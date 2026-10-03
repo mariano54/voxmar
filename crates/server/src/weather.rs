@@ -8,9 +8,10 @@
 //! simulated everywhere. Near players the process integrates how each cell responds:
 //! humidity follows the passing air mass from the climate's baseline, cloud condenses as
 //! the air nears saturation and evaporates as it dries, and thick cloud rains, which dries
-//! the air again. A cell coming into range first catches up on the last ten minutes, so
-//! the weather at a place does not depend on when anyone arrived, and cells left behind
-//! return to their climate baseline.
+//! the air again; a downpour in strong updrafts is a thunderstorm and raises lightning
+//! events. A cell coming into range first catches up on the last ten minutes, so the
+//! weather at a place does not depend on when anyone arrived, and cells left behind return
+//! to their climate baseline.
 //!
 //! Only exact floating point operations are used (no `sin`, `exp` or `powf`), so every
 //! machine computes the same weather.
@@ -245,16 +246,17 @@ impl Weather {
 
         let block = at.floor().as_ivec2();
         let celsius = temperature.sample(block.x, block.y);
-        let temperature = warmth(celsius);
+        let warm = warmth(celsius);
         let tick = tick as i64;
-        let drivers = self.drivers(at.as_dvec2(), tick, temperature);
+        let drivers = self.drivers(at.as_dvec2(), tick, warm);
         // Updrafts heap cloud into towers; without them it spreads into flat layers.
-        let convection = smoothstep(0.05, 0.5, drivers.lift + 0.25 * smoothstep(0.45, 0.8, temperature) * (1.0 - cover));
+        let convection = smoothstep(0.05, 0.5, drivers.lift + 0.25 * smoothstep(0.45, 0.8, warm) * (1.0 - cover));
         // High ice cloud runs ahead of moist air, and drifts across fair skies now and then.
         let seconds = tick as f64 / TICKS_PER_SECOND as f64;
-        let upwind = self.drivers(at.as_dvec2() - self.prevailing * 2500.0, tick, temperature);
+        let upwind = self.drivers(at.as_dvec2() - self.prevailing * 2500.0, tick, warm);
         let fair = self.noise(CIRRUS, at.as_dvec2() / 2000.0, seconds / 1200.0) as f32;
-        let cirrus = (0.8 * smoothstep(0.15, 0.7, upwind.air - drivers.air)).max(0.5 * smoothstep(0.6, 0.85, fair)) * (1.0 - cover);
+        let ahead = 0.8 * smoothstep(0.15, 0.7, upwind.air - drivers.air);
+        let cirrus = ahead.max(0.5 * smoothstep(0.6, 0.85, fair)) * (1.0 - cover);
 
         // Wind: the prevailing direction, veering and strengthening over hours, gusting in
         // showers.
@@ -283,7 +285,8 @@ impl Weather {
         let (ix, iz, it) = (i.x as i64, i.y as i64, it as i64);
         let fade = |t: f64| t * t * (3.0 - 2.0 * t);
         let (wx, wz, wt) = (fade(f.x), fade(f.y), fade(ft));
-        let corner = |dx: i64, dz: i64, dt: i64| unit(mix(mix(mix(seed ^ (ix + dx) as u64) ^ (iz + dz) as u64) ^ (it + dt) as u64));
+        let corner =
+            |dx: i64, dz: i64, dt: i64| unit(mix(mix(mix(seed ^ (ix + dx) as u64) ^ (iz + dz) as u64) ^ (it + dt) as u64));
         let plane = |dt| {
             let near = corner(0, 0, dt) + (corner(1, 0, dt) - corner(0, 0, dt)) * wx;
             let far = corner(0, 1, dt) + (corner(1, 1, dt) - corner(0, 1, dt)) * wx;
@@ -329,8 +332,12 @@ fn step(cell: Cell, drivers: &Drivers, climate: f32, temperature: f32, dt: f32) 
     }
 }
 
+/// Whether a player told `a` should now be told `b` (wind counts in tens of blocks per
+/// second).
 fn changed(a: &LocalWeather, b: &LocalWeather) -> bool {
-    let values = |w: &LocalWeather| [w.cover, w.convection, w.cirrus, w.humidity, w.precipitation, w.snow, w.wind.x / 10.0, w.wind.y / 10.0];
+    let values = |w: &LocalWeather| {
+        [w.cover, w.convection, w.cirrus, w.humidity, w.precipitation, w.snow, w.wind.x / 10.0, w.wind.y / 10.0]
+    };
     values(a).iter().zip(values(b)).any(|(x, y)| (x - y).abs() > CHANGE)
 }
 

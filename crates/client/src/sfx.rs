@@ -119,7 +119,8 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
         }
     }
     let thunder = [true, false].map(|near| {
-        (0..VARIANTS).map(|v| sources.add(AudioSource { bytes: Arc::from(wav(&thunder_clip(mix(v * 7 + near as u64), near))) })).collect()
+        let clip = |v: u64| AudioSource { bytes: Arc::from(wav(&thunder_clip(mix(v * 7 + near as u64), near))) };
+        (0..VARIANTS).map(|v| sources.add(clip(v))).collect()
     });
     commands.insert_resource(Sfx { clips, thunder, counter: 0 });
     let rain = sources.add(AudioSource { bytes: Arc::from(wav(&rain_loop(0x7261_696e))) });

@@ -120,13 +120,15 @@ fn value_noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-fn fbm(p: vec2<f32>) -> f32 {
+// Cloud noise. The finer octaves slide slowly over the coarse ones as seconds `t` pass,
+// so shapes keep forming and breaking up as they drift.
+fn fbm(p: vec2<f32>, t: f32) -> f32 {
     var value = 0.0;
     var amplitude = 0.5;
     var q = p;
     for (var i = 0; i < 5; i++) {
         value += value_noise(q) * amplitude;
-        q = q * 2.03 + vec2(17.1, 9.3);
+        q = q * 2.03 + vec2(17.1, 9.3) + t * vec2(0.006, -0.004);
         amplitude *= 0.5;
     }
     return value;
@@ -386,6 +388,7 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
     let convection = sky.clouds.z;
     let cirrus = sky.clouds.w;
     let rain = sky.weather.z;
+    let t = sky.clouds.x;
     if dir.y <= 0.01 || cover + cirrus < 0.005 {
         return vec4(0.0);
     }
@@ -406,7 +409,7 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
         let high = to_layer * 0.7 + sky.weather.xy * 0.35 + vec2(37.0, -11.0);
         let w = sky.wind.xy;
         let along = vec2(dot(high, w), dot(high, vec2(-w.y, w.x)));
-        let streaks = fbm(along * vec2(0.7, 5.0));
+        let streaks = fbm(along * vec2(0.7, 5.0), t);
         let patches = value_noise(high * 0.9);
         let density = smoothstep(0.48, 0.75, streaks) * smoothstep(0.3, 0.7, patches) * min(cirrus * 0.9, 0.65) * fade;
         result = vec4((lit * 1.1 + flash) * density, density);
@@ -418,7 +421,7 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
         if convection > 0.01 {
             billows = (value_noise(at * 9.0) + 0.5 * value_noise(at * 19.0 + 7.0) - 0.75) * convection;
         }
-        let n = fbm(at) + billows * 0.1;
+        let n = fbm(at, t) + billows * 0.1;
         // The threshold sets how much of the sky is covered; heaped cloud has crisp edges,
         // layered cloud soft ones.
         let threshold = mix(0.74, 0.17, cover);
@@ -430,7 +433,7 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
             // towards it.
             let depth = smoothstep(threshold, threshold + mix(0.4, 0.25, convection), n);
             let underside = smoothstep(0.1, 0.7, dir.y);
-            let towards_sun = fbm(at + normalize(sun.xz + vec2(1e-4, 0.0)) * 0.06) + billows * 0.1;
+            let towards_sun = fbm(at + normalize(sun.xz + vec2(1e-4, 0.0)) * 0.06, t) + billows * 0.1;
             let shadowed = clamp(0.5 + (towards_sun - n) * 8.0, 0.0, 1.0) * daylight;
             var dark = depth * mix(0.15, 0.6, underside) + shadowed * 0.35 * depth;
             // Layers are flatter and duller; rain clouds are dark, storm clouds darkest.
