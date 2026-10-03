@@ -14,10 +14,13 @@ cargo run --release -p voxmar_server        # dedicated server on port 25665, wo
 ```
 
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
-`--view-distance N` (columns of 32 blocks, default 16), `--no-vsync` (uncapped frame rate), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--menu | --screen title|worlds|create|join|settings]`,
+`--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
+frame rate), `--weather clear|cirrus|cumulus|cloudy|overcast|rain|storm|snow` (show that instead
+of the server's weather), and
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
-given) or the menu backdrop to load, logs frame time and saves a screenshot.
+given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
+time of day (a fraction of the day, 0 at sunrise).
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
@@ -83,12 +86,14 @@ How the design primitives map to the code today:
   compiles down to a fixed set of engine effects. Clients validate with the same rules to
   predict. Mining, placing, moving items and respawning are all actions.
 - **Process**: continuous server rules at a scheduling tier (`High` every tick, `Low` once a
-  second): falling damage, and regeneration, which heals slower where the temperature field
-  is freezing.
+  second): falling damage, regeneration, which heals slower where the temperature field
+  is freezing, and the weather (below).
 - **Trait**: typed data with declared replication and persistence (`core:health`,
   `core:inventory`, `core:position`); owner-replicated traits are sent when they change.
-- **Field**: coarse 16-block grids, generated baseline plus emitted differences
-  (`core:temperature`, in °C, from the climate generator).
+- **Field**: coarse grids (16 blocks per cell unless a field chooses otherwise), generated
+  baseline plus emitted differences: `core:temperature`, in °C, from the climate generator,
+  and `core:humidity`, `core:clouds` and `core:precipitation` at 128 blocks, which the weather
+  process evolves.
 - **Agent**: players, whose controller is input. Machines and creatures come later.
 - **Generator**: the `Generator` trait; `Overworld` is the first implementation. Random
   streams are seeded from world seed + generator id and version + stream + position, so
@@ -115,14 +120,41 @@ river density, vegetation), with sensible correlations. Everything else is a con
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored` (optionally with `SEED=n`)
 writes a shaded 8 km map to `target/map_preview.ppm`.
 
+## Weather
+
+The server simulates the weather; clients only draw it. What drives it is a pure function of
+the seed, place and time: moist and dry air masses a few kilometres across that drift with the
+world's prevailing wind and slowly change shape, and smaller, shorter-lived updrafts that are
+strongest on warm afternoons. Near players, a `Low` tier process evolves the humidity, cloud
+and precipitation fields cell by cell: humidity follows the passing air mass away from its
+baseline (the usual humidity of the climate's annual rainfall), cloud condenses as the air
+nears saturation, sooner in rising or cold air, and evaporates as it dries, and thick cloud
+rains, which dries the air again. Typical land rains 8-20% of the time, rainforests 30-50%,
+deserts almost never, and below 0 °C it snows. A cell coming into range first catches up on its
+last ten minutes, so the weather at a place does not depend on when anyone arrived (or whether
+the world was just loaded), and cells left behind return to their baseline. The process uses
+only exact arithmetic on seeded hash streams, so it is deterministic on every machine.
+
+Each player is sent `ServerMessage::Weather` for where they stand (low cloud cover, how heaped
+it is, cirrus, humidity, precipitation, how much falls as snow, wind) when it changes or every
+five seconds, and the client eases towards it: cloud builds and clears over tens of seconds,
+rain sets in over a few. The sky's cloud layer sits at fixed places in the world and drifts
+with the wind; its shape follows the weather, from flat grey stratus through billowing cumulus
+to dark storm cloud, under streaks of cirrus. Thick cloud greys and dims the sky, sunlight,
+ambient light and fog, and rain and snow close in the view. Rain streaks, splashes and
+snowflakes fall through a box around the camera, slanted by the wind and stopped by a map of
+the highest block around the camera, so nothing falls indoors, under trees or in caves.
+F3 shows the weather.
+
 ## Sound
 
 Music is in `assets/music` (generated offline with `tools/generate_music.py`) and plays now and
 then with long quiet gaps; `M` toggles it. Sound effects are synthesized at startup from each
 block's material (`sound: Wood` in its definition), so new blocks sound right without new audio:
 short, soft and warm, with several variants per cue and a small random pitch change so nothing
-repeats exactly. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every cue to
-`target/sfx_preview.wav`.
+repeats exactly. Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain
+is heavy and quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes
+every cue to `target/sfx_preview.wav`.
 
 ## Rendering and performance
 
@@ -138,7 +170,9 @@ repeats exactly. `cargo test -p voxmar_client sfx_preview -- --ignored` writes e
 - Bevy's GPU preprocessing does frustum culling and indirect batched draws.
 - Pixel-art texture array with alpha-weighted mipmaps; climate tints from colormaps in the shader.
 - Plants (grass, flowers) are two crossed, double-sided quads that sway from their base.
-- Day/night cycle, sky dome with sun, moon and stars, distance fog, HDR with bloom.
+- Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
+  distance fog, HDR with bloom. The sun, moon, stars and planets are measured in pixels, so
+  they stay round at any field of view.
 
 Measured on an M5 Max at 1920×1080, view distance 16 (1089 columns, ~4.7M quads loaded):
 ~540 fps at ground level, ~360 fps looking over the landscape from above. Column generation is

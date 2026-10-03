@@ -8,7 +8,9 @@ use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, Face};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::VoxelWorld;
-use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, local_pair, tcp};
+use voxmar_protocol::{
+    ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, Weather, local_pair, tcp,
+};
 use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
 
 struct Client {
@@ -22,6 +24,7 @@ struct Client {
     health: u8,
     content: Content,
     inventory: voxmar_engine::inventory::Inventory,
+    weather: Option<Weather>,
     _server: ServerHandle,
 }
 
@@ -63,6 +66,7 @@ impl Client {
             health: 0,
             content,
             inventory: Default::default(),
+            weather: None,
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -100,6 +104,7 @@ impl Client {
                 self.health = health.current;
                 self.inventory = inventory;
             }
+            ServerMessage::Weather(weather) => self.weather = Some(weather),
             _ => {}
         }
     }
@@ -240,4 +245,14 @@ fn game_mode_decides_flight_and_admin() {
         drop(client);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+}
+
+#[test]
+fn players_are_told_the_weather() {
+    let mut client = Client::join();
+    client.pump_until(|c| c.weather.is_some());
+    let weather = client.weather.unwrap();
+    let fractions = [weather.cover, weather.convection, weather.cirrus, weather.humidity, weather.precipitation, weather.snow];
+    assert!(fractions.iter().all(|f| (0.0..=1.0).contains(f)), "{weather:?}");
+    assert!(weather.wind.is_finite());
 }
