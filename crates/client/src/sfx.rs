@@ -54,11 +54,11 @@ impl Cue {
 
     fn gain(self) -> f32 {
         match self {
-            Cue::Step => 0.35,
-            Cue::Land => 0.6,
-            Cue::Place => 0.7,
-            Cue::Break => 0.8,
-            Cue::Hit => 0.3,
+            Cue::Step => 0.2,
+            Cue::Land => 0.4,
+            Cue::Place => 0.55,
+            Cue::Break => 0.6,
+            Cue::Hit => 0.22,
         }
     }
 }
@@ -199,12 +199,22 @@ struct Recipe {
 fn recipe(sound: Sound) -> Recipe {
     let base = Recipe { length: 0.12, center: 1500.0, q: 1.0, grains: 0.0, grain_length: 0.004, attack: 0.002, tones: &[], tone_gain: 0.0 };
     match sound {
-        Sound::Stone => Recipe { length: 0.09, center: 2100.0, q: 1.3, tones: &[(150.0, 30.0)], tone_gain: 0.35, ..base },
+        Sound::Stone => Recipe { length: 0.09, center: 1500.0, q: 1.3, tones: &[(150.0, 30.0)], tone_gain: 0.35, ..base },
         Sound::Wood => Recipe { length: 0.15, center: 900.0, q: 2.2, tones: &[(240.0, 16.0), (590.0, 24.0)], tone_gain: 0.6, ..base },
-        Sound::Soil => Recipe { length: 0.11, center: 650.0, q: 0.8, grains: 320.0, grain_length: 0.006, tones: &[(95.0, 30.0)], tone_gain: 0.3, ..base },
-        Sound::Grass => Recipe { length: 0.13, center: 3000.0, q: 0.9, grains: 520.0, grain_length: 0.004, attack: 0.008, ..base },
-        Sound::Sand => Recipe { length: 0.16, center: 2400.0, q: 0.6, attack: 0.02, ..base },
-        Sound::Gravel => Recipe { length: 0.14, center: 1500.0, q: 1.4, grains: 260.0, grain_length: 0.008, ..base },
+        Sound::Soil => Recipe {
+            length: 0.12,
+            center: 450.0,
+            q: 0.8,
+            grains: 200.0,
+            grain_length: 0.007,
+            attack: 0.01,
+            tones: &[(90.0, 30.0)],
+            tone_gain: 0.25,
+            ..base
+        },
+        Sound::Grass => Recipe { length: 0.14, center: 1800.0, q: 0.9, grains: 350.0, grain_length: 0.005, attack: 0.015, ..base },
+        Sound::Sand => Recipe { length: 0.2, center: 1300.0, q: 0.5, grains: 600.0, grain_length: 0.004, attack: 0.035, ..base },
+        Sound::Gravel => Recipe { length: 0.14, center: 1100.0, q: 1.4, grains: 260.0, grain_length: 0.008, ..base },
         Sound::Snow => Recipe { length: 0.17, center: 950.0, q: 0.9, grains: 420.0, grain_length: 0.007, attack: 0.012, ..base },
         Sound::Glass => Recipe {
             length: 0.22,
@@ -276,13 +286,22 @@ fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
         samples.push(sample * envelope);
     }
 
-    // Normalise, then fade the last few milliseconds so clips never click.
+    // Warm the top end with a gentle low-pass, match loudness (RMS, so continuous hiss is
+    // not louder than grainy crunches), keep peaks in range, and fade the last
+    // milliseconds so clips never click.
+    let mut warm = 0.0f32;
+    for sample in &mut samples {
+        warm += 0.35 * (*sample - warm);
+        *sample = warm;
+    }
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt().max(1e-6);
     let peak = samples.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
+    let scale = (0.16 / rms).min(0.9 / peak);
     let fade = (0.005 * RATE as f32) as usize;
     let len = samples.len();
     for (i, sample) in samples.iter_mut().enumerate() {
         let tail = ((len - i) as f32 / fade as f32).min(1.0);
-        *sample = *sample / peak * 0.8 * tail;
+        *sample *= scale * tail;
     }
     samples
 }

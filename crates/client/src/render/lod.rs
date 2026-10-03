@@ -2,7 +2,7 @@
 //!
 //! Beyond the real chunks, the world is drawn as nested square rings of tiles. Each ring
 //! doubles the cell size of the one inside it (4, 8, 16, 32 blocks), so detail falls off
-//! with distance while the triangle count per ring stays constant. Tiles are blocky
+//! with distance while the triangle count per ring stays constant. Tiles are smooth
 //! heightfields sampled from the generator's pure surface functions on worker threads,
 //! so they exist before the server has generated anything there. A fragment shader hides
 //! every part of a ring that finer detail already covers, so rings never overlap.
@@ -36,7 +36,7 @@ const RING: i32 = 6;
 const MAX_IN_FLIGHT: usize = 12;
 const TILES_PER_FRAME: usize = 6;
 
-pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6431, VertexFormat::Uint32x2);
+pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6432, VertexFormat::Uint32x3);
 
 pub struct LodPlugin;
 
@@ -105,15 +105,17 @@ impl LodPalette {
     pub fn new(registry: &BlockRegistry, textures: &[Rgba], colormaps: &[Rgba; 2]) -> Self {
         let average = |layer: u16| {
             let texture = &textures[layer as usize];
+            // Average in sRGB space, as the texture mipmaps do, so distant terrain has the
+            // same colour as far-away real chunks.
             let (mut sum, mut weight) = ([0.0f32; 3], 0.0f32);
             for pixel in texture.pixels.as_chunks::<4>().0 {
                 let a = pixel[3] as f32 / 255.0;
                 for c in 0..3 {
-                    sum[c] += srgb_to_linear(pixel[c]) * a;
+                    sum[c] += pixel[c] as f32 * a;
                 }
                 weight += a;
             }
-            sum.map(|s| s / weight.max(1e-3))
+            sum.map(|s| srgb_to_linear((s / weight.max(1e-3)).round() as u8))
         };
         let ids = (0..registry.len()).map(|i| registry.info(BlockId(i as u16)));
         let (mut top, mut side, mut tints) = (Vec::new(), Vec::new(), Vec::new());
@@ -327,124 +329,132 @@ fn apply_tiles(mut commands: Commands, mut lod: ResMut<Lod>, mut meshes: ResMut<
     }
 }
 
-/// One coarse cell of a tile.
+/// What a grid corner of a tile looks like.
 #[derive(Clone, Copy)]
-struct Cell {
-    /// World y of the top surface.
-    top: i32,
-    color: u32,
-    side_color: u32,
-    water: bool,
+struct Corner {
+    height: f32,
+    color: [f32; 3],
+    /// 1 over water, 0 on land.
+    water: f32,
 }
 
-/// Samples the generator on the tile's grid (plus a border for side faces) and builds a
-/// blocky heightfield mesh, merging equal neighbouring tops into runs.
+/// Linear colour multiplier standing in for the ambient occlusion and self-shadowing that
+/// real terrain gets but a smooth heightfield cannot.
+const GROUND_OCCLUSION: f32 = 0.88;
+const CANOPY_OCCLUSION: f32 = 0.62;
+/// How far crowns of a dense forest raise the canopy above the ground.
+const CANOPY_HEIGHT: f32 = 6.0;
+/// Depth of the walls hanging from tile edges, hiding cracks between rings.
+const SKIRT: f32 = 24.0;
+
+fn light_curve(level: f32) -> f32 {
+    level / (2.5 - 1.5 * level)
+}
+
+/// Samples the generator at the tile's grid corners and builds a smooth heightfield mesh.
+/// Forests become a raised canopy, water a flat sheet coloured by what shows through it.
 fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Option<Mesh> {
     let _span = info_span!("lod_tile").entered();
     let cell = key.cell();
     let origin = key.origin();
-    const W: i32 = CELLS + 2;
-    // Sample at cell centres.
-    let heights: Vec<i32> = (0..W * W)
-        .map(|i| {
-            let (x, z) = (i % W - 1, i / W - 1);
-            generator.height(origin.x + x * cell + cell / 2, origin.y + z * cell + cell / 2)
-        })
-        .collect();
-    let height_at = |x: i32, z: i32| heights[((z + 1) * W + x + 1) as usize];
+    // Corners 0..=CELLS plus one more on each side for normals.
+    const W: i32 = CELLS + 3;
+    let at = |i: i32| (i - 1) * cell;
+    let heights: Vec<i32> =
+        (0..W * W).map(|i| generator.height(origin.x + at(i % W), origin.y + at(i / W))).collect();
+    let height = |x: i32, z: i32| heights[((z + 1) * W + x + 1) as usize];
 
-    let pack = |c: [f32; 3]| linear_to_srgb_byte(c[0]) | linear_to_srgb_byte(c[1]) << 8 | linear_to_srgb_byte(c[2]) << 16;
-    let mut cells = Vec::with_capacity((W * W) as usize);
-    for z in -1..=CELLS {
-        for x in -1..=CELLS {
-            let (wx, wz) = (origin.x + x * cell + cell / 2, origin.y + z * cell + cell / 2);
-            let h = height_at(x, z);
-            let slope = if (0..CELLS).contains(&x) && (0..CELLS).contains(&z) {
-                [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|(dx, dz)| (height_at(x + dx, z + dz) - h).abs()).max().unwrap_or(0) / cell
+    let mut corners = Vec::with_capacity((W * W) as usize);
+    for z in -1..=CELLS + 1 {
+        for x in -1..=CELLS + 1 {
+            let (wx, wz) = (origin.x + x * cell, origin.y + z * cell);
+            let h = height(x, z);
+            let slope = if (0..=CELLS).contains(&x) && (0..=CELLS).contains(&z) {
+                [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|(dx, dz)| (height(x + dx, z + dz) - h).abs()).max().unwrap_or(0) / cell
             } else {
                 0
             };
             let surface = generator.surface_sample(wx, wz, h, slope);
-            let mut c = if let Some(water) = surface.water {
-                // Imitate looking through translucent water: the floor shows in the
-                // shallows, deep water is dark.
-                let depth = ((SEA_LEVEL - h) as f32 / 14.0).clamp(0.0, 1.0);
+            let corner = if let Some(water) = surface.water {
+                // Looking through translucent water: the floor, dimmed by depth as sky light
+                // fades through water, under the water's own colour.
+                let depth = (SEA_LEVEL - h) as f32;
+                let floor_light = light_curve(((15.0 - 2.0 * depth) / 15.0).max(0.0));
                 let floor = palette.color(surface.ground, true, surface.climate);
                 let water = palette.color(water, true, surface.climate);
-                let mixed = std::array::from_fn(|i| floor[i] * water[i] * 2.0 * (1.0 - depth) + water[i] * 0.45 * depth);
-                let color = pack(mixed);
-                Cell { top: SEA_LEVEL + 1, color, side_color: color, water: true }
+                Corner {
+                    height: SEA_LEVEL as f32 + 1.0,
+                    color: std::array::from_fn(|i| water[i] * 0.72 + floor[i] * floor_light * 0.28),
+                    water: 1.0,
+                }
             } else {
-                Cell {
-                    top: h + 1,
-                    color: pack(palette.color(surface.ground, true, surface.climate)),
-                    side_color: pack(palette.color(surface.ground, false, surface.climate)),
-                    water: false,
+                let ground = palette.color(surface.ground, true, surface.climate).map(|c| c * GROUND_OCCLUSION);
+                let (leaves, cover) = surface.canopy.unwrap_or((surface.ground, 0.0));
+                let crown = palette.color(leaves, true, surface.climate).map(|c| c * CANOPY_OCCLUSION);
+                Corner {
+                    height: h as f32 + 1.0 + CANOPY_HEIGHT * cover,
+                    color: std::array::from_fn(|i| ground[i] + (crown[i] - ground[i]) * cover),
+                    water: 0.0,
                 }
             };
-            // Tree cover: raise a share of cells by a crown, coloured like the leaves.
-            if let Some((leaves, cover)) = surface.canopy {
-                let hash = (wx as u32).wrapping_mul(0x9e37_79b1) ^ (wz as u32).wrapping_mul(0x85eb_ca77);
-                let roll = (hash.wrapping_mul(0xc2b2_ae3d) >> 8) as f32 / (1u32 << 24) as f32;
-                if roll < cover {
-                    c.top += 4 + (hash >> 29) as i32;
-                    c.color = pack(palette.color(leaves, true, surface.climate));
-                    c.side_color = pack(palette.color(leaves, false, surface.climate).map(|v| v * 0.8));
-                }
-            }
-            cells.push(c);
+            corners.push(corner);
         }
     }
-    let at = |x: i32, z: i32| cells[((z + 1) * W + x + 1) as usize];
+    let corner = |x: i32, z: i32| corners[((z + 1) * W + x + 1) as usize];
 
-    let mut vertices: Vec<[u32; 2]> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    let mut quad = |corners: [(i32, i32, i32); 4], face: Face, color: u32, water: bool| {
-        let base = vertices.len() as u32;
-        for (x, y, z) in corners {
-            let w0 = x as u32 | (z as u32) << 6 | (y.clamp(0, 511) as u32) << 12 | (face as u32) << 21 | (water as u32) << 24;
-            vertices.push([w0, color]);
-        }
-        indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
+    let pack_color = |c: [f32; 3]| linear_to_srgb_byte(c[0]) | linear_to_srgb_byte(c[1]) << 8 | linear_to_srgb_byte(c[2]) << 16;
+    let mut vertices: Vec<[u32; 3]> = Vec::with_capacity(((CELLS + 1) * (CELLS + 1) + 4 * (CELLS + 1)) as usize);
+    let vertex = |x: i32, z: i32, height: f32, normal: Vec3, c: Corner| {
+        let y = (height * 2.0).round().clamp(0.0, 1023.0) as u32;
+        [
+            x as u32 | (z as u32) << 6 | y << 12,
+            pack_color(c.color) | ((c.water * 255.0) as u32) << 24,
+            encode_normal(normal),
+        ]
     };
-
+    for z in 0..=CELLS {
+        for x in 0..=CELLS {
+            let c = corner(x, z);
+            let dx = corner(x + 1, z).height - corner(x - 1, z).height;
+            let dz = corner(x, z + 1).height - corner(x, z - 1).height;
+            let normal = Vec3::new(-dx, 2.0 * cell as f32, -dz).normalize();
+            vertices.push(vertex(x, z, c.height, normal, c));
+        }
+    }
+    let index = |x: i32, z: i32| (z * (CELLS + 1) + x) as u32;
+    let mut indices = Vec::with_capacity((CELLS * CELLS * 6 + 4 * CELLS * 6) as usize);
     for z in 0..CELLS {
-        // Tops, merged into runs along x.
-        let mut x = 0;
-        while x < CELLS {
-            let c = at(x, z);
-            let mut end = x + 1;
-            while end < CELLS && {
-                let n = at(end, z);
-                n.top == c.top && n.color == c.color && n.water == c.water
-            } {
-                end += 1;
-            }
-            quad([(x, c.top, z), (x, c.top, z + 1), (end, c.top, z + 1), (end, c.top, z)], Face::PosY, c.color, c.water);
-            x = end;
-        }
-        // Sides wherever a neighbour is lower.
         for x in 0..CELLS {
-            let c = at(x, z);
-            let sides = [
-                (at(x + 1, z).top, Face::PosX, [(x + 1, 0, z + 1), (x + 1, 0, z), (x + 1, 1, z), (x + 1, 1, z + 1)]),
-                (at(x - 1, z).top, Face::NegX, [(x, 0, z), (x, 0, z + 1), (x, 1, z + 1), (x, 1, z)]),
-                (at(x, z + 1).top, Face::PosZ, [(x, 0, z + 1), (x + 1, 0, z + 1), (x + 1, 1, z + 1), (x, 1, z + 1)]),
-                (at(x, z - 1).top, Face::NegZ, [(x + 1, 0, z), (x, 0, z), (x, 1, z), (x + 1, 1, z)]),
-            ];
-            for (neighbour, face, corners) in sides {
-                if neighbour >= c.top {
-                    continue;
-                }
-                // Corner y of 0 means the neighbour's top, 1 means ours.
-                let corners = corners.map(|(cx, level, cz)| (cx, if level == 0 { neighbour } else { c.top }, cz));
-                quad(corners, face, c.side_color, false);
+            let (a, b, c, d) = (index(x, z), index(x + 1, z), index(x + 1, z + 1), index(x, z + 1));
+            indices.extend([a, d, c, a, c, b]);
+        }
+    }
+    // Skirts: each border edge gets a wall hanging down, facing outwards.
+    let borders: [(Box<dyn Fn(i32) -> (i32, i32)>, Vec3, bool); 4] = [
+        (Box::new(|i| (i, 0)), Vec3::NEG_Z, false),
+        (Box::new(|i| (i, CELLS)), Vec3::Z, true),
+        (Box::new(|i| (0, i)), Vec3::NEG_X, true),
+        (Box::new(|i| (CELLS, i)), Vec3::X, false),
+    ];
+    for (edge, outward, flip) in borders {
+        let base = vertices.len() as u32;
+        for i in 0..=CELLS {
+            let (x, z) = edge(i);
+            let c = corner(x, z);
+            vertices.push(vertex(x, z, c.height - SKIRT, outward, c));
+        }
+        for i in 0..CELLS {
+            let (x0, z0) = edge(i);
+            let (x1, z1) = edge(i + 1);
+            let (top0, top1, bottom0, bottom1) = (index(x0, z0), index(x1, z1), base + i as u32, base + i as u32 + 1);
+            if flip {
+                indices.extend([top0, top1, bottom1, top0, bottom1, bottom0]);
+            } else {
+                indices.extend([top0, bottom1, top1, top0, bottom0, bottom1]);
             }
         }
     }
-    if indices.is_empty() {
-        return None;
-    }
+
     let indices = if vertices.len() <= u16::MAX as usize + 1 {
         Indices::U16(indices.into_iter().map(|i| i as u16).collect())
     } else {
@@ -452,7 +462,18 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
     };
     Some(
         Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-            .with_inserted_attribute(ATTRIBUTE_LOD, VertexAttributeValues::Uint32x2(vertices))
+            .with_inserted_attribute(ATTRIBUTE_LOD, VertexAttributeValues::Uint32x3(vertices))
             .with_inserted_indices(indices),
     )
+}
+
+/// Octahedral encoding of a unit normal into two 8-bit components.
+fn encode_normal(n: Vec3) -> u32 {
+    let n = n / (n.x.abs() + n.y.abs() + n.z.abs());
+    let (mut x, mut z) = (n.x, n.z);
+    if n.y < 0.0 {
+        (x, z) = ((1.0 - n.z.abs()) * n.x.signum(), (1.0 - n.x.abs()) * n.z.signum());
+    }
+    let quantize = |v: f32| ((v * 0.5 + 0.5) * 255.0).round() as u32;
+    quantize(x) | quantize(z) << 8
 }

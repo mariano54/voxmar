@@ -20,6 +20,26 @@ impl Rgba {
         Self { width, height, pixels: color.repeat((width * height) as usize) }
     }
 
+    /// Makes every texel opaque, giving transparent ones the average opaque colour. For
+    /// textures drawn on full cubes (a cactus side has transparent margins in Minecraft's
+    /// model), which would otherwise show holes at the edges.
+    pub fn fill_transparent(&mut self) {
+        let (mut sum, mut count) = ([0u32; 3], 0u32);
+        for pixel in self.pixels.chunks_exact(4).filter(|p| p[3] >= 128) {
+            for c in 0..3 {
+                sum[c] += pixel[c] as u32;
+            }
+            count += 1;
+        }
+        let average = sum.map(|s| s.checked_div(count).unwrap_or(0) as u8);
+        for pixel in self.pixels.chunks_exact_mut(4) {
+            if pixel[3] < 128 {
+                pixel[..3].copy_from_slice(&average);
+            }
+            pixel[3] = 255;
+        }
+    }
+
     /// The top square of an image (first frame of an animation strip), nearest-resampled
     /// to `size`.
     fn square(&self, size: u32) -> Rgba {

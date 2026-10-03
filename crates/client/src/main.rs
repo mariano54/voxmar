@@ -25,7 +25,7 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::window::{ExitCondition, PresentMode};
 use voxmar_engine::action::ActionRegistry;
-use voxmar_engine::block::{BlockRegistry, Tint};
+use voxmar_engine::block::{BlockRegistry, RenderKind, Tint};
 use voxmar_engine::content::Content;
 use voxmar_engine::coords::Face;
 use voxmar_protocol::{DEFAULT_PORT, local_pair, tcp};
@@ -183,7 +183,22 @@ fn setup(
 ) {
     let registry = &registry.0;
     let mut source = Source::discover();
-    let (_, block_textures) = source.block_textures(registry.textures());
+    let (_, mut block_textures) = source.block_textures(registry.textures());
+    // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
+    let mut see_through = vec![false; block_textures.len()];
+    for id in 0..registry.len() {
+        let info = registry.info(voxmar_engine::block::BlockId(id as u16));
+        if !matches!(info.render, RenderKind::Opaque | RenderKind::Invisible) {
+            for layer in info.layers {
+                see_through[layer as usize] = true;
+            }
+        }
+    }
+    for (texture, keep) in block_textures.iter_mut().zip(see_through) {
+        if !keep {
+            texture.fill_transparent();
+        }
+    }
     let colormaps = source.colormaps();
     render::setup(&mut commands, &mut images, &mut meshes, &mut voxel_materials, &mut sky_materials, &block_textures, &colormaps);
     let palette = LodPalette::new(registry, &block_textures, &colormaps);

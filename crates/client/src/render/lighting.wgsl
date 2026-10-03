@@ -39,7 +39,7 @@ fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
     return fetch_directional_shadow(0u, vec4(world, 1.0), normal, view_z, frag_xy);
 }
 
-// Lit colour of a surface. `sky` and `block` are 0..1 light levels, `ao` the occlusion
+// Lit colour of a voxel face. `sky` and `block` are 0..1 light levels, `ao` the occlusion
 // factor, `foliage` softens the sun term for leaves so crowns glow when back-lit.
 fn shade(
     albedo: vec3<f32>,
@@ -51,7 +51,21 @@ fn shade(
     foliage: bool,
     frag_xy: vec2<f32>,
 ) -> vec3<f32> {
-    let normal = NORMALS[face];
+    return shade_normal(albedo, world, NORMALS[face], FACE_SHADE[face], sky, block, ao, foliage, frag_xy);
+}
+
+// Lit colour of any surface with a normal and an ambient shading factor.
+fn shade_normal(
+    albedo: vec3<f32>,
+    world: vec3<f32>,
+    normal: vec3<f32>,
+    ambient_shade: f32,
+    sky: f32,
+    block: f32,
+    ao: f32,
+    foliage: bool,
+    frag_xy: vec2<f32>,
+) -> vec3<f32> {
     let to_sun = sun_direction();
     var facing = dot(normal, to_sun);
     if foliage {
@@ -63,8 +77,8 @@ fn shade(
     if facing > 0.0 && open > 0.0 {
         direct = sun_color() * facing * open * sun_shadow(world, normal, frag_xy);
     }
-    let ambient = lights.ambient_color.rgb * light_curve(sky) * FACE_SHADE[face] * ao;
-    let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(FACE_SHADE[face], 1.0, 0.5) * ao;
+    let ambient = lights.ambient_color.rgb * light_curve(sky) * ambient_shade * ao;
+    let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
     let floor = vec3(0.010, 0.010, 0.014) * ao;
     return albedo * (ambient + direct * mix(1.0, ao, 0.5) + torch + floor);
 }
