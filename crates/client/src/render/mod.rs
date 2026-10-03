@@ -7,13 +7,18 @@
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::Hdr;
 use bevy::camera::visibility::NoFrustumCulling;
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::Core3dSystems;
+use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin};
+use bevy::core_pipeline::tonemapping::{Tonemapping, tonemapping};
+use bevy::ecs::schedule::ScheduleConfigs;
+use bevy::ecs::system::BoxedSystem;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
 use bevy::math::DVec2;
 use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues};
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
-use bevy::post_process::bloom::Bloom;
+use bevy::post_process::bloom::{Bloom, bloom};
+use bevy::render::extract_component::ExtractComponent;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDataOrder,
@@ -40,9 +45,11 @@ impl Plugin for RenderPlugin {
         load_shader_library!(app, "lighting.wgsl");
         embedded_asset!(app, "voxel.wgsl");
         embedded_asset!(app, "sky.wgsl");
+        embedded_asset!(app, "display.wgsl");
         app.add_plugins((
             MaterialPlugin::<VoxelMaterial>::default(),
             MaterialPlugin::<SkyMaterial>::default(),
+            FullscreenMaterialPlugin::<DisplayTransform>::default(),
             lod::LodPlugin,
             precipitation::PrecipitationPlugin,
         ))
@@ -141,6 +148,31 @@ impl Material for VoxelMaterial {
             fragment.shader_defs.extend(defs.iter().map(|&def| def.into()));
         }
         Ok(())
+    }
+}
+
+/// Maps the HDR image to the screen in place of a tonemapper (see `display.wgsl`): colours
+/// up to 0.8 pass through unchanged, so blocks keep their texture colours in daylight as in
+/// Minecraft, and brighter ones (the sun, glints, light sources) roll off to white.
+#[derive(Component, ExtractComponent, ShaderType, Clone, Copy)]
+pub struct DisplayTransform {
+    /// Scales the image before the curve.
+    pub exposure: f32,
+}
+
+impl Default for DisplayTransform {
+    fn default() -> Self {
+        Self { exposure: 1.0 }
+    }
+}
+
+impl FullscreenMaterial for DisplayTransform {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://voxmar/render/display.wgsl".into()
+    }
+
+    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
+        system.in_set(Core3dSystems::PostProcess).after(bloom).before(tonemapping)
     }
 }
 
@@ -262,7 +294,10 @@ pub fn setup(
         // occlusion culling it enables, since the visibility graph already hides caves.
         Msaa::Off,
         ShadowFilteringMethod::Gaussian,
-        Tonemapping::TonyMcMapface,
+        // The display transform maps HDR to the screen instead of a tonemapper, which would
+        // wash out and desaturate sunlit blocks.
+        Tonemapping::None,
+        DisplayTransform::default(),
         Bloom { intensity: 0.1, ..Bloom::NATURAL },
         AmbientLight { brightness: 1.0, ..default() },
         DistanceFog::default(),
@@ -406,28 +441,42 @@ struct Environment {
     horizon: Vec3,
 }
 
+// Noon and midnight. A sunlit top face gets about 1.0 in all, so textures keep their own
+// colours in daylight; shade is lit by the cooler sky alone. Night is a few dozen times
+// darker than day: a faint blue moon and sky, which torches and glowstone easily outshine.
+const SUN: Vec3 = Vec3::new(0.72, 0.68, 0.62);
+const LOW_SUN: Vec3 = Vec3::new(0.72, 0.45, 0.25);
+const MOON: Vec3 = Vec3::new(0.026, 0.034, 0.06);
+const DAY_AMBIENT: Vec3 = Vec3::new(0.40, 0.45, 0.55);
+const NIGHT_AMBIENT: Vec3 = Vec3::new(0.008, 0.011, 0.02);
+const DAY_ZENITH: Vec3 = Vec3::new(0.22, 0.45, 0.95);
+const NIGHT_ZENITH: Vec3 = Vec3::new(0.0012, 0.0018, 0.0045);
+const DAY_HORIZON: Vec3 = Vec3::new(0.62, 0.78, 0.98);
+const NIGHT_HORIZON: Vec3 = Vec3::new(0.005, 0.007, 0.014);
+/// Warm hues of the horizon and the skylight around sunrise and sunset, of unit luminance.
+const DUSK_HORIZON: Vec3 = Vec3::new(1.9, 0.78, 0.32);
+const DUSK_AMBIENT: Vec3 = Vec3::new(1.3, 0.95, 0.75);
+const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
+
 impl Environment {
     fn at(day_fraction: f32) -> Self {
         // The sun crosses the sky along a slightly tilted arc.
         let angle = day_fraction * std::f32::consts::TAU;
         let to_sun = Vec3::new(angle.cos(), angle.sin(), 0.25).normalize();
-        let daylight = smoothstep(-0.12, 0.2, to_sun.y);
+        let daylight = smoothstep(-0.2, 0.15, to_sun.y);
         let dusk = (1.0 - (to_sun.y.abs() * 4.0).min(1.0)) * smoothstep(-0.25, 0.0, to_sun.y);
 
         // One shadow-casting light: the sun by day, the moon (opposite it) by night. Both
         // fade to zero at the horizon, so swapping between them is invisible.
         let (light_direction, light_color) = if to_sun.y > 0.0 {
-            let warm = Vec3::new(1.0, 0.62, 0.35).lerp(Vec3::new(1.0, 0.93, 0.82), smoothstep(0.0, 0.35, to_sun.y));
-            (to_sun, warm * 1.7 * smoothstep(0.0, 0.12, to_sun.y))
+            (to_sun, LOW_SUN.lerp(SUN, smoothstep(0.0, 0.35, to_sun.y)) * smoothstep(0.0, 0.2, to_sun.y))
         } else {
-            (-to_sun, Vec3::new(0.30, 0.38, 0.6) * 0.35 * smoothstep(0.0, 0.12, -to_sun.y))
+            (-to_sun, MOON * smoothstep(0.0, 0.2, -to_sun.y))
         };
 
-        let zenith = Vec3::new(0.004, 0.006, 0.02).lerp(Vec3::new(0.22, 0.45, 0.95), daylight);
-        let horizon = Vec3::new(0.02, 0.03, 0.06)
-            .lerp(Vec3::new(0.62, 0.78, 0.98), daylight)
-            .lerp(Vec3::new(1.0, 0.48, 0.22), dusk * 0.55);
-        let ambient = Vec3::new(0.035, 0.045, 0.085).lerp(Vec3::new(0.36, 0.44, 0.62), daylight).lerp(Vec3::new(0.6, 0.45, 0.4), dusk * 0.3);
+        let zenith = fade(NIGHT_ZENITH, DAY_ZENITH, daylight);
+        let horizon = tint(fade(NIGHT_HORIZON, DAY_HORIZON, daylight), DUSK_HORIZON, dusk * 0.9);
+        let ambient = tint(fade(NIGHT_AMBIENT, DAY_AMBIENT, daylight), DUSK_AMBIENT, dusk * 0.5);
         Self { to_sun, daylight, light_direction, light_color, ambient, zenith, horizon }
     }
 
@@ -451,6 +500,17 @@ impl Environment {
         self.horizon += lightning * 0.6;
         self
     }
+}
+
+/// Blends night to day colours geometrically, so brightness changes evenly to the eye
+/// through dusk and dawn instead of collapsing at the very end.
+fn fade(night: Vec3, day: Vec3, daylight: f32) -> Vec3 {
+    night * (day / night).powf(daylight)
+}
+
+/// Shifts `color` towards `hue` by `amount`, keeping its brightness.
+fn tint(color: Vec3, hue: Vec3, amount: f32) -> Vec3 {
+    color.lerp(hue * color.dot(LUMINANCE), amount)
 }
 
 /// Colour of the glow around the sun in sky.wgsl, which the haze shares.
@@ -489,7 +549,8 @@ fn update_environment(
     // Haze in the shaders (see lighting.wgsl) does the gradual fading; the linear falloff
     // only fades out the edge of the distant terrain.
     let (fog_start, fog_end) = if cycle.underwater {
-        horizon = Vec3::new(0.04, 0.13, 0.32) * (0.2 + 0.8 * env.daylight);
+        let water = Vec3::new(0.04, 0.13, 0.32);
+        horizon = fade(water * 0.03, water, env.daylight);
         (0.0, 40.0)
     } else {
         // Rain and, more so, snow close in the view, and humid air brings the haze nearer.

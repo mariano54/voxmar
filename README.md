@@ -180,7 +180,10 @@ every cue to `target/sfx_preview.wav`.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
   aerial perspective (haze that thins with height and glows around the sun), HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
-  of view.
+  of view. Nights are dark, lit by a faint blue moon.
+- A sunlit top face gets about as much light as Minecraft's full brightness, and the display
+  transform passes colours up to 0.8 through unchanged (rolling off only brighter ones), so
+  blocks keep their texture colours in daylight.
 - Distant terrain to ~6.6 km: smooth heightfield rings from the generator's surface
   functions, shaded as the block staircase they stand for (see docs/rendering.md).
 
