@@ -59,6 +59,15 @@ How the design primitives map to the code today:
   streams are seeded from world seed + generator id and version + stream + position, so
   generation is pure and order-independent. Distant terrain is sampled from the same functions.
 
+## Sound
+
+Music is in `assets/music` (generated offline with `tools/generate_music.py`) and plays now and
+then with long quiet gaps; `M` toggles it. Sound effects are synthesized at startup from each
+block's material (`sound: Wood` in its definition), so new blocks sound right without new audio:
+short, soft and warm, with several variants per cue and a small random pitch change so nothing
+repeats exactly. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every cue to
+`target/sfx_preview.wav`.
+
 ## Rendering and performance
 
 - 32³ chunks, palette-compressed at 0/1/2/4/8/16 bits per block; uniform chunks store nothing.

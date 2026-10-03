@@ -13,6 +13,7 @@ use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
 use crate::Actions;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
+use crate::sfx::{Cue, SoundCue};
 use crate::world::ClientWorld;
 
 pub struct InteractPlugin;
@@ -112,6 +113,7 @@ fn break_and_place(
     mut world: ResMut<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
     mut target: ResMut<Target>,
+    mut cues: MessageWriter<SoundCue>,
 ) {
     target.place_cooldown -= time.delta_secs();
     let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
@@ -132,9 +134,17 @@ fn break_and_place(
         let context = ClientContext { world: &world, player: &player };
         match target.breaking {
             Some((pos, progress)) if pos == hit.block => {
-                let progress = progress + time.delta_secs() / target.mining_seconds.max(0.05);
+                let step = time.delta_secs() / target.mining_seconds.max(0.05);
+                let block = world.block(pos).unwrap_or(BlockId::AIR);
+                // A tap sound four times a second while mining.
+                let taps = (target.mining_seconds * 4.0).max(1.0);
+                if ((progress + step) * taps).floor() > (progress * taps).floor() {
+                    cues.write(SoundCue::for_block(&world, block, Cue::Hit));
+                }
+                let progress = progress + step;
                 if progress >= 1.0 {
                     // The server commits at the same moment; predict it.
+                    cues.write(SoundCue::for_block(&world, block, Cue::Break));
                     world.set_block(hit.block, BlockId::AIR);
                     target.breaking = None;
                 } else {
@@ -159,6 +169,7 @@ fn break_and_place(
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = context.actor_held().filter(|_| allowed) {
             net.propose(place, action_target);
+            cues.write(SoundCue::for_block(&world, item, Cue::Place));
             world.set_block(hit.block + hit.face.normal(), item);
             let selected = player.selected;
             player.inventory.take_one(selected);

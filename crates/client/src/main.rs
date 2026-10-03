@@ -13,6 +13,7 @@ mod music;
 mod net;
 mod player;
 mod render;
+mod sfx;
 mod textures;
 mod world;
 
@@ -125,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         interact::InteractPlugin,
         net::NetPlugin,
         hud::HudPlugin,
+        sfx::SfxPlugin,
     ))
     .insert_resource(ClientWorld::new(registry.clone(), options.view_distance))
     .insert_resource(net::Net::new(connection, server, options.name.clone(), fingerprint))

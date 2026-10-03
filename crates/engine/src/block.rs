@@ -32,6 +32,37 @@ pub enum RenderKind {
     Translucent,
 }
 
+/// The material a block sounds like when stepped on, placed or broken.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Sound {
+    #[default]
+    Stone,
+    Wood,
+    Soil,
+    Grass,
+    Sand,
+    Gravel,
+    Snow,
+    Glass,
+    Leaves,
+    Water,
+}
+
+impl Sound {
+    pub const ALL: [Sound; 10] = [
+        Sound::Stone,
+        Sound::Wood,
+        Sound::Soil,
+        Sound::Grass,
+        Sound::Sand,
+        Sound::Gravel,
+        Sound::Snow,
+        Sound::Glass,
+        Sound::Leaves,
+        Sound::Water,
+    ];
+}
+
 /// Which biome colour multiplies a face's texture.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Tint {
@@ -83,6 +114,7 @@ pub struct BlockDef {
     pub light_filter: u8,
     /// Seconds to break by hand. Negative means unbreakable.
     pub hardness: f32,
+    pub sound: Sound,
     /// Name of the block dropped when broken. Defaults to the block itself.
     pub drops: Option<String>,
     /// Placeholder texture colour used when no texture pack is available.
@@ -101,6 +133,7 @@ impl Default for BlockDef {
             light: 0,
             light_filter: 0,
             hardness: 1.0,
+            sound: Sound::Stone,
             drops: None,
             color: [255, 0, 255],
         }
@@ -125,6 +158,7 @@ pub struct BlockInfo {
     pub layers: [u16; 6],
     pub tints: [Tint; 6],
     pub hardness: f32,
+    pub sound: Sound,
     pub drops: BlockId,
 }
 
@@ -228,6 +262,7 @@ impl BlockRegistry {
                 layers,
                 tints,
                 hardness: def.hardness,
+                sound: def.sound,
                 drops,
             });
         }
