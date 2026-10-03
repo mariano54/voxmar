@@ -105,7 +105,7 @@ pub(crate) struct Server {
     generator: Arc<dyn Generator>,
     executor: Executor,
     processes: Vec<Box<dyn Process>>,
-    /// `core:temperature`, 0 (frozen) to 1 (hot), baseline from the climate generator.
+    /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
     world: VoxelWorld,
     /// Columns edited by players. They are never unloaded until saving exists.
@@ -127,9 +127,7 @@ impl Server {
     fn new(config: ServerConfig, content: Content, incoming: Receiver<ServerConnection>) -> Self {
         let overworld = Arc::new(Overworld::new(config.seed, content.blocks.clone()));
         let climate = overworld.clone();
-        let temperature = Field::new("core:temperature", move |x, z| {
-            climate.surface_sample(x, z, climate.height(x, z), 0).climate[0] as f32 / 255.0
-        });
+        let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let generator: Arc<dyn Generator> = overworld;
         // Generate the spawn column up front and stand on its highest solid block, so
         // features like trees never bury the player.

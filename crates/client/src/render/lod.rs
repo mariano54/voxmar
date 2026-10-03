@@ -363,6 +363,8 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
     let heights: Vec<i32> =
         (0..W * W).map(|i| generator.height(origin.x + at(i % W), origin.y + at(i / W))).collect();
     let height = |x: i32, z: i32| heights[((z + 1) * W + x + 1) as usize];
+    // The regional climate is shared by every sample of the tile.
+    let sampler = generator.sampler(origin - cell, origin + (CELLS + 1) * cell);
 
     let mut corners = Vec::with_capacity((W * W) as usize);
     for z in -1..=CELLS + 1 {
@@ -374,7 +376,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
             } else {
                 0
             };
-            let surface = generator.surface_sample(wx, wz, h, slope);
+            let surface = sampler.surface(wx, wz, h, slope);
             let corner = if let Some(water) = surface.water {
                 // Looking through translucent water: the floor, dimmed by depth as sky light
                 // fades through water, under the water's own colour.

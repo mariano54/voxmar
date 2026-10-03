@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
-use voxmar_engine::block::TextureRef;
+use voxmar_engine::block::{RenderKind, TextureRef};
 
 #[derive(Clone)]
 pub struct Rgba {
@@ -116,6 +116,7 @@ impl Source {
             .zip(refs)
             .map(|(texture, r)| match texture {
                 Some(t) => t.square(size),
+                None if r.render == RenderKind::Plant => plant_placeholder(size, r.color, &r.name),
                 None => placeholder(size, r.color, &r.name),
             })
             .collect();
@@ -196,18 +197,56 @@ fn decode_png(bytes: &[u8]) -> Option<Rgba> {
     Some(Rgba { width: info.width, height: info.height, pixels })
 }
 
+fn name_seed(name: &str) -> u32 {
+    name.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193))
+}
+
 /// Speckled placeholder in the block's colour, so materials stay distinguishable.
 fn placeholder(size: u32, color: [u8; 3], name: &str) -> Rgba {
-    let seed = name.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193));
+    let seed = name_seed(name);
     let mut pixels = Vec::with_capacity((size * size * 4) as usize);
     for i in 0..size * size {
         let mut h = (i ^ seed).wrapping_mul(0x9e37_79b9);
         h ^= h >> 15;
         let shade = 0.85 + (h % 31) as f32 / 100.0;
         pixels.extend(color.map(|c| (c as f32 * shade).min(255.0) as u8));
-        pixels.push(if name.contains("leaves") && h % 5 == 0 { 0 } else { 255 });
+        pixels.push(if name.contains("leaves") && h.is_multiple_of(5) { 0 } else { 255 });
     }
     Rgba { width: size, height: size, pixels }
+}
+
+/// A tuft of blades rising from the bottom edge; flowers (any plant not named like grass,
+/// a fern or a bush) get green stems and a head in the block's colour.
+fn plant_placeholder(size: u32, color: [u8; 3], name: &str) -> Rgba {
+    let seed = name_seed(name);
+    let leafy = ["grass", "fern", "bush"].iter().any(|w| name.contains(w));
+    let stem = if leafy { color } else { [70, 130, 45] };
+    let mut texture = Rgba { width: size, height: size, pixels: vec![0; (size * size * 4) as usize] };
+    let mut put = |x: u32, y: u32, c: [u8; 3]| {
+        let i = ((y * size + x) * 4) as usize;
+        texture.pixels[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
+    };
+    for x in 0..size {
+        let h = (x ^ seed).wrapping_mul(0x9e37_79b9) >> 16;
+        if h.is_multiple_of(3) {
+            continue;
+        }
+        let top = size / 4 + h % (size / 2);
+        for y in top..size {
+            put(x, y, stem);
+        }
+    }
+    if !leafy {
+        let (center, radius) = (size as i32 / 2, size as i32 / 5);
+        for y in 0..size as i32 {
+            for x in 0..size as i32 {
+                if (x - center).pow(2) + (y - size as i32 / 4).pow(2) <= radius * radius {
+                    put(x as u32, y as u32, color);
+                }
+            }
+        }
+    }
+    texture
 }
 
 fn gradient_colormap(base: [u8; 3]) -> Rgba {

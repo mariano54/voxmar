@@ -1,13 +1,30 @@
-//! Stage 1: continents, erosion and mountain ranges, reduced to a surface height.
+//! Stage 1: continents and mountain ranges (the relief the climate sees), hills on top,
+//! then the rivers and lakes that cut into the land, reduced to a surface height.
 
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
 
 use crate::SEA_LEVEL;
+use crate::dials::WorldDials;
 
+#[derive(Clone, Copy, Debug)]
 pub struct GeoSample {
+    /// Height of the top ground block, rivers and lakes carved in.
     pub height: i32,
     /// 0 on flat land, towards 1 on mountain ranges.
     pub mountain: f32,
+    /// 1 in a river channel or lake, falling to 0 at the edge of its valley or shore.
+    pub river: f32,
+}
+
+/// Continents and mountain ranges, without hills, rivers or lakes.
+#[derive(Clone, Copy, Debug)]
+pub struct Relief {
+    /// Large-scale surface height.
+    pub elevation: f32,
+    /// Continental noise: below about −0.08 is sea, rising inland.
+    pub continental: f32,
+    pub mountain: f32,
+    roughness: f32,
 }
 
 pub struct Geology {
@@ -16,6 +33,13 @@ pub struct Geology {
     erosion: FastNoiseLite,
     ridges: FastNoiseLite,
     hills: FastNoiseLite,
+    river_warp: FastNoiseLite,
+    rivers: FastNoiseLite,
+    lakes: FastNoiseLite,
+    /// Raises or lowers the continents to give the dialled ocean fraction.
+    ocean_bias: f32,
+    peak_height: f32,
+    hill_scale: f32,
 }
 
 pub fn noise(seed: u64, salt: u32, frequency: f32, fractal: FractalType, octaves: i32) -> FastNoiseLite {
@@ -27,13 +51,20 @@ pub fn noise(seed: u64, salt: u32, frequency: f32, fractal: FractalType, octaves
     n
 }
 
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+fn warp_noise(seed: u64, salt: u32, frequency: f32, octaves: i32, amplitude: f32) -> FastNoiseLite {
+    let mut warp = noise(seed, salt, frequency, FractalType::DomainWarpProgressive, octaves);
+    warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
+    warp.set_domain_warp_amp(Some(amplitude));
+    warp
+}
+
+pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
 /// Piecewise-linear curve through `(x, y)` points sorted by x.
-fn spline(points: &[(f32, f32)], x: f32) -> f32 {
+pub fn spline(points: &[(f32, f32)], x: f32) -> f32 {
     let i = points.iter().position(|&(px, _)| px > x).unwrap_or(points.len());
     match i {
         0 => points[0].1,
@@ -46,26 +77,40 @@ fn spline(points: &[(f32, f32)], x: f32) -> f32 {
     }
 }
 
+/// Heights above this are compressed so the highest peaks approach the top of the world
+/// smoothly instead of being cut flat.
+const PEAK_KNEE: f32 = (voxmar_engine::coords::WORLD_HEIGHT - 60) as f32;
+const PEAK_ROOM: f32 = 36.0;
+
 impl Geology {
-    pub fn new(seed: u64) -> Self {
-        let mut warp = noise(seed, 1, 0.0012, FractalType::DomainWarpProgressive, 3);
-        warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
-        warp.set_domain_warp_amp(Some(90.0));
+    pub fn new(seed: u64, dials: &WorldDials) -> Self {
+        // The continental noise is roughly normal with this spread around zero, and land
+        // (with its hills) ends near −0.02; shift it so about `ocean_fraction` of it is
+        // under water. Both values are measured.
+        const SPREAD: f32 = 0.415;
+        let ocean_bias = -0.02 - SPREAD * probit(dials.ocean_fraction);
         Self {
-            warp,
-            continental: noise(seed, 2, 0.0007, FractalType::FBm, 5),
+            warp: warp_noise(seed, 1, 0.0012, 3, 90.0),
+            continental: noise(seed, 2, 1.0 / dials.continent_size, FractalType::FBm, 5),
             erosion: noise(seed, 3, 0.0011, FractalType::FBm, 3),
             ridges: noise(seed, 4, 0.0022, FractalType::Ridged, 5),
             hills: noise(seed, 5, 0.008, FractalType::FBm, 4),
+            river_warp: warp_noise(seed, 6, 0.004, 2, 45.0),
+            rivers: noise(seed, 7, 0.0005 + 0.0007 * dials.river_density, FractalType::None, 1),
+            lakes: noise(seed, 8, 0.0022, FractalType::FBm, 2),
+            ocean_bias,
+            // Active worlds raise high ranges; old ones have worn theirs down.
+            peak_height: (100.0 + 80.0 * dials.tectonic_activity) * (1.0 - 0.25 * dials.erosion_age),
+            hill_scale: 1.25 - 0.5 * dials.erosion_age,
         }
     }
 
-    pub fn sample(&self, x: i32, z: i32) -> GeoSample {
-        let (wx, wz) = self.warp.domain_warp_2d(x as f32, z as f32);
-        let continental = self.continental.get_noise_2d(wx, wz);
+    /// Continents and mountain ranges at (x, z).
+    pub fn relief(&self, x: f32, z: f32) -> Relief {
+        let (wx, wz) = self.warp.domain_warp_2d(x, z);
+        let continental = self.continental.get_noise_2d(wx, wz) + self.ocean_bias;
         let erosion = self.erosion.get_noise_2d(wx, wz);
         let ridge = (self.ridges.get_noise_2d(wx, wz) + 1.0) * 0.5;
-        let hills = self.hills.get_noise_2d(x as f32, z as f32);
 
         let sea = SEA_LEVEL as f32;
         let base = spline(
@@ -82,10 +127,72 @@ impl Geology {
         );
         let roughness = 1.0 - smoothstep(-0.4, 0.5, erosion);
         let mountain = smoothstep(0.02, 0.35, continental) * roughness;
-        let peaks = mountain * ridge.powf(2.2) * 150.0;
-        let inland = smoothstep(-0.06, 0.1, continental);
-        let height = base + peaks + hills * (3.0 + 14.0 * roughness) * inland;
-
-        GeoSample { height: (height as i32).clamp(4, voxmar_engine::coords::WORLD_HEIGHT - 24), mountain }
+        let elevation = base + mountain * ridge.powf(2.2) * self.peak_height;
+        Relief { elevation, continental, mountain, roughness }
     }
+
+    pub fn sample(&self, x: i32, z: i32) -> GeoSample {
+        let relief = self.relief(x as f32, z as f32);
+        let hills = self.hills.get_noise_2d(x as f32, z as f32);
+        let inland = smoothstep(-0.06, 0.1, relief.continental);
+        let land = relief.elevation + hills * (3.0 + 14.0 * relief.roughness) * self.hill_scale * inland;
+        let (carved, river) = self.water(x, z, land, relief.mountain);
+        let height = if carved > PEAK_KNEE { PEAK_KNEE + PEAK_ROOM * ((carved - PEAK_KNEE) / PEAK_ROOM).tanh() } else { carved };
+        GeoSample { height: (height as i32).max(4), mountain: relief.mountain, river }
+    }
+
+    /// Lowers `land` into river valleys and lake basins; returns the new height and how
+    /// close fresh water is (see [`GeoSample::river`]).
+    ///
+    /// Rivers run where a warped noise crosses zero. The distance to that line in blocks
+    /// is the noise value over its gradient, so channels keep their width whether the
+    /// noise is steep or flat there. Their surface is sea level, so they join the sea and
+    /// any lake they cross; in high country they shrink into dry valleys and end.
+    fn water(&self, x: i32, z: i32, land: f32, mountain: f32) -> (f32, f32) {
+        let sea = SEA_LEVEL as f32;
+        let above = land - sea;
+        if above < -3.0 {
+            return (land, 0.0);
+        }
+        let mut height = land;
+        let mut wet = 0.0f32;
+
+        let strength = (1.0 - smoothstep(0.2, 0.5, mountain)) * (1.0 - smoothstep(28.0, 56.0, above));
+        if strength > 0.0 {
+            let (wx, wz) = self.river_warp.domain_warp_2d(x as f32, z as f32);
+            let n = self.rivers.get_noise_2d(wx, wz);
+            let gradient = (self.rivers.get_noise_2d(wx + 1.0, wz) - n).hypot(self.rivers.get_noise_2d(wx, wz + 1.0) - n);
+            let distance = n.abs() / gradient.max(1e-5);
+            let channel = 1.5 + 4.0 * strength;
+            // Valley sides about as steep as the hills around them.
+            let valley = channel + 3.0 + above.max(0.0) * 1.6;
+            if distance < valley {
+                // A fading river's surface rises from just under sea level to the land.
+                let level = sea - 0.5 + (1.0 - strength) * (above + 0.5).max(0.0);
+                let carved = if distance < channel {
+                    level - (1.0 + 2.5 * strength) * (1.0 - (distance / channel).powi(2))
+                } else {
+                    level + 1.0 + (land - level - 1.0) * smoothstep(channel, valley, distance)
+                };
+                height = height.min(carved);
+                wet = strength * (1.0 - smoothstep(channel, valley, distance));
+            }
+        }
+
+        // Lakes fill hollows in low, flat country.
+        let lake = self.lakes.get_noise_2d(x as f32, z as f32);
+        let basin = smoothstep(0.45, 0.7, lake) * (1.0 - smoothstep(5.0, 15.0, above)) * (1.0 - smoothstep(0.1, 0.3, mountain));
+        if basin > 0.0 {
+            height = height.min(land - basin * (above + 6.0));
+            wet = wet.max(smoothstep(0.0, 0.5, basin));
+        }
+        (height, wet)
+    }
+}
+
+/// Inverse of the standard normal distribution function, by a logistic fit that is
+/// accurate to a few percent over 0.05..0.95.
+fn probit(p: f32) -> f32 {
+    let p = p.clamp(0.01, 0.99);
+    (p / (1.0 - p)).ln() / 1.702
 }

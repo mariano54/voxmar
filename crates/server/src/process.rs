@@ -12,8 +12,8 @@ use crate::player::MAX_HEALTH;
 
 /// Falls shorter than this many blocks do no damage.
 const SAFE_FALL: f32 = 3.0;
-/// Below this temperature field value, healing slows down.
-const COLD: f32 = 0.15;
+/// Below this temperature (°C), healing slows down.
+const COLD: f32 = 0.0;
 
 pub(crate) trait Process: Send {
     fn tier(&self) -> Tier;
