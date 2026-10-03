@@ -1,5 +1,5 @@
 // Shared terrain lighting: sky ambient, sun or moon with cascaded shadows, block light,
-// and distance fog with sun inscattering. Everything dynamic comes from the view bind group
+// and aerial perspective glowing towards the sun. Everything dynamic comes from the view bind group
 // (directional light, ambient light, fog), so day/night never touches material assets.
 
 #define_import_path voxmar::lighting
@@ -83,12 +83,36 @@ fn shade_normal(
     return albedo * (ambient + direct * mix(1.0, ao, 0.5) + torch + floor);
 }
 
-// Blends towards the horizon colour with distance, brightened towards the sun.
+// Aerial perspective. Haze is densest at sea level and thins with altitude, so valleys and
+// distant lowlands fade sooner than peaks; the edge of the distant terrain (fog.be.x to
+// fog.be.y) fades out completely. Real chunks, distant terrain and the sky's horizon all
+// meet in the same colour.
+const HAZE_DENSITY: f32 = 0.0002;
+const HAZE_BASE: f32 = 64.0;
+const HAZE_HEIGHT: f32 = 90.0;
+
+// How much of what lies `offset` from the eye is hidden by haze.
+fn fog_amount(offset: vec3<f32>) -> f32 {
+    let distance = length(offset);
+    // Mean density along the ray, for density falling off exponentially above sea level.
+    let start = max(view.world_position.y - HAZE_BASE, 0.0) / HAZE_HEIGHT;
+    let end = max(view.world_position.y + offset.y - HAZE_BASE, 0.0) / HAZE_HEIGHT;
+    let rise = end - start;
+    let density = select((exp(-start) - exp(-end)) / rise, exp(-start), abs(rise) < 1e-3);
+    let haze = 1.0 - exp(-HAZE_DENSITY * distance * density);
+    let edge = smoothstep(fog.be.x, fog.be.y, distance);
+    return 1.0 - (1.0 - haze) * (1.0 - edge);
+}
+
+// The haze looking along `direction`: the horizon colour, glowing around the sun with the
+// same falloff as the sky (fog.directional_light_color carries the glow's colour).
+fn fog_color(direction: vec3<f32>) -> vec3<f32> {
+    let toward_sun = max(dot(direction, sun_direction()), 0.0);
+    let glow = pow(toward_sun, 48.0) * 0.35 + pow(toward_sun, 6.0) * 0.1;
+    return fog.base_color.rgb + fog.directional_light_color.rgb * glow;
+}
+
 fn apply_fog(color: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
     let offset = world - view.world_position;
-    let distance = length(offset);
-    let amount = smoothstep(fog.be.x, fog.be.y, distance);
-    let glow = pow(max(dot(offset / distance, sun_direction()), 0.0), 8.0);
-    let fog_color = fog.base_color.rgb + sun_color() * glow * 0.15;
-    return mix(color, fog_color, amount);
+    return mix(color, fog_color(normalize(offset)), fog_amount(offset));
 }
