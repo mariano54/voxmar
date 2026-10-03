@@ -4,11 +4,12 @@
 //   word 1: r:8 | g:8 | b:8 | a:8   (sRGB albedo of top faces; a: canopy cover, or the
 //                                    opacity of ice)
 //   word 2: octahedral normal x:8 | z:8
-//   word 3: r:8 | g:8 | b:8         (sRGB albedo of side faces; for sheets, of the floor)
+//   word 3: r:8 | g:8 | b:8 | a:8   (sRGB albedo of side faces, or for sheets of the floor
+//                                    beneath; a: cover of small plants)
 
 #import bevy_pbr::mesh_functions::get_world_from_local
 #import bevy_pbr::mesh_view_bindings::{view, fog}
-#import voxmar::lighting::{shade_normal, apply_fog, sun_direction, sun_color}
+#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color}
 
 struct LodParams {
     // x: cell size of this level in blocks, y: cell size of the next finer level (0 for
@@ -33,13 +34,15 @@ const WATER: u32 = 1u;
 const ICE: u32 = 2u;
 
 const UP = vec3(0.0, 1.0, 0.0);
-// Ambient shading of block faces, as in voxmar::lighting::FACE_SHADE.
-const X_SIDE_SHADE: f32 = 0.62;
-const Z_SIDE_SHADE: f32 = 0.8;
+// Ambient shading of X and Z facing block sides.
+const X_SIDE_SHADE: f32 = FACE_SHADE[0];
+const Z_SIDE_SHADE: f32 = FACE_SHADE[4];
 // Mean ambient occlusion over the block next to an inner corner of the staircase.
 const CORNER_AO: f32 = 0.825;
-// Side area of tree crowns per unit of canopy, seen edge-on.
+// Side area of tree crowns per unit of canopy, and of small plants per unit of plant cover,
+// seen edge-on.
 const CROWN_SIDES: f32 = 0.8;
+const PLANT_SIDES: f32 = 0.5;
 // Real water's sun glint, averaged over its ripples into a wider, dimmer highlight.
 const GLINT_SHARPNESS: f32 = 50.0;
 const GLINT: f32 = 0.9;
@@ -55,8 +58,8 @@ struct VertexOutput {
     @location(1) top: vec3<f32>,
     @location(2) side: vec3<f32>,
     @location(3) normal: vec3<f32>,
-    // x: sky light 0..1, y: canopy cover, or the opacity of ice
-    @location(4) params: vec2<f32>,
+    // x: sky light 0..1, y: canopy cover, or the opacity of ice, z: plant cover
+    @location(4) params: vec3<f32>,
     @location(5) @interpolate(flat) kind: u32,
 };
 
@@ -89,7 +92,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.top = decode_color(in.packed.y);
     out.side = decode_color(in.packed.w);
     out.normal = decode_normal(in.packed.z);
-    out.params = vec2(f32((w0 >> 26u) & 15u) / 15.0, f32(in.packed.y >> 24u) / 255.0);
+    out.params = vec3(f32((w0 >> 26u) & 15u), f32(in.packed.y >> 24u), f32(in.packed.w >> 24u)) / vec3(15.0, 255.0, 255.0);
     return out;
 }
 
@@ -131,9 +134,10 @@ fn band(y: f32, a: f32, b: f32, width: f32) -> f32 {
 
 // Real terrain is a staircase of one-block steps, which the smooth tile stands in for. Each
 // pixel gets the colour that staircase would show from the eye: treads lit as tops, risers as
-// sides, ambient occlusion where they meet, and the sides of tree crowns over forests. Near
-// the real chunks the risers resolve into the same thin contour lines; further out they
-// average into a tone that darkens with slope.
+// sides, ambient occlusion where they meet, and the sides of tree crowns and small plants,
+// which stand in front of the steps when seen at a low angle. Near the real chunks the
+// risers resolve into the same thin contour lines; further out they average into a tone
+// that darkens with slope.
 fn staircase(in: VertexOutput, to_eye: vec3<f32>, filter_width: f32) -> vec3<f32> {
     let n = normalize(in.normal);
     let cover = in.params.y;
@@ -146,8 +150,9 @@ fn staircase(in: VertexOutput, to_eye: vec3<f32>, filter_width: f32) -> vec3<f32
     let corners = max(to_eye.y, 0.0) * min(abs(slope.x) + abs(slope.y), 1.0);
     let treads = max(to_eye.y - max(corners, hidden), 0.0);
     let crowns = CROWN_SIDES * cover * abs(to_eye.xz);
+    let plants = PLANT_SIDES * in.params.z * length(to_eye.xz);
     let ground = risers.x + risers.y + max(corners - hidden, 0.0) + treads;
-    let total = max(ground + crowns.x + crowns.y, 1e-4);
+    let total = max(ground + crowns.x + crowns.y + plants, 1e-4);
 
     // Visible sides face the eye, whichever way the slope runs.
     let x_side = vec3(sign(to_eye.x), 0.0, 0.0);
@@ -176,7 +181,9 @@ fn staircase(in: VertexOutput, to_eye: vec3<f32>, filter_width: f32) -> vec3<f32
     let in_riser = band(y, 1.0 - r, 1.0, width);
     let in_corner = band(y, 1.0 - r - c, 1.0 - r, width);
     let steps = in_riser * riser + in_corner * corner + (1.0 - in_riser - in_corner) * tread;
-    return mix(steps, crown, (crowns.x + crowns.y) / total);
+    // Plants are lit like real ones: as foliage facing up.
+    let plant = in.top * face_light(in, UP, FACE_SHADE[6], 1.0, true);
+    return (steps * ground + crown * (crowns.x + crowns.y) + plant * plants) / total;
 }
 
 // Water and ice: the surface over the floor beneath, which dims with depth as sky light fades

@@ -162,6 +162,11 @@ impl LodPalette {
     fn is_water(&self, block: BlockId) -> bool {
         self.tints[block.0 as usize].0 == Tint::Water
     }
+
+    /// Grass grows plants: short and tall grass, ferns and flowers.
+    fn is_grassy(&self, block: BlockId) -> bool {
+        self.tints[block.0 as usize].0 == Tint::Grass
+    }
 }
 
 fn srgb_to_linear(c: u8) -> f32 {
@@ -394,6 +399,8 @@ struct Corner {
     sky: u8,
     /// Fraction of the ground under tree crowns.
     canopy: f32,
+    /// Fraction of the ground with a small plant on it.
+    plants: f32,
     /// Water or ice at sea level above the terrain.
     sheet: Option<BlockId>,
     climate: [u8; 2],
@@ -404,6 +411,9 @@ struct Corner {
 const CROWN_SHADE: f32 = 0.8;
 /// How far crowns of a dense forest raise the canopy above the ground.
 const CANOPY_HEIGHT: f32 = 6.0;
+/// Fraction of open grassland with grass, ferns or flowers growing on it, about what the
+/// generator plants.
+const GRASS_PLANTS: f32 = 0.4;
 /// Depth of the walls hanging from tile edges, hiding cracks between rings.
 const SKIRT: f32 = 24.0;
 /// Water and ice sheets lie a hair below the top of real water, so dry ground at sea level
@@ -455,6 +465,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
                 // Sky light fades by two levels per block of water or ice.
                 sky: (15 - 2 * (SEA_LEVEL - h).max(0)).max(0) as u8,
                 canopy: cover,
+                plants: if palette.is_grassy(surface.ground) { GRASS_PLANTS * (1.0 - cover) } else { 0.0 },
                 sheet: surface.water,
                 climate: surface.climate,
             });
@@ -472,7 +483,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
             pack_position(x, z, height, c.sky, TERRAIN),
             pack_color(c.top) | ((c.canopy * 255.0) as u32) << 24,
             encode_normal(normal),
-            pack_color(c.side),
+            pack_color(c.side) | ((c.plants * 255.0) as u32) << 24,
         ]
     };
     let mut vertices: Vec<[u32; 4]> = Vec::with_capacity(((CELLS + 1) * (CELLS + 1) + 4 * (CELLS + 1)) as usize);
