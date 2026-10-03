@@ -5525,8 +5525,12 @@ name = "voxmar_server"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "flate2",
+ "postcard",
  "rayon",
+ "ron",
  "rustc-hash 2.1.3",
+ "serde",
  "tracing",
  "tracing-subscriber",
  "voxmar_engine",

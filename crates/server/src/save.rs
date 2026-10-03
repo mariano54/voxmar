@@ -1,0 +1,409 @@
+//! World saves.
+//!
+//! A world is a directory:
+//! - `world.ron`: name, seed, game mode, creation and last-played times, the generator
+//!   that made it and the time of day.
+//! - `columns/<x>.<z>.bin`: each column players have edited, as zlib-compressed postcard
+//!   together with the names of the blocks it uses, so saves survive content changes that
+//!   renumber blocks. Untouched columns are not stored: generation recreates them exactly.
+//! - `players/<name>.ron`: each player's position, health and inventory.
+//!
+//! Every file is written to a temporary file and then renamed over the old one, so a crash
+//! never leaves a half-written file behind.
+
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use flate2::Compression;
+use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
+use voxmar_engine::block::{BlockId, BlockRegistry};
+use voxmar_engine::chunk::Chunk;
+use voxmar_engine::coords::{CHUNK_VOLUME, ColumnPos};
+use voxmar_engine::glam::Vec3;
+use voxmar_engine::inventory::{Inventory, ItemStack, MAX_STACK};
+use voxmar_engine::traits::Health;
+use voxmar_engine::world::{COLUMN_AREA, Column};
+use voxmar_worldgen::Overworld;
+
+const META_FILE: &str = "world.ron";
+/// Column files start with this, followed by the zlib stream. Bump the digit when the
+/// layout changes.
+const COLUMN_MAGIC: &[u8; 4] = b"vxc1";
+
+/// How a world is played.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GameMode {
+    /// No flight.
+    #[default]
+    Survival,
+    /// Flight is allowed and the singleplayer player is an admin.
+    Creative,
+}
+
+/// `world.ron`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WorldMeta {
+    pub name: String,
+    pub seed: u64,
+    pub mode: GameMode,
+    /// Seconds since the Unix epoch.
+    pub created: u64,
+    pub last_played: u64,
+    /// Generator id and version the world was created with. Columns nobody edited are
+    /// generated again, so a different generator would leave seams.
+    pub generator: String,
+    pub generator_version: u32,
+    /// Server ticks since the world began, which set the time of day.
+    #[serde(default)]
+    pub time: u64,
+}
+
+impl WorldMeta {
+    pub fn new(name: impl Into<String>, seed: u64, mode: GameMode) -> Self {
+        let now = unix_time();
+        Self {
+            name: name.into(),
+            seed,
+            mode,
+            created: now,
+            last_played: now,
+            generator: Overworld::ID.into(),
+            generator_version: Overworld::VERSION,
+            time: 0,
+        }
+    }
+}
+
+/// Seconds since the Unix epoch.
+pub fn unix_time() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// What is kept of a player between sessions.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedPlayer {
+    pub position: Vec3,
+    pub yaw: f32,
+    pub flying: bool,
+    pub health: Health,
+    pub inventory: Inventory,
+}
+
+/// A player file. Items are stored by name, like column blocks.
+#[derive(Serialize, Deserialize)]
+struct PlayerFile {
+    position: [f32; 3],
+    yaw: f32,
+    flying: bool,
+    health: Health,
+    inventory: Vec<Option<(String, u8)>>,
+}
+
+/// A column file, generic so that saving can borrow the column.
+#[derive(Serialize, Deserialize)]
+struct ColumnFile<C> {
+    /// Name of every block id the column's chunks refer to.
+    blocks: Vec<(u16, String)>,
+    column: C,
+}
+
+/// A world directory. Cheap to clone, so worker threads can load columns.
+#[derive(Clone, Debug)]
+pub struct WorldSave {
+    dir: Arc<Path>,
+}
+
+impl WorldSave {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into().into() }
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Whether the directory holds a world.
+    pub fn exists(&self) -> bool {
+        self.dir.join(META_FILE).is_file()
+    }
+
+    /// Creates the directory and writes `world.ron`. Fails if a world is already there.
+    pub fn create(&self, meta: &WorldMeta) -> io::Result<()> {
+        if self.exists() {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} already holds a world", self.dir.display())));
+        }
+        std::fs::create_dir_all(&self.dir)?;
+        self.write_meta(meta)
+    }
+
+    pub fn read_meta(&self) -> io::Result<WorldMeta> {
+        let path = self.dir.join(META_FILE);
+        let source = std::fs::read_to_string(&path)?;
+        ron::from_str(&source).map_err(|e| invalid(&path, e))
+    }
+
+    pub fn write_meta(&self, meta: &WorldMeta) -> io::Result<()> {
+        let text = ron::ser::to_string_pretty(meta, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
+        write_atomic(&self.dir.join(META_FILE), text.as_bytes())
+    }
+
+    fn column_path(&self, pos: ColumnPos) -> PathBuf {
+        self.dir.join("columns").join(format!("{}.{}.bin", pos.0.x, pos.0.y))
+    }
+
+    /// The saved column at `pos`, if it was ever saved. Blocks are mapped to the current
+    /// ids by name; blocks that no longer exist become air.
+    pub fn read_column(&self, pos: ColumnPos, registry: &BlockRegistry) -> io::Result<Option<Column>> {
+        let path = self.column_path(pos);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let Some(compressed) = bytes.strip_prefix(COLUMN_MAGIC) else {
+            return Err(invalid(&path, "not a column file"));
+        };
+        let mut encoded = Vec::new();
+        ZlibDecoder::new(compressed).read_to_end(&mut encoded)?;
+        let file: ColumnFile<Column> = postcard::from_bytes(&encoded).map_err(|e| invalid(&path, e))?;
+        let mut column = file.column;
+        if column.climate.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
+            return Err(invalid(&path, "inconsistent column data"));
+        }
+
+        let ids: FxHashMap<u16, BlockId> = file
+            .blocks
+            .iter()
+            .map(|(id, name)| {
+                let current = registry.id(name).unwrap_or_else(|| {
+                    tracing::warn!("{}: unknown block `{name}` becomes air", path.display());
+                    BlockId::AIR
+                });
+                (*id, current)
+            })
+            .collect();
+        let map = |block: BlockId| ids.get(&block.0).copied().unwrap_or(BlockId::AIR);
+        for chunk in &mut column.chunks {
+            if chunk.palette().iter().any(|&block| map(block) != block) {
+                let mut blocks = vec![BlockId::AIR; CHUNK_VOLUME];
+                chunk.copy_to_dense(&mut blocks);
+                blocks.iter_mut().for_each(|block| *block = map(*block));
+                *chunk = Chunk::from_dense(&blocks);
+            }
+        }
+        Ok(Some(column))
+    }
+
+    pub fn write_column(&self, pos: ColumnPos, column: &Column, registry: &BlockRegistry) -> io::Result<()> {
+        let mut ids: Vec<BlockId> = column.chunks.iter().flat_map(|c| c.palette().iter().copied()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let blocks = ids.into_iter().map(|id| (id.0, registry.def(id).name.clone())).collect();
+        let file = ColumnFile { blocks, column };
+        let encoded = postcard::to_stdvec(&file).map_err(io::Error::other)?;
+        let mut encoder = ZlibEncoder::new(COLUMN_MAGIC.to_vec(), Compression::fast());
+        encoder.write_all(&encoded)?;
+        let path = self.column_path(pos);
+        std::fs::create_dir_all(path.parent().expect("column files are in a directory"))?;
+        write_atomic(&path, &encoder.finish()?)
+    }
+
+    fn player_path(&self, name: &str) -> PathBuf {
+        self.dir.join("players").join(format!("{}.ron", file_name(name)))
+    }
+
+    /// The saved state of the player called `name`. Items that no longer exist are dropped.
+    pub fn read_player(&self, name: &str, registry: &BlockRegistry) -> io::Result<Option<SavedPlayer>> {
+        let path = self.player_path(name);
+        let source = match std::fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let file: PlayerFile = ron::from_str(&source).map_err(|e| invalid(&path, e))?;
+        let mut inventory = Inventory::default();
+        for (slot, stack) in inventory.slots.iter_mut().zip(file.inventory) {
+            *slot = stack
+                .filter(|&(_, count)| count > 0)
+                .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
+        }
+        let position = Vec3::from(file.position);
+        if !position.is_finite() {
+            return Err(invalid(&path, "position is not finite"));
+        }
+        let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, flying: file.flying, health, inventory }))
+    }
+
+    pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
+        let inventory = player
+            .inventory
+            .slots
+            .iter()
+            .map(|slot| slot.map(|stack| (registry.def(stack.item).name.clone(), stack.count)))
+            .collect();
+        let file = PlayerFile {
+            position: player.position.to_array(),
+            yaw: player.yaw,
+            flying: player.flying,
+            health: player.health,
+            inventory,
+        };
+        let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
+        let path = self.player_path(name);
+        std::fs::create_dir_all(path.parent().expect("player files are in a directory"))?;
+        write_atomic(&path, text.as_bytes())
+    }
+}
+
+/// Every world in `root`, most recently played first. Directories without a readable
+/// `world.ron` are skipped.
+pub fn list_worlds(root: &Path) -> Vec<(WorldSave, WorldMeta)> {
+    let mut worlds: Vec<(WorldSave, WorldMeta)> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| WorldSave::new(entry.path()))
+        .filter(WorldSave::exists)
+        .filter_map(|save| match save.read_meta() {
+            Ok(meta) => Some((save, meta)),
+            Err(e) => {
+                tracing::warn!("skipping world in {}: {e}", save.dir().display());
+                None
+            }
+        })
+        .collect();
+    worlds.sort_by(|a, b| b.1.last_played.cmp(&a.1.last_played).then_with(|| a.1.name.cmp(&b.1.name)));
+    worlds
+}
+
+/// Writes a file through a temporary file and a rename, so readers and crashes only ever
+/// see the old or the new contents.
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temporary = path.with_extension("tmp");
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&temporary, path)
+}
+
+/// A file name for any player name: letters, digits, `-` and `_` are kept and everything
+/// else is written as `~hex~`, so distinct names never share a file.
+fn file_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push_str(&format!("~{:x}~", c as u32));
+        }
+    }
+    out
+}
+
+fn invalid(path: &Path, error: impl std::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voxmar_engine::glam::IVec3;
+    use voxmar_worldgen::Generator;
+
+    fn registry(extra_first: bool) -> Arc<BlockRegistry> {
+        let source = include_str!("../../../assets/content/base/blocks.ron");
+        let mut defs = BlockRegistry::parse("base", source).unwrap();
+        if extra_first {
+            // A mod loaded before `base` renumbers every base block.
+            defs.insert(0, voxmar_engine::block::BlockDef { name: "aaa:marble".into(), ..defs[0].clone() });
+        }
+        Arc::new(BlockRegistry::new(defs).unwrap())
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("voxmar-save-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn columns_round_trip_and_survive_renumbered_blocks() {
+        let dir = temp_dir("columns");
+        let save = WorldSave::new(&dir);
+        save.create(&WorldMeta::new("Test", 7, GameMode::Creative)).unwrap();
+        assert!(save.create(&WorldMeta::new("Again", 8, GameMode::Survival)).is_err(), "never overwrite a world");
+        assert_eq!(save.read_meta().unwrap().seed, 7);
+
+        let old = registry(false);
+        let pos = ColumnPos::new(-3, 5);
+        let mut column = Overworld::new(7, old.clone()).generate(pos);
+        let glass = old.expect("base:glass");
+        column.set_block(IVec3::new(4, 100, 9), glass);
+        save.write_column(pos, &column, &old).unwrap();
+        assert_eq!(save.read_column(pos, &old).unwrap(), Some(column.clone()));
+        assert_eq!(save.read_column(ColumnPos::new(0, 0), &old).unwrap(), None);
+
+        let new = registry(true);
+        let loaded = save.read_column(pos, &new).unwrap().unwrap();
+        assert_eq!(loaded.block(IVec3::new(4, 100, 9)), new.expect("base:glass"));
+        for y in 0..voxmar_engine::coords::WORLD_HEIGHT {
+            let at = IVec3::new(17, y, 30);
+            assert_eq!(new.def(loaded.block(at)).name, old.def(column.block(at)).name);
+        }
+
+        // A damaged file is an error, not a panic or a silently wrong column.
+        let path = save.column_path(pos);
+        let mut bytes = std::fs::read(&path).unwrap();
+        let middle = bytes.len() / 2;
+        bytes[middle] ^= 0x5a;
+        std::fs::write(&path, bytes).unwrap();
+        assert!(save.read_column(pos, &old).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn players_round_trip_by_name() {
+        let dir = temp_dir("players");
+        let save = WorldSave::new(&dir);
+        let registry = registry(false);
+        let mut inventory = Inventory::default();
+        inventory.add(registry.expect("base:cobblestone"), 70);
+        let player = SavedPlayer {
+            position: Vec3::new(1.5, 80.0, -20.25),
+            yaw: 1.25,
+            flying: true,
+            health: Health { current: 13, max: 20 },
+            inventory,
+        };
+        for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
+            save.write_player(name, &player, &registry).unwrap();
+        }
+        assert_eq!(save.read_player("a/b", &registry).unwrap(), Some(player.clone()));
+        assert_eq!(save.read_player("ünï cödé", &registry).unwrap(), Some(player.clone()));
+        assert_eq!(save.read_player("alex", &registry).unwrap(), None);
+        // Names that are not plain file names stay inside the players directory.
+        let files = std::fs::read_dir(dir.join("players")).unwrap().count();
+        assert!(files >= 4, "{files} player files");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn worlds_are_listed_newest_first() {
+        let root = temp_dir("list");
+        for (name, last_played) in [("old", 100), ("new", 300), ("middle", 200)] {
+            let meta = WorldMeta { last_played, ..WorldMeta::new(name, 1, GameMode::Survival) };
+            WorldSave::new(root.join(name)).create(&meta).unwrap();
+        }
+        std::fs::create_dir_all(root.join("not a world")).unwrap();
+        let names: Vec<String> = list_worlds(&root).into_iter().map(|(_, meta)| meta.name).collect();
+        assert_eq!(names, ["new", "middle", "old"]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}
