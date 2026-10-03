@@ -6,27 +6,54 @@ Rust, Bevy 0.19, wgpu (Metal on macOS, Vulkan/DX12 elsewhere).
 ## Running
 
 ```bash
-cargo run --release                         # singleplayer (integrated server)
-cargo run --release -- --host               # singleplayer, also open on the LAN
-cargo run --release -p voxmar_server        # dedicated server on port 25665
-cargo run --release -- --connect HOST:PORT  # join a server
+cargo run --release                         # title screen: singleplayer, multiplayer, settings
+cargo run --release -- --world NAME         # play (or create) the saved world NAME right away
+cargo run --release -- --connect HOST:PORT  # join a server right away
+cargo run --release -- --host               # also open singleplayer worlds on the LAN
+cargo run --release -p voxmar_server        # dedicated server on port 25665, world in ./world
 ```
 
-Client flags: `--seed N`, `--name NAME`, `--view-distance N` (columns of 32 blocks, default 16),
-`--no-vsync` (uncapped frame rate), and `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--menu]`, which runs headless, waits for the
-world to load, logs frame time and saves a screenshot.
+Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
+`--view-distance N` (columns of 32 blocks, default 16), `--no-vsync` (uncapped frame rate), and
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--menu | --screen title|worlds|create|join|settings]`,
+which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
+given) or the menu backdrop to load, logs frame time and saves a screenshot.
+
+The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
+worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
+the last few servers are remembered) and Settings. A new world takes a name, an optional seed
+(a number, or any text, which is hashed; empty means random) and a game mode: Creative allows
+flight and makes you the world's admin, Survival does neither.
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, 1-9 or wheel select hotbar slot, E inventory (click a slot, then
 another to move it), F3 debug overlay, Esc menu, R respawn.
 
 Esc opens the settings menu: render distance, field of view, VSync, debug overlay, music and
-sound volume, mouse sensitivity, and fly speed for admins. Settings are saved to
-`voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
-`$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows); `--view-distance` and
-`--no-vsync` override them. The singleplayer player is an admin; on a dedicated server, name
-admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
-(default 32).
+sound volume, mouse sensitivity, and fly speed for admins, with Resume, Save and quit to title
+(Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in the OS
+config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config`
+on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`); `--view-distance` and
+`--no-vsync` override them. On a dedicated server, name admins with `--admin NAME`
+(repeatable), and cap render distance with `--view-distance N` (default 32).
+
+### Saved worlds
+
+Singleplayer worlds live in `voxmar/worlds/<name>/` next to the settings:
+
+- `world.ron`: name, seed, game mode, created and last played times, the generator id and
+  version that made it, and the time of day.
+- `columns/<x>.<z>.bin`: each column a player has edited, as zlib-compressed postcard with the
+  names of the blocks it uses, so a content change that renumbers blocks does not break saves.
+  Untouched columns are not stored; generation recreates them exactly.
+- `players/<name>.ron`: each player's position, health and inventory, restored when they join.
+
+The server saves edited columns, players and the time every 30 seconds, when a player leaves
+and when it stops (leaving to the title screen or quitting). Every file is written to a
+temporary file and renamed, so a crash never leaves half a file. Saved columns are unloaded
+like any other. The dedicated server keeps its world in `--world DIR` (default `./world`),
+created with `--seed N` and, given `--no-flight`, in survival mode if it does not exist yet;
+type `stop` to save and quit.
 
 ### Textures
 
@@ -41,8 +68,8 @@ a jar, resource pack zip or folder. Without one it generates placeholder texture
 | `engine` | world data and rules, no renderer: palette chunks, column lighting, binary greedy meshing, visibility graph, collision, raycast, content packages, actions, scheduler, traits, fields |
 | `worldgen` | staged generator: geology → climate/biomes → resources → terrain, caves, trees |
 | `protocol` | client/server messages and transports (in-process channels, TCP) |
-| `server` | authoritative simulation (fixed 20 Hz tick), validation, streaming; `voxmar-server` binary |
-| `client` | Bevy app: rendering, input, prediction, HUD; the only crate that depends on Bevy |
+| `server` | authoritative simulation (fixed 20 Hz tick), validation, streaming, world saves; `voxmar-server` binary |
+| `client` | Bevy app: rendering, input, prediction, HUD, menus; the only crate that depends on Bevy |
 
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
 same registry a mod will use. Client and server compare a content fingerprint on join.
@@ -107,6 +134,5 @@ pipeline techniques, and the rendering plan.
 - Draw only the face directions that can face the camera (per-direction index ranges).
 - A custom GPU-driven terrain pass (see docs/rendering.md).
 - Lower-detail meshes for distant chunks.
-- Saving the world (edited columns are kept in memory and never unloaded for now).
 - Incremental light updates instead of relighting the affected columns.
 - Entities, items, tools; the Trait/Field primitives; WASM mods.

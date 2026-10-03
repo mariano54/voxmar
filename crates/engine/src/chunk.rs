@@ -125,6 +125,16 @@ impl Chunk {
         }
     }
 
+    /// Whether the internal data is consistent, for chunks read from storage. Other methods
+    /// may panic on an inconsistent chunk.
+    pub fn is_valid(&self) -> bool {
+        let len = self.palette.len();
+        if len == 0 || self.bits != bits_for(len) || self.data.len() != words_for(self.bits) {
+            return false;
+        }
+        self.bits == 0 || len == 1 << self.bits || (0..CHUNK_VOLUME).all(|i| (self.read_index(i) as usize) < len)
+    }
+
     /// Drops palette entries that are no longer used and shrinks the index width.
     pub fn compact(&mut self) {
         if self.bits == 0 {
@@ -195,5 +205,22 @@ mod tests {
         chunk.set(10, BlockId(3));
         chunk.compact();
         assert_eq!(chunk.as_uniform(), Some(BlockId(3)));
+    }
+
+    #[test]
+    fn validity_catches_inconsistent_data() {
+        let mut chunk = Chunk::default();
+        for i in 0..3u16 {
+            chunk.set(i as usize, BlockId(i + 1));
+        }
+        assert!(chunk.is_valid());
+        // Four palette slots at 2 bits; index 3 points past the three real entries.
+        let mut broken = chunk.clone();
+        broken.palette.pop();
+        broken.bits = bits_for(broken.palette.len());
+        assert!(!broken.is_valid());
+        let mut short = chunk;
+        short.data.pop();
+        assert!(!short.is_valid());
     }
 }

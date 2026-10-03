@@ -231,6 +231,19 @@ impl Lod {
         self.last_camera = None;
     }
 
+    /// Removes all distant terrain and stops making it until `start` is called again.
+    /// Tiles still being built are discarded.
+    pub fn clear(&mut self, commands: &mut Commands, materials: &mut Assets<LodMaterial>) {
+        for (_, entity) in self.tiles.drain() {
+            commands.entity(entity).despawn();
+        }
+        self.generator = None;
+        self.pending.clear();
+        self.wanted.clear();
+        (self.results_tx, self.results_rx) = unbounded();
+        self.set_real_columns(0, materials);
+    }
+
     /// Radius, in columns, of the real chunks the rings surround.
     pub fn real_columns(&self) -> i32 {
         self.real_columns

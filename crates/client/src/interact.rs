@@ -21,7 +21,10 @@ pub struct InteractPlugin;
 impl Plugin for InteractPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Target>()
-            .add_systems(Update, (select_slot, find_target, break_and_place, draw_target).chain());
+            .add_systems(
+                Update,
+                (select_slot, find_target, break_and_place, draw_target).chain().run_if(in_state(crate::menu::Screen::InGame)),
+            );
     }
 }
 

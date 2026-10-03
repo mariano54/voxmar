@@ -120,6 +120,15 @@ impl ClientWorld {
         }
     }
 
+    /// Forgets every column and despawns their meshes, for leaving a world. Jobs still
+    /// running deliver to a channel nobody reads any more.
+    pub fn reset(&mut self, view_distance: i32, commands: &mut Commands) {
+        for (entity, _) in self.chunks.values().flat_map(|render| render.passes.iter().flatten()) {
+            commands.entity(*entity).despawn();
+        }
+        *self = Self::new(self.registry.clone(), view_distance);
+    }
+
     pub fn set_view_distance(&mut self, view_distance: i32) {
         self.view_distance = view_distance;
         self.visibility_dirty = true;

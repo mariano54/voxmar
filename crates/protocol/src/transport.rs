@@ -52,6 +52,7 @@ pub mod tcp {
     use std::io::{self, BufReader, BufWriter, Read, Write};
     use std::net::{TcpListener, TcpStream, ToSocketAddrs};
     use std::thread;
+    use std::time::Duration;
 
     use serde::Serialize;
     use serde::de::DeserializeOwned;
@@ -59,9 +60,19 @@ pub mod tcp {
     use super::*;
 
     const MAX_FRAME: usize = 64 << 20;
+    /// How long to wait for a server to answer before giving up on an address.
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 
+    /// Connects to the first of the addresses `addr` resolves to that answers in time.
     pub fn connect(addr: impl ToSocketAddrs) -> io::Result<ClientConnection> {
-        spawn_pumps(TcpStream::connect(addr)?)
+        let mut error = io::Error::new(io::ErrorKind::NotFound, "the address resolved to nothing");
+        for addr in addr.to_socket_addrs()? {
+            match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+                Ok(stream) => return spawn_pumps(stream),
+                Err(e) => error = e,
+            }
+        }
+        Err(error)
     }
 
     /// Accepts connections on a background thread and hands each one to `accepted`.

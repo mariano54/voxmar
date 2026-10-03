@@ -16,6 +16,7 @@ struct Client {
     world: VoxelWorld,
     position: Vec3,
     admin: bool,
+    allow_flight: bool,
     /// The last position the server corrected us to.
     teleported: Option<Vec3>,
     health: u8,
@@ -31,7 +32,11 @@ fn content() -> Content {
 impl Client {
     /// Joins a new server in-process, as singleplayer does.
     fn join() -> Self {
-        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
+        Self::join_with(ServerConfig { view_distance: 2, ..Default::default() })
+    }
+
+    fn join_with(config: ServerConfig) -> Self {
+        let server = spawn(config, content()).unwrap();
         let (connection, server_side) = local_pair();
         server.connections().send(server_side).unwrap();
         Self::hello(connection, "test", server)
@@ -53,6 +58,7 @@ impl Client {
             world: VoxelWorld::default(),
             position: Vec3::ZERO,
             admin: false,
+            allow_flight: false,
             teleported: None,
             health: 0,
             content,
@@ -77,9 +83,10 @@ impl Client {
 
     fn apply(&mut self, message: ServerMessage) {
         match message {
-            ServerMessage::Welcome { position, admin, .. } => {
+            ServerMessage::Welcome { position, admin, allow_flight, .. } => {
                 self.position = position;
                 self.admin = admin;
+                self.allow_flight = allow_flight;
             }
             ServerMessage::Teleport { position } => {
                 self.position = position;
@@ -184,5 +191,53 @@ fn only_admins_fly_fast() {
         client.send_position(start + Vec3::Y * 5000.0, true);
         client.pump_until(|c| c.teleported.is_some());
         assert_eq!(client.teleported, Some(if admin { up } else { start }), "admin: {admin}");
+    }
+}
+
+/// A fresh directory for a saved world.
+fn world_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("voxmar-test-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+#[test]
+fn saved_worlds_keep_edits_and_players_across_restarts() {
+    let dir = world_dir("restart");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.count == 1));
+    // Step a little within the same block, so the position is our own rather than spawn.
+    let moved = client.position + Vec3::new(0.2, 0.0, -0.2);
+    client.send_position(moved, false);
+    std::thread::sleep(Duration::from_millis(200));
+    let inventory = client.inventory.clone();
+    // Dropping the server saves the world.
+    drop(client);
+
+    let column = ColumnPos::of_block(below);
+    assert!(dir.join("world.ron").is_file());
+    assert!(dir.join(format!("columns/{}.{}.bin", column.0.x, column.0.y)).is_file());
+    let mut client = Client::join_with(config());
+    assert_eq!(client.position, moved);
+    client.pump_until(|c| c.inventory == inventory);
+    assert_eq!(client.world.block(below), Some(BlockId::AIR), "the mined block stays mined");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn game_mode_decides_flight_and_admin() {
+    use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
+    for (mode, creative) in [(GameMode::Survival, false), (GameMode::Creative, true)] {
+        let dir = world_dir(&format!("{mode:?}"));
+        WorldSave::new(&dir).create(&WorldMeta::new("Mode", 9, mode)).unwrap();
+        let client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+        assert_eq!((client.allow_flight, client.admin), (creative, creative), "{mode:?}");
+        drop(client);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

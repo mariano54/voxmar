@@ -1,5 +1,6 @@
-//! Background music, played now and then like Minecraft's: a track starts some time after
-//! joining, then long quiet gaps separate tracks. `M` mutes or unmutes.
+//! Background music, played now and then like Minecraft's: a track starts soon on the title
+//! screen or some time after joining, then long quiet gaps separate tracks. `M` mutes or
+//! unmutes.
 //!
 //! Tracks are the files in `assets/music` (generated offline by `tools/generate_music.py`).
 
@@ -8,12 +9,15 @@ use std::time::Duration;
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
 use bevy::prelude::*;
 
+use crate::menu::InMenu;
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
 
 /// Volume at 100% in the settings.
 const VOLUME: f32 = 0.35;
 const FIRST_TRACK_DELAY: (f32, f32) = (20.0, 60.0);
+/// The title screen sets the mood straight away.
+const FIRST_MENU_TRACK_DELAY: (f32, f32) = (2.0, 6.0);
 const GAP_BETWEEN_TRACKS: (f32, f32) = (180.0, 420.0);
 
 pub struct MusicPlugin;
@@ -67,11 +71,13 @@ fn schedule_music(
     mut commands: Commands,
     time: Res<Time>,
     player: Res<LocalPlayer>,
+    menu: Option<Res<State<InMenu>>>,
     settings: Res<Settings>,
     mut music: ResMut<Music>,
     tracks: Query<(), With<MusicTrack>>,
 ) {
-    if !player.joined || music.tracks.is_empty() || !music.enabled || settings.music_volume == 0 {
+    let in_menu = menu.is_some();
+    if !(player.joined || in_menu) || music.tracks.is_empty() || !music.enabled || settings.music_volume == 0 {
         return;
     }
     // A finished track despawns itself; schedule the next one after a quiet gap.
@@ -84,7 +90,8 @@ fn schedule_music(
     if music.playing.is_some() {
         return;
     }
-    let next_at = *music.next_at.get_or_insert(time.elapsed() + Duration::from_secs_f32(random_in(&time, FIRST_TRACK_DELAY)));
+    let first_delay = if in_menu { FIRST_MENU_TRACK_DELAY } else { FIRST_TRACK_DELAY };
+    let next_at = *music.next_at.get_or_insert(time.elapsed() + Duration::from_secs_f32(random_in(&time, first_delay)));
     if time.elapsed() < next_at {
         return;
     }

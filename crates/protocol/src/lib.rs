@@ -19,7 +19,7 @@ use voxmar_engine::world::Column;
 
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -56,7 +56,8 @@ pub struct PlayerInput {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
-    Welcome { player: PlayerId, seed: u64, position: Vec3, allow_flight: bool, admin: bool },
+    /// Where the player is (as they left it, in a saved world), and what they may do.
+    Welcome { player: PlayerId, seed: u64, position: Vec3, yaw: f32, flying: bool, allow_flight: bool, admin: bool },
     Rejected { reason: String },
     Column { pos: ColumnPos, column: Arc<Column> },
     Unload { pos: ColumnPos },
