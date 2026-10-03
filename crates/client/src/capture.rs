@@ -20,6 +20,9 @@ use crate::render::DayCycle;
 use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
+/// Height `--flight` climbs to before flying forward, above all but the highest peaks.
+const FLIGHT_HEIGHT: f32 = 170.0;
+
 pub struct CapturePlugin {
     pub path: PathBuf,
     /// Optional camera override: offset from the player's eye, then yaw and pitch (degrees).
@@ -107,13 +110,14 @@ fn hold_time(state: Res<Capture>, mut cycle: ResMut<DayCycle>) {
     }
 }
 
-/// Flies forward at sprint-flight speed, climbing to clear the terrain.
+/// Climbs straight up above the terrain, then flies forward at sprint-flight speed. Flying
+/// through the ground would have the server send the player back.
 fn fly(time: &Time, player: &mut LocalPlayer) {
     player.flying = true;
     let forward = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
-    let climb = if player.position.y < 150.0 { 0.5 } else { 0.0 };
+    let direction = if player.position.y < FLIGHT_HEIGHT { Vec3::Y } else { forward };
     let speed = voxmar_engine::physics::player::FLY_SPRINT_SPEED * 0.9;
-    player.position += (forward + Vec3::Y * climb).normalize() * speed * time.delta_secs();
+    player.position += direction * speed * time.delta_secs();
 }
 
 #[allow(clippy::too_many_arguments)]
