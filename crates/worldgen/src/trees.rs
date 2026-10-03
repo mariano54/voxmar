@@ -232,6 +232,9 @@ impl Trees {
                 g.blob(top + Vec3::Y * 0.5, Vec3::new(r, r * squash, r), leaves);
             }
             Crown::Conical { radius, start } => {
+                // Layers around a thick trunk are measured from its surface rather than its
+                // centre line, so they still wrap it.
+                let girth = if s.thick { 1.0 } else { 0.0 };
                 let base_radius = pick(rng, radius);
                 let first = (height as f32 * start) as i32;
                 let span = (height + 2 - first) as f32;
@@ -239,10 +242,10 @@ impl Trees {
                     let t = (y - first) as f32 / span;
                     // Whorls: every other layer steps in, so the cone has tiers.
                     let tier = if (height - y) % 2 == 0 { 1.0 } else { 0.65 };
-                    let r = (base_radius * (1.0 - t) * tier).max(if y <= height { 0.8 } else { 0.0 });
+                    let r = (base_radius * (1.0 - t) * tier).max(if y <= height { 0.8 } else { 0.0 }) + girth;
                     g.disc(trunk(y as f32 / height as f32), r, leaves);
                 }
-                g.blob(top + Vec3::Y * 1.5, Vec3::new(0.5, 1.2, 0.5), leaves);
+                g.blob(top + Vec3::Y * 1.5, Vec3::new(0.5 + girth, 1.2, 0.5 + girth), leaves);
             }
             Crown::Umbrella { branches, reach, radius } => {
                 let n = count(rng, branches);

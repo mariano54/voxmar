@@ -117,7 +117,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 2;
+    pub const VERSION: u32 = 3;
 
     pub fn new(seed: u64, registry: Arc<BlockRegistry>) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
