@@ -231,7 +231,6 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         MeshMaterial3d(materials.add(PrecipitationMaterial { params })),
         NoFrustumCulling,
         NotShadowCaster,
-        Visibility::Hidden,
     ));
 }
 
@@ -243,15 +242,21 @@ fn update(
     world: Res<ClientWorld>,
     mut map: ResMut<SkyMap>,
     camera: Query<(&GlobalTransform, &AmbientLight), With<Camera3d>>,
-    mut drops: Query<(&MeshMaterial3d<PrecipitationMaterial>, &mut Visibility), With<Drops>>,
+    drops: Query<&MeshMaterial3d<PrecipitationMaterial>, With<Drops>>,
     mut materials: ResMut<Assets<PrecipitationMaterial>>,
     mut fallen: Local<(Vec3, Vec3)>,
 ) {
-    let (Ok((camera, ambient)), Ok((handle, mut visibility))) = (camera.single(), drops.single_mut()) else { return };
+    let (Ok((camera, ambient)), Ok(handle)) = (camera.single(), drops.single()) else { return };
     let shown = &weather.current;
-    let falling = shown.precipitation > 0.01;
-    visibility.set_if_neq(if falling { Visibility::Inherited } else { Visibility::Hidden });
-    if !falling {
+    if shown.precipitation <= 0.01 {
+        // The drops stay drawn while nothing falls, every one culled in the vertex shader, so
+        // their pipeline is built with the world rather than when the first rain starts:
+        // where pipelines are built synchronously (macOS) that would stall a frame.
+        if materials.get(&handle.0).is_some_and(|m| m.params.rain.w > 0.0)
+            && let Some(mut material) = materials.get_mut(&handle.0)
+        {
+            material.params.rain.w = 0.0;
+        }
         return;
     }
     let eye = camera.translation();
