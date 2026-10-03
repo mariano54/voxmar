@@ -23,7 +23,7 @@ pub struct Resources {
 
 impl Resources {
     pub fn new(registry: &BlockRegistry) -> Self {
-        let ore = |name, attempts, heights, size| Ore { block: registry.expect(name), attempts, heights, size };
+        let ore = |name, attempts, heights, size| Ore { block: registry.expect(&format!("base:{name}")), attempts, heights, size };
         Self {
             ores: vec![
                 ore("coal_ore", 24, (5, 190), 12),

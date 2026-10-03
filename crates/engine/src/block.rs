@@ -155,15 +155,31 @@ impl std::fmt::Display for RegistryError {
 impl std::error::Error for RegistryError {}
 
 impl BlockRegistry {
-    pub fn from_ron(source: &str) -> Result<Self, RegistryError> {
-        let file: BlockFile = ron::from_str(source).map_err(|e| RegistryError(format!("blocks.ron: {e}")))?;
-        Self::new(file.blocks)
+    pub const AIR: &'static str = "core:air";
+
+    /// Parses a package's `blocks.ron`. Unqualified names (`stone`) are placed in the
+    /// package's `namespace` (`base:stone`).
+    pub fn from_ron(namespace: &str, source: &str) -> Result<Self, RegistryError> {
+        let file: BlockFile = ron::from_str(source).map_err(|e| RegistryError(format!("{namespace}/blocks.ron: {e}")))?;
+        let qualify = |name: &str| if name.contains(':') { name.to_owned() } else { format!("{namespace}:{name}") };
+        let defs = file
+            .blocks
+            .into_iter()
+            .map(|def| BlockDef { name: qualify(&def.name), drops: def.drops.as_deref().map(qualify), ..def })
+            .collect();
+        Self::new(defs)
     }
 
-    pub fn new(defs: Vec<BlockDef>) -> Result<Self, RegistryError> {
-        if defs.first().map(|d| d.name.as_str()) != Some("air") {
-            return Err(RegistryError("the first block must be `air`".into()));
-        }
+    /// Builds the registry from fully qualified definitions. `core:air` is always id 0.
+    pub fn new(content: Vec<BlockDef>) -> Result<Self, RegistryError> {
+        let air = BlockDef {
+            name: Self::AIR.into(),
+            render: RenderKind::Invisible,
+            solid: false,
+            hardness: -1.0,
+            ..Default::default()
+        };
+        let defs: Vec<BlockDef> = std::iter::once(air).chain(content).collect();
         if defs.len() > u16::MAX as usize {
             return Err(RegistryError("too many blocks".into()));
         }

@@ -58,7 +58,7 @@ pub fn assets_dir() -> PathBuf {
 pub fn load_content(assets: &Path) -> Result<Arc<BlockRegistry>, Box<dyn std::error::Error>> {
     let path = assets.join("content/base/blocks.ron");
     let source = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(Arc::new(BlockRegistry::from_ron(&source)?))
+    Ok(Arc::new(BlockRegistry::from_ron("base", &source)?))
 }
 
 /// A running server thread. Dropping it stops the server.

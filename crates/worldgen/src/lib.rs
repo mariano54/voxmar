@@ -42,10 +42,12 @@ pub struct Overworld {
 }
 
 impl Overworld {
-    pub const ID: &'static str = "voxmar:overworld";
+    pub const ID: &'static str = "base:overworld";
+    /// Bump when generation output changes.
+    pub const VERSION: u32 = 1;
 
     pub fn new(seed: u64, registry: Arc<BlockRegistry>) -> Self {
-        let stream = rng::stream_seed(seed, Self::ID);
+        let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
         Self {
             geology: geology::Geology::new(stream),
             climate: climate::Climate::new(stream),
@@ -110,7 +112,7 @@ mod tests {
 
     fn registry() -> Arc<BlockRegistry> {
         let source = include_str!("../../../assets/content/base/blocks.ron");
-        Arc::new(BlockRegistry::from_ron(source).unwrap())
+        Arc::new(BlockRegistry::from_ron("base", source).unwrap())
     }
 
     #[test]

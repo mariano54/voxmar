@@ -43,8 +43,8 @@ pub struct Features {
 impl Features {
     pub fn new(registry: &BlockRegistry) -> Self {
         let wood = |name: &str| Wood {
-            log: registry.expect(&format!("{name}_log")),
-            leaves: registry.expect(&format!("{name}_leaves")),
+            log: registry.expect(&format!("base:{name}_log")),
+            leaves: registry.expect(&format!("base:{name}_leaves")),
         };
         Self {
             oak: wood("oak"),
@@ -52,7 +52,7 @@ impl Features {
             spruce: wood("spruce"),
             jungle: wood("jungle"),
             acacia: wood("acacia"),
-            cactus: registry.expect("cactus"),
+            cactus: registry.expect("base:cactus"),
         }
     }
 

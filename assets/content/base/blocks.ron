@@ -3,7 +3,6 @@
 // used when no texture source is available.
 (
     blocks: [
-        (name: "air", render: Invisible, solid: false, hardness: -1.0),
         (name: "bedrock", textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60)),
         (name: "stone", textures: All("stone"), hardness: 1.5, drops: Some("cobblestone"), color: (125, 125, 125)),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110)),

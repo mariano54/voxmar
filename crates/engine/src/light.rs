@@ -232,9 +232,8 @@ mod tests {
 
     fn registry() -> BlockRegistry {
         BlockRegistry::new(vec![
-            BlockDef { name: "air".into(), render: RenderKind::Invisible, solid: false, ..Default::default() },
-            BlockDef { name: "stone".into(), textures: Textures::All("stone".into()), ..Default::default() },
-            BlockDef { name: "torch".into(), render: RenderKind::Cutout, light: 14, ..Default::default() },
+            BlockDef { name: "test:stone".into(), textures: Textures::All("stone".into()), ..Default::default() },
+            BlockDef { name: "test:torch".into(), render: RenderKind::Cutout, light: 14, ..Default::default() },
         ])
         .unwrap()
     }
@@ -251,7 +250,7 @@ mod tests {
         for y in 0..64 {
             for z in 0..32 {
                 for x in 0..32 {
-                    column.set_block(IVec3::new(x, y, z), reg.expect("stone"));
+                    column.set_block(IVec3::new(x, y, z), reg.expect("test:stone"));
                 }
             }
         }
@@ -265,7 +264,7 @@ mod tests {
     fn block_light_falls_off_one_per_block() {
         let reg = registry();
         let mut column = Column::default();
-        column.set_block(IVec3::new(16, 100, 16), reg.expect("torch"));
+        column.set_block(IVec3::new(16, 100, 16), reg.expect("test:torch"));
         let region = LitRegion::compute(&reg, &neighborhood(column));
         assert_eq!(region.light(IVec3::new(16, 100, 16)) & 0xF, 14);
         assert_eq!(region.light(IVec3::new(20, 100, 16)) & 0xF, 10);

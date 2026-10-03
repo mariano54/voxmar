@@ -368,8 +368,7 @@ mod tests {
 
     fn registry() -> BlockRegistry {
         BlockRegistry::new(vec![
-            BlockDef { name: "air".into(), render: RenderKind::Invisible, solid: false, ..Default::default() },
-            BlockDef { name: "stone".into(), textures: Textures::All("stone".into()), ..Default::default() },
+            BlockDef { name: "test:stone".into(), textures: Textures::All("stone".into()), ..Default::default() },
         ])
         .unwrap()
     }

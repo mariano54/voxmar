@@ -41,9 +41,9 @@ same registry a mod will use. Client and server compare a content fingerprint on
 
 How the design primitives map to the code today:
 
-- **Definition**: `BlockDef` (RON), compiled into `BlockRegistry` lookup tables.
+- **Definition**: `BlockDef` (RON), namespaced per package (`base:stone`; `core:air` is built in), compiled into `BlockRegistry` lookup tables.
 - **Generator**: the `Generator` trait; `Overworld` is the first implementation. Random
-  streams are seeded from world seed + generator id + position, so generation is pure and
+  streams are seeded from world seed + generator id and version + stream + position, so generation is pure and
   order-independent.
 - **Action**: `protocol::Action` (intents such as break, place, move item, respawn), validated
   and committed by the server.

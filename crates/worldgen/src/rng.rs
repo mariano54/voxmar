@@ -1,8 +1,9 @@
 //! Deterministic random streams keyed by seed, generator, purpose and position.
 
-/// Mixes a world seed with a generator id into the generator's base seed.
-pub fn stream_seed(seed: u64, generator: &str) -> u64 {
-    let mut h = seed ^ 0x9e37_79b9_7f4a_7c15;
+/// Mixes a world seed with a generator id and version into the generator's base seed, so
+/// a new generator version yields new land without disturbing other generators.
+pub fn stream_seed(seed: u64, generator: &str, version: u32) -> u64 {
+    let mut h = mix(seed ^ version as u64);
     for b in generator.bytes() {
         h = mix(h ^ b as u64);
     }

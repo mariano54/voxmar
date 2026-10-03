@@ -153,7 +153,7 @@ fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, 
 }
 
 fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool, jump: bool, sneak: bool, dt: f32) {
-    let water = world.registry.id("water");
+    let water = world.registry.id("base:water");
     let aabb = Aabb::standing(player.position, dims::WIDTH, dims::HEIGHT);
     player.in_water = aabb.intersects(|p| world.block(p).is_some() && world.block(p) == water);
 

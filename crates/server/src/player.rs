@@ -89,7 +89,7 @@ impl Server {
 
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64) {
         let fingerprint = self.registry.fingerprint();
-        let start_kit: Vec<(BlockId, u8)> = [("oak_planks", 64), ("cobblestone", 64), ("glass", 32), ("glowstone", 16)]
+        let start_kit: Vec<(BlockId, u8)> = [("base:oak_planks", 64), ("base:cobblestone", 64), ("base:glass", 32), ("base:glowstone", 16)]
             .into_iter()
             .filter_map(|(name, count)| self.registry.id(name).map(|id| (id, count)))
             .collect();
@@ -246,7 +246,7 @@ impl Server {
         let mut below = aabb;
         below.translate(Vec3::new(0.0, -0.05, 0.0));
         let on_ground = below.intersects(|p| self.is_solid(p));
-        let water = self.registry.id("water");
+        let water = self.registry.id("base:water");
         let in_water = aabb.intersects(|p| self.block(p).is_some() && self.block(p) == water);
 
         let player = self.players.get_mut(&id).unwrap();

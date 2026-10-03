@@ -53,7 +53,7 @@ pub struct Terrain {
 
 impl Terrain {
     pub fn new(seed: u64, registry: &BlockRegistry) -> Self {
-        let id = |name: &str| registry.expect(name);
+        let id = |name: &str| registry.expect(&format!("base:{name}"));
         Self {
             ids: Ids {
                 bedrock: id("bedrock"),
