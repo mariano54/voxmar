@@ -198,8 +198,12 @@ fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surfa
         return ground;
     }
     let n = normalize(in.normal);
-    let edge = saturate(surface_slope - length(n.xz) / max(n.y, 0.05));
-    let gaps = (1.0 - cover) * (1.0 - edge) * exp(-CANOPY_DEPTH * cover * length(to_eye.xz) / max(to_eye.y, 0.02));
+    let slope = -n.xz / max(n.y, 0.05);
+    let edge = saturate(surface_slope - length(slope));
+    // The eye's line through the crowns runs as far as it takes to rise one crown layer above
+    // the ground, which slopes towards or away from the eye.
+    let rise = max(to_eye.y - dot(slope, to_eye.xz), 0.02);
+    let gaps = (1.0 - cover) * (1.0 - edge) * exp(-CANOPY_DEPTH * cover * length(to_eye.xz) / rise);
     let sides = CROWN_SIDES * abs(to_eye.xz);
     let x_side = vec3(sign(to_eye.x), 0.0, 0.0);
     let z_side = vec3(0.0, 0.0, sign(to_eye.z));
