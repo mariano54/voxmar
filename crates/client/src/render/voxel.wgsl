@@ -15,7 +15,7 @@
 @group(0) @binding(1) var<uniform> globals: Globals;
 #else
 #import bevy_pbr::mesh_view_bindings::globals
-#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow}
+#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, water_normal}
 #import bevy_pbr::mesh_view_bindings::fog
 #endif
 
@@ -178,15 +178,6 @@ fn biome_tint(surface: u32) -> vec3<f32> {
     // (humidity above temperature) are blank and would wash the colour out when filtered.
     let uv = vec2(1.0 - temperature, max(1.0 - humidity, 1.0 - temperature + 1.5 / 256.0));
     return textureSampleLevel(colormaps, colormap_sampler, uv, i32(kind - 1u), 0.0).rgb;
-}
-
-// Small animated ripples for the water surface normal.
-fn water_normal(world: vec3<f32>) -> vec3<f32> {
-    let t = globals.time;
-    let p = world.xz;
-    let dx = sin(p.x * 0.9 + t * 1.3) * 0.5 + sin(p.x * 2.3 - p.y * 1.1 + t * 2.1) * 0.25 + sin(dot(p, vec2(0.6, 1.7)) + t * 0.8) * 0.3;
-    let dz = cos(p.y * 1.1 + t * 1.1) * 0.5 + cos(p.y * 2.7 + p.x * 0.7 - t * 1.7) * 0.25 + cos(dot(p, vec2(-1.4, 0.5)) + t * 0.9) * 0.3;
-    return normalize(vec3(dx * 0.08, 1.0, dz * 0.08));
 }
 
 @fragment

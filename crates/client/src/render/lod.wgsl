@@ -9,7 +9,7 @@
 
 #import bevy_pbr::mesh_functions::get_world_from_local
 #import bevy_pbr::mesh_view_bindings::{view, fog}
-#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color}
+#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, water_normal}
 
 struct LodParams {
     // x: cell size of this level in blocks, y: cell size of the next finer level (0 for
@@ -43,9 +43,13 @@ const CORNER_AO: f32 = 0.825;
 // seen edge-on.
 const CROWN_SIDES: f32 = 0.8;
 const PLANT_SIDES: f32 = 0.5;
-// Real water's sun glint, averaged over its ripples into a wider, dimmer highlight.
-const GLINT_SHARPNESS: f32 = 50.0;
-const GLINT: f32 = 0.9;
+// Real water's ripples carry on past the real chunks and smooth out over this distance, into
+// their average: a wider, dimmer sun glint, and a surface facing the eye a little more (the
+// variance of the ripples' slope).
+const RIPPLE_FADE: f32 = 256.0;
+const GLINT_SHARPNESS = vec2(50.0, 220.0);
+const GLINT = vec2(0.9, 1.0);
+const RIPPLE_SLOPE_VARIANCE: f32 = 0.0013;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -194,8 +198,16 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     if in.kind == ICE {
         return mix(floor, surface, in.params.y);
     }
-    let fresnel = 0.02 + 0.98 * pow(1.0 - max(to_eye.y, 0.0), 5.0);
-    let glint = pow(max(dot(reflect(-to_eye, UP), sun_direction()), 0.0), GLINT_SHARPNESS) * GLINT;
+    let past_real = max(abs(in.world_position.x - view.world_position.x), abs(in.world_position.z - view.world_position.z))
+        - params.rings.w * COLUMN;
+    let ripples = 1.0 - smoothstep(0.0, RIPPLE_FADE, past_real);
+    let n = normalize(mix(UP, water_normal(in.world_position), ripples));
+    // Ripples facing the eye fill more of the view than those facing away, the more so the
+    // lower the angle, so on average real water faces the eye more than a flat sheet.
+    let facing = dot(n, to_eye) + (1.0 - ripples) * RIPPLE_SLOPE_VARIANCE / max(to_eye.y, 0.01);
+    let fresnel = 0.02 + 0.98 * pow(1.0 - clamp(facing, 0.0, 1.0), 5.0);
+    let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples))
+        * mix(GLINT.x, GLINT.y, ripples);
     let reflected = mix(surface, fog.base_color.rgb * 1.15, fresnel) + sun_color() * glint * 4.0;
     return mix(floor, reflected, mix(0.72, 1.0, fresnel));
 }

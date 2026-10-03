@@ -1,10 +1,11 @@
 // Shared terrain lighting: sky ambient, sun or moon with cascaded shadows, block light,
-// and aerial perspective glowing towards the sun. Everything dynamic comes from the view bind group
-// (directional light, ambient light, fog), so day/night never touches material assets.
+// water ripples, and aerial perspective glowing towards the sun. Everything dynamic comes
+// from the view bind group (directional light, ambient light, fog), so day/night never
+// touches material assets.
 
 #define_import_path voxmar::lighting
 
-#import bevy_pbr::mesh_view_bindings::{view, lights, fog}
+#import bevy_pbr::mesh_view_bindings::{view, lights, fog, globals}
 #import bevy_pbr::shadows::fetch_directional_shadow
 
 // Per face index: the six cube faces, then a plant's two diagonal quads, which are lit
@@ -84,6 +85,16 @@ fn shade_normal(
     let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
     let floor = vec3(0.010, 0.010, 0.014) * ao;
     return albedo * (ambient + direct * mix(1.0, ao, 0.5) + torch + floor);
+}
+
+// Small animated ripples for the water surface normal. Their slopes have a variance of
+// about 0.0013.
+fn water_normal(world: vec3<f32>) -> vec3<f32> {
+    let t = globals.time;
+    let p = world.xz;
+    let dx = sin(p.x * 0.9 + t * 1.3) * 0.5 + sin(p.x * 2.3 - p.y * 1.1 + t * 2.1) * 0.25 + sin(dot(p, vec2(0.6, 1.7)) + t * 0.8) * 0.3;
+    let dz = cos(p.y * 1.1 + t * 1.1) * 0.5 + cos(p.y * 2.7 + p.x * 0.7 - t * 1.7) * 0.25 + cos(dot(p, vec2(-1.4, 0.5)) + t * 0.9) * 0.3;
+    return normalize(vec3(dx * 0.08, 1.0, dz * 0.08));
 }
 
 // Aerial perspective. Haze is densest at sea level and thins with altitude, so valleys and
