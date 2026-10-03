@@ -1,0 +1,107 @@
+//! Columns of chunks and the sparse map that holds the loaded world.
+
+use std::sync::Arc;
+
+use glam::IVec3;
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
+
+use crate::block::BlockId;
+use crate::chunk::Chunk;
+use crate::coords::{CHUNK_BITS, CHUNK_SIZE, COLUMN_CHUNKS, ColumnPos, in_world_height, local, local_index};
+
+/// Per-column surface data, one entry per (x, z).
+pub const COLUMN_AREA: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
+
+/// A full-height stack of chunks plus the 2D data generators produce for it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Column {
+    pub chunks: [Chunk; COLUMN_CHUNKS as usize],
+    /// Temperature and humidity (0..=255) per (x, z), indexed `z * 32 + x`. Drives
+    /// biome tints on the client.
+    pub climate: Vec<[u8; 2]>,
+}
+
+impl Default for Column {
+    fn default() -> Self {
+        Self { chunks: Default::default(), climate: vec![[128, 128]; COLUMN_AREA] }
+    }
+}
+
+impl Column {
+    /// `pos` is relative to the column origin (x, z in 0..32, y in world range).
+    #[inline]
+    pub fn block(&self, pos: IVec3) -> BlockId {
+        self.chunks[(pos.y >> CHUNK_BITS) as usize].get(local_index(local(pos)))
+    }
+
+    pub fn set_block(&mut self, pos: IVec3, block: BlockId) {
+        self.chunks[(pos.y >> CHUNK_BITS) as usize].set(local_index(local(pos)), block);
+    }
+
+    pub fn climate_at(&self, x: i32, z: i32) -> [u8; 2] {
+        self.climate[(z * CHUNK_SIZE + x) as usize]
+    }
+}
+
+/// The loaded part of the world. Columns are shared immutably (`Arc`) so worker jobs can
+/// read snapshots while the owner keeps editing through copy-on-write.
+#[derive(Default)]
+pub struct VoxelWorld {
+    columns: FxHashMap<ColumnPos, Arc<Column>>,
+}
+
+impl VoxelWorld {
+    pub fn column(&self, pos: ColumnPos) -> Option<&Arc<Column>> {
+        self.columns.get(&pos)
+    }
+
+    pub fn contains(&self, pos: ColumnPos) -> bool {
+        self.columns.contains_key(&pos)
+    }
+
+    pub fn insert(&mut self, pos: ColumnPos, column: Arc<Column>) {
+        self.columns.insert(pos, column);
+    }
+
+    pub fn remove(&mut self, pos: ColumnPos) -> Option<Arc<Column>> {
+        self.columns.remove(&pos)
+    }
+
+    pub fn columns(&self) -> impl Iterator<Item = (&ColumnPos, &Arc<Column>)> {
+        self.columns.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.columns.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+
+    /// Returns `None` if the position is in an unloaded column. Above the world is air,
+    /// below it is reported as `None` too.
+    pub fn block(&self, pos: IVec3) -> Option<BlockId> {
+        if pos.y >= crate::coords::WORLD_HEIGHT {
+            return Some(BlockId::AIR);
+        }
+        if pos.y < 0 {
+            return None;
+        }
+        let column = self.columns.get(&ColumnPos::of_block(pos))?;
+        Some(column.block(IVec3::new(pos.x & (CHUNK_SIZE - 1), pos.y, pos.z & (CHUNK_SIZE - 1))))
+    }
+
+    /// Sets a block, returning the previous one. Fails if the column is not loaded.
+    pub fn set_block(&mut self, pos: IVec3, block: BlockId) -> Option<BlockId> {
+        if !in_world_height(pos.y) {
+            return None;
+        }
+        let column = Arc::make_mut(self.columns.get_mut(&ColumnPos::of_block(pos))?);
+        let local = IVec3::new(pos.x & (CHUNK_SIZE - 1), pos.y, pos.z & (CHUNK_SIZE - 1));
+        let previous = column.block(local);
+        column.set_block(local, block);
+        Some(previous)
+    }
+}

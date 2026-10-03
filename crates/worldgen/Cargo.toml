@@ -1,0 +1,10 @@
+[package]
+name = "voxmar_worldgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+voxmar_engine.workspace = true
+fastnoise-lite.workspace = true
+tracing.workspace = true

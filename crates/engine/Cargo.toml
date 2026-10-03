@@ -1,0 +1,12 @@
+[package]
+name = "voxmar_engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+ron.workspace = true
+rustc-hash.workspace = true
+tracing.workspace = true
