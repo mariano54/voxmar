@@ -6,8 +6,8 @@
 struct Params {
     // xyz: the camera's position within the box (wrapped), w: seconds
     camera: vec4<f32>,
-    // xyz: the camera's position within its block, w: its height
-    block: vec4<f32>,
+    // xz: the camera's position from the height map's corner, w: its height
+    map: vec4<f32>,
     // xyz: how far rain has fallen and drifted (wrapped into the box), w: amount 0..1
     rain: vec4<f32>,
     // xyz: the same for snow, w: the fraction falling as snow
@@ -58,13 +58,13 @@ fn unit(h: u32) -> f32 {
 
 // Height of the highest block below a point `offset` from the camera, relative to the camera.
 fn ground(offset: vec3<f32>) -> f32 {
-    let column = vec2<i32>(floor(offset.xz + params.block.xz)) + MAP / 2;
+    let column = vec2<i32>(floor(offset.xz + params.map.xz));
     if any(column < vec2(0)) || any(column >= vec2(MAP)) {
         return -1.0e9;
     }
     let c = u32(column.y * MAP + column.x);
     let word = params.heights[c / 16u][(c / 4u) % 4u];
-    return f32((word >> (8u * (c % 4u))) & 255u) - params.block.w;
+    return f32((word >> (8u * (c % 4u))) & 255u) - params.map.w;
 }
 
 fn project(world: vec3<f32>) -> vec4<f32> {

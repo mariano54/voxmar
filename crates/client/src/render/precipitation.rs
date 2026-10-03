@@ -31,11 +31,13 @@ const BOX: Vec3 = Vec3::new(40.0, 36.0, 40.0);
 /// Falling speeds, in blocks per second.
 const RAIN_SPEED: f32 = 14.0;
 const SNOW_SPEED: f32 = 1.6;
-/// Columns along each side of the height map, centred on the camera.
+/// Columns along each side of the height map around the camera. It is re-read when the
+/// camera strays this many blocks from its centre (it still covers the drop box then), and
+/// every `REFRESH` seconds for blocks that changed.
 const MAP: i32 = 64;
 const MAP_WORDS: usize = (MAP * MAP / 16) as usize;
-/// Seconds between height map refreshes while the camera stays in one block.
-const REFRESH: f32 = 0.5;
+const RECENTER: i32 = 8;
+const REFRESH: f32 = 1.0;
 
 const ATTRIBUTE_DROP: MeshVertexAttribute = MeshVertexAttribute::new("Drop", 0x7261_696e, VertexFormat::Uint32);
 
@@ -55,8 +57,8 @@ impl Plugin for PrecipitationPlugin {
 struct PrecipitationParams {
     /// xyz: the camera's position within the box (wrapped), w: seconds.
     camera: Vec4,
-    /// xyz: the camera's position within its block, w: its height.
-    block: Vec4,
+    /// xz: the camera's position from the height map's corner, w: its height.
+    map: Vec4,
     /// xyz: how far rain has fallen and drifted (wrapped into the box), w: amount 0..1.
     rain: Vec4,
     /// xyz: the same for snow, w: the fraction falling as snow.
@@ -216,7 +218,7 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         .with_inserted_indices(Indices::U16(indices));
     let params = PrecipitationParams {
         camera: Vec4::ZERO,
-        block: Vec4::ZERO,
+        map: Vec4::ZERO,
         rain: Vec4::ZERO,
         snow: Vec4::ZERO,
         streak: Vec4::NEG_Y,
@@ -253,10 +255,10 @@ fn update(
         return;
     }
     let eye = camera.translation();
-    let block = eye.floor().as_ivec3();
+    let column = eye.xz().floor().as_ivec2();
     map.age += time.delta_secs();
-    if map.origin != block.xz() - MAP / 2 || map.age > REFRESH {
-        map.refresh(&world, block.xz());
+    if (column - (map.origin + MAP / 2)).abs().max_element() > RECENTER || map.age > REFRESH {
+        map.refresh(&world, column);
     }
 
     let dt = time.delta_secs();
@@ -271,7 +273,7 @@ fn update(
     let light = ambient.color.to_linear();
     material.params = PrecipitationParams {
         camera: eye.rem_euclid(BOX).extend(time.elapsed_secs_wrapped()),
-        block: (eye - block.as_vec3()).extend(eye.y),
+        map: Vec4::new(eye.x - map.origin.x as f32, 0.0, eye.z - map.origin.y as f32, eye.y),
         rain: rain.extend(shown.precipitation),
         snow: snow.extend(shown.snow),
         streak: rain_velocity.normalize().extend(rain_velocity.length() * 0.045),
