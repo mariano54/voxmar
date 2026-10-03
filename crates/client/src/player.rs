@@ -8,6 +8,7 @@ use voxmar_engine::inventory::Inventory;
 use voxmar_engine::physics::{Aabb, move_and_slide, player as dims};
 
 use crate::render::DayCycle;
+use crate::settings::Settings;
 use crate::world::ClientWorld;
 
 pub struct PlayerPlugin;
@@ -31,6 +32,9 @@ pub struct LocalPlayer {
     pub in_water: bool,
     pub flying: bool,
     pub allow_flight: bool,
+    pub admin: bool,
+    /// Flight speed multiplier, as last agreed with the server.
+    pub fly_speed: f32,
     pub health: u8,
     pub inventory: Inventory,
     pub selected: usize,
@@ -50,6 +54,8 @@ impl Default for LocalPlayer {
             in_water: false,
             flying: false,
             allow_flight: false,
+            admin: false,
+            fly_speed: 1.0,
             health: 20,
             inventory: Inventory::default(),
             selected: 0,
@@ -76,28 +82,32 @@ impl LocalPlayer {
 #[derive(Resource, Default)]
 pub struct UiState {
     pub inventory_open: bool,
+    /// The settings menu.
+    pub menu_open: bool,
     pub cursor_locked: bool,
-    pub debug: bool,
 }
 
+/// Esc closes the inventory or toggles the menu. The mouse is free while a screen is open,
+/// grabbed again when it closes, and grabbed by clicking into the window.
 fn grab_cursor(
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut ui: ResMut<UiState>,
     player: Res<LocalPlayer>,
+    mut screen_was_open: Local<bool>,
 ) {
     let Ok(mut cursor) = cursor.single_mut() else { return };
-    let want_locked = if keys.just_pressed(KeyCode::Escape) {
-        ui.inventory_open = false;
-        false
-    } else if ui.inventory_open || player.dead {
-        false
-    } else if mouse.just_pressed(MouseButton::Left) {
-        true
-    } else {
-        ui.cursor_locked
-    };
+    if keys.just_pressed(KeyCode::Escape) {
+        if ui.inventory_open {
+            ui.inventory_open = false;
+        } else {
+            ui.menu_open = !ui.menu_open;
+        }
+    }
+    let screen_open = ui.inventory_open || ui.menu_open || player.dead;
+    let want_locked = !screen_open && (ui.cursor_locked || *screen_was_open || mouse.just_pressed(MouseButton::Left));
+    *screen_was_open = screen_open;
     if want_locked != ui.cursor_locked || (want_locked && cursor.grab_mode == CursorGrabMode::None) {
         ui.cursor_locked = want_locked;
         cursor.grab_mode = if want_locked { CursorGrabMode::Locked } else { CursorGrabMode::None };
@@ -105,13 +115,14 @@ fn grab_cursor(
     }
 }
 
-fn look(motion: Res<AccumulatedMouseMotion>, ui: Res<UiState>, mut player: ResMut<LocalPlayer>) {
+fn look(motion: Res<AccumulatedMouseMotion>, ui: Res<UiState>, settings: Res<Settings>, mut player: ResMut<LocalPlayer>) {
     const SENSITIVITY: f32 = 0.0022;
     if !ui.cursor_locked || motion.delta == Vec2::ZERO {
         return;
     }
-    player.yaw -= motion.delta.x * SENSITIVITY;
-    player.pitch = (player.pitch - motion.delta.y * SENSITIVITY).clamp(-1.55, 1.55);
+    let sensitivity = SENSITIVITY * settings.sensitivity as f32 / 100.0;
+    player.yaw -= motion.delta.x * sensitivity;
+    player.pitch = (player.pitch - motion.delta.y * sensitivity).clamp(-1.55, 1.55);
 }
 
 fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, world: Res<ClientWorld>, mut player: ResMut<LocalPlayer>) {
@@ -160,7 +171,7 @@ fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool,
 
     if player.flying {
         let vertical = (jump as i32 - sneak as i32) as f32;
-        let speed = if sprint { dims::FLY_SPRINT_SPEED } else { dims::FLY_SPEED };
+        let speed = if sprint { dims::FLY_SPRINT_SPEED } else { dims::FLY_SPEED } * player.fly_speed;
         let target = (wish + Vec3::Y * vertical) * speed;
         player.velocity = player.velocity.lerp(target, (12.0 * dt).min(1.0));
     } else {

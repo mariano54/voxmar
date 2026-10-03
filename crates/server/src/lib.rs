@@ -28,14 +28,18 @@ use crate::process::Process;
 
 pub struct ServerConfig {
     pub seed: u64,
-    /// Radius, in columns, streamed around each player.
+    /// Largest radius, in columns, streamed around a player. Each player chooses their own
+    /// up to this.
     pub view_distance: i32,
     pub allow_flight: bool,
+    /// Names of players with admin rights, besides the integrated server's own player.
+    /// Names are not authenticated, so this only suits servers among friends.
+    pub admins: Vec<String>,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { seed: 0x5eed, view_distance: 16, allow_flight: true }
+        Self { seed: 0x5eed, view_distance: 32, allow_flight: true, admins: Vec::new() }
     }
 }
 
@@ -187,7 +191,7 @@ impl Server {
         while let Ok(connection) = self.incoming.try_recv() {
             let id = self.next_player;
             self.next_player += 1;
-            self.players.insert(id, Player::new(id, connection, self.spawn));
+            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance));
         }
     }
 
@@ -250,11 +254,11 @@ impl Server {
 
     /// Sends loaded columns nearest-first and requests generation of missing ones.
     fn stream_columns(&mut self, id: PlayerId) {
-        let radius = self.config.view_distance;
         let Some(player) = self.players.get_mut(&id) else { return };
         if !player.joined {
             return;
         }
+        let radius = player.view_distance;
         let center = ColumnPos::of_block(player.position.floor().as_ivec3());
         let mut sent = 0;
         for ring in 0..=radius {
@@ -290,14 +294,16 @@ impl Server {
         if !self.tick.is_multiple_of(TICKS_PER_SECOND as u64 * 5) {
             return;
         }
-        let centers: Vec<ColumnPos> =
-            self.players.values().map(|p| ColumnPos::of_block(p.position.floor().as_ivec3())).collect();
-        let keep_radius = self.config.view_distance + 2;
+        let keep: Vec<(ColumnPos, i32)> = self
+            .players
+            .values()
+            .map(|p| (ColumnPos::of_block(p.position.floor().as_ivec3()), p.view_distance + 2))
+            .collect();
         let unload: Vec<ColumnPos> = self
             .world
             .columns()
             .map(|(&pos, _)| pos)
-            .filter(|pos| !self.modified.contains(pos) && centers.iter().all(|c| c.distance(*pos) > keep_radius))
+            .filter(|pos| !self.modified.contains(pos) && keep.iter().all(|(c, radius)| c.distance(*pos) > *radius))
             .collect();
         for pos in unload {
             self.world.remove(pos);

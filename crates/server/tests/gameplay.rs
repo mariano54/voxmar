@@ -1,4 +1,4 @@
-//! End-to-end server checks over an in-process connection.
+//! End-to-end server checks over in-process and TCP connections.
 
 use std::time::{Duration, Instant};
 
@@ -8,32 +8,52 @@ use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, Face};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::VoxelWorld;
-use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, local_pair};
+use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, local_pair, tcp};
 use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
 
 struct Client {
     connection: ClientConnection,
     world: VoxelWorld,
     position: Vec3,
+    admin: bool,
+    /// The last position the server corrected us to.
+    teleported: Option<Vec3>,
     health: u8,
     content: Content,
     inventory: voxmar_engine::inventory::Inventory,
     _server: ServerHandle,
 }
 
+fn content() -> Content {
+    load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
+}
+
 impl Client {
+    /// Joins a new server in-process, as singleplayer does.
     fn join() -> Self {
-        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-        let content = load_content(&assets).expect("content loads");
-        let fingerprint = content.fingerprint();
-        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, load_content(&assets).unwrap()).unwrap();
+        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
         let (connection, server_side) = local_pair();
         server.connections().send(server_side).unwrap();
-        connection.send(ClientMessage::Hello { name: "test".into(), protocol: PROTOCOL_VERSION, content: fingerprint });
+        Self::hello(connection, "test", server)
+    }
+
+    /// Joins a new server over TCP as `name`.
+    fn join_remote(name: &str, admins: &[&str]) -> Self {
+        let admins = admins.iter().map(|&a| a.to_owned()).collect();
+        let server = spawn(ServerConfig { view_distance: 2, admins, ..Default::default() }, content()).unwrap();
+        let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+        Self::hello(tcp::connect(addr).unwrap(), name, server)
+    }
+
+    fn hello(connection: ClientConnection, name: &str, server: ServerHandle) -> Self {
+        let content = content();
+        connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint() });
         let mut client = Self {
             connection,
             world: VoxelWorld::default(),
             position: Vec3::ZERO,
+            admin: false,
+            teleported: None,
             health: 0,
             content,
             inventory: Default::default(),
@@ -57,7 +77,14 @@ impl Client {
 
     fn apply(&mut self, message: ServerMessage) {
         match message {
-            ServerMessage::Welcome { position, .. } | ServerMessage::Teleport { position } => self.position = position,
+            ServerMessage::Welcome { position, admin, .. } => {
+                self.position = position;
+                self.admin = admin;
+            }
+            ServerMessage::Teleport { position } => {
+                self.position = position;
+                self.teleported = Some(position);
+            }
             ServerMessage::Column { pos, column } => self.world.insert(pos, column),
             ServerMessage::BlockChanged { pos, block } => {
                 self.world.set_block(pos, block);
@@ -73,6 +100,10 @@ impl Client {
     fn propose(&self, action: &str, target: ActionTarget) {
         let action: ActionId = self.content.actions.expect(action);
         self.connection.send(ClientMessage::Propose { action, target });
+    }
+
+    fn send_position(&self, position: Vec3, flying: bool) {
+        self.connection.send(ClientMessage::Input(PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
     }
 }
 
@@ -134,4 +165,24 @@ fn falling_hurts() {
     client.pump_until(|c| c.health < 20);
     let expected = 20 - (height - 3) as u8;
     assert_eq!(client.health, expected, "a {height} block fall should cost {} health", height - 3);
+}
+
+#[test]
+fn only_admins_fly_fast() {
+    // The integrated server's own player and players named with `--admin` are admins.
+    let clients = [(Client::join(), true), (Client::join_remote("guest", &["boss"]), false), (Client::join_remote("boss", &["boss"]), true)];
+    for (mut client, admin) in clients {
+        assert_eq!(client.admin, admin);
+        client.connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 4.0 });
+        // A second after the last move, rise faster than normal flight allows but within
+        // four times its speed, then make an impossible move so the server answers with
+        // where it thinks we are.
+        std::thread::sleep(Duration::from_millis(1100));
+        let start = client.position;
+        let up = start + Vec3::Y * 100.0;
+        client.send_position(up, true);
+        client.send_position(start + Vec3::Y * 5000.0, true);
+        client.pump_until(|c| c.teleported.is_some());
+        assert_eq!(client.teleported, Some(if admin { up } else { start }), "admin: {admin}");
+    }
 }

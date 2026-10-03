@@ -4,7 +4,8 @@
 //! `--connect HOST:PORT` join a server, `--host` also open singleplayer to the network,
 //! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--no-vsync`, `--no-music`,
 //! `--capture PATH` (screenshot and exit once loaded), with `--pose dx,dy,dz,yaw,pitch` (camera offset from the player)
-//! or `--flight SECONDS` (fly forward first and report frame pacing).
+//! or `--flight SECONDS` (fly forward first and report frame pacing), and `--menu` (show the settings menu).
+//! `--view-distance` and `--no-vsync` override the saved settings.
 
 mod capture;
 mod hud;
@@ -13,6 +14,7 @@ mod music;
 mod net;
 mod player;
 mod render;
+mod settings;
 mod sfx;
 mod textures;
 mod world;
@@ -34,6 +36,7 @@ use voxmar_server::{ServerConfig, ServerHandle};
 use crate::hud::HudImages;
 use crate::render::lod::{Lod, LodMaterial, LodPalette};
 use crate::render::{SkyMaterial, VoxelMaterial, ui_image};
+use crate::settings::Settings;
 use crate::textures::{Rgba, Source};
 use crate::world::ClientWorld;
 
@@ -42,11 +45,12 @@ struct Options {
     host: bool,
     seed: u64,
     name: String,
-    view_distance: i32,
-    vsync: bool,
+    view_distance: Option<i32>,
+    vsync: Option<bool>,
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    menu: bool,
     music: bool,
 }
 
@@ -56,11 +60,12 @@ fn parse_options() -> Result<Options, String> {
         host: false,
         seed: ServerConfig::default().seed,
         name: std::env::var("USER").unwrap_or_else(|_| "player".into()),
-        view_distance: 16,
-        vsync: true,
+        view_distance: None,
+        vsync: None,
         capture: None,
         pose: None,
         flight: None,
+        menu: false,
         music: true,
     };
     let mut args = std::env::args().skip(1);
@@ -71,11 +76,12 @@ fn parse_options() -> Result<Options, String> {
             "--host" => options.host = true,
             "--seed" => options.seed = value()?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--name" => options.name = value()?,
-            "--view-distance" => options.view_distance = value()?.parse().map_err(|e| format!("--view-distance: {e}"))?,
-            "--no-vsync" => options.vsync = false,
+            "--view-distance" => options.view_distance = Some(value()?.parse().map_err(|e| format!("--view-distance: {e}"))?),
+            "--no-vsync" => options.vsync = Some(false),
             "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
+            "--menu" => options.menu = true,
             "--pose" => {
                 let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose: {e}"))?;
                 options.pose = Some(parts.try_into().map_err(|_| "--pose needs x,y,z,yaw,pitch")?);
@@ -98,11 +104,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry = content.blocks.clone();
     let fingerprint = content.fingerprint();
     let (connection, server) = connect(&options, content.clone())?;
+    // Captures are benchmarks and visual checks, so they ignore the player's saved settings.
+    let mut settings = if options.capture.is_some() { Settings::default() } else { Settings::load() };
+    settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
+    settings.vsync = options.vsync.unwrap_or(settings.vsync);
+    let settings = settings.clamped();
 
     let mut app = App::new();
     let window = Window {
         title: "voxmar".into(),
-        present_mode: if options.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync },
+        present_mode: if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync },
         ..default()
     };
     let plugins = DefaultPlugins.set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() });
@@ -127,18 +138,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         net::NetPlugin,
         hud::HudPlugin,
         sfx::SfxPlugin,
+        settings::SettingsPlugin,
     ))
-    .insert_resource(ClientWorld::new(registry.clone(), options.view_distance))
+    .insert_resource(ClientWorld::new(registry.clone(), settings.view_distance))
     .insert_resource(net::Net::new(connection, server, options.name.clone(), fingerprint))
     .insert_resource(Actions(content.actions))
-    .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(options.view_distance), ..default() })
+    .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
+    .insert_resource(settings)
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
     if options.music && options.capture.is_none() {
         app.add_plugins(music::MusicPlugin);
     }
     if let Some(path) = options.capture {
-        app.add_plugins(capture::CapturePlugin { path, pose: options.pose, flight: options.flight });
+        app.add_plugins(capture::CapturePlugin { path, pose: options.pose, flight: options.flight, menu: options.menu });
     }
     app.run();
     Ok(())
@@ -159,7 +172,7 @@ fn connect(
         let addr = if addr.contains(':') { addr.clone() } else { format!("{addr}:{DEFAULT_PORT}") };
         return Ok((tcp::connect(addr)?, None));
     }
-    let config = ServerConfig { seed: options.seed, view_distance: options.view_distance, allow_flight: true };
+    let config = ServerConfig { seed: options.seed, ..ServerConfig::default() };
     let server = voxmar_server::spawn(config, content)?;
     if options.host {
         let addr = tcp::listen(("0.0.0.0", DEFAULT_PORT), server.connections())?;

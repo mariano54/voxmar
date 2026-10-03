@@ -9,7 +9,8 @@ use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::traits::{self, Health, TraitDecl};
 use voxmar_protocol::{
-    ClientMessage, PROTOCOL_VERSION, PlayerId, PlayerInput, PlayerView, ServerConnection, ServerMessage, TICKS_PER_SECOND,
+    ClientMessage, MAX_FLY_SPEED, PROTOCOL_VERSION, PlayerId, PlayerInput, PlayerView, ServerConnection, ServerMessage,
+    TICKS_PER_SECOND,
 };
 
 use crate::Server;
@@ -21,6 +22,11 @@ pub struct Player {
     pub name: String,
     pub connection: ServerConnection,
     pub joined: bool,
+    pub admin: bool,
+    /// Radius, in columns, streamed around the player.
+    pub view_distance: i32,
+    /// Flight speed multiplier; above 1 only for admins.
+    pub fly_speed: f32,
     pub position: Vec3,
     pub yaw: f32,
     pub selected: usize,
@@ -36,12 +42,15 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3) -> Self {
+    pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32) -> Self {
         Self {
             id,
             name: String::new(),
             connection,
             joined: false,
+            admin: false,
+            view_distance,
+            fly_speed: 1.0,
             position: spawn,
             yaw: 0.0,
             selected: 0,
@@ -86,6 +95,7 @@ impl Server {
             ClientMessage::Input(input) => self.input(id, input),
             ClientMessage::Propose { action, target } => self.propose(id, action, target),
             ClientMessage::Cancel => self.cancel_action(id),
+            ClientMessage::Settings { view_distance, fly_speed } => self.settings(id, view_distance, fly_speed),
         }
     }
 
@@ -116,11 +126,14 @@ impl Server {
 
         player.name = name.chars().filter(|c| !c.is_control()).take(32).collect();
         player.joined = true;
+        // Only the integrated server's own player can connect in-process.
+        player.admin = player.connection.is_local() || self.config.admins.contains(&player.name);
         for (block, count) in start_kit {
             player.inventory.add(block, count);
         }
         player.changed(traits::INVENTORY);
-        player.connection.send(ServerMessage::Welcome { player: id, seed, position: player.position, allow_flight });
+        let admin = player.admin;
+        player.connection.send(ServerMessage::Welcome { player: id, seed, position: player.position, allow_flight, admin });
         player.last_input_tick = tick;
         tracing::info!("{} joined", player.name);
     }
@@ -137,8 +150,9 @@ impl Server {
         let elapsed = ((tick - player.last_input_tick) as f32 / TICKS_PER_SECOND as f32).clamp(0.05, 1.0);
         let delta = input.position - player.position;
         let flying = input.flying && allow_flight;
-        let max_horizontal = if flying { dims::FLY_SPRINT_SPEED } else { dims::SPRINT_SPEED } * 1.5 * elapsed + 0.5;
-        let max_vertical = if flying { dims::FLY_SPRINT_SPEED } else { dims::TERMINAL_VELOCITY } * 1.5 * elapsed + 1.5;
+        let fly_speed = dims::FLY_SPRINT_SPEED * player.fly_speed;
+        let max_horizontal = if flying { fly_speed } else { dims::SPRINT_SPEED } * 1.5 * elapsed + 0.5;
+        let max_vertical = if flying { fly_speed } else { dims::TERMINAL_VELOCITY } * 1.5 * elapsed + 1.5;
         let aabb = Aabb::standing(input.position, dims::WIDTH * 0.9, dims::HEIGHT * 0.95);
         let inside_wall = aabb.intersects(|p| self.is_solid(p));
         let plausible = delta.with_y(0.0).length() <= max_horizontal && delta.y.abs() <= max_vertical && !inside_wall;
@@ -153,5 +167,12 @@ impl Server {
         } else {
             player.connection.send(ServerMessage::Teleport { position: player.position });
         }
+    }
+
+    fn settings(&mut self, id: PlayerId, view_distance: u8, fly_speed: f32) {
+        let max_view_distance = self.config.view_distance;
+        let player = self.players.get_mut(&id).unwrap();
+        player.view_distance = (view_distance as i32).min(max_view_distance);
+        player.fly_speed = if player.admin && fly_speed.is_finite() { fly_speed.clamp(1.0, MAX_FLY_SPEED) } else { 1.0 };
     }
 }

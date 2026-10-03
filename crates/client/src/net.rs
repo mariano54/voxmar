@@ -46,6 +46,10 @@ impl Net {
     pub fn cancel(&self) {
         self.connection.send(ClientMessage::Cancel);
     }
+
+    pub fn send_settings(&self, view_distance: u8, fly_speed: f32) {
+        self.connection.send(ClientMessage::Settings { view_distance, fly_speed });
+    }
 }
 
 #[derive(Resource, Default)]
@@ -74,10 +78,11 @@ fn receive(
             }
         };
         match message {
-            ServerMessage::Welcome { position, allow_flight, seed, .. } => {
+            ServerMessage::Welcome { position, allow_flight, admin, seed, .. } => {
                 lod.start(seed, world.registry.clone());
                 player.position = position;
                 player.allow_flight = allow_flight;
+                player.admin = admin;
                 player.joined = true;
                 net.status = None;
             }

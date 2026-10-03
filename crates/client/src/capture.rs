@@ -11,7 +11,7 @@ use bevy::camera::RenderTarget;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
-use crate::player::LocalPlayer;
+use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
@@ -21,11 +21,13 @@ pub struct CapturePlugin {
     pub pose: Option<[f32; 5]>,
     /// Seconds to fly forward after loading, measuring frame pacing while streaming.
     pub flight: Option<f32>,
+    /// Show the settings menu.
+    pub menu: bool,
 }
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Capture {
+        app.insert_resource(UiState { menu_open: self.menu, ..default() }).insert_resource(Capture {
             path: self.path.clone(),
             pose: self.pose,
             flight: self.flight,

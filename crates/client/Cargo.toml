@@ -20,6 +20,8 @@ bevy = { workspace = true, features = ["3d", "ui", "bevy_audio", "mp3", "wav"] }
 crossbeam-channel.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
+ron.workspace = true
+serde.workspace = true
 tracing.workspace = true
 zip.workspace = true
 png.workspace = true

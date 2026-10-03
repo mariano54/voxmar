@@ -5,11 +5,13 @@
 
 use std::time::Duration;
 
-use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
 use bevy::prelude::*;
 
 use crate::player::{LocalPlayer, UiState};
+use crate::settings::Settings;
 
+/// Volume at 100% in the settings.
 const VOLUME: f32 = 0.35;
 const FIRST_TRACK_DELAY: (f32, f32) = (20.0, 60.0);
 const GAP_BETWEEN_TRACKS: (f32, f32) = (180.0, 420.0);
@@ -18,7 +20,8 @@ pub struct MusicPlugin;
 
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_tracks).add_systems(Update, (toggle_music, schedule_music));
+        app.add_systems(Startup, load_tracks)
+            .add_systems(Update, (toggle_music, schedule_music, set_volume.run_if(resource_changed::<Settings>)));
     }
 }
 
@@ -56,14 +59,19 @@ fn random_in(time: &Time, (low, high): (f32, f32)) -> f32 {
     low + (high - low) * (mixed as f32 / (1u64 << 24) as f32)
 }
 
+fn volume(settings: &Settings) -> Volume {
+    Volume::Linear(VOLUME * settings.music_volume as f32 / 100.0)
+}
+
 fn schedule_music(
     mut commands: Commands,
     time: Res<Time>,
     player: Res<LocalPlayer>,
+    settings: Res<Settings>,
     mut music: ResMut<Music>,
     tracks: Query<(), With<MusicTrack>>,
 ) {
-    if !player.joined || music.tracks.is_empty() || !music.enabled {
+    if !player.joined || music.tracks.is_empty() || !music.enabled || settings.music_volume == 0 {
         return;
     }
     // A finished track despawns itself; schedule the next one after a quiet gap.
@@ -91,10 +99,16 @@ fn schedule_music(
         .spawn((
             MusicTrack,
             AudioPlayer(music.tracks[index].clone()),
-            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(VOLUME)),
+            PlaybackSettings::DESPAWN.with_volume(volume(&settings)),
         ))
         .id();
     music.playing = Some(entity);
+}
+
+fn set_volume(settings: Res<Settings>, mut playing: Query<&mut AudioSink, With<MusicTrack>>) {
+    for mut sink in &mut playing {
+        sink.set_volume(volume(&settings));
+    }
 }
 
 fn toggle_music(

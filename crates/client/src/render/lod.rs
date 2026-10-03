@@ -231,6 +231,22 @@ impl Lod {
         self.last_camera = None;
     }
 
+    /// Radius, in columns, of the real chunks the rings surround.
+    pub fn real_columns(&self) -> i32 {
+        self.real_columns
+    }
+
+    pub fn set_real_columns(&mut self, real_columns: i32, materials: &mut Assets<LodMaterial>) {
+        self.real_columns = real_columns;
+        for handle in &self.materials {
+            if let Some(mut material) = materials.get_mut(handle) {
+                material.params.rings.w = real_columns as f32;
+            }
+        }
+        // Recompute the wanted tiles.
+        self.last_camera = None;
+    }
+
     /// Tiles shown and tiles wanted.
     pub fn progress(&self) -> (usize, usize) {
         (self.tiles.len(), self.wanted.len())

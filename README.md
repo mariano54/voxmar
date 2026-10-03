@@ -13,12 +13,20 @@ cargo run --release -- --connect HOST:PORT  # join a server
 ```
 
 Client flags: `--seed N`, `--name NAME`, `--view-distance N` (columns of 32 blocks, default 16),
-`--no-vsync` (uncapped frame rate), and `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS]`, which runs headless, waits for the
+`--no-vsync` (uncapped frame rate), and `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--menu]`, which runs headless, waits for the
 world to load, logs frame time and saves a screenshot.
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, 1-9 or wheel select hotbar slot, E inventory (click a slot, then
-another to move it), F3 debug overlay, Esc release the mouse, R respawn.
+another to move it), F3 debug overlay, Esc menu, R respawn.
+
+Esc opens the settings menu: render distance, field of view, VSync, debug overlay, music and
+sound volume, mouse sensitivity, and fly speed for admins. Settings are saved to
+`voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
+`$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows); `--view-distance` and
+`--no-vsync` override them. The singleplayer player is an admin; on a dedicated server, name
+admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
+(default 32).
 
 ### Textures
 
