@@ -62,7 +62,6 @@ pub fn play(commands: &mut Commands, next: &mut NextState<Screen>, net: Net) {
 
 /// Leaves the world: stops the integrated server (which saves the world), and removes
 /// the world's chunks, distant terrain, players and per-session state.
-#[allow(clippy::too_many_arguments)]
 fn end_session(
     mut commands: Commands,
     settings: Res<Settings>,

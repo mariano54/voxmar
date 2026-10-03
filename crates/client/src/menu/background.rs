@@ -50,7 +50,6 @@ struct Backdrop {
     started: f32,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn start(
     mut commands: Commands,
     time: Res<Time>,
