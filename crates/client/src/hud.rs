@@ -12,6 +12,7 @@ use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
 use crate::settings::Settings;
+use crate::weather::{self, ClientWeather};
 use crate::world::ClientWorld;
 
 pub struct HudPlugin;
@@ -320,6 +321,7 @@ fn update_debug(
     settings: Res<Settings>,
     target: Res<Target>,
     lod: Res<Lod>,
+    weather: Res<ClientWeather>,
     mut text: Query<(&mut Text, &mut Visibility), With<DebugText>>,
 ) {
     let Ok((mut text, mut visibility)) = text.single_mut() else { return };
@@ -335,12 +337,25 @@ fn update_debug(
         .hit
         .and_then(|hit| world.block(hit.block).map(|b| format!("{} at {}", world.registry.def(b).name, hit.block)))
         .unwrap_or_else(|| "nothing".into());
+    let w = &weather.current;
+    let sky = format!(
+        "{}: cloud {:.0}% ({:.0}% heaped), cirrus {:.0}%, humidity {:.0}%, {} {:.0}%, wind {:.1} blocks/s",
+        weather::describe(w),
+        w.cover * 100.0,
+        w.convection * 100.0,
+        w.cirrus * 100.0,
+        w.humidity * 100.0,
+        if w.snow > 0.5 { "snow" } else { "rain" },
+        w.precipitation * 100.0,
+        w.wind.length(),
+    );
     text.0 = format!(
         "{fps:.0} fps ({frame_ms:.2} ms)\n\
          xyz {:.1} {:.1} {:.1}{}\n\
          columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
          mesh jobs {} | waiting {} | distant tiles {}/{}\n\
          looking at {looking}\n\
+         {sky}\n\
          F3 debug  F fly  E inventory  M music  Esc menu",
         p.x,
         p.y,

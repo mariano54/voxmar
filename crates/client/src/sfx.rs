@@ -11,24 +11,32 @@
 //!   placing adds a soft low thump, breaking is longer and lower, mining taps are quieter.
 //! - Deterministic generation, like textures: a material always sounds the same on every
 //!   machine, and nothing is downloaded or shipped.
+//!
+//! Rain is a soft loop of tiny drops over a hiss, as loud as the rain is heavy and quieter
+//! under cover.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
-use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::{BlockId, Sound};
 use voxmar_engine::physics::player as dims;
 
 use crate::player::LocalPlayer;
+use crate::render::precipitation::SkyMap;
 use crate::settings::Settings;
+use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
 const RATE: u32 = 44_100;
 const VARIANTS: u64 = 4;
 /// Volume at 100% in the settings.
 const MASTER: f32 = 0.6;
+/// Seconds in the rain loop, and its volume in the heaviest rain out in the open.
+const RAIN_LOOP: f32 = 4.0;
+const RAIN_GAIN: f32 = 0.45;
 
 pub struct SfxPlugin;
 
@@ -36,7 +44,7 @@ impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SoundCue>()
             .add_systems(Startup, synthesize)
-            .add_systems(Update, (footsteps, play_cues).chain());
+            .add_systems(Update, ((footsteps, play_cues).chain(), rain));
     }
 }
 
@@ -105,6 +113,40 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
         }
     }
     commands.insert_resource(Sfx { clips, counter: 0 });
+    let rain = sources.add(AudioSource { bytes: Arc::from(wav(&rain_loop(0x7261_696e))) });
+    let playback = PlaybackSettings { paused: true, ..PlaybackSettings::LOOP.with_volume(Volume::SILENT) };
+    commands.spawn((RainSound, AudioPlayer(rain), playback));
+}
+
+#[derive(Component)]
+struct RainSound;
+
+/// Fades the rain loop with how hard it rains (snow is silent) and how open the sky is
+/// above the player.
+fn rain(
+    time: Res<Time>,
+    weather: Res<ClientWeather>,
+    map: Res<SkyMap>,
+    settings: Res<Settings>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
+    mut sink: Query<&mut AudioSink, With<RainSound>>,
+    mut level: Local<f32>,
+) {
+    let (Ok(camera), Ok(mut sink)) = (camera.single(), sink.single_mut()) else { return };
+    let shown = &weather.current;
+    let rain = shown.precipitation * (1.0 - shown.snow);
+    let target = if rain > 0.01 { rain.sqrt() * (0.25 + 0.75 * map.openness(camera.translation())) } else { 0.0 };
+    *level += (target - *level) * (time.delta_secs() * 2.0).min(1.0);
+    if *level < 0.002 {
+        if !sink.is_paused() {
+            sink.pause();
+        }
+        return;
+    }
+    sink.set_volume(Volume::Linear(*level * RAIN_GAIN * MASTER * settings.sound_volume as f32 / 100.0));
+    if sink.is_paused() {
+        sink.play();
+    }
 }
 
 fn play_cues(mut commands: Commands, mut cues: MessageReader<SoundCue>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
@@ -308,6 +350,56 @@ fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
     samples
 }
 
+/// Rain on the ground, looping seamlessly: a dense patter of tiny drops (short decaying
+/// tones, mostly faint, a few closer and louder) over a soft hiss and a low body.
+fn rain_loop(seed: u64) -> Vec<f32> {
+    let length = (RAIN_LOOP * RATE as f32) as usize;
+    let overlap = RATE as usize / 2;
+    let mut noise = Noise(seed);
+    let mut samples = vec![0.0f32; length + overlap];
+    let drop_length = (0.012 * RATE as f32) as usize;
+    for _ in 0..((RAIN_LOOP + 0.5) * 1100.0) as usize {
+        let start = (noise.unit() * samples.len() as f32) as usize;
+        let step = TAU * (1800.0 + 4200.0 * noise.unit()) / RATE as f32;
+        let loudness = 0.04 + 0.4 * noise.unit().powi(4);
+        let decay = (-(250.0 + 500.0 * noise.unit()) / RATE as f32).exp();
+        let mut amplitude = loudness;
+        for (j, sample) in samples.iter_mut().skip(start).take(drop_length).enumerate() {
+            *sample += amplitude * (step * j as f32).sin();
+            amplitude *= decay;
+        }
+    }
+    // Hiss and body: band-passed and low-passed noise from one state-variable filter each.
+    let svf = |center: f32| 2.0 * (std::f32::consts::PI * center / RATE as f32).sin();
+    let (hiss, body) = (svf(3200.0), svf(320.0));
+    let (mut hiss_low, mut hiss_band, mut body_low, mut body_band) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for sample in &mut samples {
+        let input = noise.next();
+        hiss_low += hiss * hiss_band;
+        hiss_band += hiss * (input - hiss_low - 1.4 * hiss_band);
+        body_low += body * body_band;
+        body_band += body * (input - body_low - 1.2 * body_band);
+        *sample += 0.12 * hiss_band + 0.35 * body_low;
+    }
+    // Crossfade the extra tail into the start, keeping the power steady, so the loop has
+    // no seam.
+    for i in 0..overlap {
+        let w = i as f32 / overlap as f32;
+        samples[i] = samples[i] * w.sqrt() + samples[length + i] * (1.0 - w).sqrt();
+    }
+    samples.truncate(length);
+    let mut warm = 0.0f32;
+    for sample in &mut samples {
+        warm += 0.5 * (*sample - warm);
+        *sample = warm;
+    }
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt().max(1e-6);
+    let peak = samples.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
+    let scale = (0.15 / rms).min(0.9 / peak);
+    samples.iter_mut().for_each(|s| *s *= scale);
+    samples
+}
+
 /// A few rising bubble chirps for water.
 fn water_bubbles(t: f32, seed: u64) -> f32 {
     (0..3)
@@ -361,6 +453,14 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rain_loops_without_a_seam() {
+        let samples = rain_loop(3);
+        assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+        let steepest = samples.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+        assert!((samples[0] - samples[samples.len() - 1]).abs() <= steepest);
+    }
+
     /// `cargo test -p voxmar_client sfx_preview -- --ignored` writes every cue, one after
     /// another, to `target/sfx_preview.wav` for listening.
     #[test]
@@ -375,6 +475,9 @@ mod tests {
                 }
             }
             all.extend(std::iter::repeat_n(0.0, RATE as usize / 2));
+        }
+        for _ in 0..2 {
+            all.extend(rain_loop(1).iter().map(|s| s * RAIN_GAIN));
         }
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sfx_preview.wav");
         std::fs::write(path, wav(&all)).unwrap();
