@@ -302,6 +302,22 @@ impl Trees {
     }
 }
 
+/// The cells from `from` (exclusive, unless equal to `to`) to `to`, changing one axis at
+/// a time (horizontal first), so consecutive cells share a face and wood never looks
+/// broken where it runs diagonally.
+fn connect(from: IVec3, to: IVec3) -> impl Iterator<Item = IVec3> {
+    let mut at = from;
+    let mut first = from == to;
+    std::iter::from_fn(move || {
+        if std::mem::take(&mut first) {
+            return Some(at);
+        }
+        let axis = [0, 2, 1].into_iter().find(|&axis| at[axis] != to[axis])?;
+        at[axis] += (to[axis] - at[axis]).signum();
+        Some(at)
+    })
+}
+
 /// Writes a tree's wood and leaves, clipped to its reach and to the column being
 /// generated. Wood replaces leaves but leaves never replace wood, so the order in which
 /// parts (or overlapping trees) are written does not matter.
@@ -337,24 +353,36 @@ impl Grower<'_, '_> {
     /// blocks below its base, filling only air, so trunks on slopes (and every corner of
     /// a 2×2 trunk) reach the ground.
     fn trunk(&mut self, centre: impl Fn(f32) -> Vec3, height: i32, thick: bool, log: BlockId, sunk: bool) {
-        let cells: &[(i32, i32)] = if thick { &[(0, 0), (-1, 0), (0, -1), (-1, -1)] } else { &[(0, 0)] };
+        let offsets: &[(i32, i32)] = if thick { &[(0, 0), (-1, 0), (0, -1), (-1, -1)] } else { &[(0, 0)] };
+        let mut last: Option<IVec3> = None;
         for k in if sunk { -2 } else { 0 }..height {
             let p = centre(k.max(0) as f32 / height as f32);
             let cell = IVec3::new(p.x.floor() as i32, p.y.floor() as i32 + k.min(0), p.z.floor() as i32);
-            for &(dx, dz) in cells {
-                let cell = cell + IVec3::new(dx, 0, dz);
-                if k >= 0 {
-                    self.wood(cell, log);
-                } else if self.reachable(cell) {
-                    self.blocks.put_if_air(cell, log);
+            for step in connect(last.unwrap_or(cell), cell) {
+                for &(dx, dz) in offsets {
+                    let cell = step + IVec3::new(dx, 0, dz);
+                    if k >= 0 {
+                        self.wood(cell, log);
+                    } else if self.reachable(cell) {
+                        self.blocks.put_if_air(cell, log);
+                    }
                 }
             }
+            last = Some(cell);
         }
     }
 
-    fn line_cells(from: Vec3, to: Vec3) -> impl Iterator<Item = IVec3> {
+    fn line_cells(from: Vec3, to: Vec3) -> Vec<IVec3> {
         let steps = ((to - from).length() * 2.0).ceil().max(1.0) as i32;
-        (0..=steps).map(move |i| from.lerp(to, i as f32 / steps as f32).floor().as_ivec3())
+        let mut cells = vec![from.floor().as_ivec3()];
+        for i in 1..=steps {
+            let cell = from.lerp(to, i as f32 / steps as f32).floor().as_ivec3();
+            let last = cells[cells.len() - 1];
+            if cell != last {
+                cells.extend(connect(last, cell));
+            }
+        }
+        cells
     }
 
     fn line(&mut self, from: Vec3, to: Vec3, log: BlockId) {
