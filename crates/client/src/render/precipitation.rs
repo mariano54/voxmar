@@ -24,9 +24,9 @@ use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
 /// Drops in the box at the heaviest rain or snow, including the splashes the shader makes
-/// of some of them.
+/// of some of them, and the box of falling drops around the camera, in blocks. The shader
+/// has the same constants.
 const DROPS: u32 = 16_000;
-/// The box of falling drops around the camera, in blocks.
 const BOX: Vec3 = Vec3::new(40.0, 36.0, 40.0);
 /// Falling speeds, in blocks per second.
 const RAIN_SPEED: f32 = 14.0;

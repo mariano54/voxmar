@@ -22,11 +22,12 @@ struct Params {
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: Params;
 
+// As in precipitation.rs.
 const BOX = vec3(40.0, 36.0, 40.0);
 const MAP: i32 = 64;
+const DROPS: u32 = 16000u;
 // The last drops splash on the ground instead, within this many blocks of the camera.
 const SPLASHES: u32 = 3000u;
-const DROPS: u32 = 16000u;
 const SPLASH_REACH: f32 = 14.0;
 const TAU: f32 = 6.28318531;
 // Off-screen, for drops not drawn: all four corners collapse there.
