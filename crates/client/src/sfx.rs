@@ -22,10 +22,12 @@ use voxmar_engine::block::{BlockId, Sound};
 use voxmar_engine::physics::player as dims;
 
 use crate::player::LocalPlayer;
+use crate::settings::Settings;
 use crate::world::ClientWorld;
 
 const RATE: u32 = 44_100;
 const VARIANTS: u64 = 4;
+/// Volume at 100% in the settings.
 const MASTER: f32 = 0.6;
 
 pub struct SfxPlugin;
@@ -105,14 +107,15 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
     commands.insert_resource(Sfx { clips, counter: 0 });
 }
 
-fn play_cues(mut commands: Commands, mut cues: MessageReader<SoundCue>, sfx: Option<ResMut<Sfx>>) {
+fn play_cues(mut commands: Commands, mut cues: MessageReader<SoundCue>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
     let Some(mut sfx) = sfx else { return };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
     for cue in cues.read() {
         let variant = (sfx.random() * VARIANTS as f32) as usize % VARIANTS as usize;
         let speed = 0.92 + sfx.random() * 0.16;
         let Some(clip) = sfx.clips.get(&(cue.sound, cue.cue)).map(|v| v[variant].clone()) else { continue };
-        let settings = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(cue.cue.gain() * MASTER)) };
-        commands.spawn((AudioPlayer(clip), settings));
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(cue.cue.gain() * master)) };
+        commands.spawn((AudioPlayer(clip), playback));
     }
 }
 

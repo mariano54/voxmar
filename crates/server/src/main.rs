@@ -1,4 +1,5 @@
-//! Dedicated server: `voxmar-server [--bind ADDR] [--seed N] [--view-distance N] [--no-flight]`.
+//! Dedicated server:
+//! `voxmar-server [--bind ADDR] [--seed N] [--view-distance N] [--no-flight] [--admin NAME]...`.
 
 use std::net::SocketAddr;
 
@@ -20,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--seed" => config.seed = value()?.parse()?,
             "--view-distance" => config.view_distance = value()?.parse()?,
             "--no-flight" => config.allow_flight = false,
+            "--admin" => config.admins.push(value()?),
             _ => return Err(format!("unknown argument {arg}").into()),
         }
     }

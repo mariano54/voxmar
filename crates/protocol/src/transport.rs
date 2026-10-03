@@ -13,6 +13,7 @@ pub struct Disconnected;
 pub struct Connection<Out, In> {
     tx: Sender<Out>,
     rx: Receiver<In>,
+    local: bool,
 }
 
 pub type ClientConnection = Connection<ClientMessage, ServerMessage>;
@@ -32,13 +33,19 @@ impl<Out, In> Connection<Out, In> {
             Err(TryRecvError::Disconnected) => Err(Disconnected),
         }
     }
+
+    /// Whether this is an in-process connection, which only the integrated server's own
+    /// client can make.
+    pub fn is_local(&self) -> bool {
+        self.local
+    }
 }
 
 /// An in-process connection, used by singleplayer's integrated server.
 pub fn local_pair() -> (ClientConnection, ServerConnection) {
     let (client_tx, server_rx) = unbounded();
     let (server_tx, client_rx) = unbounded();
-    (Connection { tx: client_tx, rx: client_rx }, Connection { tx: server_tx, rx: server_rx })
+    (Connection { tx: client_tx, rx: client_rx, local: true }, Connection { tx: server_tx, rx: server_rx, local: true })
 }
 
 pub mod tcp {
@@ -133,6 +140,6 @@ pub mod tcp {
             let _ = reader.get_ref().shutdown(std::net::Shutdown::Both);
         })?;
 
-        Ok(Connection { tx: out_tx, rx: in_rx })
+        Ok(Connection { tx: out_tx, rx: in_rx, local: false })
     }
 }

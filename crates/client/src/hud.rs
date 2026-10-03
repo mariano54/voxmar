@@ -10,6 +10,7 @@ use crate::interact::Target;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
+use crate::settings::Settings;
 use crate::world::ClientWorld;
 
 pub struct HudPlugin;
@@ -204,12 +205,9 @@ fn toggle_screens(
     mut panel: Query<&mut Visibility, With<InventoryPanel>>,
     mut held: ResMut<HeldSlot>,
 ) {
-    if keys.just_pressed(KeyCode::KeyE) && !player.dead {
+    if keys.just_pressed(KeyCode::KeyE) && !player.dead && !ui.menu_open {
         ui.inventory_open = !ui.inventory_open;
         held.0 = None;
-    }
-    if keys.just_pressed(KeyCode::F3) {
-        ui.debug = !ui.debug;
     }
     if player.dead && keys.just_pressed(KeyCode::KeyR) {
         net.propose(actions.0.expect("core:respawn"), ActionTarget::None);
@@ -310,14 +308,14 @@ fn update_debug(
     diagnostics: Res<DiagnosticsStore>,
     world: Res<ClientWorld>,
     player: Res<LocalPlayer>,
-    ui: Res<UiState>,
+    settings: Res<Settings>,
     target: Res<Target>,
     lod: Res<Lod>,
     mut text: Query<(&mut Text, &mut Visibility), With<DebugText>>,
 ) {
     let Ok((mut text, mut visibility)) = text.single_mut() else { return };
-    visibility.set_if_neq(if ui.debug { Visibility::Inherited } else { Visibility::Hidden });
-    if !ui.debug {
+    visibility.set_if_neq(if settings.debug_overlay { Visibility::Inherited } else { Visibility::Hidden });
+    if !settings.debug_overlay {
         return;
     }
     let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
@@ -334,7 +332,7 @@ fn update_debug(
          columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
          mesh jobs {} | waiting {} | distant tiles {}/{}\n\
          looking at {looking}\n\
-         F3 debug  F fly  E inventory  M music  Esc release mouse",
+         F3 debug  F fly  E inventory  M music  Esc menu",
         p.x,
         p.y,
         p.z,

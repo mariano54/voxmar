@@ -119,6 +119,11 @@ impl ClientWorld {
         }
     }
 
+    pub fn set_view_distance(&mut self, view_distance: i32) {
+        self.view_distance = view_distance;
+        self.visibility_dirty = true;
+    }
+
     pub fn insert_column(&mut self, pos: ColumnPos, column: Arc<Column>) {
         self.voxels.insert(pos, column);
         for dz in -1..=1 {

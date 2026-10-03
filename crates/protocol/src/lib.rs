@@ -19,12 +19,14 @@ use voxmar_engine::world::Column;
 
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
 /// In-game day length.
 pub const TICKS_PER_DAY: u64 = 24_000;
+/// Highest flight speed multiplier an admin may choose.
+pub const MAX_FLY_SPEED: f32 = 4.0;
 
 pub type PlayerId = u32;
 
@@ -36,6 +38,9 @@ pub enum ClientMessage {
     Propose { action: ActionId, target: ActionTarget },
     /// Abandon the action in progress (for example, the mouse button was released).
     Cancel,
+    /// The player's preferences: streaming radius in columns (capped by the server) and
+    /// flight speed multiplier (honoured for admins only).
+    Settings { view_distance: u8, fly_speed: f32 },
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
@@ -51,7 +56,7 @@ pub struct PlayerInput {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
-    Welcome { player: PlayerId, seed: u64, position: Vec3, allow_flight: bool },
+    Welcome { player: PlayerId, seed: u64, position: Vec3, allow_flight: bool, admin: bool },
     Rejected { reason: String },
     Column { pos: ColumnPos, column: Arc<Column> },
     Unload { pos: ColumnPos },
