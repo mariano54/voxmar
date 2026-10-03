@@ -139,6 +139,9 @@ pub struct SkyParams {
     pub horizon: Vec4,
     pub sun: Vec4,
     pub clouds: Vec4,
+    /// x: fraction of the day, which turns the night sky with the sun; y: days elapsed
+    /// (wrapped every 1000 days), for the slow drift of the planets.
+    pub stars: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
@@ -423,7 +426,8 @@ fn update_environment(
     let Some(handles) = handles else { return };
     let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
     cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
-    let env = Environment::at((cycle.ticks / TICKS_PER_DAY as f64).fract() as f32);
+    let days = cycle.ticks / TICKS_PER_DAY as f64;
+    let env = Environment::at(days.fract() as f32);
 
     if let Ok((mut transform, mut light)) = sun.single_mut() {
         *transform = Transform::default().looking_to(-env.light_direction, Vec3::Y);
@@ -454,6 +458,7 @@ fn update_environment(
             horizon: horizon.extend(1.0),
             sun: env.to_sun.extend(env.daylight),
             clouds: Vec4::new((cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0, 0.45, 0.0, 0.0),
+            stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
         };
     }
 }
