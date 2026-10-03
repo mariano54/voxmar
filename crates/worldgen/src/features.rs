@@ -140,6 +140,22 @@ fn disc(blocks: &mut Blocks, center: IVec3, radius: i32, leaves: BlockId, rng: &
     }
 }
 
+impl Features {
+    /// The leaves that dominate a biome's tree cover, and how much ground they cover.
+    pub fn canopy(&self, biome: Biome) -> Option<(BlockId, f32)> {
+        Some(match biome {
+            Biome::Forest => (self.oak.leaves, 0.75),
+            Biome::BirchForest => (self.birch.leaves, 0.7),
+            Biome::Taiga => (self.spruce.leaves, 0.6),
+            Biome::Jungle => (self.jungle.leaves, 0.9),
+            Biome::Savanna => (self.acacia.leaves, 0.15),
+            Biome::Plains => (self.oak.leaves, 0.05),
+            Biome::SnowyTundra | Biome::Mountains => (self.spruce.leaves, 0.08),
+            _ => return None,
+        })
+    }
+}
+
 fn pick(biome: Biome, rng: &mut Rng) -> Option<Kind> {
     let (density, kind) = match biome {
         Biome::Forest => (0.45, if rng.chance(0.2) { Kind::Birch } else { Kind::Oak }),

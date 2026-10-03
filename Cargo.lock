@@ -5183,6 +5183,7 @@ dependencies = [
  "voxmar_engine",
  "voxmar_protocol",
  "voxmar_server",
+ "voxmar_worldgen",
  "zip",
 ]
 

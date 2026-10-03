@@ -26,6 +26,8 @@ use voxmar_protocol::TICKS_PER_DAY;
 
 use crate::textures::Rgba;
 
+pub mod lod;
+
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
 
 const VOXEL_SHADER: &str = "embedded://voxmar/render/voxel.wgsl";
@@ -37,7 +39,11 @@ impl Plugin for RenderPlugin {
         load_shader_library!(app, "lighting.wgsl");
         embedded_asset!(app, "voxel.wgsl");
         embedded_asset!(app, "sky.wgsl");
-        app.add_plugins((MaterialPlugin::<VoxelMaterial>::default(), MaterialPlugin::<SkyMaterial>::default()))
+        app.add_plugins((
+            MaterialPlugin::<VoxelMaterial>::default(),
+            MaterialPlugin::<SkyMaterial>::default(),
+            lod::LodPlugin,
+        ))
             .insert_resource(DirectionalLightShadowMap { size: 2048 })
             .init_resource::<DayCycle>()
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
@@ -162,7 +168,7 @@ pub struct VoxelMaterials {
 #[derive(Resource, Default)]
 pub struct DayCycle {
     pub ticks: f64,
-    /// Fog end distance in blocks.
+    /// Fog end distance in blocks: the edge of the distant terrain.
     pub view_distance: f32,
     pub underwater: bool,
 }
@@ -419,7 +425,7 @@ fn update_environment(
         horizon = Vec3::new(0.04, 0.13, 0.32) * (0.2 + 0.8 * env.daylight);
         (0.0, 40.0)
     } else {
-        (cycle.view_distance * 0.6, cycle.view_distance)
+        (cycle.view_distance * 0.3, cycle.view_distance)
     };
     let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
     clear.0 = horizon_color;

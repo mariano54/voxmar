@@ -254,6 +254,20 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     column
 }
 
+impl Terrain {
+    /// Top block of dry or submerged ground, and the block (water or ice) above it when
+    /// it lies below sea level.
+    pub fn surface_blocks(&self, x: i32, z: i32, height: i32, biome: Biome, temperature: f32, slope: i32) -> (BlockId, Option<BlockId>) {
+        let (top, _, _) = surface_layers(&self.ids, biome, height, slope, || self.floor.get_noise_2d(x as f32, z as f32));
+        let water = (height < SEA_LEVEL).then_some(if temperature < 0.18 { self.ids.ice } else { self.ids.water });
+        (top, water)
+    }
+
+    pub fn canopy(&self, biome: Biome) -> Option<(BlockId, f32)> {
+        self.features.canopy(biome)
+    }
+}
+
 /// Top block, the block beneath it and how deep that second layer goes.
 fn surface_layers(ids: &Ids, biome: Biome, height: i32, slope: i32, floor: impl Fn() -> f32) -> (BlockId, BlockId, i32) {
     if height < SEA_LEVEL {

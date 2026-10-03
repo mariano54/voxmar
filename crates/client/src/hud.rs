@@ -8,6 +8,7 @@ use voxmar_protocol::Action;
 use crate::interact::Target;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
+use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
 pub struct HudPlugin;
@@ -309,6 +310,7 @@ fn update_debug(
     player: Res<LocalPlayer>,
     ui: Res<UiState>,
     target: Res<Target>,
+    lod: Res<Lod>,
     mut text: Query<(&mut Text, &mut Visibility), With<DebugText>>,
 ) {
     let Ok((mut text, mut visibility)) = text.single_mut() else { return };
@@ -328,7 +330,7 @@ fn update_debug(
         "{fps:.0} fps ({frame_ms:.2} ms)\n\
          xyz {:.1} {:.1} {:.1}{}\n\
          columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
-         mesh jobs {} | waiting {}\n\
+         mesh jobs {} | waiting {} | distant tiles {}/{}\n\
          looking at {looking}\n\
          F3 debug  F fly  E inventory  Esc release mouse",
         p.x,
@@ -341,6 +343,8 @@ fn update_debug(
         stats.visible_chunks,
         stats.jobs_in_flight,
         stats.pending_columns,
+        lod.progress().0,
+        lod.progress().1,
     );
 }
 

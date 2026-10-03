@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use bevy::camera::primitives::Aabb;
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
@@ -68,6 +69,8 @@ impl ChunkResult {
         Self { connectivity: mesh.connectivity, passes: [PassResult::new(mesh.opaque), PassResult::new(mesh.translucent)] }
     }
 }
+
+const TRANSLUCENT: usize = 1;
 
 /// Quads handed to the renderer per frame, so streaming never causes a long frame.
 const UPLOAD_BUDGET: usize = 250_000;
@@ -259,14 +262,17 @@ fn apply_meshes(
                     }
                     (Some(mesh), None) => {
                         let handle = meshes.add(mesh);
-                        let entity = commands
-                            .spawn((
-                                Mesh3d(handle.clone()),
-                                MeshMaterial3d(material.clone()),
-                                Transform::from_translation(chunk.origin().as_vec3()),
-                                Aabb::from_min_max(Vec3::ZERO, Vec3::splat(CHUNK_SIZE as f32)),
-                            ))
-                            .id();
+                        let mut entity = commands.spawn((
+                            Mesh3d(handle.clone()),
+                            MeshMaterial3d(material.clone()),
+                            Transform::from_translation(chunk.origin().as_vec3()),
+                            Aabb::from_min_max(Vec3::ZERO, Vec3::splat(CHUNK_SIZE as f32)),
+                        ));
+                        if pass == TRANSLUCENT {
+                            // Water would shadow itself.
+                            entity.insert(NotShadowCaster);
+                        }
+                        let entity = entity.id();
                         render.passes[pass] = Some((entity, handle));
                         world.visibility_dirty = true;
                     }

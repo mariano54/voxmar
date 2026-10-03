@@ -34,13 +34,18 @@ pub struct ClimateSample {
 pub struct Climate {
     temperature: FastNoiseLite,
     precipitation: FastNoiseLite,
+    /// Picks between biomes that share a climate (desert or badlands, forest kinds).
+    variant: FastNoiseLite,
 }
 
 impl Climate {
     pub fn new(seed: u64) -> Self {
         Self {
-            temperature: noise(seed, 10, 0.0009, FractalType::FBm, 3),
-            precipitation: noise(seed, 11, 0.0011, FractalType::FBm, 3),
+            // Low frequencies and few octaves give biomes a few kilometres across with
+            // smooth borders instead of thin bands.
+            temperature: noise(seed, 10, 0.00035, FractalType::FBm, 2),
+            precipitation: noise(seed, 11, 0.0004, FractalType::FBm, 2),
+            variant: noise(seed, 12, 0.0006, FractalType::FBm, 2),
         }
     }
 
@@ -48,12 +53,13 @@ impl Climate {
         let altitude = (geo.height - SEA_LEVEL - 20).max(0) as f32;
         let temperature = ((self.temperature.get_noise_2d(x as f32, z as f32) * 0.7 + 0.5) - altitude * 0.006).clamp(0.0, 1.0);
         let precipitation = (self.precipitation.get_noise_2d(x as f32, z as f32) * 0.7 + 0.5).clamp(0.0, 1.0);
-        let biome = pick(temperature, precipitation, geo);
+        let variant = self.variant.get_noise_2d(x as f32, z as f32);
+        let biome = pick(temperature, precipitation, variant, geo);
         ClimateSample { temperature, precipitation, biome }
     }
 }
 
-fn pick(t: f32, p: f32, geo: &GeoSample) -> Biome {
+fn pick(t: f32, p: f32, variant: f32, geo: &GeoSample) -> Biome {
     let h = geo.height;
     if h < SEA_LEVEL - 3 {
         return if t < 0.2 { Biome::FrozenOcean } else { Biome::Ocean };
@@ -70,14 +76,14 @@ fn pick(t: f32, p: f32, geo: &GeoSample) -> Biome {
     match (t, p) {
         (t, p) if t < 0.22 => if p > 0.5 { Biome::Taiga } else { Biome::SnowyTundra },
         (t, p) if t < 0.38 => if p > 0.35 { Biome::Taiga } else { Biome::Plains },
-        (t, p) if t > 0.72 => match p {
-            p if p < 0.3 => Biome::Desert,
-            p if p < 0.42 => Biome::Badlands,
-            p if p < 0.62 => Biome::Savanna,
+        (t, p) if t > 0.7 => match p {
+            p if p < 0.35 && variant > 0.35 => Biome::Badlands,
+            p if p < 0.35 => Biome::Desert,
+            p if p < 0.6 => Biome::Savanna,
             _ => Biome::Jungle,
         },
         (_, p) if p < 0.38 => Biome::Plains,
-        (_, p) if p < 0.62 => Biome::Forest,
-        _ => Biome::BirchForest,
+        _ if variant > 0.3 => Biome::BirchForest,
+        _ => Biome::Forest,
     }
 }

@@ -10,6 +10,7 @@ use voxmar_server::ServerHandle;
 
 use crate::player::LocalPlayer;
 use crate::render::DayCycle;
+use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
 pub struct NetPlugin;
@@ -54,6 +55,7 @@ fn receive(
     mut player: ResMut<LocalPlayer>,
     mut cycle: ResMut<DayCycle>,
     mut remote: ResMut<RemotePlayers>,
+    mut lod: ResMut<Lod>,
 ) {
     loop {
         let message = match net.connection.try_recv() {
@@ -67,7 +69,8 @@ fn receive(
             }
         };
         match message {
-            ServerMessage::Welcome { position, allow_flight, .. } => {
+            ServerMessage::Welcome { position, allow_flight, seed, .. } => {
+                lod.start(seed, world.registry.clone());
                 player.position = position;
                 player.allow_flight = allow_flight;
                 player.joined = true;

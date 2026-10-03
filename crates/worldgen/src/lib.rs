@@ -15,7 +15,7 @@ mod terrain;
 
 use std::sync::Arc;
 
-use voxmar_engine::block::BlockRegistry;
+use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::world::Column;
@@ -32,6 +32,20 @@ pub trait Generator: Send + Sync {
 }
 
 pub const SEA_LEVEL: i32 = 64;
+
+/// A coarse description of the surface at one position, for distant terrain.
+#[derive(Clone, Copy, Debug)]
+pub struct SurfaceSample {
+    /// Height of the top ground block.
+    pub height: i32,
+    pub ground: BlockId,
+    /// Water or ice at sea level when the ground is submerged.
+    pub water: Option<BlockId>,
+    /// Dominant leaves and the fraction of ground under trees.
+    pub canopy: Option<(BlockId, f32)>,
+    /// Temperature and humidity, as stored in `Column::climate`.
+    pub climate: [u8; 2],
+}
 
 /// The default overworld.
 pub struct Overworld {
@@ -60,6 +74,26 @@ impl Overworld {
     fn surface(&self, x: i32, z: i32) -> (i32, climate::ClimateSample) {
         let geo = self.geology.sample(x, z);
         (geo.height, self.climate.sample(x, z, &geo))
+    }
+
+    /// Surface height only; cheap enough to sample on coarse grids.
+    pub fn height(&self, x: i32, z: i32) -> i32 {
+        self.geology.sample(x, z).height
+    }
+
+    /// What the surface looks like from far away, given its local steepness in blocks.
+    /// Matches full generation except for caves and individual trees.
+    pub fn surface_sample(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
+        let geo = geology::GeoSample { height, mountain: self.geology.sample(x, z).mountain };
+        let climate = self.climate.sample(x, z, &geo);
+        let (ground, water) = self.terrain.surface_blocks(x, z, height, climate.biome, climate.temperature, slope);
+        SurfaceSample {
+            height,
+            ground,
+            water,
+            canopy: if water.is_some() { None } else { self.terrain.canopy(climate.biome) },
+            climate: [(climate.temperature * 255.0) as u8, (climate.precipitation * 255.0) as u8],
+        }
     }
 }
 

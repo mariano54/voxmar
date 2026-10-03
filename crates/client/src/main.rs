@@ -23,11 +23,12 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::window::{ExitCondition, PresentMode};
 use voxmar_engine::block::{BlockRegistry, Tint};
-use voxmar_engine::coords::{CHUNK_SIZE, Face};
+use voxmar_engine::coords::Face;
 use voxmar_protocol::{DEFAULT_PORT, local_pair, tcp};
 use voxmar_server::{ServerConfig, ServerHandle};
 
 use crate::hud::HudImages;
+use crate::render::lod::{Lod, LodMaterial, LodPalette};
 use crate::render::{SkyMaterial, VoxelMaterial, ui_image};
 use crate::textures::{Rgba, Source};
 use crate::world::ClientWorld;
@@ -119,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .insert_resource(ClientWorld::new(registry.clone(), options.view_distance))
     .insert_resource(net::Net::new(connection, server, options.name.clone(), registry.fingerprint()))
-    .insert_resource(render::DayCycle { view_distance: (options.view_distance * CHUNK_SIZE) as f32, ..default() })
+    .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(options.view_distance), ..default() })
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
     if let Some(path) = options.capture {
@@ -159,12 +160,16 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut voxel_materials: ResMut<Assets<VoxelMaterial>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
+    mut lod_materials: ResMut<Assets<LodMaterial>>,
+    world: Res<ClientWorld>,
 ) {
     let registry = &registry.0;
     let mut source = Source::discover();
     let (_, block_textures) = source.block_textures(registry.textures());
     let colormaps = source.colormaps();
     render::setup(&mut commands, &mut images, &mut meshes, &mut voxel_materials, &mut sky_materials, &block_textures, &colormaps);
+    let palette = LodPalette::new(registry, &block_textures, &colormaps);
+    commands.insert_resource(Lod::new(palette, world.view_distance, &mut lod_materials));
 
     let icons = (0..registry.len())
         .map(|id| {

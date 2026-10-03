@@ -12,6 +12,7 @@ use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
 use crate::player::LocalPlayer;
+use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
 pub struct CapturePlugin {
@@ -95,6 +96,7 @@ fn fly(time: &Time, player: &mut LocalPlayer) {
     player.position += (forward + Vec3::Y * climb).normalize() * speed * time.delta_secs();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn capture(
     mut commands: Commands,
     time: Res<Time>,
@@ -103,6 +105,7 @@ fn capture(
     mut player: ResMut<LocalPlayer>,
     diagnostics: Res<DiagnosticsStore>,
     mut exit: MessageWriter<AppExit>,
+    lod: Res<Lod>,
 ) {
     let now = time.elapsed_secs();
     if let Some(taken) = state.taken_at {
@@ -112,7 +115,12 @@ fn capture(
         return;
     }
     let stats = world.stats;
-    let busy = !player.joined || stats.jobs_in_flight > 0 || stats.pending_columns > 0 || world.voxels.len() < 9;
+    let (lod_tiles, lod_wanted) = lod.progress();
+    let busy = !player.joined
+        || stats.jobs_in_flight > 0
+        || stats.pending_columns > 0
+        || world.voxels.len() < 9
+        || lod_tiles < lod_wanted;
     let flying = state.flight_started.is_some();
     if busy && !flying && now < 60.0 {
         state.settled_at = None;
@@ -146,7 +154,7 @@ fn capture(
     let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.average()).unwrap_or(0.0);
     let frame = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.average()).unwrap_or(0.0);
     info!(
-        "capture: {fps:.0} fps ({frame:.2} ms), {} columns, {} chunk meshes, {} quads ({} after cave culling), {} visible, {} jobs, {} pending, loaded in {settled:.1}s",
+        "capture: {fps:.0} fps ({frame:.2} ms), {} columns, {} chunk meshes, {} quads ({} after cave culling), {} visible, {} jobs, {} pending, {lod_tiles}/{lod_wanted} distant tiles, loaded in {settled:.1}s",
         world.voxels.len(),
         stats.chunk_entities,
         stats.quads,

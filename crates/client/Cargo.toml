@@ -15,6 +15,7 @@ tracy = ["bevy/trace_tracy"]
 voxmar_engine.workspace = true
 voxmar_protocol.workspace = true
 voxmar_server.workspace = true
+voxmar_worldgen.workspace = true
 bevy = { workspace = true, features = ["3d", "ui"] }
 crossbeam-channel.workspace = true
 rayon.workspace = true
