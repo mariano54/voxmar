@@ -1,133 +1,176 @@
-//! Stage 2: temperature and precipitation, and the biome they select.
+//! Stage 2: climate as continuous fields instead of biomes.
 //!
-//! Biomes are chosen per region, not per block: the land is divided into irregular
-//! regions about a kilometre across (a domain-warped jittered Voronoi diagram), and each
-//! region takes the biome its centre's climate selects. That gives large, coherent biomes
-//! without speckles of other biomes inside them. Height still decides oceans, beaches and
-//! mountains locally, and tints use the smooth per-position climate.
+//! Temperature falls from the equator towards the poles and with altitude, plus slow
+//! regional anomalies. Latitude repeats along z with colder land to the north, so climate
+//! zones are large and ordered: hot, temperate and cold land always lie in that order,
+//! with wide transitions between them.
+//!
+//! Precipitation follows the moisture the prevailing wind carries in from the sea. Walking
+//! from far upwind to each point, the air picks up water over open sea, slowly rains it out
+//! over land and loses most of it where it is lifted over mountains, so coasts are wet,
+//! interiors drier and the lee of a range lies in a rain shadow. Earth-like circulation
+//! adds wet tropics, dry subtropics and wet mid-latitudes on top.
+//!
+//! These regional fields vary over hundreds of blocks, so they are computed on a lattice
+//! every `CELL` blocks and interpolated; only altitude cooling is applied per block.
 
-use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType};
+use std::f32::consts::PI;
+
+use fastnoise_lite::{FastNoiseLite, FractalType};
+use voxmar_engine::glam::IVec2;
 
 use crate::SEA_LEVEL;
-use crate::geology::{GeoSample, noise};
+use crate::dials::WorldDials;
+use crate::geology::{Geology, noise, smoothstep, spline};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Biome {
-    Ocean,
-    FrozenOcean,
-    Beach,
-    Plains,
-    Forest,
-    BirchForest,
-    Taiga,
-    SnowyTundra,
-    Desert,
-    Savanna,
-    Jungle,
-    Badlands,
-    Mountains,
-    SnowyPeaks,
+/// Lattice spacing of the regional climate, in blocks.
+pub const CELL: i32 = 64;
+/// Cooling with height above sea level, °C per block.
+pub const LAPSE_RATE: f32 = 0.11;
+/// Distances upwind, far to near, at which the air crossing a point is followed.
+const UPWIND: [f32; 9] = [2600.0, 1800.0, 1250.0, 850.0, 560.0, 360.0, 220.0, 120.0, 50.0];
+/// Distance over land in which the air loses all but a third of its moisture.
+const RAIN_OUT: f32 = 3000.0;
+/// Rise in blocks over which lifted air loses all but a third of its moisture.
+const LIFT_OUT: f32 = 60.0;
+
+/// The slowly varying part of the climate at a position.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Regional {
+    /// Air temperature at sea level, °C.
+    pub sea_temperature: f32,
+    /// Annual precipitation, mm.
+    pub precipitation: f32,
+    /// 0 at the coast ..= 1 deep inland.
+    pub continentality: f32,
+    /// 0 at the equator ..= 1 at a pole.
+    pub latitude: f32,
 }
 
-pub struct ClimateSample {
-    /// 0 (frozen) ..= 1 (hot), after altitude cooling.
-    pub temperature: f32,
-    /// 0 (arid) ..= 1 (wet).
-    pub precipitation: f32,
-    pub biome: Biome,
+impl Regional {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self {
+            sea_temperature: mix(self.sea_temperature, other.sea_temperature),
+            precipitation: mix(self.precipitation, other.precipitation),
+            continentality: mix(self.continentality, other.continentality),
+            latitude: mix(self.latitude, other.latitude),
+        }
+    }
+}
+
+/// Water available to plants: precipitation over potential evaporation, which grows with
+/// warmth. Around 0.1 in deserts, 1 where they balance, 2 in rainforests.
+pub fn moisture(precipitation: f32, temperature: f32) -> f32 {
+    precipitation / (250.0 + 50.0 * temperature.max(0.0))
 }
 
 pub struct Climate {
-    temperature: FastNoiseLite,
-    precipitation: FastNoiseLite,
-    /// Picks between biomes that share a climate (desert or badlands, forest kinds).
-    variant: FastNoiseLite,
-    /// Bends region borders so they are not straight lines.
-    border_warp: FastNoiseLite,
-    seed: u64,
+    dials: WorldDials,
+    latitude_warp: FastNoiseLite,
+    anomaly: FastNoiseLite,
+    wetness: FastNoiseLite,
 }
-
-/// Average biome region size in blocks.
-const REGION: i32 = 1024;
 
 impl Climate {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, dials: &WorldDials) -> Self {
         Self {
-            // Low frequencies and few octaves give biomes a few kilometres across with
-            // smooth borders instead of thin bands.
-            temperature: noise(seed, 10, 0.00035, FractalType::FBm, 2),
-            precipitation: noise(seed, 11, 0.0004, FractalType::FBm, 2),
-            variant: noise(seed, 12, 0.0006, FractalType::FBm, 2),
-            border_warp: {
-                let mut warp = noise(seed, 13, 0.002, FractalType::DomainWarpProgressive, 3);
-                warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
-                warp.set_domain_warp_amp(Some(160.0));
-                warp
-            },
-            seed,
+            dials: *dials,
+            latitude_warp: noise(seed, 10, 0.8 / dials.pole_distance, FractalType::FBm, 2),
+            anomaly: noise(seed, 11, 1.0 / 1600.0, FractalType::FBm, 2),
+            wetness: noise(seed, 12, 1.0 / 1200.0, FractalType::FBm, 2),
         }
     }
 
-    /// Centre of the biome region containing (x, z).
-    fn region_center(&self, x: i32, z: i32) -> (f32, f32) {
-        let (wx, wz) = self.border_warp.domain_warp_2d(x as f32, z as f32);
-        let cell = (wx.div_euclid(REGION as f32) as i32, wz.div_euclid(REGION as f32) as i32);
-        let mut best = (f32::MAX, 0.0, 0.0);
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                let (cx, cz) = (cell.0 + dx, cell.1 + dz);
-                let h = crate::rng::hash3(self.seed ^ 0xb10e, cx, 0, cz);
-                let jitter = |bits: u64| 0.15 + 0.7 * ((bits & 0xffff) as f32 / 65535.0);
-                let px = (cx as f32 + jitter(h)) * REGION as f32;
-                let pz = (cz as f32 + jitter(h >> 16)) * REGION as f32;
-                let distance = (px - wx).powi(2) + (pz - wz).powi(2);
-                if distance < best.0 {
-                    best = (distance, px, pz);
+    /// 0 at the equator, 1 at a pole; 0.5 at z = 0. Latitude changes evenly between them
+    /// (a triangle wave with rounded tips), so every climate zone gets its share of land,
+    /// and zones wander north and south so their borders are not straight lines.
+    fn latitude(&self, x: f32, z: f32) -> f32 {
+        const ROUNDING: f32 = 0.98;
+        let pole = self.dials.pole_distance;
+        let z = z + self.latitude_warp.get_noise_2d(x, z) * 0.3 * pole;
+        0.5 - 0.5 * (ROUNDING * (z / pole * PI).sin()).asin() / ROUNDING.asin()
+    }
+
+    /// The regional climate at one position. Expensive: it follows the wind upwind.
+    fn regional(&self, geology: &Geology, x: f32, z: f32) -> Regional {
+        let sea = SEA_LEVEL as f32;
+        let [wind_x, wind_z] = self.dials.wind;
+        // Air arriving from beyond the walk carries an average amount of water.
+        let mut moisture = 0.5f32;
+        let mut last: Option<(f32, f32)> = None;
+        let (mut lift, mut continental) = (0.0, 0.0);
+        for distance in UPWIND.into_iter().chain([0.0]) {
+            let relief = geology.relief(x - wind_x * distance, z - wind_z * distance);
+            let ground = relief.elevation.max(sea);
+            if let Some((last_distance, last_ground)) = last {
+                if relief.elevation >= sea {
+                    moisture *= (-(last_distance - distance) / RAIN_OUT).exp();
+                }
+                lift = (ground - last_ground).max(0.0);
+                // Lifted air rains out on the way up; the last rise is the slope here.
+                if distance > 0.0 {
+                    moisture *= (-lift / LIFT_OUT).exp();
                 }
             }
+            if relief.elevation < sea {
+                moisture += (1.0 - moisture) * 0.45;
+            }
+            last = Some((distance, ground));
+            continental = relief.continental;
         }
-        (best.1, best.2)
-    }
+        // Air forced up a windward slope rains on it.
+        let orographic = 1.0 + (lift / 30.0).min(1.0);
 
-    pub fn sample(&self, x: i32, z: i32, geo: &GeoSample) -> ClimateSample {
-        let altitude = (geo.height - SEA_LEVEL - 20).max(0) as f32;
-        let temperature = ((self.temperature.get_noise_2d(x as f32, z as f32) * 0.7 + 0.5) - altitude * 0.006).clamp(0.0, 1.0);
-        let precipitation = (self.precipitation.get_noise_2d(x as f32, z as f32) * 0.7 + 0.5).clamp(0.0, 1.0);
-        // The region's biome comes from the climate at its centre.
-        let (cx, cz) = self.region_center(x, z);
-        let region_temperature = (self.temperature.get_noise_2d(cx, cz) * 0.7 + 0.5 - altitude * 0.006).clamp(0.0, 1.0);
-        let region_precipitation = (self.precipitation.get_noise_2d(cx, cz) * 0.7 + 0.5).clamp(0.0, 1.0);
-        let variant = self.variant.get_noise_2d(cx, cz);
-        let biome = pick(region_temperature, region_precipitation, variant, geo);
-        ClimateSample { temperature, precipitation, biome }
+        let latitude = self.latitude(x, z);
+        // Rising air near the equator, sinking air in the subtropics, storms along the
+        // polar front, and little water in the cold polar air.
+        let circulation =
+            spline(&[(0.0, 1.0), (0.12, 0.9), (0.3, 0.26), (0.48, 0.62), (0.66, 0.8), (0.85, 0.5), (1.0, 0.3)], latitude);
+        let wetness = (1.0 + 0.35 * self.wetness.get_noise_2d(x, z)).max(0.1);
+        let precipitation =
+            2600.0 * (0.55 + 0.9 * self.dials.humidity) * circulation * (0.2 + 0.8 * moisture) * orographic * wetness;
+
+        let sea_temperature = self.dials.mean_temperature
+            + self.dials.latitude_gradient * (0.5 - latitude)
+            + 3.5 * self.anomaly.get_noise_2d(x, z);
+        Regional {
+            sea_temperature,
+            precipitation,
+            continentality: smoothstep(-0.05, 0.6, continental),
+            latitude,
+        }
     }
 }
 
-fn pick(t: f32, p: f32, variant: f32, geo: &GeoSample) -> Biome {
-    let h = geo.height;
-    if h < SEA_LEVEL - 3 {
-        return if t < 0.2 { Biome::FrozenOcean } else { Biome::Ocean };
+/// The regional climate over an area, computed once per lattice point and bilinearly
+/// interpolated, so every caller sees exactly the same smooth fields.
+pub struct ClimateGrid {
+    /// Lattice coordinates of the first point.
+    origin: IVec2,
+    width: i32,
+    points: Vec<Regional>,
+}
+
+impl ClimateGrid {
+    /// Covers the blocks from `min` to `max` inclusive.
+    pub fn new(climate: &Climate, geology: &Geology, min: IVec2, max: IVec2) -> Self {
+        let origin = min.div_euclid(IVec2::splat(CELL));
+        let size = max.div_euclid(IVec2::splat(CELL)) + 2 - origin;
+        let points = (0..size.y)
+            .flat_map(|j| (0..size.x).map(move |i| (origin + IVec2::new(i, j)) * CELL))
+            .map(|p| climate.regional(geology, p.x as f32, p.y as f32))
+            .collect();
+        Self { origin, width: size.x, points }
     }
-    if h <= SEA_LEVEL + 2 && t > 0.25 && geo.mountain < 0.3 {
-        return Biome::Beach;
-    }
-    if h > SEA_LEVEL + 90 {
-        return if t < 0.45 { Biome::SnowyPeaks } else { Biome::Mountains };
-    }
-    if h > SEA_LEVEL + 55 && geo.mountain > 0.4 {
-        return Biome::Mountains;
-    }
-    match (t, p) {
-        (t, p) if t < 0.22 => if p > 0.5 { Biome::Taiga } else { Biome::SnowyTundra },
-        (t, p) if t < 0.38 => if p > 0.35 { Biome::Taiga } else { Biome::Plains },
-        (t, p) if t > 0.7 => match p {
-            p if p < 0.35 && variant > 0.35 => Biome::Badlands,
-            p if p < 0.35 => Biome::Desert,
-            p if p < 0.6 => Biome::Savanna,
-            _ => Biome::Jungle,
-        },
-        (_, p) if p < 0.38 => Biome::Plains,
-        _ if variant > 0.3 => Biome::BirchForest,
-        _ => Biome::Forest,
+
+    /// The regional climate at a position inside the grid's area.
+    pub fn at(&self, x: i32, z: i32) -> Regional {
+        let cell = IVec2::new(x, z).div_euclid(IVec2::splat(CELL)) - self.origin;
+        let fraction = |v: i32| v.rem_euclid(CELL) as f32 / CELL as f32;
+        let point = |dx: i32, dz: i32| self.points[((cell.y + dz) * self.width + cell.x + dx) as usize];
+        let near = point(0, 0).lerp(point(1, 0), fraction(x));
+        let far = point(0, 1).lerp(point(1, 1), fraction(x));
+        near.lerp(far, fraction(z))
     }
 }

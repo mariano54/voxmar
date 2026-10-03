@@ -4,12 +4,18 @@
 //! per slice into the largest rectangles whose faces share texture, tint, AO and light, so
 //! lighting stays exact while open terrain collapses to a handful of quads.
 //!
+//! Plants are not merged: each is two crossed quads through its cell's diagonals.
+//!
 //! Each vertex is packed into 8 bytes:
 //!
 //! ```text
 //! word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | backed:1
 //! word 1: layer:12 | tint:2 | temperature:5 | humidity:5 | block:4 | sky:4
 //! ```
+//!
+//! `face` is a `Face` (0..=5) for cube faces, or `PLANT_DIAGONAL` (6, the plane through
+//! x = z) or `PLANT_ANTIDIAGONAL` (7, through x + z = 1) for plants. On plant vertices
+//! `backed` marks the top edge, the one that sways in the wind.
 
 use glam::IVec3;
 
@@ -24,6 +30,11 @@ const S: usize = CHUNK_SIZE as usize;
 const P: usize = S + 2;
 
 pub type Vertex = [u32; 2];
+
+/// Face index of a plant's quad through the cell diagonal from (0, 0) to (1, 1) in x, z.
+pub const PLANT_DIAGONAL: u32 = 6;
+/// Face index of a plant's quad through the diagonal from (1, 0) to (0, 1).
+pub const PLANT_ANTIDIAGONAL: u32 = 7;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct MeshBuffers {
@@ -42,7 +53,7 @@ pub struct ChunkMesh {
     /// Fully opaque faces. Kept apart from cut-out faces so the GPU can use early depth
     /// testing and hidden surface removal, which an alpha test in the shader disables.
     pub opaque: MeshBuffers,
-    /// Alpha-tested faces (leaves, glass).
+    /// Alpha-tested faces (leaves, glass, plants).
     pub cutout: MeshBuffers,
     pub translucent: MeshBuffers,
     pub connectivity: Connectivity,
@@ -71,6 +82,7 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     let mut opaque = Axes::default();
     let mut cutout = Axes::default();
     let mut translucent = Axes::default();
+    let mut plants = Vec::new();
     for y in 0..P {
         for z in 0..P {
             for x in 0..P {
@@ -91,7 +103,8 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
                     RenderKind::Opaque => opaque.set(x, y, z),
                     RenderKind::Cutout => cutout.set(x, y, z),
                     RenderKind::Translucent => translucent.set(x, y, z),
-                    RenderKind::Invisible => {}
+                    RenderKind::Plant if [x, y, z].iter().all(|c| (1..=S).contains(c)) => plants.push(pidx(x, y, z)),
+                    RenderKind::Plant | RenderKind::Invisible => {}
                 }
             }
         }
@@ -105,6 +118,10 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
         mesher.mesh_faces(face, &occ, &opaque, &occ, &mut mesh.opaque);
         mesher.mesh_faces(face, &occ, &cutout, &cutout, &mut mesh.cutout);
         mesher.mesh_faces(face, &occ, &translucent, &translucent, &mut mesh.translucent);
+    }
+    for i in plants {
+        let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
+        emit_plant(&mut mesh.cutout, registry, column, &cells[i], local);
     }
     mesh
 }
@@ -368,6 +385,29 @@ fn emit_quad(
     out.indices.extend(order.map(|i| base + i));
 }
 
+/// Two crossed quads through the cell's diagonals, drawn from both sides, lit by the
+/// plant's own cell and without ambient occlusion.
+fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, cell: &Cell, pos: IVec3) {
+    let info = registry.info(cell.block);
+    let tint = info.tints[Face::PosX as usize];
+    let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { column.climate_at(pos.x, pos.z) };
+    let w1 = info.layers[Face::PosX as usize] as u32
+        | (tint as u32) << 12
+        | ((temperature >> 3) as u32) << 14
+        | ((humidity >> 3) as u32) << 19
+        | (cell.light as u32) << 24;
+    for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
+        let base = out.vertices.len() as u32;
+        for (dx, dz, top) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)] {
+            let p = pos + IVec3::new(dx, top, dz);
+            let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | face << 18 | 3 << 21 | (top as u32) << 23;
+            out.vertices.push([w0, w1]);
+        }
+        // Both windings, so back-face culling keeps one of them from either side.
+        out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -378,6 +418,14 @@ mod tests {
     fn registry() -> BlockRegistry {
         BlockRegistry::new(vec![
             BlockDef { name: "test:stone".into(), textures: Textures::All("stone".into()), ..Default::default() },
+            BlockDef {
+                name: "test:grass".into(),
+                render: RenderKind::Plant,
+                solid: false,
+                textures: Textures::All("short_grass".into()),
+                tint: Tint::Grass,
+                ..Default::default()
+            },
         ])
         .unwrap()
     }
@@ -410,5 +458,35 @@ mod tests {
         // top of the floor, all lit by open sky.
         let mesh = mesh_of(column, 0);
         assert_eq!(mesh.opaque.vertices.len(), 4);
+    }
+
+    #[test]
+    fn plant_is_two_crossed_double_sided_quads() {
+        let mut column = Column::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                column.set_block(IVec3::new(x, 0, z), BlockId(1));
+            }
+        }
+        column.set_block(IVec3::new(4, 1, 7), BlockId(2));
+        let mesh = mesh_of(column, 0);
+        // The floor still merges into one quad: the plant hides nothing and casts no AO.
+        assert_eq!(mesh.opaque.vertices.len(), 4);
+        assert_eq!(mesh.cutout.vertices.len(), 8);
+        assert_eq!(mesh.cutout.indices.len(), 24);
+        for (i, [w0, w1]) in mesh.cutout.vertices.iter().enumerate() {
+            let (x, y, z) = (w0 & 63, (w0 >> 6) & 63, (w0 >> 12) & 63);
+            let face = (w0 >> 18) & 7;
+            assert_eq!(face, if i < 4 { PLANT_DIAGONAL } else { PLANT_ANTIDIAGONAL });
+            assert!((4..=5).contains(&x) && (1..=2).contains(&y) && (7..=8).contains(&z));
+            // No occlusion, top edge flagged, lit by open sky.
+            assert_eq!((w0 >> 21) & 3, 3);
+            assert_eq!((w0 >> 23) & 1, y - 1);
+            assert_eq!(w1 >> 28, 15);
+        }
+        // Each quad lies on its diagonal plane.
+        let corner = |v: &Vertex| ((v[0] & 63) as i32 - 4, ((v[0] >> 12) & 63) as i32 - 7);
+        assert!(mesh.cutout.vertices[..4].iter().map(corner).all(|(x, z)| x == z));
+        assert!(mesh.cutout.vertices[4..].iter().map(corner).all(|(x, z)| x + z == 1));
     }
 }

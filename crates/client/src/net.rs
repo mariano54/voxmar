@@ -1,5 +1,5 @@
 //! Connection to the (local or remote) server: applies replicated state and sends the
-//! player's input and actions.
+//! player's input and actions. Present while in game.
 
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
@@ -9,6 +9,7 @@ use voxmar_protocol::{
 use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_server::ServerHandle;
 
+use crate::menu::{Notice, Screen};
 use crate::player::LocalPlayer;
 use crate::render::DayCycle;
 use crate::render::lod::Lod;
@@ -19,25 +20,32 @@ pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
+        let in_game = in_state(Screen::InGame);
         app.init_resource::<RemotePlayers>()
-            .add_systems(PreUpdate, receive)
-            .add_systems(PostUpdate, (send_input, sync_remote_players));
+            .add_systems(PreUpdate, receive.run_if(in_game.clone()))
+            .add_systems(PostUpdate, (send_input, sync_remote_players).run_if(in_game));
     }
 }
 
 #[derive(Resource)]
 pub struct Net {
+    // Declared first so it closes before the server stops.
     connection: ClientConnection,
-    /// The integrated server, when playing singleplayer. Dropping it stops the server.
-    _server: Option<ServerHandle>,
-    pub status: Option<String>,
+    /// The integrated server, when playing singleplayer. Dropping it stops the server,
+    /// which saves the world.
+    server: Option<ServerHandle>,
     input_timer: f32,
 }
 
 impl Net {
     pub fn new(connection: ClientConnection, server: Option<ServerHandle>, name: String, content: u64) -> Self {
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content });
-        Self { connection, _server: server, status: Some("Connecting…".into()), input_timer: 0.0 }
+        Self { connection, server, input_timer: 0.0 }
+    }
+
+    /// Whether this is a remote server rather than singleplayer's own.
+    pub fn is_remote(&self) -> bool {
+        self.server.is_none()
     }
 
     pub fn propose(&self, action: ActionId, target: ActionTarget) {
@@ -58,37 +66,48 @@ pub struct RemotePlayers {
     players: FxHashMap<PlayerId, (PlayerView, Option<Entity>)>,
 }
 
+/// Applies what the server sent. If it refuses us or goes away, returns to the menus with
+/// the reason.
+#[allow(clippy::too_many_arguments)]
 fn receive(
     mut commands: Commands,
-    mut net: ResMut<Net>,
+    net: Res<Net>,
     mut world: ResMut<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
     mut cycle: ResMut<DayCycle>,
     mut remote: ResMut<RemotePlayers>,
     mut lod: ResMut<Lod>,
+    mut notice: ResMut<Notice>,
+    mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
 ) {
+    let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
         let message = match net.connection.try_recv() {
             Ok(Some(message)) => message,
             Ok(None) => break,
             Err(_) => {
-                if net.status.is_none() {
-                    net.status = Some("Disconnected from server".into());
-                }
+                let reason = if net.is_remote() { "Lost the connection to the server." } else { "The world stopped unexpectedly." };
+                notice.0 = Some(reason.into());
+                next.set(menu);
                 break;
             }
         };
         match message {
-            ServerMessage::Welcome { position, allow_flight, admin, seed, .. } => {
+            ServerMessage::Welcome { position, yaw, flying, allow_flight, admin, seed, .. } => {
                 lod.start(seed, world.registry.clone());
                 player.position = position;
+                player.yaw = yaw;
+                player.flying = flying;
                 player.allow_flight = allow_flight;
                 player.admin = admin;
                 player.joined = true;
-                net.status = None;
             }
-            ServerMessage::Rejected { reason } => net.status = Some(format!("Rejected: {reason}")),
+            ServerMessage::Rejected { reason } => {
+                notice.0 = Some(format!("The server turned you away: {reason}."));
+                next.set(menu);
+                break;
+            }
             ServerMessage::Column { pos, column } => world.insert_column(pos, column),
             ServerMessage::Unload { pos } => world.remove_column(pos, &mut commands),
             ServerMessage::BlockChanged { pos, block } => {
@@ -171,7 +190,10 @@ fn sync_remote_players(
                     *t = transform;
                 }
             }
-            None => *entity = Some(commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform)).id()),
+            None => {
+                let body = (Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform, DespawnOnExit(Screen::InGame));
+                *entity = Some(commands.spawn(body).id());
+            }
         }
     }
 }

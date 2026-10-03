@@ -5,18 +5,24 @@
 use bevy::prelude::*;
 use voxmar_protocol::Weather;
 
+use crate::menu::Screen;
+
 pub struct WeatherPlugin;
 
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ClientWeather>().add_systems(Update, ease);
+        app.init_resource::<ClientWeather>()
+            .add_systems(Update, ease)
+            .add_systems(OnExit(Screen::InGame), |mut weather: ResMut<ClientWeather>| weather.leave());
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct ClientWeather {
     /// What the server last reported, or a fixed state for captures.
     target: Option<Weather>,
+    /// Whether the server has reported the weather yet in this game.
+    reported: bool,
     forced: bool,
     /// What is shown now.
     pub current: Weather,
@@ -27,16 +33,32 @@ pub struct ClientWeather {
 /// Cloud drift wraps around after this many blocks, keeping shader coordinates small.
 pub const DRIFT_WRAP: f32 = 1_048_576.0;
 
+/// Until a server reports the weather, and in the menus: a fair day.
+impl Default for ClientWeather {
+    fn default() -> Self {
+        let fair = preset("cumulus").expect("cumulus is a preset");
+        Self { target: Some(fair), reported: false, forced: false, current: fair, drift: Vec2::ZERO }
+    }
+}
+
 impl ClientWeather {
     pub fn receive(&mut self, weather: Weather) {
         if self.forced {
             return;
         }
-        // The first report is shown at once, rather than clearing up from nothing.
-        if self.target.is_none() {
+        // The first report is shown at once, rather than eased into from the menus' sky.
+        if !self.reported {
+            self.reported = true;
             self.current = weather;
         }
         self.target = Some(weather);
+    }
+
+    /// Back to the menus' fair sky, unless a fixed weather was asked for.
+    fn leave(&mut self) {
+        if !self.forced {
+            *self = Self::default();
+        }
     }
 
     /// Shows `weather` from now on, ignoring the server.

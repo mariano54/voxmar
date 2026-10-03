@@ -2,7 +2,7 @@
 //! Processes never decide; they change values and raise events (here: death).
 
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::glam::Vec3;
+use voxmar_engine::glam::{Vec2, Vec3};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits::{self, Replication};
 use voxmar_protocol::{PlayerId, ServerMessage};
@@ -13,16 +13,17 @@ use crate::weather::Weather;
 
 /// Falls shorter than this many blocks do no damage.
 const SAFE_FALL: f32 = 3.0;
-/// Below this temperature field value, healing slows down.
-const COLD: f32 = 0.15;
+/// Below this temperature (°C), healing slows down.
+const COLD: f32 = 0.0;
 
 pub(crate) trait Process: Send {
     fn tier(&self) -> Tier;
     fn run(&mut self, server: &mut Server);
 }
 
-pub(crate) fn core_processes(seed: u64) -> Vec<Box<dyn Process>> {
-    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::new(seed))]
+/// `wind` is the direction (x, z) the world's prevailing wind blows towards.
+pub(crate) fn core_processes(seed: u64, wind: Vec2) -> Vec<Box<dyn Process>> {
+    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::new(seed, wind))]
 }
 
 /// Fall damage and the void, from the server's own view of where players stand.

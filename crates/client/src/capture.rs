@@ -1,5 +1,6 @@
-//! `--capture PATH`: once the world around the player has loaded and settled, logs frame
-//! statistics, saves a screenshot and exits. Used for visual checks and benchmarking.
+//! `--capture PATH`: once the world around the player (or behind a menu screen) has loaded
+//! and settled, logs frame statistics, saves a screenshot and exits. Used for visual checks
+//! and benchmarking.
 //! Runs without a window and renders into an offscreen image, so frame times measure the
 //! engine rather than the display, and it works with the display asleep.
 
@@ -13,6 +14,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
 use voxmar_protocol::TICKS_PER_DAY;
 
+use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::DayCycle;
 use crate::render::lod::Lod;
@@ -45,7 +47,10 @@ impl Plugin for CapturePlugin {
         })
         .add_systems(PostStartup, render_offscreen)
         .add_systems(Update, (target_ui, capture))
-        .add_systems(PostUpdate, (apply_pose, hold_time).before(TransformSystems::Propagate));
+        .add_systems(
+            PostUpdate,
+            (apply_pose.run_if(in_state(Screen::InGame)), hold_time).before(TransformSystems::Propagate),
+        );
     }
 }
 
@@ -121,6 +126,7 @@ fn capture(
     diagnostics: Res<DiagnosticsStore>,
     mut exit: MessageWriter<AppExit>,
     lod: Res<Lod>,
+    screen: Res<State<Screen>>,
 ) {
     let now = time.elapsed_secs();
     if let Some(taken) = state.taken_at {
@@ -131,7 +137,13 @@ fn capture(
     }
     let stats = world.stats;
     let (lod_tiles, lod_wanted) = lod.progress();
-    let busy = !player.joined
+    // Menus wait for their backdrop world, games for the player's.
+    let joining = match screen.get() {
+        Screen::Boot => true,
+        Screen::InGame => !player.joined,
+        _ => false,
+    };
+    let busy = joining
         || stats.jobs_in_flight > 0
         || stats.pending_columns > 0
         || world.voxels.len() < 9

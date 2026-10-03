@@ -7,6 +7,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::physics::{Aabb, move_and_slide, player as dims};
 
+use crate::menu::Screen;
 use crate::render::DayCycle;
 use crate::settings::Settings;
 use crate::world::ClientWorld;
@@ -17,7 +18,8 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LocalPlayer>()
             .init_resource::<UiState>()
-            .add_systems(Update, (grab_cursor, look, movement, follow_camera).chain());
+            .add_systems(Update, (grab_cursor, look, movement, follow_camera).chain().run_if(in_state(Screen::InGame)))
+            .add_systems(OnExit(Screen::InGame), release_cursor);
     }
 }
 
@@ -112,6 +114,14 @@ fn grab_cursor(
         ui.cursor_locked = want_locked;
         cursor.grab_mode = if want_locked { CursorGrabMode::Locked } else { CursorGrabMode::None };
         cursor.visible = !want_locked;
+    }
+}
+
+/// The menus need the mouse.
+fn release_cursor(mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+    if let Ok(mut cursor) = cursor.single_mut() {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
     }
 }
 
