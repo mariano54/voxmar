@@ -154,10 +154,10 @@ pub fn placement_cell(ctx: &impl ActionContext, block: IVec3, face: Face) -> IVe
     if ctx.block(block).is_some_and(|b| ctx.info(b).replaceable) { block } else { block + face.normal() }
 }
 
-/// The block resting on `pos` that goes when `pos` is cleared (a plant), if any.
-pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Option<IVec3> {
-    let above = pos + IVec3::Y;
-    ctx.block(above).is_some_and(|b| ctx.info(b).needs_support).then_some(above)
+/// The blocks resting on `pos` that go when it is cleared: the plants stacked on it
+/// (a flower, both halves of tall grass, a stalk of sugar cane).
+pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
+    (1..).map(|dy| pos + IVec3::Y * dy).take_while(|&p| ctx.block(p).is_some_and(|b| ctx.info(b).needs_support)).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -293,8 +293,8 @@ mod tests {
         let on_ground = ActionTarget::Block { block: IVec3::ZERO, face: Face::PosY };
         assert_eq!(placement_cell(&world, IVec3::ZERO, Face::PosY), IVec3::Y);
         assert!(place().validate(&world, on_ground).is_ok());
-        assert_eq!(supported_by(&world, IVec3::ZERO), Some(IVec3::Y));
-        assert_eq!(supported_by(&world, IVec3::Z), None);
+        assert_eq!(supported_by(&world, IVec3::ZERO), vec![IVec3::Y]);
+        assert!(supported_by(&world, IVec3::Z).is_empty());
     }
 
     #[test]

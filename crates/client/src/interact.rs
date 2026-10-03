@@ -146,10 +146,9 @@ fn break_and_place(
                     // The server commits at the same moment; predict it, including a plant
                     // that loses its ground.
                     cues.write(SoundCue::for_block(&world, block, Cue::Break));
-                    let plant = supported_by(&ClientContext { world: &world, player: &player }, hit.block);
-                    world.set_block(hit.block, BlockId::AIR);
-                    if let Some(plant) = plant {
-                        world.set_block(plant, BlockId::AIR);
+                    let plants = supported_by(&ClientContext { world: &world, player: &player }, hit.block);
+                    for pos in std::iter::once(hit.block).chain(plants) {
+                        world.set_block(pos, BlockId::AIR);
                     }
                     target.breaking = None;
                 } else {

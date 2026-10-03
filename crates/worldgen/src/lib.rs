@@ -18,6 +18,7 @@ mod geology;
 mod resources;
 mod rng;
 mod terrain;
+mod trees;
 
 use std::sync::Arc;
 
@@ -182,11 +183,8 @@ impl Sampler<'_> {
         let geo = GeoSample { height, ..self.world.geology.sample(x, z) };
         let site = self.site_on(&geo, x, z, slope);
         let (ground, water) = self.world.terrain.surface_blocks(&site, x, z);
-        let canopy = (water.is_none() && site.forest > 0.0).then(|| {
-            let tree = self.world.ecology.dominant_tree(&site, x, z);
-            let cover = 1.0 - (-2.0 * site.forest * ecology::TREE_CHANCE).exp();
-            (self.world.terrain.leaves(tree), cover)
-        });
+        let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
+            .map(|(tree, cover)| (self.world.terrain.leaves(tree), cover));
         SurfaceSample { height, ground, water, canopy, climate: site.tint() }
     }
 
@@ -239,7 +237,7 @@ impl Generator for Overworld {
                 let site = self.site(x, z);
                 let pleasant = (8.0..20.0).contains(&site.temperature) && (0.6..1.6).contains(&site.soil_moisture());
                 let open = site.slope <= 1 && site.forest < 0.35 && site.river < 0.1;
-                if pleasant && open && self.terrain.is_grass(self.terrain.surface_blocks(&site, x, z).0) {
+                if pleasant && open && self.terrain.is_grass(self.terrain.surface_layers(&site, x, z).top) {
                     return IVec3::new(x, height + 1, z);
                 }
             }
@@ -355,6 +353,68 @@ mod tests {
         let water = wet as f32 / (SIZE * SIZE) as f32;
         let spawn = world.spawn_point();
         println!("{:#?}\nwater {water:.2}, spawn {spawn}: {:#?}\nwrote {path}", world.dials(), world.site(spawn.x, spawn.z));
+    }
+
+    #[test]
+    fn temperature_changes_smoothly_and_in_order() {
+        let world = Overworld::new(11, registry());
+        for x in [-2000, 0, 3000] {
+            let sampler = world.sampler(IVec2::new(x, -4000), IVec2::new(x, 4000));
+            // Sea-level temperature: what the site would have without cooling with height.
+            let sea_level = |z: i32| {
+                let site = sampler.site(x, z);
+                site.temperature + LAPSE_RATE * (site.height - SEA_LEVEL).max(0) as f32
+            };
+            let temperatures: Vec<f32> = (-4000..=4000).step_by(8).map(sea_level).collect();
+            let steepest = temperatures.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+            assert!(steepest < 0.25, "temperature jumps {steepest} °C over 8 blocks at x {x}");
+            // Climate zones are kilometres wide: from cold to hot over this line.
+            let (min, max) = temperatures.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &t| (lo.min(t), hi.max(t)));
+            assert!(max - min > 15.0, "only {min}..{max} °C along x {x}");
+        }
+    }
+
+    #[test]
+    fn deserts_never_border_snow() {
+        const STEP: i32 = 32;
+        const SIZE: i32 = 8192 / STEP;
+        // Closest a hot desert may come to snow, in samples.
+        const GAP: i32 = 128 / STEP;
+        let registry = registry();
+        let (sand, red_sand) = (registry.expect("base:sand"), registry.expect("base:red_sand"));
+        let snowy = ["base:snow_block", "base:powder_snow", "base:snowy_grass_block"].map(|n| registry.expect(n));
+        for seed in [1, 3, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            let half = SIZE * STEP / 2;
+            let sampler = world.sampler(IVec2::splat(-half - 1), IVec2::splat(half + 1));
+            let mut snow = vec![false; (SIZE * SIZE) as usize];
+            let mut deserts = Vec::new();
+            for i in 0..SIZE {
+                for j in 0..SIZE {
+                    let (x, z) = (i * STEP - half, j * STEP - half);
+                    let site = sampler.site(x, z);
+                    let top = world.terrain.surface_layers(&site, x, z).top;
+                    snow[(j * SIZE + i) as usize] = snowy.contains(&top);
+                    // Sand away from beaches and banks is desert.
+                    if (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 {
+                        deserts.push((i, j));
+                    }
+                }
+            }
+            assert!(!deserts.is_empty() || seed != 3, "the dry world has no desert");
+            for (i, j) in deserts {
+                for dj in -GAP..=GAP {
+                    for di in -GAP..=GAP {
+                        let (si, sj) = (i + di, j + dj);
+                        let inside = (0..SIZE).contains(&si) && (0..SIZE).contains(&sj);
+                        if inside && di * di + dj * dj <= GAP * GAP && snow[(sj * SIZE + si) as usize] {
+                            let (desert, snow) = ((i * STEP - half, j * STEP - half), (si * STEP - half, sj * STEP - half));
+                            panic!("seed {seed}: desert at {desert:?} within {} blocks of snow at {snow:?}", GAP * STEP);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

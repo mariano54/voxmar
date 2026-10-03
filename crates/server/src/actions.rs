@@ -121,10 +121,9 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
-                    let plant = supported_by(&Context { server: self, agent }, block);
-                    self.set_block(block, BlockId::AIR);
-                    if let Some(plant) = plant {
-                        self.set_block(plant, BlockId::AIR);
+                    let plants = supported_by(&Context { server: self, agent }, block);
+                    for pos in std::iter::once(block).chain(plants) {
+                        self.set_block(pos, BlockId::AIR);
                     }
                 }
                 (Effect::PlaceHeld, ActionTarget::Block { block, face }) => {
@@ -160,8 +159,8 @@ impl Server {
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.changed(traits::INVENTORY);
         if let ActionTarget::Block { block, face } = target {
-            // The target, where a block may have been placed, and a plant it may have taken.
-            for pos in [block, block + face.normal(), block + IVec3::Y] {
+            // The target, where a block may have been placed, and plants it may have taken.
+            for pos in [block, block + face.normal()].into_iter().chain((1..=3).map(|dy| block + IVec3::Y * dy)) {
                 if let Some(current) = self.block(pos) {
                     self.players[&agent].connection.send(ServerMessage::BlockChanged { pos, block: current });
                 }

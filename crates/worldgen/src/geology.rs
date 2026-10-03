@@ -190,6 +190,42 @@ impl Geology {
     }
 }
 
+/// Geology already sampled over a square of positions, which falls back to sampling
+/// anywhere else.
+pub struct GeoGrid<'a> {
+    geology: &'a Geology,
+    min: (i32, i32),
+    size: i32,
+    samples: Vec<GeoSample>,
+}
+
+impl<'a> GeoGrid<'a> {
+    /// Samples the `size`×`size` positions from `min`.
+    pub fn new(geology: &'a Geology, min: (i32, i32), size: i32) -> Self {
+        let samples = (0..size * size).map(|i| geology.sample(min.0 + i % size, min.1 + i / size)).collect();
+        Self { geology, min, size, samples }
+    }
+
+    pub fn samples(&self) -> &[GeoSample] {
+        &self.samples
+    }
+
+    pub fn get(&self, x: i32, z: i32) -> GeoSample {
+        let (i, j) = (x - self.min.0, z - self.min.1);
+        if (0..self.size).contains(&i) && (0..self.size).contains(&j) {
+            self.samples[(j * self.size + i) as usize]
+        } else {
+            self.geology.sample(x, z)
+        }
+    }
+
+    /// Steepest height step from (x, z) to its four neighbours, in blocks.
+    pub fn slope(&self, x: i32, z: i32) -> i32 {
+        let height = self.get(x, z).height;
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.get(x + dx, z + dz).height - height).abs()).max().unwrap_or(0)
+    }
+}
+
 /// Inverse of the standard normal distribution function, by a logistic fit that is
 /// accurate to a few percent over 0.05..0.95.
 fn probit(p: f32) -> f32 {
