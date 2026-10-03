@@ -1,7 +1,9 @@
 //! The authoritative game server. Runs headless as `voxmar-server`, or on a thread inside
 //! the client for singleplayer.
 
+mod actions;
 mod player;
+mod process;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,15 +13,18 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::{FxHashMap, FxHashSet};
-use voxmar_engine::block::{BlockId, BlockRegistry};
-use voxmar_engine::block::RenderKind;
+use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
+use voxmar_engine::content::Content;
+use voxmar_engine::field::Field;
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
 use voxmar_worldgen::{Generator, Overworld};
 
+use crate::actions::Executor;
 use crate::player::Player;
+use crate::process::Process;
 
 pub struct ServerConfig {
     pub seed: u64,
@@ -54,11 +59,9 @@ pub fn assets_dir() -> PathBuf {
     PathBuf::from("assets")
 }
 
-/// Loads all block definitions under `assets/content`.
-pub fn load_content(assets: &Path) -> Result<Arc<BlockRegistry>, Box<dyn std::error::Error>> {
-    let path = assets.join("content/base/blocks.ron");
-    let source = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(Arc::new(BlockRegistry::from_ron("base", &source)?))
+/// Loads every content package under `assets/content`.
+pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
+    Ok(Content::load(&assets.join("content"))?)
 }
 
 /// A running server thread. Dropping it stops the server.
@@ -84,22 +87,26 @@ impl Drop for ServerHandle {
     }
 }
 
-pub fn spawn(config: ServerConfig, registry: Arc<BlockRegistry>) -> std::io::Result<ServerHandle> {
+pub fn spawn(config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
     let (connections, incoming) = unbounded();
     let stop = Arc::new(AtomicBool::new(false));
     let thread = {
         let stop = stop.clone();
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, registry, incoming).run(&stop))?
+            .spawn(move || Server::new(config, content, incoming).run(&stop))?
     };
     Ok(ServerHandle { connections, stop, thread: Some(thread) })
 }
 
 pub(crate) struct Server {
     config: ServerConfig,
-    registry: Arc<BlockRegistry>,
+    content: Content,
     generator: Arc<dyn Generator>,
+    executor: Executor,
+    processes: Vec<Box<dyn Process>>,
+    /// `core:temperature`, 0 (frozen) to 1 (hot), baseline from the climate generator.
+    temperature: Field,
     world: VoxelWorld,
     /// Columns edited by players. They are never unloaded until saving exists.
     modified: FxHashSet<ColumnPos>,
@@ -117,21 +124,29 @@ const MAX_GENERATING: usize = 64;
 const COLUMNS_PER_TICK: usize = 48;
 
 impl Server {
-    fn new(config: ServerConfig, registry: Arc<BlockRegistry>, incoming: Receiver<ServerConnection>) -> Self {
-        let generator: Arc<dyn Generator> = Arc::new(Overworld::new(config.seed, registry.clone()));
+    fn new(config: ServerConfig, content: Content, incoming: Receiver<ServerConnection>) -> Self {
+        let overworld = Arc::new(Overworld::new(config.seed, content.blocks.clone()));
+        let climate = overworld.clone();
+        let temperature = Field::new("core:temperature", move |x, z| {
+            climate.surface_sample(x, z, climate.height(x, z), 0).climate[0] as f32 / 255.0
+        });
+        let generator: Arc<dyn Generator> = overworld;
         // Generate the spawn column up front and stand on its highest solid block, so
         // features like trees never bury the player.
         let mut world = VoxelWorld::default();
         let spawn_block = generator.spawn_point();
         let spawn_column = ColumnPos::of_block(spawn_block);
         world.insert(spawn_column, Arc::new(generator.generate(spawn_column)));
-        let spawn = find_ground(&world, &registry, spawn_block);
+        let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", config.seed);
         Self {
             config,
-            registry,
+            content,
             generator,
+            executor: Executor::default(),
+            processes: process::core_processes(),
+            temperature,
             world,
             modified: FxHashSet::default(),
             generating: FxHashSet::default(),
@@ -202,9 +217,11 @@ impl Server {
     fn tick(&mut self) {
         let _span = tracing::info_span!("server_tick").entered();
         self.tick += 1;
+        self.complete_actions();
+        self.run_processes();
+        self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for &id in &ids {
-            self.tick_player(id);
             self.stream_columns(id);
         }
         self.unload_columns();
@@ -289,6 +306,10 @@ impl Server {
 
     pub(crate) fn block(&self, pos: IVec3) -> Option<BlockId> {
         self.world.block(pos)
+    }
+
+    pub(crate) fn is_solid(&self, pos: IVec3) -> bool {
+        self.block(pos).is_some_and(|b| self.content.blocks.info(b).solid)
     }
 
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {

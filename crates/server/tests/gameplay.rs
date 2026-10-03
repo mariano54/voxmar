@@ -2,11 +2,13 @@
 
 use std::time::{Duration, Instant};
 
+use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::BlockId;
+use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, Face};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::VoxelWorld;
-use voxmar_protocol::{Action, ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, local_pair};
+use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, local_pair};
 use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
 
 struct Client {
@@ -14,6 +16,7 @@ struct Client {
     world: VoxelWorld,
     position: Vec3,
     health: u8,
+    content: Content,
     inventory: voxmar_engine::inventory::Inventory,
     _server: ServerHandle,
 }
@@ -21,16 +24,18 @@ struct Client {
 impl Client {
     fn join() -> Self {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-        let registry = load_content(&assets).expect("content loads");
-        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, registry.clone()).unwrap();
+        let content = load_content(&assets).expect("content loads");
+        let fingerprint = content.fingerprint();
+        let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, load_content(&assets).unwrap()).unwrap();
         let (connection, server_side) = local_pair();
         server.connections().send(server_side).unwrap();
-        connection.send(ClientMessage::Hello { name: "test".into(), protocol: PROTOCOL_VERSION, content: registry.fingerprint() });
+        connection.send(ClientMessage::Hello { name: "test".into(), protocol: PROTOCOL_VERSION, content: fingerprint });
         let mut client = Self {
             connection,
             world: VoxelWorld::default(),
             position: Vec3::ZERO,
             health: 0,
+            content,
             inventory: Default::default(),
             _server: server,
         };
@@ -58,15 +63,16 @@ impl Client {
                 self.world.set_block(pos, block);
             }
             ServerMessage::PlayerState { health, inventory } => {
-                self.health = health;
+                self.health = health.current;
                 self.inventory = inventory;
             }
             _ => {}
         }
     }
 
-    fn act(&self, action: Action) {
-        self.connection.send(ClientMessage::Action(action));
+    fn propose(&self, action: &str, target: ActionTarget) {
+        let action: ActionId = self.content.actions.expect(action);
+        self.connection.send(ClientMessage::Propose { action, target });
     }
 }
 
@@ -77,16 +83,18 @@ fn break_and_place_blocks() {
     let ground = client.world.block(below).unwrap();
     assert!(!ground.is_air());
 
-    // Finishing a break without having spent the break time is rejected.
-    client.act(Action::FinishBreaking { block: below });
-    std::thread::sleep(Duration::from_millis(200));
+    let target = ActionTarget::Block { block: below, face: Face::PosY };
+    // Mining takes the block's hardness in seconds; cancelling before then changes nothing.
+    client.propose("core:mine", target);
+    client.connection.send(ClientMessage::Cancel);
+    std::thread::sleep(Duration::from_millis(1500));
     client.pump_until(|_| true);
     assert_eq!(client.world.block(below), Some(ground));
 
-    client.act(Action::StartBreaking { block: below });
-    std::thread::sleep(Duration::from_millis(1500));
-    client.act(Action::FinishBreaking { block: below });
+    let started = std::time::Instant::now();
+    client.propose("core:mine", target);
     client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    assert!(started.elapsed() >= Duration::from_millis(400), "mining completed too early");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.count == 1));
 
     // Place the first hotbar item back on the block underneath the hole.
@@ -98,7 +106,7 @@ fn break_and_place_blocks() {
         selected_slot: 0,
         flying: false,
     }));
-    client.act(Action::Place { block: below - IVec3::Y, face: Face::PosY });
+    client.propose("core:place", ActionTarget::Block { block: below - IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.world.block(below) == Some(item.item));
     client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(item.count - 1));
 }

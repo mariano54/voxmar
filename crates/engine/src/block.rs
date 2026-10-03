@@ -160,14 +160,18 @@ impl BlockRegistry {
     /// Parses a package's `blocks.ron`. Unqualified names (`stone`) are placed in the
     /// package's `namespace` (`base:stone`).
     pub fn from_ron(namespace: &str, source: &str) -> Result<Self, RegistryError> {
+        Self::new(Self::parse(namespace, source)?)
+    }
+
+    /// Parses a package's block definitions, qualifying names with its namespace.
+    pub fn parse(namespace: &str, source: &str) -> Result<Vec<BlockDef>, RegistryError> {
         let file: BlockFile = ron::from_str(source).map_err(|e| RegistryError(format!("{namespace}/blocks.ron: {e}")))?;
         let qualify = |name: &str| if name.contains(':') { name.to_owned() } else { format!("{namespace}:{name}") };
-        let defs = file
+        Ok(file
             .blocks
             .into_iter()
             .map(|def| BlockDef { name: qualify(&def.name), drops: def.drops.as_deref().map(qualify), ..def })
-            .collect();
-        Self::new(defs)
+            .collect())
     }
 
     /// Builds the registry from fully qualified definitions. `core:air` is always id 0.

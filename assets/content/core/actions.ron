@@ -1,0 +1,21 @@
+// Core actions. Every discrete change a player (or later a machine or NPC) makes goes
+// through one of these: requirements are checked when proposed and again on completion,
+// then the effects are applied atomically.
+(
+    actions: [
+        (
+            name: "mine",
+            duration: TargetHardness,
+            requires: [Alive, InReach, Breakable],
+            effects: [GiveDrop, ClearTarget],
+        ),
+        (
+            name: "place",
+            duration: Instant,
+            requires: [Alive, InReach, HoldingBlock, Replaceable, Unobstructed],
+            effects: [PlaceHeld],
+        ),
+        (name: "transfer", duration: Instant, requires: [Alive], effects: [MoveStack]),
+        (name: "respawn", duration: Instant, requires: [Dead], effects: [Respawn]),
+    ],
+)

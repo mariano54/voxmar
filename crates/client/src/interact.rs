@@ -1,15 +1,16 @@
 //! Block targeting, breaking and placing, and hotbar selection.
 //!
-//! Edits are predicted locally for responsiveness and sent to the server as actions; if
-//! the server disagrees it replies with the authoritative block, which overwrites ours.
+//! Edits are proposed to the server as actions and predicted locally for responsiveness;
+//! if the server disagrees it replies with the authoritative state, which overwrites ours.
 
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
-use voxmar_engine::block::{BlockId, RenderKind};
+use voxmar_engine::action::{ActionContext, ActionTarget};
+use voxmar_engine::block::{BlockId, BlockInfo, RenderKind};
 use voxmar_engine::inventory::HOTBAR_SLOTS;
 use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
-use voxmar_protocol::Action;
 
+use crate::Actions;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::world::ClientWorld;
@@ -28,6 +29,7 @@ pub struct Target {
     pub hit: Option<RayHit>,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
+    mining_seconds: f32,
     place_cooldown: f32,
 }
 
@@ -64,60 +66,101 @@ fn find_target(world: Res<ClientWorld>, player: Res<LocalPlayer>, mut target: Re
     });
 }
 
+/// The client's view for checking actions before proposing them, using the same rules
+/// the server applies.
+struct ClientContext<'a> {
+    world: &'a ClientWorld,
+    player: &'a LocalPlayer,
+}
+
+impl ActionContext for ClientContext<'_> {
+    fn block(&self, pos: IVec3) -> Option<BlockId> {
+        self.world.block(pos)
+    }
+
+    fn info(&self, block: BlockId) -> &BlockInfo {
+        self.world.registry.info(block)
+    }
+
+    fn actor_eye(&self) -> Vec3 {
+        self.player.eye()
+    }
+
+    fn actor_alive(&self) -> bool {
+        !self.player.dead
+    }
+
+    fn actor_held(&self) -> Option<BlockId> {
+        self.player.inventory.get(self.player.selected).map(|s| s.item)
+    }
+
+    fn occupied(&self, cell: IVec3) -> bool {
+        Aabb::standing(self.player.position, dims::WIDTH, dims::HEIGHT).intersects(|c| c == cell)
+    }
+}
+
+/// Mining proposes `core:mine` and shows progress over the same duration the server
+/// uses; releasing the button or looking away cancels it. Placing proposes `core:place`.
+/// Both are predicted locally and corrected by the server if it disagrees.
+#[allow(clippy::too_many_arguments)]
 fn break_and_place(
     time: Res<Time>,
     mouse: Res<ButtonInput<MouseButton>>,
     ui: Res<UiState>,
     net: Res<Net>,
+    actions: Res<Actions>,
     mut world: ResMut<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
     mut target: ResMut<Target>,
 ) {
     target.place_cooldown -= time.delta_secs();
-    if !ui.cursor_locked || player.dead {
-        target.breaking = None;
-        return;
-    }
-    let Some(hit) = target.hit else {
-        target.breaking = None;
-        return;
-    };
+    let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
+    let mining = hit.filter(|_| mouse.pressed(MouseButton::Left));
 
-    if mouse.pressed(MouseButton::Left) {
-        let block = world.block(hit.block).unwrap_or(BlockId::AIR);
-        let hardness = world.registry.info(block).hardness;
-        let progress = match target.breaking {
-            Some((pos, progress)) if pos == hit.block => progress,
-            _ => {
-                net.act(Action::StartBreaking { block: hit.block });
-                0.0
+    // Stop mining when the button is released or the target changes.
+    if let Some((pos, _)) = target.breaking
+        && mining.is_none_or(|hit| hit.block != pos)
+    {
+        target.breaking = None;
+        net.cancel();
+    }
+
+    if let Some(hit) = mining {
+        let mine = actions.0.expect("core:mine");
+        let def = actions.0.get(mine).expect("core:mine is defined");
+        let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+        let context = ClientContext { world: &world, player: &player };
+        match target.breaking {
+            Some((pos, progress)) if pos == hit.block => {
+                let progress = progress + time.delta_secs() / target.mining_seconds.max(0.05);
+                if progress >= 1.0 {
+                    // The server commits at the same moment; predict it.
+                    world.set_block(hit.block, BlockId::AIR);
+                    target.breaking = None;
+                } else {
+                    target.breaking = Some((pos, progress));
+                }
             }
-        };
-        if hardness >= 0.0 {
-            let progress = progress + time.delta_secs() / hardness.max(0.05);
-            if progress >= 1.0 {
-                net.act(Action::FinishBreaking { block: hit.block });
-                world.set_block(hit.block, BlockId::AIR);
-                target.breaking = None;
-            } else {
-                target.breaking = Some((hit.block, progress));
+            _ if def.validate(&context, action_target).is_ok() => {
+                target.mining_seconds = def.seconds(&context, action_target);
+                target.breaking = Some((hit.block, 0.0));
+                net.propose(mine, action_target);
             }
+            _ => {}
         }
-    } else {
-        target.breaking = None;
     }
 
+    let Some(hit) = hit else { return };
     if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 {
         target.place_cooldown = 0.2;
-        let pos = hit.block + hit.face.normal();
-        let selected = player.selected;
-        let Some(item) = player.inventory.get(selected).map(|s| s.item) else { return };
-        let solid = world.registry.info(item).solid;
-        let overlaps_player = Aabb::standing(player.position, dims::WIDTH, dims::HEIGHT).intersects(|c| c == pos);
-        let replaceable = world.block(pos).is_some_and(|b| !world.registry.info(b).solid);
-        if replaceable && !(solid && overlaps_player) {
-            net.act(Action::Place { block: hit.block, face: hit.face });
-            world.set_block(pos, item);
+        let place = actions.0.expect("core:place");
+        let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+        let context = ClientContext { world: &world, player: &player };
+        let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
+        if let Some(item) = context.actor_held().filter(|_| allowed) {
+            net.propose(place, action_target);
+            world.set_block(hit.block + hit.face.normal(), item);
+            let selected = player.selected;
             player.inventory.take_one(selected);
         }
     }

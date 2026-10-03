@@ -3,8 +3,9 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, SLOTS};
-use voxmar_protocol::Action;
+use voxmar_engine::action::ActionTarget;
 
+use crate::Actions;
 use crate::interact::Target;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
@@ -199,6 +200,7 @@ fn toggle_screens(
     mut ui: ResMut<UiState>,
     player: Res<LocalPlayer>,
     net: Res<Net>,
+    actions: Res<Actions>,
     mut panel: Query<&mut Visibility, With<InventoryPanel>>,
     mut held: ResMut<HeldSlot>,
 ) {
@@ -210,7 +212,7 @@ fn toggle_screens(
         ui.debug = !ui.debug;
     }
     if player.dead && keys.just_pressed(KeyCode::KeyR) {
-        net.act(Action::Respawn);
+        net.propose(actions.0.expect("core:respawn"), ActionTarget::None);
     }
     if let Ok(mut visibility) = panel.single_mut() {
         visibility.set_if_neq(if ui.inventory_open { Visibility::Inherited } else { Visibility::Hidden });
@@ -351,6 +353,7 @@ fn update_debug(
 fn click_inventory(
     ui: Res<UiState>,
     net: Res<Net>,
+    actions: Res<Actions>,
     mut held: ResMut<HeldSlot>,
     mut player: ResMut<LocalPlayer>,
     mut slots: Query<(&InventorySlot, &Interaction, &mut BackgroundColor), Changed<Interaction>>,
@@ -362,7 +365,8 @@ fn click_inventory(
         match interaction {
             Interaction::Pressed => match held.0.take() {
                 Some(from) if from != slot.0 => {
-                    net.act(Action::MoveItem { from: from as u8, to: slot.0 as u8 });
+                    let target = ActionTarget::Slots { from: from as u8, to: slot.0 as u8 };
+                    net.propose(actions.0.expect("core:transfer"), target);
                     player.inventory.move_stack(from, slot.0);
                 }
                 Some(_) => {}

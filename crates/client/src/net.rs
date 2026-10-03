@@ -4,8 +4,9 @@
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_protocol::{
-    Action, ClientConnection, ClientMessage, PlayerId, PlayerInput, PlayerView, ServerMessage, TICKS_PER_SECOND,
+    ClientConnection, ClientMessage, PlayerId, PlayerInput, PlayerView, ServerMessage, TICKS_PER_SECOND,
 };
+use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_server::ServerHandle;
 
 use crate::player::LocalPlayer;
@@ -38,8 +39,12 @@ impl Net {
         Self { connection, _server: server, status: Some("Connecting…".into()), input_timer: 0.0 }
     }
 
-    pub fn act(&self, action: Action) {
-        self.connection.send(ClientMessage::Action(action));
+    pub fn propose(&self, action: ActionId, target: ActionTarget) {
+        self.connection.send(ClientMessage::Propose { action, target });
+    }
+
+    pub fn cancel(&self) {
+        self.connection.send(ClientMessage::Cancel);
     }
 }
 
@@ -85,9 +90,9 @@ fn receive(
                 }
             }
             ServerMessage::PlayerState { health, inventory } => {
-                player.health = health;
+                player.health = health.current;
                 player.inventory = inventory;
-                if health > 0 {
+                if health.alive() {
                     player.dead = false;
                 }
             }

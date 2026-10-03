@@ -1,6 +1,6 @@
 //! Client/server messages and the transports that carry them.
 //!
-//! The server is authoritative. Clients send intent (input and proposed [`Action`]s);
+//! The server is authoritative. Clients send intent (input and proposed actions);
 //! the server validates, commits and replicates the result. The same message types travel
 //! over an in-process channel (singleplayer) or TCP (multiplayer).
 
@@ -9,15 +9,17 @@ mod transport;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::BlockId;
-use voxmar_engine::coords::{ColumnPos, Face};
+use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::Inventory;
+use voxmar_engine::traits::Health;
 use voxmar_engine::world::Column;
 
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -30,7 +32,10 @@ pub type PlayerId = u32;
 pub enum ClientMessage {
     Hello { name: String, protocol: u32, content: u64 },
     Input(PlayerInput),
-    Action(Action),
+    /// Propose an action; it replaces any action still in progress.
+    Propose { action: ActionId, target: ActionTarget },
+    /// Abandon the action in progress (for example, the mouse button was released).
+    Cancel,
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
@@ -44,17 +49,6 @@ pub struct PlayerInput {
     pub flying: bool,
 }
 
-/// A change the player proposes. The server may reject any of them.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum Action {
-    StartBreaking { block: IVec3 },
-    FinishBreaking { block: IVec3 },
-    /// Place the selected item against `face` of `block`.
-    Place { block: IVec3, face: Face },
-    MoveItem { from: u8, to: u8 },
-    Respawn,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     Welcome { player: PlayerId, seed: u64, position: Vec3, allow_flight: bool },
@@ -62,7 +56,7 @@ pub enum ServerMessage {
     Column { pos: ColumnPos, column: Arc<Column> },
     Unload { pos: ColumnPos },
     BlockChanged { pos: IVec3, block: BlockId },
-    PlayerState { health: u8, inventory: Inventory },
+    PlayerState { health: Health, inventory: Inventory },
     /// Authoritative position, after a rejected move or a respawn.
     Teleport { position: Vec3 },
     Players { players: Vec<PlayerView> },

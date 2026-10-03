@@ -23,7 +23,9 @@ use bevy::app::ScheduleRunnerPlugin;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::window::{ExitCondition, PresentMode};
+use voxmar_engine::action::ActionRegistry;
 use voxmar_engine::block::{BlockRegistry, Tint};
+use voxmar_engine::content::Content;
 use voxmar_engine::coords::Face;
 use voxmar_protocol::{DEFAULT_PORT, local_pair, tcp};
 use voxmar_server::{ServerConfig, ServerHandle};
@@ -91,8 +93,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rayon::ThreadPoolBuilder::new().num_threads(workers).thread_name(|i| format!("worker-{i}")).build_global()?;
 
     let assets = voxmar_server::assets_dir();
-    let registry = voxmar_server::load_content(&assets)?;
-    let (connection, server) = connect(&options, registry.clone())?;
+    let content = voxmar_server::load_content(&assets)?;
+    let registry = content.blocks.clone();
+    let fingerprint = content.fingerprint();
+    let (connection, server) = connect(&options, content.clone())?;
 
     let mut app = App::new();
     let window = Window {
@@ -123,7 +127,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hud::HudPlugin,
     ))
     .insert_resource(ClientWorld::new(registry.clone(), options.view_distance))
-    .insert_resource(net::Net::new(connection, server, options.name.clone(), registry.fingerprint()))
+    .insert_resource(net::Net::new(connection, server, options.name.clone(), fingerprint))
+    .insert_resource(Actions(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(options.view_distance), ..default() })
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
@@ -140,16 +145,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[derive(Resource)]
 struct Registry(Arc<BlockRegistry>);
 
+/// Action definitions, shared with the server, for proposing and predicting actions.
+#[derive(Resource)]
+pub struct Actions(pub Arc<ActionRegistry>);
+
 fn connect(
     options: &Options,
-    registry: Arc<BlockRegistry>,
+    content: Content,
 ) -> Result<(voxmar_protocol::ClientConnection, Option<ServerHandle>), Box<dyn std::error::Error>> {
     if let Some(addr) = &options.connect {
         let addr = if addr.contains(':') { addr.clone() } else { format!("{addr}:{DEFAULT_PORT}") };
         return Ok((tcp::connect(addr)?, None));
     }
     let config = ServerConfig { seed: options.seed, view_distance: options.view_distance, allow_flight: true };
-    let server = voxmar_server::spawn(config, registry)?;
+    let server = voxmar_server::spawn(config, content)?;
     if options.host {
         let addr = tcp::listen(("0.0.0.0", DEFAULT_PORT), server.connections())?;
         info!("open to the network on {addr}");

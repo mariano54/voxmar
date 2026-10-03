@@ -30,7 +30,7 @@ a jar, resource pack zip or folder. Without one it generates placeholder texture
 
 | crate | role |
 | --- | --- |
-| `engine` | world data and rules, no renderer: palette chunks, column lighting, binary greedy meshing, visibility graph, collision, raycast, inventory, block registry |
+| `engine` | world data and rules, no renderer: palette chunks, column lighting, binary greedy meshing, visibility graph, collision, raycast, content packages, actions, scheduler, traits, fields |
 | `worldgen` | staged generator: geology → climate/biomes → resources → terrain, caves, trees |
 | `protocol` | client/server messages and transports (in-process channels, TCP) |
 | `server` | authoritative simulation (fixed 20 Hz tick), validation, streaming; `voxmar-server` binary |
@@ -41,15 +41,23 @@ same registry a mod will use. Client and server compare a content fingerprint on
 
 How the design primitives map to the code today:
 
-- **Definition**: `BlockDef` (RON), namespaced per package (`base:stone`; `core:air` is built in), compiled into `BlockRegistry` lookup tables.
+- **Definition**: blocks (`content/base/blocks.ron`) and actions (`content/core/actions.ron`),
+  namespaced per package (`base:stone`, `core:mine`; `core:air` is built in).
+- **Action**: the only way discrete changes happen. Every action goes through one lifecycle on
+  the server (propose, validate, schedule one completion, re-validate, commit or cancel) and
+  compiles down to a fixed set of engine effects. Clients validate with the same rules to
+  predict. Mining, placing, moving items and respawning are all actions.
+- **Process**: continuous server rules at a scheduling tier (`High` every tick, `Low` once a
+  second): falling damage, and regeneration, which heals slower where the temperature field
+  is freezing.
+- **Trait**: typed data with declared replication and persistence (`core:health`,
+  `core:inventory`, `core:position`); owner-replicated traits are sent when they change.
+- **Field**: coarse 16-block grids, generated baseline plus emitted differences
+  (`core:temperature` from the climate generator).
+- **Agent**: players, whose controller is input. Machines and creatures come later.
 - **Generator**: the `Generator` trait; `Overworld` is the first implementation. Random
-  streams are seeded from world seed + generator id and version + stream + position, so generation is pure and
-  order-independent.
-- **Action**: `protocol::Action` (intents such as break, place, move item, respawn), validated
-  and committed by the server.
-- **Process**: per-tick server rules (fall damage, regeneration, void damage).
-- **Agent**: players. **Trait** and **Field** are not built yet; replication is currently
-  explicit messages.
+  streams are seeded from world seed + generator id and version + stream + position, so
+  generation is pure and order-independent. Distant terrain is sampled from the same functions.
 
 ## Rendering and performance
 

@@ -1,0 +1,162 @@
+//! The action executor: propose, validate, schedule one completion, then commit
+//! atomically or cancel. Long actions (mining) are a single scheduled event, not work
+//! done every tick.
+
+use rustc_hash::FxHashMap;
+use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect};
+use voxmar_engine::block::{BlockId, BlockInfo};
+use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::schedule::{EventId, Scheduler};
+use voxmar_engine::traits;
+use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+
+use crate::Server;
+use crate::player::MAX_HEALTH;
+
+/// An action waiting for its completion tick.
+pub struct Pending {
+    agent: PlayerId,
+    action: ActionId,
+    target: ActionTarget,
+}
+
+#[derive(Default)]
+pub struct Executor {
+    scheduler: Scheduler<Pending>,
+    /// Each agent performs at most one timed action at a time.
+    in_progress: FxHashMap<PlayerId, EventId>,
+}
+
+/// Validation view of the world from one agent's point of view.
+struct Context<'a> {
+    server: &'a Server,
+    agent: PlayerId,
+}
+
+impl ActionContext for Context<'_> {
+    fn block(&self, pos: IVec3) -> Option<BlockId> {
+        self.server.block(pos)
+    }
+
+    fn info(&self, block: BlockId) -> &BlockInfo {
+        self.server.content.blocks.info(block)
+    }
+
+    fn actor_eye(&self) -> Vec3 {
+        self.server.players[&self.agent].eye()
+    }
+
+    fn actor_alive(&self) -> bool {
+        self.server.players[&self.agent].health.alive()
+    }
+
+    fn actor_held(&self) -> Option<BlockId> {
+        self.server.players[&self.agent].held()
+    }
+
+    fn occupied(&self, cell: IVec3) -> bool {
+        self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
+    }
+}
+
+impl Server {
+    fn action_def(&self, action: ActionId) -> Option<ActionDef> {
+        self.content.actions.get(action).cloned()
+    }
+
+    pub(crate) fn propose(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
+        self.cancel_action(agent);
+        let Some(def) = self.action_def(action) else { return };
+        let context = Context { server: self, agent };
+        if def.validate(&context, target).is_err() {
+            self.reject(agent, target);
+            return;
+        }
+        let ticks = (def.seconds(&context, target) * TICKS_PER_SECOND as f32).round() as u64;
+        if ticks == 0 {
+            self.commit(agent, &def, target);
+        } else {
+            let id = self.executor.scheduler.schedule(self.tick + ticks, Pending { agent, action, target });
+            self.executor.in_progress.insert(agent, id);
+        }
+    }
+
+    pub(crate) fn cancel_action(&mut self, agent: PlayerId) {
+        if let Some(id) = self.executor.in_progress.remove(&agent) {
+            self.executor.scheduler.cancel(id);
+        }
+    }
+
+    /// Completes every action due this tick. Requirements are checked again, since the
+    /// world may have changed while the action was in progress.
+    pub(crate) fn complete_actions(&mut self) {
+        while let Some((_, id, pending)) = self.executor.scheduler.pop_due(self.tick) {
+            if self.executor.in_progress.get(&pending.agent) == Some(&id) {
+                self.executor.in_progress.remove(&pending.agent);
+            }
+            if !self.players.contains_key(&pending.agent) {
+                continue;
+            }
+            let Some(def) = self.action_def(pending.action) else { continue };
+            if def.validate(&Context { server: self, agent: pending.agent }, pending.target).is_ok() {
+                self.commit(pending.agent, &def, pending.target);
+            } else {
+                self.reject(pending.agent, pending.target);
+            }
+        }
+    }
+
+    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+        for &effect in &def.effects {
+            match (effect, target) {
+                (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
+                    let Some(current) = self.block(block) else { continue };
+                    let drop = self.content.blocks.info(current).drops;
+                    let player = self.players.get_mut(&agent).unwrap();
+                    player.inventory.add(drop, 1);
+                    player.changed(traits::INVENTORY);
+                }
+                (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
+                    self.set_block(block, BlockId::AIR);
+                }
+                (Effect::PlaceHeld, ActionTarget::Block { block, face }) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    let selected = player.selected;
+                    let Some(item) = player.inventory.take_one(selected) else { continue };
+                    player.changed(traits::INVENTORY);
+                    self.set_block(block + face.normal(), item);
+                }
+                (Effect::MoveStack, ActionTarget::Slots { from, to }) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    if player.inventory.move_stack(from as usize, to as usize) {
+                        player.changed(traits::INVENTORY);
+                    }
+                }
+                (Effect::Respawn, _) => {
+                    let spawn = self.spawn;
+                    let player = self.players.get_mut(&agent).unwrap();
+                    player.health.heal(MAX_HEALTH);
+                    player.position = spawn;
+                    player.fall_start = None;
+                    player.changed(traits::HEALTH);
+                    player.connection.send(ServerMessage::Teleport { position: spawn });
+                }
+                (effect, target) => tracing::warn!("{} cannot apply {effect:?} to {target:?}", def.name),
+            }
+        }
+    }
+
+    /// Tells the client the truth about anything it may have predicted.
+    fn reject(&mut self, agent: PlayerId, target: ActionTarget) {
+        let Some(player) = self.players.get_mut(&agent) else { return };
+        player.changed(traits::INVENTORY);
+        if let ActionTarget::Block { block, face } = target {
+            for pos in [block, block + face.normal()] {
+                if let Some(current) = self.block(pos) {
+                    self.players[&agent].connection.send(ServerMessage::BlockChanged { pos, block: current });
+                }
+            }
+        }
+    }
+}
