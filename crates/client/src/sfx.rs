@@ -210,7 +210,6 @@ fn recipe(sound: Sound) -> Recipe {
             attack: 0.01,
             tones: &[(90.0, 30.0)],
             tone_gain: 0.25,
-            ..base
         },
         Sound::Grass => Recipe { length: 0.14, center: 1800.0, q: 0.9, grains: 350.0, grain_length: 0.005, attack: 0.015, ..base },
         Sound::Sand => Recipe { length: 0.2, center: 1300.0, q: 0.5, grains: 600.0, grain_length: 0.004, attack: 0.035, ..base },

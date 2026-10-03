@@ -430,13 +430,15 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
         }
     }
     // Skirts: each border edge gets a wall hanging down, facing outwards.
-    let borders: [(Box<dyn Fn(i32) -> (i32, i32)>, Vec3, bool); 4] = [
-        (Box::new(|i| (i, 0)), Vec3::NEG_Z, false),
-        (Box::new(|i| (i, CELLS)), Vec3::Z, true),
-        (Box::new(|i| (0, i)), Vec3::NEG_X, true),
-        (Box::new(|i| (CELLS, i)), Vec3::X, false),
+    // (start corner, step along the edge, outward normal, winding flipped)
+    let borders = [
+        ((0, 0), (1, 0), Vec3::NEG_Z, false),
+        ((0, CELLS), (1, 0), Vec3::Z, true),
+        ((0, 0), (0, 1), Vec3::NEG_X, true),
+        ((CELLS, 0), (0, 1), Vec3::X, false),
     ];
-    for (edge, outward, flip) in borders {
+    for ((sx, sz), (dx, dz), outward, flip) in borders {
+        let edge = |i: i32| (sx + dx * i, sz + dz * i);
         let base = vertices.len() as u32;
         for i in 0..=CELLS {
             let (x, z) = edge(i);
