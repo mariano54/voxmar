@@ -13,7 +13,7 @@
 //!   machine, and nothing is downloaded or shipped.
 //!
 //! Rain is a soft loop of tiny drops over a hiss, as loud as the rain is heavy and quieter
-//! under cover.
+//! under cover. Thunder rumbles low and long, opening with a crack when the lightning is close.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ use voxmar_engine::physics::player as dims;
 use crate::player::LocalPlayer;
 use crate::render::precipitation::SkyMap;
 use crate::settings::Settings;
-use crate::weather::ClientWeather;
+use crate::weather::{ClientWeather, Thunder};
 use crate::world::ClientWorld;
 
 const RATE: u32 = 44_100;
@@ -37,6 +37,10 @@ const MASTER: f32 = 0.6;
 /// Seconds in the rain loop, and its volume in the heaviest rain out in the open.
 const RAIN_LOOP: f32 = 4.0;
 const RAIN_GAIN: f32 = 0.45;
+/// Thunder's volume from lightning right overhead.
+const THUNDER_GAIN: f32 = 0.9;
+/// Lightning closer than this many blocks cracks before it rumbles.
+const NEAR_LIGHTNING: f32 = 300.0;
 
 pub struct SfxPlugin;
 
@@ -44,7 +48,7 @@ impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SoundCue>()
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, play_cues).chain(), rain));
+            .add_systems(Update, ((footsteps, play_cues).chain(), rain, thunder));
     }
 }
 
@@ -89,6 +93,8 @@ impl SoundCue {
 #[derive(Resource)]
 struct Sfx {
     clips: FxHashMap<(Sound, Cue), Vec<Handle<AudioSource>>>,
+    /// Thunder from near and far lightning, a few variants each.
+    thunder: [Vec<Handle<AudioSource>>; 2],
     counter: u64,
 }
 
@@ -112,7 +118,10 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
             clips.insert((sound, cue), variants);
         }
     }
-    commands.insert_resource(Sfx { clips, counter: 0 });
+    let thunder = [true, false].map(|near| {
+        (0..VARIANTS).map(|v| sources.add(AudioSource { bytes: Arc::from(wav(&thunder_clip(mix(v * 7 + near as u64), near))) })).collect()
+    });
+    commands.insert_resource(Sfx { clips, thunder, counter: 0 });
     let rain = sources.add(AudioSource { bytes: Arc::from(wav(&rain_loop(0x7261_696e))) });
     let playback = PlaybackSettings { paused: true, ..PlaybackSettings::LOOP.with_volume(Volume::SILENT) };
     commands.spawn((RainSound, AudioPlayer(rain), playback));
@@ -120,6 +129,19 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
 
 #[derive(Component)]
 struct RainSound;
+
+/// Plays thunder as it reaches the player, quieter the farther the lightning.
+fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
+    let Some(mut sfx) = sfx else { return };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    for thunder in heard.read() {
+        let variant = (sfx.random() * VARIANTS as f32) as usize % VARIANTS as usize;
+        let speed = 0.9 + sfx.random() * 0.2;
+        let clip = sfx.thunder[(thunder.distance >= NEAR_LIGHTNING) as usize][variant].clone();
+        let volume = Volume::Linear(THUNDER_GAIN / (1.0 + thunder.distance / 400.0) * master);
+        commands.spawn((AudioPlayer(clip), PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(volume) }));
+    }
+}
 
 /// Fades the rain loop with how hard it rains (snow is silent) and how open the sky is
 /// above the player.
@@ -400,6 +422,49 @@ fn rain_loop(seed: u64) -> Vec<f32> {
     samples
 }
 
+/// Thunder: a long, low rumble that swells as sound arrives from farther along the bolt, and
+/// for lightning close by, a sharp crack first.
+fn thunder_clip(seed: u64, near: bool) -> Vec<f32> {
+    let length = (6.0 * RATE as f32) as usize;
+    let mut noise = Noise(seed);
+    // When, how strongly and for how long sound from each stretch of the bolt arrives.
+    let swells: Vec<(f32, f32, f32)> =
+        (0..5).map(|_| (0.1 + 2.4 * noise.unit(), 0.3 + 0.7 * noise.unit(), 0.25 + 0.6 * noise.unit())).collect();
+    // Two cascaded low-passes for the rumble; distant thunder has lost more of its highs.
+    let low = 2.0 * (std::f32::consts::PI * if near { 180.0 } else { 110.0 } / RATE as f32).sin();
+    let crack = 2.0 * (std::f32::consts::PI * 1400.0 / RATE as f32).sin();
+    let mut filters = [(0.0f32, 0.0f32); 3];
+    let mut samples = Vec::with_capacity(length);
+    for i in 0..length {
+        let t = i as f32 / RATE as f32;
+        let white = noise.next();
+        let mut input = white;
+        for (low_state, band) in &mut filters[..2] {
+            *low_state += low * *band;
+            *band += low * (input - *low_state - *band);
+            input = *low_state;
+        }
+        let swell: f32 = swells.iter().map(|&(at, strength, width)| strength * (-((t - at) / width).powi(2)).exp()).sum();
+        let envelope = (t / 0.03).min(1.0) * (swell + 0.3) * (-t / 2.5).exp();
+        let mut sample = input * envelope;
+        if near {
+            let (low_state, band) = &mut filters[2];
+            *low_state += crack * *band;
+            *band += crack * (white - *low_state - 0.8 * *band);
+            sample += *band * 1.5 * (-t * 14.0).exp();
+        }
+        samples.push(sample);
+    }
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt().max(1e-6);
+    let peak = samples.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
+    let scale = (0.2 / rms).min(0.95 / peak);
+    let fade = RATE as usize / 2;
+    for (i, sample) in samples.iter_mut().enumerate() {
+        *sample *= scale * ((length - i) as f32 / fade as f32).min(1.0);
+    }
+    samples
+}
+
 /// A few rising bubble chirps for water.
 fn water_bubbles(t: f32, seed: u64) -> f32 {
     (0..3)
@@ -454,6 +519,15 @@ mod tests {
     }
 
     #[test]
+    fn thunder_renders_clean_audio() {
+        for near in [true, false] {
+            let samples = thunder_clip(5, near);
+            assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+            assert!(samples.last().unwrap().abs() < 0.01);
+        }
+    }
+
+    #[test]
     fn rain_loops_without_a_seam() {
         let samples = rain_loop(3);
         assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
@@ -478,6 +552,9 @@ mod tests {
         }
         for _ in 0..2 {
             all.extend(rain_loop(1).iter().map(|s| s * RAIN_GAIN));
+        }
+        for near in [true, false] {
+            all.extend(thunder_clip(2, near).iter().map(|s| s * THUNDER_GAIN));
         }
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sfx_preview.wav");
         std::fs::write(path, wav(&all)).unwrap();

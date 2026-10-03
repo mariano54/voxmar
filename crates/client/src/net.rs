@@ -142,6 +142,7 @@ fn receive(
             }
             ServerMessage::Time { ticks } => cycle.ticks = ticks as f64,
             ServerMessage::Weather(report) => weather.receive(report),
+            ServerMessage::Lightning { at } => weather.lightning(at.distance(player.position.xz())),
             ServerMessage::Died => player.dead = true,
         }
     }

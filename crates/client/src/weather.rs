@@ -1,6 +1,6 @@
 //! The weather as the client sees it: the server's latest report for where the player is,
-//! eased into over seconds so clouds form and rain sets in gradually, plus how far the
-//! wind has carried the clouds.
+//! eased into over seconds so clouds form and rain sets in gradually, how far the wind has
+//! carried the clouds, and lightning: a flash at once, thunder when the sound arrives.
 
 use bevy::prelude::*;
 use voxmar_protocol::Weather;
@@ -12,6 +12,7 @@ pub struct WeatherPlugin;
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ClientWeather>()
+            .add_message::<Thunder>()
             .add_systems(Update, ease)
             .add_systems(OnExit(Screen::InGame), |mut weather: ResMut<ClientWeather>| weather.leave());
     }
@@ -28,16 +29,34 @@ pub struct ClientWeather {
     pub current: Weather,
     /// How far the wind has carried the clouds, in blocks, wrapped every `DRIFT_WRAP`.
     pub drift: Vec2,
+    strikes: Vec<Strike>,
 }
 
 /// Cloud drift wraps around after this many blocks, keeping shader coordinates small.
 pub const DRIFT_WRAP: f32 = 1_048_576.0;
+/// Blocks sound travels per second.
+const SOUND_SPEED: f32 = 343.0;
+
+/// A lightning flash, seen at once and heard later.
+struct Strike {
+    /// Seconds since the flash.
+    age: f32,
+    /// Blocks away.
+    distance: f32,
+    heard: bool,
+}
+
+/// Thunder reaching the player from lightning `distance` blocks away.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct Thunder {
+    pub distance: f32,
+}
 
 /// Until a server reports the weather, and in the menus: a fair day.
 impl Default for ClientWeather {
     fn default() -> Self {
         let fair = preset("cumulus").expect("cumulus is a preset");
-        Self { target: Some(fair), reported: false, forced: false, current: fair, drift: Vec2::ZERO }
+        Self { target: Some(fair), reported: false, forced: false, current: fair, drift: Vec2::ZERO, strikes: Vec::new() }
     }
 }
 
@@ -52,6 +71,22 @@ impl ClientWeather {
             self.current = weather;
         }
         self.target = Some(weather);
+    }
+
+    /// Lightning flashed `distance` blocks away.
+    pub fn lightning(&mut self, distance: f32) {
+        self.strikes.push(Strike { age: 0.0, distance, heard: false });
+    }
+
+    /// How brightly lightning lights the sky and land now, 0..1: a few quick pulses per
+    /// flash, fainter the farther it is.
+    pub fn flash(&self) -> f32 {
+        let pulses = |age: f32| {
+            let pulse = |at: f32, strength: f32| strength * (-((age - at) * 30.0).powi(2)).exp();
+            pulse(0.02, 1.0) + pulse(0.14, 0.5) + pulse(0.3, 0.8) + 0.15 * (-age * 8.0).exp()
+        };
+        let flashes = self.strikes.iter().map(|s| pulses(s.age) / (1.0 + (s.distance / 400.0).powi(2)));
+        flashes.sum::<f32>().min(1.0)
     }
 
     /// Back to the menus' fair sky, unless a fixed weather was asked for.
@@ -70,10 +105,18 @@ impl ClientWeather {
 }
 
 /// Moves the shown weather towards the reported one: cloud builds and clears over tens of
-/// seconds, rain sets in and stops over a few.
-fn ease(time: Res<Time>, mut weather: ResMut<ClientWeather>) {
+/// seconds, rain sets in and stops over a few. Thunder follows each flash.
+fn ease(time: Res<Time>, mut weather: ResMut<ClientWeather>, mut thunder: MessageWriter<Thunder>) {
     let dt = time.delta_secs();
     let weather = &mut *weather;
+    for strike in &mut weather.strikes {
+        strike.age += dt;
+        if !strike.heard && strike.age >= strike.distance / SOUND_SPEED {
+            strike.heard = true;
+            thunder.write(Thunder { distance: strike.distance });
+        }
+    }
+    weather.strikes.retain(|s| !s.heard || s.age < 1.0);
     if let Some(target) = weather.target {
         let current = &mut weather.current;
         let approach = |value: &mut f32, target: f32, seconds: f32| *value += (target - *value) * (dt / seconds).min(1.0);

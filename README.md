@@ -130,7 +130,9 @@ and precipitation fields cell by cell: humidity follows the passing air mass awa
 baseline (the usual humidity of the climate's annual rainfall), cloud condenses as the air
 nears saturation, sooner in rising or cold air, and evaporates as it dries, and thick cloud
 rains, which dries the air again. Typical land rains 8-20% of the time, rainforests 30-50%,
-deserts almost never, and below 0 °C it snows. A cell coming into range first catches up on its
+deserts almost never, and below 0 °C it snows. A downpour under strong updrafts is a
+thunderstorm: each second it may raise a lightning event somewhere in the cell, which nearby
+clients see as a flash and hear as thunder once the sound has travelled. A cell coming into range first catches up on its
 last ten minutes, so the weather at a place does not depend on when anyone arrived (or whether
 the world was just loaded), and cells left behind return to their baseline. The process uses
 only exact arithmetic on seeded hash streams, so it is deterministic on every machine.

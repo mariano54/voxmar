@@ -69,6 +69,8 @@ pub enum ServerMessage {
     Time { ticks: u64 },
     /// The weather where the player is, sent when it changes and every few seconds.
     Weather(Weather),
+    /// Lightning over (x, z): a flash, and thunder once the sound has travelled.
+    Lightning { at: Vec2 },
     Died,
 }
 

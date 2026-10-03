@@ -314,6 +314,7 @@ fn update_status(player: Res<LocalPlayer>, target: Res<Target>, mut status: Quer
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_debug(
     diagnostics: Res<DiagnosticsStore>,
     world: Res<ClientWorld>,

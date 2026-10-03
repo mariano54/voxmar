@@ -425,8 +425,9 @@ impl Environment {
     }
 
     /// The same light under cloud: a full layer hides the sun or moon, and the sky and
-    /// ambient light turn grey, darker still in rain and storms.
-    fn under(mut self, weather: &Weather) -> Self {
+    /// ambient light turn grey, darker still in rain and storms. Lightning (`flash`, 0..1)
+    /// lights everything up for a moment.
+    fn under(mut self, weather: &Weather, flash: f32) -> Self {
         let overcast = smoothstep(0.3, 1.0, weather.cover);
         let gloom = 1.0 - 0.75 * weather.precipitation * (0.5 + 0.5 * weather.convection);
         let grey = |color: Vec3, brightness: f32| {
@@ -437,6 +438,10 @@ impl Environment {
         self.horizon = grey(self.horizon, 0.9) * gloom;
         // Cloud spreads the hidden sunlight over the whole sky, brightening the shade.
         self.ambient = grey(self.ambient, 1.0 + 0.6 * self.daylight) * gloom;
+        let lightning = Vec3::new(0.7, 0.75, 1.0) * flash;
+        self.ambient += lightning * 1.5;
+        self.zenith += lightning * 0.4;
+        self.horizon += lightning * 0.6;
         self
     }
 }
@@ -459,7 +464,8 @@ fn update_environment(
     cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
     let days = cycle.ticks / TICKS_PER_DAY as f64;
     let shown = &weather.current;
-    let env = Environment::at(days.fract() as f32).under(shown);
+    let flash = weather.flash();
+    let env = Environment::at(days.fract() as f32).under(shown, flash);
 
     if let Ok((mut transform, mut light)) = sun.single_mut() {
         *transform = Transform::default().looking_to(-env.light_direction, Vec3::Y);
@@ -497,7 +503,7 @@ fn update_environment(
             sun: env.to_sun.extend(env.daylight),
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
             stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
-            weather: layer.rem_euclid(DVec2::splat(4096.0)).as_vec2().extend(shown.precipitation).extend(0.0),
+            weather: layer.rem_euclid(DVec2::splat(4096.0)).as_vec2().extend(shown.precipitation).extend(flash),
             wind: shown.wind.normalize_or(Vec2::X).extend(0.0).extend(0.0),
         };
     }

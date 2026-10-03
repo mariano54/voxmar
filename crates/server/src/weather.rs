@@ -36,12 +36,17 @@ const MEAN_WIND: f64 = 3.0;
 /// A player's weather is sent when any value moves this much, or after `RESEND` ticks.
 const CHANGE: f32 = 0.02;
 const RESEND: u64 = 5 * TICKS_PER_SECOND as u64;
+/// Chance per second that a cell under the fiercest storm flashes, and how far away, in
+/// blocks, players see and hear lightning.
+const LIGHTNING: f32 = 0.015;
+const LIGHTNING_REACH: f32 = 1500.0;
 
 /// Random streams, each mixed into the world seed.
 const AIR_MASS: u64 = 1;
 const UPDRAFT: u64 = 2;
 const GUSTS: u64 = 3;
 const CIRRUS: u64 = 4;
+const STRIKES: u64 = 5;
 
 /// `core:humidity` (relative), `core:clouds` (cloud cover) and `core:precipitation` (rain
 /// or snow reaching the ground), all 0..1.
@@ -119,7 +124,14 @@ impl Process for Weather {
         let positions: Vec<(PlayerId, Vec2)> =
             server.players.values().filter(|p| p.joined).map(|p| (p.id, Vec2::new(p.position.x, p.position.z))).collect();
         let around: Vec<IVec2> = positions.iter().map(|(_, at)| at.floor().as_ivec2()).collect();
-        self.update(&mut server.weather, &mut server.temperature, &around, tick);
+        let strikes = self.update(&mut server.weather, &mut server.temperature, &around, tick);
+        for at in strikes {
+            for (id, player) in &positions {
+                if player.distance(at) < LIGHTNING_REACH {
+                    server.players[id].connection.send(ServerMessage::Lightning { at });
+                }
+            }
+        }
 
         self.sent.retain(|id, _| server.players.contains_key(id));
         for (id, at) in positions {
@@ -145,8 +157,8 @@ impl Weather {
     }
 
     /// Advances the cells within range of each block position in `around` to `tick`, and
-    /// returns cells no longer in range to their baseline.
-    fn update(&mut self, fields: &mut WeatherFields, temperature: &mut Field, around: &[IVec2], tick: u64) {
+    /// returns cells no longer in range to their baseline. Returns where lightning flashed.
+    fn update(&mut self, fields: &mut WeatherFields, temperature: &mut Field, around: &[IVec2], tick: u64) -> Vec<Vec2> {
         let mut cells = FxHashSet::default();
         for at in around {
             let center = at.div_euclid(IVec2::splat(CELL));
@@ -160,51 +172,40 @@ impl Weather {
             fields.reset(cell * CELL);
         }
         let dt = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
+        let mut strikes = Vec::new();
         for &cell in &cells {
             let at = cell * CELL + CELL / 2;
             let climate = fields.humidity.baseline(at.x, at.y);
             let warmth = warmth(temperature.sample(at.x, at.y));
             let state = if self.active.contains(&cell) {
-                self.step(fields.get(at), at, climate, warmth, tick as i64, dt)
+                let drivers = self.drivers(at.as_dvec2(), tick as i64, warmth);
+                let state = step(fields.get(at), &drivers, climate, warmth, dt);
+                strikes.extend(self.lightning(cell, state.precipitation, drivers.lift, tick));
+                state
             } else {
                 // Catch up from the climate's average state.
                 let mut state = Cell { humidity: climate, clouds: 0.0, precipitation: 0.0 };
                 let start = tick as i64 - CATCH_UP * TICKS_PER_SECOND as i64;
                 for i in 1..=CATCH_UP / CATCH_UP_STEP {
                     let t = start + i * CATCH_UP_STEP * TICKS_PER_SECOND as i64;
-                    state = self.step(state, at, climate, warmth, t, CATCH_UP_STEP as f32);
+                    state = step(state, &self.drivers(at.as_dvec2(), t, warmth), climate, warmth, CATCH_UP_STEP as f32);
                 }
                 state
             };
             fields.set(at, state);
         }
         self.active = cells;
+        strikes
     }
 
-    /// One step of `dt` seconds of a cell's response to its drivers. `climate` is the
-    /// usual humidity and `temperature` the warmth (see `warmth`).
-    fn step(&self, cell: Cell, at: IVec2, climate: f32, temperature: f32, tick: i64, dt: f32) -> Cell {
-        let drivers = self.drivers(at.as_dvec2(), tick, temperature);
-        let rate = |seconds: f32| (dt / seconds).min(1.0);
-        // Humidity follows the air mass, away from the climate's usual humidity.
-        let target = (0.18 + 0.75 * climate + 0.42 * drivers.air).clamp(0.0, 1.0);
-        let mut humidity = cell.humidity + (target - cell.humidity) * rate(150.0);
-        // Cloud forms as the air nears saturation, sooner in rising air and in cold air,
-        // which holds less water, and evaporates again as it dries.
-        let saturation = 0.78 - 0.08 * (1.0 - temperature) - 0.2 * drivers.lift;
-        let cloud_target = smoothstep(saturation - 0.4, saturation + 0.08, humidity);
-        let clouds = cell.clouds + (cloud_target - cell.clouds) * rate(90.0);
-        // Thick cloud rains, harder from strong updrafts or very moist air; rain dries the
-        // air, which thins the cloud until the air mass brings more moisture.
-        let wetness = smoothstep(saturation, saturation + 0.25, humidity).max(drivers.lift);
-        let rain_target = smoothstep(0.8, 0.97, clouds) * (0.3 + 0.7 * wetness);
-        let precipitation = cell.precipitation + (rain_target - cell.precipitation) * rate(30.0);
-        humidity -= precipitation * 0.0012 * dt;
-        Cell {
-            humidity: humidity.clamp(0.0, 1.0),
-            clouds: clouds.clamp(0.0, 1.0),
-            precipitation: precipitation.clamp(0.0, 1.0),
-        }
+    /// Where lightning flashes in a cell this second, if it does: a downpour under strong
+    /// updrafts is a thunderstorm, which has a chance each second to flash somewhere in
+    /// the cell, drawn from the cell's own random stream.
+    fn lightning(&self, cell: IVec2, rain: f32, lift: f32, tick: u64) -> Option<Vec2> {
+        let chance = LIGHTNING * smoothstep(0.25, 0.8, rain * smoothstep(0.1, 0.6, lift));
+        let h = mix(mix(mix(self.seed ^ STRIKES ^ tick) ^ cell.x as u64) ^ cell.y as u64);
+        let place = Vec2::new(unit(mix(h)) as f32, unit(mix(mix(h))) as f32);
+        (unit(h) < chance as f64).then(|| (cell.as_vec2() + place) * CELL as f32)
     }
 
     /// The air mass and lift at a block position and tick. `temperature`, the warmth (see
@@ -303,6 +304,31 @@ fn warmth(celsius: f32) -> f32 {
     ((celsius + 10.0) / 40.0).clamp(0.0, 1.0)
 }
 
+/// One step of `dt` seconds of a cell's response to its drivers. `climate` is the usual
+/// humidity and `temperature` the warmth (see `warmth`).
+fn step(cell: Cell, drivers: &Drivers, climate: f32, temperature: f32, dt: f32) -> Cell {
+    let rate = |seconds: f32| (dt / seconds).min(1.0);
+    // Humidity follows the air mass, away from the climate's usual humidity.
+    let target = (0.18 + 0.75 * climate + 0.42 * drivers.air).clamp(0.0, 1.0);
+    let mut humidity = cell.humidity + (target - cell.humidity) * rate(150.0);
+    // Cloud forms as the air nears saturation, sooner in rising air and in cold air,
+    // which holds less water, and evaporates again as it dries.
+    let saturation = 0.78 - 0.08 * (1.0 - temperature) - 0.2 * drivers.lift;
+    let cloud_target = smoothstep(saturation - 0.4, saturation + 0.08, humidity);
+    let clouds = cell.clouds + (cloud_target - cell.clouds) * rate(90.0);
+    // Thick cloud rains, harder from strong updrafts or very moist air; rain dries the
+    // air, which thins the cloud until the air mass brings more moisture.
+    let wetness = smoothstep(saturation, saturation + 0.25, humidity).max(drivers.lift);
+    let rain_target = smoothstep(0.8, 0.97, clouds) * (0.3 + 0.7 * wetness);
+    let precipitation = cell.precipitation + (rain_target - cell.precipitation) * rate(30.0);
+    humidity -= precipitation * 0.0012 * dt;
+    Cell {
+        humidity: humidity.clamp(0.0, 1.0),
+        clouds: clouds.clamp(0.0, 1.0),
+        precipitation: precipitation.clamp(0.0, 1.0),
+    }
+}
+
 fn changed(a: &LocalWeather, b: &LocalWeather) -> bool {
     let values = |w: &LocalWeather| [w.cover, w.convection, w.cirrus, w.humidity, w.precipitation, w.snow, w.wind.x / 10.0, w.wind.y / 10.0];
     values(a).iter().zip(values(b)).any(|(x, y)| (x - y).abs() > CHANGE)
@@ -384,7 +410,8 @@ mod tests {
             let at = IVec2::new(place * 20_000, place * -13_000);
             let mut cell = Cell { humidity: climate, clouds: 0.0, precipitation: 0.0 };
             for step in 0..2 * 24 * 3600 / 5 {
-                cell = weather.step(cell, at, climate, warmth(celsius), step * 5 * SECOND as i64, 5.0);
+                let drivers = weather.drivers(at.as_dvec2(), step * 5 * SECOND as i64, warmth(celsius));
+                cell = super::step(cell, &drivers, climate, warmth(celsius), 5.0);
                 rainy += (cell.precipitation > 0.1) as u32;
                 steps += 1;
             }
@@ -422,5 +449,18 @@ mod tests {
         assert!(!changed(&stayed, &arrived), "{stayed:?} != {arrived:?}");
         // The cells left behind are back to their climate.
         assert_eq!(fields.clouds.deltas().filter(|&(cell, _)| cell.x > 100).count(), 0);
+    }
+
+    #[test]
+    fn lightning_only_in_thunderstorms() {
+        let weather = Weather::new(9, Vec2::X);
+        let flashes = |rain: f32, lift: f32| {
+            (0..20_000u64).filter_map(|s| weather.lightning(IVec2::new(3, -4), rain, lift, s * SECOND)).collect::<Vec<_>>()
+        };
+        assert!(flashes(0.0, 1.0).is_empty() && flashes(1.0, 0.0).is_empty() && flashes(0.2, 0.5).is_empty());
+        let storm = flashes(1.0, 1.0);
+        assert!((100..500).contains(&storm.len()), "{} flashes", storm.len());
+        assert!(storm.iter().all(|at| (384.0..512.0).contains(&at.x) && (-512.0..-384.0).contains(&at.y)));
+        assert_eq!(storm, flashes(1.0, 1.0));
     }
 }
