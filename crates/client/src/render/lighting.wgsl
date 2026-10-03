@@ -7,13 +7,16 @@
 #import bevy_pbr::mesh_view_bindings::{view, lights, fog}
 #import bevy_pbr::shadows::fetch_directional_shadow
 
-const NORMALS = array<vec3<f32>, 6>(
+// Per face index: the six cube faces, then a plant's two diagonal quads, which are lit
+// as if facing up so both sides and every blade of a tuft read alike.
+const NORMALS = array<vec3<f32>, 8>(
     vec3(1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0),
     vec3(0.0, 1.0, 0.0), vec3(0.0, -1.0, 0.0),
     vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0),
+    vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0),
 );
 // Minecraft-style directional shading for ambient light.
-const FACE_SHADE = array<f32, 6>(0.62, 0.62, 1.0, 0.5, 0.8, 0.8);
+const FACE_SHADE = array<f32, 8>(0.62, 0.62, 1.0, 0.5, 0.8, 0.8, 0.85, 0.85);
 const BLOCK_LIGHT_COLOR = vec3(1.0, 0.72, 0.42);
 
 // Brightness rises slowly at low light levels, like Minecraft's light table.

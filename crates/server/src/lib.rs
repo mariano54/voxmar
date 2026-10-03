@@ -4,6 +4,7 @@
 mod actions;
 mod player;
 mod process;
+pub mod save;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,23 +26,46 @@ use voxmar_worldgen::{Generator, Overworld};
 use crate::actions::Executor;
 use crate::player::Player;
 use crate::process::Process;
+use crate::save::{GameMode, WorldMeta, WorldSave};
 
 pub struct ServerConfig {
+    /// Seed of a new world. A saved world keeps its own.
     pub seed: u64,
     /// Largest radius, in columns, streamed around a player. Each player chooses their own
     /// up to this.
     pub view_distance: i32,
     pub allow_flight: bool,
+    /// Whether the integrated server's own (in-process) player is an admin.
+    pub local_admin: bool,
     /// Names of players with admin rights, besides the integrated server's own player.
     /// Names are not authenticated, so this only suits servers among friends.
     pub admins: Vec<String>,
+    /// Directory the world is saved in; a new world is created there if it holds none. A
+    /// saved world's game mode replaces `allow_flight` and `local_admin`. `None` keeps the
+    /// world in memory only.
+    pub world: Option<PathBuf>,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { seed: 0x5eed, view_distance: 32, allow_flight: true, admins: Vec::new() }
+        Self { seed: 0x5eed, view_distance: 32, allow_flight: true, local_admin: true, admins: Vec::new(), world: None }
     }
 }
+
+impl GameMode {
+    /// Creative allows flight and makes the singleplayer player an admin; survival does
+    /// neither.
+    fn apply(self, config: &mut ServerConfig) {
+        let creative = self == GameMode::Creative;
+        config.allow_flight = creative;
+        config.local_admin = creative;
+    }
+}
+
+/// How often edited columns, players and the time of day are saved.
+const SAVE_INTERVAL: u64 = 30 * TICKS_PER_SECOND as u64;
+/// Time of day a new world starts at: early morning.
+const FIRST_TICK: u64 = 2000;
 
 /// Finds the `assets` directory: `$VOXMAR_ASSETS`, then next to the working directory or
 /// the executable (including cargo's `target/<profile>` layout).
@@ -91,29 +115,78 @@ impl Drop for ServerHandle {
     }
 }
 
-pub fn spawn(config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
+/// Starts a server thread. With `config.world` set, opens the world saved there (or
+/// creates it); the server saves it periodically and when the handle is dropped.
+pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
+    let (save, meta) = open_world(&mut config)?;
     let (connections, incoming) = unbounded();
     let stop = Arc::new(AtomicBool::new(false));
     let thread = {
         let stop = stop.clone();
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, content, incoming).run(&stop))?
+            .spawn(move || Server::new(config, meta, save, content, incoming).run(&stop))?
     };
     Ok(ServerHandle { connections, stop, thread: Some(thread) })
 }
 
+/// The world `config` asks for: the one saved in `config.world` (created if missing), or
+/// an unsaved one.
+fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, WorldMeta)> {
+    let new_mode = if config.allow_flight { GameMode::Creative } else { GameMode::Survival };
+    let Some(dir) = &config.world else { return Ok((None, WorldMeta::new("world", config.seed, new_mode))) };
+    let save = WorldSave::new(dir);
+    let mut meta = if save.exists() {
+        save.read_meta()?
+    } else {
+        let name = dir.file_name().map_or_else(|| "world".into(), |name| name.to_string_lossy().into_owned());
+        let meta = WorldMeta::new(name, config.seed, new_mode);
+        save.create(&meta)?;
+        tracing::info!("created world {}", dir.display());
+        meta
+    };
+    if meta.generator != Overworld::ID || meta.generator_version != Overworld::VERSION {
+        tracing::warn!(
+            "{} was made by {} version {}; new terrain comes from {} version {} and may not line up",
+            dir.display(),
+            meta.generator,
+            meta.generator_version,
+            Overworld::ID,
+            Overworld::VERSION,
+        );
+    }
+    meta.mode.apply(config);
+    meta.last_played = save::unix_time();
+    save.write_meta(&meta)?;
+    Ok((Some(save), meta))
+}
+
+/// A saved column if there is one, otherwise a freshly generated one. Runs on workers.
+fn load_column(save: Option<&WorldSave>, generator: &dyn Generator, registry: &BlockRegistry, pos: ColumnPos) -> Column {
+    if let Some(save) = save {
+        match save.read_column(pos, registry) {
+            Ok(Some(column)) => return column,
+            Ok(None) => {}
+            Err(e) => tracing::error!("could not load column {pos:?}, generating it again: {e}"),
+        }
+    }
+    generator.generate(pos)
+}
+
 pub(crate) struct Server {
     config: ServerConfig,
+    meta: WorldMeta,
+    save: Option<WorldSave>,
     content: Content,
     generator: Arc<dyn Generator>,
     executor: Executor,
     processes: Vec<Box<dyn Process>>,
-    /// `core:temperature`, 0 (frozen) to 1 (hot), baseline from the climate generator.
+    /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
     world: VoxelWorld,
-    /// Columns edited by players. They are never unloaded until saving exists.
-    modified: FxHashSet<ColumnPos>,
+    /// Columns edited since they were last saved. They stay loaded until saved; without a
+    /// save, that is forever.
+    dirty: FxHashSet<ColumnPos>,
     generating: FxHashSet<ColumnPos>,
     generated_tx: Sender<(ColumnPos, Column)>,
     generated_rx: Receiver<(ColumnPos, Column)>,
@@ -128,31 +201,38 @@ const MAX_GENERATING: usize = 64;
 const COLUMNS_PER_TICK: usize = 48;
 
 impl Server {
-    fn new(config: ServerConfig, content: Content, incoming: Receiver<ServerConnection>) -> Self {
-        let overworld = Arc::new(Overworld::new(config.seed, content.blocks.clone()));
+    fn new(
+        config: ServerConfig,
+        meta: WorldMeta,
+        save: Option<WorldSave>,
+        content: Content,
+        incoming: Receiver<ServerConnection>,
+    ) -> Self {
+        let overworld = Arc::new(Overworld::new(meta.seed, content.blocks.clone()));
         let climate = overworld.clone();
-        let temperature = Field::new("core:temperature", move |x, z| {
-            climate.surface_sample(x, z, climate.height(x, z), 0).climate[0] as f32 / 255.0
-        });
+        let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let generator: Arc<dyn Generator> = overworld;
-        // Generate the spawn column up front and stand on its highest solid block, so
+        // Load the spawn column up front and stand on its highest solid block, so
         // features like trees never bury the player.
         let mut world = VoxelWorld::default();
         let spawn_block = generator.spawn_point();
         let spawn_column = ColumnPos::of_block(spawn_block);
-        world.insert(spawn_column, Arc::new(generator.generate(spawn_column)));
+        world.insert(spawn_column, Arc::new(load_column(save.as_ref(), &*generator, &content.blocks, spawn_column)));
         let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
-        tracing::info!("world seed {:#x}, spawn at {spawn}", config.seed);
+        tracing::info!("world seed {:#x}, spawn at {spawn}", meta.seed);
         Self {
             config,
+            tick: meta.time.max(FIRST_TICK),
+            meta,
+            save,
             content,
             generator,
             executor: Executor::default(),
             processes: process::core_processes(),
             temperature,
             world,
-            modified: FxHashSet::default(),
+            dirty: FxHashSet::default(),
             generating: FxHashSet::default(),
             generated_tx,
             generated_rx,
@@ -160,13 +240,11 @@ impl Server {
             players: FxHashMap::default(),
             next_player: 1,
             spawn,
-            // Start the first day in the morning.
-            tick: 2000,
         }
     }
 
-    /// Runs fixed-rate ticks until `stop` is set. Between ticks, messages are handled as
-    /// soon as they arrive so actions feel immediate.
+    /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
+    /// handled as soon as they arrive so actions feel immediate.
     fn run(mut self, stop: &AtomicBool) {
         let tick_length = Duration::from_secs(1) / TICKS_PER_SECOND;
         let mut next_tick = Instant::now();
@@ -185,6 +263,7 @@ impl Server {
             }
             std::thread::sleep(next_tick.saturating_duration_since(Instant::now()).min(Duration::from_millis(2)));
         }
+        self.save();
     }
 
     fn accept_connections(&mut self) {
@@ -211,6 +290,7 @@ impl Server {
                     Ok(None) => break,
                     Err(_) => {
                         tracing::info!("{} left", player.name);
+                        self.save_player(player);
                         self.players.remove(&id);
                     }
                 }
@@ -232,6 +312,45 @@ impl Server {
         self.broadcast_players();
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(ServerMessage::Time { ticks: self.tick });
+        }
+        if self.tick.is_multiple_of(SAVE_INTERVAL) {
+            self.save();
+        }
+    }
+
+    /// Writes edited columns, joined players and the world's metadata. Failures are
+    /// logged; columns that failed stay dirty and are tried again at the next save.
+    fn save(&mut self) {
+        let Some(save) = &self.save else { return };
+        let _span = tracing::info_span!("save_world").entered();
+        let started = Instant::now();
+        let (world, registry) = (&self.world, &self.content.blocks);
+        let columns = self.dirty.len();
+        self.dirty.retain(|&pos| {
+            let Some(column) = world.column(pos) else { return false };
+            let result = save.write_column(pos, column, registry);
+            if let Err(e) = &result {
+                tracing::error!("could not save column {pos:?}: {e}");
+            }
+            result.is_err()
+        });
+        for player in self.players.values().filter(|p| p.joined) {
+            self.save_player(player);
+        }
+        self.meta.time = self.tick;
+        self.meta.last_played = save::unix_time();
+        if let Err(e) = save.write_meta(&self.meta) {
+            tracing::error!("could not save {}: {e}", save.dir().display());
+        }
+        tracing::debug!("saved {columns} columns and {} players in {:?}", self.players.len(), started.elapsed());
+    }
+
+    fn save_player(&self, player: &Player) {
+        if let Some(save) = &self.save
+            && player.joined
+            && let Err(e) = save.write_player(&player.name, &player.saved(), &self.content.blocks)
+        {
+            tracing::error!("could not save player {}: {e}", player.name);
         }
     }
 
@@ -273,10 +392,10 @@ impl Server {
                         sent += 1;
                     }
                 } else if self.generating.len() < MAX_GENERATING && self.generating.insert(pos) {
-                    let generator = self.generator.clone();
+                    let (generator, save, registry) = (self.generator.clone(), self.save.clone(), self.content.blocks.clone());
                     let tx = self.generated_tx.clone();
                     rayon::spawn(move || {
-                        let _ = tx.send((pos, generator.generate(pos)));
+                        let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, pos)));
                     });
                 }
             }
@@ -303,7 +422,7 @@ impl Server {
             .world
             .columns()
             .map(|(&pos, _)| pos)
-            .filter(|pos| !self.modified.contains(pos) && keep.iter().all(|(c, radius)| c.distance(*pos) > *radius))
+            .filter(|pos| !self.dirty.contains(pos) && keep.iter().all(|(c, radius)| c.distance(*pos) > *radius))
             .collect();
         for pos in unload {
             self.world.remove(pos);
@@ -320,7 +439,7 @@ impl Server {
 
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
         if self.world.set_block(pos, block).is_some() {
-            self.modified.insert(ColumnPos::of_block(pos));
+            self.dirty.insert(ColumnPos::of_block(pos));
             self.broadcast(ServerMessage::BlockChanged { pos, block });
         }
     }

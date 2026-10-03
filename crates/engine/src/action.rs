@@ -9,7 +9,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockId, BlockInfo, RegistryError, RenderKind};
+use crate::block::{BlockId, BlockInfo, RegistryError};
 use crate::coords::Face;
 use crate::glam::{IVec3, Vec3};
 use crate::physics::player::REACH;
@@ -43,10 +43,13 @@ pub enum Requirement {
     Breakable,
     /// The actor holds a placeable block.
     HoldingBlock,
-    /// The block next to the target face is empty (air or a fluid).
+    /// The cell the held block would go into (see [`placement_cell`]) is free: air, a
+    /// fluid or a plant.
     Replaceable,
     /// No agent stands where the held block would go.
     Unobstructed,
+    /// A held block that needs support (a plant) would stand on solid ground.
+    Supported,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -54,9 +57,9 @@ pub enum Requirement {
 pub enum Effect {
     /// Give the actor what the target block drops.
     GiveDrop,
-    /// Turn the target block into air.
+    /// Turn the target block into air, and the plant standing on it if there is one.
     ClearTarget,
-    /// Take one held item and put it against the target face.
+    /// Take one held item and put it into the placement cell of the target.
     PlaceHeld,
     /// Move a stack between the actor's inventory slots.
     MoveStack,
@@ -144,6 +147,19 @@ pub trait ActionContext {
     fn occupied(&self, cell: IVec3) -> bool;
 }
 
+/// Where a block placed against `face` of `block` goes: into `block` itself when it can
+/// be replaced (aiming at grass puts the block on the ground beneath it), otherwise into
+/// the cell in front of the face.
+pub fn placement_cell(ctx: &impl ActionContext, block: IVec3, face: Face) -> IVec3 {
+    if ctx.block(block).is_some_and(|b| ctx.info(b).replaceable) { block } else { block + face.normal() }
+}
+
+/// The blocks resting on `pos` that go when it is cleared: the plants stacked on it
+/// (a flower, both halves of tall grass, a stalk of sugar cane).
+pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
+    (1..).map(|dy| pos + IVec3::Y * dy).take_while(|&p| ctx.block(p).is_some_and(|b| ctx.info(b).needs_support)).collect()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rejection {
     WrongTarget,
@@ -180,15 +196,18 @@ impl ActionDef {
             Requirement::HoldingBlock => ctx.actor_held().is_some(),
             Requirement::Replaceable => {
                 let (block, face) = block_target()?;
-                ctx.block(block + face.normal()).is_some_and(|b| {
-                    let info = ctx.info(b);
-                    b.is_air() || (info.render == RenderKind::Translucent && !info.solid)
-                })
+                ctx.block(placement_cell(ctx, block, face)).is_some_and(|b| ctx.info(b).replaceable)
             }
             Requirement::Unobstructed => {
                 let (block, face) = block_target()?;
                 let solid = ctx.actor_held().is_some_and(|b| ctx.info(b).solid);
-                !solid || !ctx.occupied(block + face.normal())
+                !solid || !ctx.occupied(placement_cell(ctx, block, face))
+            }
+            Requirement::Supported => {
+                let (block, face) = block_target()?;
+                let below = placement_cell(ctx, block, face) - IVec3::Y;
+                !ctx.actor_held().is_some_and(|b| ctx.info(b).needs_support)
+                    || ctx.block(below).is_some_and(|b| ctx.info(b).solid)
             }
         })
     }
@@ -203,5 +222,87 @@ impl ActionDef {
                 _ => 0.0,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustc_hash::FxHashMap;
+
+    use super::*;
+    use crate::block::{BlockDef, BlockRegistry, RenderKind};
+
+    struct World {
+        registry: BlockRegistry,
+        blocks: FxHashMap<IVec3, BlockId>,
+        held: BlockId,
+    }
+
+    impl ActionContext for World {
+        fn block(&self, pos: IVec3) -> Option<BlockId> {
+            Some(self.blocks.get(&pos).copied().unwrap_or(BlockId::AIR))
+        }
+        fn info(&self, block: BlockId) -> &BlockInfo {
+            self.registry.info(block)
+        }
+        fn actor_eye(&self) -> Vec3 {
+            Vec3::new(0.5, 2.6, 2.5)
+        }
+        fn actor_alive(&self) -> bool {
+            true
+        }
+        fn actor_held(&self) -> Option<BlockId> {
+            Some(self.held)
+        }
+        fn occupied(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    const STONE: BlockId = BlockId(1);
+    const FLOWER: BlockId = BlockId(2);
+
+    /// Stone at the origin with a flower on it, and bare stone next to it along +z.
+    fn world(held: BlockId) -> World {
+        let registry = BlockRegistry::new(vec![
+            BlockDef { name: "test:stone".into(), ..Default::default() },
+            BlockDef { name: "test:flower".into(), render: RenderKind::Plant, solid: false, hardness: 0.0, ..Default::default() },
+        ])
+        .unwrap();
+        let blocks = [(IVec3::ZERO, STONE), (IVec3::Y, FLOWER), (IVec3::Z, STONE)].into_iter().collect();
+        World { registry, blocks, held }
+    }
+
+    fn place() -> ActionDef {
+        use Requirement::*;
+        ActionDef {
+            name: "test:place".into(),
+            duration: Duration::Instant,
+            requires: vec![Alive, InReach, HoldingBlock, Replaceable, Unobstructed, Supported],
+            effects: vec![Effect::PlaceHeld],
+        }
+    }
+
+    #[test]
+    fn blocks_replace_plants_they_are_aimed_at() {
+        let world = world(STONE);
+        // Aiming at the flower puts the block where the flower is, not on top of it.
+        assert_eq!(placement_cell(&world, IVec3::Y, Face::PosY), IVec3::Y);
+        assert!(place().validate(&world, ActionTarget::Block { block: IVec3::Y, face: Face::PosY }).is_ok());
+        // Against the top of the stone beneath, it also goes into the flower's cell.
+        let on_ground = ActionTarget::Block { block: IVec3::ZERO, face: Face::PosY };
+        assert_eq!(placement_cell(&world, IVec3::ZERO, Face::PosY), IVec3::Y);
+        assert!(place().validate(&world, on_ground).is_ok());
+        assert_eq!(supported_by(&world, IVec3::ZERO), vec![IVec3::Y]);
+        assert!(supported_by(&world, IVec3::Z).is_empty());
+    }
+
+    #[test]
+    fn plants_need_solid_ground() {
+        let world = world(FLOWER);
+        let on_stone = ActionTarget::Block { block: IVec3::Z, face: Face::PosY };
+        let in_the_air = ActionTarget::Block { block: IVec3::Z, face: Face::PosZ };
+        assert!(place().validate(&world, on_stone).is_ok());
+        assert_eq!(place().validate(&world, in_the_air), Err(Rejection::Unmet(Requirement::Supported)));
     }
 }

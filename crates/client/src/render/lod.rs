@@ -252,6 +252,19 @@ impl Lod {
         self.last_camera = None;
     }
 
+    /// Removes all distant terrain and stops making it until `start` is called again.
+    /// Tiles still being built are discarded.
+    pub fn clear(&mut self, commands: &mut Commands, materials: &mut Assets<LodMaterial>) {
+        for (_, entity) in self.tiles.drain() {
+            commands.entity(entity).despawn();
+        }
+        self.generator = None;
+        self.pending.clear();
+        self.wanted.clear();
+        (self.results_tx, self.results_rx) = unbounded();
+        self.set_real_columns(0, materials);
+    }
+
     /// Radius, in columns, of the real chunks the rings surround.
     pub fn real_columns(&self) -> i32 {
         self.real_columns
@@ -413,6 +426,8 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
     let heights: Vec<i32> =
         (0..W * W).map(|i| generator.height(origin.x + at(i % W), origin.y + at(i / W))).collect();
     let height = |x: i32, z: i32| heights[((z + 1) * W + x + 1) as usize];
+    // The regional climate is shared by every sample of the tile.
+    let sampler = generator.sampler(origin - cell, origin + (CELLS + 1) * cell);
 
     let mut corners = Vec::with_capacity((W * W) as usize);
     for z in -1..=CELLS + 1 {
@@ -426,7 +441,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
             } else {
                 0
             };
-            let surface = generator.surface_sample(wx, wz, h, slope);
+            let surface = sampler.surface(wx, wz, h, slope);
             let (top, side) = palette.faces(surface.ground, surface.climate);
             let (leaves, cover) = surface.canopy.unwrap_or((surface.ground, 0.0));
             let (crown_top, crown_side) = palette.faces(leaves, surface.climate);

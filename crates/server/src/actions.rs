@@ -3,7 +3,7 @@
 //! done every tick.
 
 use rustc_hash::FxHashMap;
-use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect};
+use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::schedule::{EventId, Scheduler};
@@ -113,19 +113,26 @@ impl Server {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
                     let Some(current) = self.block(block) else { continue };
                     let drop = self.content.blocks.info(current).drops;
+                    if drop.is_air() {
+                        continue;
+                    }
                     let player = self.players.get_mut(&agent).unwrap();
                     player.inventory.add(drop, 1);
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
-                    self.set_block(block, BlockId::AIR);
+                    let plants = supported_by(&Context { server: self, agent }, block);
+                    for pos in std::iter::once(block).chain(plants) {
+                        self.set_block(pos, BlockId::AIR);
+                    }
                 }
                 (Effect::PlaceHeld, ActionTarget::Block { block, face }) => {
+                    let cell = placement_cell(&Context { server: self, agent }, block, face);
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
-                    self.set_block(block + face.normal(), item);
+                    self.set_block(cell, item);
                 }
                 (Effect::MoveStack, ActionTarget::Slots { from, to }) => {
                     let player = self.players.get_mut(&agent).unwrap();
@@ -152,7 +159,8 @@ impl Server {
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.changed(traits::INVENTORY);
         if let ActionTarget::Block { block, face } = target {
-            for pos in [block, block + face.normal()] {
+            // The target, where a block may have been placed, and plants it may have taken.
+            for pos in [block, block + face.normal()].into_iter().chain((1..=3).map(|dy| block + IVec3::Y * dy)) {
                 if let Some(current) = self.block(pos) {
                     self.players[&agent].connection.send(ServerMessage::BlockChanged { pos, block: current });
                 }

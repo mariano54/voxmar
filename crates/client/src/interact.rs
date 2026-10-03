@@ -5,7 +5,7 @@
 
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
-use voxmar_engine::action::{ActionContext, ActionTarget};
+use voxmar_engine::action::{ActionContext, ActionTarget, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, RenderKind};
 use voxmar_engine::inventory::HOTBAR_SLOTS;
 use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
@@ -21,7 +21,10 @@ pub struct InteractPlugin;
 impl Plugin for InteractPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Target>()
-            .add_systems(Update, (select_slot, find_target, break_and_place, draw_target).chain());
+            .add_systems(
+                Update,
+                (select_slot, find_target, break_and_place, draw_target).chain().run_if(in_state(crate::menu::Screen::InGame)),
+            );
     }
 }
 
@@ -143,9 +146,13 @@ fn break_and_place(
                 }
                 let progress = progress + step;
                 if progress >= 1.0 {
-                    // The server commits at the same moment; predict it.
+                    // The server commits at the same moment; predict it, including a plant
+                    // that loses its ground.
                     cues.write(SoundCue::for_block(&world, block, Cue::Break));
-                    world.set_block(hit.block, BlockId::AIR);
+                    let plants = supported_by(&ClientContext { world: &world, player: &player }, hit.block);
+                    for pos in std::iter::once(hit.block).chain(plants) {
+                        world.set_block(pos, BlockId::AIR);
+                    }
                     target.breaking = None;
                 } else {
                     target.breaking = Some((pos, progress));
@@ -168,9 +175,10 @@ fn break_and_place(
         let context = ClientContext { world: &world, player: &player };
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = context.actor_held().filter(|_| allowed) {
+            let cell = placement_cell(&context, hit.block, hit.face);
             net.propose(place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
-            world.set_block(hit.block + hit.face.normal(), item);
+            world.set_block(cell, item);
             let selected = player.selected;
             player.inventory.take_one(selected);
         }

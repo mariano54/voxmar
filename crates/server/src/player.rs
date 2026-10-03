@@ -14,6 +14,7 @@ use voxmar_protocol::{
 };
 
 use crate::Server;
+use crate::save::SavedPlayer;
 
 pub const MAX_HEALTH: u8 = 20;
 
@@ -85,6 +86,17 @@ impl Player {
             self.dirty.push(decl);
         }
     }
+
+    /// The persistent traits, for saving.
+    pub fn saved(&self) -> SavedPlayer {
+        SavedPlayer {
+            position: self.position,
+            yaw: self.yaw,
+            flying: self.flying,
+            health: self.health,
+            inventory: self.inventory.clone(),
+        }
+    }
 }
 
 impl Server {
@@ -107,7 +119,16 @@ impl Server {
                 .into_iter()
                 .filter_map(|(name, count)| blocks.id(name).map(|id| (id, count)))
                 .collect();
-        let (seed, allow_flight, tick) = (self.config.seed, self.config.allow_flight, self.tick);
+        let (seed, allow_flight, tick) = (self.meta.seed, self.config.allow_flight, self.tick);
+        let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
+        let name = if name.trim().is_empty() { "player".to_owned() } else { name };
+        let saved = self.save.as_ref().and_then(|save| {
+            save.read_player(&name, blocks).unwrap_or_else(|e| {
+                tracing::error!("could not load player {name}: {e}");
+                None
+            })
+        });
+        let local_admin = self.config.local_admin;
         let player = self.players.get_mut(&id).expect("message from unknown player");
         if player.joined {
             return;
@@ -124,16 +145,39 @@ impl Server {
             return;
         }
 
-        player.name = name.chars().filter(|c| !c.is_control()).take(32).collect();
+        player.name = name;
         player.joined = true;
         // Only the integrated server's own player can connect in-process.
-        player.admin = player.connection.is_local() || self.config.admins.contains(&player.name);
-        for (block, count) in start_kit {
-            player.inventory.add(block, count);
+        player.admin = (player.connection.is_local() && local_admin) || self.config.admins.contains(&player.name);
+        // Returning players carry on where they left; new ones start at spawn with a kit.
+        match saved {
+            Some(saved) if saved.health.alive() => {
+                player.position = saved.position;
+                player.yaw = saved.yaw;
+                player.flying = saved.flying && allow_flight;
+                player.health = saved.health;
+                player.inventory = saved.inventory;
+            }
+            // Players who left dead come back to life at the spawn point.
+            Some(saved) => player.inventory = saved.inventory,
+            None => {
+                for (block, count) in start_kit {
+                    player.inventory.add(block, count);
+                }
+            }
         }
         player.changed(traits::INVENTORY);
+        player.changed(traits::HEALTH);
         let admin = player.admin;
-        player.connection.send(ServerMessage::Welcome { player: id, seed, position: player.position, allow_flight, admin });
+        player.connection.send(ServerMessage::Welcome {
+            player: id,
+            seed,
+            position: player.position,
+            yaw: player.yaw,
+            flying: player.flying,
+            allow_flight,
+            admin,
+        });
         player.last_input_tick = tick;
         tracing::info!("{} joined", player.name);
     }

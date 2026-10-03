@@ -30,6 +30,10 @@ pub enum RenderKind {
     Cutout,
     /// Alpha-blended cube (water). Drawn in the translucent pass.
     Translucent,
+    /// Two crossed, alpha-tested quads through the cell's diagonals (grass, flowers). Hides
+    /// nothing and lets light through. A plant gives way to a block placed into it and
+    /// goes when the block beneath it does.
+    Plant,
 }
 
 /// The material a block sounds like when stepped on, placed or broken.
@@ -115,7 +119,8 @@ pub struct BlockDef {
     /// Seconds to break by hand. Negative means unbreakable.
     pub hardness: f32,
     pub sound: Sound,
-    /// Name of the block dropped when broken. Defaults to the block itself.
+    /// Name of the block dropped when broken, `core:air` for nothing. Defaults to the
+    /// block itself.
     pub drops: Option<String>,
     /// Placeholder texture colour used when no texture pack is available.
     pub color: [u8; 3],
@@ -159,7 +164,12 @@ pub struct BlockInfo {
     pub tints: [Tint; 6],
     pub hardness: f32,
     pub sound: Sound,
+    /// What breaking the block gives; air for nothing.
     pub drops: BlockId,
+    /// A block placed into this cell replaces it (air, fluids, plants).
+    pub replaceable: bool,
+    /// Removed together with the block beneath it (plants).
+    pub needs_support: bool,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -167,6 +177,8 @@ pub struct BlockInfo {
 pub struct TextureRef {
     pub name: String,
     pub color: [u8; 3],
+    /// How the first block using the texture is drawn, so placeholders can match its shape.
+    pub render: RenderKind,
 }
 
 #[derive(Debug)]
@@ -238,7 +250,7 @@ impl BlockRegistry {
             for face in Face::ALL {
                 if let Some(name) = def.textures.face(face) {
                     layers[face as usize] = *texture_index.entry(name.to_owned()).or_insert_with(|| {
-                        textures.push(TextureRef { name: name.to_owned(), color: def.color });
+                        textures.push(TextureRef { name: name.to_owned(), color: def.color, render: def.render });
                         (textures.len() - 1) as u16
                     });
                 }
@@ -264,6 +276,8 @@ impl BlockRegistry {
                 hardness: def.hardness,
                 sound: def.sound,
                 drops,
+                replaceable: !def.solid && matches!(def.render, RenderKind::Invisible | RenderKind::Translucent | RenderKind::Plant),
+                needs_support: def.render == RenderKind::Plant,
             });
         }
         if textures.len() > 4096 {
