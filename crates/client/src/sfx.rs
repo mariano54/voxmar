@@ -157,7 +157,7 @@ fn rain(
     let (Ok(camera), Ok(mut sink)) = (camera.single(), sink.single_mut()) else { return };
     let shown = &weather.current;
     let rain = shown.precipitation * (1.0 - shown.snow);
-    let target = if rain > 0.01 { rain.sqrt() * (0.25 + 0.75 * map.openness(camera.translation())) } else { 0.0 };
+    let target = if rain > 0.01 { rain.sqrt() * map.openness(camera.translation()) } else { 0.0 };
     *level += (target - *level) * (time.delta_secs() * 2.0).min(1.0);
     if *level < 0.002 {
         if !sink.is_paused() {

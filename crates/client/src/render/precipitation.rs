@@ -136,22 +136,20 @@ impl SkyMap {
         ((0..MAP).contains(&i.x) && (0..MAP).contains(&i.y)).then(|| self.heights[(i.y * MAP + i.x) as usize])
     }
 
-    /// How much of the sky is open above `eye`, from 0 (deep under cover) to 1 (out in
-    /// the open), judged from the columns around it.
+    /// How well rain can be heard at `eye`, from the columns around it: 1 out in the open,
+    /// less under a roof, nothing deep underground.
     pub fn openness(&self, eye: Vec3) -> f32 {
         let center = eye.xz().floor().as_ivec2();
-        let mut open = 0.0;
-        let mut total = 0.0;
+        let (mut heard, mut total) = (0.0, 0.0);
         for dz in -3..=3 {
             for dx in -3..=3 {
                 let weight = 1.0 / (1.0 + (dx * dx + dz * dz) as f32);
-                if self.height(center + IVec2::new(dx, dz)).is_some_and(|top| eye.y + 1.0 >= top as f32) {
-                    open += weight;
-                }
+                let cover = self.height(center + IVec2::new(dx, dz)).map_or(0.0, |top| top as f32 - (eye.y + 1.0));
+                heard += weight * if cover <= 0.0 { 1.0 } else { 0.3 * (1.0 - (cover / 16.0).min(1.0)) };
                 total += weight;
             }
         }
-        open / total
+        heard / total
     }
 
     /// Re-reads the columns around `camera` from the client's world.
