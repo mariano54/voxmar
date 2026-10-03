@@ -252,7 +252,7 @@ fn downsample(pixels: &[u8], size: u32) -> Vec<u8> {
                 alpha += a;
             }
             for c in rgb {
-                out.push(if alpha == 0 { 0 } else { (c / alpha) as u8 });
+                out.push(c.checked_div(alpha).unwrap_or(0) as u8);
             }
             out.push((alpha / 4) as u8);
         }
@@ -286,6 +286,7 @@ pub fn build_mesh(buffers: &MeshBuffers) -> Mesh {
 }
 
 /// Advances time of day and pushes sun, sky and fog parameters to the materials.
+#[allow(clippy::too_many_arguments)]
 fn update_environment(
     time: Res<Time>,
     mut cycle: ResMut<DayCycle>,
@@ -295,8 +296,12 @@ fn update_environment(
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut dome: Query<&mut Transform, With<SkyDome>>,
     mut clear: ResMut<ClearColor>,
+    mut last: Local<VoxelParams>,
 ) {
     let Some(handles) = handles else { return };
+    if let (Ok(camera), Ok(mut dome)) = (camera.single(), dome.single_mut()) {
+        dome.translation = camera.translation();
+    }
     cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
     let day_fraction = (cycle.ticks / TICKS_PER_DAY as f64).fract() as f32;
 
@@ -321,8 +326,14 @@ fn update_environment(
     let params = VoxelParams {
         sun: sun.extend(daylight),
         fog_color: horizon.extend(1.0),
-        fog: Vec4::new(cycle.view_distance * 0.55, cycle.view_distance, time.elapsed_secs(), cycle.underwater as u32 as f32),
+        fog: Vec4::new(cycle.view_distance * 0.7, cycle.view_distance, 0.0, cycle.underwater as u32 as f32),
     };
+    // Changing a material makes the renderer re-prepare it, so only push visible changes.
+    let same = |a: Vec4, b: Vec4| a.abs_diff_eq(b, 2e-3);
+    if [(params.sun, last.sun), (params.fog_color, last.fog_color), (params.fog, last.fog)].iter().all(|&(a, b)| same(a, b)) {
+        return;
+    }
+    *last = params;
     for handle in [&handles.opaque, &handles.translucent] {
         if let Some(mut material) = voxel_materials.get_mut(handle) {
             material.params = params;
@@ -330,9 +341,6 @@ fn update_environment(
     }
     if let Some(mut sky) = sky_materials.get_mut(&handles.sky) {
         sky.params = SkyParams { zenith: zenith.extend(1.0), horizon: horizon.extend(1.0), sun: sun.extend(daylight) };
-    }
-    if let (Ok(camera), Ok(mut dome)) = (camera.single(), dome.single_mut()) {
-        dome.translation = camera.translation();
     }
 }
 

@@ -159,7 +159,7 @@ fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool,
 
     if player.flying {
         let vertical = (jump as i32 - sneak as i32) as f32;
-        let speed = dims::FLY_SPEED * if sprint { 2.5 } else { 1.0 };
+        let speed = if sprint { dims::FLY_SPRINT_SPEED } else { dims::FLY_SPEED };
         let target = (wish + Vec3::Y * vertical) * speed;
         player.velocity = player.velocity.lerp(target, (12.0 * dt).min(1.0));
     } else {
@@ -185,8 +185,8 @@ fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool,
     let mut aabb = Aabb::standing(player.position, dims::WIDTH, dims::HEIGHT);
     let blocked = move_and_slide(&mut aabb, player.velocity * dt, |p| world.is_solid(p));
     player.on_ground = blocked[1] && player.velocity.y <= 0.0;
-    for axis in 0..3 {
-        if blocked[axis] {
+    for (axis, blocked) in blocked.into_iter().enumerate() {
+        if blocked {
             player.velocity[axis] = 0.0;
         }
     }

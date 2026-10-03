@@ -14,7 +14,8 @@ pub mod player {
     pub const JUMP_VELOCITY: f32 = 9.0;
     pub const WALK_SPEED: f32 = 4.3;
     pub const SPRINT_SPEED: f32 = 5.6;
-    pub const FLY_SPEED: f32 = 20.0;
+    pub const FLY_SPEED: f32 = 12.0;
+    pub const FLY_SPRINT_SPEED: f32 = 32.0;
     pub const REACH: f32 = 5.0;
 }
 

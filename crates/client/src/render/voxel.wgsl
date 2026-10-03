@@ -8,7 +8,7 @@ struct VoxelParams {
     sun: vec4<f32>,
     // rgb: fog / horizon colour
     fog_color: vec4<f32>,
-    // x: fog start, y: fog end, z: seconds, w: 1 when the camera is underwater
+    // x: fog start, y: fog end, z: unused, w: 1 when the camera is underwater
     fog: vec4<f32>,
 };
 
@@ -70,9 +70,9 @@ fn vertex(in: Vertex) -> VertexOutput {
     return out;
 }
 
-// Minecraft's light curve: brightness rises slowly at low levels.
+// Brightness rises slowly at low light levels, like Minecraft's light table.
 fn light_curve(level: f32) -> f32 {
-    return level / (4.0 - 3.0 * level);
+    return level / (2.5 - 1.5 * level);
 }
 
 fn biome_tint(surface: u32) -> vec3<f32> {

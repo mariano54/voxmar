@@ -15,7 +15,7 @@ use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::world::Column;
 
-pub use transport::{ClientConnection, Connection, ServerConnection, local_pair, tcp};
+pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const DEFAULT_PORT: u16 = 25_665;

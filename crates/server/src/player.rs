@@ -130,11 +130,11 @@ impl Server {
         let elapsed = ((tick - player.last_input_tick) as f32 / TICKS_PER_SECOND as f32).clamp(0.05, 1.0);
         let delta = input.position - player.position;
         let flying = input.flying && allow_flight;
-        let max_horizontal = if flying { dims::FLY_SPEED } else { dims::SPRINT_SPEED } * 1.5 * elapsed + 0.5;
-        let max_vertical = if flying { dims::FLY_SPEED } else { dims::TERMINAL_VELOCITY } * 1.5 * elapsed + 1.5;
+        let max_horizontal = if flying { dims::FLY_SPRINT_SPEED } else { dims::SPRINT_SPEED } * 1.5 * elapsed + 0.5;
+        let max_vertical = if flying { dims::FLY_SPRINT_SPEED } else { dims::TERMINAL_VELOCITY } * 1.5 * elapsed + 1.5;
         let aabb = Aabb::standing(input.position, dims::WIDTH * 0.9, dims::HEIGHT * 0.95);
         let inside_wall = aabb.intersects(|p| self.is_solid(p));
-        let plausible = delta.truncate().length() <= max_horizontal && delta.y.abs() <= max_vertical && !inside_wall;
+        let plausible = delta.with_y(0.0).length() <= max_horizontal && delta.y.abs() <= max_vertical && !inside_wall;
 
         let player = self.players.get_mut(&id).unwrap();
         player.yaw = input.yaw;
@@ -271,7 +271,7 @@ impl Server {
                 if player.health == 0 {
                     player.connection.send(ServerMessage::Died);
                 }
-            } else if player.health < MAX_HEALTH && tick % REGEN_INTERVAL == 0 {
+            } else if player.health < MAX_HEALTH && tick.is_multiple_of(REGEN_INTERVAL) {
                 player.health += 1;
                 player.state_dirty = true;
             }

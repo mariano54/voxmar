@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::{BlockId, BlockRegistry};
-use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::block::RenderKind;
+use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
@@ -118,14 +119,20 @@ const COLUMNS_PER_TICK: usize = 48;
 impl Server {
     fn new(config: ServerConfig, registry: Arc<BlockRegistry>, incoming: Receiver<ServerConnection>) -> Self {
         let generator: Arc<dyn Generator> = Arc::new(Overworld::new(config.seed, registry.clone()));
-        let spawn = generator.spawn_point().as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        // Generate the spawn column up front and stand on its highest solid block, so
+        // features like trees never bury the player.
+        let mut world = VoxelWorld::default();
+        let spawn_block = generator.spawn_point();
+        let spawn_column = ColumnPos::of_block(spawn_block);
+        world.insert(spawn_column, Arc::new(generator.generate(spawn_column)));
+        let spawn = find_ground(&world, &registry, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", config.seed);
         Self {
             config,
             registry,
             generator,
-            world: VoxelWorld::default(),
+            world,
             modified: FxHashSet::default(),
             generating: FxHashSet::default(),
             generated_tx,
@@ -134,7 +141,8 @@ impl Server {
             players: FxHashMap::default(),
             next_player: 1,
             spawn,
-            tick: 0,
+            // Start the first day in the morning.
+            tick: 2000,
         }
     }
 
@@ -178,16 +186,13 @@ impl Server {
     fn handle_messages(&mut self) {
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
-            loop {
-                let Some(player) = self.players.get_mut(&id) else { break };
+            while let Some(player) = self.players.get(&id) {
                 match player.connection.try_recv() {
                     Ok(Some(message)) => self.handle_message(id, message),
                     Ok(None) => break,
-                    Err(()) => {
-                        if let Some(p) = self.players.remove(&id) {
-                            tracing::info!("{} left", p.name);
-                        }
-                        break;
+                    Err(_) => {
+                        tracing::info!("{} left", player.name);
+                        self.players.remove(&id);
                     }
                 }
             }
@@ -204,7 +209,7 @@ impl Server {
         }
         self.unload_columns();
         self.broadcast_players();
-        if self.tick % TICKS_PER_SECOND as u64 == 0 {
+        if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(ServerMessage::Time { ticks: self.tick });
         }
     }
@@ -265,7 +270,7 @@ impl Server {
     }
 
     fn unload_columns(&mut self) {
-        if self.tick % (TICKS_PER_SECOND as u64 * 5) != 0 {
+        if !self.tick.is_multiple_of(TICKS_PER_SECOND as u64 * 5) {
             return;
         }
         let centers: Vec<ColumnPos> =
@@ -292,6 +297,27 @@ impl Server {
             self.broadcast(ServerMessage::BlockChanged { pos, block });
         }
     }
+}
+
+/// The spot nearest `start` within its column whose top block is opaque ground with two
+/// free blocks above it (so the player never spawns in a tree).
+fn find_ground(world: &VoxelWorld, registry: &BlockRegistry, start: IVec3) -> Vec3 {
+    let origin = ColumnPos::of_block(start).origin();
+    let mut candidates: Vec<IVec3> =
+        (0..CHUNK_SIZE).flat_map(|z| (0..CHUNK_SIZE).map(move |x| origin + IVec3::new(x, 0, z))).collect();
+    candidates.sort_by_key(|p| (p.x - start.x).abs() + (p.z - start.z).abs());
+    let info = |p: IVec3| world.block(p).map(|b| registry.info(b));
+    for column in candidates {
+        let Some(ground) = (0..WORLD_HEIGHT).rev().map(|y| column.with_y(y)).find(|&p| info(p).is_some_and(|i| i.solid))
+        else {
+            continue;
+        };
+        let open = |p: IVec3| info(p).is_some_and(|i| !i.solid);
+        if info(ground).is_some_and(|i| i.render == RenderKind::Opaque) && open(ground + IVec3::Y) && open(ground + IVec3::Y * 2) {
+            return (ground + IVec3::Y).as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        }
+    }
+    start.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
 }
 
 /// Column positions at exactly Chebyshev distance `ring` from `center`.

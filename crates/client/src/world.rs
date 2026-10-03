@@ -29,6 +29,7 @@ impl Plugin for WorldPlugin {
 struct ChunkRender {
     entities: [Option<Entity>; 2],
     hashes: [u64; 2],
+    quads: [usize; 2],
     connectivity: Connectivity,
 }
 
@@ -56,6 +57,8 @@ pub struct ClientWorld {
 #[derive(Default, Clone, Copy)]
 pub struct WorldStats {
     pub chunk_entities: usize,
+    pub quads: usize,
+    pub visible_quads: usize,
     pub visible_chunks: usize,
     pub jobs_in_flight: usize,
     pub pending_columns: usize,
@@ -212,6 +215,7 @@ fn apply_meshes(
                     continue;
                 }
                 render.hashes[pass] = hash;
+                render.quads[pass] = buffers.vertices.len() / 4;
                 match (buffers.is_empty(), render.entities[pass]) {
                     (true, Some(entity)) => {
                         commands.entity(entity).despawn();
@@ -238,6 +242,7 @@ fn apply_meshes(
         }
     }
     world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.entities.iter().flatten()).count();
+    world.stats.quads = world.chunks.values().flat_map(|c| c.quads).sum();
 }
 
 /// Hides chunks the camera cannot see through the terrain (cave culling).
@@ -258,10 +263,11 @@ fn cull_chunks(
 
     let _span = info_span!("cull_chunks").entered();
     let visible = visible_chunks(eye, world.view_distance, |pos| world.chunks.get(&pos).map(|c| c.connectivity));
-    let mut count = 0;
+    let (mut count, mut quads) = (0, 0);
     for (pos, render) in &world.chunks {
         let shown = visible.contains(pos);
         count += shown as usize;
+        quads += if shown { render.quads.iter().sum() } else { 0 };
         for entity in render.entities.iter().flatten() {
             if let Ok(mut v) = visibility.get_mut(*entity) {
                 v.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
@@ -269,4 +275,5 @@ fn cull_chunks(
         }
     }
     world.stats.visible_chunks = count;
+    world.stats.visible_quads = quads;
 }

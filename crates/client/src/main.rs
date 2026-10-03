@@ -3,7 +3,8 @@
 //! `voxmar` starts singleplayer with an integrated server. Options:
 //! `--connect HOST:PORT` join a server, `--host` also open singleplayer to the network,
 //! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--vsync`,
-//! `--capture PATH` (screenshot and exit once loaded).
+//! `--capture PATH` (screenshot and exit once loaded), `--pose x,y,z,yaw,pitch` (camera for
+//! `--capture`).
 
 mod capture;
 mod hud;
@@ -15,13 +16,15 @@ mod textures;
 mod world;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::camera::Hdr;
-use bevy::window::PresentMode;
+use bevy::app::ScheduleRunnerPlugin;
+use bevy::window::{ExitCondition, PresentMode};
 use voxmar_engine::block::{BlockRegistry, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, Face};
 use voxmar_protocol::{DEFAULT_PORT, local_pair, tcp};
@@ -40,6 +43,7 @@ struct Options {
     view_distance: i32,
     vsync: bool,
     capture: Option<std::path::PathBuf>,
+    pose: Option<[f32; 5]>,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -51,6 +55,7 @@ fn parse_options() -> Result<Options, String> {
         view_distance: 16,
         vsync: false,
         capture: None,
+        pose: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -63,6 +68,10 @@ fn parse_options() -> Result<Options, String> {
             "--view-distance" => options.view_distance = value()?.parse().map_err(|e| format!("--view-distance: {e}"))?,
             "--vsync" => options.vsync = true,
             "--capture" => options.capture = Some(value()?.into()),
+            "--pose" => {
+                let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose: {e}"))?;
+                options.pose = Some(parts.try_into().map_err(|_| "--pose needs x,y,z,yaw,pitch")?);
+            }
             _ => return Err(format!("unknown argument {arg}")),
         }
     }
@@ -81,18 +90,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, server) = connect(&options, registry.clone())?;
 
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "voxmar".into(),
-                    present_mode: if options.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync },
-                    ..default()
-                }),
-                ..default()
-            })
-            .set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() }),
-    )
+    let window = Window {
+        title: "voxmar".into(),
+        present_mode: if options.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync },
+        ..default()
+    };
+    let plugins = DefaultPlugins.set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() });
+    if options.capture.is_some() {
+        // Headless: render offscreen as fast as possible, independent of any display.
+        app.add_plugins((
+            plugins
+                .set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, ..default() })
+                .disable::<bevy::winit::WinitPlugin>(),
+            ScheduleRunnerPlugin::run_loop(Duration::ZERO),
+        ));
+    } else {
+        app.add_plugins(plugins.set(WindowPlugin { primary_window: Some(window), ..default() }));
+    }
+    app
     .add_plugins((
         FrameTimeDiagnosticsPlugin::default(),
         render::RenderPlugin,
@@ -108,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
     if let Some(path) = options.capture {
-        app.add_plugins(capture::CapturePlugin(path));
+        app.add_plugins(capture::CapturePlugin { path, pose: options.pose });
     }
     app.run();
     Ok(())
@@ -184,7 +199,7 @@ fn setup(
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {
-    for pixel in texture.pixels.chunks_exact_mut(4) {
+    for pixel in texture.pixels.as_chunks_mut::<4>().0 {
         for c in 0..3 {
             pixel[c] = (pixel[c] as f32 * color[c]) as u8;
         }

@@ -316,7 +316,7 @@ fn update_debug(
     text.0 = format!(
         "{fps:.0} fps ({frame_ms:.2} ms)\n\
          xyz {:.1} {:.1} {:.1}{}\n\
-         columns {} | chunk meshes {} | visible {}\n\
+         columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
          mesh jobs {} | waiting {}\n\
          looking at {looking}\n\
          F3 debug  F fly  E inventory  Esc release mouse",
@@ -326,6 +326,7 @@ fn update_debug(
         if player.flying { " (flying)" } else { "" },
         world.voxels.len(),
         stats.chunk_entities,
+        stats.quads,
         stats.visible_chunks,
         stats.jobs_in_flight,
         stats.pending_columns,
@@ -355,6 +356,9 @@ fn click_inventory(
             },
             Interaction::Hovered => background.0 = Color::srgb(0.7, 0.7, 0.7),
             Interaction::None => background.0 = Color::srgb(0.55, 0.55, 0.55),
+        }
+        if held.0 == Some(slot.0) {
+            background.0 = Color::srgb(0.9, 0.8, 0.35);
         }
     }
 }

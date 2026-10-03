@@ -72,12 +72,13 @@ impl Generator for Overworld {
     }
 
     fn spawn_point(&self) -> IVec3 {
-        // Walk outwards on a spiral until we find dry land that is not a mountain top.
+        // Walk outwards on a spiral until we find grassland that is not a mountain top.
         for ring in 0..256 {
             for step in 0..(ring * 8).max(1) {
                 let (x, z) = spiral(ring, step);
                 let (height, climate) = self.surface(x * 16, z * 16);
-                if height > SEA_LEVEL + 1 && height < SEA_LEVEL + 40 && climate.biome != Biome::Desert {
+                let grassy = matches!(climate.biome, Biome::Plains | Biome::Forest | Biome::BirchForest | Biome::Taiga);
+                if grassy && height > SEA_LEVEL + 3 && height < SEA_LEVEL + 40 {
                     return IVec3::new(x * 16, height + 1, z * 16);
                 }
             }

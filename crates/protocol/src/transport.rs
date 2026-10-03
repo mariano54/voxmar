@@ -5,6 +5,10 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 
 use crate::{ClientMessage, ServerMessage};
 
+/// The peer closed the connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Disconnected;
+
 /// One end of a bidirectional message stream.
 pub struct Connection<Out, In> {
     tx: Sender<Out>,
@@ -21,11 +25,11 @@ impl<Out, In> Connection<Out, In> {
     }
 
     /// The next received message, `Ok(None)` if none is pending, `Err` when disconnected.
-    pub fn try_recv(&self) -> Result<Option<In>, ()> {
+    pub fn try_recv(&self) -> Result<Option<In>, Disconnected> {
         match self.rx.try_recv() {
             Ok(m) => Ok(Some(m)),
             Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => Err(()),
+            Err(TryRecvError::Disconnected) => Err(Disconnected),
         }
     }
 }

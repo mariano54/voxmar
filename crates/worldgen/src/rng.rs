@@ -37,7 +37,7 @@ impl Rng {
 
     /// Uniform in `0..n`.
     pub fn below(&mut self, n: u32) -> i32 {
-        ((self.next_u64() >> 32) * n as u64 >> 32) as i32
+        (((self.next_u64() >> 32) * n as u64) >> 32) as i32
     }
 
     pub fn range(&mut self, lo: i32, hi: i32) -> i32 {

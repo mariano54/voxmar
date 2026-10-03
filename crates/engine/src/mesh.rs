@@ -44,12 +44,6 @@ pub struct ChunkMesh {
     pub connectivity: Connectivity,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Pass {
-    Opaque,
-    Translucent,
-}
-
 /// Per-cell flags of the padded chunk, derived from the registry.
 #[derive(Clone, Copy, Default)]
 struct Cell {
@@ -71,6 +65,7 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     // Bit columns along each axis (bit i = padded coordinate i).
     let mut occ = Axes::default();
     let mut opaque = Axes::default();
+    let mut cutout = Axes::default();
     let mut translucent = Axes::default();
     for y in 0..P {
         for z in 0..P {
@@ -89,7 +84,11 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
                     occ.set(x, y, z);
                 }
                 match render {
-                    RenderKind::Opaque | RenderKind::Cutout => opaque.set(x, y, z),
+                    RenderKind::Opaque => opaque.set(x, y, z),
+                    RenderKind::Cutout => {
+                        opaque.set(x, y, z);
+                        cutout.set(x, y, z);
+                    }
                     RenderKind::Translucent => translucent.set(x, y, z),
                     RenderKind::Invisible => {}
                 }
@@ -100,8 +99,8 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     let mut mesher = Mesher { registry, column, cells: &cells, planes: [[0; S]; S], keys: [[0; S]; S] };
     let mut mesh = ChunkMesh { connectivity: Connectivity::compute(|x, y, z| cells[pidx(x + 1, y + 1, z + 1)].occludes), ..Default::default() };
     for face in Face::ALL {
-        mesher.mesh_faces(face, &occ, &opaque, Pass::Opaque, &mut mesh.opaque);
-        mesher.mesh_faces(face, &occ, &translucent, Pass::Translucent, &mut mesh.translucent);
+        mesher.mesh_faces(face, &occ, &opaque, &cutout, &mut mesh.opaque);
+        mesher.mesh_faces(face, &occ, &translucent, &translucent, &mut mesh.translucent);
     }
     mesh
 }
@@ -173,26 +172,26 @@ struct Mesher<'a> {
 }
 
 impl Mesher<'_> {
-    fn mesh_faces(&mut self, face: Face, occ: &Axes, visible: &Axes, pass: Pass, out: &mut MeshBuffers) {
+    /// Meshes the faces of `visible` cells along `face`. A face is hidden by an occluding
+    /// neighbour, or when both cells belong to `joined` (water next to water, leaves next
+    /// to leaves), whose shared faces are never seen.
+    fn mesh_faces(&mut self, face: Face, occ: &Axes, visible: &Axes, joined: &Axes, out: &mut MeshBuffers) {
         let fa = face_axes(face);
         self.planes = [[0; S]; S];
         let mut any = false;
 
-        // Cull faces 32 at a time: visible where the cell renders and the neighbour along
-        // the normal neither occludes nor (for translucent) is translucent too.
-        let (occ_cols, vis_cols) = match fa.normal {
-            0 => (&occ.x, &visible.x),
-            1 => (&occ.y, &visible.y),
-            _ => (&occ.z, &visible.z),
+        // Cull faces a whole column of cells at a time with bit operations.
+        let (occ_cols, vis_cols, joined_cols) = match fa.normal {
+            0 => (&occ.x, &visible.x, &joined.x),
+            1 => (&occ.y, &visible.y, &joined.y),
+            _ => (&occ.z, &visible.z, &joined.z),
         };
+        let neighbour = |bits: u64| if fa.positive { bits >> 1 } else { bits << 1 };
         for a in 1..=S {
             for b in 1..=S {
-                let mut hide = occ_cols[a][b];
-                if pass == Pass::Translucent {
-                    hide |= vis_cols[a][b];
-                }
-                let neighbour = if fa.positive { hide >> 1 } else { hide << 1 };
-                let faces = ((vis_cols[a][b] & !neighbour) >> 1) as u32;
+                let joined = joined_cols[a][b];
+                let hidden = neighbour(occ_cols[a][b]) | (joined & neighbour(joined));
+                let faces = ((vis_cols[a][b] & !hidden) >> 1) as u32;
                 if faces == 0 {
                     continue;
                 }
@@ -279,7 +278,7 @@ impl Mesher<'_> {
                     count += 1;
                 }
             }
-            let packed = ((sky + count / 2) / count) << 4 | (block + count / 2) / count;
+            let packed = (((sky + count / 2) / count) << 4) | ((block + count / 2) / count);
             light |= (packed as u64) << (corner * 8);
         }
         surface | ao << 24 | light << 32
@@ -311,8 +310,8 @@ impl Mesher<'_> {
                     }
                     height += 1;
                 }
-                for r in row..row + height {
-                    plane[r] &= !span;
+                for bits in &mut plane[row..row + height] {
+                    *bits &= !span;
                 }
 
                 emit_quad(out, face, fa, slice, row, col, width, height, key);

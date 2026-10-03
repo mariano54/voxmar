@@ -59,7 +59,7 @@ fn receive(
         let message = match net.connection.try_recv() {
             Ok(Some(message)) => message,
             Ok(None) => break,
-            Err(()) => {
+            Err(_) => {
                 if net.status.is_none() {
                     net.status = Some("Disconnected from server".into());
                 }
