@@ -31,7 +31,7 @@ a jar, resource pack zip or folder. Without one it generates placeholder texture
 | crate | role |
 | --- | --- |
 | `engine` | world data and rules, no renderer: palette chunks, column lighting, binary greedy meshing, visibility graph, collision, raycast, content packages, actions, scheduler, traits, fields |
-| `worldgen` | staged generator: geology → climate/biomes → resources → terrain, caves, trees |
+| `worldgen` | staged generator: world dials → geology, rivers → climate fields → ecology → resources → terrain, caves, trees, plants |
 | `protocol` | client/server messages and transports (in-process channels, TCP) |
 | `server` | authoritative simulation (fixed 20 Hz tick), validation, streaming; `voxmar-server` binary |
 | `client` | Bevy app: rendering, input, prediction, HUD; the only crate that depends on Bevy |
@@ -53,11 +53,32 @@ How the design primitives map to the code today:
 - **Trait**: typed data with declared replication and persistence (`core:health`,
   `core:inventory`, `core:position`); owner-replicated traits are sent when they change.
 - **Field**: coarse 16-block grids, generated baseline plus emitted differences
-  (`core:temperature` from the climate generator).
+  (`core:temperature`, in °C, from the climate generator).
 - **Agent**: players, whose controller is input. Machines and creatures come later.
 - **Generator**: the `Generator` trait; `Overworld` is the first implementation. Random
   streams are seeded from world seed + generator id and version + stream + position, so
   generation is pure and order-independent. Distant terrain is sampled from the same functions.
+
+## World generation
+
+There are no biomes. Each world draws a few physically meaningful dials from its seed
+(`Overworld::dials`: mean temperature, equator-to-pole temperature difference and distance,
+ocean fraction, continent size, humidity, prevailing wind, tectonic activity, erosion age,
+river density, vegetation), with sensible correlations. Everything else is a continuous field:
+
+- **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
+  hot, temperate and cold land always lie in that order) and with altitude.
+- **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
+  drier interiors, rain shadows behind mountains, wet tropics and dry subtropics.
+- **Rivers and lakes** are carved into the height function, ending as dry valleys in high country.
+- **Surfaces, trees and plants** follow smoothly from temperature, moisture, slope and height:
+  transitions are bands where materials interleave (grass, snowy grass, snow; grass, coarse
+  dirt, sand), and each climate has its own procedurally shaped trees (giant spruce, pine,
+  birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti).
+
+`Overworld::site(x, z)` returns every parameter at a position for gameplay to use.
+`cargo test --release -p voxmar_worldgen map_preview -- --ignored` (optionally with `SEED=n`)
+writes a shaded 8 km map to `target/map_preview.ppm`.
 
 ## Sound
 
@@ -80,7 +101,8 @@ repeats exactly. `cargo test -p voxmar_client sfx_preview -- --ignored` writes e
 - Cave culling: per-chunk face connectivity and a breadth-first visibility walk
   (Tommaso Checchi's algorithm) hide chunks the camera cannot see.
 - Bevy's GPU preprocessing does frustum culling and indirect batched draws.
-- Pixel-art texture array with alpha-weighted mipmaps; biome tints from colormaps in the shader.
+- Pixel-art texture array with alpha-weighted mipmaps; climate tints from colormaps in the shader.
+- Plants (grass, flowers) are two crossed, double-sided quads that sway from their base.
 - Day/night cycle, sky dome with sun, moon and stars, distance fog, HDR with bloom.
 
 Measured on an M5 Max at 1920×1080, view distance 16 (1089 columns, ~4.7M quads loaded):

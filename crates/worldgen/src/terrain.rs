@@ -400,7 +400,7 @@ impl Terrain {
         let hot = past(t, 14.0, 18.0);
         let warm = past(t, 8.0, 12.0);
         let arid = !past(w, 0.2, 0.34);
-        let dry = !past(w, 0.32, 0.5);
+        let dry = !past(w, 0.3, 0.44);
         // Red rock weathers out of hot, dry uplands.
         let red = hot && dry && past((above - 12.0) / 16.0 + (t - 21.0) / 5.0, 0.0, 1.0);
 
