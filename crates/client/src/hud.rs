@@ -7,6 +7,7 @@ use voxmar_engine::action::ActionTarget;
 
 use crate::Actions;
 use crate::interact::Target;
+use crate::menu::Screen;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
@@ -17,10 +18,14 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostStartup, spawn_hud).add_systems(
-            Update,
-            (toggle_screens, update_slots, update_hearts, update_status, update_debug, click_inventory),
-        );
+        app.add_systems(PostStartup, spawn_hud)
+            .add_systems(
+                Update,
+                (toggle_screens, update_slots, update_hearts, update_status, update_debug, click_inventory)
+                    .run_if(in_state(Screen::InGame)),
+            )
+            .add_systems(OnEnter(Screen::InGame), show_hud::<true>)
+            .add_systems(OnExit(Screen::InGame), show_hud::<false>);
     }
 }
 
@@ -40,6 +45,9 @@ pub struct HudImages {
 const SCALE: f32 = 2.0;
 const SLOT: f32 = 20.0 * SCALE;
 
+/// The HUD's root, shown only in game.
+#[derive(Component)]
+struct HudRoot;
 #[derive(Component)]
 struct SlotIcon(usize);
 #[derive(Component)]
@@ -91,7 +99,7 @@ fn slot_contents(parent: &mut ChildSpawnerCommands, slot: usize) {
 fn spawn_hud(mut commands: Commands, images: Res<HudImages>) {
     commands.insert_resource(HeldSlot::default());
     let root = Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
-    commands.spawn(root).with_children(|root| {
+    commands.spawn((HudRoot, root, Visibility::Hidden)).with_children(|root| {
         // Crosshair and block-breaking progress.
         root.spawn(Node {
             position_type: PositionType::Absolute,
@@ -196,6 +204,13 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>) {
     });
 }
 
+fn show_hud<const SHOWN: bool>(mut root: Query<&mut Visibility, With<HudRoot>>, mut held: ResMut<HeldSlot>) {
+    if let Ok(mut visibility) = root.single_mut() {
+        *visibility = if SHOWN { Visibility::Inherited } else { Visibility::Hidden };
+    }
+    held.0 = None;
+}
+
 fn toggle_screens(
     keys: Res<ButtonInput<KeyCode>>,
     mut ui: ResMut<UiState>,
@@ -286,18 +301,12 @@ fn update_hearts(
     }
 }
 
-fn update_status(net: Res<Net>, player: Res<LocalPlayer>, target: Res<Target>, mut status: Query<&mut Text, With<StatusText>>, mut bar: Query<&mut Node, With<BreakBar>>) {
-    let message = if let Some(status) = &net.status {
-        status.clone()
-    } else if player.dead {
-        "You died. Press R to respawn.".to_owned()
-    } else {
-        String::new()
-    };
+fn update_status(player: Res<LocalPlayer>, target: Res<Target>, mut status: Query<&mut Text, With<StatusText>>, mut bar: Query<&mut Node, With<BreakBar>>) {
+    let message = if player.dead { "You died. Press R to respawn." } else { "" };
     if let Ok(mut text) = status.single_mut()
         && text.0 != message
     {
-        text.0 = message;
+        message.clone_into(&mut text.0);
     }
     if let Ok(mut node) = bar.single_mut() {
         node.width = Val::Px(target.breaking.map_or(0.0, |(_, p)| p * 40.0));

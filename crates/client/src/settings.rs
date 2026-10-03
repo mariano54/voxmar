@@ -1,5 +1,6 @@
-//! Player settings: the menu Esc opens, applying each choice to the game, and keeping them
-//! in `voxmar/settings.ron` in the platform's configuration directory.
+//! Player settings: the panel Esc opens in game (also the title screen's Settings),
+//! applying each choice to the game, and keeping them in `voxmar/settings.ron` in the
+//! platform's configuration directory.
 
 use std::path::PathBuf;
 
@@ -10,6 +11,11 @@ use serde::{Deserialize, Serialize};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_protocol::MAX_FLY_SPEED;
 
+use crate::menu::Screen;
+use crate::menu::widgets::{
+    ACCENT, ButtonStyle, MUTED, Pressed, SCRIM, SOFT, TEXT, TRACK, UiFont, button_row, heading, panel, screen, spawn_button,
+    text,
+};
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::DayCycle;
@@ -28,7 +34,7 @@ impl Plugin for SettingsPlugin {
                     .chain(),
                 apply.run_if(resource_changed::<Settings>),
                 fit_lod_hole,
-                sync_server,
+                sync_server.run_if(in_state(Screen::InGame)),
             ),
         );
     }
@@ -108,7 +114,16 @@ impl Settings {
 
 /// `voxmar/settings.ron` in the platform's configuration directory.
 fn path() -> Option<PathBuf> {
+    Some(config_dir()?.join("settings.ron"))
+}
+
+/// Where settings, worlds and recent servers are kept: `$VOXMAR_CONFIG`, else `voxmar` in
+/// the platform's configuration directory.
+pub fn config_dir() -> Option<PathBuf> {
     let var = |name| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(dir) = var("VOXMAR_CONFIG") {
+        return Some(dir);
+    }
     let base = if cfg!(target_os = "macos") {
         var("HOME")?.join("Library/Application Support")
     } else if cfg!(windows) {
@@ -116,7 +131,7 @@ fn path() -> Option<PathBuf> {
     } else {
         var("XDG_CONFIG_HOME").or_else(|| Some(var("HOME")?.join(".config")))?
     };
-    Some(base.join("voxmar").join("settings.ron"))
+    Some(base.join("voxmar"))
 }
 
 /// A setting chosen with a slider.
@@ -240,29 +255,25 @@ const SECTIONS: [(&str, &[Control]); 3] = [
 
 #[derive(Component, Clone, Copy)]
 enum MenuButton {
+    /// Back to the game.
     Resume,
+    /// Back to the title screen, when opened from there.
+    Done,
+    QuitToTitle,
     Quit,
-}
-
-impl MenuButton {
-    fn label(self) -> &'static str {
-        match self {
-            MenuButton::Resume => "Resume",
-            MenuButton::Quit => "Quit game",
-        }
-    }
-
-    /// Text colour, background and hovered background.
-    fn colors(self) -> (Color, Color, Color) {
-        match self {
-            MenuButton::Resume => (ON_ACCENT, ACCENT, ACCENT_HOVER),
-            MenuButton::Quit => (TEXT, SUBTLE, SUBTLE_HOVER),
-        }
-    }
 }
 
 #[derive(Component)]
 struct MenuRoot;
+/// Parts of the panel that only make sense in some places.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum ShownWhen {
+    InGame,
+    OnTitle,
+    /// For admins in game, and always on the title screen, where it applies to the next
+    /// world.
+    Admin,
+}
 /// The draggable area of a slider.
 #[derive(Component)]
 struct SliderTrack(Slider);
@@ -272,71 +283,17 @@ struct SliderFill(Slider);
 struct SliderValue(Slider);
 #[derive(Component)]
 struct Switch(Toggle);
-/// Rows only admins see.
-#[derive(Component)]
-struct AdminOnly;
 
 const PANEL_WIDTH: f32 = 520.0;
 const SLIDER_WIDTH: f32 = 200.0;
 const VALUE_WIDTH: f32 = 84.0;
 const KNOB: f32 = 16.0;
 
-const SCRIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.5);
-const PANEL: Color = Color::srgb(0.08, 0.09, 0.11);
-const OUTLINE: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
-const TEXT: Color = Color::srgb(0.93, 0.94, 0.96);
-const SOFT: Color = Color::srgba(0.93, 0.94, 0.96, 0.7);
-const MUTED: Color = Color::srgba(0.93, 0.94, 0.96, 0.45);
-const ACCENT: Color = Color::srgb(0.36, 0.78, 0.5);
-const ACCENT_HOVER: Color = Color::srgb(0.46, 0.85, 0.59);
-const ON_ACCENT: Color = Color::srgb(0.04, 0.1, 0.06);
-const TRACK: Color = Color::srgba(1.0, 1.0, 1.0, 0.14);
-const SUBTLE: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
-const SUBTLE_HOVER: Color = Color::srgba(1.0, 1.0, 1.0, 0.14);
-
-/// A clean sans-serif from the system; Bevy's built-in font is monospaced and ASCII only.
-fn system_font(fonts: &mut Assets<Font>) -> Handle<Font> {
-    const CANDIDATES: [&str; 5] = [
-        "/System/Library/Fonts/SFNS.ttf",
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ];
-    CANDIDATES
-        .iter()
-        .find_map(|path| std::fs::read(path).ok())
-        .map_or_else(Handle::default, |bytes| fonts.add(Font::from_bytes(bytes)))
-}
-
-fn text(font: &Handle<Font>, value: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor) {
-    (Text::new(value), TextFont { font: font.into(), font_size: FontSize::Px(size), ..default() }, TextColor(color))
-}
-
-fn spawn_menu(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
-    let font = &system_font(&mut fonts);
-    let root = Node {
-        position_type: PositionType::Absolute,
-        width: Val::Percent(100.0),
-        height: Val::Percent(100.0),
-        justify_content: JustifyContent::Center,
-        align_items: AlignItems::Center,
-        ..default()
-    };
-    let panel = Node {
-        width: Val::Px(PANEL_WIDTH),
-        flex_direction: FlexDirection::Column,
-        padding: UiRect::new(Val::Px(36.0), Val::Px(36.0), Val::Px(28.0), Val::Px(32.0)),
-        border: UiRect::all(Val::Px(1.0)),
-        border_radius: BorderRadius::all(Val::Px(18.0)),
-        ..default()
-    };
-    let shadow = BoxShadow::new(Color::srgba(0.0, 0.0, 0.0, 0.45), Val::ZERO, Val::Px(16.0), Val::ZERO, Val::Px(48.0));
-    commands.spawn((MenuRoot, root, BackgroundColor(SCRIM), GlobalZIndex(1), Visibility::Hidden)).with_children(|root| {
-        root.spawn((panel, BackgroundColor(PANEL), BorderColor::all(OUTLINE), shadow)).with_children(|panel| {
-            let mut title = text(font, "Settings", 30.0, TEXT);
-            title.1.weight = FontWeight::SEMIBOLD;
-            panel.spawn(title);
+fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
+    let font = &font.0;
+    commands.spawn((MenuRoot, screen(SCRIM), GlobalZIndex(1), Visibility::Hidden)).with_children(|root| {
+        root.spawn(panel(PANEL_WIDTH)).with_children(|panel| {
+            panel.spawn(heading(font, "Settings"));
             for (section, controls) in SECTIONS {
                 let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(18.0), Val::Px(2.0));
                 panel.spawn((Node { margin, ..default() }, text(font, section.to_uppercase(), 12.0, MUTED)));
@@ -344,23 +301,13 @@ fn spawn_menu(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                     spawn_row(panel, font, control);
                 }
             }
-            let buttons = Node { margin: UiRect::top(Val::Px(26.0)), column_gap: Val::Px(12.0), ..default() };
-            panel.spawn(buttons).with_children(|row| {
-                for button in [MenuButton::Resume, MenuButton::Quit] {
-                    let (color, background, _) = button.colors();
-                    let node = Node {
-                        flex_grow: 1.0,
-                        flex_basis: Val::ZERO,
-                        height: Val::Px(44.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::all(Val::Px(12.0)),
-                        ..default()
-                    };
-                    let mut label = text(font, button.label(), 16.0, color);
-                    label.1.weight = FontWeight::MEDIUM;
-                    row.spawn((Button, button, node, BackgroundColor(background))).with_child(label);
-                }
+            panel.spawn(button_row(26.0)).with_children(|row| {
+                spawn_button(row, font, "Resume", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
+                spawn_button(row, font, "Done", ButtonStyle::Primary, (MenuButton::Done, ShownWhen::OnTitle));
+            });
+            panel.spawn((button_row(12.0), ShownWhen::InGame)).with_children(|row| {
+                spawn_button(row, font, "Save and quit to title", ButtonStyle::Secondary, MenuButton::QuitToTitle);
+                spawn_button(row, font, "Quit game", ButtonStyle::Secondary, MenuButton::Quit);
             });
         });
     });
@@ -380,7 +327,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
     };
     let mut row = panel.spawn(node);
     if control == Control::Slider(Slider::FlySpeed) {
-        row.insert(AdminOnly);
+        row.insert(ShownWhen::Admin);
     }
     row.with_children(|row| {
         row.spawn(text(font, label, 16.0, TEXT));
@@ -460,19 +407,21 @@ fn click_switches(mut settings: ResMut<Settings>, switches: Query<(&Switch, &Int
 }
 
 fn click_buttons(
-    mut buttons: Query<(&MenuButton, &Interaction, &mut BackgroundColor), Changed<Interaction>>,
+    buttons: Query<(&MenuButton, &Interaction), Pressed>,
     mut ui: ResMut<UiState>,
     settings: Res<Settings>,
+    mut next: ResMut<NextState<Screen>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    for (&button, interaction, mut background) in &mut buttons {
-        let (_, normal, hovered) = button.colors();
-        background.0 = if *interaction == Interaction::None { normal } else { hovered };
+    for (&button, interaction) in &buttons {
         if *interaction != Interaction::Pressed {
             continue;
         }
         match button {
             MenuButton::Resume => ui.menu_open = false,
+            MenuButton::Done => next.set(Screen::Title),
+            // Leaving the game stops the integrated server, which saves the world.
+            MenuButton::QuitToTitle => next.set(Screen::Title),
             MenuButton::Quit => {
                 settings.save();
                 exit.write(AppExit::Success);
@@ -502,27 +451,53 @@ fn sync_controls(
     }
 }
 
-/// Shows the menu while it is open, with admin-only rows for admins, and saves the
-/// settings when it closes.
+/// Shows the menu while it is open in game or the title screen's Settings is up, with the
+/// buttons that fit and admin-only rows for admins (and on the title screen), and saves
+/// the settings when it closes.
+#[allow(clippy::too_many_arguments)]
 fn show_menu(
     ui: Res<UiState>,
+    screen: Res<State<Screen>>,
     settings: Res<Settings>,
     player: Res<LocalPlayer>,
+    net: Option<Res<Net>>,
     mut was_open: Local<bool>,
     mut root: Query<&mut Visibility, With<MenuRoot>>,
-    mut admin_rows: Query<&mut Node, With<AdminOnly>>,
+    mut nodes: Query<(&mut Node, &ShownWhen)>,
+    quit_to_title: Query<(&MenuButton, &Children)>,
+    mut texts: Query<&mut Text>,
 ) {
-    if *was_open && !ui.menu_open {
+    let in_game = *screen.get() == Screen::InGame;
+    let open = (in_game && ui.menu_open) || *screen.get() == Screen::Settings;
+    if *was_open && !open {
         settings.save();
     }
-    *was_open = ui.menu_open;
+    *was_open = open;
     if let Ok(mut visibility) = root.single_mut() {
-        visibility.set_if_neq(if ui.menu_open { Visibility::Inherited } else { Visibility::Hidden });
+        visibility.set_if_neq(if open { Visibility::Inherited } else { Visibility::Hidden });
     }
-    let display = if player.admin { Display::Flex } else { Display::None };
-    for mut node in &mut admin_rows {
+    if !open {
+        return;
+    }
+    for (mut node, when) in &mut nodes {
+        let shown = match when {
+            ShownWhen::InGame => in_game,
+            ShownWhen::OnTitle => !in_game,
+            ShownWhen::Admin => player.admin || !in_game,
+        };
+        let display = if shown { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;
+        }
+    }
+    // Leaving a server saves nothing of ours, so say what it does.
+    let label = if net.is_some_and(|net| net.is_remote()) { "Disconnect" } else { "Save and quit to title" };
+    for (button, children) in &quit_to_title {
+        if matches!(button, MenuButton::QuitToTitle)
+            && let Some(mut text) = children.first().and_then(|&child| texts.get_mut(child).ok())
+            && text.0 != label
+        {
+            label.clone_into(&mut text.0);
         }
     }
 }
@@ -588,7 +563,12 @@ fn fit_lod_hole(
 fn sync_server(settings: Res<Settings>, net: Res<Net>, mut player: ResMut<LocalPlayer>, mut sent: Local<Option<(i32, f32)>>) {
     let fly_speed = if player.admin { settings.fly_speed as f32 / 100.0 } else { 1.0 };
     let wanted = (settings.view_distance, fly_speed);
-    if !player.joined || *sent == Some(wanted) {
+    if !player.joined {
+        // A new session needs telling again.
+        *sent = None;
+        return;
+    }
+    if *sent == Some(wanted) {
         return;
     }
     *sent = Some(wanted);

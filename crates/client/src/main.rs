@@ -1,19 +1,26 @@
 //! The voxmar client.
 //!
-//! `voxmar` starts singleplayer with an integrated server. Options:
-//! `--connect HOST:PORT` join a server, `--host` also open singleplayer to the network,
-//! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--no-vsync`, `--no-music`,
-//! `--capture PATH` (screenshot and exit once loaded), with `--pose dx,dy,dz,yaw,pitch` (camera offset from the player)
-//! or `--flight SECONDS` (fly forward first and report frame pacing), and `--menu` (show the settings menu).
-//! `--view-distance` and `--no-vsync` override the saved settings.
+//! `voxmar` opens the title screen. Options that go straight into a game instead:
+//! `--world NAME` play (or create) the saved world NAME, `--connect HOST[:PORT]` join a
+//! server, `--capture PATH` (screenshot and exit once loaded; plays an unsaved world unless
+//! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
+//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--menu`
+//! (show the settings menu) or `--screen title|worlds|create|join|settings` (capture a
+//! menu screen instead).
+//! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
+//! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
+//! `--no-vsync`, `--no-music`. `--view-distance` and `--no-vsync` override the saved
+//! settings.
 
 mod capture;
 mod hud;
 mod interact;
+mod menu;
 mod music;
 mod net;
 mod player;
 mod render;
+mod session;
 mod settings;
 mod sfx;
 mod textures;
@@ -28,20 +35,21 @@ use bevy::prelude::*;
 use bevy::window::{ExitCondition, PresentMode};
 use voxmar_engine::action::ActionRegistry;
 use voxmar_engine::block::{BlockRegistry, RenderKind, Tint};
-use voxmar_engine::content::Content;
 use voxmar_engine::coords::Face;
-use voxmar_protocol::{DEFAULT_PORT, local_pair, tcp};
-use voxmar_server::{ServerConfig, ServerHandle};
+use voxmar_server::ServerConfig;
 
 use crate::hud::HudImages;
+use crate::menu::{FirstScreen, Screen};
 use crate::render::lod::{Lod, LodMaterial, LodPalette};
 use crate::render::{SkyMaterial, VoxelMaterial, ui_image};
+use crate::session::Launch;
 use crate::settings::Settings;
 use crate::textures::{Rgba, Source};
 use crate::world::ClientWorld;
 
 struct Options {
     connect: Option<String>,
+    world: Option<String>,
     host: bool,
     seed: u64,
     name: String,
@@ -51,12 +59,14 @@ struct Options {
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
     menu: bool,
+    screen: Option<Screen>,
     music: bool,
 }
 
 fn parse_options() -> Result<Options, String> {
     let mut options = Options {
         connect: None,
+        world: None,
         host: false,
         seed: ServerConfig::default().seed,
         name: std::env::var("USER").unwrap_or_else(|_| "player".into()),
@@ -66,6 +76,7 @@ fn parse_options() -> Result<Options, String> {
         pose: None,
         flight: None,
         menu: false,
+        screen: None,
         music: true,
     };
     let mut args = std::env::args().skip(1);
@@ -73,6 +84,7 @@ fn parse_options() -> Result<Options, String> {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
             "--connect" => options.connect = Some(value()?),
+            "--world" => options.world = Some(value()?),
             "--host" => options.host = true,
             "--seed" => options.seed = value()?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--name" => options.name = value()?,
@@ -82,6 +94,10 @@ fn parse_options() -> Result<Options, String> {
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
             "--menu" => options.menu = true,
+            "--screen" => {
+                let name = value()?;
+                options.screen = Some(Screen::from_name(&name).ok_or_else(|| format!("--screen: no screen called {name}"))?);
+            }
             "--pose" => {
                 let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose: {e}"))?;
                 options.pose = Some(parts.try_into().map_err(|_| "--pose needs x,y,z,yaw,pitch")?);
@@ -102,8 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
     let registry = content.blocks.clone();
-    let fingerprint = content.fingerprint();
-    let (connection, server) = connect(&options, content.clone())?;
+    let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings.
     let mut settings = if options.capture.is_some() { Settings::default() } else { Settings::load() };
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
@@ -139,14 +154,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hud::HudPlugin,
         sfx::SfxPlugin,
         settings::SettingsPlugin,
+        menu::MenuPlugin,
+        session::SessionPlugin,
     ))
     .insert_resource(ClientWorld::new(registry.clone(), settings.view_distance))
-    .insert_resource(net::Net::new(connection, server, options.name.clone(), fingerprint))
     .insert_resource(Actions(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(settings)
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
+
+    // Go straight into a game when asked to, otherwise to the title screen.
+    let first = if let Some(screen) = options.screen {
+        screen
+    } else if let Some(address) = &options.connect {
+        app.insert_resource(menu::connect(address));
+        Screen::Join
+    } else if options.world.is_some() || options.capture.is_some() {
+        let world = match &options.world {
+            Some(name) => Some(menu::worlds_dir().ok_or("no configuration directory to keep worlds in")?.join(name)),
+            None => None,
+        };
+        let config = ServerConfig { seed: options.seed, world, ..ServerConfig::default() };
+        app.insert_resource(launch.singleplayer(config)?);
+        Screen::InGame
+    } else {
+        Screen::Title
+    };
+    app.insert_resource(FirstScreen(first)).insert_resource(launch);
     if options.music && options.capture.is_none() {
         app.add_plugins(music::MusicPlugin);
     }
@@ -163,25 +198,6 @@ struct Registry(Arc<BlockRegistry>);
 /// Action definitions, shared with the server, for proposing and predicting actions.
 #[derive(Resource)]
 pub struct Actions(pub Arc<ActionRegistry>);
-
-fn connect(
-    options: &Options,
-    content: Content,
-) -> Result<(voxmar_protocol::ClientConnection, Option<ServerHandle>), Box<dyn std::error::Error>> {
-    if let Some(addr) = &options.connect {
-        let addr = if addr.contains(':') { addr.clone() } else { format!("{addr}:{DEFAULT_PORT}") };
-        return Ok((tcp::connect(addr)?, None));
-    }
-    let config = ServerConfig { seed: options.seed, ..ServerConfig::default() };
-    let server = voxmar_server::spawn(config, content)?;
-    if options.host {
-        let addr = tcp::listen(("0.0.0.0", DEFAULT_PORT), server.connections())?;
-        info!("open to the network on {addr}");
-    }
-    let (client, server_side) = local_pair();
-    server.connections().send(server_side)?;
-    Ok((client, Some(server)))
-}
 
 #[allow(clippy::too_many_arguments)]
 fn setup(
