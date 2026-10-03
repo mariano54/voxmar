@@ -16,7 +16,7 @@ use voxmar_engine::mesh::{ChunkMesh, MeshBuffers, mesh_chunk};
 use voxmar_engine::visibility::{Connectivity, visible_chunks};
 use voxmar_engine::world::{Column, VoxelWorld};
 
-use crate::render::{VoxelMaterials, build_mesh};
+use crate::render::{TerrainPass, VoxelMaterials, build_mesh};
 
 pub struct WorldPlugin;
 
@@ -28,10 +28,10 @@ impl Plugin for WorldPlugin {
 
 #[derive(Default)]
 struct ChunkRender {
-    /// Entity and mesh per pass (opaque, translucent).
-    passes: [Option<(Entity, Handle<Mesh>)>; 2],
-    hashes: [u64; 2],
-    quads: [usize; 2],
+    /// Entity and mesh per pass (opaque, cut-out, translucent).
+    passes: [Option<(Entity, Handle<Mesh>)>; 3],
+    hashes: [u64; 3],
+    quads: [usize; 3],
     connectivity: Connectivity,
 }
 
@@ -44,7 +44,7 @@ struct MeshResult {
 
 struct ChunkResult {
     connectivity: Connectivity,
-    passes: [PassResult; 2],
+    passes: [PassResult; 3],
 }
 
 struct PassResult {
@@ -66,11 +66,12 @@ impl PassResult {
 
 impl ChunkResult {
     fn new(mesh: ChunkMesh) -> Self {
-        Self { connectivity: mesh.connectivity, passes: [PassResult::new(mesh.opaque), PassResult::new(mesh.translucent)] }
+        let passes = [PassResult::new(mesh.opaque), PassResult::new(mesh.cutout), PassResult::new(mesh.translucent)];
+        Self { connectivity: mesh.connectivity, passes }
     }
 }
 
-const TRANSLUCENT: usize = 1;
+const TRANSLUCENT: usize = TerrainPass::Translucent as usize;
 
 /// Quads handed to the renderer per frame, so streaming never causes a long frame.
 const UPLOAD_BUDGET: usize = 250_000;
@@ -243,8 +244,7 @@ fn apply_meshes(
                 render.connectivity = chunk_result.connectivity;
                 world.visibility_dirty = true;
             }
-            let materials = [&materials.opaque, &materials.translucent];
-            for (pass, (result, material)) in chunk_result.passes.into_iter().zip(materials).enumerate() {
+            for (pass, (result, material)) in chunk_result.passes.into_iter().zip(&materials.passes).enumerate() {
                 if render.hashes[pass] == result.hash {
                     continue;
                 }
@@ -280,8 +280,10 @@ fn apply_meshes(
             }
         }
     }
-    world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.passes.iter().flatten()).count();
-    world.stats.quads = world.chunks.values().flat_map(|c| c.quads).sum();
+    if uploaded > 0 {
+        world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.passes.iter().flatten()).count();
+        world.stats.quads = world.chunks.values().flat_map(|c| c.quads).sum();
+    }
 }
 
 /// Hides chunks the camera cannot see through the terrain (cave culling).

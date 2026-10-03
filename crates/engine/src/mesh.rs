@@ -39,7 +39,11 @@ impl MeshBuffers {
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct ChunkMesh {
+    /// Fully opaque faces. Kept apart from cut-out faces so the GPU can use early depth
+    /// testing and hidden surface removal, which an alpha test in the shader disables.
     pub opaque: MeshBuffers,
+    /// Alpha-tested faces (leaves, glass).
+    pub cutout: MeshBuffers,
     pub translucent: MeshBuffers,
     pub connectivity: Connectivity,
 }
@@ -85,10 +89,7 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
                 }
                 match render {
                     RenderKind::Opaque => opaque.set(x, y, z),
-                    RenderKind::Cutout => {
-                        opaque.set(x, y, z);
-                        cutout.set(x, y, z);
-                    }
+                    RenderKind::Cutout => cutout.set(x, y, z),
                     RenderKind::Translucent => translucent.set(x, y, z),
                     RenderKind::Invisible => {}
                 }
@@ -99,7 +100,10 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     let mut mesher = Mesher { registry, column, cells: &cells, planes: [[0; S]; S], keys: [[0; S]; S] };
     let mut mesh = ChunkMesh { connectivity: Connectivity::compute(|x, y, z| cells[pidx(x + 1, y + 1, z + 1)].occludes), ..Default::default() };
     for face in Face::ALL {
-        mesher.mesh_faces(face, &occ, &opaque, &cutout, &mut mesh.opaque);
+        // Opaque faces between two occluders are already hidden, so `occ` doubles as the
+        // joined set.
+        mesher.mesh_faces(face, &occ, &opaque, &occ, &mut mesh.opaque);
+        mesher.mesh_faces(face, &occ, &cutout, &cutout, &mut mesh.cutout);
         mesher.mesh_faces(face, &occ, &translucent, &translucent, &mut mesh.translucent);
     }
     mesh

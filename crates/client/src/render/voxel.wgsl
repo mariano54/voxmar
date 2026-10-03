@@ -2,6 +2,8 @@
 //   word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | backed:1
 //   word 1: layer:12 | tint:2 | temperature:5 | humidity:5 | block:4 | sky:4
 // The same file provides the main pass and the depth prepass / shadow pass entry points.
+// Shader defs pick the pass: none for opaque terrain (no alpha test, so the GPU keeps early
+// depth and hidden surface removal), CUTOUT for leaves and glass, TRANSLUCENT for water.
 
 #import bevy_pbr::mesh_functions::get_world_from_local
 #import bevy_pbr::mesh_view_bindings::view
@@ -167,7 +169,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let layer = i32(in.surface & 0xFFFu);
     var albedo = textureSample(block_textures, block_sampler, in.uv, layer);
     let kind = tint_kind(in.surface);
-#ifndef TRANSLUCENT
+#ifdef CUTOUT
     if albedo.a < 0.5 {
         if in.backed == 0u {
             discard;
@@ -176,6 +178,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let average = textureSampleLevel(block_textures, block_sampler, in.uv, layer, 8.0).rgb;
         albedo = vec4(average * 0.45, 1.0);
     }
+#endif
+#ifndef TRANSLUCENT
     albedo.a = 1.0;
 #endif
     let base = albedo.rgb * biome_tint(in.surface);
