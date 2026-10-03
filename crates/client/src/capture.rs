@@ -11,7 +11,10 @@ use bevy::camera::RenderTarget;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
+use voxmar_protocol::TICKS_PER_DAY;
+
 use crate::player::{LocalPlayer, UiState};
+use crate::render::DayCycle;
 use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
@@ -21,6 +24,8 @@ pub struct CapturePlugin {
     pub pose: Option<[f32; 5]>,
     /// Seconds to fly forward after loading, measuring frame pacing while streaming.
     pub flight: Option<f32>,
+    /// Fixed time of day, as a fraction of the day from sunrise.
+    pub time: Option<f32>,
     /// Show the settings menu.
     pub menu: bool,
 }
@@ -31,6 +36,7 @@ impl Plugin for CapturePlugin {
             path: self.path.clone(),
             pose: self.pose,
             flight: self.flight,
+            time: self.time,
             target: Handle::default(),
             settled_at: None,
             flight_started: None,
@@ -39,7 +45,7 @@ impl Plugin for CapturePlugin {
         })
         .add_systems(PostStartup, render_offscreen)
         .add_systems(Update, (target_ui, capture))
-        .add_systems(PostUpdate, apply_pose.before(TransformSystems::Propagate));
+        .add_systems(PostUpdate, (apply_pose, hold_time).before(TransformSystems::Propagate));
     }
 }
 
@@ -48,6 +54,7 @@ struct Capture {
     path: PathBuf,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    time: Option<f32>,
     target: Handle<Image>,
     settled_at: Option<f32>,
     flight_started: Option<f32>,
@@ -87,6 +94,12 @@ fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&
     let (Some([x, y, z, yaw, pitch]), Ok(mut transform)) = (state.pose, camera.single_mut()) else { return };
     transform.translation = player.eye() + Vec3::new(x, y, z);
     transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
+}
+
+fn hold_time(state: Res<Capture>, mut cycle: ResMut<DayCycle>) {
+    if let Some(time) = state.time {
+        cycle.ticks = time as f64 * TICKS_PER_DAY as f64;
+    }
 }
 
 /// Flies forward at sprint-flight speed, climbing to clear the terrain.

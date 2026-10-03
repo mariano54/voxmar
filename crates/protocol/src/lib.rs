@@ -12,14 +12,14 @@ use serde::{Deserialize, Serialize};
 use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::traits::Health;
 use voxmar_engine::world::Column;
 
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -66,6 +66,8 @@ pub enum ServerMessage {
     Teleport { position: Vec3 },
     Players { players: Vec<PlayerView> },
     Time { ticks: u64 },
+    /// The weather where the player is, sent when it changes and every few seconds.
+    Weather(Weather),
     Died,
 }
 
@@ -76,4 +78,24 @@ pub struct PlayerView {
     pub name: String,
     pub position: Vec3,
     pub yaw: f32,
+}
+
+/// The weather at one place. Clients ease towards each update, so it may change in steps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Weather {
+    /// Fraction of the sky covered by low cloud, 0..1.
+    pub cover: f32,
+    /// How that cloud is built: 0 flat layers (stratus) to 1 heaped towers (cumulus, and
+    /// cumulonimbus when it rains).
+    pub convection: f32,
+    /// High, thin ice cloud (cirrus), 0..1. It often runs ahead of rain.
+    pub cirrus: f32,
+    /// Relative humidity of the air, 0..1.
+    pub humidity: f32,
+    /// Rain or snow reaching the ground, 0 (none) to 1 (downpour).
+    pub precipitation: f32,
+    /// How much of it falls as snow, 0..1.
+    pub snow: f32,
+    /// Wind along x and z, in blocks per second.
+    pub wind: Vec2,
 }

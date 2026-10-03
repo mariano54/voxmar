@@ -10,6 +10,7 @@ use bevy::camera::visibility::NoFrustumCulling;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
+use bevy::math::DVec2;
 use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues};
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
 use bevy::post_process::bloom::Bloom;
@@ -20,11 +21,13 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::{ShaderRef, load_shader_library};
 use voxmar_engine::mesh::MeshBuffers;
-use voxmar_protocol::TICKS_PER_DAY;
+use voxmar_protocol::{TICKS_PER_DAY, Weather};
 
 use crate::textures::Rgba;
+use crate::weather::{ClientWeather, DRIFT_WRAP};
 
 pub mod lod;
+pub mod precipitation;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
 
@@ -41,6 +44,7 @@ impl Plugin for RenderPlugin {
             MaterialPlugin::<VoxelMaterial>::default(),
             MaterialPlugin::<SkyMaterial>::default(),
             lod::LodPlugin,
+            precipitation::PrecipitationPlugin,
         ))
             .insert_resource(DirectionalLightShadowMap { size: 2048 })
             .init_resource::<DayCycle>()
@@ -138,11 +142,21 @@ pub struct SkyParams {
     pub zenith: Vec4,
     pub horizon: Vec4,
     pub sun: Vec4,
+    /// x: seconds of game time, y: low cloud cover, z: how heaped it is, w: cirrus.
     pub clouds: Vec4,
     /// x: fraction of the day, which turns the night sky with the sun; y: days elapsed
     /// (wrapped every 1000 days), for the slow drift of the planets.
     pub stars: Vec4,
+    /// xy: the cloud layer's offset over the camera in cloud units, z: precipitation,
+    /// w: lightning flash.
+    pub weather: Vec4,
+    /// xy: wind direction.
+    pub wind: Vec4,
 }
+
+/// Blocks per unit of the sky shader's cloud noise. The cloud layer's offset wraps every
+/// 4096 units, which the wind drift's wrapping matches, so wrapping never shows.
+const CLOUD_UNIT: f64 = DRIFT_WRAP as f64 / 4096.0;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct SkyMaterial {
@@ -409,6 +423,22 @@ impl Environment {
         let ambient = Vec3::new(0.035, 0.045, 0.085).lerp(Vec3::new(0.36, 0.44, 0.62), daylight).lerp(Vec3::new(0.6, 0.45, 0.4), dusk * 0.3);
         Self { to_sun, daylight, light_direction, light_color, ambient, zenith, horizon }
     }
+
+    /// The same light under cloud: a full layer hides the sun or moon, and the sky and
+    /// ambient light turn grey, darker still in rain and storms.
+    fn under(mut self, weather: &Weather) -> Self {
+        let overcast = smoothstep(0.3, 1.0, weather.cover);
+        let gloom = 1.0 - 0.75 * weather.precipitation * (0.5 + 0.5 * weather.convection);
+        let grey = |color: Vec3, brightness: f32| {
+            color.lerp(Vec3::splat(color.dot(Vec3::new(0.2126, 0.7152, 0.0722)) * brightness), overcast)
+        };
+        self.light_color *= (1.0 - 0.9 * overcast) * gloom;
+        self.zenith = grey(self.zenith, 1.0) * gloom;
+        self.horizon = grey(self.horizon, 0.9) * gloom;
+        // Cloud spreads the hidden sunlight over the whole sky, brightening the shade.
+        self.ambient = grey(self.ambient, 1.0 + 0.6 * self.daylight) * gloom;
+        self
+    }
 }
 
 /// Advances time of day and moves the sun, light colours, fog and sky to match.
@@ -416,6 +446,7 @@ impl Environment {
 fn update_environment(
     time: Res<Time>,
     mut cycle: ResMut<DayCycle>,
+    weather: Res<ClientWeather>,
     handles: Option<Res<VoxelMaterials>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut camera: Query<(&GlobalTransform, &mut AmbientLight, &mut DistanceFog), With<Camera3d>>,
@@ -427,7 +458,8 @@ fn update_environment(
     let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
     cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
     let days = cycle.ticks / TICKS_PER_DAY as f64;
-    let env = Environment::at(days.fract() as f32);
+    let shown = &weather.current;
+    let env = Environment::at(days.fract() as f32).under(shown);
 
     if let Ok((mut transform, mut light)) = sun.single_mut() {
         *transform = Transform::default().looking_to(-env.light_direction, Vec3::Y);
@@ -442,7 +474,10 @@ fn update_environment(
         horizon = Vec3::new(0.04, 0.13, 0.32) * (0.2 + 0.8 * env.daylight);
         (0.0, 40.0)
     } else {
-        (cycle.view_distance * 0.3, cycle.view_distance)
+        // Rain and, more so, snow close in the view; humid air hazes the middle distance.
+        let murk = (shown.precipitation * (0.7 + 0.6 * shown.snow)).min(1.0);
+        let end = cycle.view_distance * (1.0 - 0.9 * murk.sqrt());
+        (end * (0.3 - 0.27 * murk) * (1.0 - 0.4 * smoothstep(0.5, 1.0, shown.humidity)), end)
     };
     let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
     clear.0 = horizon_color;
@@ -453,12 +488,17 @@ fn update_environment(
 
     // The sky dome is the only entity using its material, so updating it is cheap.
     if let Some(mut sky) = sky_materials.get_mut(&handles.sky) {
+        let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
+        let position = camera.translation().as_dvec3();
+        let layer = (DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT;
         sky.params = SkyParams {
             zenith: env.zenith.extend(1.0),
             horizon: horizon.extend(1.0),
             sun: env.to_sun.extend(env.daylight),
-            clouds: Vec4::new((cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0, 0.45, 0.0, 0.0),
+            clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
             stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
+            weather: layer.rem_euclid(DVec2::splat(4096.0)).as_vec2().extend(shown.precipitation).extend(0.0),
+            wind: shown.wind.normalize_or(Vec2::X).extend(0.0).extend(0.0),
         };
     }
 }

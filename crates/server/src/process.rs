@@ -9,6 +9,7 @@ use voxmar_protocol::{PlayerId, ServerMessage};
 
 use crate::Server;
 use crate::player::MAX_HEALTH;
+use crate::weather::Weather;
 
 /// Falls shorter than this many blocks do no damage.
 const SAFE_FALL: f32 = 3.0;
@@ -20,8 +21,8 @@ pub(crate) trait Process: Send {
     fn run(&mut self, server: &mut Server);
 }
 
-pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
-    vec![Box::new(Falling), Box::new(Regeneration::default())]
+pub(crate) fn core_processes(seed: u64) -> Vec<Box<dyn Process>> {
+    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::new(seed))]
 }
 
 /// Fall damage and the void, from the server's own view of where players stand.

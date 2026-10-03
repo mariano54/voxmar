@@ -2,10 +2,11 @@
 //!
 //! `voxmar` starts singleplayer with an integrated server. Options:
 //! `--connect HOST:PORT` join a server, `--host` also open singleplayer to the network,
-//! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--no-vsync`, `--no-music`,
+//! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--fov DEGREES`, `--no-vsync`, `--no-music`,
+//! `--weather clear|cirrus|cumulus|cloudy|overcast|rain|storm|snow` (show that instead of the server's weather),
 //! `--capture PATH` (screenshot and exit once loaded), with `--pose dx,dy,dz,yaw,pitch` (camera offset from the player)
-//! or `--flight SECONDS` (fly forward first and report frame pacing), and `--menu` (show the settings menu).
-//! `--view-distance` and `--no-vsync` override the saved settings.
+//! or `--flight SECONDS` (fly forward first and report frame pacing), `--time FRACTION` (of the day, 0 is sunrise),
+//! and `--menu` (show the settings menu). `--view-distance`, `--fov` and `--no-vsync` override the saved settings.
 
 mod capture;
 mod hud;
@@ -17,6 +18,7 @@ mod render;
 mod settings;
 mod sfx;
 mod textures;
+mod weather;
 mod world;
 
 use std::sync::Arc;
@@ -46,10 +48,13 @@ struct Options {
     seed: u64,
     name: String,
     view_distance: Option<i32>,
+    fov: Option<i32>,
     vsync: Option<bool>,
+    weather: Option<voxmar_protocol::Weather>,
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    time: Option<f32>,
     menu: bool,
     music: bool,
 }
@@ -61,10 +66,13 @@ fn parse_options() -> Result<Options, String> {
         seed: ServerConfig::default().seed,
         name: std::env::var("USER").unwrap_or_else(|_| "player".into()),
         view_distance: None,
+        fov: None,
         vsync: None,
+        weather: None,
         capture: None,
         pose: None,
         flight: None,
+        time: None,
         menu: false,
         music: true,
     };
@@ -77,10 +85,16 @@ fn parse_options() -> Result<Options, String> {
             "--seed" => options.seed = value()?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--name" => options.name = value()?,
             "--view-distance" => options.view_distance = Some(value()?.parse().map_err(|e| format!("--view-distance: {e}"))?),
+            "--fov" => options.fov = Some(value()?.parse().map_err(|e| format!("--fov: {e}"))?),
             "--no-vsync" => options.vsync = Some(false),
+            "--weather" => {
+                let name = value()?;
+                options.weather = Some(weather::preset(&name).ok_or_else(|| format!("--weather: unknown weather {name}"))?);
+            }
             "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
+            "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
             "--pose" => {
                 let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose: {e}"))?;
@@ -107,6 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings.
     let mut settings = if options.capture.is_some() { Settings::default() } else { Settings::load() };
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
+    settings.fov = options.fov.unwrap_or(settings.fov);
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
     let settings = settings.clamped();
 
@@ -139,6 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hud::HudPlugin,
         sfx::SfxPlugin,
         settings::SettingsPlugin,
+        weather::WeatherPlugin,
     ))
     .insert_resource(ClientWorld::new(registry.clone(), settings.view_distance))
     .insert_resource(net::Net::new(connection, server, options.name.clone(), fingerprint))
@@ -147,11 +163,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(settings)
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
+    if let Some(forced) = options.weather {
+        app.world_mut().resource_mut::<weather::ClientWeather>().force(forced);
+    }
     if options.music && options.capture.is_none() {
         app.add_plugins(music::MusicPlugin);
     }
     if let Some(path) = options.capture {
-        app.add_plugins(capture::CapturePlugin { path, pose: options.pose, flight: options.flight, menu: options.menu });
+        app.add_plugins(capture::CapturePlugin {
+            path,
+            pose: options.pose,
+            flight: options.flight,
+            time: options.time,
+            menu: options.menu,
+        });
     }
     app.run();
     Ok(())

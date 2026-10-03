@@ -12,6 +12,7 @@ use voxmar_server::ServerHandle;
 use crate::player::LocalPlayer;
 use crate::render::DayCycle;
 use crate::render::lod::Lod;
+use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
 pub struct NetPlugin;
@@ -65,6 +66,7 @@ fn receive(
     mut cycle: ResMut<DayCycle>,
     mut remote: ResMut<RemotePlayers>,
     mut lod: ResMut<Lod>,
+    mut weather: ResMut<ClientWeather>,
 ) {
     loop {
         let message = match net.connection.try_recv() {
@@ -120,6 +122,7 @@ fn receive(
                 });
             }
             ServerMessage::Time { ticks } => cycle.ticks = ticks as f64,
+            ServerMessage::Weather(report) => weather.receive(report),
             ServerMessage::Died => player.dead = true,
         }
     }

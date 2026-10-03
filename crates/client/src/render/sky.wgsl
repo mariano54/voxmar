@@ -1,5 +1,6 @@
-// Sky dome: horizon-to-zenith gradient, drifting clouds, sun and moon, and a night sky of
-// stars, constellations, the Milky Way, faint galaxies and planets that turns with the sun.
+// Sky dome: horizon-to-zenith gradient, clouds shaped by the weather, sun and moon, and a
+// night sky of stars, constellations, the Milky Way, faint galaxies and planets that turns
+// with the sun.
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
@@ -9,10 +10,16 @@ struct SkyParams {
     horizon: vec4<f32>,
     // xyz: direction towards the sun, w: daylight 0..1
     sun: vec4<f32>,
-    // x: seconds of game time, y: cloud cover 0..1
+    // x: seconds of game time, y: low cloud cover 0..1, z: how heaped it is, from flat
+    // layers (0) to towers (1), w: cirrus 0..1
     clouds: vec4<f32>,
     // x: fraction of the day, y: days elapsed (wrapped every 1000 days)
     stars: vec4<f32>,
+    // xy: where the cloud layer is over the camera (its position and wind drift, in cloud
+    // units), z: precipitation 0..1, w: lightning flash 0..1
+    weather: vec4<f32>,
+    // xy: wind direction
+    wind: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> sky: SkyParams;
@@ -85,8 +92,10 @@ fn hash(p: vec3<f32>) -> f32 {
     return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
 }
 
+// For whole-numbered `p`. An integer hash stays random however far the clouds drift.
 fn hash2(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    let i = vec2<i32>(p);
+    return unit(pcg(u32(i.x) + pcg(u32(i.y) ^ 0x9e3779b9u)));
 }
 
 // Integer hash (PCG) for star cells, free of the banding a sine hash shows at large inputs.
@@ -351,9 +360,101 @@ fn planet(p: vec3<f32>, sph: vec2<f32>, lon: f32, lat: f32, radius: f32, kind: u
     return vec4(color, max(disc, ring));
 }
 
+// Where `dir` falls on a disc of angular `radius` around `center`, measured in pixels like
+// the stars so the disc stays round anywhere on screen at any field of view: xy in disc
+// radii, oriented east and north on the sky, and z the pixel's coverage. `ddx` and `ddy`
+// are the change of `dir` per pixel; `px` is the angle a pixel spans mid-screen, which
+// sets the disc's size.
+fn disc(dir: vec3<f32>, ddx: vec3<f32>, ddy: vec3<f32>, center: vec3<f32>, radius: f32, px: f32) -> vec3<f32> {
+    let east = normalize(vec3(-center.y, center.x, 0.0));
+    let f = mat2x3(east, cross(center, east));
+    let j = mat2x2(ddx * f, ddy * f);
+    // Pixels per unit of east and north (the inverse of `j`), and the pixel offset.
+    let inv = mat2x2(vec2(j[1].y, -j[0].y), vec2(-j[1].x, j[0].x)) * (1.0 / determinant(j));
+    let s = inv * (dir * f);
+    let e = normalize(inv[0]);
+    let n = normalize(inv[1] - dot(inv[1], e) * e);
+    let r = radius / px;
+    return vec3(vec2(dot(s, e), dot(s, n)) / r, clamp(r - length(s) + 0.5, 0.0, 1.0));
+}
+
+// Cloud as seen from below, in premultiplied colour and opacity: a low layer whose cover,
+// build and darkness follow the weather, over high wisps of cirrus. Both drift with the
+// wind and sit at fixed places in the world, so they pass overhead as the player moves.
+fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
+    let cover = sky.clouds.y;
+    let convection = sky.clouds.z;
+    let cirrus = sky.clouds.w;
+    let rain = sky.weather.z;
+    if dir.y <= 0.01 || cover + cirrus < 0.005 {
+        return vec4(0.0);
+    }
+    let fade = smoothstep(0.01, 0.2, dir.y);
+    // The layers bend down towards the horizon so they do not stretch out to infinity.
+    let to_layer = dir.xz / (dir.y + 0.08);
+    let sun = sky.sun.xyz;
+
+    // Light on the clouds: white by day, warm when the sun is low, pale blue moonlight.
+    let low_sun = 1.0 - smoothstep(0.0, 0.35, sun.y);
+    let sunlit = mix(vec3(1.0, 0.98, 0.95), vec3(1.0, 0.7, 0.5), low_sun);
+    let lit = mix(vec3(0.6, 0.68, 0.85), sunlit, smoothstep(-0.2, -0.05, sun.y)) * mix(0.07, 1.0, daylight);
+    let flash = vec3(0.75, 0.8, 1.0) * sky.weather.w;
+
+    var result = vec4(0.0);
+    if cirrus > 0.005 {
+        // Higher, so it moves less as the player moves; streaked along the wind.
+        let high = to_layer * 0.7 + sky.weather.xy * 0.35 + vec2(37.0, -11.0);
+        let w = sky.wind.xy;
+        let along = vec2(dot(high, w), dot(high, vec2(-w.y, w.x)));
+        let streaks = fbm(along * vec2(0.7, 5.0));
+        let patches = value_noise(high * 0.9);
+        let density = smoothstep(0.48, 0.75, streaks) * smoothstep(0.3, 0.7, patches) * min(cirrus * 0.9, 0.65) * fade;
+        result = vec4((lit * 1.1 + flash) * density, density);
+    }
+    if cover > 0.005 {
+        let at = to_layer * 2.0 + sky.weather.xy;
+        // Heaped cloud gets billowing, crisp outlines from two finer octaves.
+        let billows = (value_noise(at * 9.0) + 0.5 * value_noise(at * 19.0 + 7.0) - 0.75) * convection;
+        let n = fbm(at) + billows * 0.1;
+        // The threshold sets how much of the sky is covered; heaped cloud has crisp edges,
+        // layered cloud soft ones.
+        let threshold = mix(0.74, 0.17, cover);
+        let edge = mix(0.17, 0.035, convection);
+        let density = smoothstep(threshold - edge, threshold + edge, n) * smoothstep(0.0, 0.1, cover) * fade;
+        if density > 0.0 {
+            // Overhead we see the shaded undersides of thick cloud, towards the horizon
+            // its sunlit flanks. The side away from the sun lies in the shadow of the cloud
+            // towards it.
+            let depth = smoothstep(threshold, threshold + mix(0.4, 0.25, convection), n);
+            let underside = smoothstep(0.1, 0.7, dir.y);
+            let towards_sun = fbm(at + normalize(sun.xz + vec2(1e-4, 0.0)) * 0.06) + billows * 0.1;
+            let shadowed = clamp(0.5 + (towards_sun - n) * 8.0, 0.0, 1.0) * daylight;
+            var dark = depth * mix(0.15, 0.6, underside) + shadowed * 0.35 * depth;
+            // Layers are flatter and duller; rain clouds are dark, storm clouds darkest.
+            dark += 0.25 * smoothstep(0.6, 1.0, cover) * (1.0 - convection) + rain * mix(0.4, 0.75, convection);
+            dark = clamp(dark, 0.0, 0.95);
+            // A thick layer lets little light through even where it is thin, and rain and
+            // storm clouds hold back the most.
+            let storm = rain * (0.4 + 0.6 * convection);
+            let through = (1.0 - 0.45 * smoothstep(0.6, 1.0, cover)) * (1.0 - 0.8 * storm);
+            let grey = dot(sky.horizon.rgb, vec3(0.3, 0.55, 0.15));
+            let shade = (mix(sky.horizon.rgb, vec3(grey), 0.5) * 0.45 + vec3(0.05, 0.055, 0.07) * daylight) * (1.0 - 0.75 * storm);
+            var color = mix(lit * 1.4 * through, shade, dark) + vec3(1.0, 0.85, 0.6) * glow * (1.0 - depth);
+            color += flash * (0.5 + 0.5 * depth);
+            let opacity = density * mix(0.9, 1.0, smoothstep(0.5, 1.0, cover));
+            result = vec4(color * opacity + result.rgb * (1.0 - opacity), opacity + result.a * (1.0 - opacity));
+        }
+    }
+    return result;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_position.xyz - view.world_position);
+    let ddx = dpdx(dir);
+    let ddy = dpdy(dir);
+    // Angle a pixel spans mid-screen, where pixels span the widest angle.
+    let px = 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
     let up = max(dir.y, 0.0);
     var color = mix(sky.horizon.rgb, sky.zenith.rgb, pow(up, 0.55));
     if dir.y < 0.0 {
@@ -363,16 +464,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let daylight = sky.sun.w;
     let night = 1.0 - daylight;
     let sun_dot = dot(dir, sky.sun.xyz);
-
-    // Clouds on a plane far above, fading out towards the horizon.
-    var cover = 0.0;
-    var cloud_at = vec2(0.0);
-    if dir.y > 0.01 {
-        let wind = vec2(sky.clouds.x * 0.004, sky.clouds.x * 0.0015);
-        cloud_at = (dir.xz / (dir.y + 0.08) * 1.6 + wind) * 1.3;
-        let density = smoothstep(0.62 - sky.clouds.y * 0.25, 0.92, fbm(cloud_at));
-        cover = density * smoothstep(0.01, 0.25, dir.y) * 0.9;
-    }
+    // Thick cloud spreads the sun's glow into a dull bright patch.
+    let overcast = smoothstep(0.4, 1.0, sky.clouds.y);
+    let glow = (pow(max(sun_dot, 0.0), 48.0) * 0.35 + pow(max(sun_dot, 0.0), 6.0) * 0.1) * (1.0 - 0.7 * overcast);
+    let cloud = clouds(dir, daylight, glow);
 
     // The night sky appears as daylight fades: planets first, then bright stars, then the
     // faint ones. It hides behind thick clouds and the haze near the horizon.
@@ -390,10 +485,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let dpx = dpdx(p);
         let dpy = dpdy(p);
         let sph = vec2(degrees(atan2(p.y, p.x)), degrees(asin(clamp(p.z, -1.0, 1.0))));
-        // Angle a pixel spans mid-screen, where pixels span the widest angle.
-        let px = 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
         let px_deg = degrees(px);
-        let clear = smoothstep(-0.02, 0.18, dir.y) * (1.0 - smoothstep(0.15, 0.6, cover));
+        let clear = smoothstep(-0.02, 0.18, dir.y) * (1.0 - smoothstep(0.15, 0.6, cloud.a));
 
         var night_sky = vec3(0.0);
         if dark > 0.0 {
@@ -417,30 +510,20 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         color += night_sky * clear;
     }
 
-    let glow = pow(max(sun_dot, 0.0), 48.0) * 0.35 + pow(max(sun_dot, 0.0), 6.0) * 0.1;
     color += vec3(1.0, 0.8, 0.55) * glow * clamp(daylight * 2.0, 0.0, 1.0);
-    color = mix(color, vec3(8.0, 7.2, 5.6), smoothstep(0.99955, 0.9997, sun_dot));
+    if sun_dot > 0.999 {
+        let sun = disc(dir, ddx, ddy, sky.sun.xyz, 0.0275, px);
+        color = mix(color, vec3(8.0, 7.2, 5.6), sun.z);
+    }
 
-    // The moon, opposite the sun, with faint darker seas.
-    let moon = smoothstep(0.99965, 0.9998, -sun_dot) * night;
-    if moon > 0.0 {
-        let m = -sky.sun.xyz;
-        let east = normalize(vec3(-m.y, m.x, 0.0));
-        let north = cross(m, east);
-        // In moon radii.
-        let q = vec2(dot(dir, east), dot(dir, north)) / 0.0237;
+    // The moon, opposite the sun and so always full, with faint darker seas.
+    if -sun_dot > 0.999 && night > 0.0 {
+        let moon = disc(dir, ddx, ddy, -sky.sun.xyz, 0.0237, px);
+        let q = moon.xy;
         let seas = smoothstep(0.5, 0.7, value_noise(q * 2.2 + 5.0) * 0.7 + value_noise(q * 5.0 + 1.0) * 0.3);
         let limb = mix(0.8, 1.0, sqrt(max(1.0 - dot(q, q), 0.0)));
-        color = mix(color, vec3(1.5, 1.55, 1.7) * limb * (1.0 - 0.22 * seas), moon);
+        color = mix(color, vec3(1.5, 1.55, 1.7) * limb * (1.0 - 0.22 * seas), moon.z * night);
     }
 
-    if cover > 0.0 {
-        let shading = fbm(cloud_at + sky.sun.xz * 0.08);
-        let sunlit = mix(vec3(1.0, 0.98, 0.95), vec3(1.0, 0.7, 0.5), 1.0 - smoothstep(0.0, 0.35, sky.sun.y));
-        let lit = mix(vec3(0.6, 0.68, 0.85), sunlit, smoothstep(-0.2, -0.05, sky.sun.y));
-        let cloud = mix(sky.horizon.rgb * 1.1, lit, 0.55 + 0.45 * (1.0 - shading)) * mix(0.08, 1.0, daylight)
-            + vec3(1.0, 0.85, 0.6) * glow * 0.6;
-        color = mix(color, cloud, cover);
-    }
-    return vec4(color, 1.0);
+    return vec4(color * (1.0 - cloud.a) + cloud.rgb, 1.0);
 }

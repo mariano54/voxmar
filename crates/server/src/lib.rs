@@ -4,6 +4,7 @@
 mod actions;
 mod player;
 mod process;
+mod weather;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use voxmar_worldgen::{Generator, Overworld};
 use crate::actions::Executor;
 use crate::player::Player;
 use crate::process::Process;
+use crate::weather::WeatherFields;
 
 pub struct ServerConfig {
     pub seed: u64,
@@ -111,6 +113,8 @@ pub(crate) struct Server {
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, 0 (frozen) to 1 (hot), baseline from the climate generator.
     temperature: Field,
+    /// Humidity, cloud and precipitation, evolved by the weather process.
+    weather: WeatherFields,
     world: VoxelWorld,
     /// Columns edited by players. They are never unloaded until saving exists.
     modified: FxHashSet<ColumnPos>,
@@ -134,6 +138,9 @@ impl Server {
         let temperature = Field::new("core:temperature", move |x, z| {
             climate.surface_sample(x, z, climate.height(x, z), 0).climate[0] as f32 / 255.0
         });
+        let climate = overworld.clone();
+        let weather = WeatherFields::new(move |x, z| climate.surface_sample(x, z, climate.height(x, z), 0).climate[1] as f32 / 255.0);
+        let processes = process::core_processes(config.seed);
         let generator: Arc<dyn Generator> = overworld;
         // Generate the spawn column up front and stand on its highest solid block, so
         // features like trees never bury the player.
@@ -149,8 +156,9 @@ impl Server {
             content,
             generator,
             executor: Executor::default(),
-            processes: process::core_processes(),
+            processes,
             temperature,
+            weather,
             world,
             modified: FxHashSet::default(),
             generating: FxHashSet::default(),
