@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Plain `cargo run` starts the game. Use `-p voxmar_server` for the dedicated server and
+# `--workspace` to build or test everything.
+default-members = ["crates/client"]
 
 [workspace.package]
 version = "0.1.0"

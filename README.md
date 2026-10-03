@@ -8,7 +8,7 @@ Rust, Bevy 0.19, wgpu (Metal on macOS, Vulkan/DX12 elsewhere).
 ```bash
 cargo run --release                         # singleplayer (integrated server)
 cargo run --release -- --host               # singleplayer, also open on the LAN
-cargo run --release --bin voxmar-server     # dedicated server on port 25665
+cargo run --release -p voxmar_server        # dedicated server on port 25665
 cargo run --release -- --connect HOST:PORT  # join a server
 ```
 
