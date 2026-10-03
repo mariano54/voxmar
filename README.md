@@ -91,10 +91,13 @@ streams in about a second.
 Profile with Tracy: `cargo run --release --features tracy` (engine work is instrumented with
 `tracing` spans).
 
+See [docs/rendering.md](docs/rendering.md) for measurements, a comparison with GPU-driven
+pipeline techniques, and the rendering plan.
+
 ## Next steps
 
 - Draw only the face directions that can face the camera (per-direction index ranges).
-- GPU occlusion culling (Hi-Z) via a depth prepass for the voxel material.
+- A custom GPU-driven terrain pass (see docs/rendering.md).
 - Lower-detail meshes for distant chunks.
 - Saving the world (edited columns are kept in memory and never unloaded for now).
 - Incremental light updates instead of relighting the affected columns.

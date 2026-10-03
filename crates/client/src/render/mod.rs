@@ -7,7 +7,6 @@
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::Hdr;
 use bevy::camera::visibility::NoFrustumCulling;
-use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
@@ -15,7 +14,6 @@ use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, Primit
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
-use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::render::render_resource::{
     AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDataOrder,
     TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension, VertexFormat,
@@ -220,10 +218,9 @@ pub fn setup(
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection { fov: 75f32.to_radians(), near: 0.05, ..default() }),
         Hdr,
+        // No depth prepass: it doubles opaque vertex work and measured slower than the
+        // occlusion culling it enables, since the visibility graph already hides caves.
         Msaa::Off,
-        // The depth prepass lets the GPU skip meshes hidden behind terrain drawn last frame.
-        DepthPrepass,
-        OcclusionCulling,
         ShadowFilteringMethod::Gaussian,
         Tonemapping::TonyMcMapface,
         Bloom { intensity: 0.1, ..Bloom::NATURAL },
