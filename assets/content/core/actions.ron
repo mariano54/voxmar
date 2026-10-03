@@ -12,7 +12,7 @@
         (
             name: "place",
             duration: Instant,
-            requires: [Alive, InReach, HoldingBlock, Replaceable, Unobstructed],
+            requires: [Alive, InReach, HoldingBlock, Replaceable, Unobstructed, Supported],
             effects: [PlaceHeld],
         ),
         (name: "transfer", duration: Instant, requires: [Alive], effects: [MoveStack]),
