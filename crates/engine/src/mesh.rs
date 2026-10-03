@@ -9,13 +9,16 @@
 //! Each vertex is packed into 8 bytes:
 //!
 //! ```text
-//! word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | backed:1
+//! word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | flags:2
 //! word 1: layer:12 | tint:2 | temperature:5 | humidity:5 | block:4 | sky:4
 //! ```
 //!
 //! `face` is a `Face` (0..=5) for cube faces, or `PLANT_DIAGONAL` (6, the plane through
-//! x = z) or `PLANT_ANTIDIAGONAL` (7, through x + z = 1) for plants. On plant vertices
-//! `backed` marks the top edge, the one that sways in the wind.
+//! x = z) or `PLANT_ANTIDIAGONAL` (7, through x + z = 1) for plants. On leaf faces, flag 1
+//! marks a double-sided face between two leaves (meshed apart, in `ChunkMesh::inner`), and
+//! flag 2 one with leaves behind it, which casts a solid shadow. On translucent faces flag 1 marks a
+//! face covered by a block (water under ice). On plant vertices flag 1 marks the top edge,
+//! the one that sways in the wind.
 
 use glam::IVec3;
 
@@ -35,6 +38,10 @@ pub type Vertex = [u32; 2];
 pub const PLANT_DIAGONAL: u32 = 6;
 /// Face index of a plant's quad through the diagonal from (1, 0) to (0, 1).
 pub const PLANT_ANTIDIAGONAL: u32 = 7;
+/// Vertex flag 1 (see the module docs).
+const FLAG_INNER: u32 = 1 << 23;
+/// Ambient occlusion level (0..=3) of the faces between two leaves.
+const INNER_LEAF_AO: u64 = 1;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct MeshBuffers {
@@ -55,6 +62,9 @@ pub struct ChunkMesh {
     pub opaque: MeshBuffers,
     /// Alpha-tested faces (leaves, glass, plants).
     pub cutout: MeshBuffers,
+    /// Alpha-tested, double-sided faces between two leaves. They cast no shadow: the
+    /// crown's shell already does.
+    pub inner: MeshBuffers,
     pub translucent: MeshBuffers,
     pub connectivity: Connectivity,
 }
@@ -64,6 +74,9 @@ pub struct ChunkMesh {
 struct Cell {
     block: BlockId,
     occludes: bool,
+    /// Casts ambient occlusion: opaque blocks, and leaves, which darken the inside of a
+    /// crown as in Minecraft.
+    shades: bool,
     light: u8,
 }
 
@@ -83,6 +96,9 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     let mut cutout = Axes::default();
     let mut translucent = Axes::default();
     let mut plants = Vec::new();
+    let mut joins = Joins::default();
+    // Leaf cells, as bit columns along x.
+    let mut leaves = [[0u64; P]; P];
     for y in 0..P {
         for z in 0..P {
             for x in 0..P {
@@ -95,35 +111,127 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
                     // Below the world: an invisible wall that hides bottom faces.
                     None => (BlockId::AIR, true, RenderKind::Invisible),
                 };
-                cells[pidx(x, y, z)] = Cell { block, occludes: info_occludes, light: region.light(pos) };
+                let shades = info_occludes || render == RenderKind::Leaves;
+                cells[pidx(x, y, z)] = Cell { block, occludes: info_occludes, shades, light: region.light(pos) };
                 if info_occludes {
                     occ.set(x, y, z);
                 }
                 match render {
                     RenderKind::Opaque => opaque.set(x, y, z),
                     RenderKind::Cutout => cutout.set(x, y, z),
+                    RenderKind::Leaves => {
+                        cutout.set(x, y, z);
+                        leaves[y][z] |= 1 << x;
+                    }
                     RenderKind::Translucent => translucent.set(x, y, z),
                     RenderKind::Plant if [x, y, z].iter().all(|c| (1..=S).contains(c)) => plants.push(pidx(x, y, z)),
                     RenderKind::Plant | RenderKind::Invisible => {}
+                }
+                if matches!(render, RenderKind::Cutout | RenderKind::Translucent) {
+                    // Cells with a lower coordinate are already filled in.
+                    let hidden = &mut joins.hidden;
+                    if x > 0 && cells[pidx(x - 1, y, z)].block == block {
+                        hidden.x[y][z] |= 1 << (x - 1);
+                    }
+                    if y > 0 && cells[pidx(x, y - 1, z)].block == block {
+                        hidden.y[z][x] |= 1 << (y - 1);
+                    }
+                    if z > 0 && cells[pidx(x, y, z - 1)].block == block {
+                        hidden.z[y][x] |= 1 << (z - 1);
+                    }
                 }
             }
         }
     }
 
+    join_leaves(&leaves, &occ, &mut joins);
+
     let mut mesher = Mesher { registry, column, cells: &cells, planes: [[0; S]; S], keys: [[0; S]; S] };
     let mut mesh = ChunkMesh { connectivity: Connectivity::compute(|x, y, z| cells[pidx(x + 1, y + 1, z + 1)].occludes), ..Default::default() };
     for face in Face::ALL {
-        // Opaque faces between two occluders are already hidden, so `occ` doubles as the
-        // joined set.
-        mesher.mesh_faces(face, &occ, &opaque, &occ, &mut mesh.opaque);
-        mesher.mesh_faces(face, &occ, &cutout, &cutout, &mut mesh.cutout);
-        mesher.mesh_faces(face, &occ, &translucent, &translucent, &mut mesh.translucent);
+        mesher.mesh_faces(face, &occ, &opaque, &joins, &mut mesh.opaque);
+        mesher.mesh_faces(face, &occ, &cutout, &joins, &mut mesh.cutout);
+        mesher.mesh_faces(face, &occ, &translucent, &joins, &mut mesh.translucent);
     }
+    mesh.inner = split_inner(&mut mesh.cutout);
     for i in plants {
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
         emit_plant(&mut mesh.cutout, registry, column, &cells[i], local);
     }
     mesh
+}
+
+/// Where two cells meet, as bit columns along each axis: bit i pairs cell i with cell i + 1.
+#[derive(Default)]
+struct Joins {
+    /// Neither face is drawn: the same see-through block on both sides (water, glass), whose
+    /// shared face is never seen, or two leaves buried in foliage.
+    hidden: Axes,
+    /// One double-sided face is drawn, towards +axis: two leaves.
+    single: Axes,
+}
+
+/// Faces between leaves are drawn, so crowns show the same depth through their holes from
+/// every angle; where two leaves meet, one double-sided face serves both sides. Between two
+/// leaves buried in foliage (or solid blocks) on every side there is none: those are only
+/// seen through holes in two layers of leaves, where the faces further in still close the
+/// view, and they make up much of a big crown.
+fn join_leaves(leaves: &[[u64; P]; P], occ: &Axes, joins: &mut Joins) {
+    let filled = |y: usize, z: usize| leaves[y][z] | occ.x[y][z];
+    let mut buried = [[0u64; P]; P];
+    for y in 1..P - 1 {
+        for z in 1..P - 1 {
+            let row = filled(y, z);
+            buried[y][z] = leaves[y][z]
+                & row << 1
+                & row >> 1
+                & filled(y - 1, z)
+                & filled(y + 1, z)
+                & filled(y, z - 1)
+                & filled(y, z + 1);
+        }
+    }
+    for (cells, pairs) in [(&buried, &mut joins.hidden), (leaves, &mut joins.single)] {
+        for y in 0..P {
+            for z in 0..P {
+                let here = cells[y][z];
+                pairs.x[y][z] |= here & here >> 1;
+                if y + 1 < P {
+                    for x in bits(here & cells[y + 1][z]) {
+                        pairs.y[z][x] |= 1 << y;
+                    }
+                }
+                if z + 1 < P {
+                    for x in bits(here & cells[y][z + 1]) {
+                        pairs.z[y][x] |= 1 << z;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Indices of the set bits.
+fn bits(mut mask: u64) -> impl Iterator<Item = usize> {
+    std::iter::from_fn(move || {
+        let i = mask.trailing_zeros() as usize;
+        mask &= mask.wrapping_sub(1);
+        (i < 64).then_some(i)
+    })
+}
+
+/// Moves the faces flagged inner (between two leaves) out of `cutout`, which holds only
+/// greedy quads at this point.
+fn split_inner(cutout: &mut MeshBuffers) -> MeshBuffers {
+    let (mut shell, mut inner) = (MeshBuffers::default(), MeshBuffers::default());
+    for (quad, (vertices, indices)) in cutout.vertices.chunks(4).zip(cutout.indices.chunks(6)).enumerate() {
+        let out = if vertices[0][0] & FLAG_INNER != 0 { &mut inner } else { &mut shell };
+        let base = out.vertices.len() as u32;
+        out.vertices.extend_from_slice(vertices);
+        out.indices.extend(indices.iter().map(|&i| i - 4 * quad as u32 + base));
+    }
+    *cutout = shell;
+    inner
 }
 
 #[inline]
@@ -152,6 +260,15 @@ impl Axes {
         self.x[y][z] |= 1 << x;
         self.y[z][x] |= 1 << y;
         self.z[y][x] |= 1 << z;
+    }
+
+    /// The bit columns along axis 0 (x), 1 (y) or 2 (z).
+    fn along(&self, axis: usize) -> &[[u64; P]; P] {
+        match axis {
+            0 => &self.x,
+            1 => &self.y,
+            _ => &self.z,
+        }
     }
 }
 
@@ -194,24 +311,26 @@ struct Mesher<'a> {
 
 impl Mesher<'_> {
     /// Meshes the faces of `visible` cells along `face`. A face is hidden by an occluding
-    /// neighbour, or when both cells belong to `joined` (water next to water, leaves next
-    /// to leaves), whose shared faces are never seen.
-    fn mesh_faces(&mut self, face: Face, occ: &Axes, visible: &Axes, joined: &Axes, out: &mut MeshBuffers) {
+    /// neighbour, or where `joins` says so.
+    fn mesh_faces(&mut self, face: Face, occ: &Axes, visible: &Axes, joins: &Joins, out: &mut MeshBuffers) {
         let fa = face_axes(face);
         self.planes = [[0; S]; S];
         let mut any = false;
 
         // Cull faces a whole column of cells at a time with bit operations.
-        let (occ_cols, vis_cols, joined_cols) = match fa.normal {
-            0 => (&occ.x, &visible.x, &joined.x),
-            1 => (&occ.y, &visible.y, &joined.y),
-            _ => (&occ.z, &visible.z, &joined.z),
-        };
+        let (occ_cols, vis_cols) = (occ.along(fa.normal), visible.along(fa.normal));
+        let (hidden_cols, single_cols) = (joins.hidden.along(fa.normal), joins.single.along(fa.normal));
         let neighbour = |bits: u64| if fa.positive { bits >> 1 } else { bits << 1 };
         for a in 1..=S {
             for b in 1..=S {
-                let joined = joined_cols[a][b];
-                let hidden = neighbour(occ_cols[a][b]) | (joined & neighbour(joined));
+                // Bit i of `joins` pairs cell i with cell i + 1; single faces are drawn
+                // towards +axis only.
+                let joined = if fa.positive {
+                    hidden_cols[a][b]
+                } else {
+                    (hidden_cols[a][b] | single_cols[a][b]) << 1
+                };
+                let hidden = neighbour(occ_cols[a][b]) | joined;
                 let faces = ((vis_cols[a][b] & !hidden) >> 1) as u32;
                 if faces == 0 {
                     continue;
@@ -261,14 +380,22 @@ impl Mesher<'_> {
     }
 
     /// Everything that must match for two faces to merge:
-    /// layer:12 tint:2 temperature:5 humidity:5 | ao 4×2 | light 4×8 | backed:1.
+    /// layer:12 tint:2 temperature:5 humidity:5 | ao 4×2 | light 4×8 | flags:2.
     fn face_key(&self, face: Face, fa: &FaceAxes, slice: usize, row: usize, col: usize) -> u128 {
         let pos = Self::cell(fa, slice, row, col);
-        let block = self.padded(pos).block;
-        let info = self.registry.info(block);
-        // A cut-out face with more of the same block behind it (inside a tree crown) is
-        // drawn solid, so crowns read as dense foliage instead of a see-through shell.
-        let backed = info.render == RenderKind::Cutout && self.padded(pos - face.normal()).block == block;
+        let info = self.registry.info(self.padded(pos).block);
+        let (inner, backed) = match info.render {
+            // Shadows from a crown only need its shell: faces between two leaves cast none,
+            // and shell faces with more leaves behind them cast a solid one. Crowns shade as
+            // densely as if every face cast, for the cost of the shell.
+            RenderKind::Leaves => {
+                let leaf = |p: IVec3| self.registry.info(self.padded(p).block).render == RenderKind::Leaves;
+                (leaf(pos + face.normal()), leaf(pos - face.normal()))
+            }
+            // Water under ice is covered: still, and reflecting nothing.
+            RenderKind::Translucent => (!self.padded(pos + face.normal()).block.is_air(), false),
+            _ => (false, false),
+        };
         let tint = info.tints[face as usize];
         let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { self.column.climate_at(pos.x, pos.z) };
         let surface = info.layers[face as usize] as u64
@@ -285,16 +412,16 @@ impl Mesher<'_> {
             let side_u = self.padded(front + du * su);
             let side_v = self.padded(front + dv * sv);
             let diagonal = self.padded(front + du * su + dv * sv);
-            let both_sides = side_u.occludes && side_v.occludes;
-            let corner_ao = if both_sides {
+            let corner_ao = if side_u.shades && side_v.shades {
                 0
             } else {
-                3 - (side_u.occludes as u64 + side_v.occludes as u64 + diagonal.occludes as u64)
+                3 - (side_u.shades as u64 + side_v.shades as u64 + diagonal.shades as u64)
             };
             ao |= corner_ao << (corner * 2);
 
             // Smooth light: average of the open cells touching this vertex. The diagonal
             // is unreachable when both sides are walls.
+            let both_sides = side_u.occludes && side_v.occludes;
             let (mut sky, mut block, mut count) = ((center.light >> 4) as u32, (center.light & 0xF) as u32, 1);
             for (cell, open) in [(side_u, !side_u.occludes), (side_v, !side_v.occludes), (diagonal, !diagonal.occludes && !both_sides)] {
                 if open {
@@ -306,7 +433,15 @@ impl Mesher<'_> {
             let packed = (((sky + count / 2) / count) << 4) | ((block + count / 2) / count);
             light |= (packed as u64) << (corner * 8);
         }
-        (surface | ao << 24 | light << 32) as u128 | (backed as u128) << 64
+        if inner && info.render == RenderKind::Leaves {
+            // One double-sided face serves both leaves: lit evenly by both, and shaded as
+            // the inside of a crown. Even light also lets these faces merge widely.
+            let (a, b) = (self.padded(pos).light as u64, center.light as u64);
+            let average = |shift: u32| ((a >> shift & 15) + (b >> shift & 15)).div_ceil(2) << shift;
+            light = (average(4) | average(0)) * 0x0101_0101;
+            ao = INNER_LEAF_AO * 0b0101_0101;
+        }
+        (surface | ao << 24 | light << 32) as u128 | (inner as u128) << 64 | (backed as u128) << 65
     }
 
     fn greedy(&mut self, face: Face, fa: &FaceAxes, slice: usize, out: &mut MeshBuffers) {
@@ -360,7 +495,7 @@ fn emit_quad(
     let plane = slice as i32 + fa.positive as i32;
     let corners = [(col, row), (col + width, row), (col + width, row + height), (col, row + height)];
     let surface = (key & 0xFF_FFFF) as u32;
-    let backed = (key >> 64) as u32 & 1;
+    let flags = (key >> 64) as u32 & 3;
     let base = out.vertices.len() as u32;
     let mut ao = [0u32; 4];
     for (i, (c, r)) in corners.into_iter().enumerate() {
@@ -370,7 +505,7 @@ fn emit_quad(
         p[fa.col] = c as i32;
         ao[i] = ((key >> (24 + i * 2)) & 3) as u32;
         let light = ((key >> (32 + i * 8)) & 0xFF) as u32;
-        let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | (face as u32) << 18 | ao[i] << 21 | backed << 23;
+        let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | (face as u32) << 18 | ao[i] << 21 | flags << 23;
         out.vertices.push([w0, surface | light << 24]);
     }
 
@@ -416,16 +551,17 @@ mod tests {
     use crate::block::{BlockDef, Textures};
 
     fn registry() -> BlockRegistry {
+        let block = |name: &str, render| BlockDef {
+            name: format!("test:{name}"),
+            render,
+            textures: Textures::All(name.into()),
+            ..Default::default()
+        };
         BlockRegistry::new(vec![
-            BlockDef { name: "test:stone".into(), textures: Textures::All("stone".into()), ..Default::default() },
-            BlockDef {
-                name: "test:grass".into(),
-                render: RenderKind::Plant,
-                solid: false,
-                textures: Textures::All("short_grass".into()),
-                tint: Tint::Grass,
-                ..Default::default()
-            },
+            block("stone", RenderKind::Opaque),
+            BlockDef { solid: false, tint: Tint::Grass, ..block("short_grass", RenderKind::Plant) },
+            block("leaves", RenderKind::Leaves),
+            block("glass", RenderKind::Cutout),
         ])
         .unwrap()
     }
@@ -488,5 +624,45 @@ mod tests {
         let corner = |v: &Vertex| ((v[0] & 63) as i32 - 4, ((v[0] >> 12) & 63) as i32 - 7);
         assert!(mesh.cutout.vertices[..4].iter().map(corner).all(|(x, z)| x == z));
         assert!(mesh.cutout.vertices[4..].iter().map(corner).all(|(x, z)| x + z == 1));
+    }
+
+    #[test]
+    fn leaves_draw_the_faces_between_them() {
+        let (leaves, glass) = (BlockId(3), BlockId(4));
+        for (block, shared_faces) in [(leaves, 1), (glass, 0)] {
+            let mut column = Column::default();
+            column.set_block(IVec3::new(4, 40, 4), block);
+            column.set_block(IVec3::new(5, 40, 4), block);
+            let mesh = mesh_of(column, 1);
+            // Between the two blocks, in the plane x = 5: one double-sided face for leaves,
+            // which casts no shadow.
+            let between = |buffers: &MeshBuffers| buffers.vertices.chunks(4).filter(|quad| quad.iter().all(|v| v[0] & 63 == 5)).count();
+            assert_eq!((between(&mesh.cutout), between(&mesh.inner)), (0, shared_faces));
+        }
+    }
+
+    #[test]
+    fn buried_leaves_hide_the_faces_between_them() {
+        let mut column = Column::default();
+        for y in 40..45 {
+            for z in 4..9 {
+                for x in 4..9 {
+                    column.set_block(IVec3::new(x, y, z), BlockId(3));
+                }
+            }
+        }
+        let mesh = mesh_of(column, 1);
+        // A 5³ crown has 3 × 4 × 25 pairs of neighbouring leaves. The faces between two of
+        // the 27 buried ones (3 × 2 × 9 pairs) are hidden; each other pair has one.
+        let area: i32 = mesh
+            .inner
+            .vertices
+            .chunks(4)
+            .map(|quad| {
+                let axis = |shift: u32| quad.iter().map(move |v| (v[0] >> shift & 63) as i32);
+                [0, 6, 12].map(|s| (axis(s).max().unwrap() - axis(s).min().unwrap()).max(1)).iter().product::<i32>()
+            })
+            .sum();
+        assert_eq!(area, 3 * 4 * 25 - 3 * 2 * 9);
     }
 }

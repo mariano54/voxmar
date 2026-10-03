@@ -1,11 +1,13 @@
 // Voxel terrain. Vertices are two packed u32 words (see voxmar_engine::mesh):
-//   word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | backed:1
+//   word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | flags:2
 //   word 1: layer:12 | tint:2 | temperature:5 | humidity:5 | block:4 | sky:4
-// Faces 0-5 are cube faces; 6 and 7 are a plant's two diagonal quads, whose `backed` bit
-// marks the top edge instead.
+// Faces 0-5 are cube faces; 6 and 7 are a plant's two diagonal quads. The flags mark a
+// translucent face covered by a block (water under ice) or a plant's top edge (FLAG_INNER),
+// and a leaf face with leaves behind it, which casts a solid shadow (FLAG_BACKED).
 // The same file provides the main pass and the depth prepass / shadow pass entry points.
 // Shader defs pick the pass: none for opaque terrain (no alpha test, so the GPU keeps early
-// depth and hidden surface removal), CUTOUT for leaves and glass, TRANSLUCENT for water.
+// depth and hidden surface removal), CUTOUT for leaves, glass and plants, plus INNER for the
+// double-sided faces between two leaves, TRANSLUCENT for water and ice.
 
 #import bevy_pbr::mesh_functions::get_world_from_local
 #import bevy_pbr::mesh_view_bindings::view
@@ -28,6 +30,8 @@ const TINT_NONE: u32 = 0u;
 const TINT_FOLIAGE: u32 = 2u;
 const TINT_WATER: u32 = 3u;
 const FACE_PLANT: u32 = 6u;
+const FLAG_INNER: u32 = 1u << 23u;
+const FLAG_BACKED: u32 = 1u << 24u;
 const AO_CURVE = array<f32, 4>(0.45, 0.65, 0.84, 1.0);
 
 struct Vertex {
@@ -47,11 +51,6 @@ fn face_of(w0: u32) -> u32 {
     return (w0 >> 18u) & 7u;
 }
 
-// Backed (filled) cut-out face; plant faces use the bit for their top edge instead.
-fn backed_of(w0: u32) -> u32 {
-    return select((w0 >> 23u) & 1u, 0u, face_of(w0) >= FACE_PLANT);
-}
-
 // World position, with leaves swaying gently and plants bending from their base. Shared
 // by every pass so depth matches.
 fn world_position(in: Vertex) -> vec3<f32> {
@@ -59,7 +58,7 @@ fn world_position(in: Vertex) -> vec3<f32> {
     var world = (world_from_local * vec4(local_position(in.packed.x), 1.0)).xyz;
     let t = globals.time;
     if face_of(in.packed.x) >= FACE_PLANT {
-        if ((in.packed.x >> 23u) & 1u) != 0u {
+        if (in.packed.x & FLAG_INNER) != 0u {
             // Gusts roll across the field: a slow wave plus a quicker flutter.
             let phase = world.x * 0.35 + world.z * 0.25;
             let gust = sin(t * 1.3 + phase) * 0.6 + sin(t * 2.9 + phase * 2.1) * 0.25;
@@ -87,13 +86,11 @@ fn face_uv(local: vec3<f32>, face: u32) -> vec2<f32> {
     }
 }
 
-// Cut-out texel test. Backed faces (inside a crown) fill their holes instead.
-fn alpha_test(uv: vec2<f32>, surface: u32, backed: bool) -> f32 {
-    let alpha = textureSample(block_textures, block_sampler, uv, i32(surface & 0xFFFu)).a;
-    if alpha < 0.5 && !backed {
+// Cut-out texel test.
+fn alpha_test(uv: vec2<f32>, surface: u32, solid: u32) {
+    if solid == 0u && textureSample(block_textures, block_sampler, uv, i32(surface & 0xFFFu)).a < 0.5 {
         discard;
     }
-    return alpha;
 }
 
 #ifdef PREPASS_PIPELINE
@@ -102,7 +99,8 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) surface: u32,
-    @location(2) @interpolate(flat) backed: u32,
+    // Skips the alpha test: a leaf face with leaves behind it shades solidly.
+    @location(2) @interpolate(flat) solid: u32,
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     @location(3) unclipped_depth: f32,
 #endif
@@ -111,6 +109,7 @@ struct VertexOutput {
 @vertex
 fn vertex(in: Vertex) -> VertexOutput {
     var out: VertexOutput;
+    out.solid = select(0u, 1u, face_of(in.packed.x) < FACE_PLANT && (in.packed.x & FLAG_BACKED) != 0u);
     out.position = view.clip_from_world * vec4(world_position(in), 1.0);
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.unclipped_depth = out.position.z;
@@ -118,20 +117,19 @@ fn vertex(in: Vertex) -> VertexOutput {
 #endif
     out.uv = face_uv(local_position(in.packed.x), face_of(in.packed.x));
     out.surface = in.packed.y & 0xFFFFFFu;
-    out.backed = backed_of(in.packed.x);
     return out;
 }
 
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
 @fragment
 fn fragment(in: VertexOutput) -> @builtin(frag_depth) f32 {
-    alpha_test(in.uv, in.surface, in.backed != 0u);
+    alpha_test(in.uv, in.surface, in.solid);
     return in.unclipped_depth;
 }
 #else
 @fragment
 fn fragment(in: VertexOutput) {
-    alpha_test(in.uv, in.surface, in.backed != 0u);
+    alpha_test(in.uv, in.surface, in.solid);
 }
 #endif
 
@@ -145,7 +143,7 @@ struct VertexOutput {
     @location(2) light: vec3<f32>,
     @location(3) @interpolate(flat) surface: u32,
     @location(4) @interpolate(flat) face: u32,
-    @location(5) @interpolate(flat) backed: u32,
+    @location(5) @interpolate(flat) covered: u32,
 };
 
 @vertex
@@ -159,7 +157,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.uv = face_uv(local_position(w0), out.face);
     out.light = vec3(AO_CURVE[(w0 >> 21u) & 3u], f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
-    out.backed = backed_of(w0);
+    out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
     return out;
 }
 
@@ -181,18 +179,13 @@ fn biome_tint(surface: u32) -> vec3<f32> {
 }
 
 @fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     let layer = i32(in.surface & 0xFFFu);
     var albedo = textureSample(block_textures, block_sampler, in.uv, layer);
     let kind = tint_kind(in.surface);
 #ifdef CUTOUT
     if albedo.a < 0.5 {
-        if in.backed == 0u {
-            discard;
-        }
-        // Inside a tree crown: fill the gap with the leaf's own average colour, in shade.
-        let average = textureSampleLevel(block_textures, block_sampler, in.uv, layer, 8.0).rgb;
-        albedo = vec4(average * 0.45, 1.0);
+        discard;
     }
 #endif
 #ifndef TRANSLUCENT
@@ -206,21 +199,44 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if plant {
         shadow_at.y = floor(in.world_position.y - 0.001) + 1.1;
     }
-    var color = shade(base, shadow_at, in.face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant, in.clip_position.xy);
+    var face = in.face;
+#ifdef INNER
+    // Seen from its back, the face belongs to the leaf on the other side.
+    face = select(face ^ 1u, face, front_facing);
+#endif
+    var color = shade(base, shadow_at, face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant, in.clip_position.xy);
     var alpha = albedo.a;
 
 #ifdef TRANSLUCENT
-    if kind == TINT_WATER && in.face == 2u {
-        // Fresnel reflection of the sky and a sun glint on rippled water.
-        let n = water_normal(in.world_position);
-        let to_eye = normalize(view.world_position - in.world_position);
+    let to_eye = normalize(view.world_position - in.world_position);
+    let sky = fog.base_color.rgb * 1.15;
+    let open = smoothstep(0.5, 0.95, in.light.y);
+    if kind == TINT_WATER {
+        if in.face == 2u && in.covered == 0u {
+            // Fresnel reflection of the sky and a sun glint on rippled water.
+            let n = water_normal(in.world_position);
+            let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, to_eye), 0.0), 5.0);
+            let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 220.0) * open
+                * sun_shadow(in.world_position, n, in.clip_position.xy);
+            color = mix(color, sky * open + color * (1.0 - open), fresnel) + sun_color() * glint * 4.0;
+            alpha = mix(0.72, 1.0, fresnel);
+        }
+    } else {
+        // Solid see-through blocks (ice) show only their outside, like any solid block, so
+        // a sheet of ice never blends its far side over what lies beyond. Clearer than
+        // their texture, they reflect the sky through their own tint, mirror-smooth, with
+        // a sharp sun glint.
+        if !front_facing {
+            discard;
+        }
+        let n = NORMALS[in.face];
         let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, to_eye), 0.0), 5.0);
-        let sky = fog.base_color.rgb * 1.15;
-        let open = smoothstep(0.5, 0.95, in.light.y);
-        let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 220.0) * open
+        let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 160.0) * open
             * sun_shadow(in.world_position, n, in.clip_position.xy);
-        color = mix(color, sky * open + color * (1.0 - open), fresnel) + sun_color() * glint * 4.0;
-        alpha = mix(0.72, 1.0, fresnel);
+        let hue = base / max(max(base.r, max(base.g, base.b)), 0.001);
+        let reflection = sky * mix(vec3(1.0), hue, 0.5);
+        color = mix(color, reflection * open + color * (1.0 - open), fresnel * 0.7) + sun_color() * glint * 3.0;
+        alpha = mix(alpha * 0.55, 0.95, fresnel);
     }
 #endif
 

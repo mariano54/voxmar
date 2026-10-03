@@ -26,9 +26,13 @@ pub enum RenderKind {
     /// Fully opaque cube. Hides neighbouring faces and blocks light.
     #[default]
     Opaque,
-    /// Alpha-tested cube (leaves). Drawn in the opaque pass, does not hide neighbours.
+    /// Alpha-tested cube (glass). Does not hide neighbours; faces between two of the same
+    /// block are hidden.
     Cutout,
-    /// Alpha-blended cube (water). Drawn in the translucent pass.
+    /// Alpha-tested cube that draws every face, also between two of its kind, so its holes
+    /// show depth from every angle (Minecraft's fancy leaves).
+    Leaves,
+    /// Alpha-blended cube (water, ice). Faces between two of the same block are hidden.
     Translucent,
     /// Two crossed, alpha-tested quads through the cell's diagonals (grass, flowers). Hides
     /// nothing and lets light through. A plant gives way to a block placed into it and

@@ -28,10 +28,10 @@ impl Plugin for WorldPlugin {
 
 #[derive(Default)]
 struct ChunkRender {
-    /// Entity and mesh per pass (opaque, cut-out, translucent).
-    passes: [Option<(Entity, Handle<Mesh>)>; 3],
-    hashes: [u64; 3],
-    quads: [usize; 3],
+    /// Entity and mesh per `TerrainPass`.
+    passes: [Option<(Entity, Handle<Mesh>)>; 4],
+    hashes: [u64; 4],
+    quads: [usize; 4],
     connectivity: Connectivity,
 }
 
@@ -44,7 +44,7 @@ struct MeshResult {
 
 struct ChunkResult {
     connectivity: Connectivity,
-    passes: [PassResult; 3],
+    passes: [PassResult; 4],
 }
 
 struct PassResult {
@@ -66,11 +66,12 @@ impl PassResult {
 
 impl ChunkResult {
     fn new(mesh: ChunkMesh) -> Self {
-        let passes = [PassResult::new(mesh.opaque), PassResult::new(mesh.cutout), PassResult::new(mesh.translucent)];
+        let passes = [mesh.opaque, mesh.cutout, mesh.inner, mesh.translucent].map(PassResult::new);
         Self { connectivity: mesh.connectivity, passes }
     }
 }
 
+const INNER: usize = TerrainPass::Inner as usize;
 const TRANSLUCENT: usize = TerrainPass::Translucent as usize;
 
 /// Quads handed to the renderer per frame (about 3 MB of vertex and index data), so
@@ -283,8 +284,8 @@ fn apply_meshes(
                             Transform::from_translation(chunk.origin().as_vec3()),
                             Aabb::from_min_max(Vec3::ZERO, Vec3::splat(CHUNK_SIZE as f32)),
                         ));
-                        if pass == TRANSLUCENT {
-                            // Water would shadow itself.
+                        if pass == INNER || pass == TRANSLUCENT {
+                            // The crowns' shells cast their shadows; water would shadow itself.
                             entity.insert(NotShadowCaster);
                         }
                         let entity = entity.id();

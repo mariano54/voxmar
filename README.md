@@ -172,6 +172,11 @@ every cue to `target/sfx_preview.wav`.
 - Bevy's GPU preprocessing does frustum culling and indirect batched draws.
 - Pixel-art texture array with alpha-weighted mipmaps; climate tints from colormaps in the shader.
 - Plants (grass, flowers) are two crossed, double-sided quads that sway from their base.
+- Leaves draw the faces between them too, like Minecraft's fancy leaves, so crowns show the
+  same depth through their holes from every angle: one double-sided face where two leaves
+  meet, none between leaves buried on every side, and only a crown's shell casts shadows.
+  Faces between two of the same glass, ice or water are hidden; ice is clear blue with a sky
+  reflection over still water.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
   aerial perspective (haze that thins with height and glows around the sun), HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field

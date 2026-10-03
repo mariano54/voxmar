@@ -64,12 +64,14 @@ pub struct VoxelMaterial {
     pub pass: TerrainPass,
 }
 
-/// Terrain is drawn in three passes; each mesh pass of a chunk uses the matching material.
+/// Terrain is drawn in four passes; each mesh pass of a chunk uses the matching material.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TerrainPass {
     Opaque,
     Cutout,
+    /// Cut-out, double-sided faces between two leaves, which cast no shadow.
+    Inner,
     Translucent,
 }
 
@@ -106,7 +108,7 @@ impl Material for VoxelMaterial {
         match self.pass {
             TerrainPass::Opaque => AlphaMode::Opaque,
             // Cut-out faces need the alpha test in the depth and shadow passes too.
-            TerrainPass::Cutout => AlphaMode::Mask(0.5),
+            TerrainPass::Cutout | TerrainPass::Inner => AlphaMode::Mask(0.5),
             TerrainPass::Translucent => AlphaMode::Blend,
         }
     }
@@ -118,20 +120,25 @@ impl Material for VoxelMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.vertex.buffers = vec![layout.0.get_layout(&[ATTRIBUTE_VOXEL.at_shader_location(0)])?];
-        // The prepass and shadow pipelines default to no culling; back faces of solid-filled
-        // leaves would then write depth the main pass never covers.
+        // Faces are one-sided (plants emit both windings); the prepass and shadow pipelines
+        // default to no culling.
         descriptor.primitive.cull_mode = Some(bevy::render::render_resource::Face::Back);
-        let define = match key.bind_group_data.pass {
-            TerrainPass::Opaque => None,
-            TerrainPass::Cutout => Some("CUTOUT"),
+        let defs: &[&str] = match key.bind_group_data.pass {
+            TerrainPass::Opaque => &[],
+            TerrainPass::Cutout => &["CUTOUT"],
+            TerrainPass::Inner => {
+                // One face serves the two leaves on either side of it.
+                descriptor.primitive.cull_mode = None;
+                &["CUTOUT", "INNER"]
+            }
             TerrainPass::Translucent => {
                 // Water is visible from below too.
                 descriptor.primitive.cull_mode = None;
-                Some("TRANSLUCENT")
+                &["TRANSLUCENT"]
             }
         };
-        if let (Some(define), Some(fragment)) = (define, descriptor.fragment.as_mut()) {
-            fragment.shader_defs.push(define.into());
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.extend(defs.iter().map(|&def| def.into()));
         }
         Ok(())
     }
@@ -191,7 +198,7 @@ impl Material for SkyMaterial {
 /// Handles to the shared terrain materials, indexed by `TerrainPass`.
 #[derive(Resource)]
 pub struct VoxelMaterials {
-    pub passes: [Handle<VoxelMaterial>; 3],
+    pub passes: [Handle<VoxelMaterial>; 4],
     pub sky: Handle<SkyMaterial>,
 }
 
@@ -225,7 +232,7 @@ pub fn setup(
     let material = |pass| VoxelMaterial { textures: textures.clone(), colormaps: colormaps.clone(), pass };
     let sky = sky_materials.add(SkyMaterial { params: SkyParams::default() });
     commands.insert_resource(VoxelMaterials {
-        passes: [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Translucent]
+        passes: [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent]
             .map(|pass| voxel_materials.add(material(pass))),
         sky: sky.clone(),
     });

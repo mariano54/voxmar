@@ -63,9 +63,10 @@ fn select_slot(keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScro
 
 fn find_target(world: Res<ClientWorld>, player: Res<LocalPlayer>, mut target: ResMut<Target>) {
     target.hit = raycast(player.eye(), player.look_direction(), dims::REACH, |p| {
+        // Water is looked through; ice and other solid see-through blocks can be mined.
         world.block(p).is_some_and(|b| {
-            let render = world.registry.info(b).render;
-            render != RenderKind::Invisible && render != RenderKind::Translucent
+            let info = world.registry.info(b);
+            info.render != RenderKind::Invisible && (info.solid || info.render != RenderKind::Translucent)
         })
     });
 }
