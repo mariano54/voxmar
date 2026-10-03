@@ -10,8 +10,10 @@
 //! The heightfield is the true ground, sea floor included, with tree crowns raised over
 //! forests. Water and ice are a separate sheet at sea level over it, so the floor shows
 //! through real translucent water at the edge of the real chunks. Vertices carry the
-//! albedo of top and side faces; the shader shades the heightfield as the staircase of
-//! blocks it stands for (see `lod.wgsl`), with the same lighting as real chunks.
+//! albedo of the ground's top and side faces and of tree crowns, and how much of the
+//! ground is under crowns or small plants; the shader shades the heightfield as the
+//! staircase of blocks it stands for (see `lod.wgsl`), with the same lighting as real
+//! chunks.
 
 use std::sync::Arc;
 
@@ -392,9 +394,10 @@ fn apply_tiles(mut commands: Commands, mut lod: ResMut<Lod>, mut meshes: ResMut<
 struct Corner {
     /// Top of the terrain: dry ground, the sea floor, or tree crowns over forests.
     height: f32,
-    /// Linear albedo of top and side faces.
+    /// Linear albedo of the ground's top and side faces, and of tree crowns.
     top: [f32; 3],
     side: [f32; 3],
+    leaves: [f32; 3],
     /// Sky light at the terrain surface, 0..=15. It fades with depth under water.
     sky: u8,
     /// Fraction of the ground under tree crowns.
@@ -409,7 +412,7 @@ struct Corner {
 /// Seen from afar, leaves are darker than their texture: the gaps show the shaded inside of
 /// the crown.
 const CROWN_SHADE: f32 = 0.8;
-/// How far crowns of a dense forest raise the canopy above the ground.
+/// How far crowns of a dense forest raise the canopy above the ground (as in `lod.wgsl`).
 const CANOPY_HEIGHT: f32 = 6.0;
 /// Fraction of open grassland with grass, ferns or flowers growing on it, about what the
 /// generator plants.
@@ -454,14 +457,11 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
             let surface = sampler.surface(wx, wz, h, slope);
             let (top, side) = palette.faces(surface.ground, surface.climate);
             let (leaves, cover) = surface.canopy.unwrap_or((surface.ground, 0.0));
-            let (crown_top, crown_side) = palette.faces(leaves, surface.climate);
-            let crown = |ground: [f32; 3], leaves: [f32; 3]| {
-                std::array::from_fn(|i| ground[i] + (leaves[i] * CROWN_SHADE - ground[i]) * cover)
-            };
             corners.push(Corner {
                 height: h as f32 + 1.0 + CANOPY_HEIGHT * cover,
-                top: crown(top, crown_top),
-                side: crown(side, crown_side),
+                top,
+                side,
+                leaves: palette.color(leaves, true, surface.climate).map(|c| c * CROWN_SHADE),
                 // Sky light fades by two levels per block of water or ice.
                 sky: (15 - 2 * (SEA_LEVEL - h).max(0)).max(0) as u8,
                 canopy: cover,
@@ -474,6 +474,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
     let corner = |x: i32, z: i32| corners[((z + 1) * W + x + 1) as usize];
 
     let pack_color = |c: [f32; 3]| linear_to_srgb_byte(c[0]) | linear_to_srgb_byte(c[1]) << 8 | linear_to_srgb_byte(c[2]) << 16;
+    let pack_rgb565 = |c: [f32; 3]| linear_to_srgb_byte(c[0]) >> 3 | (linear_to_srgb_byte(c[1]) >> 2) << 5 | (linear_to_srgb_byte(c[2]) >> 3) << 11;
     let pack_position = |x: i32, z: i32, height: f32, sky: u8, kind: u32| {
         let y = (height * 32.0).round().clamp(0.0, 16383.0) as u32;
         x as u32 | (z as u32) << 6 | y << 12 | (sky as u32) << 26 | kind << 30
@@ -482,17 +483,18 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
         [
             pack_position(x, z, height, c.sky, TERRAIN),
             pack_color(c.top) | ((c.canopy * 255.0) as u32) << 24,
-            encode_normal(normal),
+            encode_normal(normal) | pack_rgb565(c.leaves) << 16,
             pack_color(c.side) | ((c.plants * 255.0) as u32) << 24,
         ]
     };
     let mut vertices: Vec<[u32; 4]> = Vec::with_capacity(((CELLS + 1) * (CELLS + 1) + 4 * (CELLS + 1)) as usize);
     for z in 0..=CELLS {
         for x in 0..=CELLS {
+            // The ground's normal, which shades its steps; crowns are shaded on their own.
             let c = corner(x, z);
-            let dx = corner(x + 1, z).height - corner(x - 1, z).height;
-            let dz = corner(x, z + 1).height - corner(x, z - 1).height;
-            let normal = Vec3::new(-dx, 2.0 * cell as f32, -dz).normalize();
+            let dx = height(x + 1, z) - height(x - 1, z);
+            let dz = height(x, z + 1) - height(x, z - 1);
+            let normal = Vec3::new(-dx as f32, 2.0 * cell as f32, -dz as f32).normalize();
             vertices.push(terrain_vertex(x, z, c.height, normal, c));
         }
     }
