@@ -239,13 +239,14 @@ impl Lod {
     /// Tiles each ring needs around `camera`, nearest rings first: those in the ring's
     /// square that are not entirely covered by finer detail.
     fn wanted_tiles(&self, camera: IVec2) -> Vec<TileKey> {
+        let column = camera.div_euclid(IVec2::splat(CHUNK_SIZE));
+        let real = ((column - (self.real_columns - 1)) * CHUNK_SIZE, (column + self.real_columns) * CHUNK_SIZE);
         let mut wanted = Vec::new();
         for level in 0..LEVELS as u8 {
             let tile = (FIRST_CELL << level) * CELLS;
             let center = camera.div_euclid(IVec2::splat(tile));
-            let (hole_low, hole_high) = if level == 0 {
-                let column = camera.div_euclid(IVec2::splat(CHUNK_SIZE));
-                ((column - (self.real_columns - 1)) * CHUNK_SIZE, (column + self.real_columns) * CHUNK_SIZE)
+            let finer = if level == 0 {
+                real
             } else {
                 let finer = tile / 2;
                 let c = camera.div_euclid(IVec2::splat(finer));
@@ -256,7 +257,9 @@ impl Lod {
                 for x in center.x - RING..=center.x + RING {
                     let low = IVec2::new(x, z) * tile;
                     let high = low + tile;
-                    let hidden = low.cmpge(hole_low).all() && high.cmple(hole_high).all();
+                    // Real chunks can reach past the finer rings at long view distances.
+                    let inside = |(hole_low, hole_high): (IVec2, IVec2)| low.cmpge(hole_low).all() && high.cmple(hole_high).all();
+                    let hidden = inside(finer) || inside(real);
                     if !hidden {
                         ring.push(TileKey { level, x, z });
                     }

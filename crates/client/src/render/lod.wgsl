@@ -61,22 +61,24 @@ fn vertex(in: Vertex) -> VertexOutput {
     return out;
 }
 
-// Whether a position is covered by finer detail (real chunks or the next finer level),
-// derived from the camera position exactly as the client chooses its tiles.
+// Whether a position is covered by finer detail (real chunks, which at long view distances
+// reach past the finest rings, or the next finer level), derived from the camera position
+// exactly as the client chooses its tiles.
 fn covered_by_finer(xz: vec2<f32>) -> bool {
     let camera = view.world_position.xz;
-    var low: vec2<f32>;
-    var high: vec2<f32>;
-    if params.rings.y == 0.0 {
-        let column = floor(camera / COLUMN);
-        low = (column - (params.rings.w - 1.0)) * COLUMN;
-        high = (column + params.rings.w) * COLUMN;
-    } else {
-        let tile = params.rings.y * CELLS_PER_TILE;
-        let center = floor(camera / tile);
-        low = (center - params.rings.z) * tile;
-        high = (center + params.rings.z + 1.0) * tile;
+    let column = floor(camera / COLUMN);
+    let real_low = (column - (params.rings.w - 1.0)) * COLUMN;
+    let real_high = (column + params.rings.w) * COLUMN;
+    if all(xz >= real_low) && all(xz < real_high) {
+        return true;
     }
+    if params.rings.y == 0.0 {
+        return false;
+    }
+    let tile = params.rings.y * CELLS_PER_TILE;
+    let center = floor(camera / tile);
+    let low = (center - params.rings.z) * tile;
+    let high = (center + params.rings.z + 1.0) * tile;
     return all(xz >= low) && all(xz < high);
 }
 
