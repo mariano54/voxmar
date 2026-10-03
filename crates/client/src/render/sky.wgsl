@@ -414,7 +414,10 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
     if cover > 0.005 {
         let at = to_layer * 2.0 + sky.weather.xy;
         // Heaped cloud gets billowing, crisp outlines from two finer octaves.
-        let billows = (value_noise(at * 9.0) + 0.5 * value_noise(at * 19.0 + 7.0) - 0.75) * convection;
+        var billows = 0.0;
+        if convection > 0.01 {
+            billows = (value_noise(at * 9.0) + 0.5 * value_noise(at * 19.0 + 7.0) - 0.75) * convection;
+        }
         let n = fbm(at) + billows * 0.1;
         // The threshold sets how much of the sky is covered; heaped cloud has crisp edges,
         // layered cloud soft ones.

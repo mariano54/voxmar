@@ -140,10 +140,13 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     h = pcg(h);
     let phase = unit(h) * TAU;
 
-    // Where the drop is relative to the camera, wrapped into the box around it.
+    // Where the drop is relative to the camera, wrapped into the box around it. Slow
+    // snowflakes crowd into a box half as wide, which divides the full one, so they stay
+    // put in the world too.
     let fallen = select(params.rain.xyz, params.snow.xyz, snowflake);
-    let p = vec3(x, y, z) * BOX + fallen - params.camera.xyz;
-    var offset = p - BOX * floor(p / BOX) - BOX * 0.5;
+    let box = select(BOX, BOX * 0.5, snowflake);
+    let p = vec3(x, y, z) * box + fallen - params.camera.xyz;
+    var offset = p - box * floor(p / box) - box * 0.5;
     let t = params.camera.w;
     if snowflake {
         offset += vec3(sin(t * (0.6 + size) + phase), 0.0, cos(t * (0.5 + 0.8 * size) + phase * 1.7)) * 0.4;
@@ -158,7 +161,7 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     // How far the drop reaches above its centre; below the ground it is not drawn at all.
     var top: f32;
     if snowflake {
-        let radius = 0.04 + 0.05 * size;
+        let radius = 0.03 + 0.04 * size;
         let drawn = max(radius, pixel * 0.7);
         let right = view.world_from_view[0].xyz;
         let up = view.world_from_view[1].xyz;
@@ -182,8 +185,8 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
         return out;
     }
     // A cylinder rather than a box, soft at its edges, with nothing right at the eye.
-    let reach = length(offset.xz) / (BOX.x * 0.5);
-    opacity *= (1.0 - smoothstep(0.6, 1.0, reach)) * (1.0 - smoothstep(0.8, 1.0, abs(offset.y) / (BOX.y * 0.5)));
+    let reach = length(offset.xz) / (box.x * 0.5);
+    opacity *= (1.0 - smoothstep(0.6, 1.0, reach)) * (1.0 - smoothstep(0.8, 1.0, abs(offset.y) / (box.y * 0.5)));
     // Drops right at the eye would smear across the screen.
     opacity *= smoothstep(1.5, 4.0, distance);
     out.color.a = opacity;
