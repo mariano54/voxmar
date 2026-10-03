@@ -319,8 +319,8 @@ fn connect(from: IVec3, to: IVec3) -> impl Iterator<Item = IVec3> {
 }
 
 /// Writes a tree's wood and leaves, clipped to its reach and to the column being
-/// generated. Wood replaces leaves but leaves never replace wood, so the order in which
-/// parts (or overlapping trees) are written does not matter.
+/// generated. Wood replaces leaves but leaves never replace wood, so a tree's parts can be
+/// written in any order; overlapping trees are written in the same order by every column.
 struct Grower<'a, 'b> {
     blocks: &'a mut Blocks<'b>,
     /// Seeds per-voxel randomness (ragged leaf edges).
