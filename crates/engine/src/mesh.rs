@@ -7,8 +7,8 @@
 //! Each vertex is packed into 8 bytes:
 //!
 //! ```text
-//! word 0: x:6 | y:6 | z:6 | face:3 | ao:2
-//! word 1: layer:12 | tint:2 | temperature:5 | humidity:5 | sky:4 | block:4
+//! word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | backed:1
+//! word 1: layer:12 | tint:2 | temperature:5 | humidity:5 | block:4 | sky:4
 //! ```
 
 use glam::IVec3;
@@ -168,7 +168,7 @@ struct Mesher<'a> {
     cells: &'a [Cell],
     /// `planes[slice][row]`: bit `col` set where a face is visible.
     planes: [[u32; S]; S],
-    keys: [[u64; S]; S],
+    keys: [[u128; S]; S],
 }
 
 impl Mesher<'_> {
@@ -239,11 +239,15 @@ impl Mesher<'_> {
         &self.cells[pidx((p.x + 1) as usize, (p.y + 1) as usize, (p.z + 1) as usize)]
     }
 
-    /// Everything that must match for two faces to merge, packed into 64 bits:
-    /// layer:12 tint:2 temperature:5 humidity:5 | ao 4×2 | light 4×8.
-    fn face_key(&self, face: Face, fa: &FaceAxes, slice: usize, row: usize, col: usize) -> u64 {
+    /// Everything that must match for two faces to merge:
+    /// layer:12 tint:2 temperature:5 humidity:5 | ao 4×2 | light 4×8 | backed:1.
+    fn face_key(&self, face: Face, fa: &FaceAxes, slice: usize, row: usize, col: usize) -> u128 {
         let pos = Self::cell(fa, slice, row, col);
-        let info = self.registry.info(self.padded(pos).block);
+        let block = self.padded(pos).block;
+        let info = self.registry.info(block);
+        // A cut-out face with more of the same block behind it (inside a tree crown) is
+        // drawn solid, so crowns read as dense foliage instead of a see-through shell.
+        let backed = info.render == RenderKind::Cutout && self.padded(pos - face.normal()).block == block;
         let tint = info.tints[face as usize];
         let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { self.column.climate_at(pos.x, pos.z) };
         let surface = info.layers[face as usize] as u64
@@ -281,7 +285,7 @@ impl Mesher<'_> {
             let packed = (((sky + count / 2) / count) << 4) | ((block + count / 2) / count);
             light |= (packed as u64) << (corner * 8);
         }
-        surface | ao << 24 | light << 32
+        (surface | ao << 24 | light << 32) as u128 | (backed as u128) << 64
     }
 
     fn greedy(&mut self, face: Face, fa: &FaceAxes, slice: usize, out: &mut MeshBuffers) {
@@ -330,11 +334,12 @@ fn emit_quad(
     col: usize,
     width: usize,
     height: usize,
-    key: u64,
+    key: u128,
 ) {
     let plane = slice as i32 + fa.positive as i32;
     let corners = [(col, row), (col + width, row), (col + width, row + height), (col, row + height)];
     let surface = (key & 0xFF_FFFF) as u32;
+    let backed = (key >> 64) as u32 & 1;
     let base = out.vertices.len() as u32;
     let mut ao = [0u32; 4];
     for (i, (c, r)) in corners.into_iter().enumerate() {
@@ -344,7 +349,7 @@ fn emit_quad(
         p[fa.col] = c as i32;
         ao[i] = ((key >> (24 + i * 2)) & 3) as u32;
         let light = ((key >> (32 + i * 8)) & 0xFF) as u32;
-        let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | (face as u32) << 18 | ao[i] << 21;
+        let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | (face as u32) << 18 | ao[i] << 21 | backed << 23;
         out.vertices.push([w0, surface | light << 24]);
     }
 

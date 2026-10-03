@@ -27,16 +27,50 @@ impl Plugin for WorldPlugin {
 
 #[derive(Default)]
 struct ChunkRender {
-    entities: [Option<Entity>; 2],
+    /// Entity and mesh per pass (opaque, translucent).
+    passes: [Option<(Entity, Handle<Mesh>)>; 2],
     hashes: [u64; 2],
     quads: [usize; 2],
     connectivity: Connectivity,
 }
 
+/// A finished relight+remesh job. Meshes are built on the worker so the main thread only
+/// hands them to the renderer.
 struct MeshResult {
     pos: ColumnPos,
-    meshes: Vec<ChunkMesh>,
+    chunks: Vec<ChunkResult>,
 }
+
+struct ChunkResult {
+    connectivity: Connectivity,
+    passes: [PassResult; 2],
+}
+
+struct PassResult {
+    hash: u64,
+    quads: usize,
+    mesh: Option<Mesh>,
+}
+
+impl PassResult {
+    fn new(buffers: MeshBuffers) -> Self {
+        let mut hasher = FxHasher::default();
+        buffers.vertices.hash(&mut hasher);
+        buffers.indices.hash(&mut hasher);
+        let quads = buffers.vertices.len() / 4;
+        let mesh = (!buffers.is_empty()).then(|| build_mesh(buffers));
+        Self { hash: hasher.finish(), quads, mesh }
+    }
+}
+
+impl ChunkResult {
+    fn new(mesh: ChunkMesh) -> Self {
+        Self { connectivity: mesh.connectivity, passes: [PassResult::new(mesh.opaque), PassResult::new(mesh.translucent)] }
+    }
+}
+
+/// Quads handed to the renderer per frame, so streaming never causes a long frame.
+const UPLOAD_BUDGET: usize = 250_000;
 
 #[derive(Resource)]
 pub struct ClientWorld {
@@ -95,7 +129,7 @@ impl ClientWorld {
         self.dirty.remove(&pos);
         for cy in 0..COLUMN_CHUNKS {
             if let Some(render) = self.chunks.remove(&pos.chunk(cy)) {
-                for entity in render.entities.into_iter().flatten() {
+                for (entity, _) in render.passes.into_iter().flatten() {
                     commands.entity(entity).despawn();
                 }
             }
@@ -172,8 +206,9 @@ fn dispatch_jobs(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform,
         let tx = world.results_tx.clone();
         rayon::spawn(move || {
             let region = LitRegion::compute(&registry, &columns);
-            let meshes = (0..COLUMN_CHUNKS).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy)).collect();
-            let _ = tx.send(MeshResult { pos, meshes });
+            let chunks =
+                (0..COLUMN_CHUNKS).map(|cy| ChunkResult::new(mesh_chunk(&registry, &region, &columns[4], cy))).collect();
+            let _ = tx.send(MeshResult { pos, chunks });
         });
     }
     world.stats.jobs_in_flight = world.in_flight.len();
@@ -181,14 +216,8 @@ fn dispatch_jobs(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform,
     world.stats.pending_columns = world.dirty.iter().filter(|p| world.neighborhood(**p).is_some()).count();
 }
 
-fn mesh_hash(buffers: &MeshBuffers) -> u64 {
-    let mut hasher = FxHasher::default();
-    buffers.vertices.hash(&mut hasher);
-    buffers.indices.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Turns finished jobs into chunk entities, skipping meshes that did not change.
+/// Hands finished jobs to the renderer, skipping meshes that did not change. Existing
+/// chunks keep their entity and mesh handle; only the mesh asset is replaced.
 fn apply_meshes(
     mut commands: Commands,
     mut world: ResMut<ClientWorld>,
@@ -196,52 +225,56 @@ fn apply_meshes(
     materials: Res<VoxelMaterials>,
 ) {
     let world = &mut *world;
-    while let Ok(result) = world.results_rx.try_recv() {
+    let mut uploaded = 0;
+    while uploaded < UPLOAD_BUDGET
+        && let Ok(result) = world.results_rx.try_recv()
+    {
         world.in_flight.remove(&result.pos);
         if !world.voxels.contains(result.pos) {
             continue;
         }
-        for (cy, mesh) in result.meshes.into_iter().enumerate() {
+        for (cy, chunk_result) in result.chunks.into_iter().enumerate() {
             let chunk = result.pos.chunk(cy as i32);
             let render = world.chunks.entry(chunk).or_default();
-            if render.connectivity != mesh.connectivity {
-                render.connectivity = mesh.connectivity;
+            if render.connectivity != chunk_result.connectivity {
+                render.connectivity = chunk_result.connectivity;
                 world.visibility_dirty = true;
             }
-            let passes = [(&mesh.opaque, &materials.opaque), (&mesh.translucent, &materials.translucent)];
-            for (pass, (buffers, material)) in passes.into_iter().enumerate() {
-                let hash = mesh_hash(buffers);
-                if render.hashes[pass] == hash {
+            let materials = [&materials.opaque, &materials.translucent];
+            for (pass, (result, material)) in chunk_result.passes.into_iter().zip(materials).enumerate() {
+                if render.hashes[pass] == result.hash {
                     continue;
                 }
-                render.hashes[pass] = hash;
-                render.quads[pass] = buffers.vertices.len() / 4;
-                match (buffers.is_empty(), render.entities[pass]) {
-                    (true, Some(entity)) => {
-                        commands.entity(entity).despawn();
-                        render.entities[pass] = None;
+                render.hashes[pass] = result.hash;
+                render.quads[pass] = result.quads;
+                uploaded += result.quads;
+                match (result.mesh, &render.passes[pass]) {
+                    (None, Some((entity, _))) => {
+                        commands.entity(*entity).despawn();
+                        render.passes[pass] = None;
                     }
-                    (true, None) => {}
-                    (false, Some(entity)) => {
-                        commands.entity(entity).insert(Mesh3d(meshes.add(build_mesh(buffers))));
+                    (None, None) => {}
+                    (Some(mesh), Some((_, handle))) => {
+                        meshes.insert(handle, mesh).expect("chunk mesh handle is live");
                     }
-                    (false, None) => {
+                    (Some(mesh), None) => {
+                        let handle = meshes.add(mesh);
                         let entity = commands
                             .spawn((
-                                Mesh3d(meshes.add(build_mesh(buffers))),
+                                Mesh3d(handle.clone()),
                                 MeshMaterial3d(material.clone()),
                                 Transform::from_translation(chunk.origin().as_vec3()),
                                 Aabb::from_min_max(Vec3::ZERO, Vec3::splat(CHUNK_SIZE as f32)),
                             ))
                             .id();
-                        render.entities[pass] = Some(entity);
+                        render.passes[pass] = Some((entity, handle));
                         world.visibility_dirty = true;
                     }
                 }
             }
         }
     }
-    world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.entities.iter().flatten()).count();
+    world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.passes.iter().flatten()).count();
     world.stats.quads = world.chunks.values().flat_map(|c| c.quads).sum();
 }
 
@@ -268,7 +301,7 @@ fn cull_chunks(
         let shown = visible.contains(pos);
         count += shown as usize;
         quads += if shown { render.quads.iter().sum() } else { 0 };
-        for entity in render.entities.iter().flatten() {
+        for (entity, _) in render.passes.iter().flatten() {
             if let Ok(mut v) = visibility.get_mut(*entity) {
                 v.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
             }

@@ -13,7 +13,7 @@ cargo run --release -- --connect HOST:PORT  # join a server
 ```
 
 Client flags: `--seed N`, `--name NAME`, `--view-distance N` (columns of 32 blocks, default 16),
-`--vsync`, and `--capture out.png [--pose x,y,z,yaw,pitch]`, which runs headless, waits for the
+`--no-vsync` (uncapped frame rate), and `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS]`, which runs headless, waits for the
 world to load, logs frame time and saves a screenshot.
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break

@@ -2,7 +2,7 @@
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use voxmar_engine::inventory::{HOTBAR_SLOTS, SLOTS};
+use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, SLOTS};
 use voxmar_protocol::Action;
 
 use crate::interact::Target;
@@ -222,10 +222,15 @@ fn update_slots(
     mut icons: Query<(&SlotIcon, &mut ImageNode, &mut Visibility)>,
     mut counts: Query<(&SlotCount, &mut Text)>,
     mut selection: Query<&mut Node, With<HotbarSelection>>,
+    mut shown: Local<Option<(Inventory, usize)>>,
 ) {
-    if !player.is_changed() {
+    // The player resource changes every frame (movement); only touch the UI when the
+    // inventory or selection actually changed.
+    let state = (player.inventory.clone(), player.selected);
+    if shown.as_ref() == Some(&state) {
         return;
     }
+    *shown = Some(state);
     for (slot, mut image, mut visibility) in &mut icons {
         match player.inventory.get(slot.0) {
             Some(stack) => {
@@ -249,10 +254,16 @@ fn update_slots(
     }
 }
 
-fn update_hearts(player: Res<LocalPlayer>, images: Res<HudImages>, mut hearts: Query<(&Heart, &mut ImageNode, &mut Visibility)>) {
-    if !player.is_changed() {
+fn update_hearts(
+    player: Res<LocalPlayer>,
+    images: Res<HudImages>,
+    mut hearts: Query<(&Heart, &mut ImageNode, &mut Visibility)>,
+    mut shown: Local<Option<u8>>,
+) {
+    if *shown == Some(player.health) {
         return;
     }
+    *shown = Some(player.health);
     for (heart, mut image, mut visibility) in &mut hearts {
         let points = player.health as usize;
         let shown = match points.saturating_sub(heart.0 * 2) {

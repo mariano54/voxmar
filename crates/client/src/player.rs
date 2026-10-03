@@ -7,6 +7,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::physics::{Aabb, move_and_slide, player as dims};
 
+use crate::render::DayCycle;
 use crate::world::ClientWorld;
 
 pub struct PlayerPlugin;
@@ -196,9 +197,16 @@ fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool,
     player.position = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
 }
 
-fn follow_camera(player: Res<LocalPlayer>, mut camera: Query<&mut Transform, With<Camera3d>>) {
+fn follow_camera(
+    player: Res<LocalPlayer>,
+    world: Res<ClientWorld>,
+    mut cycle: ResMut<DayCycle>,
+    mut camera: Query<&mut Transform, With<Camera3d>>,
+) {
     if let Ok(mut transform) = camera.single_mut() {
         transform.translation = player.eye();
         transform.rotation = player.rotation();
     }
+    let underwater = world.block(player.eye().floor().as_ivec3()) == world.registry.id("base:water");
+    cycle.underwater = underwater;
 }

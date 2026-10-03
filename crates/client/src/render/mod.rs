@@ -1,16 +1,26 @@
-//! GPU side of the voxel world: terrain material, texture arrays, sky and day/night.
+//! GPU side of the voxel world: terrain material, texture arrays, camera, sun and sky.
+//!
+//! Time of day drives a real directional light (with cascaded shadow maps), the camera's
+//! ambient light and distance fog. Shaders read those from the view bind group, so the
+//! day/night cycle never modifies material assets (which would respecialise every chunk).
 
 use bevy::asset::{RenderAssetUsages, embedded_asset};
+use bevy::camera::Hdr;
 use bevy::camera::visibility::NoFrustumCulling;
+use bevy::core_pipeline::prepass::DepthPrepass;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
 use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues};
-use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, ShaderType, SpecializedMeshPipelineError, TextureDataOrder, TextureDimension, TextureFormat,
-    TextureViewDescriptor, TextureViewDimension, VertexFormat,
+    AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDataOrder,
+    TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension, VertexFormat,
 };
-use bevy::shader::ShaderRef;
+use bevy::shader::{ShaderRef, load_shader_library};
 use voxmar_engine::mesh::MeshBuffers;
 use voxmar_protocol::TICKS_PER_DAY;
 
@@ -18,23 +28,20 @@ use crate::textures::Rgba;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
 
+const VOXEL_SHADER: &str = "embedded://voxmar/render/voxel.wgsl";
+
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
+        load_shader_library!(app, "lighting.wgsl");
         embedded_asset!(app, "voxel.wgsl");
         embedded_asset!(app, "sky.wgsl");
         app.add_plugins((MaterialPlugin::<VoxelMaterial>::default(), MaterialPlugin::<SkyMaterial>::default()))
+            .insert_resource(DirectionalLightShadowMap { size: 2048 })
             .init_resource::<DayCycle>()
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
     }
-}
-
-#[derive(ShaderType, Clone, Copy, Default, Debug)]
-pub struct VoxelParams {
-    pub sun: Vec4,
-    pub fog_color: Vec4,
-    pub fog: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
@@ -46,8 +53,6 @@ pub struct VoxelMaterial {
     #[texture(2, dimension = "2d_array")]
     #[sampler(3)]
     pub colormaps: Handle<Image>,
-    #[uniform(4)]
-    pub params: VoxelParams,
     pub translucent: bool,
 }
 
@@ -65,32 +70,37 @@ impl From<&VoxelMaterial> for VoxelMaterialKey {
 
 impl Material for VoxelMaterial {
     fn vertex_shader() -> ShaderRef {
-        "embedded://voxmar/render/voxel.wgsl".into()
+        VOXEL_SHADER.into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "embedded://voxmar/render/voxel.wgsl".into()
+        VOXEL_SHADER.into()
+    }
+
+    fn prepass_vertex_shader() -> ShaderRef {
+        VOXEL_SHADER.into()
+    }
+
+    fn prepass_fragment_shader() -> ShaderRef {
+        VOXEL_SHADER.into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
-        if self.translucent { AlphaMode::Blend } else { AlphaMode::Opaque }
-    }
-
-    fn enable_prepass() -> bool {
-        false
-    }
-
-    fn enable_shadows() -> bool {
-        false
+        // Opaque terrain includes cut-out leaves, so the depth and shadow passes must run
+        // the alpha test too.
+        if self.translucent { AlphaMode::Blend } else { AlphaMode::Mask(0.5) }
     }
 
     fn specialize(
         _pipeline: &MaterialPipeline,
-        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.vertex.buffers = vec![layout.0.get_layout(&[ATTRIBUTE_VOXEL.at_shader_location(0)])?];
+        // The prepass and shadow pipelines default to no culling; back faces of solid-filled
+        // leaves would then write depth the main pass never covers.
+        descriptor.primitive.cull_mode = Some(bevy::render::render_resource::Face::Back);
         if key.bind_group_data.translucent {
             // Water is visible from below too.
             descriptor.primitive.cull_mode = None;
@@ -107,6 +117,7 @@ pub struct SkyParams {
     pub zenith: Vec4,
     pub horizon: Vec4,
     pub sun: Vec4,
+    pub clouds: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
@@ -130,7 +141,7 @@ impl Material for SkyMaterial {
 
     fn specialize(
         _pipeline: &MaterialPipeline,
-        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
@@ -159,7 +170,10 @@ pub struct DayCycle {
 #[derive(Component)]
 pub struct SkyDome;
 
-/// Creates the texture arrays, materials and sky dome.
+#[derive(Component)]
+pub struct Sun;
+
+/// Creates the texture arrays, materials, camera, sun and sky dome.
 pub fn setup(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -171,12 +185,7 @@ pub fn setup(
 ) {
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat));
     let colormaps = images.add(array_image(colormaps, false, ImageAddressMode::ClampToEdge));
-    let material = |translucent| VoxelMaterial {
-        textures: textures.clone(),
-        colormaps: colormaps.clone(),
-        params: VoxelParams::default(),
-        translucent,
-    };
+    let material = |translucent| VoxelMaterial { textures: textures.clone(), colormaps: colormaps.clone(), translucent };
     let sky = sky_materials.add(SkyMaterial { params: SkyParams::default() });
     commands.insert_resource(VoxelMaterials {
         opaque: voxel_materials.add(material(false)),
@@ -187,23 +196,53 @@ pub fn setup(
         SkyDome,
         Mesh3d(meshes.add(Sphere::new(1.0).mesh().uv(32, 16))),
         MeshMaterial3d(sky),
-        Transform::from_scale(Vec3::splat(4000.0)),
+        Transform::from_scale(Vec3::splat(20_000.0)),
         NoFrustumCulling,
+    ));
+    commands.spawn((
+        Sun,
+        DirectionalLight { shadow_maps_enabled: true, illuminance: 1.0, ..default() },
+        CascadeShadowConfigBuilder {
+            num_cascades: 4,
+            first_cascade_far_bound: 20.0,
+            maximum_distance: 200.0,
+            ..default()
+        }
+        .build(),
+    ));
+    commands.spawn((
+        Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection { fov: 75f32.to_radians(), near: 0.05, ..default() }),
+        Hdr,
+        Msaa::Off,
+        // The depth prepass lets the GPU skip meshes hidden behind terrain drawn last frame.
+        DepthPrepass,
+        OcclusionCulling,
+        ShadowFilteringMethod::Gaussian,
+        Tonemapping::TonyMcMapface,
+        Bloom { intensity: 0.1, ..Bloom::NATURAL },
+        AmbientLight { brightness: 1.0, ..default() },
+        DistanceFog::default(),
+        Transform::from_xyz(0.0, 100.0, 0.0),
     ));
 }
 
-/// A square texture array with an optional box-filtered mip chain.
+/// A square texture array with an optional mip chain.
 fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode) -> Image {
     let size = layers[0].width;
     let levels = if mipmaps { size.trailing_zeros() + 1 } else { 1 };
     let mut data = Vec::new();
     for layer in layers {
+        let coverage = alpha_coverage(&layer.pixels);
         let mut level = layer.pixels.clone();
         let mut level_size = size;
         data.extend_from_slice(&level);
         for _ in 1..levels {
             level = downsample(&level, level_size);
             level_size /= 2;
+            if coverage < 1.0 {
+                preserve_coverage(&mut level, coverage);
+            }
             data.extend_from_slice(&level);
         }
     }
@@ -232,6 +271,33 @@ fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode) -> Ima
         ..default()
     });
     image
+}
+
+/// Fraction of texels that pass the 0.5 alpha test.
+fn alpha_coverage(pixels: &[u8]) -> f32 {
+    let texels = pixels.len() / 4;
+    pixels.iter().skip(3).step_by(4).filter(|&&a| a >= 128).count() as f32 / texels as f32
+}
+
+/// Scales a mip level's alpha so the same fraction of texels passes the alpha test as in
+/// the full-size texture. Without this, leaves thin out and vanish with distance.
+fn preserve_coverage(pixels: &mut [u8], coverage: f32) {
+    let (mut low, mut high) = (0.0f32, 8.0f32);
+    let scaled = |scale: f32, pixels: &[u8]| {
+        let texels = pixels.len() / 4;
+        pixels.iter().skip(3).step_by(4).filter(|&&a| a as f32 * scale >= 128.0).count() as f32 / texels as f32
+    };
+    for _ in 0..12 {
+        let mid = (low + high) / 2.0;
+        if scaled(mid, pixels) < coverage {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    for alpha in pixels.iter_mut().skip(3).step_by(4) {
+        *alpha = (*alpha as f32 * high).min(255.0) as u8;
+    }
 }
 
 /// Halves an RGBA8 square, averaging colour weighted by alpha so cut-out edges do not
@@ -273,74 +339,103 @@ pub fn ui_image(texture: &Rgba) -> Image {
     image
 }
 
-/// Uploads one mesh pass of a chunk. Uses 16-bit indices whenever they fit.
-pub fn build_mesh(buffers: &MeshBuffers) -> Mesh {
+/// Builds one mesh pass of a chunk. Uses 16-bit indices whenever they fit. Runs on worker
+/// threads.
+pub fn build_mesh(buffers: MeshBuffers) -> Mesh {
     let indices = if buffers.vertices.len() <= u16::MAX as usize + 1 {
         Indices::U16(buffers.indices.iter().map(|&i| i as u16).collect())
     } else {
-        Indices::U32(buffers.indices.clone())
+        Indices::U32(buffers.indices)
     };
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL, VertexAttributeValues::Uint32x2(buffers.vertices.clone()))
+        .with_inserted_attribute(ATTRIBUTE_VOXEL, VertexAttributeValues::Uint32x2(buffers.vertices))
         .with_inserted_indices(indices)
 }
 
-/// Advances time of day and pushes sun, sky and fog parameters to the materials.
+/// Sun position, light colours and sky colours for a time of day (0..1, 0 = sunrise).
+struct Environment {
+    to_sun: Vec3,
+    daylight: f32,
+    light_direction: Vec3,
+    light_color: Vec3,
+    ambient: Vec3,
+    zenith: Vec3,
+    horizon: Vec3,
+}
+
+impl Environment {
+    fn at(day_fraction: f32) -> Self {
+        // The sun crosses the sky along a slightly tilted arc.
+        let angle = day_fraction * std::f32::consts::TAU;
+        let to_sun = Vec3::new(angle.cos(), angle.sin(), 0.25).normalize();
+        let daylight = smoothstep(-0.12, 0.2, to_sun.y);
+        let dusk = (1.0 - (to_sun.y.abs() * 4.0).min(1.0)) * smoothstep(-0.25, 0.0, to_sun.y);
+
+        // One shadow-casting light: the sun by day, the moon (opposite it) by night. Both
+        // fade to zero at the horizon, so swapping between them is invisible.
+        let (light_direction, light_color) = if to_sun.y > 0.0 {
+            let warm = Vec3::new(1.0, 0.62, 0.35).lerp(Vec3::new(1.0, 0.93, 0.82), smoothstep(0.0, 0.35, to_sun.y));
+            (to_sun, warm * 1.7 * smoothstep(0.0, 0.12, to_sun.y))
+        } else {
+            (-to_sun, Vec3::new(0.30, 0.38, 0.6) * 0.35 * smoothstep(0.0, 0.12, -to_sun.y))
+        };
+
+        let zenith = Vec3::new(0.004, 0.006, 0.02).lerp(Vec3::new(0.22, 0.45, 0.95), daylight);
+        let horizon = Vec3::new(0.02, 0.03, 0.06)
+            .lerp(Vec3::new(0.62, 0.78, 0.98), daylight)
+            .lerp(Vec3::new(1.0, 0.48, 0.22), dusk * 0.55);
+        let ambient = Vec3::new(0.035, 0.045, 0.085).lerp(Vec3::new(0.36, 0.44, 0.62), daylight).lerp(Vec3::new(0.6, 0.45, 0.4), dusk * 0.3);
+        Self { to_sun, daylight, light_direction, light_color, ambient, zenith, horizon }
+    }
+}
+
+/// Advances time of day and moves the sun, light colours, fog and sky to match.
 #[allow(clippy::too_many_arguments)]
 fn update_environment(
     time: Res<Time>,
     mut cycle: ResMut<DayCycle>,
     handles: Option<Res<VoxelMaterials>>,
-    mut voxel_materials: ResMut<Assets<VoxelMaterial>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
-    camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut dome: Query<&mut Transform, With<SkyDome>>,
+    mut camera: Query<(&GlobalTransform, &mut AmbientLight, &mut DistanceFog), With<Camera3d>>,
+    mut sun: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>)>,
     mut clear: ResMut<ClearColor>,
-    mut last: Local<VoxelParams>,
 ) {
     let Some(handles) = handles else { return };
-    if let (Ok(camera), Ok(mut dome)) = (camera.single(), dome.single_mut()) {
+    let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
+    cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
+    let env = Environment::at((cycle.ticks / TICKS_PER_DAY as f64).fract() as f32);
+
+    if let Ok((mut transform, mut light)) = sun.single_mut() {
+        *transform = Transform::default().looking_to(-env.light_direction, Vec3::Y);
+        light.color = Color::linear_rgb(env.light_color.x, env.light_color.y, env.light_color.z);
+    }
+    if let Ok(mut dome) = dome.single_mut() {
         dome.translation = camera.translation();
     }
-    cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
-    let day_fraction = (cycle.ticks / TICKS_PER_DAY as f64).fract() as f32;
 
-    // Tick 0 is sunrise; the sun crosses the sky along a slightly tilted arc.
-    let angle = day_fraction * std::f32::consts::TAU;
-    let sun = Vec3::new(angle.cos(), angle.sin(), 0.25).normalize();
-    let daylight = smoothstep(-0.12, 0.2, sun.y);
-    let dusk = (1.0 - (sun.y.abs() * 4.0).min(1.0)) * smoothstep(-0.25, 0.0, sun.y);
-
-    let day_zenith = Vec3::new(0.25, 0.48, 0.95);
-    let day_horizon = Vec3::new(0.66, 0.80, 0.98);
-    let night_zenith = Vec3::new(0.004, 0.006, 0.02);
-    let night_horizon = Vec3::new(0.02, 0.03, 0.06);
-    let sunset = Vec3::new(1.0, 0.45, 0.2);
-    let zenith = night_zenith.lerp(day_zenith, daylight);
-    let mut horizon = night_horizon.lerp(day_horizon, daylight).lerp(sunset, dusk * 0.6);
-    if cycle.underwater {
-        horizon = Vec3::new(0.05, 0.15, 0.35) * (0.2 + 0.8 * daylight);
-    }
-
-    clear.0 = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
-    let params = VoxelParams {
-        sun: sun.extend(daylight),
-        fog_color: horizon.extend(1.0),
-        fog: Vec4::new(cycle.view_distance * 0.7, cycle.view_distance, 0.0, cycle.underwater as u32 as f32),
+    let mut horizon = env.horizon;
+    let (fog_start, fog_end) = if cycle.underwater {
+        horizon = Vec3::new(0.04, 0.13, 0.32) * (0.2 + 0.8 * env.daylight);
+        (0.0, 40.0)
+    } else {
+        (cycle.view_distance * 0.6, cycle.view_distance)
     };
-    // Changing a material makes the renderer re-prepare it, so only push visible changes.
-    let same = |a: Vec4, b: Vec4| a.abs_diff_eq(b, 2e-3);
-    if [(params.sun, last.sun), (params.fog_color, last.fog_color), (params.fog, last.fog)].iter().all(|&(a, b)| same(a, b)) {
-        return;
-    }
-    *last = params;
-    for handle in [&handles.opaque, &handles.translucent] {
-        if let Some(mut material) = voxel_materials.get_mut(handle) {
-            material.params = params;
-        }
-    }
+    let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
+    clear.0 = horizon_color;
+    ambient.color = Color::linear_rgb(env.ambient.x, env.ambient.y, env.ambient.z);
+    fog.color = horizon_color;
+    fog.directional_light_color = Color::NONE;
+    fog.falloff = FogFalloff::Linear { start: fog_start, end: fog_end };
+
+    // The sky dome is the only entity using its material, so updating it is cheap.
     if let Some(mut sky) = sky_materials.get_mut(&handles.sky) {
-        sky.params = SkyParams { zenith: zenith.extend(1.0), horizon: horizon.extend(1.0), sun: sun.extend(daylight) };
+        sky.params = SkyParams {
+            zenith: env.zenith.extend(1.0),
+            horizon: horizon.extend(1.0),
+            sun: env.to_sun.extend(env.daylight),
+            clouds: Vec4::new((cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0, 0.45, 0.0, 0.0),
+        };
     }
 }
 

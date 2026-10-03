@@ -2,9 +2,9 @@
 //!
 //! `voxmar` starts singleplayer with an integrated server. Options:
 //! `--connect HOST:PORT` join a server, `--host` also open singleplayer to the network,
-//! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--vsync`,
-//! `--capture PATH` (screenshot and exit once loaded), `--pose x,y,z,yaw,pitch` (camera for
-//! `--capture`).
+//! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--no-vsync`,
+//! `--capture PATH` (screenshot and exit once loaded), with `--pose dx,dy,dz,yaw,pitch` (camera offset from the player)
+//! or `--flight SECONDS` (fly forward first and report frame pacing).
 
 mod capture;
 mod hud;
@@ -18,12 +18,9 @@ mod world;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
-use bevy::post_process::bloom::Bloom;
-use bevy::prelude::*;
-use bevy::camera::Hdr;
 use bevy::app::ScheduleRunnerPlugin;
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::prelude::*;
 use bevy::window::{ExitCondition, PresentMode};
 use voxmar_engine::block::{BlockRegistry, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, Face};
@@ -44,6 +41,7 @@ struct Options {
     vsync: bool,
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
+    flight: Option<f32>,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -53,9 +51,10 @@ fn parse_options() -> Result<Options, String> {
         seed: ServerConfig::default().seed,
         name: std::env::var("USER").unwrap_or_else(|_| "player".into()),
         view_distance: 16,
-        vsync: false,
+        vsync: true,
         capture: None,
         pose: None,
+        flight: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -66,8 +65,9 @@ fn parse_options() -> Result<Options, String> {
             "--seed" => options.seed = value()?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--name" => options.name = value()?,
             "--view-distance" => options.view_distance = value()?.parse().map_err(|e| format!("--view-distance: {e}"))?,
-            "--vsync" => options.vsync = true,
+            "--no-vsync" => options.vsync = false,
             "--capture" => options.capture = Some(value()?.into()),
+            "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
             "--pose" => {
                 let parts: Vec<f32> = value()?.split(',').map(str::parse).collect::<Result<_, _>>().map_err(|e| format!("--pose: {e}"))?;
                 options.pose = Some(parts.try_into().map_err(|_| "--pose needs x,y,z,yaw,pitch")?);
@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
     if let Some(path) = options.capture {
-        app.add_plugins(capture::CapturePlugin { path, pose: options.pose });
+        app.add_plugins(capture::CapturePlugin { path, pose: options.pose, flight: options.flight });
     }
     app.run();
     Ok(())
@@ -187,15 +187,6 @@ fn setup(
         heart_half: sprite("heart/half", (9, 9), [150, 20, 20, 255]),
         heart_container: sprite("heart/container", (9, 9), [40, 0, 0, 255]),
     });
-
-    commands.spawn((
-        Camera3d::default(),
-        Projection::Perspective(PerspectiveProjection { fov: 75f32.to_radians(), near: 0.05, ..default() }),
-        Hdr,
-        Tonemapping::AcesFitted,
-        Bloom { intensity: 0.08, ..Bloom::NATURAL },
-        Transform::from_xyz(0.0, 100.0, 0.0),
-    ));
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {
