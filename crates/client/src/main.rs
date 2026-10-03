@@ -95,9 +95,13 @@ fn parse_options() -> Result<Options, String> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = parse_options()?;
     // Leave a core for the main and render threads; worldgen, lighting and meshing share
-    // the rest.
+    // the rest, at a lower priority so bursts of streaming never delay a frame.
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(2).max(2));
-    rayon::ThreadPoolBuilder::new().num_threads(workers).thread_name(|i| format!("worker-{i}")).build_global()?;
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .thread_name(|i| format!("worker-{i}"))
+        .start_handler(|_| lower_thread_priority())
+        .build_global()?;
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
@@ -155,6 +159,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     app.run();
     Ok(())
+}
+
+/// Lowers the calling thread's scheduling priority below the game's frame threads.
+fn lower_thread_priority() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
+        }
+        const QOS_CLASS_UTILITY: u32 = 0x11;
+        // SAFETY: only changes the scheduling class of the current thread.
+        unsafe { pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0) };
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn nice(increment: i32) -> i32;
+        }
+        // SAFETY: on Linux `nice` affects only the calling thread.
+        unsafe { nice(5) };
+    }
 }
 
 #[derive(Resource)]

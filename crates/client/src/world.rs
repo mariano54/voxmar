@@ -73,8 +73,9 @@ impl ChunkResult {
 
 const TRANSLUCENT: usize = TerrainPass::Translucent as usize;
 
-/// Quads handed to the renderer per frame, so streaming never causes a long frame.
-const UPLOAD_BUDGET: usize = 250_000;
+/// Quads handed to the renderer per frame (about 3 MB of vertex and index data), so
+/// streaming and edits never cause a long frame.
+const UPLOAD_BUDGET: usize = 64_000;
 
 #[derive(Resource)]
 pub struct ClientWorld {
