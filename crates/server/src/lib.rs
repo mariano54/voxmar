@@ -216,7 +216,7 @@ impl Server {
         let climate = overworld.clone();
         let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let climate = overworld.clone();
-        let weather = WeatherFields::new(move |x, z| climate.site(x, z).moisture);
+        let weather = WeatherFields::new(move |x, z| climate.site(x, z).precipitation);
         let processes = process::core_processes(meta.seed, overworld.dials().wind.into());
         let generator: Arc<dyn Generator> = overworld;
         // Load the spawn column up front and stand on its highest solid block, so

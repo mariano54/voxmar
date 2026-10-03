@@ -52,12 +52,11 @@ pub(crate) struct WeatherFields {
 }
 
 impl WeatherFields {
-    /// `moisture(x, z)` is the climate's precipitation over potential evaporation (about
-    /// 0.1 in deserts, 1 where they balance, 2 in rainforests); humidity's baseline, the
-    /// air's usual humidity, follows it.
-    pub fn new(moisture: impl Fn(i32, i32) -> f32 + Send + Sync + 'static) -> Self {
+    /// `rainfall(x, z)` is the climate's annual precipitation in mm; humidity's baseline,
+    /// the air's usual humidity, follows it, so wet climates rain often and dry ones rarely.
+    pub fn new(rainfall: impl Fn(i32, i32) -> f32 + Send + Sync + 'static) -> Self {
         Self {
-            humidity: Field::with_cell_size("core:humidity", CELL, move |x, z| usual_humidity(moisture(x, z))),
+            humidity: Field::with_cell_size("core:humidity", CELL, move |x, z| usual_humidity(rainfall(x, z))),
             clouds: Field::with_cell_size("core:clouds", CELL, |_, _| 0.0),
             precipitation: Field::with_cell_size("core:precipitation", CELL, |_, _| 0.0),
         }
@@ -293,9 +292,9 @@ impl Weather {
     }
 }
 
-/// The air's usual relative humidity for a climate's moisture index.
-fn usual_humidity(moisture: f32) -> f32 {
-    moisture.max(0.0) / (moisture.max(0.0) + 0.8)
+/// The air's usual relative humidity where `rainfall` mm of rain or snow fall a year.
+fn usual_humidity(rainfall: f32) -> f32 {
+    rainfall.max(0.0) / (rainfall.max(0.0) + 1200.0)
 }
 
 /// How warm a mean temperature is for the weather, 0 (−10 °C and colder) to 1 (30 °C and
@@ -333,15 +332,15 @@ mod tests {
 
     const SECOND: u64 = TICKS_PER_SECOND as u64;
 
-    fn setup(moisture: f32, celsius: f32) -> (WeatherFields, Field) {
-        (WeatherFields::new(move |_, _| moisture), Field::new("core:temperature", move |_, _| celsius))
+    fn setup(rainfall: f32, celsius: f32) -> (WeatherFields, Field) {
+        (WeatherFields::new(move |_, _| rainfall), Field::new("core:temperature", move |_, _| celsius))
     }
 
     /// Runs the process for a player walking east from `from`, returning what they were
     /// told each second.
-    fn walk(seed: u64, moisture: f32, celsius: f32, from: Vec2, seconds: u64) -> Vec<LocalWeather> {
+    fn walk(seed: u64, rainfall: f32, celsius: f32, from: Vec2, seconds: u64) -> Vec<LocalWeather> {
         let mut weather = Weather::new(seed, Vec2::new(0.6, 0.8));
-        let (mut fields, mut temperature) = setup(moisture, celsius);
+        let (mut fields, mut temperature) = setup(rainfall, celsius);
         (0..seconds)
             .map(|s| {
                 let at = from + Vec2::X * 4.3 * s as f32;
@@ -355,14 +354,14 @@ mod tests {
     #[test]
     fn deterministic_per_seed() {
         let from = Vec2::new(-300.0, 1234.0);
-        assert_eq!(walk(7, 1.4, 15.0, from, 600), walk(7, 1.4, 15.0, from, 600));
-        assert_ne!(walk(7, 1.4, 15.0, from, 600), walk(8, 1.4, 15.0, from, 600));
+        assert_eq!(walk(7, 1500.0, 15.0, from, 600), walk(7, 1500.0, 15.0, from, 600));
+        assert_ne!(walk(7, 1500.0, 15.0, from, 600), walk(8, 1500.0, 15.0, from, 600));
     }
 
     #[test]
     fn values_stay_in_bounds() {
-        for (moisture, celsius) in [(0.0, -30.0), (3.0, 40.0), (3.0, -30.0), (0.0, 40.0), (1.0, 10.0)] {
-            for weather in walk(3, moisture, celsius, Vec2::new(5000.0, -5000.0), 1800) {
+        for (rainfall, celsius) in [(0.0, -30.0), (6000.0, 40.0), (6000.0, -30.0), (0.0, 40.0), (900.0, 10.0)] {
+            for weather in walk(3, rainfall, celsius, Vec2::new(5000.0, -5000.0), 1800) {
                 let values = [weather.cover, weather.convection, weather.cirrus, weather.humidity, weather.precipitation, weather.snow];
                 assert!(values.iter().all(|v| (0.0..=1.0).contains(v)), "{weather:?}");
                 assert!(weather.wind.is_finite() && weather.wind.length() < 20.0, "{weather:?}");
@@ -372,14 +371,14 @@ mod tests {
 
     #[test]
     fn snow_only_where_freezing() {
-        assert!(walk(1, 1.0, -8.0, Vec2::ZERO, 10).iter().all(|w| w.snow == 1.0));
-        assert!(walk(1, 1.0, 12.0, Vec2::ZERO, 10).iter().all(|w| w.snow == 0.0));
+        assert!(walk(1, 800.0, -8.0, Vec2::ZERO, 10).iter().all(|w| w.snow == 1.0));
+        assert!(walk(1, 800.0, 12.0, Vec2::ZERO, 10).iter().all(|w| w.snow == 0.0));
     }
 
     /// Fraction of two days that it rains, over several places, for a climate.
-    fn rainy_fraction(moisture: f32, celsius: f32) -> f32 {
+    fn rainy_fraction(rainfall: f32, celsius: f32) -> f32 {
         let weather = Weather::new(11, Vec2::new(-1.0, 0.0));
-        let climate = usual_humidity(moisture);
+        let climate = usual_humidity(rainfall);
         let (mut rainy, mut steps) = (0, 0);
         for place in 0..6 {
             let at = IVec2::new(place * 20_000, place * -13_000);
@@ -395,11 +394,11 @@ mod tests {
 
     #[test]
     fn rain_follows_the_climate() {
-        let desert = rainy_fraction(0.1, 28.0);
-        let temperate = rainy_fraction(1.0, 12.0);
-        let rainforest = rainy_fraction(2.0, 26.0);
+        let desert = rainy_fraction(150.0, 28.0);
+        let temperate = rainy_fraction(900.0, 12.0);
+        let rainforest = rainy_fraction(3000.0, 26.0);
         assert!(desert < 0.01, "desert rains {desert}");
-        assert!((0.05..0.35).contains(&temperate), "temperate rains {temperate}");
+        assert!((0.03..0.25).contains(&temperate), "temperate rains {temperate}");
         assert!(rainforest > 0.25, "rainforest rains {rainforest}");
     }
 
@@ -407,7 +406,7 @@ mod tests {
     fn weather_does_not_depend_on_when_players_arrived() {
         let wind = Vec2::new(0.0, 1.0);
         let mut weather = Weather::new(5, wind);
-        let (mut fields, mut temperature) = setup(1.5, 20.0);
+        let (mut fields, mut temperature) = setup(2000.0, 20.0);
         let (here, elsewhere) = (IVec2::new(100, 100), IVec2::new(90_000, 0));
         let start = 80_000;
         for s in 0..1200 {
@@ -416,7 +415,7 @@ mod tests {
         let stayed = weather.local(&mut fields, &mut temperature, here.as_vec2(), start + 1199 * SECOND);
 
         let mut weather = Weather::new(5, wind);
-        let (mut fields, mut temperature) = setup(1.5, 20.0);
+        let (mut fields, mut temperature) = setup(2000.0, 20.0);
         weather.update(&mut fields, &mut temperature, &[elsewhere], start + 1198 * SECOND);
         weather.update(&mut fields, &mut temperature, &[here], start + 1199 * SECOND);
         let arrived = weather.local(&mut fields, &mut temperature, here.as_vec2(), start + 1199 * SECOND);

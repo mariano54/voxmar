@@ -17,7 +17,7 @@ use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, VertexFormat,
 };
 use bevy::shader::ShaderRef;
-use voxmar_engine::block::BlockId;
+use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
 use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS, ColumnPos, local_index};
 
 use crate::weather::ClientWeather;
@@ -164,13 +164,14 @@ impl SkyMap {
             for cx in low.0.x..=high.0.x {
                 let pos = ColumnPos::new(cx, cz);
                 let column = world.voxels.column(pos);
+                let registry = &world.registry;
                 let origin = pos.origin().xz();
                 let from = (origin - self.origin).max(IVec2::ZERO);
                 let to = (origin + CHUNK_SIZE - self.origin).min(IVec2::splat(MAP));
                 for z in from.y..to.y {
                     for x in from.x..to.x {
                         let local = self.origin + IVec2::new(x, z) - origin;
-                        self.heights[(z * MAP + x) as usize] = column.map_or(0, |c| top(c, local));
+                        self.heights[(z * MAP + x) as usize] = column.map_or(0, |c| top(c, registry, local));
                     }
                 }
             }
@@ -183,17 +184,19 @@ impl SkyMap {
     }
 }
 
-/// Top of the highest non-air block in a column of blocks, plus one; 0 if there is none.
-fn top(column: &voxmar_engine::world::Column, local: IVec2) -> u8 {
+/// Top of the highest block in a column that rain lands on, plus one; 0 if there is none.
+/// Rain falls through plants onto the ground they grow from.
+fn top(column: &voxmar_engine::world::Column, registry: &BlockRegistry, local: IVec2) -> u8 {
+    let catches_rain = |block: BlockId| !matches!(registry.info(block).render, RenderKind::Invisible | RenderKind::Plant);
     for cy in (0..COLUMN_CHUNKS).rev() {
         let chunk = &column.chunks[cy as usize];
         match chunk.as_uniform() {
-            Some(BlockId::AIR) => continue,
+            Some(block) if !catches_rain(block) => continue,
             Some(_) => return (((cy + 1) * CHUNK_SIZE).min(255)) as u8,
             None => {}
         }
         for y in (0..CHUNK_SIZE).rev() {
-            if !chunk.get(local_index(IVec3::new(local.x, y, local.y))).is_air() {
+            if catches_rain(chunk.get(local_index(IVec3::new(local.x, y, local.y)))) {
                 return ((cy * CHUNK_SIZE + y + 1).min(255)) as u8;
             }
         }
