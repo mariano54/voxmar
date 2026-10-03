@@ -16,7 +16,7 @@ voxmar_engine.workspace = true
 voxmar_protocol.workspace = true
 voxmar_server.workspace = true
 voxmar_worldgen.workspace = true
-bevy = { workspace = true, features = ["3d", "ui"] }
+bevy = { workspace = true, features = ["3d", "ui", "bevy_audio", "mp3"] }
 crossbeam-channel.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true

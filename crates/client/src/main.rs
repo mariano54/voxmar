@@ -2,13 +2,14 @@
 //!
 //! `voxmar` starts singleplayer with an integrated server. Options:
 //! `--connect HOST:PORT` join a server, `--host` also open singleplayer to the network,
-//! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--no-vsync`,
+//! `--seed N`, `--name NAME`, `--view-distance N` (columns), `--no-vsync`, `--no-music`,
 //! `--capture PATH` (screenshot and exit once loaded), with `--pose dx,dy,dz,yaw,pitch` (camera offset from the player)
 //! or `--flight SECONDS` (fly forward first and report frame pacing).
 
 mod capture;
 mod hud;
 mod interact;
+mod music;
 mod net;
 mod player;
 mod render;
@@ -43,6 +44,7 @@ struct Options {
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    music: bool,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -56,6 +58,7 @@ fn parse_options() -> Result<Options, String> {
         capture: None,
         pose: None,
         flight: None,
+        music: true,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -67,6 +70,7 @@ fn parse_options() -> Result<Options, String> {
             "--name" => options.name = value()?,
             "--view-distance" => options.view_distance = value()?.parse().map_err(|e| format!("--view-distance: {e}"))?,
             "--no-vsync" => options.vsync = false,
+            "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
             "--pose" => {
@@ -123,6 +127,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(options.view_distance), ..default() })
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
+    if options.music && options.capture.is_none() {
+        app.add_plugins(music::MusicPlugin);
+    }
     if let Some(path) = options.capture {
         app.add_plugins(capture::CapturePlugin { path, pose: options.pose, flight: options.flight });
     }

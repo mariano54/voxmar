@@ -332,7 +332,7 @@ fn update_debug(
          columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
          mesh jobs {} | waiting {} | distant tiles {}/{}\n\
          looking at {looking}\n\
-         F3 debug  F fly  E inventory  Esc release mouse",
+         F3 debug  F fly  E inventory  M music  Esc release mouse",
         p.x,
         p.y,
         p.z,
