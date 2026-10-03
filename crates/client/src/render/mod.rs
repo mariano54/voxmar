@@ -446,6 +446,9 @@ impl Environment {
     }
 }
 
+/// Colour of the glow around the sun in sky.wgsl, which the haze shares.
+const SUN_GLOW: Vec3 = Vec3::new(1.0, 0.8, 0.55);
+
 /// Advances time of day and moves the sun, light colours, fog and sky to match.
 #[allow(clippy::too_many_arguments)]
 fn update_environment(
@@ -476,20 +479,31 @@ fn update_environment(
     }
 
     let mut horizon = env.horizon;
+    // Haze in the shaders (see lighting.wgsl) does the gradual fading; the linear falloff
+    // only fades out the edge of the distant terrain.
     let (fog_start, fog_end) = if cycle.underwater {
         horizon = Vec3::new(0.04, 0.13, 0.32) * (0.2 + 0.8 * env.daylight);
         (0.0, 40.0)
     } else {
-        // Rain and, more so, snow close in the view; humid air hazes the middle distance.
+        // Rain and, more so, snow close in the view, and humid air brings the haze nearer.
+        // Every surface fades through these, so the weather thickens fog everywhere alike.
         let murk = (shown.precipitation * (0.7 + 0.6 * shown.snow)).min(1.0);
         let end = cycle.view_distance * (1.0 - 0.9 * murk.sqrt());
-        (end * (0.3 - 0.27 * murk) * (1.0 - 0.4 * smoothstep(0.5, 1.0, shown.humidity)), end)
+        (end * (0.6 - 0.57 * murk) * (1.0 - 0.4 * smoothstep(0.5, 1.0, shown.humidity)), end)
+    };
+    // Haze glows around the sun like the sky does, while the sun is the light, and as
+    // dully as the sky's glow under thick cloud.
+    let overcast = smoothstep(0.4, 1.0, shown.cover);
+    let glow = if cycle.underwater || env.to_sun.y <= 0.0 {
+        Vec3::ZERO
+    } else {
+        SUN_GLOW * (env.daylight * 2.0).min(1.0) * (1.0 - 0.7 * overcast)
     };
     let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
     clear.0 = horizon_color;
     ambient.color = Color::linear_rgb(env.ambient.x, env.ambient.y, env.ambient.z);
     fog.color = horizon_color;
-    fog.directional_light_color = Color::NONE;
+    fog.directional_light_color = Color::linear_rgb(glow.x, glow.y, glow.z);
     fog.falloff = FogFalloff::Linear { start: fog_start, end: fog_end };
 
     // The sky dome is the only entity using its material, so updating it is cheap.

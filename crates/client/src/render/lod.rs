@@ -6,6 +6,14 @@
 //! heightfields sampled from the generator's pure surface functions on worker threads,
 //! so they exist before the server has generated anything there. A fragment shader hides
 //! every part of a ring that finer detail already covers, so rings never overlap.
+//!
+//! The heightfield is the true ground, sea floor included, with tree crowns raised over
+//! forests. Water and ice are a separate sheet at sea level over it, so the floor shows
+//! through real translucent water at the edge of the real chunks. Vertices carry the
+//! albedo of the ground's top and side faces and of tree crowns, and how much of the
+//! ground is under crowns or small plants; the shader shades the heightfield as the
+//! staircase of blocks it stands for (see `lod.wgsl`), with the same lighting as real
+//! chunks.
 
 use std::sync::Arc;
 
@@ -36,7 +44,7 @@ const RING: i32 = 6;
 const MAX_IN_FLIGHT: usize = 12;
 const TILES_PER_FRAME: usize = 6;
 
-pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6432, VertexFormat::Uint32x3);
+pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6433, VertexFormat::Uint32x4);
 
 pub struct LodPlugin;
 
@@ -96,6 +104,8 @@ impl Material for LodMaterial {
 pub struct LodPalette {
     top: Vec<[f32; 3]>,
     side: Vec<[f32; 3]>,
+    /// Average opacity of top faces, for seeing through ice.
+    opacity: Vec<f32>,
     tints: Vec<(Tint, Tint)>,
     grass: Rgba,
     foliage: Rgba,
@@ -108,23 +118,26 @@ impl LodPalette {
             // Average in sRGB space, as the texture mipmaps do, so distant terrain has the
             // same colour as far-away real chunks.
             let (mut sum, mut weight) = ([0.0f32; 3], 0.0f32);
-            for pixel in texture.pixels.as_chunks::<4>().0 {
+            let pixels = texture.pixels.as_chunks::<4>().0;
+            for pixel in pixels {
                 let a = pixel[3] as f32 / 255.0;
                 for c in 0..3 {
                     sum[c] += pixel[c] as f32 * a;
                 }
                 weight += a;
             }
-            sum.map(|s| srgb_to_linear((s / weight.max(1e-3)).round() as u8))
+            (sum.map(|s| srgb_to_linear((s / weight.max(1e-3)).round() as u8)), weight / pixels.len().max(1) as f32)
         };
         let ids = (0..registry.len()).map(|i| registry.info(BlockId(i as u16)));
-        let (mut top, mut side, mut tints) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut top, mut side, mut opacity, mut tints) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for info in ids {
-            top.push(average(info.layers[Face::PosY as usize]));
-            side.push(average(info.layers[Face::PosX as usize]));
+            let (color, alpha) = average(info.layers[Face::PosY as usize]);
+            top.push(color);
+            opacity.push(alpha);
+            side.push(average(info.layers[Face::PosX as usize]).0);
             tints.push((info.tints[Face::PosY as usize], info.tints[Face::PosX as usize]));
         }
-        Self { top, side, tints, grass: colormaps[0].clone(), foliage: colormaps[1].clone() }
+        Self { top, side, opacity, tints, grass: colormaps[0].clone(), foliage: colormaps[1].clone() }
     }
 
     fn color(&self, block: BlockId, top: bool, climate: [u8; 2]) -> [f32; 3] {
@@ -140,6 +153,21 @@ impl LodPalette {
             }
         };
         [base[0] * tint[0], base[1] * tint[1], base[2] * tint[2]]
+    }
+
+    /// Top and side colours of a block.
+    fn faces(&self, block: BlockId, climate: [u8; 2]) -> ([f32; 3], [f32; 3]) {
+        (self.color(block, true, climate), self.color(block, false, climate))
+    }
+
+    /// Water gets ripples and reflections; other see-through blocks only their opacity.
+    fn is_water(&self, block: BlockId) -> bool {
+        self.tints[block.0 as usize].0 == Tint::Water
+    }
+
+    /// Grass grows plants: short and tall grass, ferns and flowers.
+    fn is_grassy(&self, block: BlockId) -> bool {
+        self.tints[block.0 as usize].0 == Tint::Grass
     }
 }
 
@@ -361,30 +389,46 @@ fn apply_tiles(mut commands: Commands, mut lod: ResMut<Lod>, mut meshes: ResMut<
     }
 }
 
-/// What a grid corner of a tile looks like.
+/// What the terrain looks like at a grid corner of a tile.
 #[derive(Clone, Copy)]
 struct Corner {
+    /// Top of the terrain: dry ground, the sea floor, or tree crowns over forests.
     height: f32,
-    color: [f32; 3],
-    /// 1 over water, 0 on land.
-    water: f32,
+    /// Linear albedo of the ground's top and side faces, and of tree crowns.
+    top: [f32; 3],
+    side: [f32; 3],
+    leaves: [f32; 3],
+    /// Sky light at the terrain surface, 0..=15. It fades with depth under water.
+    sky: u8,
+    /// Fraction of the ground under tree crowns.
+    canopy: f32,
+    /// Fraction of the ground with a small plant on it.
+    plants: f32,
+    /// Water or ice at sea level above the terrain.
+    sheet: Option<BlockId>,
+    climate: [u8; 2],
 }
 
-/// Linear colour multiplier standing in for the ambient occlusion and self-shadowing that
-/// real terrain gets but a smooth heightfield cannot.
-const GROUND_OCCLUSION: f32 = 0.88;
-const CANOPY_OCCLUSION: f32 = 0.62;
-/// How far crowns of a dense forest raise the canopy above the ground.
+/// Seen from afar, leaves are darker than their texture: the gaps show the shaded inside of
+/// the crown.
+const CROWN_SHADE: f32 = 0.8;
+/// How far crowns of a dense forest raise the canopy above the ground (as in `lod.wgsl`).
 const CANOPY_HEIGHT: f32 = 6.0;
+/// Fraction of open grassland with grass, ferns or flowers growing on it, about what the
+/// generator plants.
+const GRASS_PLANTS: f32 = 0.4;
 /// Depth of the walls hanging from tile edges, hiding cracks between rings.
 const SKIRT: f32 = 24.0;
+/// Water and ice sheets lie a hair below the top of real water, so dry ground at sea level
+/// stays above them.
+const SHEET_HEIGHT: f32 = (SEA_LEVEL + 1) as f32 - 1.0 / 32.0;
+/// Vertex kinds, see `lod.wgsl`.
+const TERRAIN: u32 = 0;
+const WATER: u32 = 1;
+const ICE: u32 = 2;
 
-fn light_curve(level: f32) -> f32 {
-    level / (2.5 - 1.5 * level)
-}
-
-/// Samples the generator at the tile's grid corners and builds a smooth heightfield mesh.
-/// Forests become a raised canopy, water a flat sheet coloured by what shows through it.
+/// Samples the generator at the tile's grid corners and builds a smooth heightfield mesh of
+/// the ground, plus a flat sheet over cells with water or ice.
 fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Option<Mesh> {
     let _span = info_span!("lod_tile").entered();
     let cell = key.cell();
@@ -403,56 +447,55 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
         for x in -1..=CELLS + 1 {
             let (wx, wz) = (origin.x + x * cell, origin.y + z * cell);
             let h = height(x, z);
+            // Steepness per block, rounded like the whole steps between real columns.
             let slope = if (0..=CELLS).contains(&x) && (0..=CELLS).contains(&z) {
-                [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|(dx, dz)| (height(x + dx, z + dz) - h).abs()).max().unwrap_or(0) / cell
+                let rise = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|(dx, dz)| (height(x + dx, z + dz) - h).abs()).max().unwrap_or(0);
+                (rise + cell / 2) / cell
             } else {
                 0
             };
             let surface = sampler.surface(wx, wz, h, slope);
-            let corner = if let Some(water) = surface.water {
-                // Looking through translucent water: the floor, dimmed by depth as sky light
-                // fades through water, under the water's own colour.
-                let depth = (SEA_LEVEL - h) as f32;
-                let floor_light = light_curve(((15.0 - 2.0 * depth) / 15.0).max(0.0));
-                let floor = palette.color(surface.ground, true, surface.climate);
-                let water = palette.color(water, true, surface.climate);
-                Corner {
-                    height: SEA_LEVEL as f32 + 1.0,
-                    color: std::array::from_fn(|i| water[i] * 0.72 + floor[i] * floor_light * 0.28),
-                    water: 1.0,
-                }
-            } else {
-                let ground = palette.color(surface.ground, true, surface.climate).map(|c| c * GROUND_OCCLUSION);
-                let (leaves, cover) = surface.canopy.unwrap_or((surface.ground, 0.0));
-                let crown = palette.color(leaves, true, surface.climate).map(|c| c * CANOPY_OCCLUSION);
-                Corner {
-                    height: h as f32 + 1.0 + CANOPY_HEIGHT * cover,
-                    color: std::array::from_fn(|i| ground[i] + (crown[i] - ground[i]) * cover),
-                    water: 0.0,
-                }
-            };
-            corners.push(corner);
+            let (top, side) = palette.faces(surface.ground, surface.climate);
+            let (leaves, cover) = surface.canopy.unwrap_or((surface.ground, 0.0));
+            corners.push(Corner {
+                height: h as f32 + 1.0 + CANOPY_HEIGHT * cover,
+                top,
+                side,
+                leaves: palette.color(leaves, true, surface.climate).map(|c| c * CROWN_SHADE),
+                // Sky light fades by two levels per block of water or ice.
+                sky: (15 - 2 * (SEA_LEVEL - h).max(0)).max(0) as u8,
+                canopy: cover,
+                plants: if palette.is_grassy(surface.ground) { GRASS_PLANTS * (1.0 - cover) } else { 0.0 },
+                sheet: surface.water,
+                climate: surface.climate,
+            });
         }
     }
     let corner = |x: i32, z: i32| corners[((z + 1) * W + x + 1) as usize];
 
     let pack_color = |c: [f32; 3]| linear_to_srgb_byte(c[0]) | linear_to_srgb_byte(c[1]) << 8 | linear_to_srgb_byte(c[2]) << 16;
-    let mut vertices: Vec<[u32; 3]> = Vec::with_capacity(((CELLS + 1) * (CELLS + 1) + 4 * (CELLS + 1)) as usize);
-    let vertex = |x: i32, z: i32, height: f32, normal: Vec3, c: Corner| {
-        let y = (height * 2.0).round().clamp(0.0, 1023.0) as u32;
+    let pack_rgb565 = |c: [f32; 3]| linear_to_srgb_byte(c[0]) >> 3 | (linear_to_srgb_byte(c[1]) >> 2) << 5 | (linear_to_srgb_byte(c[2]) >> 3) << 11;
+    let pack_position = |x: i32, z: i32, height: f32, sky: u8, kind: u32| {
+        let y = (height * 32.0).round().clamp(0.0, 16383.0) as u32;
+        x as u32 | (z as u32) << 6 | y << 12 | (sky as u32) << 26 | kind << 30
+    };
+    let terrain_vertex = |x: i32, z: i32, height: f32, normal: Vec3, c: Corner| {
         [
-            x as u32 | (z as u32) << 6 | y << 12,
-            pack_color(c.color) | ((c.water * 255.0) as u32) << 24,
-            encode_normal(normal),
+            pack_position(x, z, height, c.sky, TERRAIN),
+            pack_color(c.top) | ((c.canopy * 255.0) as u32) << 24,
+            encode_normal(normal) | pack_rgb565(c.leaves) << 16,
+            pack_color(c.side) | ((c.plants * 255.0) as u32) << 24,
         ]
     };
+    let mut vertices: Vec<[u32; 4]> = Vec::with_capacity(((CELLS + 1) * (CELLS + 1) + 4 * (CELLS + 1)) as usize);
     for z in 0..=CELLS {
         for x in 0..=CELLS {
+            // The ground's normal, which shades its steps; crowns are shaded on their own.
             let c = corner(x, z);
-            let dx = corner(x + 1, z).height - corner(x - 1, z).height;
-            let dz = corner(x, z + 1).height - corner(x, z - 1).height;
-            let normal = Vec3::new(-dx, 2.0 * cell as f32, -dz).normalize();
-            vertices.push(vertex(x, z, c.height, normal, c));
+            let dx = height(x + 1, z) - height(x - 1, z);
+            let dz = height(x, z + 1) - height(x, z - 1);
+            let normal = Vec3::new(-dx as f32, 2.0 * cell as f32, -dz as f32).normalize();
+            vertices.push(terrain_vertex(x, z, c.height, normal, c));
         }
     }
     let index = |x: i32, z: i32| (z * (CELLS + 1) + x) as u32;
@@ -463,13 +506,14 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
             indices.extend([a, d, c, a, c, b]);
         }
     }
-    // Skirts: each border edge gets a wall hanging down, facing outwards.
+    // Skirts: each border edge gets a wall hanging down, facing outwards, which closes the
+    // crack to whatever lies beyond the edge, on the side nearer the camera.
     // (start corner, step along the edge, outward normal, winding flipped)
     let borders = [
-        ((0, 0), (1, 0), Vec3::NEG_Z, false),
-        ((0, CELLS), (1, 0), Vec3::Z, true),
-        ((0, 0), (0, 1), Vec3::NEG_X, true),
-        ((CELLS, 0), (0, 1), Vec3::X, false),
+        ((0, 0), (1, 0), Vec3::NEG_Z, true),
+        ((0, CELLS), (1, 0), Vec3::Z, false),
+        ((0, 0), (0, 1), Vec3::NEG_X, false),
+        ((CELLS, 0), (0, 1), Vec3::X, true),
     ];
     for ((sx, sz), (dx, dz), outward, flip) in borders {
         let edge = |i: i32| (sx + dx * i, sz + dz * i);
@@ -477,7 +521,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
         for i in 0..=CELLS {
             let (x, z) = edge(i);
             let c = corner(x, z);
-            vertices.push(vertex(x, z, c.height - SKIRT, outward, c));
+            vertices.push(terrain_vertex(x, z, c.height - SKIRT, outward, c));
         }
         for i in 0..CELLS {
             let (x0, z0) = edge(i);
@@ -491,6 +535,34 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
         }
     }
 
+    // The sheet covers every cell with water or ice at a corner; dry ground pokes through
+    // it along the shore. Its vertices carry the floor beneath as their side colour.
+    let mut sheet = vec![u32::MAX; ((CELLS + 1) * (CELLS + 1)) as usize];
+    for z in 0..CELLS {
+        for x in 0..CELLS {
+            let cell_corners = [(x, z), (x + 1, z), (x + 1, z + 1), (x, z + 1)];
+            let Some(block) = cell_corners.iter().find_map(|&(x, z)| corner(x, z).sheet) else { continue };
+            for (x, z) in cell_corners {
+                let slot = &mut sheet[index(x, z) as usize];
+                if *slot == u32::MAX {
+                    *slot = vertices.len() as u32;
+                    let c = corner(x, z);
+                    let block = c.sheet.unwrap_or(block);
+                    let (kind, opacity) =
+                        if palette.is_water(block) { (WATER, 1.0) } else { (ICE, palette.opacity[block.0 as usize]) };
+                    vertices.push([
+                        pack_position(x, z, SHEET_HEIGHT, c.sky, kind),
+                        pack_color(palette.color(block, true, c.climate)) | ((opacity * 255.0) as u32) << 24,
+                        encode_normal(Vec3::Y),
+                        pack_color(c.top),
+                    ]);
+                }
+            }
+            let [a, b, c, d] = cell_corners.map(|(x, z)| sheet[index(x, z) as usize]);
+            indices.extend([a, d, c, a, c, b]);
+        }
+    }
+
     let indices = if vertices.len() <= u16::MAX as usize + 1 {
         Indices::U16(indices.into_iter().map(|i| i as u16).collect())
     } else {
@@ -498,7 +570,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Opti
     };
     Some(
         Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-            .with_inserted_attribute(ATTRIBUTE_LOD, VertexAttributeValues::Uint32x3(vertices))
+            .with_inserted_attribute(ATTRIBUTE_LOD, VertexAttributeValues::Uint32x4(vertices))
             .with_inserted_indices(indices),
     )
 }

@@ -173,8 +173,11 @@ every cue to `target/sfx_preview.wav`.
 - Pixel-art texture array with alpha-weighted mipmaps; climate tints from colormaps in the shader.
 - Plants (grass, flowers) are two crossed, double-sided quads that sway from their base.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
-  distance fog, HDR with bloom. The sun, moon, stars and planets are measured in pixels, so
-  they stay round at any field of view.
+  aerial perspective (haze that thins with height and glows around the sun), HDR with bloom.
+  The sun, moon, stars and planets are measured in pixels, so they stay round at any field
+  of view.
+- Distant terrain to ~6.6 km: smooth heightfield rings from the generator's surface
+  functions, shaded as the block staircase they stand for (see docs/rendering.md).
 
 Measured on an M5 Max at 1920×1080, view distance 16 (1089 columns, ~4.7M quads loaded):
 ~540 fps at ground level, ~360 fps looking over the landscape from above. Column generation is

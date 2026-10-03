@@ -39,6 +39,57 @@ meshes, 3–4 million quads), plus distant terrain rings out to ~6.6 km.
    cuts quads by 2–3×.
 3. **Larger real view distance**, once 1 and 2 are in.
 
+## Distant terrain, and what Distant Horizons does
+
+Distant Horizons (DH), read from its source (`distant-horizons-core`, 2025):
+
+- **Data.** Columns of vertical runs (block, biome, top and bottom y, sky and block light),
+  in a quadtree where each detail level doubles the column width. Data comes from chunks
+  the game has generated, or from running the generator's early stages far away.
+- **Geometry.** Always boxes: top, bottom and side faces per run, with faces between
+  neighbouring columns culled, at every level. Silhouettes stay blocky.
+- **Colour.** One colour per block: its texture's average times the biome tint. An
+  optional noise texture varies brightness per block so flat colour reads less like
+  plastic; recent versions can also texture faces from an atlas.
+- **Lighting.** Each vertex carries sky and block light and looks it up in Minecraft's own
+  light map, and vanilla's per-face shade is baked into the colour, so day, night and
+  dusk match the real terrain by construction. Ambient occlusion is a screen-space pass
+  over the LOD depth buffer.
+- **Seam.** LODs nearer than the vanilla render distance are discarded (optionally
+  dithered), and a fade pass blends the far edge of the vanilla chunks into the LOD image
+  by distance.
+- **Fog.** Its own pass over LOD depth: distance fog plus height fog, coloured like the
+  game's fog. Shader packs (Iris) get separate `dh_terrain`, `dh_water` and `dh_shadow`
+  programs and DH's depth buffers, and apply the same lighting, water and fog to LODs as
+  to terrain; that is what makes DH look seamless with shaders.
+
+What voxmar takes from it, and where it differs (`render/lod.rs`, `render/lod.wgsl`):
+
+- Distant terrain uses the real terrain's lighting inputs: the shared `shade_normal`, the
+  same face shade table, sky light that fades under water two levels per block. Colours
+  are texture averages times climate tint, as before.
+- Tiles stay smooth heightfields rather than boxes: a quarter of the triangles of
+  4-block columns, no cracks, and 4-block columns would be a coarser staircase than the
+  real one beside them anyway. Instead the shader renders what the one-block staircase
+  would show from the eye: treads, risers in the side colour, ambient occlusion in inner
+  corners, grass plants in front of the steps on grassland, crowns over forests (tops and
+  sides, hiding the ground at low angles). Near the real chunks the risers resolve into
+  the same contour lines real terrain shows; further out they average out. This is
+  analytic, so it does not shimmer, and it costs no geometry.
+- Water and ice are a sheet over the true sea floor, shaded like real water: same
+  ripples near the real chunks fading into their average (a broader glint, fresnel facing
+  the eye by the ripples' slope variance), sky reflection, the floor dimmed by depth.
+- No fade pass is needed: tiles come from the same generator functions as the chunks,
+  and finer detail hides coarser detail exactly in the fragment shader. Skirts face
+  outwards and sunk terrain fills the first cell under finer detail, so edges never crack.
+- Fog is one aerial perspective function for chunks, tiles and the sky's horizon:
+  exponential haze densest at sea level and thinning with height, glowing around the sun
+  like the sky, plus a fade over the last 40% of the distant terrain.
+
+Measured with the same poses at view distance 8 and 16, so the band 256–512 blocks is
+real terrain in one capture and distant terrain in the other: the mean colour difference
+over eight regions fell from 10–17 to 4–6 levels per channel (of 255).
+
 ## Keeping room for what comes next
 
 - **Non-cube blocks** (slabs, stairs, fences, plants, torches): a second block-model path in
