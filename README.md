@@ -81,18 +81,17 @@ lines with the arguments filled in (`$1`, `$*`), which is how a package adds its
 is `time set day`).
 
 Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
-distant chunks merge two or four columns into one, which draws far terrain much faster),
-field of view, anti-aliasing, particles (All,
-Fewer or Off: the pieces that fly from broken blocks and the chips while mining), how far the hotbar
-sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
-mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
-(the view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins,
-with Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved
-to `voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
-`$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces
-`…/voxmar`); `--view-distance` and `--no-vsync` override them. On a dedicated server, name
-admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
-(default 32).
+distant chunks merge two or four columns into one, which draws far terrain much faster), field
+of view, anti-aliasing, water quality, particles (All, Fewer or Off: the pieces that fly from
+broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
+HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key
+(click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
+smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
+to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
+the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
+`~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
+`--view-distance` and `--no-vsync` override them. On a dedicated server, name admins with
+`--admin NAME` (repeatable), and cap render distance with `--view-distance N` (default 32).
 
 ### Saved worlds
 
@@ -459,7 +458,8 @@ lava source turns to obsidian, flowing lava to basalt, and lava pouring into wat
 water to broken basalt (`cobbled_basalt`). Every state is its own block (`water_flow_1` to
 `water_flow_7`, `water_falling`; rivers also have pinned water that carries a current), so
 chunks, saves and the network treat them like any block. Flowing water and river currents
-carry swimmers along.
+carry swimmers along, and they look it: flows slope down from their source, waves run with
+the flow and rapids froth, and falling water is streaked white (see docs/rendering.md).
 
 The server's kernel is event-driven: a block change wakes only the fluid beside it, each cell
 moves on its fluid's tick (water every five ticks, lava every thirty, with a little hashed jitter
@@ -523,6 +523,11 @@ writes about twenty seconds of each of nine typical places to `target/ambience_p
   meet, none between leaves buried on every side, and only a crown's shell casts shadows.
   Faces between two of the same glass, ice or water are hidden; ice is clear blue with a sky
   reflection over still water.
+- Water is drawn in its own pass over the finished scene: clear in the shallows and taking
+  the biome's colour with depth, from how far light really travels through it; the bed bent
+  by wind-driven waves; reflections of the terrain marched through the depth buffer, and of
+  the sky elsewhere; sun glints and foam along shores. The Water setting (Low, Medium, High)
+  trades waves and reflections for speed, and shader packs scale each part.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
   aerial perspective (haze that thins with height and glows around the sun), HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
@@ -542,7 +547,8 @@ Profile with Tracy: `cargo run --release --features tracy` (engine work is instr
 `tracing` spans).
 
 See [docs/rendering.md](docs/rendering.md) for measurements, a comparison with GPU-driven
-pipeline techniques, and the rendering plan.
+pipeline techniques, and the rendering plan. Code adapted from other projects, and its
+licences, is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Next steps
 

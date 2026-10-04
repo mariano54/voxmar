@@ -665,6 +665,10 @@ pub struct FloraDef {
     pub cover: f32,
     /// How much of the open ground flowers take, in drifts, 0 ..= 1.
     pub flowers: f32,
+    /// How far the land is in bloom beyond the drifts every biome has, 0 ..= 1: 0 for
+    /// most biomes, where flowers are sparse; high in the rare flower meadows and
+    /// lavender fields, which bloom throughout.
+    pub bloom: f32,
     /// Plants, by selector: shares among the carpeting plants and among the flowers; for
     /// plants that grow alone, the weight is their chance in a hundred per block.
     pub plants: Vec<Select>,
@@ -1628,7 +1632,7 @@ impl WorldContent {
                 }
             }
             let flora = &biome.flora;
-            for (what, v) in [("forest", flora.forest), ("cover", flora.cover), ("flowers", flora.flowers)] {
+            for (what, v) in [("forest", flora.forest), ("cover", flora.cover), ("flowers", flora.flowers), ("bloom", flora.bloom)] {
                 if !(0.0..=1.0).contains(&v) {
                     return Err(ContentError(format!("{}: {what} must be in 0..=1", at())));
                 }

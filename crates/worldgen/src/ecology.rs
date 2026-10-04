@@ -105,6 +105,7 @@ struct Flora {
     forest: f32,
     cover: f32,
     flowers: f32,
+    bloom: f32,
     /// Trees that make up the forest.
     canopy: Vec<(TreeId, f32)>,
     /// Trees of a particular habitat, beside the forest.
@@ -411,15 +412,15 @@ impl Ecology {
         let fertile = 0.8 + 0.4 * site.fertility;
 
         // Flowers, sparse: a stray one here and there, drifts where the bloom field runs
-        // high, and dense patches only in its rare peaks (and in biomes whose `flowers` is
-        // high, such as flower meadows). A smooth noise chooses along the cumulative
+        // high, and dense patches only in its rare peaks (and throughout biomes in `bloom`,
+        // such as flower meadows). A smooth noise chooses along the cumulative
         // weights, within a window a slow noise moves about, so neighbours mostly share a
         // kind and a place has only a few kinds at a time.
         if flora.flowers > 0.0 {
             let (total, thriving) = suited(&flora.drifts);
             if total > 0.0 {
                 let bloom = crate::climate::uniform(self.blooms.get_noise_2d(x as f32, z as f32));
-                let field = STRAY_FLOWERS + smoothstep(DRIFTS.0, DRIFTS.1, bloom) + PATCH_BOOST * smoothstep(FLOWER_PATCHES.0, FLOWER_PATCHES.1, bloom);
+                let field = STRAY_FLOWERS + smoothstep(DRIFTS.0, DRIFTS.1, bloom).max(flora.bloom) + PATCH_BOOST * smoothstep(FLOWER_PATCHES.0, FLOWER_PATCHES.1, bloom);
                 // Fewest deep in the woods; more at forest edges, in clearings and along
                 // creeks and rivers.
                 let edge = smoothstep(0.05, 0.25, site.forest) * (1.0 - smoothstep(0.35, 0.6, site.forest));
@@ -533,7 +534,7 @@ impl Flora {
     /// Resolves a biome's selectors against the pools, once per world.
     fn new(def: &FloraDef, content: &WorldContent, registry: &BlockRegistry, tree_rarity: &[f32], plant_rarity: &[f32]) -> Self {
         let wonders = def.wonders.clone().unwrap_or_else(|| vec![Select::Tag("wonder".into(), 1.0)]);
-        let mut flora = Flora { forest: def.forest, cover: def.cover, flowers: def.flowers, ..Default::default() };
+        let mut flora = Flora { forest: def.forest, cover: def.cover, flowers: def.flowers, bloom: def.bloom, ..Default::default() };
         for (i, tree) in content.trees.iter().enumerate() {
             let tags = tree.tags.iter().map(String::as_str);
             let id = TreeId(i as u16);

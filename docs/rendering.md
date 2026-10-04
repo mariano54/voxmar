@@ -368,6 +368,92 @@ puts its fronts at `mean * seconds`, so when the mean changes by δ they jump by
 `δ * seconds` (with `seconds` in the hundreds of thousands, a whole meadow would lurch
 as the wind veered).
 
+## Water
+
+Water used to be an alpha-blended sheet: the block texture in the biome's colour, made more
+opaque by a count of water blocks below each vertex (up to seven), with a fresnel blend
+towards the fog colour. It read as flat, nearly opaque light blue, every block of depth
+along a shore showed as a band, and it reflected nothing. Complementary Reimagined's water,
+which Mariano wanted, gets its look from things only the finished scene can give: what lies
+behind the surface, and what lies around it.
+
+**Its own pass** (`render/water.rs`). Water and ice (`TerrainPass::Translucent`) are drawn
+after the opaque terrain and before Bevy's transparent pass, with the scene so far bound at
+group 4 (`water_surface.wgsl`; group 3 is the chunks of a page). Nothing is copied that
+need not be:
+
+- Depth is sampled through a read-only depth attachment, so the pass reads the depth buffer
+  it tests against (water writes no depth).
+- Colour is read from the main image as the opaque pass left it, while the pass writes the
+  other main image of Bevy's post-processing ping-pong, which then becomes the main one.
+  With MSAA the pass draws into the multisampled image and resolves into it, so no extra
+  pass or copy is needed; without MSAA it first copies the scene into it.
+
+The water shader then composes the surface over the scene itself (alpha 1):
+
+- **Light through water** (`water.wgsl`). Absorption is what turns white light into the
+  biome's water colour over six blocks (`-ln(colour) / 6`, plus a little for clear water),
+  and a little light is scattered back, a muted version of the colour. The path is the real
+  distance from the surface to the scene behind it along the view, plus the depth of water
+  above that point for the light that lit it. Shallows are nearly clear, a few blocks take the
+  colour, deep water is its own dark colour, and the colour changes smoothly with depth along
+  the eye's ray instead of in whole-block bands. The scene behind already carries the haze
+  between it and the eye; the haze in front of the surface is taken back out, the water
+  applied, and the haze put back, so far water is not fogged twice.
+- **Refraction.** The view is bent by the waves' departure from the face normal and looks up
+  the scene where the bent ray ends (no further than six blocks past the surface); where that
+  lands on something nearer than the surface, the straight view is kept.
+- **Reflections.** A march through the depth buffer in screen space, where a straight 3D
+  line stays straight (uv and reverse-Z depth are both affine in 1/z), in steps that
+  lengthen by 15% each so nearby banks are resolved finely, then halved back to the surface
+  it passed behind. Rays that would dip into the water are bent to skim it, and hits below
+  the surface are thrown away. Where the march leaves the screen the reflection is the sky's
+  gradient (the sky dome's zenith and horizon colours), dark where no sky light reaches. The
+  march is skipped where the fresnel term is under 3%: seen from above, water reflects
+  almost nothing. The march reads a half-resolution depth (the nearest of each 2×2
+  pixels, single-sampled, made by a small pass before the water: `water_depth.wgsl`),
+  which took the water pass at High from about 1.7–1.9 to 1.25–1.3 ms on a lake filling
+  most of a 1080p MSAA frame; the hit is then refined and confirmed at full resolution.
+- **Waves**: octaves of afl_ext's `exp(sin x)` waves, each dragging the next along its slope
+  (see THIRD_PARTY_NOTICES.md). Their directions, frequencies and phases are worked out on
+  the CPU each frame in double precision around the camera, so the shader only adds small
+  offsets and the waves stay smooth however far from the origin. The weather's wind turns
+  the long waves to run with it and raises them, from a calm ripple to choppy water in a
+  breeze. The slope is summed analytically in one pass (not from three height samples), and
+  octaves fade out as they shrink below about three pixels, which both stops distant water
+  sparkling and ends the loop early. Small drifting ripples go over the waves, and in caves,
+  where little sky light reaches, the water is calmer. A shader pack can make water
+  **pixelated**, one normal per texel of the block textures, the glittering squares of
+  Complementary's Reimagined style (Verdant does).
+- **Glints and foam.** A sharp sun highlight with a broader sheen, shadowed by the sun's
+  shadow maps; foam in drifting patches where the bed comes within a third of a block of the
+  surface, which lines every shore with a broken edge.
+- **Under water**, looking up, the surface shows the world above inside Snell's window and
+  mirrors the deep water outside it.
+- **Flowing water** (see "Fluid state" below for what the mesher reads). The surface slopes
+  down from its source, the top edge of the sides with it, and the normal tilts with the
+  slope. The waves are carried along the flow in two layers half a cycle (1.6 s) apart,
+  each fading out as it starts again, so the pattern moves with the water without ever
+  stretching; each layer sums at most ten octaves, and the water gets choppier the faster
+  it runs. From 1.6 blocks a second it froths, as do pools where water falls in (the mesher
+  gives their surface a churning flow away from the fall). Falling water, and water pouring
+  over an edge, is streaked white and runs down its sides.
+
+Distant water (`lod.wgsl`) uses the same optics and the same biome water colour (the
+generator's, carried by the sheet's vertices): the floor seen through a depth derived from
+the sky light at the floor, the water's own colour where deep, and the sky's gradient as the
+reflected sky (its zenith and horizon colours come with `DistantView`), so the two meet in
+nearly the same colour where real chunks give way to tiles: within about 10 levels of 255
+at view distance 8, seen from 30 blocks up, where they had differed by over 20.
+
+The water's colour is the biome's (`Column::colors`, looked up per block like grass), so
+absorption and the colour of deep water follow it.
+
+The Water setting picks how much work this is: Low (the old ripples, sky reflections only),
+Medium (8 wave octaves, a 12-step march) and High (12 octaves, 20 steps, the default). Shader
+packs scale absorption, scattering, reflections, waves, refraction and foam, and choose
+pixelated water (`ShaderPack::water`).
+
 ## The air (ClientAtmosphere)
 
 `weather::atmosphere::ClientAtmosphere`, next to `ClientWeather`, is the air around the
@@ -428,6 +514,14 @@ whole water blocks. A mesher reads it like this:
   calls the same function, so what scrolls is what pushes a swimmer.
 - **Falling.** `falling` cells are full columns of water pouring down; scroll their sides
   downwards.
+
+The mesher (`engine/src/mesh.rs`) does all of this for see-through fluids. Faces between
+cells of one fluid are hidden; water faces carry, where ambient occlusion would be, how far
+the surface lies below the block's top at each corner (eighths, from `corner_heights`, on
+the top face and the top edge of the sides), the flow (a direction in 16ths and one of the
+speeds 0, 0.7, 1.4 and 2.8; the mean over the cells around each top corner, so it changes
+smoothly), and whether the cell falls. Lava is opaque and keeps whole blocks: lowering its
+top would open holes where neighbours' faces were culled against it.
 
 Fluid changes reach the client as `ServerMessage::Blocks` (one message per tick with every
 change in columns the player has) and go through `ClientWorld::set_block` like any edit.
