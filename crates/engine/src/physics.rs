@@ -39,13 +39,33 @@ impl Aabb {
 
     /// Whether the box overlaps any cell for which `solid` returns true.
     pub fn intersects(&self, solid: impl Fn(IVec3) -> bool) -> bool {
-        let lo = (self.min + EPSILON).floor().as_ivec3();
-        let hi = (self.max - EPSILON).floor().as_ivec3();
-        (lo.y..=hi.y).any(|y| (lo.z..=hi.z).any(|z| (lo.x..=hi.x).any(|x| solid(IVec3::new(x, y, z)))))
+        let lo = self.min.to_array().map(first_cell);
+        let hi = self.max.to_array().map(last_cell);
+        (lo[1]..=hi[1]).any(|y| (lo[2]..=hi[2]).any(|z| (lo[0]..=hi[0]).any(|x| solid(IVec3::new(x, y, z)))))
     }
 }
 
+/// How far a box may overlap a cell, or fall short of it, and still only touch it: a
+/// tenth of a millimetre near the origin, and eight steps of f32 rounding further out,
+/// where positions round to coarser steps (a quarter of a millimetre beyond 2,048 blocks).
+/// A fixed tolerance there let rounding put a box a hair inside the wall it was stopped
+/// at, which then counted it as already past, so walls far from the origin could be
+/// walked through.
+fn tolerance(at: f32) -> f32 {
+    EPSILON.max(at.abs() * 8.0 * f32::EPSILON)
+}
+
 const EPSILON: f32 = 1e-4;
+
+/// The first cell a box starting at `min` overlaps, along one axis.
+fn first_cell(min: f32) -> i32 {
+    (min + tolerance(min)).floor() as i32
+}
+
+/// The last cell a box ending at `max` overlaps, along one axis.
+fn last_cell(max: f32) -> i32 {
+    (max - tolerance(max)).floor() as i32
+}
 
 /// Moves `aabb` by `delta`, stopping at solid cells one axis at a time (Y, then X, then Z)
 /// so movement slides along walls. Returns which axes were blocked.
@@ -62,8 +82,8 @@ fn move_axis(aabb: &mut Aabb, axis: usize, delta: f32, solid: &impl Fn(IVec3) ->
         return false;
     }
     let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
-    let u_range = (aabb.min[u] + EPSILON).floor() as i32..=(aabb.max[u] - EPSILON).floor() as i32;
-    let v_range = (aabb.min[v] + EPSILON).floor() as i32..=(aabb.max[v] - EPSILON).floor() as i32;
+    let u_range = first_cell(aabb.min[u])..=last_cell(aabb.max[u]);
+    let v_range = first_cell(aabb.min[v])..=last_cell(aabb.max[v]);
     let blocked_at = |c: i32| {
         u_range.clone().any(|a| {
             v_range.clone().any(|b| {
@@ -78,13 +98,13 @@ fn move_axis(aabb: &mut Aabb, axis: usize, delta: f32, solid: &impl Fn(IVec3) ->
 
     let mut allowed = delta;
     if delta > 0.0 {
-        let first = (aabb.max[axis] - EPSILON).floor() as i32 + 1;
+        let first = last_cell(aabb.max[axis]) + 1;
         let last = (aabb.max[axis] + delta).ceil() as i32 - 1;
         if let Some(c) = (first..=last).find(|&c| blocked_at(c)) {
             allowed = (c as f32 - aabb.max[axis]).max(0.0);
         }
     } else {
-        let first = (aabb.min[axis] + EPSILON).floor() as i32 - 1;
+        let first = first_cell(aabb.min[axis]) - 1;
         let last = (aabb.min[axis] + delta).floor() as i32;
         if let Some(c) = (last..=first).rev().find(|&c| blocked_at(c)) {
             allowed = ((c + 1) as f32 - aabb.min[axis]).min(0.0);
@@ -168,6 +188,25 @@ mod tests {
         let blocked = move_and_slide(&mut aabb, Vec3::new(5.0, 0.0, 0.0), |c| c.x == 2);
         assert!(blocked[0]);
         assert!((aabb.max.x - 2.0).abs() < 1e-5);
+    }
+
+    /// Far from the origin, f32 positions round to steps larger than a fixed tolerance;
+    /// walking into a wall there must still stop at it, however long it is pushed.
+    #[test]
+    fn walls_far_from_the_origin_hold() {
+        for base in [0.0f32, 1_100.0, 2_100.0, -3_000.0, 20_000.0] {
+            let wall = base.floor() as i32 + 2;
+            let solid = move |c: IVec3| c.y < 0 || (c.y <= 1 && c.x >= wall);
+            let mut aabb = Aabb::standing(Vec3::new(base + 1.0, 0.0, base + 0.5), 0.6, 1.8);
+            for _ in 0..1000 {
+                // Rebuilt from the centre each step, as a player's box is.
+                let feet = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
+                aabb = Aabb::standing(feet, 0.6, 1.8);
+                move_and_slide(&mut aabb, Vec3::new(0.04, -0.01, 0.012), solid);
+            }
+            assert!(aabb.max.x <= wall as f32 + tolerance(wall as f32), "through the wall at {base}: {}", aabb.max.x);
+            assert!(aabb.max.x > wall as f32 - 0.01, "stopped short at {base}");
+        }
     }
 
     #[test]

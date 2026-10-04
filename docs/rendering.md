@@ -289,7 +289,8 @@ Breaking a block (`client/src/breaking.rs`) uses it as Minecraft does:
   a quarter of its side texture, each picked among the mostly opaque quarters
   (`TexturePieces`), so a flower breaks into petals and leaves rather than empty texels;
   0.1–0.2 blocks wide, living 0.5–1.5 s. Blocks broken by others (an unpredicted
-  `BlockChanged` to air) burst too, within 32 blocks.
+  `BlockChanged` to air) burst too, within 32 blocks, but not plants: those also vanish
+  under feet as the server wears paths, which is not breaking them.
 
 Particles are lit with a sky light estimated once per burst from the columns around the
 block, by the engine's rule (straight down from the sky, less through water and leaves,
