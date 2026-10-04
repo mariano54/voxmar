@@ -142,6 +142,7 @@ impl Rivers {
             min_area: 3,
             incision: 2.0,
             lakes: false,
+            springs: 0.0,
             tunnel: Some(TunnelRule { depth: 14.0, chance: 0.35, length: 6 }),
             seed,
         };
@@ -156,6 +157,8 @@ impl Rivers {
             min_area: 48,
             incision: 1.0,
             lakes: true,
+            // Rare: a few in a volcanic world's kilometre, none in a quiet one.
+            springs: 0.02 * smoothstep(0.35, 0.9, dials.volcanism),
             tunnel: None,
             seed: rng::mix(seed),
         };

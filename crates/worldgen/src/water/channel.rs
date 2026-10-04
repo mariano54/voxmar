@@ -41,6 +41,8 @@ pub enum Body {
     Lake,
     /// A closed basin dried to a salt flat.
     Salt,
+    /// A hot spring's warm pool.
+    Spring,
     Sea,
 }
 
@@ -122,6 +124,8 @@ struct LakeCell {
     /// Surface of the lake whose shore the cell is (0: none).
     shore: i32,
     salt: bool,
+    /// Whether the lake is a hot spring.
+    spring: bool,
 }
 
 /// The rivers one tier draws from one region's cells, and the lakes over the region.
@@ -297,8 +301,10 @@ impl Channels {
                     let k = (j * lake_size + i) as usize;
                     if footprint[e] {
                         map[k].water = map[k].water.max(lake.level);
+                        map[k].spring |= lake.spring;
                     } else if ring[e] {
                         map[k].shore = map[k].shore.max(lake.level);
+                        map[k].spring |= lake.spring;
                     }
                 }
             }
@@ -490,18 +496,19 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
 
     // Lakes.
     let lake = own.expect("the column's own region").lake(x, z);
+    let lake_body = if lake.spring { Body::Spring } else { Body::Lake };
     if lake.water > 0 && out.cavity.is_none() {
         let top = top_block(lake.water);
         if (out.ground.floor() as i32) < top {
             out.water = Some(out.water.map_or(lake.water, |w| w.max(lake.water)));
-            out.body = Some(Body::Lake);
+            out.body = Some(lake_body);
             if !out.channel {
                 out.current = None;
             }
         }
         out.near = Some(out.near.map_or(lake.water, |n| n.max(lake.water)));
         if out.body.is_none() || !out.channel {
-            out.body = Some(Body::Lake);
+            out.body = Some(lake_body);
         }
         out.wet = out.wet.max(1.0 - smoothstep(0.0, 5.0, out.ground - top as f32));
     } else if lake.shore > 0 {
@@ -509,7 +516,7 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
         // beside it, sealing raises it (see `water::seal`).
         let top = top_block(lake.shore) as f32;
         out.near = Some(out.near.map_or(lake.shore, |n| n.max(lake.shore)));
-        out.body = out.body.or(Some(Body::Lake));
+        out.body = out.body.or(Some(lake_body));
         out.wet = out.wet.max(1.0 - smoothstep(0.0, 5.0, out.ground - top));
     }
     if lake.salt && out.water.is_none() {

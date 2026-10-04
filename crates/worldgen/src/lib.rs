@@ -723,7 +723,7 @@ mod tests {
 
     /// `cargo test --release -p voxmar_worldgen river_sights -- --ignored --nocapture`
     /// finds a highland lake, the tallest waterfall, a confluence, a river mouth, a river
-    /// tunnel and an island in a river near spawn and prints `--pose` arguments that look at each, for in-game
+    /// tunnel, an island in a river and a hot spring near spawn and prints `--pose` arguments that look at each, for in-game
     /// captures.
     #[test]
     #[ignore]
@@ -738,7 +738,7 @@ mod tests {
         let geos: Vec<GeoSample> = (0..n * n).map(|i| world.geo(spawn.x - range + i % n * step, spawn.z - range + i / n * step)).collect();
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         // (score, x, z, y)
-        let mut best: [(f32, i32, i32, i32); 6] = [(0.0, 0, 0, 0); 6];
+        let mut best: [(f32, i32, i32, i32); 7] = [(0.0, 0, 0, 0); 7];
         for j in 1..n - 1 {
             for i in 1..n - 1 {
                 let g = at(i, j);
@@ -753,6 +753,9 @@ mod tests {
                     consider(4, 1.0);
                 }
                 let river = |o: GeoSample| o.submerged() && o.body == Body::River;
+                if g.submerged() && g.body == Body::Spring {
+                    consider(6, 1.0);
+                }
                 if !g.submerged() && g.body == Body::River && (river(at(i - 2, j)) && river(at(i + 2, j)) || river(at(i, j - 2)) && river(at(i, j + 2))) {
                     consider(5, 1.0);
                 }
@@ -788,7 +791,7 @@ mod tests {
             }
         }
         println!("seed {seed}, spawn {spawn}");
-        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel", "river island"].into_iter().zip(best) {
+        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel", "river island", "hot spring"].into_iter().zip(best) {
             if score == 0.0 {
                 println!("{name}: none within {range}");
                 continue;
@@ -1205,7 +1208,7 @@ mod tests {
     ///
     /// The sea is deep blue, lakes above the sea turquoise, rivers bright blue and creeks
     /// light blue (found by sampling inside each pixel, since they are narrower than one),
-    /// and dry salt flats white.
+    /// hot springs orange and dry salt flats white.
     #[test]
     #[ignore]
     fn map_preview() {
@@ -1318,6 +1321,7 @@ mod tests {
                         _ if ice => [0.75, 0.85, 0.95],
                         Body::Creek => [0.45, 0.75, 1.0],
                         Body::River => [0.2, 0.55, 1.0],
+                        Body::Spring => [0.95, 0.6, 0.2],
                         Body::Lake if surface.water_level > SEA_LEVEL => [0.1, 0.6 - 0.2 * depth, 0.75 - 0.2 * depth],
                         _ => [0.15, 0.35 - 0.15 * depth, 0.7 - 0.25 * depth],
                     };

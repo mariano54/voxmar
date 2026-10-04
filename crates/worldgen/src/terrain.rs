@@ -272,7 +272,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             }
             underground.decorate(x, z, &site, &cave, &mut blocks);
             // Fast water stays open in the cold.
-            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3));
+            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring);
             for y in height + 1..=geo.water {
                 blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
             }
