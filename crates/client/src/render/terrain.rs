@@ -34,7 +34,7 @@ use bevy::render::render_phase::{
     ViewSortedRenderPhases,
 };
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
+    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
     BufferUsages, CachedRenderPipelineId, CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
@@ -49,15 +49,23 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderDefVal;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::{FxHashMap, FxHashSet};
-use voxmar_engine::coords::{CHUNK_SIZE, ChunkPos};
+use voxmar_engine::coords::{CHUNK_SIZE, ChunkPos, ColumnPos};
 use voxmar_engine::mesh::{MeshBuffers, Vertex};
+use voxmar_engine::world::{COLUMN_AREA, DEFAULT_COLORS};
+
+mod compact;
+
+use compact::Compaction;
 
 use super::lod::{LodVertex, TileKey, TileMesh};
 use super::wind::Breeze;
 use super::{ATTRIBUTE_LOD, ATTRIBUTE_VOXEL, DISTANT_SHADER, GRASS_SHADER, TerrainPass, VOXEL_SHADER};
 
-/// Vertices per chunk page (32 MB, with 24 MB of indices): room for about a million quads.
-const PAGE_VERTICES: u32 = 4 << 20;
+/// Chunk vertices are handed out in blocks of this many, each owned by one chunk (see
+/// `PagePool`).
+const VERTEX_BLOCK: u32 = 64;
+/// Vertices per distant terrain page.
+const TILE_PAGE_VERTICES: u32 = 1 << 20;
 const PASSES: [TerrainPass; 5] =
     [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent, TerrainPass::Fringe];
 /// Only these passes cast shadows: leaf crowns' shells already shade, and water would
@@ -66,12 +74,25 @@ const SHADOW_PASSES: [TerrainPass; 3] = [TerrainPass::Opaque, TerrainPass::Cutou
 /// Leaf fringes are drawn for chunks this close to the camera, in blocks; further out they
 /// would be sub-pixel.
 const FRINGE_DISTANCE: f32 = 96.0;
-/// Blades grown per grass block, and vertices per blade (see grass.wgsl).
-const BLADES: u32 = 16;
-const BLADE_VERTICES: u32 = 9;
-/// Grass blades are drawn for chunks this close to the camera, in blocks; they have shrunk
-/// away just before (see grass.wgsl).
-const BLADE_DISTANCE: f32 = 46.0;
+/// Plant faces' face index (voxel.wgsl's `FACE_PLANT`).
+const FACE_PLANT: usize = 6;
+/// The most grass blades a block grows, and the distances in blocks over which they thin
+/// out and shrink away (grass.wgsl's `BLADES` and `FADE`); further chunks draw none.
+const BLADES: f32 = 16.0;
+const BLADE_FADE: [f32; 2] = [16.0, 34.0];
+/// Points and indices of one blade (two segments of a strip; see grass.wgsl).
+const BLADE_POINTS: u32 = 5;
+const BLADE_INDICES: [u32; 9] = [0, 1, 2, 2, 1, 3, 2, 3, 4];
+/// Blades in the blade index buffer; longer draws are split.
+const PATTERN_BLADES: u32 = 1 << 14;
+
+/// How many blades each block of a chunk this far away grows: as many as grass.wgsl's
+/// `kept` leaves at its nearest point.
+fn blades_at(distance: f32) -> u32 {
+    let t = ((distance - BLADE_FADE[0]) / (BLADE_FADE[1] - BLADE_FADE[0])).clamp(0.0, 1.0);
+    let fade = 1.0 - t * t * (3.0 - 2.0 * t);
+    if fade <= 0.0 { 0 } else { (BLADES * (0.25 + 0.75 * fade)).ceil() as u32 }
+}
 
 pub struct TerrainPlugin;
 
@@ -93,7 +114,7 @@ impl Plugin for TerrainPlugin {
             .add_render_command::<AlphaMask3d, DrawTerrainMain>()
             .add_render_command::<Transparent3d, DrawTerrainMain>()
             .add_render_command::<Shadow, DrawTerrainShadow>()
-            .add_systems(RenderStartup, init_pipelines)
+            .add_systems(RenderStartup, (init_pipelines, compact::init_pipeline))
             .add_systems(
                 Render,
                 (
@@ -102,16 +123,16 @@ impl Plugin for TerrainPlugin {
                     receive.in_set(RenderSystems::PrepareAssets),
                     prepare_bind_group.in_set(RenderSystems::PrepareBindGroups),
                     (cull, queue).chain().in_set(RenderSystems::Queue),
+                    compact::dispatch.in_set(RenderSystems::PrepareResources),
                 ),
             );
     }
 }
 
-/// The block texture array and the grass/foliage colour maps.
+/// The block texture array.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TerrainTextures {
     pub textures: Handle<Image>,
-    pub colormaps: Handle<Image>,
 }
 
 /// The main world's handle on terrain rendering.
@@ -124,6 +145,8 @@ enum Message {
     Upload { chunk: ChunkPos, pass: TerrainPass, mesh: MeshBuffers },
     Remove { chunk: ChunkPos, pass: TerrainPass },
     Blades { chunk: ChunkPos, seeds: Vec<u32> },
+    ColumnColours { column: IVec2, colours: Vec<[[u8; 3]; 3]> },
+    RemoveColumn(IVec2),
     /// The chunks cave culling leaves visible; any other chunk is skipped.
     Visible(FxHashSet<ChunkPos>),
     UploadTile(Box<TileMesh>),
@@ -141,6 +164,17 @@ impl Terrain {
 
     pub fn remove(&self, chunk: ChunkPos, pass: TerrainPass) {
         let _ = self.tx.send(Message::Remove { chunk, pass });
+    }
+
+    /// Sets the biome colours of a column's blocks (grass, foliage and water, sRGB, indexed
+    /// z * 32 + x), which its chunks are tinted with. Send them before the chunks.
+    pub fn upload_column(&self, column: ColumnPos, colours: Vec<[[u8; 3]; 3]>) {
+        let _ = self.tx.send(Message::ColumnColours { column: column.0, colours });
+    }
+
+    /// Forgets a column's colours; its chunks must be gone too.
+    pub fn remove_column(&self, column: ColumnPos) {
+        let _ = self.tx.send(Message::RemoveColumn(column.0));
     }
 
     /// Replaces a chunk's grass blade seeds (see `voxmar_engine::mesh::ChunkMesh`); none
@@ -226,25 +260,53 @@ struct Page {
     index_buffer: Buffer,
     vertices: RangeAllocator,
     indices: RangeAllocator,
+    /// Chunk pages only: the chunk slot of each block of `VERTEX_BLOCK` vertices, and the
+    /// bind group (group 3) that holds it.
+    chunks: Option<(Buffer, BindGroup)>,
 }
 
 /// Pages of one vertex format.
+///
+/// Chunk pages hand vertices out in whole blocks of `VERTEX_BLOCK` and store page-wide
+/// indices, recording which chunk owns each block. The shader finds a vertex's chunk
+/// from its index, so neighbouring chunks' meshes in a page draw as one range.
 struct PagePool {
     label: &'static str,
     vertex_size: u64,
     /// Vertices per page; indices get one and a half times as many.
     page_vertices: u32,
     pages: Vec<Page>,
+    chunk_pages: bool,
+}
+
+/// What a chunk page's draw needs of a mesh being added: its owner, and the layout of
+/// the page's bind group.
+struct Owner<'a> {
+    slot: u32,
+    layout: &'a BindGroupLayout,
 }
 
 impl PagePool {
-    fn new(label: &'static str, vertex_size: usize, page_vertices: u32) -> Self {
-        Self { label, vertex_size: vertex_size as u64, page_vertices, pages: Vec::new() }
+    fn new(label: &'static str, vertex_size: usize, page_vertices: u32, chunk_pages: bool) -> Self {
+        Self { label, vertex_size: vertex_size as u64, page_vertices, pages: Vec::new(), chunk_pages }
     }
 
-    /// Copies a mesh into the first page with room, adding a page if none has.
-    fn allocate<V: bytemuck::Pod>(&mut self, device: &RenderDevice, queue: &RenderQueue, vertices: &[V], indices: &[u32]) -> Allocation {
-        let (vertex_count, index_count) = (vertices.len() as u32, indices.len() as u32);
+    /// Copies a mesh into the first page with room, adding a page if none has. A chunk
+    /// mesh's indices count from `first_vertex`, and are stored counting from the page.
+    fn allocate<V: bytemuck::Pod>(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        vertices: &[V],
+        indices: &[u32],
+        first_vertex: u32,
+        owner: Option<Owner>,
+    ) -> Allocation {
+        let mut vertex_count = vertices.len() as u32;
+        if self.chunk_pages {
+            vertex_count = vertex_count.next_multiple_of(VERTEX_BLOCK);
+        }
+        let index_count = indices.len() as u32;
         let found = self.pages.iter_mut().enumerate().find_map(|(i, page)| {
             let vertices = page.vertices.allocate(vertex_count)?;
             match page.indices.allocate(index_count) {
@@ -256,7 +318,7 @@ impl PagePool {
             }
         });
         let (page, vertex_range, index_range) = found.unwrap_or_else(|| {
-            let mut page = self.new_page(device);
+            let mut page = self.new_page(device, owner.as_ref().map(|owner| owner.layout));
             let vertices = page.vertices.allocate(vertex_count).expect("a mesh fits a page");
             let indices = page.indices.allocate(index_count).expect("a mesh fits a page");
             self.pages.push(page);
@@ -264,7 +326,15 @@ impl PagePool {
         });
         let target = &self.pages[page];
         queue.write_buffer(&target.vertex_buffer, vertex_range.start as u64 * self.vertex_size, bytemuck::cast_slice(vertices));
-        queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices));
+        let index_offset = |indices: &[u32]| indices.iter().map(|&i| i - first_vertex + vertex_range.start).collect::<Vec<_>>();
+        match (&target.chunks, owner) {
+            (Some((chunks, _)), Some(owner)) => {
+                queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(&index_offset(indices)));
+                let blocks = vec![owner.slot; (vertex_range.len() as u32 / VERTEX_BLOCK) as usize];
+                queue.write_buffer(chunks, (vertex_range.start / VERTEX_BLOCK) as u64 * 4, bytemuck::cast_slice(&blocks));
+            }
+            _ => queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices)),
+        }
         Allocation { page: page as u32, vertices: vertex_range, indices: index_range }
     }
 
@@ -274,7 +344,11 @@ impl PagePool {
         page.indices.release(allocation.indices);
     }
 
-    fn new_page(&self, device: &RenderDevice) -> Page {
+    fn index_usage(&self) -> BufferUsages {
+        if self.chunk_pages { BufferUsages::STORAGE } else { BufferUsages::empty() }
+    }
+
+    fn new_page(&self, device: &RenderDevice, layout: Option<&BindGroupLayout>) -> Page {
         let index = self.pages.len();
         let buffer = |kind: &str, size: u64, usage: BufferUsages| {
             device.create_buffer(&BufferDescriptor {
@@ -285,11 +359,22 @@ impl PagePool {
             })
         };
         let page_indices = self.page_vertices / 2 * 3;
+        let chunks = layout.filter(|_| self.chunk_pages).map(|layout| {
+            let chunks = buffer("chunks", (self.page_vertices / VERTEX_BLOCK) as u64 * 4, BufferUsages::STORAGE);
+            let bind_group = device.create_bind_group(
+                format!("{}_chunks_{index}", self.label).as_str(),
+                layout,
+                &BindGroupEntries::single(chunks.as_entire_binding()),
+            );
+            (chunks, bind_group)
+        });
         Page {
             vertex_buffer: buffer("vertices", self.page_vertices as u64 * self.vertex_size, BufferUsages::VERTEX),
-            index_buffer: buffer("indices", page_indices as u64 * 4, BufferUsages::INDEX),
+            // Chunk indices are also read by the compaction pass.
+            index_buffer: buffer("indices", page_indices as u64 * 4, BufferUsages::INDEX | self.index_usage()),
             vertices: RangeAllocator::new(self.page_vertices),
             indices: RangeAllocator::new(page_indices),
+            chunks,
         }
     }
 }
@@ -301,52 +386,128 @@ struct Allocation {
     indices: Range<u32>,
 }
 
+/// A chunk's meshes are drawn in streams, each with its own pages: one per pass, with
+/// opaque faces split by direction, so a view skips the faces turned away from it (half
+/// of all opaque faces) before the GPU ever sees them, and plants apart from the other
+/// cut-out faces, so they are skipped where they have sunk away. Streams 0-5 are opaque
+/// faces by `Face`, then cut-out faces, plants, inner, translucent and fringe.
+const STREAMS: usize = 11;
+const PLANTS: usize = 7;
+/// Plants have sunk into the ground by this distance, in blocks (`PLANT_FADE` in
+/// voxel.wgsl), so further chunks skip them.
+const PLANT_DISTANCE: f32 = 320.0;
+
+/// The streams a pass is drawn from.
+fn streams(pass: TerrainPass) -> Range<usize> {
+    match pass {
+        TerrainPass::Opaque => 0..6,
+        TerrainPass::Cutout => 6..8,
+        pass => 6 + pass as usize..7 + pass as usize,
+    }
+}
+
+/// Vertices per page of each stream: the opaque directions and cut-outs hold most quads.
+fn stream_page_vertices(stream: usize) -> u32 {
+    match stream {
+        0..=6 => 1 << 21,
+        PLANTS => 1 << 20,
+        10 => 1 << 18,
+        _ => 1 << 19,
+    }
+}
+
+/// Which opaque face directions might face a view, by `Face` index: a camera sees a face
+/// pointing +x only from its +x side, a sun only faces pointing back at it.
+fn facing(min: Vec3, max: Vec3, eye: Vec3, light: Option<Vec3>) -> [bool; 6] {
+    match light {
+        Some(towards) => [towards.x < 0.0, towards.x > 0.0, towards.y < 0.0, towards.y > 0.0, towards.z < 0.0, towards.z > 0.0],
+        None => [eye.x > min.x, eye.x < max.x, eye.y > min.y, eye.y < max.y, eye.z > min.z, eye.z < max.z],
+    }
+}
+
+/// The quads of a pass's mesh that go to each of its streams. The mesher emits opaque
+/// faces grouped by face, in `Face` order, and plants after the other cut-out faces.
+fn split(pass: TerrainPass, mesh: &MeshBuffers) -> Vec<Range<usize>> {
+    let face = |quad: &[Vertex]| ((quad[0][0] >> 18) & 7) as usize;
+    let group = |face: usize| match pass {
+        TerrainPass::Opaque => face,
+        TerrainPass::Cutout => (face >= FACE_PLANT) as usize,
+        _ => 0,
+    };
+    let groups: Vec<usize> = mesh.vertices.chunks(4).map(|quad| group(face(quad))).collect();
+    debug_assert!(groups.is_sorted(), "a pass's faces come grouped by stream");
+    streams(pass)
+        .enumerate()
+        .map(|(g, _)| groups.partition_point(|&q| q < g)..groups.partition_point(|&q| q <= g))
+        .collect()
+}
+
 struct ChunkRecord {
-    /// Index into the origin table, which the shader reads as the instance index.
+    /// Index into the origin table, which the shader finds from the vertex's block.
     slot: u32,
-    passes: [Option<Allocation>; 5],
+    streams: [Option<Allocation>; STREAMS],
     /// Where the chunk's grass blade seeds are in the seed buffer.
     blades: Option<Range<u32>>,
 }
 
 impl ChunkRecord {
     fn is_empty(&self) -> bool {
-        self.passes.iter().all(Option::is_none) && self.blades.is_none()
+        self.streams.iter().all(Option::is_none) && self.blades.is_none()
     }
 }
 
-/// Grass blade seeds of every chunk, in one storage buffer that grows as needed.
-#[derive(Default)]
-struct SeedBuffer {
+/// Packs a column's biome colours for the shader: grass, foliage and water for each
+/// block, a word (RGBA8, sRGB) each.
+fn pack_colours(colours: &[[[u8; 3]; 3]]) -> Vec<u32> {
+    colours.iter().flat_map(|kinds| kinds.map(|[r, g, b]| u32::from_le_bytes([r, g, b, 255]))).collect()
+}
+
+/// A storage buffer of words handed out in ranges, which grows (keeping its contents) as
+/// needed: grass blade seeds, and the biome colours of columns.
+struct Arena {
+    label: &'static str,
     buffer: Option<Buffer>,
     ranges: RangeAllocator,
     capacity: u32,
 }
 
-impl SeedBuffer {
-    fn allocate(&mut self, device: &RenderDevice, queue: &RenderQueue, seeds: &[u32]) -> Range<u32> {
-        let len = seeds.len() as u32;
+impl Arena {
+    fn new(label: &'static str) -> Self {
+        Self { label, buffer: None, ranges: RangeAllocator::default(), capacity: 0 }
+    }
+
+    fn allocate(&mut self, device: &RenderDevice, queue: &RenderQueue, words: &[u32]) -> Range<u32> {
+        let len = words.len() as u32;
         let range = self.ranges.allocate(len).unwrap_or_else(|| {
             self.grow(device, queue, len);
-            self.ranges.allocate(len).expect("the seed buffer has just grown")
+            self.ranges.allocate(len).expect("the arena has just grown")
         });
-        let buffer = self.buffer.as_ref().expect("the seed buffer exists once it has room");
-        queue.write_buffer(buffer, range.start as u64 * 4, bytemuck::cast_slice(seeds));
+        self.write(queue, range.start, words);
         range
     }
 
-    /// Replaces the buffer with one at least twice as large, holding the same seeds.
+    fn write(&self, queue: &RenderQueue, start: u32, words: &[u32]) {
+        let buffer = self.buffer.as_ref().expect("the arena exists once it has room");
+        queue.write_buffer(buffer, start as u64 * 4, bytemuck::cast_slice(words));
+    }
+
+    /// Forgets every range, keeping the buffer.
+    fn clear(&mut self) {
+        self.ranges = RangeAllocator::new(self.capacity);
+    }
+
+    /// Replaces the buffer with one at least twice as large, holding the same words.
     fn grow(&mut self, device: &RenderDevice, queue: &RenderQueue, at_least: u32) {
         let capacity = (self.capacity * 2).max(self.capacity + at_least).max(1 << 18);
         let buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("blade_seeds"),
+            label: Some(self.label),
             size: capacity as u64 * 4,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         if let Some(old) = &self.buffer {
-            // Seeds written to the old buffer this frame land before the copy.
-            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor { label: Some("grow_blade_seeds") });
+            // Words written to the old buffer this frame land before the copy.
+            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor { label: Some(self.label) });
             encoder.copy_buffer_to_buffer(old, 0, &buffer, 0, self.capacity as u64 * 4);
             queue.submit([encoder.finish()]);
         }
@@ -389,7 +550,8 @@ struct DistantView {
 /// Render world state: pages, chunk records and the bind group shared by every draw.
 #[derive(Resource)]
 struct TerrainGpu {
-    chunk_pages: PagePool,
+    /// Chunk pages of each stream.
+    streams: [PagePool; STREAMS],
     tile_pages: PagePool,
     chunks: FxHashMap<ChunkPos, ChunkRecord>,
     tiles: FxHashMap<TileKey, TileRecord>,
@@ -406,19 +568,31 @@ struct TerrainGpu {
     origins_dirty: bool,
     distant_view: Option<Buffer>,
     coverage: Option<Buffer>,
-    seeds: SeedBuffer,
+    seeds: Arena,
+    /// One blade's triangles, repeated `PATTERN_BLADES` times.
+    blade_indices: Option<Buffer>,
+    /// Biome colours of every column with real chunks: `COLUMN_COLOUR_WORDS` words each,
+    /// found by the offset chunks keep in their origin's w.
+    colours: Arena,
+    column_colours: FxHashMap<IVec2, Range<u32>>,
+    /// Colours for chunks whose column sent none.
+    default_colours: Option<Range<u32>>,
     wind: Option<Buffer>,
     bind_group: Option<BindGroup>,
     distant_bind_group: Option<BindGroup>,
     /// Whether the bind groups must be rebuilt (the origin buffer was replaced).
     bind_group_dirty: bool,
+    /// Counts clears, which replace every page.
+    generation: u32,
 }
 
 impl Default for TerrainGpu {
     fn default() -> Self {
         Self {
-            chunk_pages: PagePool::new("terrain", size_of::<Vertex>(), PAGE_VERTICES),
-            tile_pages: PagePool::new("distant", size_of::<LodVertex>(), PAGE_VERTICES / 4),
+            streams: std::array::from_fn(|stream| {
+                PagePool::new("terrain", size_of::<Vertex>(), stream_page_vertices(stream), true)
+            }),
+            tile_pages: PagePool::new("distant", size_of::<LodVertex>(), TILE_PAGE_VERTICES, false),
             chunks: FxHashMap::default(),
             tiles: FxHashMap::default(),
             columns: FxHashMap::default(),
@@ -431,11 +605,16 @@ impl Default for TerrainGpu {
             origins_dirty: false,
             distant_view: None,
             coverage: None,
-            seeds: SeedBuffer::default(),
+            seeds: Arena::new("blade_seeds"),
+            blade_indices: None,
+            colours: Arena::new("column_colours"),
+            column_colours: FxHashMap::default(),
+            default_colours: None,
             wind: None,
             bind_group: None,
             distant_bind_group: None,
             bind_group_dirty: false,
+            generation: 0,
         }
     }
 }
@@ -455,8 +634,10 @@ impl TerrainGpu {
     /// The chunk's record, made if it has none.
     fn record(&mut self, chunk: ChunkPos) -> &mut ChunkRecord {
         if !self.chunks.contains_key(&chunk) {
-            let slot = self.new_slot(chunk.origin().extend(1));
-            self.chunks.insert(chunk, ChunkRecord { slot, passes: Default::default(), blades: None });
+            let column = IVec2::new(chunk.0.x, chunk.0.z);
+            let colours = self.column_colours.get(&column).or(self.default_colours.as_ref()).map_or(0, |range| range.start);
+            let slot = self.new_slot(chunk.origin().extend(colours as i32));
+            self.chunks.insert(chunk, ChunkRecord { slot, streams: Default::default(), blades: None });
             *self.columns.entry(IVec2::new(chunk.0.x, chunk.0.z)).or_default() += 1;
         }
         self.chunks.get_mut(&chunk).expect("record was just ensured")
@@ -480,16 +661,35 @@ impl TerrainGpu {
 
     fn release(&mut self, chunk: ChunkPos, pass: TerrainPass) {
         let Some(record) = self.chunks.get_mut(&chunk) else { return };
-        if let Some(allocation) = record.passes[pass as usize].take() {
-            self.chunk_pages.free(allocation);
+        for stream in streams(pass) {
+            if let Some(allocation) = record.streams[stream].take() {
+                self.streams[stream].free(allocation);
+            }
         }
         self.forget_if_empty(chunk);
     }
 
-    fn upload(&mut self, device: &RenderDevice, queue: &RenderQueue, chunk: ChunkPos, pass: TerrainPass, mesh: &MeshBuffers) {
+    fn upload(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        layout: &BindGroupLayout,
+        chunk: ChunkPos,
+        pass: TerrainPass,
+        mesh: &MeshBuffers,
+    ) {
         self.release(chunk, pass);
-        let allocation = self.chunk_pages.allocate(device, queue, &mesh.vertices, &mesh.indices);
-        self.record(chunk).passes[pass as usize] = Some(allocation);
+        let slot = self.record(chunk).slot;
+        for (stream, quads) in streams(pass).zip(split(pass, mesh)) {
+            if quads.is_empty() {
+                continue;
+            }
+            let vertices = &mesh.vertices[quads.start * 4..quads.end * 4];
+            let indices = &mesh.indices[quads.start * 6..quads.end * 6];
+            let owner = Owner { slot, layout };
+            let allocation = self.streams[stream].allocate(device, queue, vertices, indices, quads.start as u32 * 4, Some(owner));
+            self.record(chunk).streams[stream] = Some(allocation);
+        }
     }
 
     fn upload_blades(&mut self, device: &RenderDevice, queue: &RenderQueue, chunk: ChunkPos, seeds: &[u32]) {
@@ -506,6 +706,24 @@ impl TerrainGpu {
         self.record(chunk).blades = Some(range);
     }
 
+    fn upload_column_colours(&mut self, device: &RenderDevice, queue: &RenderQueue, column: IVec2, colours: &[[[u8; 3]; 3]]) {
+        let words = pack_colours(colours);
+        if let Some(range) = self.column_colours.get(&column) {
+            self.colours.write(queue, range.start, &words);
+            return;
+        }
+        let capacity = self.colours.capacity;
+        let range = self.colours.allocate(device, queue, &words);
+        self.bind_group_dirty |= self.colours.capacity != capacity;
+        self.column_colours.insert(column, range);
+    }
+
+    fn remove_column_colours(&mut self, column: IVec2) {
+        if let Some(range) = self.column_colours.remove(&column) {
+            self.colours.ranges.release(range);
+        }
+    }
+
     fn remove_tile(&mut self, key: TileKey) {
         if let Some(tile) = self.tiles.remove(&key) {
             self.tile_pages.free(tile.mesh);
@@ -515,7 +733,7 @@ impl TerrainGpu {
 
     fn upload_tile(&mut self, device: &RenderDevice, queue: &RenderQueue, tile: TileMesh) {
         self.remove_tile(tile.key);
-        let mesh = self.tile_pages.allocate(device, queue, &tile.vertices, &tile.indices);
+        let mesh = self.tile_pages.allocate(device, queue, &tile.vertices, &tile.indices, 0, None);
         let corner = tile.key.origin();
         let slot = self.new_slot(IVec4::new(corner.x, 0, corner.y, tile.key.cell()));
         let size = tile.key.size() as f32;
@@ -536,24 +754,52 @@ impl TerrainGpu {
     }
 
     fn clear(&mut self) {
-        let mut seeds = std::mem::take(&mut self.seeds);
-        seeds.ranges = RangeAllocator::new(seeds.capacity);
+        let mut seeds = std::mem::replace(&mut self.seeds, Arena::new("blade_seeds"));
+        let mut colours = std::mem::replace(&mut self.colours, Arena::new("column_colours"));
+        seeds.clear();
+        colours.clear();
         *self = Self {
             origins_buffer: self.origins_buffer.take(),
             distant_view: self.distant_view.take(),
             coverage: self.coverage.take(),
             seeds,
+            colours,
+            blade_indices: self.blade_indices.take(),
             wind: self.wind.take(),
             bind_group_dirty: true,
+            generation: self.generation + 1,
             ..Self::default()
         };
     }
 
-    /// Writes this frame's wind, making the wind and seed buffers the first time.
-    fn write_wind(&mut self, device: &RenderDevice, queue: &RenderQueue, breeze: Breeze) {
+    /// Makes the arenas' buffers the first time, and the default colours after a clear.
+    fn ensure_arenas(&mut self, device: &RenderDevice, queue: &RenderQueue) {
         if self.seeds.buffer.is_none() {
             self.seeds.grow(device, queue, 0);
         }
+        if self.colours.buffer.is_none() {
+            self.colours.grow(device, queue, 0);
+        }
+        if self.blade_indices.is_none() {
+            let indices: Vec<u32> =
+                (0..PATTERN_BLADES).flat_map(|blade| BLADE_INDICES.map(|i| blade * BLADE_POINTS + i)).collect();
+            let buffer = device.create_buffer(&BufferDescriptor {
+                label: Some("blade_indices"),
+                size: (indices.len() * 4) as u64,
+                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&indices));
+            self.blade_indices = Some(buffer);
+        }
+        if self.default_colours.is_none() {
+            let words = pack_colours(&[DEFAULT_COLORS; COLUMN_AREA]);
+            self.default_colours = Some(self.colours.allocate(device, queue, &words));
+        }
+    }
+
+    /// Writes this frame's wind.
+    fn write_wind(&mut self, device: &RenderDevice, queue: &RenderQueue, breeze: Breeze) {
         let wind = WindUniform {
             flow: breeze.velocity.extend(breeze.offset.x).extend(breeze.offset.y),
             player: breeze.player.map_or(Vec4::ZERO, |feet| feet.extend(1.0)),
@@ -631,6 +877,7 @@ impl TerrainGpu {
 }
 
 /// Applies the main world's messages: writes and frees mesh data, updates the origin table.
+#[allow(clippy::too_many_arguments)]
 fn receive(
     mut gpu: ResMut<TerrainGpu>,
     inbox: Res<TerrainInbox>,
@@ -638,12 +885,18 @@ fn receive(
     queue: Res<RenderQueue>,
     cameras: Query<&ExtractedView, With<ExtractedCamera>>,
     breeze: Option<Res<Breeze>>,
+    pipelines: Res<TerrainPipelines>,
+    pipeline_cache: Res<PipelineCache>,
 ) {
+    let layout = pipeline_cache.get_bind_group_layout(&pipelines.chunks_layout);
+    gpu.ensure_arenas(&device, &queue);
     for message in inbox.0.try_iter() {
         match message {
-            Message::Upload { chunk, pass, mesh } => gpu.upload(&device, &queue, chunk, pass, &mesh),
+            Message::Upload { chunk, pass, mesh } => gpu.upload(&device, &queue, &layout, chunk, pass, &mesh),
             Message::Remove { chunk, pass } => gpu.release(chunk, pass),
             Message::Blades { chunk, seeds } => gpu.upload_blades(&device, &queue, chunk, &seeds),
+            Message::ColumnColours { column, colours } => gpu.upload_column_colours(&device, &queue, column, &colours),
+            Message::RemoveColumn(column) => gpu.remove_column_colours(column),
             Message::Visible(visible) => gpu.visible = visible,
             Message::UploadTile(tile) => gpu.upload_tile(&device, &queue, *tile),
             Message::RemoveTile(key) => gpu.remove_tile(key),
@@ -677,8 +930,10 @@ fn prepare_bind_group(
         &pipeline_cache.get_bind_group_layout(&pipelines.distant_layout),
         &BindGroupEntries::sequential((origins.as_entire_binding(), view.as_entire_binding(), coverage.as_entire_binding())),
     );
-    let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.colormaps)?)));
-    let (Some((blocks, colormaps)), Some(seeds), Some(wind)) = (textures, &gpu.seeds.buffer, &gpu.wind) else {
+    let blocks = textures.as_ref().and_then(|t| images.get(&t.textures));
+    let (Some(blocks), Some(seeds), Some(wind), Some(colours)) =
+        (blocks, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer)
+    else {
         gpu.distant_bind_group = Some(distant);
         return;
     };
@@ -688,11 +943,10 @@ fn prepare_bind_group(
         &BindGroupEntries::sequential((
             &blocks.texture_view,
             &blocks.sampler,
-            &colormaps.texture_view,
-            &colormaps.sampler,
             origins.as_entire_binding(),
             seeds.as_entire_binding(),
             wind.as_entire_binding(),
+            colours.as_entire_binding(),
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -700,26 +954,37 @@ fn prepare_bind_group(
     gpu.bind_group_dirty = false;
 }
 
-/// One draw: a chunk's pass from a page.
-struct Draw {
+/// One draw of chunk meshes from one stream's page: a range of the view's gathered
+/// indices, usually many chunks long.
+struct ChunkDraw {
+    stream: u8,
+    page: u32,
+    indices: Range<u32>,
+}
+
+/// One distant terrain tile.
+struct TileDraw {
     page: u32,
     indices: Range<u32>,
     base_vertex: i32,
     slot: u32,
 }
 
-/// One chunk's grass blades: a range of vertices, a tuft per seed.
+/// One chunk's grass blades: a tuft of `blades` per seed.
 struct BladeDraw {
-    vertices: Range<u32>,
+    seeds: Range<u32>,
+    blades: u32,
     slot: u32,
 }
 
 /// The draws of each pass that survive a view's frustum, in drawing order.
 #[derive(Component, Default)]
 struct TerrainDraws {
-    passes: [Vec<Draw>; 5],
+    passes: [Vec<ChunkDraw>; 5],
+    /// Where the passes' indices are gathered from the pages.
+    compaction: Compaction,
     /// Distant terrain tiles, cameras only.
-    distant: Vec<Draw>,
+    distant: Vec<TileDraw>,
     /// Grass blades near the camera, nearest first; cameras only.
     blades: Vec<BladeDraw>,
 }
@@ -728,9 +993,10 @@ struct TerrainDraws {
 type CulledView = (Entity, &'static ExtractedView, Has<LightEntity>, Option<&'static mut TerrainDraws>);
 type CulledViewFilter = Or<(With<LightEntity>, With<ExtractedCamera>)>;
 
-/// Culls the visible chunks against each view's frustum, in parallel over views.
-/// Translucent chunks are sorted back to front; the rest keep page order, so pages rarely
-/// switch.
+/// Culls the visible chunks against each view's frustum, in parallel over views, and
+/// skips opaque faces turned away from the view. What survives is gathered into the
+/// view's own index buffer (see `compact`), one draw per stream and page; translucent
+/// chunks are gathered back to front.
 fn cull(
     mut commands: Commands,
     gpu: Res<TerrainGpu>,
@@ -755,51 +1021,76 @@ fn cull(
             .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
         let frustum = Frustum::new(clip_from_world, is_light);
         let eye = view.world_from_view.translation();
+        let light = is_light.then(|| view.world_from_view.forward().as_vec3());
         let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
-        for pass in &mut draws.passes {
-            pass.clear();
-        }
+        // Each stream's surviving ranges, and the translucent ones with their distance.
+        let mut ranges: [Vec<(u32, Range<u32>)>; STREAMS] = Default::default();
         let mut translucent = Vec::new();
         let mut blades = Vec::new();
         for &(min, record) in &candidates {
-            if !frustum.intersects(min, min + CHUNK_SIZE as f32) {
+            let max = min + CHUNK_SIZE as f32;
+            if !frustum.intersects(min, max) {
                 continue;
             }
             // Distance from the camera (not a shadow view's light) to the chunk's bounds.
-            let distance = (gpu.camera.clamp(min, min + CHUNK_SIZE as f32) - gpu.camera).length();
-            let near = distance < FRINGE_DISTANCE;
+            let distance = (gpu.camera.clamp(min, max) - gpu.camera).length();
             if let Some(seeds) = &record.blades
                 && !is_light
-                && distance < BLADE_DISTANCE
+                && blades_at(distance) > 0
             {
-                let per_seed = BLADES * BLADE_VERTICES;
-                let vertices = seeds.start * per_seed..seeds.end * per_seed;
-                blades.push((distance, BladeDraw { vertices, slot: record.slot }));
+                blades.push((distance, BladeDraw { seeds: seeds.clone(), blades: blades_at(distance), slot: record.slot }));
             }
+            let facing = facing(min, max, eye, light);
             for &pass in passes {
-                if pass == TerrainPass::Fringe && !near {
+                if pass == TerrainPass::Fringe && distance >= FRINGE_DISTANCE {
                     continue;
                 }
-                let Some(allocation) = &record.passes[pass as usize] else { continue };
-                let draw = Draw {
-                    page: allocation.page,
-                    indices: allocation.indices.clone(),
-                    base_vertex: allocation.vertices.start as i32,
-                    slot: record.slot,
-                };
-                if pass == TerrainPass::Translucent {
-                    let centre = min + CHUNK_SIZE as f32 / 2.0;
-                    translucent.push((centre.distance_squared(eye), draw));
-                } else {
-                    draws.passes[pass as usize].push(draw);
+                for stream in streams(pass) {
+                    let Some(allocation) = &record.streams[stream] else { continue };
+                    if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && distance >= PLANT_DISTANCE) {
+                        continue;
+                    }
+                    let range = (allocation.page, allocation.indices.clone());
+                    if pass == TerrainPass::Translucent {
+                        let centre = min + CHUNK_SIZE as f32 / 2.0;
+                        translucent.push((centre.distance_squared(eye), range));
+                    } else {
+                        ranges[stream].push(range);
+                    }
                 }
             }
+        }
+        let draws = &mut *draws;
+        draws.compaction.clear();
+        for pass in &mut draws.passes {
+            pass.clear();
+        }
+        // Each stream's ranges are gathered page by page, in page order.
+        for pass in PASSES {
+            for stream in streams(pass) {
+                let ranges = &mut ranges[stream];
+                ranges.sort_unstable_by_key(|(page, indices)| (*page, indices.start));
+                for run in ranges.chunk_by(|a, b| a.0 == b.0) {
+                    let page = run[0].0;
+                    let indices = draws.compaction.gather(stream, page, run.iter().map(|(_, indices)| indices.clone()));
+                    draws.passes[pass as usize].push(ChunkDraw { stream: stream as u8, page, indices });
+                }
+                ranges.clear();
+            }
+        }
+        // Translucent chunks keep their back-to-front order across pages.
+        translucent.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        let stream = streams(TerrainPass::Translucent).start;
+        for run in translucent.chunk_by(|a, b| a.1.0 == b.1.0) {
+            let page = run[0].1.0;
+            let indices = draws.compaction.gather(stream, page, run.iter().map(|(_, (_, indices))| indices.clone()));
+            draws.passes[TerrainPass::Translucent as usize].push(ChunkDraw { stream: stream as u8, page, indices });
         }
         draws.distant.clear();
         if !is_light {
             for (&key, tile) in &gpu.tiles {
                 if frustum.intersects(tile.min, tile.max) && !(key.level == 0 && gpu.covered_by_real(key)) {
-                    draws.distant.push(Draw {
+                    draws.distant.push(TileDraw {
                         page: tile.mesh.page,
                         indices: tile.mesh.indices.clone(),
                         base_vertex: tile.mesh.vertices.start as i32,
@@ -809,11 +1100,6 @@ fn cull(
             }
             draws.distant.sort_unstable_by_key(|draw| draw.page);
         }
-        for pass in &mut draws.passes {
-            pass.sort_unstable_by_key(|draw| draw.page);
-        }
-        translucent.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-        draws.passes[TerrainPass::Translucent as usize].extend(translucent.into_iter().map(|(_, draw)| draw));
         // Nearest first, so nearer blades hide the farther ones' fragments.
         blades.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         draws.blades.clear();
@@ -856,6 +1142,8 @@ struct TerrainPassItem(TerrainPass);
 #[derive(Resource)]
 struct TerrainPipelines {
     layout: BindGroupLayoutDescriptor,
+    /// A chunk page's table of which chunk owns each block of vertices.
+    chunks_layout: BindGroupLayoutDescriptor,
     shader: Handle<Shader>,
     vertex_layout: MeshVertexBufferLayout,
     /// One render entity per pass.
@@ -880,14 +1168,18 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
             (
                 texture_2d_array(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
-                texture_2d_array(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
                 storage_buffer_read_only_sized(false, None),
                 // Grass blade seeds and the wind, for grass.wgsl and wind.wgsl.
                 storage_buffer_read_only_sized(false, None),
                 uniform_buffer::<WindUniform>(false),
+                // Biome colours of columns, by block.
+                storage_buffer_read_only_sized(false, None),
             ),
         ),
+    );
+    let chunks_layout = BindGroupLayoutDescriptor::new(
+        "terrain_chunks_layout",
+        &BindGroupLayoutEntries::single(ShaderStages::VERTEX, storage_buffer_read_only_sized(false, None)),
     );
     let attribute = ATTRIBUTE_VOXEL.at_shader_location(0);
     let vertex_layout = MeshVertexBufferLayout::new(
@@ -930,6 +1222,7 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
     let blade_item = commands.spawn_empty().id();
     commands.insert_resource(TerrainPipelines {
         layout,
+        chunks_layout,
         shader: asset_server.load(VOXEL_SHADER),
         vertex_layout,
         items,
@@ -1011,6 +1304,7 @@ impl TerrainPipelines {
         let key = view_key | alpha;
         let label = format!("terrain_{pass:?}");
         let mut descriptor = mesh_like(mesh_pipeline, layouts, key, &self.vertex_layout, &self.layout, &self.shader, label)?;
+        descriptor.layout.push(self.chunks_layout.clone());
         let (defs, cull_mode) = pass_setup(pass);
         descriptor.primitive.cull_mode = cull_mode;
         // With several samples per pixel, cut-outs cover samples by their alpha instead of
@@ -1094,7 +1388,12 @@ impl TerrainPipelines {
         });
         let descriptor = RenderPipelineDescriptor {
             label: Some(format!("terrain_shadow_{pass:?}").into()),
-            layout: vec![prepass.view_layout_no_motion_vectors.clone(), prepass.empty_layout.clone(), self.layout.clone()],
+            layout: vec![
+                prepass.view_layout_no_motion_vectors.clone(),
+                prepass.empty_layout.clone(),
+                self.layout.clone(),
+                self.chunks_layout.clone(),
+            ],
             vertex: VertexState { shader: self.shader.clone(), shader_defs: defs, buffers: vec![self.vertex_layout.layout().clone()], ..default() },
             fragment,
             primitive: PrimitiveState { cull_mode, unclipped_depth: !emulate_unclipped, ..default() },
@@ -1238,10 +1537,20 @@ impl<P: PhaseItem> RenderCommand<P> for DrawBlades {
         gpu: SystemParamItem<'w, '_, Self::Param>,
         render_pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let Some(bind_group) = &gpu.into_inner().bind_group else { return RenderCommandResult::Skip };
+        let gpu = gpu.into_inner();
+        let (Some(bind_group), Some(indices)) = (&gpu.bind_group, &gpu.blade_indices) else {
+            return RenderCommandResult::Skip;
+        };
         render_pass.set_bind_group(2, bind_group, &[]);
+        render_pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
         for draw in &draws.blades {
-            render_pass.draw(draw.vertices.clone(), draw.slot..draw.slot + 1);
+            let instance = draw.slot | draw.blades << 24;
+            let (first, total) = (draw.seeds.start * draw.blades, draw.seeds.len() as u32 * draw.blades);
+            for start in (0..total).step_by(PATTERN_BLADES as usize) {
+                let count = (total - start).min(PATTERN_BLADES);
+                let base = ((first + start) * BLADE_POINTS) as i32;
+                render_pass.draw_indexed(0..count * BLADE_INDICES.len() as u32, base, instance..instance + 1);
+            }
         }
         RenderCommandResult::Success
     }
@@ -1298,16 +1607,23 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
         let (Some(TerrainPassItem(pass)), Some(bind_group)) = (pass_item, &gpu.bind_group) else {
             return RenderCommandResult::Skip;
         };
+        let (true, Some(indices)) = (draws.compaction.ready, draws.compaction.indices()) else {
+            return RenderCommandResult::Skip;
+        };
         render_pass.set_bind_group(2, bind_group, &[]);
+        render_pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
         let mut current = None;
         for draw in &draws.passes[*pass as usize] {
-            if current != Some(draw.page) {
-                let Some(page) = gpu.chunk_pages.pages.get(draw.page as usize) else { return RenderCommandResult::Skip };
+            if current != Some((draw.stream, draw.page)) {
+                let page = gpu.streams[draw.stream as usize].pages.get(draw.page as usize);
+                let Some((page, (_, chunks))) = page.and_then(|page| Some((page, page.chunks.as_ref()?))) else {
+                    return RenderCommandResult::Skip;
+                };
                 render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(page.index_buffer.slice(..), IndexFormat::Uint32);
-                current = Some(draw.page);
+                render_pass.set_bind_group(3, chunks, &[]);
+                current = Some((draw.stream, draw.page));
             }
-            render_pass.draw_indexed(draw.indices.clone(), draw.base_vertex, draw.slot..draw.slot + 1);
+            render_pass.draw_indexed(draw.indices.clone(), 0, 0..1);
         }
         RenderCommandResult::Success
     }
