@@ -19,6 +19,9 @@ const NORMALS = array<vec3<f32>, 8>(
 // Minecraft-style directional shading for ambient light.
 const FACE_SHADE = array<f32, 8>(0.62, 0.62, 1.0, 0.5, 0.8, 0.8, 0.85, 0.85);
 const BLOCK_LIGHT_COLOR = vec3(1.0, 0.72, 0.42);
+// Share of the sunlight on open ground that it scatters back up, on average over grass,
+// sand, rock and leaves.
+const GROUND_ALBEDO: f32 = 0.3;
 
 // Brightness rises slowly at low light levels, like Minecraft's light table.
 fn light_curve(level: f32) -> f32 {
@@ -84,7 +87,14 @@ fn shade_normal(
     let ambient = lights.ambient_color.rgb * light_curve(sky) * ambient_shade * ao;
     let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
     let floor = vec3(0.010, 0.010, 0.014) * ao;
-    return albedo * (ambient + direct * mix(1.0, ao, 0.5) + torch + floor);
+    // Sunlight bounced off the sunlit ground around: a wall sees half ground, an underside
+    // all of it. Without it the shaded side of a one-block step was lit by the sky alone,
+    // several times darker than the sunlit ground beside it, and the corners of terraced
+    // beaches and grass ledges stood out as dark teeth. fog.directional_light_color.a
+    // carries the shader pack's strength.
+    let bounce = sun_color() * max(to_sun.y, 0.0) * GROUND_ALBEDO * 0.5 * (1.0 - normal.y) * open * ao
+        * fog.directional_light_color.a;
+    return albedo * (ambient + bounce + direct * mix(1.0, ao, 0.5) + torch + floor);
 }
 
 // Small animated ripples for the water surface normal. Their slopes have a variance of

@@ -237,17 +237,23 @@ fn fragment(in: VertexOutput) {
 
 #else // main pass
 
+// Lighting inputs are interpolated at the centroid of the samples a triangle covers (see
+// lod.wgsl): with MSAA, values taken at the centre of a pixel the triangle only clips are
+// extrapolated, which on far faces seen edge on runs wild (light past full, a negative
+// water depth, a point off the surface) and showed as black dashes and glints along the
+// edge of distant water. Texture coordinates stay at the pixel centre, where their
+// derivatives, which pick the mip level, are exact.
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) world_position: vec3<f32>,
+    @location(0) @interpolate(perspective, centroid) world_position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     // x: ao, y: sky light, z: block light (all 0..1, interpolated for smooth lighting)
-    @location(2) light: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) light: vec3<f32>,
     @location(3) @interpolate(flat) surface: u32,
     @location(4) @interpolate(flat) face: u32,
     @location(5) @interpolate(flat) covered: u32,
     // Depth of water below a water surface, in blocks.
-    @location(6) water_depth: f32,
+    @location(6) @interpolate(perspective, centroid) water_depth: f32,
     // Where the chunk's column colours start in `column_colours`.
     @location(7) @interpolate(flat) colours: u32,
 };

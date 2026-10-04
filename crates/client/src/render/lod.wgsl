@@ -51,6 +51,19 @@ const PLANT_SIDES: f32 = 0.5;
 // for its spacing, which sets how soon crowns hide the ground between them.
 const CANOPY_HEIGHT: f32 = 6.0;
 const CANOPY_DEPTH: f32 = 1.0;
+// Crowns as the eye resolves them: blobs about a tree across (a noise cell of this many
+// blocks), covering the canopy's share of the ground. The pattern shows where a cell spans
+// a few pixels and fades into its average before it could shimmer.
+const CROWN_CELL: f32 = 5.0;
+const CROWN_FADE = vec2(0.2, 0.5);
+// How much a crown's dome tilts its surface, per unit of the noise's slope across a cell.
+const CROWN_DOME: f32 = 2.4;
+// Light left on the ground of a forest by the crowns around it, where they cover all of it.
+const FOREST_FLOOR: f32 = 0.55;
+// Patches a few blocks across, lighter and darker as real ground is with its mix of blocks,
+// and how strongly; they fade where they would be a pixel or two, like the crowns.
+const PATCH_CELL: f32 = 4.0;
+const PATCHES: f32 = 0.3;
 // Real water's ripples carry on past the real chunks and smooth out over this distance, into
 // their average: a wider, dimmer sun glint, and a surface facing the eye a little more (the
 // variance of the ripples' slope).
@@ -66,16 +79,22 @@ struct Vertex {
     @location(0) packed: vec4<u32>,
 };
 
+// Interpolated at the centroid of the samples a triangle covers. With MSAA the fragment
+// shader runs once per pixel, by default at the pixel's centre even when only a corner of
+// the pixel is covered; far away, where triangles are slivers seen edge on, values
+// extrapolated that far outside the triangle are wild (negative colours, a position off
+// the surface, a bent normal), which showed as black dashes and sparkling glints along
+// distant shores.
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) world_position: vec3<f32>,
-    @location(1) top: vec3<f32>,
-    @location(2) side: vec3<f32>,
-    @location(3) normal: vec3<f32>,
+    @location(0) @interpolate(perspective, centroid) world_position: vec3<f32>,
+    @location(1) @interpolate(perspective, centroid) top: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) side: vec3<f32>,
+    @location(3) @interpolate(perspective, centroid) normal: vec3<f32>,
     // x: sky light 0..1, y: canopy cover, or the opacity of ice, z: plant cover
-    @location(4) params: vec3<f32>,
+    @location(4) @interpolate(perspective, centroid) params: vec3<f32>,
     @location(5) @interpolate(flat) kind: u32,
-    @location(6) leaves: vec3<f32>,
+    @location(6) @interpolate(perspective, centroid) leaves: vec3<f32>,
     // Cell size of the tile's ring, in blocks.
     @location(7) @interpolate(flat) cell: f32,
 };
@@ -206,30 +225,76 @@ fn steps(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32) -> vec3
     return mix(stairs, plant, plants / (ground + plants));
 }
 
+fn lattice(cell: vec2<i32>) -> f32 {
+    var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u);
+    h = (h ^ (h >> 15u)) * 0x2c1b3c6du;
+    h ^= h >> 12u;
+    return f32(h >> 8u) / 16777216.0;
+}
+
+// Smooth value noise 0..1 over cells of one unit, and its gradient (yz).
+fn value_noise(p: vec2<f32>) -> vec3<f32> {
+    let i = vec2<i32>(floor(p));
+    let f = fract(p);
+    let w = f * f * (3.0 - 2.0 * f);
+    let dw = 6.0 * f * (1.0 - f);
+    let a = lattice(i);
+    let b = lattice(i + vec2(1, 0));
+    let c = lattice(i + vec2(0, 1));
+    let d = lattice(i + vec2(1, 1));
+    let value = mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+    let gradient = vec2(mix(b - a, d - c, w.y) * dw.x, mix(c - a, d - b, w.x) * dw.y);
+    return vec3(value, gradient);
+}
+
+// Where the crowns of a forest covering `cover` of the ground stand, around `xz`: x is the
+// share of the pixel under a crown (soft at the crown's edge, by the pixel's footprint in
+// blocks), yz how its dome tilts the surface. The level that leaves `cover` of the noise
+// above it was measured from the noise's distribution.
+fn crowns(xz: vec2<f32>, cover: f32, footprint: vec2<f32>) -> vec3<f32> {
+    let q = value_noise(xz / CROWN_CELL);
+    let d = cover - 0.5;
+    let level = 0.5 - 0.64 * d - 0.7 * d * d * d;
+    let soft = 0.04 + footprint.x / CROWN_CELL * length(q.yz);
+    return vec3(smoothstep(level - soft, level + soft, q.x), q.yz * CROWN_DOME);
+}
+
 // Tree crowns over the steps. From above the gaps between crowns show the ground; at a low
 // angle crowns stand in front of the gaps behind them, so a forest seen from afar is all
 // leaves, tops and sides. Where the surface is steeper than the ground beneath it, at the
-// edge of a forest, it is the wall of crowns facing out of the forest.
-fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surface_slope: f32) -> vec3<f32> {
+// edge of a forest, it is the wall of crowns facing out of the forest. Up to a few hundred
+// blocks past the real chunks the crowns resolve into single domes, lit on the sun's side,
+// over the ground between them, as the trees of the real chunks do.
+fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surface_slope: f32, footprint: vec2<f32>) -> vec3<f32> {
     let cover = in.params.y;
-    let ground = steps(in, to_eye, y, filter_width);
+    var ground = steps(in, to_eye, y, filter_width);
     if cover == 0.0 {
         return ground;
     }
+    // The ground between trees lies in their shade.
+    ground *= mix(1.0, FOREST_FLOOR, cover);
     let n = normalize(in.normal);
     let slope = -n.xz / max(n.y, 0.05);
     let edge = saturate(surface_slope - length(slope));
     // The eye's line through the crowns runs as far as it takes to rise one crown layer above
     // the ground, which slopes towards or away from the eye.
     let rise = max(to_eye.y - dot(slope, to_eye.xz), 0.02);
-    let gaps = (1.0 - cover) * (1.0 - edge) * exp(-CANOPY_DEPTH * cover * length(to_eye.xz) / rise);
+    var gaps = (1.0 - cover) * (1.0 - edge) * exp(-CANOPY_DEPTH * cover * length(to_eye.xz) / rise);
+    var top = UP;
+    let resolved = 1.0 - smoothstep(CROWN_FADE.x, CROWN_FADE.y, footprint.y / CROWN_CELL);
+    if resolved > 0.0 {
+        let here = crowns(in.world_position.xz, cover, footprint);
+        // The gaps the eye sees through, in proportion to the ground left open right here.
+        gaps = mix(gaps, gaps / max(1.0 - cover, 0.01) * (1.0 - here.x), resolved);
+        top = normalize(vec3(-here.y * resolved, 1.0, -here.z * resolved));
+    }
     let sides = CROWN_SIDES * abs(to_eye.xz);
     let x_side = vec3(sign(to_eye.x), 0.0, 0.0);
     let z_side = vec3(0.0, 0.0, sign(to_eye.z));
-    let crown = in.leaves * (max(to_eye.y, 0.0) * face_light(in, UP, 1.0, 1.0, true)
+    let crown = in.leaves * (max(to_eye.y, 0.0) * face_light(in, top, 1.0, 1.0, true)
         + sides.x * face_light(in, x_side, X_SIDE_SHADE, 1.0, true)
         + sides.y * face_light(in, z_side, Z_SIDE_SHADE, 1.0, true)) / max(to_eye.y + sides.x + sides.y, 1e-4);
-    return mix(crown, ground, gaps);
+    return mix(crown, ground, saturate(gaps));
 }
 
 // Water and ice: the surface over the floor beneath, which dims with depth as sky light fades
@@ -264,6 +329,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // before any branch like every derivative.
     let y = in.world_position.y - CANOPY_HEIGHT * in.params.y;
     let filter_width = max(length(vec2(dpdx(y), dpdy(y))), 1e-3);
+    // Blocks of ground across the pixel: x along its longer side (foreshortened at a low
+    // angle), y the side of a square of the same area. Detail fades by area, so a crown
+    // still shows where it spans several pixels across even if only one or two deep, and
+    // its edge softens by the longer side, so it blurs rather than shimmers.
+    let ground_x = length(dpdx(in.world_position.xz));
+    let ground_y = length(dpdy(in.world_position.xz));
+    let footprint = vec2(max(ground_x, ground_y), sqrt(ground_x * ground_y));
     // Steepness of the drawn surface, crowns included.
     // Degenerate where a triangle is thinner than a pixel; such pixels count as flat.
     let across = cross(dpdx(in.world_position), dpdy(in.world_position));
@@ -279,7 +351,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if in.kind == TERRAIN {
         // The staircase estimate can overshoot on slivers along shores; real terrain never
         // gets brighter than a sunlit white block.
-        color = clamp(terrain(in, to_eye, y, filter_width, surface_slope), vec3(0.0), vec3(2.0));
+        color = clamp(terrain(in, to_eye, y, filter_width, surface_slope, footprint), vec3(0.0), vec3(2.0));
+        let patches = 1.0 - smoothstep(CROWN_FADE.x, CROWN_FADE.y, footprint.y / PATCH_CELL);
+        if patches > 0.0 {
+            color *= 1.0 + PATCHES * patches * (value_noise(in.world_position.xz / PATCH_CELL + 17.0).x - 0.5);
+        }
     } else {
         color = sheet(in, to_eye);
     }

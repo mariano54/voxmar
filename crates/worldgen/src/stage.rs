@@ -89,9 +89,38 @@ pub(crate) use clock::{Times, enter, measure};
 #[cfg(test)]
 mod clock {
     use std::cell::RefCell;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::Stage;
+
+    /// A tick counter far cheaper to read than `Instant` (which costs about as much as a
+    /// short stage), and the length of its ticks in nanoseconds: the CPU's own counter.
+    #[cfg(target_arch = "aarch64")]
+    fn ticks() -> u64 {
+        let ticks: u64;
+        // SAFETY: reading the virtual counter, which user code may, has no side effects.
+        unsafe { std::arch::asm!("mrs {}, cntvct_el0", out(reg) ticks, options(nomem, nostack)) };
+        ticks
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn tick_nanos() -> f64 {
+        let hertz: u64;
+        // SAFETY: as above, for the counter's frequency.
+        unsafe { std::arch::asm!("mrs {}, cntfrq_el0", out(reg) hertz, options(nomem, nostack)) };
+        1e9 / hertz as f64
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    fn ticks() -> u64 {
+        static START: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+        START.elapsed().as_nanos() as u64
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    fn tick_nanos() -> f64 {
+        1.0
+    }
 
     /// Time spent in each stage, in `Stage::ALL` order.
     #[derive(Clone, Copy, Debug, Default)]
@@ -116,17 +145,18 @@ mod clock {
     }
 
     struct Clock {
-        times: Times,
+        /// Ticks spent in each stage.
+        ticks: [u64; Stage::ALL.len()],
         /// The stages entered and not yet left, innermost last.
         stack: Vec<Stage>,
-        since: Instant,
+        since: u64,
     }
 
     impl Clock {
         /// Charges the time since the last change to the innermost stage.
-        fn charge(&mut self, now: Instant) {
+        fn charge(&mut self, now: u64) {
             let current = *self.stack.last().unwrap_or(&Stage::Other);
-            self.times.0[current as usize] += now - self.since;
+            self.ticks[current as usize] += now - self.since;
             self.since = now;
         }
     }
@@ -138,14 +168,15 @@ mod clock {
     /// Runs `f` with this thread's stage clock running, and returns the time spent in each
     /// stage along with its result.
     pub fn measure<R>(f: impl FnOnce() -> R) -> (R, Times) {
-        CLOCK.with_borrow_mut(|clock| *clock = Some(Clock { times: Times::default(), stack: Vec::new(), since: Instant::now() }));
+        CLOCK.with_borrow_mut(|clock| *clock = Some(Clock { ticks: [0; Stage::ALL.len()], stack: Vec::new(), since: ticks() }));
         let result = f();
-        let times = CLOCK.with_borrow_mut(|clock| {
+        let spent = CLOCK.with_borrow_mut(|clock| {
             let mut clock = clock.take().expect("started above");
-            clock.charge(Instant::now());
-            clock.times
+            clock.charge(ticks());
+            clock.ticks
         });
-        (result, times)
+        let scale = tick_nanos();
+        (result, Times(spent.map(|t| Duration::from_nanos((t as f64 * scale) as u64))))
     }
 
     pub struct Guard(bool);
@@ -153,7 +184,7 @@ mod clock {
     pub fn enter(stage: Stage) -> Guard {
         Guard(CLOCK.with_borrow_mut(|clock| {
             let Some(clock) = clock else { return false };
-            clock.charge(Instant::now());
+            clock.charge(ticks());
             clock.stack.push(stage);
             true
         }))
@@ -164,7 +195,7 @@ mod clock {
             if self.0 {
                 CLOCK.with_borrow_mut(|clock| {
                     if let Some(clock) = clock {
-                        clock.charge(Instant::now());
+                        clock.charge(ticks());
                         clock.stack.pop();
                     }
                 });

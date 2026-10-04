@@ -378,6 +378,17 @@ impl Biomes {
         self.variant(parent, p.0[V])
     }
 
+    /// The biome a variant belongs to; any other biome itself.
+    pub fn parent_of(&self, id: BiomeId) -> BiomeId {
+        (0..self.variants.len()).find(|&p| self.variants[p].iter().any(|s| s.biome == id)).map_or(id, |p| BiomeId(p as u16))
+    }
+
+    /// The band index of a point along each of the four table axes.
+    #[cfg(test)]
+    pub(crate) fn bands(&self, p: &Point) -> [u8; 4] {
+        std::array::from_fn(|a| self.edges[a].partition_point(|&edge| edge <= p.0[a]) as u8)
+    }
+
     fn variant(&self, parent: BiomeId, v: f32) -> BiomeId {
         self.variants[parent.0 as usize].iter().find(|s| (s.start..s.end).contains(&v)).map_or(parent, |s| s.biome)
     }
@@ -659,8 +670,11 @@ mod tests {
     #[test]
     fn ecotones_sit_on_the_border() {
         let biomes = biomes();
-        // Humid: taiga below 4 °C, forest above, birch taiga within a degree of the edge.
-        let at = |t: f32| biomes.get(biomes.resolve(&point(t, 1.1, 0.4, 0.0, 0.5, 0.0, 0.99))).name.as_str();
+        // Humid: taiga below 4 °C, forest above (where the weirdness gives the cell to
+        // forest rather than the other woods sharing it), birch taiga within a degree of
+        // the edge.
+        let w = (0..100).map(|i| i as f32 / 100.0).find(|&w| biomes.get(biomes.resolve(&point(5.5, 1.1, 0.4, 0.0, w, 0.0, 0.99))).name == "base:forest").unwrap();
+        let at = |t: f32| biomes.get(biomes.resolve(&point(t, 1.1, 0.4, 0.0, w, 0.0, 0.99))).name.as_str();
         assert_eq!(at(2.5), "base:taiga");
         assert_eq!(at(3.5), "base:birch_taiga");
         assert_eq!(at(4.5), "base:birch_taiga");

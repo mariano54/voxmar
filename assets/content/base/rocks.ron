@@ -1,10 +1,8 @@
 // Rock provinces: regions 2-4 km across, each with its own stones underground and on bare
 // rock, independent of the climate, so a desert may lie on sandstone or on granite. A
 // province's share of the world is its weight times its rarity. Stones are drawn by
-// weight; tagged stones join automatically once blocks carry tags.
-//
-// Until our own stones arrive these use the blocks we have: calcite and diorite stand in
-// for limestone and marble, tuff, andesite and deepslate for basalt and slate.
+// weight; tagged stones join automatically once blocks carry tags. Bare slopes, cliffs,
+// boulders and scree all show a province's stones, so each region reads differently.
 (
     provinces: [
         (
@@ -13,33 +11,49 @@
             stones: [Name("stone", 3.0), Name("granite", 2.0), Name("diorite", 0.6), Name("andesite", 0.4)],
         ),
         (
+            // Pale karst country.
             name: "limestone",
             tags: ["sedimentary", "karst"],
-            stones: [Name("stone", 3.0), Name("diorite", 1.2), Name("calcite", 1.0)],
+            stones: [Name("limestone", 3.0), Name("stone", 1.5), Name("calcite", 0.5)],
         ),
         (
             name: "basalt",
             tags: ["igneous", "volcanic"],
             weight: 0.7,
-            stones: [Name("andesite", 2.0), Name("stone", 2.0), Name("tuff", 1.5)],
+            stones: [Name("basalt", 3.0), Name("andesite", 1.0), Name("tuff", 1.0), Name("stone", 0.5)],
         ),
         (
             name: "marble",
             tags: ["metamorphic"],
             rarity: Uncommon,
-            stones: [Name("calcite", 2.0), Name("diorite", 2.0), Name("stone", 1.0)],
+            stones: [Name("marble", 3.0), Name("diorite", 1.0), Name("stone", 1.0)],
         ),
         (
             name: "sandstone",
             tags: ["sedimentary"],
             weight: 0.8,
-            stones: [Name("stone", 2.0), Name("sandstone", 2.0), Name("red_sandstone", 0.6)],
+            stones: [Name("sandstone", 2.5), Name("stone", 1.5), Name("red_sandstone", 0.6)],
         ),
         (
             name: "slate",
             tags: ["metamorphic"],
             weight: 0.8,
-            stones: [Name("stone", 2.0), Name("tuff", 1.5), Name("deepslate", 1.0), Name("andesite", 0.5)],
+            stones: [Name("slate", 3.0), Name("stone", 1.0), Name("deepslate", 0.6), Name("tuff", 0.4)],
+        ),
+        (
+            // White downs of chalk with flint-grey stone.
+            name: "chalk",
+            tags: ["sedimentary", "karst"],
+            rarity: Uncommon,
+            weight: 0.6,
+            stones: [Name("chalk", 3.0), Name("limestone", 1.0), Name("stone", 0.5)],
+        ),
+        (
+            // Banded travertine where old springs laid it down.
+            name: "travertine",
+            tags: ["sedimentary", "spring"],
+            rarity: Rare,
+            stones: [Name("travertine", 3.0), Name("limestone", 1.0), Name("calcite", 0.6)],
         ),
     ],
 )

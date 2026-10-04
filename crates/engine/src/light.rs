@@ -5,12 +5,13 @@
 //! column from its 3×3 neighbourhood is therefore exact, needs no shared mutable state,
 //! and runs on any worker thread. Edits relight only the columns within reach.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use glam::IVec3;
 
 use crate::block::{BlockId, BlockRegistry};
-use crate::coords::{CHUNK_SIZE, CHUNK_VOLUME, COLUMN_CHUNKS, WORLD_HEIGHT};
+use crate::coords::{CHUNK_SIZE, COLUMN_CHUNKS, WORLD_HEIGHT};
 use crate::world::Column;
 
 /// Horizontal padding around the column: light reach plus the mesher's border.
@@ -44,13 +45,20 @@ impl LitRegion {
         let _span = tracing::info_span!("light_column").entered();
         let total = PLANE * H as usize;
         let mut region = Self { blocks: vec![BlockId::AIR; total], light: vec![0; total] };
-        let mut attenuation = vec![1u8; total];
-        let mut queue = Vec::new();
-
-        region.copy_blocks(registry, columns, &mut attenuation, &mut queue);
-        region.flood(&attenuation, &mut queue, 0);
-        region.sky_light(&attenuation, &mut queue);
-        region.flood(&attenuation, &mut queue, 4);
+        thread_local! {
+            /// Attenuation and the flood's queue, kept between regions: freshly allocated,
+            /// their megabytes cost as much in page faults as the light itself.
+            static SCRATCH: RefCell<(Vec<u8>, Vec<u32>)> = const { RefCell::new((Vec::new(), Vec::new())) };
+        }
+        SCRATCH.with_borrow_mut(|(attenuation, queue)| {
+            attenuation.clear();
+            attenuation.resize(total, 1);
+            queue.clear();
+            region.copy_blocks(registry, columns, attenuation, queue);
+            region.flood(attenuation, queue, 0);
+            region.sky_light(attenuation, queue);
+            region.flood(attenuation, queue, 4);
+        });
         region
     }
 
@@ -82,7 +90,9 @@ impl LitRegion {
         attenuation: &mut [u8],
         queue: &mut Vec<u32>,
     ) {
-        let mut dense = vec![BlockId::AIR; CHUNK_VOLUME];
+        // A palette's blocks with their attenuation and emission, and a row of indices.
+        let mut looks: Vec<(BlockId, u8, u8)> = Vec::new();
+        let mut indices = [0u16; CHUNK_SIZE as usize];
         for (n, column) in columns.iter().enumerate() {
             let (dx, dz) = (n as i32 % 3 - 1, n as i32 / 3 - 1);
             // Overlap of this neighbour with the region, in neighbour-local coordinates.
@@ -112,19 +122,21 @@ impl LitRegion {
                     continue;
                 }
 
-                chunk.copy_to_dense(&mut dense);
+                // Only the rows the region needs, decoded straight from the packed indices,
+                // with each block of the palette looked up once.
+                looks.clear();
+                looks.extend(chunk.palette().iter().map(|&block| (block, registry.info(block).attenuation, registry.info(block).emission)));
+                let indices = &mut indices[..x_range.len()];
                 for y in 0..CHUNK_SIZE {
                     for z in z_range.clone() {
-                        let src = ((y * CHUNK_SIZE + z) * CHUNK_SIZE) as usize;
-                        let row = index(0, y0 + y, z + to_region.z);
-                        for x in x_range.clone() {
-                            let block = dense[src + x as usize];
-                            let info = registry.info(block);
-                            let i = row + (x + to_region.x) as usize;
+                        chunk.indices(((y * CHUNK_SIZE + z) * CHUNK_SIZE + x_range.start) as usize, indices);
+                        let row = index(x_range.start + to_region.x, y0 + y, z + to_region.z);
+                        for (i, &look) in (row..).zip(indices.iter()) {
+                            let (block, att, emission) = looks[look as usize];
                             self.blocks[i] = block;
-                            attenuation[i] = info.attenuation;
-                            if info.emission > 0 {
-                                self.light[i] = info.emission;
+                            attenuation[i] = att;
+                            if emission > 0 {
+                                self.light[i] = emission;
                                 queue.push(i as u32);
                             }
                         }
