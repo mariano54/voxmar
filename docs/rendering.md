@@ -341,7 +341,7 @@ The water shader then composes the surface over the scene itself (alpha 1):
   lands on something nearer than the surface, the straight view is kept.
 - **Reflections.** A march through the depth buffer in screen space, where a straight 3D
   line stays straight (uv and reverse-Z depth are both affine in 1/z), in steps that
-  lengthen by 12% each so nearby banks are resolved finely, then halved back to the surface
+  lengthen by 15% each so nearby banks are resolved finely, then halved back to the surface
   it passed behind. Rays that would dip into the water are bent to skim it, and hits below
   the surface are thrown away. Where the march leaves the screen the reflection is the sky's
   gradient (the sky dome's zenith and horizon colours), dark where no sky light reaches. The
@@ -380,7 +380,7 @@ The water's colour is the biome's (`Column::colors`, looked up per block like gr
 absorption and the colour of deep water follow it.
 
 The Water setting picks how much work this is: Low (the old ripples, sky reflections only),
-Medium (8 wave octaves, a 16-step march) and High (16 octaves, 28 steps, the default). Shader
+Medium (8 wave octaves, a 12-step march) and High (12 octaves, 20 steps, the default). Shader
 packs scale absorption, scattering, reflections, waves, refraction and foam, and choose
 pixelated water (`ShaderPack::water`).
 

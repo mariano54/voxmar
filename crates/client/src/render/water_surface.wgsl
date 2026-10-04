@@ -77,7 +77,7 @@ const BEND_REACH: f32 = 6.0;
 // Depth thickness assumed of what a reflected ray passes behind, in blocks.
 const THICKNESS: f32 = 1.5;
 // Each step of the reflection march is this much longer than the last.
-const STEP_GROWTH: f32 = 1.12;
+const STEP_GROWTH: f32 = 1.15;
 // Glints: a sharp highlight and a broader sheen around it.
 const GLINT = vec2(1600.0, 160.0);
 const GLINT_STRENGTH = vec2(40.0, 0.6);

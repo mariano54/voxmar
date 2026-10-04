@@ -109,8 +109,8 @@ impl WaterQuality {
     fn budget(self) -> (usize, u32, u32) {
         match self {
             WaterQuality::Low => (0, 0, 0),
-            WaterQuality::Medium => (8, 16, 4),
-            WaterQuality::High => (MAX_OCTAVES, 28, 6),
+            WaterQuality::Medium => (8, 12, 4),
+            WaterQuality::High => (12, 20, 5),
         }
     }
 }
