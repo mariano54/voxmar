@@ -378,7 +378,7 @@ fn footsteps(player: Res<LocalPlayer>, world: Res<ClientWorld>, mut cues: Messag
         return;
     }
     let feet = position.floor().as_ivec3();
-    let ground = world.block((position - Vec3::Y * 0.1).floor().as_ivec3()).filter(|b| !b.is_air());
+    let ground = ground_under(&world, position);
     // A plant, carpet or flower the feet stand in.
     let cover = world.block(feet).filter(|&b| world.registry.info(b).render == RenderKind::Plant);
     let wading = player.in_water;
@@ -411,6 +411,16 @@ fn footsteps(player: Res<LocalPlayer>, world: Res<ClientWorld>, mut cues: Messag
         }
     }
     state.was_grounded = player.on_ground;
+}
+
+/// The block a body standing at `feet` stands on: the one under its middle, or when that
+/// is open (standing on an edge), the one under a corner of its footprint.
+fn ground_under(world: &ClientWorld, feet: Vec3) -> Option<BlockId> {
+    let half = dims::WIDTH / 2.0 - 0.01;
+    [Vec2::ZERO, Vec2::new(-half, -half), Vec2::new(half, -half), Vec2::new(-half, half), Vec2::new(half, half)]
+        .into_iter()
+        .filter_map(|corner| world.block((feet + Vec3::new(corner.x, -0.1, corner.y)).floor().as_ivec3()))
+        .find(|&b| world.registry.info(b).solid)
 }
 
 /// The sounds of one step: the ground's, unless something covers it (a plant, moss
