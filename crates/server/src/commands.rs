@@ -7,7 +7,7 @@
 
 use voxmar_engine::command::{self, CommandDef, Lookup, Permission, Run};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
-use voxmar_engine::glam::{IVec3, Vec2, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
 use voxmar_protocol::{ChatKind, MAX_LINE, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
 use crate::save::GameMode;
@@ -17,6 +17,9 @@ use crate::{Server, load_column};
 const MAX_DEPTH: usize = 8;
 /// The fastest the time of day may run.
 const MAX_DAY_SPEED: f32 = 1000.0;
+/// How far `/locate` looks unless told, and at most, in blocks.
+const LOCATE_RADIUS: i32 = 4000;
+const MAX_LOCATE_RADIUS: i32 = 10_000;
 /// Seconds forced weather lasts unless the command says otherwise, and at most.
 const WEATHER_SECONDS: u32 = 300;
 const MAX_WEATHER_SECONDS: u32 = 24 * 3600;
@@ -94,8 +97,11 @@ impl Server {
             Run::SetBlock => self.set_block_command(id, args),
             Run::Fill => self.fill(id, args),
             Run::Give => self.give(id, args),
-            Run::Biome | Run::Locate => Err("This world has no biomes yet.".into()),
+            Run::Biome => Ok(self.biome(id)),
+            Run::Locate => self.locate(id, args),
         };
+        let (Ok(text) | Err(text)) = &reply;
+        tracing::debug!("/{}: {text}", def.short_name());
         match reply {
             Ok(text) if !text.is_empty() => self.tell(id, ChatKind::Info, text),
             Ok(_) => {}
@@ -325,6 +331,44 @@ impl Server {
                 self.weather.force_wind(&wind, at, seconds, tick);
                 Ok(reply)
             }
+        }
+    }
+
+    /// The biome the player stands in, and what makes it.
+    fn biome(&self, id: PlayerId) -> String {
+        let at = self.players[&id].position.floor().as_ivec3();
+        let site = self.overworld.site(at.x, at.z);
+        let biome = self.overworld.biome_at(at.x, at.z);
+        let tags = if biome.tags.is_empty() { String::new() } else { format!(" ({})", biome.tags.join(", ")) };
+        format!(
+            "{}{tags}, {:?}. {:.1} °C mean, {:.0} mm of rain a year, aether {:.2}.",
+            biome.name, biome.rarity, site.temperature, site.precipitation, site.aether
+        )
+    }
+
+    /// `/locate biome NAME [RADIUS]`: the nearest place of a biome.
+    fn locate(&self, id: PlayerId, args: &[String]) -> Reply {
+        let (name, radius) = match args {
+            [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
+            [kind, name, radius] if kind == "biome" => {
+                let radius: i32 = radius.parse().ok().filter(|r| (1..=MAX_LOCATE_RADIUS).contains(r))
+                    .ok_or_else(|| format!("The radius must be a number of blocks up to {MAX_LOCATE_RADIUS}."))?;
+                (name, radius)
+            }
+            _ => return Err("Locate what?".into()),
+        };
+        if self.overworld.biomes().id(name).or_else(|| self.overworld.biomes().id(&format!("base:{name}"))).is_none() {
+            return Err(format!("There is no biome called `{name}`."));
+        }
+        let position = self.players[&id].position;
+        let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
+        match self.overworld.locate_biome(name, from, radius) {
+            Some(at) => {
+                let offset = (at - from).as_vec2();
+                let way = if offset.length() < 1.0 { String::new() } else { format!(" to the {}", compass(offset)) };
+                Ok(format!("The nearest {name} is at {} {}, {:.0} blocks away{way}. /tp {} {} goes there.", at.x, at.y, offset.length(), at.x, at.y))
+            }
+            None => Err(format!("No {name} within {radius} blocks.")),
         }
     }
 

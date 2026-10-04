@@ -140,7 +140,7 @@ impl Rivers {
             min_area: 3,
             incision: 2.0,
             lakes: false,
-            tunnel: Some(TunnelRule { depth: 24.0, chance: 0.5, length: 6 }),
+            tunnel: Some(TunnelRule { depth: 14.0, chance: 0.35, length: 6 }),
             seed,
         };
         let streams = Tier {
@@ -163,22 +163,22 @@ impl Rivers {
             trunks: Drainage::new(trunks, Budget { lakes: 16 * MB, basins: 32 * MB, flows: 8 * MB }),
             streams: Drainage::new(streams, Budget { lakes: 32 * MB, basins: 96 * MB, flows: 16 * MB }),
             trunk_style: Style { river_width: 5.0, floodplain: 1.0, wall: 1.6, valley: 48.0, jitter: 18.0, shore: 5, roof: 14.0 },
-            stream_style: Style { river_width: 5.0, floodplain: 0.3, wall: 1.1, valley: 20.0, jitter: 2.5, shore: 1, roof: f32::MAX },
+            stream_style: Style { river_width: 5.0, floodplain: 0.3, wall: 1.1, valley: 20.0, jitter: 2.5, shore: 0, roof: f32::MAX },
             coarse: Cache::new(16 * MB),
             fine: Cache::new(64 * MB),
             rain: Cache::new(4 * MB),
             trunk_channels: Cache::new(32 * MB),
             stream_channels: Cache::new(96 * MB),
             creek,
-            trunk: creek * 10.0,
+            trunk: creek * 6.0,
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
-    /// Width of a river carrying `flow`, in blocks: a trickle at the smallest creek, and
-    /// widening with the square root of the flow, roughly, downstream.
+    /// Width of a river carrying `flow`, in blocks: a trickle at the smallest creek, six
+    /// blocks with twenty times its water, ten with fifty.
     fn width(&self, flow: f32) -> f32 {
-        (1.3 * (flow / self.creek).powf(0.45)).clamp(1.0, 28.0)
+        (flow / self.creek).powf(0.6).clamp(1.0, 28.0)
     }
 
     /// The regional climate at a position, from samples every `RAIN_CELL` blocks.
@@ -243,9 +243,12 @@ impl Rivers {
         let tier = &self.streams.tier;
         let n = (tier.tile * tier.tile) as usize;
         let (mut height, mut runoff, mut absorbed) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+        let first = tier.centre(key * tier.tile);
+        let trunks = self.near(land, Level::Trunk, TRUNK_MARGIN, first, first + (tier.tile - 1) * tier.cell);
         for i in 0..tier.tile * tier.tile {
             let centre = tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile));
-            let carved = self.carve_trunks(land, centre.x, centre.y, land.geology.land(centre.x, centre.y).height);
+            let ground = Carved::land(land.geology.land(centre.x, centre.y).height);
+            let carved = carve(&self.trunk_style, trunks.list(), centre.x, centre.y, ground);
             height.push(carved.ground);
             absorbed.push(match carved.water {
                 Some(surface) if carved.cavity.is_none() => surface,
@@ -323,9 +326,11 @@ impl Rivers {
         let found = RECENT.with(|recent| {
             let mut recent = recent.borrow_mut();
             let i = recent.iter().position(|(id, l, r, _)| *id == self.id && *l == level && *r == region)?;
-            let entry = recent.remove(i);
-            let channels = entry.3.clone();
-            recent.insert(0, entry);
+            let channels = recent[i].3.clone();
+            if i > 0 {
+                let entry = recent.remove(i);
+                recent.insert(0, entry);
+            }
             Some(channels)
         });
         if let Some(channels) = found {
@@ -347,45 +352,30 @@ impl Rivers {
         channels
     }
 
-    /// The channels of a tier that may reach a column: its own region's first, then its
-    /// neighbours' where it lies within `margin` of their border.
-    fn channels_near(&self, land: Stages, level: Level, margin: i32, x: i32, z: i32) -> Near {
-        let region = IVec2::new(x, z).div_euclid(IVec2::splat(REGION));
-        let local = IVec2::new(x, z) - region * REGION;
-        let side = |v: i32| if v < margin { -1 } else if v >= REGION - margin { 1 } else { 0 };
-        let (sx, sz) = (side(local.x), side(local.y));
-        let mut near = Near { channels: Default::default(), len: 0 };
-        let mut add = |offset: IVec2| {
-            near.channels[near.len] = Some(self.channels(land, level, region + offset));
-            near.len += 1;
-        };
-        add(IVec2::ZERO);
-        if sx != 0 {
-            add(IVec2::new(sx, 0));
-        }
-        if sz != 0 {
-            add(IVec2::new(0, sz));
-        }
-        if sx != 0 && sz != 0 {
-            add(IVec2::new(sx, sz));
+    /// The channels of a tier that may reach any column from `min` to `max` (inclusive):
+    /// those of every region within `margin` of them.
+    fn near(&self, land: Stages, level: Level, margin: i32, min: IVec2, max: IVec2) -> Near {
+        let first = (min - margin).div_euclid(IVec2::splat(REGION));
+        let last = (max + margin).div_euclid(IVec2::splat(REGION));
+        let mut near = Near::new();
+        for z in first.y..=last.y {
+            for x in first.x..=last.x {
+                near.push(self.channels(land, level, IVec2::new(x, z)));
+            }
         }
         near
     }
 
-    /// The trunk tier carved into a column whose land is `height` high.
-    fn carve_trunks(&self, land: Stages, x: i32, z: i32, height: f32) -> Carved {
-        let near = self.channels_near(land, Level::Trunk, TRUNK_MARGIN, x, z);
-        let near = near.list();
-        carve(&self.trunk_style, &near, near[0], x, z, Carved::land(height))
+    /// Both tiers' channels near the columns from `min` to `max`.
+    fn tiers(&self, land: Stages, min: IVec2, max: IVec2) -> (Near, Near) {
+        (self.near(land, Level::Trunk, TRUNK_MARGIN, min, max), self.near(land, Level::Stream, STREAM_MARGIN, min, max))
     }
 
     /// A column with both tiers carved in, before sealing.
-    fn unsealed(&self, land: Stages, x: i32, z: i32) -> Column {
+    fn unsealed(&self, land: Stages, (trunks, streams): &(Near, Near), x: i32, z: i32) -> Column {
         let ground = land.geology.land(x, z);
-        let trunks = self.carve_trunks(land, x, z, ground.height);
-        let near = self.channels_near(land, Level::Stream, STREAM_MARGIN, x, z);
-        let near = near.list();
-        let carved = carve(&self.stream_style, &near, near[0], x, z, trunks);
+        let trunks = carve(&self.trunk_style, trunks.list(), x, z, Carved::land(ground.height));
+        let carved = carve(&self.stream_style, streams.list(), x, z, trunks);
         let height = (carved.ground.floor() as i32).max(4);
         let water = match carved.water {
             Some(surface) => top_block(surface).max(if height < SEA_LEVEL { SEA_LEVEL } else { i32::MIN }),
@@ -415,11 +405,12 @@ impl Rivers {
 
     /// The geology of one column, with its rivers and lakes.
     pub fn sample(&self, land: Stages, x: i32, z: i32) -> GeoSample {
-        let column = self.unsealed(land, x, z);
+        let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
+        let column = self.unsealed(land, &tiers, x, z);
         if !column.near || column.sample.water > column.sample.height {
             return column.sample;
         }
-        let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, x + dx, z + dz).sample);
+        let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, &tiers, x + dx, z + dz).sample);
         seal(column.sample, &neighbours)
     }
 
@@ -427,7 +418,8 @@ impl Rivers {
     /// lakes; the same as sampling each alone, but sharing the work of sealing.
     pub fn area(&self, land: Stages, min: IVec2, size: i32) -> Vec<GeoSample> {
         let wide = size + 2;
-        let columns: Vec<Column> = (0..wide * wide).map(|i| self.unsealed(land, min.x - 1 + i % wide, min.y - 1 + i / wide)).collect();
+        let tiers = self.tiers(land, min - 1, min + size);
+        let columns: Vec<Column> = (0..wide * wide).map(|i| self.unsealed(land, &tiers, min.x - 1 + i % wide, min.y - 1 + i / wide)).collect();
         (0..size * size)
             .map(|i| {
                 let (x, z) = (i % size + 1, i / size + 1);
@@ -442,15 +434,26 @@ impl Rivers {
     }
 }
 
-/// Up to four regions' channels, own region first.
+/// The channels of the regions around some columns: up to four, as a margin is far less
+/// than a region.
 struct Near {
     channels: [Option<Arc<Channels>>; 4],
     len: usize,
 }
 
 impl Near {
-    fn list(&self) -> Vec<&Channels> {
-        self.channels[..self.len].iter().map(|c| c.as_deref().expect("filled")).collect()
+    fn new() -> Self {
+        Self { channels: Default::default(), len: 0 }
+    }
+
+    fn push(&mut self, channels: Arc<Channels>) {
+        assert!(self.len < 4, "columns near more than four regions");
+        self.channels[self.len] = Some(channels);
+        self.len += 1;
+    }
+
+    fn list(&self) -> &[Option<Arc<Channels>>] {
+        &self.channels[..self.len]
     }
 }
 

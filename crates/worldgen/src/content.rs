@@ -2,8 +2,8 @@
 //! are, so a mod adds a biome, a tree or a rock province exactly as the base game does.
 //!
 //! Each package may hold `climate.ron` (the bands every biome is placed by, and the blocks
-//! of snow and ice), `rocks.ron` (rock provinces), `biomes.ron`, `trees.ron` and
-//! `plants.ron`. Names are qualified with the package (`base:taiga`). Loading resolves
+//! of snow and ice), `rocks.ron` (rock provinces), `biomes.ron`, `cave_biomes.ron` (biomes
+//! of the `Underground` layer, in a file of their own), `trees.ron` and `plants.ron`. Names are qualified with the package (`base:taiga`). Loading resolves
 //! `inherit`, then checks every reference: blocks, provinces, biomes, trees, plants, band
 //! names, and that the biome table has no holes. A broken package fails at load with a
 //! message naming the file, the definition and what is wrong, never later in generation.
@@ -151,7 +151,10 @@ pub enum Layer {
     /// The ground under the sky.
     #[default]
     Surface,
-    /// Caves, chosen by depth as well (later).
+    /// Caves: chosen in 3D, by depth, height and rock province as well as climate. Their
+    /// `surface` lines cave floors (`ground`, or `underwater` under water) and ceilings
+    /// (`cliff`); their `stones` (or `strata`) are the rock around them; and their
+    /// `cave_decoration` grows from floors and ceilings. See `crate::underground`.
     Underground,
 }
 
@@ -175,6 +178,12 @@ pub struct ClimateBox {
     pub erosion: Option<(String, String)>,
     /// Where aether is in this range the biome displaces the ordinary biomes of its cells.
     pub aether: Option<(f32, f32)>,
+    /// Underground biomes only: blocks below the surface.
+    pub depth: Option<(f32, f32)>,
+    /// Underground biomes only: height above sea level (negative below it).
+    pub height: Option<(f32, f32)>,
+    /// Underground biomes only: the rock provinces it lies in, by name or tag.
+    pub provinces: Option<Vec<String>>,
 }
 
 impl ClimateBox {
@@ -305,6 +314,40 @@ pub struct SurfaceDef {
     pub cliff: Option<Material>,
 }
 
+/// Which way a cave decoration grows.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub enum Side {
+    /// Up from a cave floor.
+    Floor,
+    /// Down from a cave ceiling.
+    Ceiling,
+}
+
+/// Something growing in a cave: a plant or mushroom on the floor, a stalagmite, a
+/// stalactite, an icicle, hanging roots or vines, a crystal. It grows straight up or down
+/// within its block column, into open air only.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DecorationDef {
+    pub on: Side,
+    /// The chance per block of floor or ceiling. A position takes the first decoration of
+    /// its side that it rolls, in order.
+    pub chance: f32,
+    /// Further conditions on the column, as in surface rules (patches, warmth).
+    #[serde(default)]
+    pub when: Vec<Condition>,
+    /// Only on floor or ceiling blocks carrying one of these tags (soil for plants).
+    #[serde(default)]
+    pub on_tags: Vec<String>,
+    pub block: Material,
+    /// How many blocks it grows, from the first number to the second; one when left out.
+    #[serde(default = "single")]
+    pub length: (i32, i32),
+    /// A different last block, with this chance: glowing tips.
+    #[serde(default)]
+    pub tip: Option<(Material, f32)>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub enum Stones {
     /// The stones of the rock province.
@@ -342,7 +385,9 @@ struct RawBiome {
     strata: Option<Vec<String>>,
     colors: Option<Colors>,
     flora: Option<FloraDef>,
+    atmosphere: Option<AtmosphereDef>,
     variants: Option<Vec<(String, f32)>>,
+    cave_decoration: Option<Vec<DecorationDef>>,
 }
 
 /// A biome with its inheritance resolved.
@@ -364,8 +409,11 @@ pub struct BiomeDef {
     pub strata: Vec<String>,
     pub colors: Colors,
     pub flora: FloraDef,
+    pub atmosphere: AtmosphereDef,
     /// Sub-biomes and the share of this biome's land each takes.
     pub variants: Vec<(String, f32)>,
+    /// What grows from the floors and ceilings of an underground biome's caves.
+    pub cave_decoration: Vec<DecorationDef>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -587,6 +635,102 @@ pub struct FloraDef {
 }
 
 // ---------------------------------------------------------------------------------------
+// ambient.ron and atmospheres
+
+/// How ambient particles move.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum Motion {
+    /// Wander slowly on the air (pollen, motes).
+    #[default]
+    Drift,
+    /// Hang in place, bobbing (fireflies, spores).
+    Hover,
+    /// Settle downwards (snow, ash).
+    Fall,
+    /// Float upwards (embers, mist).
+    Rise,
+    /// Stream along with the wind (dust, sand).
+    Blow,
+}
+
+/// The time of day a particle set shows at.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum DayTime {
+    #[default]
+    Always,
+    Day,
+    Night,
+    /// Dawn and dusk.
+    Twilight,
+}
+
+/// The weather a particle set shows in.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum WeatherWhen {
+    #[default]
+    Always,
+    /// No rain or snow falling.
+    Dry,
+    /// Rain or snow falling.
+    Wet,
+}
+
+/// A set of ambient particles, for the client to show around the player.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ParticleDef {
+    pub name: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub rarity: Rarity,
+    /// How many there are where conditions suit them fully, 0 ..= 1 of the most the
+    /// client shows.
+    pub density: f32,
+    /// sRGB.
+    pub color: (u8, u8, u8),
+    /// Size in blocks.
+    #[serde(default = "tenth")]
+    pub size: f32,
+    #[serde(default)]
+    pub motion: Motion,
+    /// Gives off its own light.
+    #[serde(default)]
+    pub glow: bool,
+    #[serde(default)]
+    pub time: DayTime,
+    #[serde(default)]
+    pub weather: WeatherWhen,
+    #[serde(default)]
+    pub comfort: Comfort,
+    /// How strongly it follows the aether field, 0 (not at all) ..= 1 (only where aether
+    /// is high).
+    #[serde(default)]
+    pub aether: f32,
+}
+
+/// A biome's air: haze, a nudge to the sky and the colour grading, and ambient particles.
+/// Everything left out comes from the climate, so most biomes need nothing here.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct AtmosphereDef {
+    /// Haze colour, sRGB.
+    pub haze: Option<(u8, u8, u8)>,
+    /// Haze density relative to the usual, 1.
+    pub haze_density: Option<f32>,
+    /// A tint multiplied into the sky, sRGB (white leaves it).
+    pub sky: Option<(u8, u8, u8)>,
+    /// Colour grading: −1 cooler ..= 1 warmer, slight around 0.
+    pub warmth: Option<f32>,
+    /// Colour grading: saturation relative to the usual, 1.
+    pub saturation: Option<f32>,
+    /// Particle sets, by selector; every set whose climate fits when left out.
+    pub particles: Option<Vec<Select>>,
+    /// Tags of particle sets never shown here.
+    pub exclude: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------------------
 // Loading
 
 #[derive(Deserialize)]
@@ -613,6 +757,12 @@ struct PlantFile {
     plants: Vec<PlantDef>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AmbientFile {
+    particles: Vec<ParticleDef>,
+}
+
 /// Everything the world generator reads from content packages.
 #[derive(Clone, Debug)]
 pub struct WorldContent {
@@ -621,12 +771,15 @@ pub struct WorldContent {
     pub biomes: Vec<BiomeDef>,
     pub trees: Vec<TreeDef>,
     pub plants: Vec<PlantDef>,
+    pub particles: Vec<ParticleDef>,
 }
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 5] = [
+pub(crate) const BASE_FILES: [(&str, &str); 7] = [
+    ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
+    ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
     ("rocks.ron", include_str!("../../../assets/content/base/rocks.ron")),
@@ -652,7 +805,7 @@ impl WorldContent {
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
         let mut provinces = Vec::new();
-        let (mut trees, mut plants) = (Vec::new(), Vec::new());
+        let (mut trees, mut plants, mut particles) = (Vec::new(), Vec::new(), Vec::new());
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -676,7 +829,7 @@ impl WorldContent {
                     stones: p.stones.iter().map(|s| qualify_select(&file.package, s)).collect(),
                     ..p
                 })),
-                "biomes.ron" => {
+                "biomes.ron" | "cave_biomes.ron" => {
                     for biome in parse::<BiomeFile>(&at, &file.source)?.biomes {
                         raw.push((at.clone(), qualify_biome(&file.package, biome)));
                     }
@@ -692,6 +845,9 @@ impl WorldContent {
                         ..t
                     }
                 })),
+                "ambient.ron" => particles.extend(
+                    parse::<AmbientFile>(&at, &file.source)?.particles.into_iter().map(|p| ParticleDef { name: qualify(&file.package, &p.name), ..p }),
+                ),
                 "plants.ron" => plants.extend(parse::<PlantFile>(&at, &file.source)?.plants.into_iter().map(|p| {
                     let q = |n: &str| qualify(&file.package, n);
                     PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), ..p }
@@ -701,7 +857,7 @@ impl WorldContent {
         }
         let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
         let biomes = inherit(&raw)?;
-        let content = Self { climate, provinces, biomes, trees, plants };
+        let content = Self { climate, provinces, biomes, trees, plants, particles };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }
@@ -809,10 +965,36 @@ impl WorldContent {
                 {
                     return Err(ContentError(format!("{}: the aether range ({lo}, {hi}) is empty or outside 0..=1", at())));
                 }
+                let underground = climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some();
+                if underground && biome.layer != Layer::Underground {
+                    return Err(ContentError(format!("{}: depth, height and provinces are for underground biomes", at())));
+                }
+                for (what, range) in [("depth", climate.depth), ("height", climate.height)] {
+                    if let Some((lo, hi)) = range
+                        && lo.partial_cmp(&hi) != Some(std::cmp::Ordering::Less)
+                    {
+                        return Err(ContentError(format!("{}: the {what} range ({lo}, {hi}) is empty", at())));
+                    }
+                }
+                for name in climate.provinces.iter().flatten() {
+                    if !self.provinces.iter().any(|p| p.matches(name)) {
+                        return Err(ContentError(format!("{}: no rock province is named or tagged `{name}`", at())));
+                    }
+                }
+            }
+            if !biome.cave_decoration.is_empty() && biome.layer != Layer::Underground {
+                return Err(ContentError(format!("{}: cave decoration is for underground biomes", at())));
+            }
+            for (i, decoration) in biome.cave_decoration.iter().enumerate() {
+                let at = || format!("{}, cave decoration {}", at(), i + 1);
+                self.check_decoration(decoration, !biome.strata.is_empty(), registry, &at, &block, &blocks)?;
             }
             let is_variant = self.biomes.iter().any(|b| b.variants.iter().any(|(v, _)| *v == biome.name));
             if biome.layer == Layer::Surface && biome.climate.is_empty() && biome.ecotone.is_none() && !is_variant {
                 return Err(ContentError(format!("{}: never grows: it has no climate, is no ecotone and no biome's variant", at())));
+            }
+            if biome.layer == Layer::Underground && (biome.climate.is_empty() && !is_variant || biome.ecotone.is_some()) {
+                return Err(ContentError(format!("{}: an underground biome grows in a climate box or as a variant, not as an ecotone", at())));
             }
             if let Some(ecotone) = &biome.ecotone {
                 if ecotone.width.is_nan() || ecotone.width <= 0.0 {
@@ -916,9 +1098,33 @@ impl WorldContent {
             }
             comfort(&at, &plant.comfort)?;
         }
+        for (i, particles) in self.particles.iter().enumerate() {
+            let at = || format!("ambient.ron: particles `{}`", particles.name);
+            if self.particles[..i].iter().any(|p| p.name == particles.name) {
+                return Err(ContentError(format!("{}: defined twice", at())));
+            }
+            if !(0.0..=1.0).contains(&particles.density) || !(0.0..=1.0).contains(&particles.aether) || !(particles.size > 0.0 && particles.size <= 4.0) {
+                return Err(ContentError(format!("{}: density and aether must be in 0..=1 and size in (0, 4]", at())));
+            }
+            comfort(&at, &particles.comfort)?;
+        }
         for biome in &self.biomes {
             let file = file_of(&biome.name);
             let at = || format!("{file}: biome `{}`", biome.name);
+            let air = &biome.atmosphere;
+            for (what, value, range) in [("haze_density", air.haze_density, 0.0..=4.0), ("warmth", air.warmth, -1.0..=1.0), ("saturation", air.saturation, 0.0..=2.0)] {
+                if value.is_some_and(|v| !range.contains(&v)) {
+                    return Err(ContentError(format!("{}: atmosphere {what} must be in {range:?}", at())));
+                }
+            }
+            for select in air.particles.iter().flatten() {
+                positive(&|| format!("{}, atmosphere", at()), "weight", select.weight())?;
+                if let Select::Name(name, _) = select
+                    && !self.particles.iter().any(|p| p.name == *name)
+                {
+                    return Err(ContentError(format!("{}, atmosphere: unknown particles `{name}`", at())));
+                }
+            }
             let flora = &biome.flora;
             for (what, v) in [("forest", flora.forest), ("cover", flora.cover), ("flowers", flora.flowers)] {
                 if !(0.0..=1.0).contains(&v) {
@@ -997,6 +1203,44 @@ impl WorldContent {
             }
         }
         Ok(())
+    }
+
+    fn check_decoration(
+        &self,
+        decoration: &DecorationDef,
+        strata: bool,
+        registry: &BlockRegistry,
+        at: &dyn Fn() -> String,
+        block: &BlockCheck<'_, str>,
+        blocks: &BlockCheck<'_, [Select]>,
+    ) -> Result<(), ContentError> {
+        let material = |material: &Material| match material {
+            Material::Block(name) => block(at, name),
+            Material::Mix(selects) => blocks(at, selects),
+            Material::Stones => Ok(()),
+            Material::Strata if strata => Ok(()),
+            Material::Strata => Err(ContentError(format!("{}: uses strata but the biome has none", at()))),
+        };
+        material(&decoration.block)?;
+        if let Some((tip, chance)) = &decoration.tip {
+            material(tip)?;
+            if !(0.0..=1.0).contains(chance) {
+                return Err(ContentError(format!("{}: the tip's chance must be in 0..=1", at())));
+            }
+        }
+        if !(0.0..=1.0).contains(&decoration.chance) {
+            return Err(ContentError(format!("{}: a chance must be in 0..=1", at())));
+        }
+        let (lo, hi) = decoration.length;
+        if !(1 <= lo && lo <= hi && hi <= 32) {
+            return Err(ContentError(format!("{}: the length ({lo}, {hi}) must be within 1..=32 and increase", at())));
+        }
+        for tag in &decoration.on_tags {
+            if registry.tagged(tag).next().is_none() {
+                return Err(ContentError(format!("{}: no block has the tag `{tag}`", at())));
+            }
+        }
+        decoration.when.iter().try_for_each(|c| self.check_condition(c, at))
     }
 
     fn check_condition(&self, condition: &Condition, at: &dyn Fn() -> String) -> Result<(), ContentError> {
@@ -1182,6 +1426,10 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             cliff: s.cliff.map(|m| qualify_material(package, m)),
         }),
         strata: biome.strata.map(|names| names.iter().map(|n| q(n)).collect()),
+        atmosphere: biome.atmosphere.map(|a| AtmosphereDef {
+            particles: a.particles.map(|p| p.iter().map(|s| qualify_select(package, s)).collect()),
+            ..a
+        }),
         flora: biome.flora.map(|f| FloraDef {
             trees: f.trees.iter().map(|s| qualify_select(package, s)).collect(),
             plants: f.plants.iter().map(|s| qualify_select(package, s)).collect(),
@@ -1193,6 +1441,15 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             Stones::Blocks(selects) => Stones::Blocks(selects.iter().map(|s| qualify_select(package, s)).collect()),
         }),
         variants: biome.variants.map(|v| v.into_iter().map(|(name, share)| (q(&name), share)).collect()),
+        cave_decoration: biome.cave_decoration.map(|list| {
+            list.into_iter()
+                .map(|d| DecorationDef {
+                    block: qualify_material(package, d.block),
+                    tip: d.tip.map(|(m, chance)| (qualify_material(package, m), chance)),
+                    ..d
+                })
+                .collect()
+        }),
         ..biome
     }
 }
@@ -1242,10 +1499,16 @@ fn inherit(raw: &[(String, RawBiome)]) -> Result<Vec<BiomeDef>, ContentError> {
                 strata: field!(strata).unwrap_or_default(),
                 colors: field!(colors).unwrap_or_default(),
                 flora: field!(flora).unwrap_or_default(),
+                atmosphere: field!(atmosphere).unwrap_or_default(),
                 variants: biome.variants.clone().unwrap_or_default(),
+                cave_decoration: field!(cave_decoration).unwrap_or_default(),
             })
         })
         .collect()
+}
+
+fn tenth() -> f32 {
+    0.1
 }
 
 fn soil() -> Vec<Ground> {
@@ -1258,6 +1521,10 @@ fn one() -> f32 {
 
 fn one_octave() -> i32 {
     1
+}
+
+fn single() -> (i32, i32) {
+    (1, 1)
 }
 
 fn temperature_axis() -> Axis {
@@ -1363,5 +1630,33 @@ mod tests {
         let only_cold = format!("#![enable(implicit_some)]\n(biomes: [(name: \"cold\", climate: [(temperature: (\"frozen\", \"cold\"))], {GROUND})])");
         let message = load_with(&only_cold).unwrap_err().0;
         assert!(message.contains("holes") && message.contains("cool"), "{message}");
+    }
+
+    #[test]
+    fn broken_cave_biomes_fail_with_clear_errors() {
+        let load = |caves: &str| {
+            let mut files = base_files();
+            let source = format!("#![enable(implicit_some)]\n(biomes: [{caves}])");
+            files.iter_mut().find(|f| f.name == "cave_biomes.ron").unwrap().source = source;
+            WorldContent::from_files(files.iter(), &registry())
+        };
+        let cave = |extra: &str| format!("(name: \"c\", layer: Underground, climate: [(depth: (4.0, 80.0))], {GROUND}, {extra})");
+        assert!(load(&cave("cave_decoration: [(on: Ceiling, chance: 0.1, block: Block(\"ice\"), length: (1, 3))]")).is_ok());
+        let cases = [
+            (cave("cave_decoration: [(on: Ceiling, chance: 1.5, block: Block(\"ice\"))]"), "chance"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, block: Block(\"ice\"), length: (3, 1))]"), "length"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, block: Block(\"icee\"))]"), "unknown block `base:icee`"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, on_tags: [\"nope\"], block: Block(\"ice\"))]"), "tag `nope`"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, block: Strata)]"), "strata"),
+            ("(name: \"c\", layer: Underground, climate: [(depth: (80.0, 4.0))], SURFACE)".replace("SURFACE", GROUND), "depth range"),
+            ("(name: \"c\", layer: Underground, climate: [(provinces: [\"chalk\"])], SURFACE)".replace("SURFACE", GROUND), "rock province"),
+            ("(name: \"c\", layer: Underground, SURFACE)".replace("SURFACE", GROUND), "climate box"),
+            // Underground parts on a surface biome.
+            ("(name: \"c\", climate: [(depth: (4.0, 80.0))], SURFACE)".replace("SURFACE", GROUND), "underground biomes"),
+        ];
+        for (source, expected) in cases {
+            let message = load(&source).unwrap_err().0;
+            assert!(message.contains(expected) && message.contains("cave_biomes.ron"), "expected `{expected}` in: {message}");
+        }
     }
 }

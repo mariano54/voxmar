@@ -9,6 +9,10 @@
 // `aether` range only applies where the land is that fantastical, and there displaces the
 // ordinary biomes of its cells.
 //
+// `atmosphere` (haze, sky tint, colour grading, ambient particles from ambient.ron) comes
+// from the climate unless a biome sets parts of it. `flora` selects trees and plants from
+// the shared pools in trees.ron and plants.ron.
+//
 // `variants` take a share of their parent's land each (times their rarity), picked by an
 // evenly spread variant field. An `ecotone` is a thin slice along the border of two
 // biomes. `inherit` copies every field left out from another biome.
@@ -463,6 +467,10 @@
                 shore: (top: Block("sand")),
             ),
             colors: (grass: (158, 178, 225), foliage: (170, 186, 230)),
+            atmosphere: (
+                haze: (196, 204, 240), sky: (236, 236, 255), saturation: 1.15,
+                particles: [Tag("fantastical", 4.0), Tag("meadow", 1.0)],
+            ),
         ),
     ],
 )

@@ -195,6 +195,8 @@ pub(crate) struct Server {
     save: Option<WorldSave>,
     content: Content,
     generator: Arc<dyn Generator>,
+    /// The same generator, for what commands ask about the land.
+    overworld: Arc<Overworld>,
     executor: Executor,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
@@ -245,7 +247,7 @@ impl Server {
         let chances = weather::chances(&content.weather, &overworld.dials().featured);
         let weather = WeatherState::new(meta.seed, overworld.dials().wind.into(), land, content.weather.clone(), chances);
         let processes = process::core_processes();
-        let generator: Arc<dyn Generator> = overworld;
+        let generator: Arc<dyn Generator> = overworld.clone();
         // Load the spawn column up front and stand on its highest solid block, so
         // features like trees never bury the player.
         let mut world = VoxelWorld::default();
@@ -268,6 +270,7 @@ impl Server {
             save,
             content,
             generator,
+            overworld,
             executor: Executor::default(),
             processes,
             temperature,

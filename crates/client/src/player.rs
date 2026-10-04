@@ -48,6 +48,8 @@ pub struct LocalPlayer {
     pub dead: bool,
     /// Set once the server has welcomed us.
     pub joined: bool,
+    /// The world's seed, as the server told us.
+    pub seed: u64,
 }
 
 impl Default for LocalPlayer {
@@ -68,6 +70,7 @@ impl Default for LocalPlayer {
             selected: 0,
             dead: false,
             joined: false,
+            seed: 0,
         }
     }
 }
@@ -251,7 +254,7 @@ fn look(
         return;
     }
     let sensitivity = SENSITIVITY * settings.sensitivity as f32 / 100.0 / zoom.current;
-    zoom.look(&mut *player, delta * sensitivity, settings.cinematic_zoom, time.delta_secs());
+    zoom.look(&mut player, delta * sensitivity, settings.cinematic_zoom, time.delta_secs());
 }
 
 /// The camera's field of view: the setting's, narrowed while zoomed.

@@ -30,10 +30,11 @@ use crate::settings::Settings;
 use crate::weather::{ClientWeather, Thunder};
 use crate::world::ClientWorld;
 
-const RATE: u32 = 44_100;
+/// Sample rate of every synthesized sound, shared with `ambience`.
+pub(crate) const RATE: u32 = 44_100;
 const VARIANTS: u64 = 4;
 /// Volume at 100% in the settings.
-const MASTER: f32 = 0.6;
+pub(crate) const MASTER: f32 = 0.6;
 /// Seconds in the rain loop, and its volume in the heaviest rain out in the open.
 const RAIN_LOOP: f32 = 4.0;
 const RAIN_GAIN: f32 = 0.45;
@@ -227,22 +228,25 @@ fn footsteps(
 }
 
 /// SplitMix64 finaliser.
-fn mix(mut z: u64) -> u64 {
+pub(crate) fn mix(mut z: u64) -> u64 {
     z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
 }
 
-struct Noise(u64);
+/// White noise and uniform numbers from a seed.
+pub(crate) struct Noise(pub(crate) u64);
 
 impl Noise {
-    fn next(&mut self) -> f32 {
+    /// -1..1.
+    pub(crate) fn next(&mut self) -> f32 {
         self.0 = mix(self.0);
         (self.0 >> 40) as f32 / (1u64 << 23) as f32 - 1.0
     }
 
-    fn unit(&mut self) -> f32 {
+    /// 0..1.
+    pub(crate) fn unit(&mut self) -> f32 {
         (self.next() + 1.0) * 0.5
     }
 }
@@ -482,18 +486,30 @@ fn water_bubbles(t: f32, seed: u64) -> f32 {
 }
 
 /// Encodes mono samples as a 16-bit PCM WAV file.
-fn wav(samples: &[f32]) -> Vec<u8> {
-    let data_len = (samples.len() * 2) as u32;
+pub(crate) fn wav(samples: &[f32]) -> Vec<u8> {
+    encode(1, samples.len(), samples.iter().copied())
+}
+
+/// Encodes two channels of equal length as a 16-bit PCM WAV file.
+pub(crate) fn wav_stereo(left: &[f32], right: &[f32]) -> Vec<u8> {
+    debug_assert_eq!(left.len(), right.len());
+    encode(2, left.len(), left.iter().zip(right).flat_map(|(&l, &r)| [l, r]))
+}
+
+/// A WAV file of `frames` frames of `channels` interleaved samples.
+fn encode(channels: u16, frames: usize, samples: impl Iterator<Item = f32>) -> Vec<u8> {
+    let block = channels as u32 * 2;
+    let data_len = frames as u32 * block;
     let mut out = Vec::with_capacity(44 + data_len as usize);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(36 + data_len).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
     out.extend_from_slice(&16u32.to_le_bytes());
     out.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&channels.to_le_bytes());
     out.extend_from_slice(&RATE.to_le_bytes());
-    out.extend_from_slice(&(RATE * 2).to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&(RATE * block).to_le_bytes());
+    out.extend_from_slice(&(block as u16).to_le_bytes());
     out.extend_from_slice(&16u16.to_le_bytes());
     out.extend_from_slice(b"data");
     out.extend_from_slice(&data_len.to_le_bytes());
