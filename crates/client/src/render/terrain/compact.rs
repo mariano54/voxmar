@@ -29,7 +29,7 @@ const COPY_LIMIT: u32 = 2048;
 
 /// One range of indices to copy, as compact.wgsl reads it.
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 struct Copy {
     source: u32,
     destination: u32,
@@ -38,6 +38,7 @@ struct Copy {
 }
 
 /// Copies that read from one page, one dispatch.
+#[derive(PartialEq, Eq)]
 struct Batch {
     stream: u8,
     page: u32,
@@ -54,10 +55,19 @@ pub(super) struct Compaction {
     buffers: Option<ViewBuffers>,
     /// Whether this frame's copies were dispatched, so the gathered indices can be drawn.
     pub ready: bool,
+    /// The copies last dispatched, and the terrain's revision then: when nothing changed,
+    /// last frame's gathered indices are still right and the copy is skipped.
+    last: (Vec<Copy>, Vec<Batch>, u64),
 }
 
 impl Compaction {
     pub fn clear(&mut self) {
+        if self.ready {
+            self.last.0.clear();
+            self.last.1.clear();
+            std::mem::swap(&mut self.copies, &mut self.last.0);
+            std::mem::swap(&mut self.batches, &mut self.last.1);
+        }
         self.copies.clear();
         self.batches.clear();
         self.len = 0;
@@ -150,6 +160,15 @@ pub(super) fn dispatch(
             if compaction.batches.is_empty() {
                 continue;
             }
+            let unchanged = compaction.buffers.is_some()
+                && compaction.last.2 == gpu.revision
+                && compaction.last.0 == compaction.copies
+                && compaction.last.1 == compaction.batches;
+            if unchanged {
+                compaction.ready = true;
+                continue;
+            }
+            compaction.last.2 = gpu.revision;
             // Each dispatch reads its first copy from `params`, at a uniform offset; long
             // batches are split to stay within the dispatch size limit.
             let mut params = Vec::new();
