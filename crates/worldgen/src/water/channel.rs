@@ -9,10 +9,10 @@
 //! outside, the valley rises from the bank to the land, and a low berm keeps the water in
 //! where the land between cells dips below it.
 //!
-//! Lakes are drawn on a grid of 8-block cells: every column near the lake's cells whose
-//! ground lies under the lake's surface holds water, so the shore follows the real land,
-//! and one ring further out the ground is raised to the surface wherever it dips below,
-//! so no water hangs in the air.
+//! Lakes are drawn on a grid of 8-block cells: every column in the lake's cells whose
+//! ground lies under the lake's surface holds water, so the shore follows the real land.
+//! Where the land between cells dips below the surface at the shore, the column-level
+//! seal raises it (see `water::seal`), so no water hangs in the air.
 
 use std::sync::Arc;
 
@@ -110,13 +110,13 @@ impl Edge {
     }
 }
 
-/// A lake's water or berm over one map cell.
+/// A lake's water or shore over one map cell.
 #[derive(Clone, Copy, Default)]
 struct LakeCell {
     /// Surface of the lake whose water may fill the cell, in eighths (0: none).
     water: i32,
-    /// Surface the ground is raised to where it dips below, around a lake (0: none).
-    dam: i32,
+    /// Surface of the lake whose shore the cell is (0: none).
+    shore: i32,
     salt: bool,
 }
 
@@ -240,7 +240,7 @@ impl Channels {
             ((0..lake_size).contains(&p.x) && (0..lake_size).contains(&p.y)).then(|| (p.y * lake_size + p.x) as usize)
         };
         // Each lake's footprint covers the map cells under its own cells, grown by the
-        // shore distance; the dam ring is one map cell beyond. Map cells further than that
+        // shore distance; its shore is one map cell beyond. Map cells further than that
         // from the region cannot reach it, so the work stays within an area around it.
         let per = cell / MAP;
         let grow_by = style.shore + 1;
@@ -294,7 +294,7 @@ impl Channels {
                     if footprint[e] {
                         map[k].water = map[k].water.max(lake.level);
                     } else if ring[e] {
-                        map[k].dam = map[k].dam.max(lake.level);
+                        map[k].shore = map[k].shore.max(lake.level);
                     }
                 }
             }
@@ -487,12 +487,11 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
             out.body = Some(Body::Lake);
         }
         out.wet = out.wet.max(1.0 - smoothstep(0.0, 5.0, out.ground - top as f32));
-    } else if lake.dam > 0 {
-        let top = top_block(lake.dam) as f32;
-        if !out.channel && out.water.is_none() {
-            out.ground = out.ground.max(top);
-        }
-        out.near = Some(out.near.map_or(lake.dam, |n| n.max(lake.dam)));
+    } else if lake.shore > 0 {
+        // The shore: banks of the lake's kind. Where the ground dips below the water
+        // beside it, sealing raises it (see `water::seal`).
+        let top = top_block(lake.shore) as f32;
+        out.near = Some(out.near.map_or(lake.shore, |n| n.max(lake.shore)));
         out.body = out.body.or(Some(Body::Lake));
         out.wet = out.wet.max(1.0 - smoothstep(0.0, 5.0, out.ground - top));
     }

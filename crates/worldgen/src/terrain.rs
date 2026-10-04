@@ -265,6 +265,16 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             for y in height + 1..=geo.water {
                 blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
             }
+            // Rocks break the surface of rapids and the foot of falls.
+            if geo.current.is_some_and(|c| c.speed >= 3)
+                && matches!(geo.body, Body::Creek | Body::River)
+                && hash3(world.seed ^ 0xb01d, wx, 0, wz) % 100 < 9
+            {
+                let rock = stones.pick((hash3(world.seed ^ 0xb01e, wx, 0, wz) & 0xffff) as f32 / 65536.0);
+                for y in height + 1..=geo.water {
+                    blocks.set_local(x, y, z, rock);
+                }
+            }
             // A river running in a tunnel under the ground.
             if let Some(cavity) = geo.cavity {
                 for y in cavity.floor + 1..=cavity.ceiling.min(height - 3) {
@@ -404,11 +414,9 @@ impl Overworld {
         if past(exposure, 3.0, 5.5) {
             return cliff();
         }
-        // Beaches along the sea and banks along rivers and lakes.
-        let beach = match site.body {
-            Body::Sea => site.continentalness < 0.7 && !past(above, 0.5, 2.5),
-            _ => site.river > 0.3 && !past(shore, 0.5, 2.5),
-        };
+        // Beaches along the sea. Banks of rivers and lakes are the river biome's own
+        // (`Site::biome` takes it near fresh water).
+        let beach = site.body == Body::Sea && site.continentalness < 0.7 && !past(above, 0.5, 2.5);
         let ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
         if past(-t, -2.5, 1.5) && terrain.ground(ground.top) == Ground::Soil {
             return Layers { top: ids.snowy_ground, ..ground };

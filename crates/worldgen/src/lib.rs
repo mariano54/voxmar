@@ -665,8 +665,9 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen river_sights -- --ignored --nocapture`
-    /// finds a highland lake, a waterfall, a confluence and a river mouth near spawn and
-    /// prints `--pose` arguments that look at each, for in-game captures.
+    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth and a river
+    /// tunnel near spawn and prints `--pose` arguments that look at each, for in-game
+    /// captures.
     #[test]
     #[ignore]
     fn river_sights() {
@@ -680,7 +681,7 @@ mod tests {
         let geos: Vec<GeoSample> = (0..n * n).map(|i| world.geo(spawn.x - range + i % n * step, spawn.z - range + i / n * step)).collect();
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         // (score, x, z, y)
-        let mut best: [(f32, i32, i32, i32); 4] = [(0.0, 0, 0, 0); 4];
+        let mut best: [(f32, i32, i32, i32); 5] = [(0.0, 0, 0, 0); 5];
         for j in 1..n - 1 {
             for i in 1..n - 1 {
                 let g = at(i, j);
@@ -691,15 +692,19 @@ mod tests {
                         best[k] = (score * near, x, z, g.water);
                     }
                 };
+                if g.cavity.is_some() {
+                    consider(4, 1.0);
+                }
                 if !g.submerged() {
                     continue;
                 }
                 if g.body == Body::Lake && g.water > SEA_LEVEL + 20 {
                     consider(0, (g.water - SEA_LEVEL) as f32);
                 }
+                // Steps of two samples, so a fall is found from its top.
                 let drop = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|&(di, dj)| at(i + di, j + dj)).filter(|o| o.submerged()).map(|o| g.water - o.water).max().unwrap_or(0);
                 if drop >= 3 && g.body != Body::Lake {
-                    consider(1, drop as f32);
+                    consider(1, (drop * drop) as f32);
                 }
                 let channel = |o: GeoSample| o.submerged() && matches!(o.body, Body::Creek | Body::River);
                 if channel(g) {
@@ -722,7 +727,7 @@ mod tests {
             }
         }
         println!("seed {seed}, spawn {spawn}");
-        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth"].into_iter().zip(best) {
+        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel"].into_iter().zip(best) {
             if score == 0.0 {
                 println!("{name}: none within {range}");
                 continue;

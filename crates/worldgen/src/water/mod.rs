@@ -140,7 +140,7 @@ impl Rivers {
             min_area: 3,
             incision: 2.0,
             lakes: false,
-            tunnel: Some(TunnelRule { depth: 24.0, chance: 0.5, length: 6 }),
+            tunnel: Some(TunnelRule { depth: 14.0, chance: 0.35, length: 6 }),
             seed,
         };
         let streams = Tier {
@@ -163,7 +163,7 @@ impl Rivers {
             trunks: Drainage::new(trunks, Budget { lakes: 16 * MB, basins: 32 * MB, flows: 8 * MB }),
             streams: Drainage::new(streams, Budget { lakes: 32 * MB, basins: 96 * MB, flows: 16 * MB }),
             trunk_style: Style { river_width: 5.0, floodplain: 1.0, wall: 1.6, valley: 48.0, jitter: 18.0, shore: 5, roof: 14.0 },
-            stream_style: Style { river_width: 5.0, floodplain: 0.3, wall: 1.1, valley: 20.0, jitter: 2.5, shore: 1, roof: f32::MAX },
+            stream_style: Style { river_width: 5.0, floodplain: 0.3, wall: 1.1, valley: 20.0, jitter: 2.5, shore: 0, roof: f32::MAX },
             coarse: Cache::new(16 * MB),
             fine: Cache::new(64 * MB),
             rain: Cache::new(4 * MB),
