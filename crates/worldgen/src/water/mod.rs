@@ -205,8 +205,9 @@ impl Rivers {
         (flow / self.creek).powf(0.6).clamp(1.0, 28.0)
     }
 
-    /// The regional climate at a position, from samples every `RAIN_CELL` blocks.
-    fn rain_at(&self, land: Stages, x: i32, z: i32) -> Regional {
+    /// The regional climate over the region holding (x, z), sampled every `RAIN_CELL`
+    /// blocks, for [`Rain::at`].
+    fn rain(&self, land: Stages, x: i32, z: i32) -> Rain {
         let per = REGION / RAIN_CELL;
         let region = IVec2::new(x, z).div_euclid(IVec2::splat(REGION));
         let samples = self.rain.get(region, || {
@@ -217,24 +218,12 @@ impl Rivers {
                 })
                 .collect()
         });
-        let local = IVec2::new(x, z) - region * REGION;
-        let cell = local / RAIN_CELL;
-        let f = (local - cell * RAIN_CELL).as_vec2() / RAIN_CELL as f32;
-        let at = |i: i32, j: i32| samples[((cell.y + j) * (per + 1) + cell.x + i) as usize];
-        at(0, 0).lerp(at(1, 0), f.x).lerp(at(0, 1).lerp(at(1, 1), f.x), f.y)
+        Rain { region, samples }
     }
 
     /// Precipitation over evaporation at a position whose ground is `height` high.
     fn moisture(&self, land: Stages, x: i32, z: i32, height: f32) -> f32 {
-        let regional = self.rain_at(land, x, z);
-        let temperature = regional.sea_temperature - LAPSE_RATE * (height - SEA_LEVEL as f32).max(0.0);
-        climate::moisture(regional.precipitation, temperature)
-    }
-
-    /// Water a block of ground sheds into rivers: a little even in dry country, rising
-    /// with rainfall.
-    fn runoff(&self, land: Stages, x: i32, z: i32, height: f32) -> f32 {
-        0.1 + 0.7 * self.moisture(land, x, z, height).clamp(0.0, 1.6)
+        self.rain(land, x, z).moisture(x, z, height)
     }
 
     /// Whether lakes stay full: 0 in deserts, 1 from moist grassland up.
@@ -249,6 +238,8 @@ impl Rivers {
         let tier = &self.trunks.tier;
         let n = (tier.tile * tier.tile) as usize;
         let (mut height, mut runoff) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        // A tile lies in one region, whose rain it reads.
+        let rain = self.rain(land, key.x * tier.tile * tier.cell, key.y * tier.tile * tier.cell);
         for i in 0..tier.tile * tier.tile {
             let centre = tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile));
             let h = [IVec2::ZERO, IVec2::new(-20, -20), IVec2::new(20, -20), IVec2::new(-20, 20), IVec2::new(20, 20)]
@@ -256,7 +247,7 @@ impl Rivers {
                 .map(|o| land.geology.land(centre.x + o.x, centre.y + o.y).height)
                 .fold(f32::MAX, f32::min);
             height.push(h);
-            runoff.push(self.runoff(land, centre.x, centre.y, h) * (TRUNK_CELL * TRUNK_CELL) as f32 / FLOW_AREA);
+            runoff.push(rain.runoff(centre.x, centre.y, h) * (TRUNK_CELL * TRUNK_CELL) as f32 / FLOW_AREA);
         }
         Tile { height: height.into(), runoff: runoff.into(), absorbed: vec![drainage::DRY; n].into() }
     }
@@ -269,6 +260,7 @@ impl Rivers {
         let (mut height, mut runoff, mut absorbed) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
         let first = tier.centre(key * tier.tile);
         let trunks = self.near(land, Level::Trunk, TRUNK_MARGIN, first, first + (tier.tile - 1) * tier.cell);
+        let rain = self.rain(land, first.x, first.y);
         for i in 0..tier.tile * tier.tile {
             let centre = tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile));
             let ground = Carved::land(land.geology.land(centre.x, centre.y).height);
@@ -278,7 +270,7 @@ impl Rivers {
                 Some(surface) if carved.cavity.is_none() => surface,
                 _ => drainage::DRY,
             });
-            runoff.push(self.runoff(land, centre.x, centre.y, carved.ground) * (STREAM_CELL * STREAM_CELL) as f32 / FLOW_AREA);
+            runoff.push(rain.runoff(centre.x, centre.y, carved.ground) * (STREAM_CELL * STREAM_CELL) as f32 / FLOW_AREA);
         }
         Tile { height: height.into(), runoff: runoff.into(), absorbed: absorbed.into() }
     }
@@ -458,6 +450,38 @@ impl Rivers {
                 seal(column.sample, &neighbours)
             })
             .collect()
+    }
+}
+
+/// The regional climate over one region, sampled every `RAIN_CELL` blocks.
+struct Rain {
+    region: IVec2,
+    samples: Arc<[Regional]>,
+}
+
+impl Rain {
+    /// The regional climate at a position in the region, interpolated.
+    fn at(&self, x: i32, z: i32) -> Regional {
+        let per = REGION / RAIN_CELL;
+        let local = IVec2::new(x, z) - self.region * REGION;
+        debug_assert!(local.cmpge(IVec2::ZERO).all() && local.cmplt(IVec2::splat(REGION)).all(), "({x}, {z}) outside region {}", self.region);
+        let cell = local / RAIN_CELL;
+        let f = (local - cell * RAIN_CELL).as_vec2() / RAIN_CELL as f32;
+        let at = |i: i32, j: i32| self.samples[((cell.y + j) * (per + 1) + cell.x + i) as usize];
+        at(0, 0).lerp(at(1, 0), f.x).lerp(at(0, 1).lerp(at(1, 1), f.x), f.y)
+    }
+
+    /// Precipitation over evaporation at a position whose ground is `height` high.
+    fn moisture(&self, x: i32, z: i32, height: f32) -> f32 {
+        let regional = self.at(x, z);
+        let temperature = regional.sea_temperature - LAPSE_RATE * (height - SEA_LEVEL as f32).max(0.0);
+        climate::moisture(regional.precipitation, temperature)
+    }
+
+    /// Water a block of ground sheds into rivers: a little even in dry country, rising
+    /// with rainfall.
+    fn runoff(&self, x: i32, z: i32, height: f32) -> f32 {
+        0.1 + 0.7 * self.moisture(x, z, height).clamp(0.0, 1.6)
     }
 }
 
