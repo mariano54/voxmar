@@ -39,10 +39,15 @@ captures log the weather and air they show. Every kind: `/weather list`.
   three times as wide carries rain (or, as specks, snow) into the distance. Raindrops
   splash as crowns on the ground and ring out as ripples on water; under leaves they come
   through as slow, heavy drips that carry on for a few minutes after the rain, as the
-  ground dries. Snowflakes are mostly fine with a few large ones, six-armed, turning and
-  glinting as they flutter down.
+  ground dries. Snowflakes are soft, slightly ragged blobs of a few pixels, varied in size
+  and opacity. Sparkle belongs to diamond dust alone: in bitter cold under a halo, ice
+  crystals hang in the air, each glinting for an instant as it turns (`glints` in
+  precipitation.rs, drawn as an ambient particle set).
 - Every kind of weather has an intensity (`/weather rain 0.3`, `--weather snow:heavy`):
-  what falls scales with it, from a few streaks to a downpour that fills the view.
+  what falls follows a steep curve (`density` in precipitation.rs, intensity^1.8), so
+  light stays a few streaks or flakes, heavy sits between, and max is a downpour, a
+  whiteout or a brown-out: at heavy and above, the far layer adds veils of rain, snow or
+  dust a few blocks off that grey, white or tan out the distance.
 - Rain, snow and particles slant and drift with the gusting wind; clouds drift with the
   mean wind; grass sways with `Wind` (graphics thread).
 - Lightning: the flash (existing) and the bolt, drawn for now as bright gizmo lines that

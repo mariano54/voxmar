@@ -62,7 +62,8 @@ struct Options {
     view_distance: Option<i32>,
     fov: Option<i32>,
     vsync: Option<bool>,
-    weather: Option<voxmar_protocol::Weather>,
+    /// The kind of weather `--weather` asked for, resolved once content has loaded.
+    weather: Option<String>,
     commands: Vec<String>,
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
@@ -108,8 +109,7 @@ fn parse_options() -> Result<Options, String> {
             "--fov" => options.fov = Some(value()?.parse().map_err(|e| format!("--fov: {e}"))?),
             "--no-vsync" => options.vsync = Some(false),
             "--weather" => {
-                let name = value()?;
-                options.weather = Some(weather::preset(&name).ok_or_else(|| format!("--weather: unknown weather {name}"))?);
+                options.weather = Some(value()?);
             }
             "--command" => options.commands.push(value()?),
             "--no-music" => options.music = false,
@@ -145,6 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
@@ -202,7 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(settings)
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
-    if let Some(forced) = options.weather {
+    if let Some(forced) = options.weather.as_deref().map(|name| weather::preset(&content_weather, name)).transpose()? {
         app.world_mut().resource_mut::<weather::ClientWeather>().force(forced);
     }
     app.world_mut().resource_mut::<hud::console::Console>().run_when_joined(options.commands);
