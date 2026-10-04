@@ -584,7 +584,7 @@ impl Decor {
     fn stones<'a>(&self, area: &'a Area, site: &Site, mat: &'a Mat) -> &'a Palette {
         match mat {
             Mat::Blocks(palette) => palette,
-            Mat::Stones => area.world.stones(site),
+            Mat::Stones => area.world.outcrop(site),
         }
     }
 
