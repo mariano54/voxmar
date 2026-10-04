@@ -251,6 +251,12 @@ gets dark pieces; a light field kept from meshing would fix it.
 The particle setting (All, Fewer, Off) and the shader pack's `particles` scale how many
 are spawned, and the pack's `cracks` how strongly cracks show (0 hides them).
 
+Cost: with no particle alive nothing is drawn. A full ring (8,192 live particles, most of
+them in view in front of the camera) measured under 0.1 ms a frame, drawing and not
+drawing it on alternate halves of each second in one run so the load of the rest of the
+machine fell on both alike. A 64-piece burst takes about 12 µs of CPU when the block
+breaks (the sky light estimate and finding each piece's floor), and 4 KB of upload.
+
 ## Wind
 
 The wind is part of the weather the server simulates and comes to the client in the
