@@ -234,15 +234,26 @@ the weirdness field, so they appear in whole regions of some worlds and not in o
 variants take shares of their parent; ecotones sit on borders; fantastical biomes claim cells
 where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
-lines such as game trails) over the stones of its rock province, while snow, ice and bare rock
-follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
+lines such as game trails; shared sets in `surfaces.ron` break every soil slope up into
+coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
+rock follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
 birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
 and plants (`plants.ron`, with nutrition, alchemy and dye properties) are a shared pool:
 each says what climate, ground and habitat it likes, biomes select from the pool by tag or
 name, and the climate at each spot weighs the candidates, so a new plant with the right
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
-runs high. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
+runs high. Forests have structure: one field grades them from dense old-growth cores with the
+giant trees through ordinary woodland to scrubby edges and gaps, and a global field opens
+clearings with a soft edge. Ground decoration (`decorations.ron`, another shared pool biomes
+select by tag) is placed in a fixed order of stages: patches of dirt, gravel and moss; boulders
+and scattered stones of the rock province, mossy on their north side in damp woods; bushes of
+the trees growing there; ornaments each tree makes of its own blocks (needle and leaf litter,
+fallen leaves, fungi at the trunk's foot); fallen logs (some thick and hollow, with branches and
+the stump they broke from) and stumps, each laid only where the ground holds it; then flowers
+(sparse, a few kinds at a time, thicker at forest edges and along creeks), fungi and a carpet
+of grasses and ferns over most open ground; and last a snow blanket on every level open to the
+sky where snow lies, using the same snowy blocks as snow that falls in play. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
 colour-grading nudges, and ambient particle sets from `ambient.ron` such as pollen,
 fireflies, spores, dust, drifting snow and aether motes), taken from the climate unless a
 biome sets parts of it, and blended across borders.
@@ -259,6 +270,8 @@ near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections and level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
 arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;
+`decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest edge,
+a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
 `column_timing` reports generation time per column (all `-- --ignored --nocapture`).
 
 ## Weather

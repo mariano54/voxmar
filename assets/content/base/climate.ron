@@ -21,5 +21,7 @@
         ice: "ice",
         thick_ice: "packed_ice",
         rare_ice: "blue_ice",
+        // Snow on rocks and moss above the ground, wherever snow lies.
+        blanket: [(Tag("stone"), "snow_block"), (Name("moss_block"), "snow_block")],
     ),
 )

@@ -102,6 +102,8 @@ enum Cond {
     Drier(f32, f32),
     Forest(f32, f32),
     River(f32, f32),
+    Clearing(f32, f32),
+    Stand(f32, f32),
     /// A bit per matching province.
     Province(u64),
     Band(usize, f32),
@@ -174,7 +176,8 @@ impl SurfaceRules {
         Self { noises: Vec::new(), names: FxHashMap::default(), seed }
     }
 
-    fn noise(&mut self, def: &NoiseDef) -> usize {
+    /// The index of a named noise field, made on first use.
+    pub(crate) fn noise(&mut self, def: &NoiseDef) -> usize {
         let key = format!("{}/{}/{}", def.name, def.scale, def.octaves);
         if let Some(&i) = self.names.get(&key) {
             return i;
@@ -228,6 +231,8 @@ impl SurfaceRules {
             Condition::Drier(a, b) => Cond::Drier(*a, *b),
             Condition::Forest(a, b) => Cond::Forest(*a, *b),
             Condition::River(a, b) => Cond::River(*a, *b),
+            Condition::Clearing(a, b) => Cond::Clearing(*a, *b),
+            Condition::Stand(a, b) => Cond::Stand(*a, *b),
             Condition::Province(name) => {
                 Cond::Province((0..rocks.len().min(64)).filter(|&i| rocks.matches(ProvinceId(i as u8), name)).fold(0, |m, i| m | 1 << i))
             }
@@ -238,6 +243,11 @@ impl SurfaceRules {
             Condition::Not(inner) => Cond::Not(Box::new(self.condition(inner, rocks))),
             Condition::Any(list) => Cond::Any(list.iter().map(|c| self.condition(c, rocks)).collect()),
         }
+    }
+
+    /// A noise field's value at a position, −1 ..= 1.
+    pub(crate) fn sample(&self, noise: usize, x: i32, z: i32) -> f32 {
+        self.noises[noise].get_noise_2d(x as f32, z as f32)
     }
 
     fn holds(&self, c: &Cond, spot: &Spot) -> bool {
@@ -257,6 +267,8 @@ impl SurfaceRules {
             Cond::Drier(a, b) => site.soil_moisture() < at(*a, *b),
             Cond::Forest(a, b) => site.forest > at(*a, *b),
             Cond::River(a, b) => site.river > at(*a, *b),
+            Cond::Clearing(a, b) => site.clearing > at(*a, *b),
+            Cond::Stand(a, b) => site.stand > at(*a, *b),
             Cond::Province(mask) => mask & (1 << site.province.0) != 0,
             Cond::Band(n, w) => noise(*n).abs() < *w,
             Cond::Tapered(n, by, widths) => {

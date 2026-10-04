@@ -1,6 +1,8 @@
 //! Stage 4: turns sites and resources into blocks: surface materials, caves (see
 //! [`crate::caves`]), water and ice at the level of the sea, lake or river over each
-//! column, then trees and the small plants on the ground.
+//! column, then trees and ground decorations (see [`crate::features`]), the small plants on
+//! the ground, and last the snow blanket: where snow lies, it lies on every level open to
+//! the sky down through the canopy (Wilder Wild's), on rocks and in the crowns of trees.
 //!
 //! Surface materials come from the biome's surface rules (see `surface`), around a few
 //! physical rules every biome shares: bare rock on cliffs and exposed heights, snow where
@@ -18,7 +20,7 @@ use voxmar_engine::world::Column;
 
 use crate::biome::Biomes;
 use crate::caves::{Cave, CaveFace};
-use crate::content::WorldContent;
+use crate::content::{BlockMatch, WorldContent};
 use crate::ecology::{Ground, Plant};
 use crate::features::{self, Features};
 use crate::geology::{GeoGrid, noise};
@@ -63,9 +65,15 @@ pub struct Terrain {
     stone: Vec<bool>,
     /// What each block offers plants, by block id.
     grounds: Vec<Ground>,
+    /// Whether a block is a small plant, by block id.
+    plants: Vec<bool>,
+    /// What the snow blanket makes of a block open to the sky, by block id.
+    blanket: Vec<Option<BlockId>>,
+    /// What lying snow makes of a ground block, by block id (`snow_cover` in weather.ron).
+    snow_cover: Vec<Option<BlockId>>,
     seed: u64,
     resources: Resources,
-    features: Features,
+    pub(crate) features: Features,
 }
 
 impl Terrain {
@@ -89,6 +97,20 @@ impl Terrain {
                 }
             })
             .collect();
+        let plants = by_id(&|block| registry.def(block).render == voxmar_engine::block::RenderKind::Plant);
+        let blanket = (0..registry.len())
+            .map(|i| {
+                let def = registry.def(BlockId(i as u16));
+                frost.blanket.iter().find(|(from, _)| match from {
+                    BlockMatch::Name(name) => def.name == *name,
+                    BlockMatch::Tag(tag) => def.has_tag(tag),
+                })
+                .map(|(_, to)| registry.expect(to))
+            })
+            .collect();
+        let snow_cover = (0..registry.len())
+            .map(|i| content.snow_cover.iter().find(|(ground, _)| registry.def(BlockId(i as u16)).name == *ground).map(|(_, snowy)| registry.expect(snowy)))
+            .collect();
         Self {
             ids: Ids {
                 bedrock: id("bedrock"),
@@ -111,6 +133,9 @@ impl Terrain {
             soft,
             stone: by_id(&|block| stones.contains(&block)),
             grounds,
+            plants,
+            blanket,
+            snow_cover,
             seed,
             resources: Resources::new(registry),
             features: Features::new(content, registry),
@@ -135,6 +160,16 @@ impl Blocks<'_> {
 
     fn local(x: i32, y: i32, z: i32) -> usize {
         (y / CHUNK_SIZE) as usize * CHUNK_VOLUME + local_index(IVec3::new(x, y % CHUNK_SIZE, z))
+    }
+
+    /// The block at `pos`, if it lies in the column.
+    pub fn get(&self, pos: IVec3) -> Option<BlockId> {
+        self.index(pos).map(|i| self.data[i])
+    }
+
+    /// Puts `block` at `pos` whatever is there; whether `pos` lies in the column.
+    pub fn set(&mut self, pos: IVec3, block: BlockId) -> bool {
+        self.index(pos).map(|i| self.data[i] = block).is_some()
     }
 
     fn get_local(&self, x: i32, y: i32, z: i32) -> BlockId {
@@ -280,16 +315,17 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     terrain.resources.place(world.seed, pos, &mut blocks);
     terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
 
-    // Ground plants last, wherever trees, caves and water left the surface open.
+    // Ground plants, wherever trees, decorations, caves and water left the ground open.
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
-            let (site, surface) = &surfaces[(z * CHUNK_SIZE + x) as usize];
+            let (site, _) = &surfaces[(z * CHUNK_SIZE + x) as usize];
             let h = site.height;
             let open = |y: i32| y < WORLD_HEIGHT && blocks.get_local(x, y, z).is_air();
-            if h < site.water || blocks.get_local(x, h, z) != *surface || !open(h + 1) {
+            if h < site.water || !open(h + 1) {
                 continue;
             }
-            match world.ecology.plant(site, terrain.ground(*surface), origin.x + x, origin.z + z) {
+            let ground = terrain.ground(blocks.get_local(x, h, z));
+            match world.ecology.plant(site, ground, origin.x + x, origin.z + z) {
                 Some(Plant::One(plant)) => blocks.set_local(x, h + 1, z, plant),
                 Some(Plant::Tall(bottom, top)) if open(h + 2) => {
                     blocks.set_local(x, h + 1, z, bottom);
@@ -302,6 +338,24 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    // The snow blanket: on every level open to the sky where snow lies on the ground.
+    for z in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            let (site, surface) = &surfaces[(z * CHUNK_SIZE + x) as usize];
+            if !terrain.frosty(*surface) {
+                continue;
+            }
+            let mut open = true;
+            for y in (site.height + 1..(site.height + 48).min(WORLD_HEIGHT)).rev() {
+                let block = blocks.get_local(x, y, z);
+                if open && let Some(snowy) = terrain.blanket[block.0 as usize] {
+                    blocks.set_local(x, y, z, snowy);
+                }
+                open = block.is_air() || terrain.plants[block.0 as usize];
             }
         }
     }
@@ -359,6 +413,16 @@ impl Terrain {
     pub fn ground(&self, block: BlockId) -> Ground {
         self.grounds[block.0 as usize]
     }
+
+    /// Whether a block is a small plant.
+    pub fn is_plant(&self, block: BlockId) -> bool {
+        self.plants[block.0 as usize]
+    }
+
+    /// Whether snow lies on a surface block: the snow blanket covers what stands on it.
+    fn frosty(&self, top: BlockId) -> bool {
+        top == self.ids.snow || top == self.ids.powder || top == self.ids.snowy_ground
+    }
 }
 
 impl Overworld {
@@ -412,8 +476,14 @@ impl Overworld {
             _ => site.river > 0.3 && !past(shore, 0.5, 2.5),
         };
         let ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
-        if past(-t, -2.5, 1.5) && terrain.ground(ground.top) == Ground::Soil {
-            return Layers { top: ids.snowy_ground, ..ground };
+        // Thin snow: the same snowy blocks snow that falls in play makes, else snowy soil.
+        if past(-t, -2.5, 1.5) {
+            if let Some(snowy) = terrain.snow_cover[ground.top.0 as usize] {
+                return Layers { top: snowy, ..ground };
+            }
+            if terrain.ground(ground.top) == Ground::Soil {
+                return Layers { top: ids.snowy_ground, ..ground };
+            }
         }
         ground
     }
