@@ -68,6 +68,11 @@ impl Console {
         }
     }
 
+    /// Runs these lines (commands with a `/`) as soon as the game has started.
+    pub fn run_when_joined(&mut self, lines: Vec<String>) {
+        self.pending.extend(lines);
+    }
+
     fn leave(&mut self) {
         self.lines.clear();
         self.input.clear();
