@@ -44,6 +44,9 @@ struct Ids {
     lava: BlockId,
     /// The crust of a dry salt flat.
     salt: BlockId,
+    /// Boulders by creeks and rivers.
+    boulder: BlockId,
+    mossy_boulder: BlockId,
     sand: BlockId,
     snow: BlockId,
     powder: BlockId,
@@ -120,6 +123,8 @@ impl Terrain {
                 water,
                 lava: id("lava"),
                 salt: id("calcite"),
+                boulder: id("cobblestone"),
+                mossy_boulder: id("mossy_cobblestone"),
                 sand: id("sand"),
                 snow: registry.expect(&frost.snow),
                 powder: registry.expect(&frost.powder),
@@ -297,7 +302,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             }
             underground.decorate(x, z, &site, &cave, &mut blocks);
             // Fast water stays open in the cold.
-            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3));
+            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring);
             for y in height + 1..=geo.water {
                 blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
             }
@@ -338,8 +343,18 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             if h < site.water || !open(h + 1) {
                 continue;
             }
+            let (wx, wz) = (origin.x + x, origin.z + z);
+            if let Some(boulder) = boulder(world, site, &geology, wx, wz) {
+                for (y, block) in (h + 1..).zip(boulder.into_iter().flatten()) {
+                    if y >= WORLD_HEIGHT || !blocks.get_local(x, y, z).is_air() {
+                        break;
+                    }
+                    blocks.set_local(x, y, z, block);
+                }
+                continue;
+            }
             let ground = terrain.ground(blocks.get_local(x, h, z));
-            match world.ecology.plant(site, ground, origin.x + x, origin.z + z) {
+            match world.ecology.plant(site, ground, wx, wz) {
                 Some(Plant::One(plant)) => blocks.set_local(x, h + 1, z, plant),
                 Some(Plant::Tall(bottom, top)) if open(h + 2) => {
                     blocks.set_local(x, h + 1, z, bottom);
@@ -511,6 +526,25 @@ impl Overworld {
         let water = (site.height < site.water).then(|| self.terrain.ice(site, x, z).unwrap_or(self.terrain.ids.water));
         (top, water)
     }
+}
+
+/// A boulder on a creek's or river's bank, a block or two high, if one lies here: now and
+/// then along the water's edge, often beside rapids and plunge pools, mossy where it is
+/// damp.
+fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) -> Option<[Option<BlockId>; 2]> {
+    if !matches!(site.body, Body::Creek | Body::River) || site.river < 0.7 || site.height - site.water > 2 {
+        return None;
+    }
+    let fast = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dz)| geology.get(x + dx, z + dz).current.is_some_and(|c| c.speed >= 3));
+    let hash = hash3(world.seed ^ 0xb0a1, x, 0, z);
+    let chance = if fast { 18 } else { 3 };
+    if hash % 100 >= chance {
+        return None;
+    }
+    let ids = &world.terrain.ids;
+    let damp = site.soil_moisture() > 0.85 && site.temperature > 0.0;
+    let stone = |bits: u64| if damp && !bits.is_multiple_of(3) { ids.mossy_boulder } else { ids.boulder };
+    Some([Some(stone(hash >> 8)), (hash >> 16 & 3 == 0).then(|| stone(hash >> 20))])
 }
 
 /// The stone at a block: deepslate in the depths, otherwise one of `stones` in blobs and

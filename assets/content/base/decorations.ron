@@ -82,13 +82,6 @@
             shape: Rocks(count: (1, 4), spread: 2.2, size: (0.5, 1.2), stones: Stones),
             spacing: 26.0,
         ),
-        (
-            // Stones along the banks of creeks and rivers.
-            name: "bank_stones", tags: ["river"],
-            shape: Rocks(count: (2, 5), spread: 2.0, size: (0.5, 1.0), stones: Stones, moss: 0.4),
-            spacing: 9.0,
-            follows: [(River, 0.45, 0.75)],
-        ),
 
         // --- Bushes -------------------------------------------------------------------
         (
