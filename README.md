@@ -185,7 +185,10 @@ each says what climate, ground and habitat it likes, biomes select from the pool
 name, and the climate at each spot weighs the candidates, so a new plant with the right
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
-runs high.
+runs high. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
+colour-grading nudges, and ambient particle sets from `ambient.ron` such as pollen,
+fireflies, spores, dust, drifting snow and aether motes), taken from the climate unless a
+biome sets parts of it, and blended across borders.
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and

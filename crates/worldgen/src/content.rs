@@ -338,6 +338,7 @@ struct RawBiome {
     strata: Option<Vec<String>>,
     colors: Option<Colors>,
     flora: Option<FloraDef>,
+    atmosphere: Option<AtmosphereDef>,
     variants: Option<Vec<(String, f32)>>,
 }
 
@@ -360,6 +361,7 @@ pub struct BiomeDef {
     pub strata: Vec<String>,
     pub colors: Colors,
     pub flora: FloraDef,
+    pub atmosphere: AtmosphereDef,
     /// Sub-biomes and the share of this biome's land each takes.
     pub variants: Vec<(String, f32)>,
 }
@@ -583,6 +585,102 @@ pub struct FloraDef {
 }
 
 // ---------------------------------------------------------------------------------------
+// ambient.ron and atmospheres
+
+/// How ambient particles move.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum Motion {
+    /// Wander slowly on the air (pollen, motes).
+    #[default]
+    Drift,
+    /// Hang in place, bobbing (fireflies, spores).
+    Hover,
+    /// Settle downwards (snow, ash).
+    Fall,
+    /// Float upwards (embers, mist).
+    Rise,
+    /// Stream along with the wind (dust, sand).
+    Blow,
+}
+
+/// The time of day a particle set shows at.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum DayTime {
+    #[default]
+    Always,
+    Day,
+    Night,
+    /// Dawn and dusk.
+    Twilight,
+}
+
+/// The weather a particle set shows in.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum WeatherWhen {
+    #[default]
+    Always,
+    /// No rain or snow falling.
+    Dry,
+    /// Rain or snow falling.
+    Wet,
+}
+
+/// A set of ambient particles, for the client to show around the player.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ParticleDef {
+    pub name: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub rarity: Rarity,
+    /// How many there are where conditions suit them fully, 0 ..= 1 of the most the
+    /// client shows.
+    pub density: f32,
+    /// sRGB.
+    pub color: (u8, u8, u8),
+    /// Size in blocks.
+    #[serde(default = "tenth")]
+    pub size: f32,
+    #[serde(default)]
+    pub motion: Motion,
+    /// Gives off its own light.
+    #[serde(default)]
+    pub glow: bool,
+    #[serde(default)]
+    pub time: DayTime,
+    #[serde(default)]
+    pub weather: WeatherWhen,
+    #[serde(default)]
+    pub comfort: Comfort,
+    /// How strongly it follows the aether field, 0 (not at all) ..= 1 (only where aether
+    /// is high).
+    #[serde(default)]
+    pub aether: f32,
+}
+
+/// A biome's air: haze, a nudge to the sky and the colour grading, and ambient particles.
+/// Everything left out comes from the climate, so most biomes need nothing here.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct AtmosphereDef {
+    /// Haze colour, sRGB.
+    pub haze: Option<(u8, u8, u8)>,
+    /// Haze density relative to the usual, 1.
+    pub haze_density: Option<f32>,
+    /// A tint multiplied into the sky, sRGB (white leaves it).
+    pub sky: Option<(u8, u8, u8)>,
+    /// Colour grading: −1 cooler ..= 1 warmer, slight around 0.
+    pub warmth: Option<f32>,
+    /// Colour grading: saturation relative to the usual, 1.
+    pub saturation: Option<f32>,
+    /// Particle sets, by selector; every set whose climate fits when left out.
+    pub particles: Option<Vec<Select>>,
+    /// Tags of particle sets never shown here.
+    pub exclude: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------------------
 // Loading
 
 #[derive(Deserialize)]
@@ -609,6 +707,12 @@ struct PlantFile {
     plants: Vec<PlantDef>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AmbientFile {
+    particles: Vec<ParticleDef>,
+}
+
 /// Everything the world generator reads from content packages.
 #[derive(Clone, Debug)]
 pub struct WorldContent {
@@ -617,11 +721,13 @@ pub struct WorldContent {
     pub biomes: Vec<BiomeDef>,
     pub trees: Vec<TreeDef>,
     pub plants: Vec<PlantDef>,
+    pub particles: Vec<ParticleDef>,
 }
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 5] = [
+pub(crate) const BASE_FILES: [(&str, &str); 6] = [
+    ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
@@ -648,7 +754,7 @@ impl WorldContent {
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
         let mut provinces = Vec::new();
-        let (mut trees, mut plants) = (Vec::new(), Vec::new());
+        let (mut trees, mut plants, mut particles) = (Vec::new(), Vec::new(), Vec::new());
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -688,6 +794,9 @@ impl WorldContent {
                         ..t
                     }
                 })),
+                "ambient.ron" => particles.extend(
+                    parse::<AmbientFile>(&at, &file.source)?.particles.into_iter().map(|p| ParticleDef { name: qualify(&file.package, &p.name), ..p }),
+                ),
                 "plants.ron" => plants.extend(parse::<PlantFile>(&at, &file.source)?.plants.into_iter().map(|p| {
                     let q = |n: &str| qualify(&file.package, n);
                     PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), ..p }
@@ -697,7 +806,7 @@ impl WorldContent {
         }
         let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
         let biomes = inherit(&raw)?;
-        let content = Self { climate, provinces, biomes, trees, plants };
+        let content = Self { climate, provinces, biomes, trees, plants, particles };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }
@@ -912,9 +1021,33 @@ impl WorldContent {
             }
             comfort(&at, &plant.comfort)?;
         }
+        for (i, particles) in self.particles.iter().enumerate() {
+            let at = || format!("ambient.ron: particles `{}`", particles.name);
+            if self.particles[..i].iter().any(|p| p.name == particles.name) {
+                return Err(ContentError(format!("{}: defined twice", at())));
+            }
+            if !(0.0..=1.0).contains(&particles.density) || !(0.0..=1.0).contains(&particles.aether) || !(particles.size > 0.0 && particles.size <= 4.0) {
+                return Err(ContentError(format!("{}: density and aether must be in 0..=1 and size in (0, 4]", at())));
+            }
+            comfort(&at, &particles.comfort)?;
+        }
         for biome in &self.biomes {
             let file = file_of(&biome.name);
             let at = || format!("{file}: biome `{}`", biome.name);
+            let air = &biome.atmosphere;
+            for (what, value, range) in [("haze_density", air.haze_density, 0.0..=4.0), ("warmth", air.warmth, -1.0..=1.0), ("saturation", air.saturation, 0.0..=2.0)] {
+                if value.is_some_and(|v| !range.contains(&v)) {
+                    return Err(ContentError(format!("{}: atmosphere {what} must be in {range:?}", at())));
+                }
+            }
+            for select in air.particles.iter().flatten() {
+                positive(&|| format!("{}, atmosphere", at()), "weight", select.weight())?;
+                if let Select::Name(name, _) = select
+                    && !self.particles.iter().any(|p| p.name == *name)
+                {
+                    return Err(ContentError(format!("{}, atmosphere: unknown particles `{name}`", at())));
+                }
+            }
             let flora = &biome.flora;
             for (what, v) in [("forest", flora.forest), ("cover", flora.cover), ("flowers", flora.flowers)] {
                 if !(0.0..=1.0).contains(&v) {
@@ -1171,6 +1304,10 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             cliff: s.cliff.map(|m| qualify_material(package, m)),
         }),
         strata: biome.strata.map(|names| names.iter().map(|n| q(n)).collect()),
+        atmosphere: biome.atmosphere.map(|a| AtmosphereDef {
+            particles: a.particles.map(|p| p.iter().map(|s| qualify_select(package, s)).collect()),
+            ..a
+        }),
         flora: biome.flora.map(|f| FloraDef {
             trees: f.trees.iter().map(|s| qualify_select(package, s)).collect(),
             plants: f.plants.iter().map(|s| qualify_select(package, s)).collect(),
@@ -1231,10 +1368,15 @@ fn inherit(raw: &[(String, RawBiome)]) -> Result<Vec<BiomeDef>, ContentError> {
                 strata: field!(strata).unwrap_or_default(),
                 colors: field!(colors).unwrap_or_default(),
                 flora: field!(flora).unwrap_or_default(),
+                atmosphere: field!(atmosphere).unwrap_or_default(),
                 variants: biome.variants.clone().unwrap_or_default(),
             })
         })
         .collect()
+}
+
+fn tenth() -> f32 {
+    0.1
 }
 
 fn soil() -> Vec<Ground> {

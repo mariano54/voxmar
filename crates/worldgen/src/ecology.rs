@@ -125,7 +125,7 @@ fn ground_bit(ground: Ground) -> u8 {
 /// The weight a biome's selectors give a candidate with this name and these tags: a
 /// selector naming it wins, else the strongest matching tag; nothing if an excluded tag
 /// matches.
-fn selected<'a>(selects: &[Select], exclude: &[String], name: &str, tags: impl Iterator<Item = &'a str> + Clone) -> f32 {
+pub(crate) fn selected<'a>(selects: &[Select], exclude: &[String], name: &str, tags: impl Iterator<Item = &'a str> + Clone) -> f32 {
     if tags.clone().any(|t| exclude.iter().any(|e| e == t)) {
         return 0.0;
     }
@@ -141,7 +141,7 @@ fn selected<'a>(selects: &[Select], exclude: &[String], name: &str, tags: impl I
 }
 
 /// How well a climate suits a comfort range: 1 inside, fading to 0 over a margin.
-fn fit(comfort: &Comfort, temperature: f32, moisture: f32) -> f32 {
+pub(crate) fn fit(comfort: &Comfort, temperature: f32, moisture: f32) -> f32 {
     let band = |v: f32, range: Option<(f32, f32)>, margin: f32| {
         range.map_or(1.0, |(lo, hi)| smoothstep(lo - margin, lo + margin, v) * (1.0 - smoothstep(hi - margin, hi + margin, v)))
     };
