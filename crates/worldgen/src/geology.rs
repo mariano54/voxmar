@@ -365,7 +365,34 @@ impl Geology {
     }
 
     /// The land at (x, z), before rivers and lakes.
+    ///
+    /// Rivers, trails and every column ask for the same positions many times (a column's
+    /// neighbours, the sealing of its water, the slopes around it), so each thread keeps the
+    /// positions it computed last in a small direct-mapped memo.
     pub fn land(&self, x: i32, z: i32) -> Landform {
+        const SLOTS: usize = 1 << 12;
+        thread_local! {
+            static MEMO: RefCell<Vec<(u64, i32, i32, Landform)>> = const { RefCell::new(Vec::new()) };
+        }
+        let slot = ((x as u32).wrapping_mul(0x9e37_79b1) ^ (z as u32).wrapping_mul(0x85eb_ca77)).rotate_left(13) as usize % SLOTS;
+        if let Some(land) = MEMO.with(|memo| {
+            let memo = memo.borrow();
+            memo.get(slot).filter(|e| e.0 == self.id && e.1 == x && e.2 == z).map(|e| e.3)
+        }) {
+            return land;
+        }
+        let land = self.compute_land(x, z);
+        MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.is_empty() {
+                memo.resize(SLOTS, (u64::MAX, 0, 0, land));
+            }
+            memo[slot] = (self.id, x, z, land);
+        });
+        land
+    }
+
+    fn compute_land(&self, x: i32, z: i32) -> Landform {
         let relief = self.relief(x as f32, z as f32);
         let hills = self.hills.get_noise_2d(x as f32, z as f32);
         let inland = smoothstep(-0.06, 0.1, relief.continental);
