@@ -310,7 +310,8 @@ impl Shapes {
     }
 
     /// What the shapes make of (x, z), on ground of the given height whose regional climate
-    /// is `regional`.
+    /// is `regional`. The land asks through `shape_lanes`; this is for tests and benchmarks.
+    #[cfg(test)]
     pub fn shape(&self, x: i32, z: i32, ground: &Ground, regional: &Regional) -> Shaped {
         self.shape_lanes(&[(x, z)], std::slice::from_ref(ground), std::slice::from_ref(regional))[0]
     }
@@ -351,9 +352,9 @@ impl Shapes {
                     weight[k] = if shape.alone { 1.0 } else { shape.climate_weight(x[k], z[k], &fields[k], &regionals[k]) };
                 }
             }
-            // Weighed only where it can rise at all: not where its weight is zero (nor NaN,
-            // which `shape` would weigh on).
-            let active = weight.map(|w| !(w <= 0.0));
+            // Risen only where its weight is not zero (a NaN weight would rise, as it always
+            // has).
+            let active = weight.map(|w| w > 0.0 || w.is_nan());
             if let Some((noise, share)) = &shape.region {
                 let need = active;
                 let mask = sample(noise, &need, x, z);
@@ -361,7 +362,7 @@ impl Shapes {
                     weight[k] *= shape.region_share(*share, mask[k]);
                 }
             }
-            let active = weight.map(|w| !(w <= 0.0));
+            let active = weight.map(|w| w > 0.0 || w.is_nan());
             let rise: [(f32, f32, f32); 4] = match shape.kind {
                 ShapeKind::Hills { height, spacing } => {
                     let folded = sample(&shape.noises[0], &active, x.map(|x| x / spacing), z.map(|z| z / spacing));

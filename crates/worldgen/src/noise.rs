@@ -455,6 +455,7 @@ mod neon {
     /// Progressive domain warp at four points, one point per lane: each octave warps the
     /// points the octave before left, so octaves cannot run side by side, but points can.
     #[target_feature(enable = "neon")]
+    #[allow(clippy::excessive_precision)]
     pub(super) fn warp_2d_x4(warp: &FastNoiseLite, x: [f32; 4], y: [f32; 4], bounding: f32) -> ([f32; 4], [f32; 4]) {
         let (mut x, mut y) = (load(x), load(y));
         let (mut seed, mut amp, mut frequency) = (warp.seed, warp.domain_warp_amp * bounding, warp.frequency);

@@ -307,7 +307,9 @@ impl Geology {
         &self.shapes
     }
 
-    /// Continents, ranges, plateaus and valleys at (x, z).
+    /// Continents, ranges, plateaus and valleys at (x, z). Generation asks through
+    /// `reliefs` and `land`; this is for tests and benchmarks.
+    #[cfg(test)]
     pub fn relief(&self, x: f32, z: f32) -> Relief {
         self.relief_lanes(&[(x, z)])[0]
     }
