@@ -329,7 +329,7 @@ fn prepare_depth_textures(
     mut commands: Commands,
     mut cache: ResMut<TextureCache>,
     device: Res<RenderDevice>,
-    views: Query<(Entity, &ExtractedCamera, Option<&TerrainDraws>)>,
+    views: Query<(Entity, &ExtractedCamera, Option<&TerrainDraws>), With<Camera3d>>,
 ) {
     for (entity, camera, draws) in &views {
         let Some(size) = camera.physical_target_size.filter(|_| draws.is_some_and(TerrainDraws::has_water)) else {

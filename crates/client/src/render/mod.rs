@@ -34,6 +34,7 @@ pub mod lod;
 pub mod pack;
 pub mod particles;
 pub mod post;
+pub mod scale;
 pub mod precipitation;
 pub mod terrain;
 pub mod volumetric;
@@ -66,6 +67,7 @@ impl Plugin for RenderPlugin {
             wind::WindPlugin,
             MaterialPlugin::<SkyMaterial>::default(),
             post::PostPlugin,
+            scale::ScalePlugin,
             lod::LodPlugin,
             precipitation::PrecipitationPlugin,
             particles::ParticlePlugin,

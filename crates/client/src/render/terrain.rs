@@ -907,7 +907,7 @@ fn receive(
     inbox: Res<TerrainInbox>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
-    cameras: Query<&ExtractedView, With<ExtractedCamera>>,
+    cameras: Query<&ExtractedView, (With<ExtractedCamera>, With<Camera3d>)>,
     breeze: Option<Res<Breeze>>,
     pipelines: Res<TerrainPipelines>,
     pipeline_cache: Res<PipelineCache>,
@@ -1045,7 +1045,8 @@ impl TerrainDraws {
 
 /// A view whose draws `cull` fills: a camera or a shadow cascade.
 type CulledView = (Entity, &'static ExtractedView, Has<LightEntity>, Option<&'static mut TerrainDraws>);
-type CulledViewFilter = Or<(With<LightEntity>, With<ExtractedCamera>)>;
+// The world's camera, not the one that shows it scaled on the window (`render::scale`).
+type CulledViewFilter = Or<(With<LightEntity>, (With<ExtractedCamera>, With<Camera3d>))>;
 
 /// Culls the visible chunks against each view's frustum, in parallel over views, and
 /// skips opaque faces turned away from the view. What survives is gathered into the
@@ -1503,7 +1504,7 @@ fn queue(
     view_keys: Res<ViewKeyCache>,
     mut phases: Phases,
     keys: Res<TerrainKeys>,
-    mut views: Query<(&ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>)>,
+    mut views: Query<(&ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>), Or<(With<LightEntity>, With<Camera3d>)>>,
 ) {
     let items = PASSES.map(|pass| (pipelines.items[pass as usize], keys.passes[pass as usize]));
     let distant_item = (pipelines.distant_item, keys.distant);

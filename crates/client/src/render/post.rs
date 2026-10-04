@@ -186,6 +186,9 @@ fn blend(intensity: f32, level: f32, lowest: f32) -> f32 {
     (intensity + boost) * high_pass
 }
 
+/// A camera with what its post-processing needs, and what it last made of it.
+type CameraPost = (Entity, &'static ExtractedView, &'static ExtractedCamera, Option<&'static Glow>, Option<&'static DisplayTransform>, Option<&'static mut PostView>);
+
 /// A camera's bloom chain and display uniforms this frame.
 #[derive(Component)]
 pub struct PostView {
@@ -216,7 +219,7 @@ fn prepare(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     mut textures: ResMut<TextureCache>,
-    mut views: Query<(Entity, &ExtractedView, &ExtractedCamera, Option<&Glow>, Option<&DisplayTransform>, Option<&mut PostView>)>,
+    mut views: Query<CameraPost>,
 ) {
     for (entity, view, camera, glow, display, existing) in &mut views {
         let (Some(display), Some(size)) = (display, camera.physical_viewport_size) else {

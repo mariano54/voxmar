@@ -96,8 +96,9 @@ is `time set day`).
 Esc opens the settings menu, in tabs (Video, Graphics, Audio, Controls, Interface) with a
 line explaining the setting under the pointer; a choice steps forward on click and back on
 right click, and the wheel moves a slider. The settings: render distance, far detail (Balanced, Fast or Full: how soon
-distant chunks merge two or four columns into one, which draws far terrain much faster), field
-of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
+distant chunks merge two or four columns into one, which draws far terrain much faster),
+resolution (75%, 50% or Full: how many pixels the world is drawn at before it is stretched over
+the window; menus and text stay sharp), field of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
 broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key

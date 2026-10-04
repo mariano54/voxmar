@@ -44,6 +44,41 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Bevy (bloom)
+
+- Source: https://github.com/bevyengine/bevy (`crates/bevy_post_process/src/bloom`, 0.19.1)
+- Author: the Bevy contributors
+- Licence: MIT or Apache-2.0, at our choice; we take it under MIT
+- What we adapted: its bloom: the 13-tap downsample with Karis's firefly weighting on the
+  first level, the soft threshold, the 3x3 tent upsample, the sizing of the chain and the
+  energy-conserving blend between its levels. Bevy draws it as a render pass per level;
+  ours runs the same filters as compute dispatches in one pass (rewritten in our own code).
+- Where: `crates/client/src/render/bloom.wgsl`, `post.rs` and the bloom in `display.wgsl`.
+
+```
+MIT License
+
+Copyright (c) the Bevy contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## FastNoiseLite
 
 - Source: https://github.com/Auburn/FastNoiseLite (the Rust port, crate `fastnoise-lite` 1.1.1)

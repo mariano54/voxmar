@@ -62,6 +62,10 @@ pub struct CapturePlugin {
     pub clip: Option<f32>,
     /// Width and height of the shot, in pixels.
     pub size: UVec2,
+    /// Render to a real window and shoot that, rather than an offscreen image: slower to
+    /// set up and in the way on screen, but it exercises what only a window has (the
+    /// render scale, presenting frames).
+    pub windowed: bool,
 }
 
 /// What changes between the two shots of a flicker measurement.
@@ -103,9 +107,13 @@ impl Plugin for CapturePlugin {
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
             clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
             size: self.size,
+            windowed: self.windowed,
         })
-        .add_systems(PostStartup, render_offscreen)
-        .add_systems(Update, (target_ui, capture, measure_flicker.after(capture), record_clip.after(capture)))
+        .add_systems(PostStartup, render_offscreen.run_if(|state: Res<Capture>| !state.windowed))
+        .add_systems(
+            Update,
+            (target_ui.run_if(|state: Res<Capture>| !state.windowed), capture, measure_flicker.after(capture), record_clip.after(capture)),
+        )
         .add_systems(
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
@@ -137,6 +145,14 @@ struct Capture {
     flicker: Option<Flicker>,
     clip: Option<Clip>,
     size: UVec2,
+    windowed: bool,
+}
+
+impl Capture {
+    /// A shot of what is drawn: the offscreen image, or the window.
+    fn screenshot(&self) -> Screenshot {
+        if self.windowed { Screenshot::primary_window() } else { Screenshot::image(self.target.clone()) }
+    }
 }
 
 /// Progress of a `--clip`, which starts once the world has settled.
@@ -364,7 +380,7 @@ fn capture(
         return;
     }
     commands
-        .spawn(Screenshot::image(state.target.clone()))
+        .spawn(state.screenshot())
         .observe(save_to_disk(state.path.clone()))
         .observe(|_: On<ScreenshotCaptured>, mut state: ResMut<Capture>| state.saved = true);
     state.taken_at = Some(now);
@@ -446,11 +462,12 @@ fn measure_flicker(
 /// `CLIP_RATE`th of a second of game time after the last.
 fn record_clip(mut commands: Commands, mut state: ResMut<Capture>, real: Res<Time<Real>>) {
     let state = &mut *state;
+    let screenshot = state.screenshot();
     let Some(clip) = state.clip.as_mut().filter(|c| c.started) else { return };
     if clip.taken < clip.frames {
         let saved = clip.saved.clone();
         commands
-            .spawn(Screenshot::image(state.target.clone()))
+            .spawn(screenshot)
             .observe(save_to_disk(sibling(&state.path, &format!("{:03}", clip.taken))))
             .observe(move |_: On<ScreenshotCaptured>| {
                 saved.fetch_add(1, Ordering::Relaxed);

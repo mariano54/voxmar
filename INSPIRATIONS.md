@@ -48,16 +48,6 @@ copied.
 - What we took: all of our noise. Most of generation still calls the crate itself.
 - Where: everywhere in `crates/worldgen/src/`; the vectorised port is in `noise.rs`.
 
-### "Very fast procedural ocean"
-
-- Author: afl_ext
-- Link: https://www.shadertoy.com/view/MdXyzX
-- Licence: MIT. **Copied**: the wave function and its constants (see the notices).
-- What we took: water waves as octaves of `exp(sin x - 1)`, each turned by a fixed angle
-  and dragging the next along its slope.
-- Where: `crates/client/src/render/water_surface.wgsl` (`wave_normal`) and
-  `crates/client/src/render/water.rs` (`octaves`).
-
 ### Glimmer
 
 - Author: Josh Britain (jbritain); its screen-space tracer credits a public gist by Belmu
@@ -66,8 +56,18 @@ copied.
   light-through-water model (see the notices).
 - What we took: reflections traced through the depth buffer with a binary refinement,
   refraction that keeps the straight view where the bent one lands in front of the water,
-  and water as absorption plus in-scattering. It is also where we found afl_ext's waves.
+  and water as absorption plus in-scattering. It is also where we found afl_ext's waves
+  ("Very fast procedural ocean", MIT), which we used until our own wave texture replaced them.
 - Where: `crates/client/src/render/water_surface.wgsl` and `water.wgsl`.
+
+### Bevy (bloom)
+
+- Author: the Bevy contributors
+- Link: https://github.com/bevyengine/bevy
+- Licence: MIT or Apache-2.0. Copied (adapted).
+- What we took: its bloom's filters, threshold, chain sizing and blend, rebuilt as one
+  compute pass instead of a render pass per level.
+- Where: `crates/client/src/render/bloom.wgsl`, `post.rs` and `display.wgsl`.
 
 ## World generation
 
@@ -277,8 +277,14 @@ copied.
 - Link: https://modrinth.com/mod/grassier-grass
 - Licence: all rights reserved. Ideas only.
 - What we took: real grass blades growing from grass blocks near the camera, rolling across
-  a meadow in waves with the wind and parting around the player.
-- Where: `crates/client/src/render/grass.wgsl` and `wind.wgsl`.
+  a meadow in waves with the wind and parting around the player. From studying how it moves
+  them: the motion is mostly a lean that follows a gust field scrolling with the wind, so
+  neighbours bend together, with only a small flutter on top whose phase is advanced
+  frame by frame on the CPU rather than computed from the clock; each blade gives to the
+  wind a little more or less than its neighbours and flutters at its own pace; and the
+  gusts show as a lighter sheen on the blades they bend. Our gust field, constants and
+  shader are our own.
+- Where: `crates/client/src/render/grass.wgsl`, `wind.wgsl` and `wind.rs`.
 
 ### Particle Rain
 
@@ -420,6 +426,10 @@ General techniques we use under their usual names, credited where they appear in
   `crates/client/src/render/clouds.wgsl` and `voxel.wgsl`.
 - SplitMix64 for seeds and hashing: `crates/worldgen/src/rng.rs` and elsewhere.
 - Schlick's approximation for the reflectance of water: `crates/client/src/render/water.wgsl`.
+- Bloom by a chain of 13-tap downsamples and tent upsamples, after Jimenez's "Next
+  Generation Post Processing in Call of Duty: Advanced Warfare" (SIGGRAPH 2014), with Brian
+  Karis's weighting against fireflies, as Bevy implements it (adapted; see
+  THIRD_PARTY_NOTICES.md): `crates/client/src/render/bloom.wgsl` and `post.rs`.
 - Percentage-closer soft shadows: `crates/client/src/render/shadows.wgsl`.
 - The Gabriel graph for which places trails join: `crates/worldgen/src/trails/network.rs`.
 - Catmull-Rom curves for trails and river channels: `trails/path.rs` and `water/channel.rs`.
