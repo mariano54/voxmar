@@ -318,17 +318,16 @@ impl Geology {
             let massif = mountain * (0.35 + 0.65 * ridge);
             peak = mountain * ridge * ridge;
             // Crags on the upper slopes, stretched down the fall line (across the range,
-            // along the range noise's gradient) into gullies and arêtes.
+            // along the range noise's gradient) into gullies and arêtes: a blend of crags
+            // stretched along x and along z, by how the fall line runs.
             let spine = smoothstep(0.35, 0.8, mountain) * self.jaggedness;
             let crags = if spine > 0.0 {
                 let step = 8.0;
                 let gx = self.ranges.get_noise_2d(wx + step, wz) - e;
                 let gz = self.ranges.get_noise_2d(wx, wz + step) - e;
-                let len = gx.hypot(gz).max(1e-6);
-                let (fx, fz) = (gx / len, gz / len);
-                let along = wx * -fz + wz * fx;
-                let down = wx * fx + wz * fz;
-                spine * (self.crags.get_noise_2d(along, down * 0.3) * 0.5 + 0.5)
+                let along_x = gx * gx / (gx * gx + gz * gz).max(1e-12);
+                let stretched = |sx: f32, sz: f32| self.crags.get_noise_2d(wx * sx, wz * sz) * 0.5 + 0.5;
+                spine * (along_x * stretched(0.3, 1.0) + (1.0 - along_x) * stretched(1.0, 0.3))
             } else {
                 0.0
             };
