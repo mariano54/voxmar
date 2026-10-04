@@ -50,7 +50,8 @@ fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, soft: bool) -> f32 {
 }
 
 // Lit colour of a voxel face. `sky` and `block` are 0..1 light levels, `ao` the occlusion
-// factor, `foliage` lights leaves and plants as thin and translucent.
+// factor, `foliage` lights leaves and plants as thin and translucent, and `soft` picks
+// soft-edged shadows (see `sun_shadow`).
 fn shade(
     albedo: vec3<f32>,
     world: vec3<f32>,
@@ -59,8 +60,9 @@ fn shade(
     block: f32,
     ao: f32,
     foliage: bool,
+    soft: bool,
 ) -> vec3<f32> {
-    return shade_normal(albedo, world, NORMALS[face], FACE_SHADE[face], sky, block, ao, foliage, true);
+    return shade_normal(albedo, world, NORMALS[face], FACE_SHADE[face], sky, block, ao, foliage, soft);
 }
 
 // Lit colour of any surface with a normal and an ambient shading factor, its shadows

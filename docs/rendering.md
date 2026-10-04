@@ -145,7 +145,17 @@ the side and towards the sun. `Casters` keeps only chunks whose shadow can land 
 the cascade's range of view depth: the shadow falls along the sun's direction, no further
 than ground 160 blocks above what it shades would throw it at the sun's height. That
 halves the shadow quads with the sun high (2.84 to 1.41 million) and cuts a fifth with it
-low, where long shadows really do reach far.
+low, where long shadows really do reach far. The shadow must also fall within the
+camera's four side planes, not just its range of depth: the box takes in chunks well off
+to either side of the view, and leaving them out took a fifth off the two farthest
+cascades (0.2 ms of their 1.3 ms at 2268×1473).
+
+Shading asks for soft or hard shadow edges (`sun_shadow`). Terrain, leaves and grass
+blades keep the soft filter; water, particles and plants take one comparison of the four
+nearest shadow texels. Water's light only tints what it scatters, particles are too
+small for a penumbra, and a plant takes one shadow for its whole cell, whose edge its
+blades break up: the soft filter's blocker search had cost the water up to a quarter of
+its time over a lake and the plants half their shading in a savanna (0.24 ms).
 
 ### Measuring
 
