@@ -287,7 +287,6 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let geo = geology.get(wx, wz);
             let height = geo.height;
             let site = area.site_on(&geo, wx, wz, geology.slope(wx, wz));
-            column.climate[(z * CHUNK_SIZE + x) as usize] = site.tint();
             let colors = area.colors_of(&site, wx, wz);
             column.colors[(z * CHUNK_SIZE + x) as usize] = [colors.grass, colors.foliage, colors.water];
             let surface = stage::enter(Stage::Surface);

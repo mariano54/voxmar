@@ -158,7 +158,7 @@ impl Site {
         self.moisture.max(self.river * 1.3)
     }
 
-    /// Temperature and humidity bytes as stored in `Column::climate`: coordinates in
+    /// Temperature and humidity as bytes (0..=255): coordinates in
     /// Minecraft-style grass and foliage colour maps.
     pub fn tint(&self) -> [u8; 2] {
         let temperature = ((self.temperature + 5.0) / 25.0).clamp(0.0, 1.0);
@@ -180,7 +180,7 @@ pub struct SurfaceSample {
     pub water_level: i32,
     /// Dominant leaves and the fraction of ground under trees.
     pub canopy: Option<(BlockId, f32)>,
-    /// Temperature and humidity, as stored in `Column::climate`.
+    /// Temperature and humidity bytes, as [`Site::tint`] gives them.
     pub climate: [u8; 2],
     /// Grass, foliage and water colours.
     pub colors: BiomeColors,
