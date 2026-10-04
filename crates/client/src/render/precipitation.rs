@@ -452,8 +452,8 @@ fn update(
             }
         };
         *at = (*at + motion_velocity(set.motion, wind) * dt).rem_euclid(BOX);
-        // Sets ask for a share of the most shown; sparse ones are lifted to be seen.
-        sets[i * 3] = at.extend((set.density * 2.5).min(1.0));
+        // Sets ask for a share of the most shown.
+        sets[i * 3] = at.extend(set.density.min(1.0));
         sets[i * 3 + 1] = set.color.extend(if set.glow { 1.0 } else { 0.0 });
         sets[i * 3 + 2] = Vec4::new(set.size, motion_code(set.motion), 0.0, 0.0);
     }
