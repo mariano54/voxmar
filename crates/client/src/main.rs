@@ -15,7 +15,8 @@
 //! `--fov DEGREES`, `--weather KIND[:INTENSITY]` (show that instead of the server's
 //! weather; the kinds are in `weather.ron`, intensities 0..1 or light|moderate|heavy|max), `--command LINE` (run a console command once in game, such as
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
-//! `--fov` and `--no-vsync` override the saved settings.
+//! `--fov` and `--no-vsync` override the saved settings. Captures are silent, and so is
+//! any run with the environment variable `VOXMAR_MUTE` set.
 
 mod ambience;
 mod breaking;
@@ -198,6 +199,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
     } else {
         app.add_plugins(plugins.set(WindowPlugin { primary_window: Some(window), ..default() }));
+    }
+    // Captures make no sound, nor does any run with VOXMAR_MUTE set: games launched while
+    // developing would otherwise play over whoever is at the machine. Every sound plays at
+    // Bevy's global volume, here zero, so the settings themselves are left alone.
+    if options.capture.is_some() || std::env::var_os("VOXMAR_MUTE").is_some() {
+        app.insert_resource(bevy::audio::GlobalVolume::new(bevy::audio::Volume::SILENT));
     }
     app
     .add_plugins((

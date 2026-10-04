@@ -423,10 +423,12 @@ dries, and thick cloud rains, which dries the air again. Typical land rains 8-20
 rainforests 30-50%, deserts almost never. Rain wets the ground, which dries over minutes, and
 snow lies where it is cold enough and melts above freezing; as it deepens, grass turns snowy
 block by block and turns back as it melts. The air is colder at night and warmer in the
-afternoon, more so in dry climates and under clear skies, and it snows below about 0 °C. A
-downpour under strong updrafts is a thunderstorm: each second it may raise a lightning strike
-somewhere in the cell, which nearby clients see as a flash and a bolt and hear as thunder once
-the sound has travelled. A cell coming into range first catches up on its last ten minutes, so
+afternoon, more so in dry climates and under clear skies, and it snows below about 0 °C. Only a
+heavy downpour under strong updrafts is a thunderstorm: each second it may, rarely, raise a
+lightning strike somewhere in the cell (a few flashes a minute in the heart of the fiercest
+storm), which nearby clients see as a flash and a bolt and hear as thunder once the sound has
+travelled: a crack, boom and roll close by, a muffled rip and roll farther off, only a low
+roll from far away. A cell coming into range first catches up on its last ten minutes, so
 the weather at a place does not depend on when anyone arrived, and cells left behind return to
 their baseline. The process uses only exact arithmetic on seeded hash streams, so it is
 deterministic on every machine. It runs on the simulation clock, so it carries on when the
@@ -541,6 +543,8 @@ range with a fade, and rain ducks layers rather than silencing them. Captures ru
 and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
 writes about twenty seconds of each of nine typical places to `target/ambience_preview.wav`, and
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
+`weather_sound_preview -- --ignored` writes rain at four strengths, thunder near to far, the
+brook, gurgles, swimming and a splash to `target/sound_preview/`, as the game plays them.
 
 ## Rendering and performance
 

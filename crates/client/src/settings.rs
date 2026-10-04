@@ -1121,6 +1121,7 @@ fn select_pack(settings: Res<Settings>, packs: Res<ShaderPacks>, mut active: Res
 
 /// Applies the settings other modules do not read for themselves. The field of view is
 /// the player's camera's, which narrows while zooming.
+#[allow(clippy::too_many_arguments)]
 fn apply(
     settings: Res<Settings>,
     mut world: ResMut<ClientWorld>,

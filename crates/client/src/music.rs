@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, GlobalVolume, PlaybackSettings, Volume};
 use bevy::prelude::*;
 
 use crate::menu::{InMenu, Screen};
@@ -154,6 +154,7 @@ fn fade_out(
     mut commands: Commands,
     time: Res<Time>,
     settings: Res<Settings>,
+    global: Res<GlobalVolume>,
     mut fading: Query<(Entity, &mut FadingOut, Option<&mut AudioSink>)>,
 ) {
     for (entity, mut fade, sink) in &mut fading {
@@ -163,13 +164,14 @@ fn fade_out(
             commands.entity(entity).despawn();
             continue;
         };
-        sink.set_volume(Volume::Linear(level(&settings) * fade.0 / FADE_OUT));
+        // Bevy applies the global volume only as a track starts (see main.rs).
+        sink.set_volume(Volume::Linear(level(&settings) * fade.0 / FADE_OUT) * global.volume);
     }
 }
 
-fn set_volume(settings: Res<Settings>, mut playing: Query<&mut AudioSink, (With<MusicTrack>, Without<FadingOut>)>) {
+fn set_volume(settings: Res<Settings>, global: Res<GlobalVolume>, mut playing: Query<&mut AudioSink, (With<MusicTrack>, Without<FadingOut>)>) {
     for mut sink in &mut playing {
-        sink.set_volume(volume(&settings));
+        sink.set_volume(volume(&settings) * global.volume);
     }
 }
 
