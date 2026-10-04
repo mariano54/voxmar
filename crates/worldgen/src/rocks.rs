@@ -88,14 +88,40 @@ impl Rocks {
     /// The province at (x, z), whose borders are displaced by `warp` blocks.
     pub fn at(&self, x: i32, z: i32, warp: [f32; 2]) -> ProvinceId {
         let (px, pz) = ((x as f32 + warp[0]) / CELL, (z as f32 + warp[1]) / CELL);
+        self.nearest(px, pz).map_or(ProvinceId(0), |h| self.province(h))
+    }
+
+    /// The hash of the cell whose centre lies nearest (px, pz) (in cells), of the 3×3 around
+    /// it: the first of the nearest, row by row, as a search of all nine finds it.
+    ///
+    /// Centres lie at least a tenth of a cell inside their cells, so a neighbour whose
+    /// centre cannot come as near as the centre of the position's own cell is not hashed:
+    /// near the middle of its cell, a position looks at its own cell alone. (The bound
+    /// gives up a hundredth of a cell, far more than rounding takes anywhere in the world.)
+    fn nearest(&self, px: f32, pz: f32) -> Option<u64> {
         let (cx, cz) = (px.floor() as i32, pz.floor() as i32);
-        let mut best = (f32::MAX, ProvinceId(0));
+        let distance = |centre: [f32; 2]| (centre[0] - px).powi(2) + (centre[1] - pz).powi(2);
+        let own = self.centre(cx, cz);
+        let own_distance = distance(own.0);
+        let (fx, fz) = (px - cx as f32, pz - cz as f32);
+        let gap = |d: i32, f: f32| match d {
+            -1 => (f + 0.1 - 0.01).max(0.0),
+            1 => (1.1 - f - 0.01).max(0.0),
+            _ => 0.0,
+        };
+        let mut best = (f32::MAX, None);
         for dz in -1..=1 {
             for dx in -1..=1 {
-                let (centre, province) = self.cell(cx + dx, cz + dz);
-                let d = (centre[0] - px).powi(2) + (centre[1] - pz).powi(2);
+                let (centre, h) = if (dx, dz) == (0, 0) {
+                    own
+                } else if gap(dx, fx).powi(2) + gap(dz, fz).powi(2) > own_distance {
+                    continue;
+                } else {
+                    self.centre(cx + dx, cz + dz)
+                };
+                let d = distance(centre);
                 if d < best.0 {
-                    best = (d, province);
+                    best = (d, Some(h));
                 }
             }
         }
@@ -141,18 +167,7 @@ impl ProvinceMask {
     /// Whether (x, z) lies in a matching province, whose borders are displaced by `warp`.
     pub fn contains(&self, x: f32, z: f32, warp: [f32; 2]) -> bool {
         let (px, pz) = ((x + warp[0]) / CELL, (z + warp[1]) / CELL);
-        let (cx, cz) = (px.floor() as i32, pz.floor() as i32);
-        let mut best = (f32::MAX, 0);
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                let (centre, h) = self.rocks.centre(cx + dx, cz + dz);
-                let d = (centre[0] - px).powi(2) + (centre[1] - pz).powi(2);
-                if d < best.0 {
-                    best = (d, h);
-                }
-            }
-        }
-        self.matching[self.rocks.province(best.1).0 as usize]
+        self.matching[self.rocks.province(self.rocks.nearest(px, pz).unwrap_or(0)).0 as usize]
     }
 
     /// Blocks from (x, z) to the nearest border between a matching province and another:
@@ -191,6 +206,34 @@ impl ProvinceMask {
 mod tests {
     use super::*;
     use voxmar_engine::block::BlockRegistry;
+
+    /// The pruned search for the nearest cell finds what a search of all nine finds.
+    #[test]
+    fn nearest_cell_matches_a_full_search() {
+        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let content = WorldContent::base(&registry).unwrap();
+        let rocks = Rocks::new(9, &content, &registry, &crate::rarity::Featured::new(9, 0.5));
+        let mut rng = crate::rng::Rng::new(9, 9, 9, 9);
+        for i in 0..200_000 {
+            let (px, pz) = if i % 2 == 0 {
+                ((rng.range(-10_000_000, 10_000_000) as f32 + rng.unit() * 400.0) / CELL, (rng.range(-10_000_000, 10_000_000) as f32) / CELL)
+            } else {
+                (rng.range(-40, 40) as f32 + rng.unit(), rng.range(-40, 40) as f32 + rng.unit())
+            };
+            let (cx, cz) = (px.floor() as i32, pz.floor() as i32);
+            let mut best = (f32::MAX, None);
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let (centre, h) = rocks.centre(cx + dx, cz + dz);
+                    let d = (centre[0] - px).powi(2) + (centre[1] - pz).powi(2);
+                    if d < best.0 {
+                        best = (d, Some(h));
+                    }
+                }
+            }
+            assert_eq!(rocks.nearest(px, pz), best.1, "at ({px}, {pz})");
+        }
+    }
 
     #[test]
     fn province_depth_measures_to_the_border() {

@@ -26,7 +26,7 @@ pub(crate) const GROUND_SPREAD: f32 = 0.09;
 /// Likewise for carpeting plants against the grass.
 pub(crate) const CARPET_SPREAD: f32 = 0.09;
 
-/// sRGB (0 ..= 255) to Oklab.
+/// sRGB (0 ..= 255) to Oklab (Björn Ottosson's colour space, as in `voxmar_texgen`).
 pub(crate) fn oklab(rgb: [f32; 3]) -> [f32; 3] {
     let linear = rgb.map(|c| {
         let c = (c / 255.0).clamp(0.0, 1.0);

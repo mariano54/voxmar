@@ -8,7 +8,7 @@
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
 #import voxmar::lighting::{shade_normal, apply_fog}
-#import voxmar::wind::{sway, parting}
+#import voxmar::wind::{sway, parting, wind_strength}
 
 @group(2) @binding(2) var<storage, read> chunk_origins: array<vec4<i32>>;
 @group(2) @binding(3) var<storage, read> blade_seeds: array<u32>;
@@ -87,20 +87,29 @@ fn vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: 
     let width = mix(0.05, 0.09, a.w);
     let facing = b.x * 6.2832;
     let across = vec2(cos(facing), sin(facing));
-    // Each blade leans a little its own way; wind and the player add to that.
-    let lean = (b.yz - 0.5) * 0.5 + sway(root.xz, globals.time) + parting(root);
+    // Each blade gives to the wind a little more or less than its neighbours and flutters
+    // at its own pace, a whole number of 64ths near twice the flutter phase; at rest it
+    // leans a little its own way, less as the wind takes it.
+    let own = fract(b * 64.0);
+    let pace = floor(mix(58.0, 71.0, own.x)) / 32.0;
+    let strength = wind_strength();
+    let wind = sway(root.xz, pace, own.y * 1.5);
+    let lean = (b.yz - 0.5) * 0.5 * (1.0 - 0.6 * strength) + wind.lean * mix(0.8, 1.15, own.z) + parting(root);
     let up = select(select(0.0, MIDDLE, point >= 2u), 1.0, point == 4u);
     let side = select(select(0.5, -0.5, point % 2u == 0u), 0.0, point == 4u) * (1.0 - up * 0.8);
-    // Bent along a curve, and lower for it, so a blade keeps roughly its length.
-    let bend = lean * up * up * height;
+    // Bent along a curve, and lower for it, so a blade keeps roughly its length: its tip
+    // leans over to the angle whose tangent is `lean`.
+    let bend = lean * up * up * height / sqrt(1.0 + dot(lean, lean));
     let lowered = height * up / sqrt(1.0 + dot(lean, lean) * up * up);
     let world = root + vec3(across.x * side * width + bend.x, lowered, across.y * side * width + bend.y);
 
     var out: VertexOutput;
     out.world_position = world;
     out.clip_position = view.clip_from_world * vec4(world, 1.0);
-    // Darker at the root where blades crowd, lighter at the tip, and each its own shade.
-    out.albedo = grass_colour(chunk.w, local) * mix(0.42, 0.95, up) * mix(0.8, 1.12, b.w);
+    // Darker at the root where blades crowd, lighter at the tip, and each its own shade. A
+    // gust sweeping over shows as a lighter wave, as bent blades catch the sky.
+    let sheen = 1.0 + 0.16 * (wind.gust - 0.5) * smoothstep(0.0, 0.3, strength);
+    out.albedo = grass_colour(chunk.w, local) * mix(0.42, 0.95, up) * mix(0.8, 1.12, b.w) * sheen;
     out.light = vec2(f32((seed >> 19u) & 15u) / 15.0, f32((seed >> 15u) & 15u) / 15.0);
     out.normal = normalize(vec3(-across.y * 0.4, 1.0, across.x * 0.4));
     out.shadow_at = vec3(world.x, max(world.y, root.y + 0.12), world.z);

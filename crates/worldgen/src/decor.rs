@@ -724,8 +724,8 @@ impl Decor {
             let at = start + axis * i;
             if log.thick {
                 // Three wide and three high, corners rounded off at random, or hollow along
-                // its middle if it rotted from the inside (then square, so its walls hold
-                // together rather than meeting only at their edges).
+                // its middle if it rotted from the inside (Wilder Wild's hollowed logs; then
+                // square, so its walls hold together rather than meeting only at their edges).
                 for dy in 0..3 {
                     for ds in -1..=1 {
                         let corner = dy != 1 && ds != 0;

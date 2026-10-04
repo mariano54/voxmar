@@ -7,6 +7,7 @@ use voxmar_protocol::{
     ClientConnection, ClientMessage, PlayerId, PlayerInput, PlayerView, ServerMessage, TICKS_PER_SECOND,
 };
 use voxmar_engine::action::{ActionId, ActionTarget};
+use voxmar_engine::block::RenderKind;
 use voxmar_server::ServerHandle;
 
 use crate::breaking::{BlockBroken, SHOWN_WITHIN, shows_breaking};
@@ -150,10 +151,14 @@ fn receive(
             ServerMessage::BlockChanged { pos, block } => {
                 let old = world.block(pos);
                 if old != Some(block) {
-                    // A break the player did not predict: someone else's, shown nearby.
+                    // A break the player did not predict: someone else's, or the player's own
+                    // when the server's word came first, shown nearby. Plants also vanish
+                    // under feet (the server's wear), which is not breaking them, so only
+                    // blocks count; a player's own plants break the moment they click.
                     if let Some(old) = old
                         && block.is_air()
                         && shows_breaking(world.registry.info(old))
+                        && world.registry.info(old).render != RenderKind::Plant
                         && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
                     {
                         broken.write(BlockBroken { pos, block: old });

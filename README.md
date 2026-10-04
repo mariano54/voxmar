@@ -156,7 +156,8 @@ texel, optionally beside the same name from another pack (`--pack DIR` picks the
 `--columns`, `--zoom` and `--out` the layout).
 
 Code and assets adapted from other open source projects are listed, with their licences, in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Every mod, shader pack and project whose
+ideas we used is credited in [INSPIRATIONS.md](INSPIRATIONS.md).
 
 ## Layout
 
@@ -500,8 +501,13 @@ Block sounds follow each block's material (`sound: Wood` in its definition; the 
 in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps
 while mining and breaking come from the player's own Minecraft install when it has them (the
 official launcher's or Prism Launcher's asset store; nothing from Minecraft is shipped), with
-Minecraft's own volumes and pitches. Otherwise they are synthesized at startup: short, soft and
-warm, with several variants per cue and a small random pitch change so nothing repeats exactly.
+Minecraft's pitches, levelled to the loudness of our own cues so footsteps are heard. Otherwise
+they are synthesized at startup: short, soft and warm, with several variants per cue and a small
+random pitch change so nothing repeats exactly. Footsteps come from whatever is underfoot: the
+ground, the rustle of plants, flowers and moss carpet walked through (with the ground softer
+under them), a splash when wading, strokes when swimming. Every broken block plays its break
+sound once, whether the player's own break or one the server reports, fading out over 16 blocks
+for others' breaks.
 Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain is heavy and
 quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
 synthesized cue to `target/sfx_preview.wav`.
