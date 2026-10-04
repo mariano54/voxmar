@@ -297,6 +297,11 @@ impl Biomes {
         &self.list[id.0 as usize]
     }
 
+    /// Every biome's strata.
+    pub(crate) fn strata(&self) -> impl Iterator<Item = &[BlockId]> {
+        self.list.iter().map(|biome| biome.strata.as_slice())
+    }
+
     pub fn id(&self, name: &str) -> Option<BiomeId> {
         self.list.iter().position(|b| b.name == name).map(|i| BiomeId(i as u16))
     }

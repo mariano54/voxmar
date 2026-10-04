@@ -60,6 +60,7 @@ pub fn view_distance(real_columns: i32) -> f32 {
 }
 
 /// Average colours of block faces, for colouring coarse cells.
+#[derive(Clone)]
 pub struct LodPalette {
     top: Vec<[f32; 3]>,
     side: Vec<[f32; 3]>,
@@ -69,6 +70,9 @@ pub struct LodPalette {
     /// Average opacity of top faces, for seeing through ice.
     opacity: Vec<f32>,
     tints: Vec<(Tint, Tint)>,
+    /// For blocks the surface lays in bands by height (strata), the top and side colours of
+    /// their bands blended, as a banded slope or cliff looks from afar (`with_strata`).
+    banded: Vec<Option<([f32; 3], [f32; 3])>>,
 }
 
 impl LodPalette {
@@ -102,7 +106,30 @@ impl LodPalette {
             }));
             tints.push((info.tints[Face::PosY as usize], info.tints[Face::PosX as usize]));
         }
-        Self { top, side, overlay, opacity, tints }
+        let banded = vec![None; top.len()];
+        Self { top, side, overlay, opacity, tints, banded }
+    }
+
+    /// This palette with the blocks of each of `strata` coloured as their bands blended. A
+    /// coarse cell's corner samples the surface at one height, so it took whichever band lay
+    /// at that height, and banded cliffs were striped in every colour of their bands.
+    pub fn with_strata<'a>(&self, strata: impl Iterator<Item = &'a [BlockId]>) -> Self {
+        let mut sums = vec![([0.0f32; 3], [0.0f32; 3], 0.0f32); self.top.len()];
+        for bands in strata {
+            let n = bands.len() as f32;
+            let blend = |faces: &[[f32; 3]]| {
+                bands.iter().fold([0.0; 3], |sum, band| std::array::from_fn::<f32, 3, _>(|c| sum[c] + faces[band.0 as usize][c] / n))
+            };
+            let (top, side) = (blend(&self.top), blend(&self.side));
+            for band in bands {
+                let sum = &mut sums[band.0 as usize];
+                sum.0 = std::array::from_fn(|c| sum.0[c] + top[c]);
+                sum.1 = std::array::from_fn(|c| sum.1[c] + side[c]);
+                sum.2 += 1.0;
+            }
+        }
+        let banded = sums.into_iter().map(|(top, side, sets)| (sets > 0.0).then(|| (top.map(|v| v / sets), side.map(|v| v / sets)))).collect();
+        Self { banded, ..self.clone() }
     }
 
     /// The colour of a block's top or side faces where the biome colours are `colors`.
@@ -125,8 +152,11 @@ impl LodPalette {
         color
     }
 
-    /// Top and side colours of a block.
+    /// Top and side colours of a block, its bands' blend for one laid in bands.
     fn faces(&self, block: BlockId, colors: &BiomeColors) -> ([f32; 3], [f32; 3]) {
+        if let Some(faces) = self.banded[block.0 as usize] {
+            return faces;
+        }
         (self.color(block, true, colors), self.color(block, false, colors))
     }
 
@@ -256,6 +286,9 @@ impl Lod {
     fn follow(&mut self, generator: Option<Arc<Overworld>>) {
         for key in self.tiles.drain() {
             self.terrain.remove_tile(key);
+        }
+        if let Some(generator) = &generator {
+            self.palette = Arc::new(self.palette.with_strata(generator.strata()));
         }
         self.generator = generator;
         self.pending.clear();
@@ -399,6 +432,16 @@ const CANOPY_HEIGHT: f32 = 6.0;
 /// Fraction of open grassland with grass, ferns or flowers growing on it, about what the
 /// generator plants.
 const GRASS_PLANTS: f32 = 0.4;
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// A slope past any the surface rules tell apart, which always takes a column's cliff rock.
+const CLIFF_SLOPE: i32 = 64;
+/// The corner and the blocks around it, half a cell out, whose cliff rock a steep corner's
+/// risers blend.
+const AROUND: [(i32, i32); 9] = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)];
 /// Depth of the walls hanging from tile edges, hiding cracks between rings.
 const SKIRT: f32 = 24.0;
 /// Water and ice sheets lie a hair below the top of real water, so dry ground at the
@@ -421,23 +464,50 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
     let heights: Vec<i32> =
         (0..W * W).map(|i| generator.height(origin.x + at(i % W), origin.y + at(i / W))).collect();
     let height = |x: i32, z: i32| heights[((z + 1) * W + x + 1) as usize];
-    // The regional climate is shared by every sample of the tile.
-    let sampler = generator.sampler(origin - cell, origin + (CELLS + 1) * cell);
+    // The regional climate is shared by every sample of the tile, and of the cliffs' rock
+    // half a cell beyond its outermost corners.
+    let sampler = generator.sampler(origin - 2 * cell, origin + (CELLS + 2) * cell);
 
     let mut corners = Vec::with_capacity((W * W) as usize);
     for z in -1..=CELLS + 1 {
         for x in -1..=CELLS + 1 {
             let (wx, wz) = (origin.x + x * cell, origin.y + z * cell);
             let h = height(x, z);
-            // Steepness per block, rounded like the whole steps between real columns.
-            let slope = if (0..=CELLS).contains(&x) && (0..=CELLS).contains(&z) {
-                let rise = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|(dx, dz)| (height(x + dx, z + dz) - h).abs()).max().unwrap_or(0);
-                (rise + cell / 2) / cell
+            // The steepest rise to a neighbouring corner, and the steepness per block,
+            // rounded like the whole steps between real columns.
+            let rise = if (0..=CELLS).contains(&x) && (0..=CELLS).contains(&z) {
+                [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|(dx, dz)| (height(x + dx, z + dz) - h).abs()).max().unwrap_or(0)
             } else {
                 0
             };
+            let slope = (rise + cell / 2) / cell;
             let surface = sampler.surface(wx, wz, h, slope);
-            let (top, side) = palette.faces(surface.ground, &surface.colors);
+            let (top, mut side) = palette.faces(surface.ground, &surface.colors);
+            // Cliffs are rock: real chunks lay their cliff rock wherever a column is steep
+            // from one block to the next, but a corner's slope is its cell's average, which
+            // calls even a sheer cliff a gentle rise once cells are a few blocks wide. Risers
+            // there showed the ground of the cliff's top or foot instead (grass, a beach's
+            // sand), in stripes of whatever each corner sampled. They take the rock the
+            // surface lays on a cliff instead, in as far as the cell is steep: the rock of
+            // the highest corner around, whose column the cliff face below it belongs to,
+            // blended over the blocks around it, as its mix of rocks blends from afar.
+            let steepness = smoothstep(1.0, 2.5, rise as f32 / cell as f32);
+            if steepness > 0.0 {
+                let (top_x, top_z) = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)]
+                    .into_iter()
+                    .map(|(dx, dz)| (x + dx, z + dz))
+                    .max_by_key(|&(x, z)| height(x, z))
+                    .unwrap_or((x, z));
+                let (cx, cz, ch) = (origin.x + top_x * cell, origin.y + top_z * cell, height(top_x, top_z));
+                let r = cell / 2;
+                let mut rock = [0.0f32; 3];
+                for (dx, dz) in AROUND {
+                    let face = sampler.surface(cx + dx * r, cz + dz * r, ch, CLIFF_SLOPE);
+                    let colour = palette.faces(face.ground, &face.colors).1;
+                    rock = std::array::from_fn(|c| rock[c] + colour[c] / AROUND.len() as f32);
+                }
+                side = std::array::from_fn(|c| side[c] + (rock[c] - side[c]) * steepness);
+            }
             let (leaves, cover) = surface.canopy.unwrap_or((surface.ground, 0.0));
             corners.push(Corner {
                 height: h as f32 + 1.0 + CANOPY_HEIGHT * cover,

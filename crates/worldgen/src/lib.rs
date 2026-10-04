@@ -447,6 +447,13 @@ impl Overworld {
         [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.height(x + dx, z + dz) - height).abs()).max().unwrap_or(0)
     }
 
+    /// Every set of bands (strata) the surface lays by height, of biomes and of terrain
+    /// shapes: what distant terrain blends to show a banded slope as it looks from afar.
+    pub fn strata(&self) -> impl Iterator<Item = &[BlockId]> {
+        let shapes = self.shape_surfaces.iter().flatten().map(|shape| shape.strata.as_slice());
+        self.biomes.strata().chain(shapes).filter(|strata| !strata.is_empty())
+    }
+
     /// Samples many positions within the blocks from `min` to `max` (inclusive) far
     /// faster than one at a time, by sharing the regional climate.
     pub fn sampler(&self, min: IVec2, max: IVec2) -> Sampler<'_> {
