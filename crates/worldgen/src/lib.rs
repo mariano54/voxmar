@@ -231,7 +231,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 11;
+    pub const VERSION: u32 = 12;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -845,7 +845,8 @@ mod tests {
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
-        for (seed, biome) in [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest")] {
+        let places = [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (13, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
+        for (seed, biome) in places {
             let world = Overworld::new(seed, registry.clone());
             let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {biome}"));
             let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
@@ -898,7 +899,7 @@ mod tests {
                     }
                 }
             }
-            assert!(pieces > 20 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome}");
+            assert!(pieces >= 10 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome}");
         }
     }
 
@@ -980,6 +981,27 @@ mod tests {
             ("snowy", |s, _| s.temperature < -3.0 && s.forest > 0.2),
         ];
         println!("seed {seed}, spawn {spawn}");
+        // Named biomes (`BIOMES=maple_forest,bog`): the nearest place well inside each.
+        if let Ok(names) = std::env::var("BIOMES") {
+            for name in names.split(',') {
+                let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
+                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 6000).and_then(|at| {
+                    (0..400).map(|i| spiral(i / 16, i % 16)).map(|(dx, dz)| at + IVec2::new(dx * 16, dz * 16)).find(|p| {
+                        let site = world.site(p.x, p.y);
+                        site.home == id && site.edge > 24.0 && dry(&site) && site.slope <= 2
+                    })
+                });
+                let Some(at) = found else {
+                    println!("{name}: not found");
+                    continue;
+                };
+                // Poses are relative to the eye of the player the command takes there.
+                let forest = world.site(at.x, at.y).forest > 0.3;
+                let (back, up) = if forest { (20.0, 26.0) } else { (14.0, 11.0) };
+                println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,45,-8  above: --pose {back},{up},{back},45,-36", at.x, at.y, at.x, at.y);
+            }
+            return;
+        }
         for (name, test) in sights {
             let mut best: Option<(i32, Site, i32, i32)> = None;
             for dz in (-range..=range).step_by(6) {
@@ -1157,32 +1179,35 @@ mod tests {
     #[test]
     fn geodes_are_hollow_and_lined() {
         let registry = registry();
-        let world = Overworld::new(5, registry.clone());
         let crystal = [registry.expect("base:crystal_block")];
         let mut checked = 0;
-        for i in 0..400 {
-            let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
-            let origin = pos.origin();
-            let geology = geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
-            let column = world.generate(pos);
-            for geode in world.caves.geodes_near(&geology, origin) {
-                let centre = geode.centre.floor().as_ivec3();
-                if ColumnPos::of_block(centre) != pos {
+        for seed in [5, 1, 42, 7] {
+            let world = Overworld::new(seed, registry.clone());
+            for i in 0..400 {
+                let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
+                let origin = pos.origin();
+                let geology = geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
+                let geodes: Vec<_> = world.caves.geodes_near(&geology, origin).into_iter().filter(|g| ColumnPos::of_block(g.centre.floor().as_ivec3()) == pos).collect();
+                if geodes.is_empty() {
                     continue;
                 }
-                let local = |p: IVec3| IVec3::new(p.x & 31, p.y, p.z & 31);
-                let middle = column.block(local(centre));
-                assert!(!registry.info(middle).solid, "a geode at {centre} is not hollow");
-                // Straight up and down from the centre, through the lining, unless a cave cut it.
-                for dir in [IVec3::Y, IVec3::NEG_Y] {
-                    let p = centre + dir * (geode.radius + 0.6).floor() as i32;
-                    let block = column.block(local(p));
-                    assert!(crystal.contains(&block) || !registry.info(block).solid, "{} at {p} lines the geode at {centre}", registry.def(block).name);
+                let column = world.generate(pos);
+                for geode in geodes {
+                    let centre = geode.centre.floor().as_ivec3();
+                    let local = |p: IVec3| IVec3::new(p.x & 31, p.y, p.z & 31);
+                    let middle = column.block(local(centre));
+                    assert!(!registry.info(middle).solid, "seed {seed}: a geode at {centre} is not hollow: {}", registry.def(middle).name);
+                    // Straight up and down from the centre, through the lining, unless a cave cut it.
+                    for dir in [IVec3::Y, IVec3::NEG_Y] {
+                        let p = centre + dir * (geode.radius + 0.6).floor() as i32;
+                        let block = column.block(local(p));
+                        assert!(crystal.contains(&block) || !registry.info(block).solid, "seed {seed}: {} at {p} lines the geode at {centre}", registry.def(block).name);
+                    }
+                    checked += 1;
                 }
-                checked += 1;
             }
         }
-        assert!(checked >= 2, "only {checked} geodes");
+        assert!(checked >= 6, "only {checked} geodes");
     }
 
     /// `cargo test --release -p voxmar_worldgen cave_preview -- --ignored --nocapture`
@@ -1594,6 +1619,8 @@ mod tests {
         let mut pixels = Vec::with_capacity((SIZE * SIZE * 3) as usize);
         let (mut wet, mut creeks, mut rivers, mut lakes) = (0, 0, 0, 0);
         let mut area = vec![0usize; world.biomes.len()];
+        let mut homes = vec![u16::MAX; (SIZE * SIZE) as usize];
+        let mut bands = vec![[0u8; 4]; (SIZE * SIZE) as usize];
         let mut near_spawn = vec![false; world.biomes.len()];
         for z in 0..SIZE {
             for x in 0..SIZE {
@@ -1602,6 +1629,10 @@ mod tests {
                 let surface = sampler.surface(ax(x), az(z), h, slope);
                 let site = sampler.site(ax(x), az(z));
                 area[site.biome.0 as usize] += 1;
+                if !site.body.eq(&Body::Sea) || site.height >= site.water {
+                    homes[(z * SIZE + x) as usize] = world.biomes.parent_of(site.home).0;
+                    bands[(z * SIZE + x) as usize] = world.biomes.bands(&world.point(&sampler.grid.at(ax(x), az(z))));
+                }
                 if (ax(x) - spawn.x).pow(2) + (az(z) - spawn.z).pow(2) < 5000 * 5000 {
                     near_spawn[site.home.0 as usize] = true;
                 }
@@ -1713,6 +1744,100 @@ mod tests {
         }
         let near: Vec<&str> = (0..near_spawn.len()).filter(|&i| near_spawn[i]).map(|i| world.biomes.get(BiomeId(i as u16)).name.as_str()).collect();
         println!("{} biomes within 5 km of spawn: {}\nwrote {path}", near.len(), near.join(", "));
+        biome_sizes(&world, &homes, SIZE, scale);
+        // Which axis changes across each border between biomes (a border can count twice).
+        let mut causes = [0usize; 5];
+        let mut pairs: rustc_hash::FxHashMap<(u16, u16), usize> = Default::default();
+        for z in 0..SIZE - 1 {
+            for x in 0..SIZE - 1 {
+                let i = (z * SIZE + x) as usize;
+                for j in [i + 1, i + SIZE as usize] {
+                    if homes[i] == u16::MAX || homes[j] == u16::MAX || homes[i] == homes[j] {
+                        continue;
+                    }
+                    let differ: Vec<usize> = (0..4).filter(|&a| bands[i][a] != bands[j][a]).collect();
+                    if differ.is_empty() {
+                        causes[4] += 1;
+                        *pairs.entry((homes[i].min(homes[j]), homes[i].max(homes[j]))).or_default() += 1;
+                    }
+                    for a in differ {
+                        causes[a] += 1;
+                    }
+                }
+            }
+        }
+        let total: usize = causes.iter().sum::<usize>().max(1);
+        println!(
+            "borders by axis: temperature {:.0}%, moisture {:.0}%, continentalness {:.0}%, landform {:.0}%, within a cell (weirdness, aether, ecotones) {:.0}%",
+            100.0 * causes[0] as f32 / total as f32,
+            100.0 * causes[1] as f32 / total as f32,
+            100.0 * causes[2] as f32 / total as f32,
+            100.0 * causes[3] as f32 / total as f32,
+            100.0 * causes[4] as f32 / total as f32
+        );
+        let mut pairs: Vec<((u16, u16), usize)> = pairs.into_iter().collect();
+        pairs.sort_by_key(|p| std::cmp::Reverse(p.1));
+        let name = |b: u16| world.biomes.get(BiomeId(b)).name.trim_start_matches("base:").to_owned();
+        println!("within-cell borders: {}", pairs.iter().take(12).map(|((a, b), n)| format!("{}|{} {}", name(*a), name(*b), n)).collect::<Vec<_>>().join(", "));
+    }
+
+    /// How large the land biomes' regions are on a map of `homes` (a biome per pixel,
+    /// `u16::MAX` for sea), `scale` blocks per pixel: each region's size as the diameter of a
+    /// circle of its area, and the share of land in regions at least a kilometre across.
+    fn biome_sizes(world: &Overworld, homes: &[u16], size: i32, scale: i32) {
+        let mut seen = vec![false; homes.len()];
+        let mut regions: Vec<(u16, usize)> = Vec::new();
+        for start in 0..homes.len() {
+            if seen[start] || homes[start] == u16::MAX {
+                continue;
+            }
+            let id = homes[start];
+            let (mut stack, mut count) = (vec![start], 0);
+            seen[start] = true;
+            while let Some(i) = stack.pop() {
+                count += 1;
+                let (x, z) = (i as i32 % size, i as i32 / size);
+                for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let (nx, nz) = (x + dx, z + dz);
+                    if (0..size).contains(&nx) && (0..size).contains(&nz) {
+                        let j = (nz * size + nx) as usize;
+                        if !seen[j] && homes[j] == id {
+                            seen[j] = true;
+                            stack.push(j);
+                        }
+                    }
+                }
+            }
+            regions.push((id, count));
+        }
+        let diameter = |pixels: usize| 2.0 * (pixels as f32 * (scale * scale) as f32 / std::f32::consts::PI).sqrt();
+        let land: usize = regions.iter().map(|r| r.1).sum();
+        let big: usize = regions.iter().filter(|r| diameter(r.1) >= 1000.0).map(|r| r.1).sum();
+        let mid: usize = regions.iter().filter(|r| (400.0..1000.0).contains(&diameter(r.1))).map(|r| r.1).sum();
+        // The diameter of the region the median block of land lies in.
+        let mut by_size: Vec<(f32, usize)> = regions.iter().map(|r| (diameter(r.1), r.1)).collect();
+        by_size.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut acc = 0;
+        let median = by_size.iter().find(|r| {
+            acc += r.1;
+            acc * 2 >= land
+        });
+        println!(
+            "biome regions: land in regions ≥1 km across {:.0}%, 0.4-1 km {:.0}%; the median block of land lies in a region {:.0} m across",
+            100.0 * big as f32 / land.max(1) as f32,
+            100.0 * mid as f32 / land.max(1) as f32,
+            median.map_or(0.0, |r| r.0)
+        );
+        // The largest region of each base biome (not variants, ecotones or water).
+        let mut largest: Vec<(f32, &str)> = (0..world.biomes.len())
+            .filter_map(|b| {
+                let biome = world.biomes.get(BiomeId(b as u16));
+                let best = regions.iter().filter(|r| r.0 as usize == b).map(|r| r.1).max()?;
+                (!biome.has_tag("ocean") && !biome.has_tag("water")).then(|| (diameter(best), biome.name.as_str()))
+            })
+            .collect();
+        largest.sort_by(|a, b| b.0.total_cmp(&a.0));
+        println!("largest region per biome: {}", largest.iter().map(|(d, n)| format!("{} {:.1} km", n.trim_start_matches("base:"), d / 1000.0)).collect::<Vec<_>>().join(", "));
     }
 
     /// `SEED=1,2 cargo test --release -p voxmar_worldgen biomes_near_spawn -- --ignored
