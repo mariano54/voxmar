@@ -4,6 +4,9 @@ Parts of voxmar are adapted from other open source projects. Each entry names th
 its author and licence, what we took and where it lives in this repository, and the notice
 the licence requires.
 
+Projects we took only ideas from, without copying, are credited in
+[INSPIRATIONS.md](INSPIRATIONS.md).
+
 ## RoadWeaver
 
 - Source: https://github.com/shiroha-233/RoadWeaver
@@ -46,42 +49,32 @@ SOFTWARE.
 - Source: https://github.com/Auburn/FastNoiseLite (the Rust port, crate `fastnoise-lite` 1.1.1)
 - Author: Jordan Peck and contributors
 - Licence: MIT
-- What we adapted: its 2D and 3D OpenSimplex2 noise and its fractal sums (Brownian motion and
-  ridged), with its gradient tables and hashing constants, rewritten for NEON to evaluate four
-  points (3D) or four octaves (2D) in step, with selects in place of branches. It returns
-  exactly the crate's values; other noise still comes from the crate itself.
+- What we adapted: its 2D and 3D OpenSimplex2 noise, its fractal sums (Brownian motion and
+  ridged) and its progressive OpenSimplex2 domain warp, with its gradient and random-vector
+  tables and hashing constants, rewritten for NEON to evaluate four points (3D and 2D) or four
+  octaves (2D) in step, with selects in place of branches. It returns exactly the crate's
+  values; other noise still comes from the crate itself.
 - Where: `crates/worldgen/src/noise.rs`.
 
-## "Very fast procedural ocean" (water waves)
-
-- Source: https://www.shadertoy.com/view/MdXyzX, as carried in Glimmer's
-  `shaders/lib/water/waveNormals.glsl` (https://github.com/jbritain/glimmer-shaders)
-- Author: afl_ext
-- Licence: MIT (the source reads "afl_ext 2017-2024 // MIT License")
-- Became: `crates/client/src/render/water_surface.wgsl` (`wave_normal`) and
-  `crates/client/src/render/water.rs` (`octaves`): octaves of `exp(sin x - 1)` waves whose
-  frequency, speed and weight grow and decay by afl_ext's factors, turned by afl_ext's
-  direction step, each dragging the next along its slope.
-- Changed: the slope is summed analytically in one pass instead of from three height
-  samples; phases are worked out on the CPU in double precision around the camera; the long
-  waves turn towards the weather's wind; octaves fade out as they shrink below a few pixels.
-
 ```
-Copyright (c) 2017-2024 afl_ext
+MIT License
+
+Copyright(c) 2023 Jordan Peck (jordan.me2@gmail.com)
+Copyright(c) 2023 Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
+of this software and associated documentation files(the "Software"), to deal
 in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
 copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+furnished to do so, subject to the following conditions :
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
@@ -92,8 +85,7 @@ SOFTWARE.
 
 - Source: https://github.com/jbritain/glimmer-shaders, files
   `shaders/lib/util/screenSpaceRayTrace.glsl` (itself after a public gist by Belmu),
-  `shaders/program/c3_translucents.glsl`, `shaders/lib/water/waterFog.glsl` and
-  `shaders/lib/water/waveNormals.glsl`
+  `shaders/program/c3_translucents.glsl` and `shaders/lib/water/waterFog.glsl`
 - Author: Josh Britain (jbritain)
 - Licence: MIT
 - Became: `crates/client/src/render/water_surface.wgsl` (`trace`, the screen-space march
@@ -110,16 +102,6 @@ SOFTWARE.
 ```
 MIT License
 
-Copyright(c) 2023 Jordan Peck (jordan.me2@gmail.com)
-Copyright(c) 2023 Contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files(the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions :
-
 Copyright (c) 2024 Josh Britain (jbritain)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -134,8 +116,6 @@ copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,

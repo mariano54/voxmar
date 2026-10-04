@@ -259,8 +259,11 @@ impl WorldSave {
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
-        let inventory = player
-            .inventory
+        // A stack held on the pointer is saved back in the inventory (only a full one
+        // loses it).
+        let mut held = player.inventory.clone();
+        held.stow_cursor();
+        let inventory = held
             .slots
             .iter()
             .map(|slot| slot.map(|stack| (registry.def(stack.item).name.clone(), stack.count)))

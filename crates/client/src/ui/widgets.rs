@@ -1,79 +1,88 @@
-//! The look the menus and the settings panel share (dark rounded panels, a clean system
-//! font, green accents) and their widgets: text, panels, buttons with hover states,
-//! scrolling lists and single-line text fields.
+//! The widgets every screen is built from, in the interface's one look (see `skin`):
+//! pixel text, gold-trimmed slate panels, raised buttons that light up teal under the
+//! pointer and sink when pressed, recessed fields, and scrolling lists.
 
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use bevy::text::FontSmoothing;
 use bevy::ui::RelativeCursorPosition;
+
+use super::skin::{FONT, PX, Piece, font_size};
 
 pub struct WidgetsPlugin;
 
 impl Plugin for WidgetsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_font)
+        app.insert_resource(UiFont(FONT))
             .add_systems(Update, (style_buttons, scroll_lists, (focus_fields, edit_fields, draw_fields).chain()));
     }
 }
 
-pub const SCRIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.5);
-pub const PANEL: Color = Color::srgb(0.08, 0.09, 0.11);
-pub const OUTLINE: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
-pub const TEXT: Color = Color::srgb(0.93, 0.94, 0.96);
-pub const SOFT: Color = Color::srgba(0.93, 0.94, 0.96, 0.7);
-pub const MUTED: Color = Color::srgba(0.93, 0.94, 0.96, 0.45);
-pub const ACCENT: Color = Color::srgb(0.36, 0.78, 0.5);
-pub const ACCENT_HOVER: Color = Color::srgb(0.46, 0.85, 0.59);
-pub const ON_ACCENT: Color = Color::srgb(0.04, 0.1, 0.06);
-pub const TRACK: Color = Color::srgba(1.0, 1.0, 1.0, 0.14);
-pub const SUBTLE: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
-pub const SUBTLE_HOVER: Color = Color::srgba(1.0, 1.0, 1.0, 0.14);
-pub const DANGER: Color = Color::srgb(0.84, 0.3, 0.3);
-pub const DANGER_HOVER: Color = Color::srgb(0.91, 0.39, 0.39);
+/// Behind a centred panel.
+pub const SCRIM: Color = Color::srgba(0.02, 0.02, 0.05, 0.45);
+/// Warm parchment white, for most text.
+pub const TEXT: Color = Color::srgb(0.95, 0.92, 0.84);
+pub const SOFT: Color = Color::srgb(0.78, 0.79, 0.86);
+pub const MUTED: Color = Color::srgb(0.55, 0.58, 0.70);
+/// Headings, and what is chosen.
+pub const GOLD: Color = Color::srgb(0.96, 0.80, 0.42);
+/// Arcane teal: what the pointer is on, what is on, what is focused.
+pub const ACCENT: Color = Color::srgb(0.37, 0.88, 0.82);
 /// Text reporting a problem.
-pub const ERROR: Color = Color::srgb(1.0, 0.58, 0.55);
+pub const ERROR: Color = Color::srgb(1.0, 0.52, 0.48);
+/// The dark under pixel text.
+pub const SHADOW: Color = Color::srgba(0.0, 0.0, 0.02, 0.85);
 
-/// The sans-serif UI font.
+/// Text sizes: two screen pixels per font pixel for body text, three for headings.
+pub const BODY: f32 = font_size(2);
+pub const LARGE: f32 = font_size(3);
+
+/// The pixel font. A resource so the screens that predate the skin can keep asking for
+/// it; it is always the same handle, `skin::FONT`.
 #[derive(Resource)]
 pub struct UiFont(pub Handle<Font>);
 
-/// A clean sans-serif from the system; Bevy's built-in font is monospaced and ASCII only.
-fn load_font(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
-    const CANDIDATES: [&str; 5] = [
-        "/System/Library/Fonts/SFNS.ttf",
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ];
-    let font = CANDIDATES
-        .iter()
-        .find_map(|path| std::fs::read(path).ok())
-        .map_or_else(Handle::default, |bytes| fonts.add(Font::from_bytes(bytes)));
-    commands.insert_resource(UiFont(font));
-}
-
+/// Pixel text. Sizes snap to whole screen pixels per font pixel, at least two.
 pub fn text(font: &Handle<Font>, value: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor) {
-    (Text::new(value), TextFont { font: font.into(), font_size: FontSize::Px(size), ..default() }, TextColor(color))
+    let size = font_size((size / font_size(1)).round().max(2.0) as u32);
+    let font = TextFont { font: font.into(), font_size: FontSize::Px(size), font_smoothing: FontSmoothing::None, ..default() };
+    (Text::new(value), font, TextColor(color))
 }
 
-/// Text in a heavier weight.
-pub fn strong(font: &Handle<Font>, value: impl Into<String>, size: f32, color: Color, weight: FontWeight) -> (Text, TextFont, TextColor) {
-    let mut text = text(font, value, size, color);
-    text.1.weight = weight;
-    text
+/// Pixel text with a drop shadow one font pixel down and right, for text over the world
+/// or on buttons.
+pub fn shadowed(font: &Handle<Font>, value: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor, TextShadow) {
+    let (text, font, color) = text(font, value, size, color);
+    let FontSize::Px(px) = font.font_size else { unreachable!("pixel text has a size in pixels") };
+    (text, font, color, TextShadow { offset: Vec2::splat(px / font_size(1)), color: SHADOW })
 }
 
-/// A panel's title.
-pub fn heading(font: &Handle<Font>, value: &str) -> (Text, TextFont, TextColor) {
-    strong(font, value, 30.0, TEXT, FontWeight::SEMIBOLD)
+/// A panel's title, in gold between two teal diamonds, over a gold rule.
+pub fn spawn_heading(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, value: &str) {
+    let row = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
+    parent.spawn(row).with_children(|row| {
+        row.spawn(shadowed(font, "◆", BODY, ACCENT));
+        row.spawn(shadowed(font, value, LARGE, GOLD));
+        row.spawn(shadowed(font, "◆", BODY, ACCENT));
+    });
+    spawn_rule(parent, 4.0 * PX);
 }
 
-/// A small upper-case label above a group of controls.
+/// A thin gold line across a panel, dividing it.
+pub fn spawn_rule(parent: &mut ChildSpawnerCommands, margin: f32) {
+    let node = Node { height: Val::Px(2.0 * PX), margin: UiRect::vertical(Val::Px(margin)), flex_direction: FlexDirection::Column, ..default() };
+    parent.spawn(node).with_children(|rule| {
+        rule.spawn((Node { height: Val::Px(PX), ..default() }, BackgroundColor(Color::srgb(0.42, 0.29, 0.12))));
+        rule.spawn((Node { height: Val::Px(PX), ..default() }, BackgroundColor(Color::srgb(0.69, 0.51, 0.21))));
+    });
+}
+
+/// A small label above a group of controls.
 pub fn label(font: &Handle<Font>, value: &str) -> (Node, Text, TextFont, TextColor) {
-    let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(18.0), Val::Px(8.0));
-    let (text, font, color) = text(font, value.to_uppercase(), 12.0, MUTED);
+    let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(7.0 * PX), Val::Px(3.0 * PX));
+    let (text, font, color) = text(font, value, BODY, MUTED);
     (Node { margin, ..default() }, text, font, color)
 }
 
@@ -91,23 +100,20 @@ pub fn screen(backdrop: Color) -> (Node, BackgroundColor) {
     (node, BackgroundColor(backdrop))
 }
 
-/// The dark rounded panel menus are laid out in.
-pub fn panel(width: f32) -> (Node, BackgroundColor, BorderColor, BoxShadow) {
+/// The gold-trimmed slate panel menus are laid out in.
+pub fn panel(width: f32) -> (Node, ImageNode) {
     let node = Node {
         width: Val::Px(width),
         flex_direction: FlexDirection::Column,
-        padding: UiRect::new(Val::Px(36.0), Val::Px(36.0), Val::Px(28.0), Val::Px(32.0)),
-        border: UiRect::all(Val::Px(1.0)),
-        border_radius: BorderRadius::all(Val::Px(18.0)),
+        padding: UiRect::new(Val::Px(14.0 * PX), Val::Px(14.0 * PX), Val::Px(10.0 * PX), Val::Px(12.0 * PX)),
         ..default()
     };
-    let shadow = BoxShadow::new(Color::srgba(0.0, 0.0, 0.0, 0.45), Val::ZERO, Val::Px(16.0), Val::ZERO, Val::Px(48.0));
-    (node, BackgroundColor(PANEL), BorderColor::all(OUTLINE), shadow)
+    (node, Piece::Panel.image())
 }
 
 /// A row of equally wide buttons.
 pub fn button_row(top: f32) -> Node {
-    Node { margin: UiRect::top(Val::Px(top)), column_gap: Val::Px(12.0), ..default() }
+    Node { margin: UiRect::top(Val::Px(top)), column_gap: Val::Px(4.0 * PX), ..default() }
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -120,12 +126,12 @@ pub enum ButtonStyle {
 }
 
 impl ButtonStyle {
-    /// Text colour, background and hovered background.
-    fn colors(self) -> (Color, Color, Color) {
+    /// The pieces drawn at rest, under the pointer and pressed.
+    fn pieces(self) -> [Piece; 3] {
         match self {
-            ButtonStyle::Primary => (ON_ACCENT, ACCENT, ACCENT_HOVER),
-            ButtonStyle::Secondary => (TEXT, SUBTLE, SUBTLE_HOVER),
-            ButtonStyle::Danger => (Color::WHITE, DANGER, DANGER_HOVER),
+            ButtonStyle::Primary => [Piece::Primary, Piece::PrimaryHover, Piece::PrimaryDown],
+            ButtonStyle::Secondary => [Piece::Button, Piece::ButtonHover, Piece::ButtonDown],
+            ButtonStyle::Danger => [Piece::Danger, Piece::DangerHover, Piece::DangerDown],
         }
     }
 }
@@ -134,8 +140,15 @@ impl ButtonStyle {
 #[derive(Component)]
 pub struct Disabled;
 
+/// A button showing the option currently chosen, ringed in gold.
+#[derive(Component)]
+pub struct Selected;
+
 /// Filter for buttons pressed this frame.
 pub type Pressed = (Changed<Interaction>, Without<Disabled>);
+
+/// Height of a button.
+pub const BUTTON: f32 = 20.0 * PX;
 
 /// A button taking an equal share of its row, carrying `action` to identify it.
 pub fn spawn_button(
@@ -145,35 +158,54 @@ pub fn spawn_button(
     style: ButtonStyle,
     action: impl Bundle,
 ) -> Entity {
-    let (color, background, _) = style.colors();
     let node = Node {
         flex_grow: 1.0,
         flex_basis: Val::ZERO,
-        height: Val::Px(44.0),
+        height: Val::Px(BUTTON),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
-        // Transparent unless a screen marks the button as chosen.
-        border: UiRect::all(Val::Px(1.0)),
-        border_radius: BorderRadius::all(Val::Px(12.0)),
         ..default()
     };
-    parent
-        .spawn((Button, style, node, BackgroundColor(background), BorderColor::all(Color::NONE), action))
-        .with_child(strong(font, label, 16.0, color, FontWeight::MEDIUM))
-        .id()
+    parent.spawn((Button, style, node, style.pieces()[0].image(), action)).with_child(shadowed(font, label, BODY, TEXT)).id()
 }
 
-fn style_buttons(mut buttons: Query<(&ButtonStyle, &Interaction, Has<Disabled>, &mut BackgroundColor)>) {
-    for (style, interaction, disabled, mut background) in &mut buttons {
-        let (_, normal, hovered) = style.colors();
-        let color = if disabled {
-            normal.with_alpha(normal.alpha() * 0.35)
-        } else if *interaction == Interaction::None {
-            normal
-        } else {
-            hovered
+/// Draws each button for its state: the hover piece under the pointer, the pressed piece
+/// with its label two pixels lower while held, gold when selected, faded when disabled.
+/// Screens have a few dozen buttons at most, so every one is checked each frame and only
+/// what differs is written.
+fn style_buttons(
+    mut buttons: Query<(&ButtonStyle, &Interaction, Has<Disabled>, Has<Selected>, &mut ImageNode, &mut Node, &Children)>,
+    mut colors: Query<&mut TextColor>,
+) {
+    for (style, interaction, disabled, selected, mut image, mut node, children) in &mut buttons {
+        let [rest, hover, down] = style.pieces();
+        let piece = match (disabled, interaction) {
+            (true, _) => rest,
+            (false, Interaction::Pressed) => down,
+            (false, Interaction::Hovered) => hover,
+            (false, Interaction::None) if selected && *style == ButtonStyle::Secondary => Piece::ButtonSelected,
+            (false, Interaction::None) => rest,
         };
-        background.set_if_neq(BackgroundColor(color));
+        let tint = if disabled { Color::srgba(1.0, 1.0, 1.0, 0.45) } else { Color::WHITE };
+        if image.image != piece.handle() || image.color != tint {
+            image.image = piece.handle();
+            image.color = tint;
+        }
+        let sunk = !disabled && *interaction == Interaction::Pressed;
+        let top = Val::Px(if sunk { 2.0 * PX } else { 0.0 });
+        if node.padding.top != top {
+            node.padding.top = top;
+        }
+        let color = match (disabled, selected) {
+            (true, _) => MUTED,
+            (false, true) => GOLD,
+            (false, false) => TEXT,
+        };
+        for &child in children {
+            if let Ok(mut text) = colors.get_mut(child) {
+                text.set_if_neq(TextColor(color));
+            }
+        }
     }
 }
 
@@ -233,24 +265,22 @@ pub fn spawn_text_field(
     marker: impl Bundle,
 ) -> Entity {
     let node = Node {
-        height: Val::Px(44.0),
-        padding: UiRect::horizontal(Val::Px(14.0)),
+        height: Val::Px(BUTTON),
+        padding: UiRect::horizontal(Val::Px(5.0 * PX)),
         align_items: AlignItems::Center,
-        border: UiRect::all(Val::Px(1.0)),
-        border_radius: BorderRadius::all(Val::Px(10.0)),
         overflow: Overflow::clip(),
         ..default()
     };
-    let mut field = parent.spawn((Button, node, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.05)), BorderColor::all(OUTLINE), marker));
+    let mut field = parent.spawn((Button, node, Piece::Well.image(), marker));
     if focused {
         field.insert(Focused);
     }
     let (mut text_entity, mut caret, mut placeholder_entity) = (Entity::PLACEHOLDER, Entity::PLACEHOLDER, Entity::PLACEHOLDER);
     field.with_children(|field| {
-        text_entity = field.spawn(text(font, value, 16.0, TEXT)).id();
-        let caret_node = Node { width: Val::Px(2.0), height: Val::Px(20.0), margin: UiRect::horizontal(Val::Px(1.0)), ..default() };
+        text_entity = field.spawn(text(font, value, BODY, TEXT)).id();
+        let caret_node = Node { width: Val::Px(PX), height: Val::Px(8.0 * PX), margin: UiRect::left(Val::Px(PX)), ..default() };
         caret = field.spawn((caret_node, BackgroundColor(ACCENT))).id();
-        placeholder_entity = field.spawn(text(font, placeholder, 16.0, MUTED)).id();
+        placeholder_entity = field.spawn(text(font, placeholder, BODY, MUTED.with_alpha(0.7))).id();
     });
     field.insert(TextField {
         value: value.to_owned(),
@@ -311,16 +341,16 @@ fn edit_fields(
 }
 
 /// Shows each field's text, its placeholder while empty, a blinking caret while focused,
-/// and a highlighted border while focused or hovered.
+/// and a teal rim while focused (fainter while hovered).
 fn draw_fields(
     time: Res<Time>,
-    mut fields: Query<(&TextField, Has<Focused>, &Interaction, &mut BorderColor)>,
+    mut fields: Query<(&TextField, Has<Focused>, &Interaction, &mut ImageNode)>,
     mut texts: Query<&mut Text>,
     mut nodes: Query<&mut Node>,
     mut visibility: Query<&mut Visibility>,
 ) {
     let blink_on = time.elapsed_secs().fract() < 0.55;
-    for (field, focused, interaction, mut border) in &mut fields {
+    for (field, focused, interaction, mut image) in &mut fields {
         if let Ok(mut text) = texts.get_mut(field.text)
             && text.0 != field.value
         {
@@ -335,13 +365,15 @@ fn draw_fields(
         if let Ok(mut caret) = visibility.get_mut(field.caret) {
             caret.set_if_neq(if focused && blink_on { Visibility::Inherited } else { Visibility::Hidden });
         }
-        let color = if focused {
-            ACCENT
+        let piece = if focused {
+            Piece::WellFocus
         } else if *interaction == Interaction::None {
-            OUTLINE
+            Piece::Well
         } else {
-            TRACK
+            Piece::WellHover
         };
-        border.set_if_neq(BorderColor::all(color));
+        if image.image != piece.handle() {
+            image.image = piece.handle();
+        }
     }
 }

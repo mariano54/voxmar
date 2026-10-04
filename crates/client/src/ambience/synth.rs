@@ -15,6 +15,7 @@ use std::f32::consts::{PI, TAU};
 
 use serde::Deserialize;
 
+use crate::sfx::dsp::{Drift, Pink, Svf, between, bubble, gap, seconds};
 use crate::sfx::{Noise, RATE, mix};
 
 const SR: f32 = RATE as f32;
@@ -202,65 +203,6 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
 
 // --- Building blocks ---
 
-/// Chamberlin state-variable filter: low-, band- and high-pass at once.
-struct Svf {
-    f: f32,
-    damping: f32,
-    low: f32,
-    band: f32,
-}
-
-impl Svf {
-    fn new(center: f32, q: f32) -> Self {
-        let mut svf = Self { f: 0.0, damping: 1.0 / q, low: 0.0, band: 0.0 };
-        svf.tune(center);
-        svf
-    }
-
-    /// Kept well below the frequencies where this filter turns unstable.
-    fn tune(&mut self, center: f32) {
-        self.f = 2.0 * (PI * center.clamp(10.0, 7000.0) / SR).sin();
-    }
-
-    fn low(&mut self, x: f32) -> f32 {
-        self.run(x).0
-    }
-
-    fn band(&mut self, x: f32) -> f32 {
-        self.run(x).1
-    }
-
-    fn high(&mut self, x: f32) -> f32 {
-        self.run(x).2
-    }
-
-    fn run(&mut self, x: f32) -> (f32, f32, f32) {
-        self.low += self.f * self.band;
-        let high = x - self.low - self.damping * self.band;
-        self.band += self.f * high;
-        (self.low, self.band, high)
-    }
-}
-
-/// A slow, smooth wander in -1..1: a few sines of unrelated frequencies around `rate` Hz.
-struct Drift([(f32, f32); 3]);
-
-impl Drift {
-    fn new(noise: &mut Noise, rate: f32) -> Self {
-        Self([1.0, 2.13, 3.71].map(|k| (rate * k * (0.8 + 0.4 * noise.unit()), TAU * noise.unit())))
-    }
-
-    fn at(&self, t: f32) -> f32 {
-        self.0.iter().zip([0.55, 0.3, 0.15]).map(|(&(f, phase), w)| w * (TAU * f * t + phase).sin()).sum()
-    }
-
-    /// 0..1, eased.
-    fn unit(&self, t: f32) -> f32 {
-        let x = 0.5 + 0.5 * self.at(t);
-        x * x * (3.0 - 2.0 * x)
-    }
-}
-
 /// A sine whose frequency may change every sample.
 #[derive(Default)]
 struct Osc(f32);
@@ -283,14 +225,6 @@ fn add_at(out: &mut [f32], t: f32, count: usize, mut f: impl FnMut(usize) -> f32
             *sample += value;
         }
     }
-}
-
-fn seconds(t: f32) -> usize {
-    (t.max(0.0) * SR) as usize
-}
-
-fn between(noise: &mut Noise, low: f32, high: f32) -> f32 {
-    low + (high - low) * noise.unit()
 }
 
 /// A smooth bump over 0..1 with a quicker rise than fall.
@@ -589,33 +523,33 @@ fn crickets(noise: &mut Noise, len: usize) -> Vec<f32> {
     out
 }
 
-/// A brook: a stream of small bubbles, each a rising, quickly fading tone, over the
-/// flickering rush of the water and a low body.
+/// A brook: the soft rush of water over stones (pink noise through a broad band around
+/// a kilohertz, over a low body) and the babble of hundreds of small bubbles a second,
+/// mostly faint and high, coming in busier and quieter spells (after Farnell's *Designing
+/// Sound*). No bubble stands out on its own, so it never turns into the bloop of a cartoon.
 fn stream(noise: &mut Noise, len: usize) -> Vec<f32> {
-    let flicker = Drift::new(noise, 6.0);
-    let mut rush = Svf::new(1200.0, 0.8);
-    let mut body = Svf::new(250.0, 0.7);
+    // How busy the water is, wandering on two time scales so it never pulses evenly.
+    let (slow, quick) = (Drift::new(noise, 0.11), Drift::new(noise, 0.7));
+    let busy = |t: f32| 0.6 * slow.unit(t) + 0.4 * quick.unit(t);
+    let flicker = Drift::new(noise, 3.0);
+    let mut pink = Pink::default();
+    let mut rush = Svf::new(1000.0, 0.45);
+    let mut body = Svf::new(320.0, 0.8);
     let mut out: Vec<f32> = (0..len)
         .map(|i| {
-            let white = noise.next();
-            rush.band(white) * (0.12 + 0.08 * flicker.at(i as f32 / SR)) + body.low(white) * 0.15
+            let t = i as f32 / SR;
+            let p = pink.next(noise.next());
+            rush.band(p) * (0.3 + 0.05 * flicker.at(t) + 0.1 * busy(t)) + body.band(p) * 0.12
         })
         .collect();
     let mut t = 0.0;
     while t < len as f32 / SR {
-        let start = seconds(t);
-        let base = 300.0 + 900.0 * noise.unit().powi(2);
-        let rise = between(noise, 3.0, 9.0);
-        let decay = between(noise, 25.0, 60.0);
-        let gain = 0.1 + 0.5 * noise.unit().powi(3);
-        let mut phase = 0.0f32;
-        for j in 0..seconds(5.0 / decay) {
-            let Some(sample) = out.get_mut(start + j) else { break };
-            let local = j as f32 / SR;
-            phase = (phase + base * (1.0 + rise * local) / SR).fract();
-            *sample += gain * (TAU * phase).sin() * (-local * decay).exp();
-        }
-        t += -(1.0 - noise.unit()).max(1e-6).ln() / 35.0;
+        let busy = busy(t);
+        // Mostly small bubbles (high), a few larger.
+        let frequency = 600.0 * 5.0f32.powf(noise.unit().powf(0.7));
+        let gain = (0.014 + 0.11 * noise.unit().powi(4)) * (0.5 + busy);
+        bubble(&mut out, t, frequency, gain, between(noise, 0.05, 0.3));
+        t += gap(noise, 150.0 + 450.0 * busy);
     }
     out
 }
@@ -837,25 +771,22 @@ fn frog(noise: &mut Noise) -> Vec<f32> {
     out
 }
 
-/// A plop: a small splash and a few rising bubbles.
+/// Water gurgling past a stone nearby: the hush of a little splash, then a few small
+/// bubbles in quick succession, each fainter than the last.
 fn plop(noise: &mut Noise) -> Vec<f32> {
-    let mut out = vec![0.0f32; seconds(0.5)];
-    let mut splash = Svf::new(2500.0, 0.8);
-    for (j, sample) in out.iter_mut().enumerate().take(seconds(0.03)) {
-        *sample += splash.band(noise.next()) * 0.4 * (-(j as f32 / SR) * 120.0).exp();
+    let mut out = vec![0.0f32; seconds(0.45)];
+    let mut hush = Svf::new(between(noise, 1500.0, 2500.0), 0.7);
+    let mut pink = Pink::default();
+    for (j, sample) in out.iter_mut().enumerate().take(seconds(0.12)) {
+        let t = j as f32 / SR;
+        *sample += hush.band(pink.next(noise.next())) * 0.5 * (t / 0.004).min(1.0) * (-t / 0.03).exp();
     }
-    let mut start = seconds(0.005);
-    for _ in 0..1 + (noise.unit() * 3.0) as usize {
-        let base = between(noise, 350.0, 900.0);
-        let decay = between(noise, 35.0, 55.0);
-        let mut phase = 0.0f32;
-        for j in 0..seconds(5.0 / decay) {
-            let Some(sample) = out.get_mut(start + j) else { break };
-            let local = j as f32 / SR;
-            phase = (phase + base * (1.0 + 6.0 * local) / SR).fract();
-            *sample += 0.8 * (TAU * phase).sin() * (-local * decay).exp();
-        }
-        start += seconds(between(noise, 0.04, 0.12));
+    let mut t = between(noise, 0.01, 0.03);
+    let mut gain = 1.0;
+    for _ in 0..3 + (noise.unit() * 4.0) as usize {
+        bubble(&mut out, t, between(noise, 700.0, 2200.0), gain * between(noise, 0.5, 1.0), between(noise, 0.1, 0.35));
+        t += between(noise, 0.02, 0.07);
+        gain *= 0.75;
     }
     out
 }

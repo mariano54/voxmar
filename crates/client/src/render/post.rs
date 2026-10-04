@@ -68,7 +68,7 @@ impl Plugin for PostPlugin {
         render_app
             .add_systems(RenderStartup, init)
             .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
-            .add_systems(Core3d, post.in_set(Core3dSystems::PostProcess).after(bloom).before(tonemapping));
+            .add_systems(Core3d, bloom_and_display.in_set(Core3dSystems::PostProcess).after(bloom).before(tonemapping));
     }
 }
 
@@ -91,7 +91,7 @@ struct DisplayUniform {
 }
 
 #[derive(Resource)]
-struct PostPipelines {
+pub struct PostPipelines {
     bloom_layout: BindGroupLayoutDescriptor,
     display_layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
@@ -188,7 +188,7 @@ fn blend(intensity: f32, level: f32, lowest: f32) -> f32 {
 
 /// A camera's bloom chain and display uniforms this frame.
 #[derive(Component)]
-struct PostView {
+pub struct PostView {
     display_pipeline: CachedRenderPipelineId,
     display_uniform: UniformBuffer<DisplayUniform>,
     /// The levels as downsampled, and as upsampled back up (the top `LEVELS - 1` of them;
@@ -322,7 +322,8 @@ fn prepare(
     }
 }
 
-fn post(
+/// Runs the bloom chain, then the display transform into the next post-process target.
+pub fn bloom_and_display(
     view: ViewQuery<(&ViewTarget, &PostView)>,
     pipelines: Res<PostPipelines>,
     cache: Res<PipelineCache>,

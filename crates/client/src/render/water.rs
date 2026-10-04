@@ -13,9 +13,9 @@
 //! - reflections of the terrain by marching the depth buffer, and of the sky elsewhere;
 //! - foam where the surface meets the shore.
 //!
-//! Waves are octaves of the "very fast procedural ocean" (afl_ext, MIT): their directions,
-//! frequencies and phases are worked out here each frame, in double precision around the
-//! camera, so far from the origin they stay smooth, and they lean with the weather's wind.
+//! Waves are a tiling texture of swells laid over the surface in a few layers that drift
+//! with the wind (see `waves`); their positions are worked out here each frame, in double
+//! precision around the camera, so far from the origin they stay smooth.
 
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
@@ -31,10 +31,11 @@ use bevy::render::render_phase::{
 };
 use bevy::render::render_resource::{
     AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
-    BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState, LoadOp,
+    BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState, LoadOp, MipmapFilterMode,
     Operations, PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
     RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, StoreOp,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, encase,
+    TextureDataOrder, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
+    TextureViewDescriptor, encase,
     binding_types::{sampler, texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
@@ -52,8 +53,14 @@ use super::terrain::{DrawTerrain, TerrainDraws};
 use super::{DayCycle, SkyHandle, SkyMaterial};
 use crate::weather::Wind;
 
-/// Wave octaves the shader can sum (`water.wgsl`).
-pub const MAX_OCTAVES: usize = 16;
+mod waves;
+
+/// Wave layers the shader can sum (`water_surface.wgsl`).
+const LAYERS: usize = waves::LAYERS.len();
+/// Wind speed (blocks per second) at which waves reach their full height, and how high they
+/// are in calm air, as a fraction of that.
+const WINDY: f32 = 8.0;
+const CALM_WAVES: f32 = 0.2;
 
 pub struct WaterPlugin;
 
@@ -110,81 +117,21 @@ impl WaterQuality {
         }
     }
 
-    /// Wave octaves summed, steps of the reflection march, and halvings that refine a hit.
-    fn budget(self) -> (usize, u32, u32) {
+    /// Wave layers summed, steps of the reflection march, and halvings that refine a hit.
+    fn budget(self) -> (u32, u32, u32) {
         match self {
-            WaterQuality::Low => (0, 0, 0),
-            WaterQuality::Medium => (8, 12, 4),
-            WaterQuality::High => (12, 20, 5),
+            WaterQuality::Low => (2, 0, 0),
+            WaterQuality::Medium => (3, 12, 4),
+            WaterQuality::High => (LAYERS as u32, 20, 5),
         }
     }
-}
-
-/// The waves on still water: octaves of `exp(sin x)` waves, each a little shorter, quicker
-/// and weaker than the last, in directions scattered by a fixed angle (afl_ext's).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Octave {
-    /// Unit direction the crests travel in, along x and z.
-    pub direction: Vec2,
-    /// Radians per block.
-    pub frequency: f32,
-    /// Radians per second.
-    pub speed: f32,
-    pub weight: f32,
-}
-
-/// Longest waves, in radians per block (about six blocks from crest to crest).
-const BASE_FREQUENCY: f64 = 1.0;
-const FREQUENCY_GROWTH: f64 = 1.18;
-const BASE_SPEED: f64 = 1.6;
-const SPEED_GROWTH: f64 = 1.07;
-const WEIGHT_DECAY: f32 = 0.8;
-/// Turn between successive octaves' directions, in radians (afl_ext's).
-const DIRECTION_STEP: f64 = 1232.399963;
-
-/// The first `count` octaves for a wind (blocks per second along x and z): the long waves
-/// turn towards the wind's direction the harder it blows, the short ones stay scattered.
-/// Weights sum to one.
-pub fn octaves(count: usize, wind: Vec2) -> Vec<Octave> {
-    let speed = wind.length();
-    let along = if speed > 0.01 { wind / speed } else { Vec2::X };
-    // A breeze lines up the swell; a gale lines up nearly everything.
-    let alignment = (speed / 12.0).clamp(0.0, 0.85);
-    let mut octaves: Vec<Octave> = (0..count)
-        .map(|i| {
-            let angle = DIRECTION_STEP * i as f64;
-            let scattered = Vec2::new(angle.sin() as f32, angle.cos() as f32);
-            // Each octave keeps the side of the wind it started on, so they never all
-            // cancel out, and shorter octaves turn less.
-            let pull = alignment * WEIGHT_DECAY.powi(i as i32);
-            let toward = if scattered.dot(along) >= 0.0 { along } else { -along };
-            let direction = scattered.lerp(toward, pull).normalize_or(scattered);
-            Octave {
-                direction,
-                frequency: (BASE_FREQUENCY * FREQUENCY_GROWTH.powi(i as i32)) as f32,
-                speed: (BASE_SPEED * SPEED_GROWTH.powi(i as i32)) as f32,
-                weight: WEIGHT_DECAY.powi(i as i32),
-            }
-        })
-        .collect();
-    let total: f32 = octaves.iter().map(|o| o.weight).sum();
-    for octave in &mut octaves {
-        octave.weight /= total.max(f32::EPSILON);
-    }
-    octaves
-}
-
-/// Phase of an octave at a world position and time, wrapped to one turn. Done in double
-/// precision, so the shader only adds the small part relative to `origin`.
-pub fn phase(octave: &Octave, origin: DVec2, seconds: f64) -> f32 {
-    let x = octave.direction.as_dvec2().dot(origin) * octave.frequency as f64 - seconds * octave.speed as f64;
-    x.rem_euclid(std::f64::consts::TAU) as f32
 }
 
 /// Everything the water shader is given, gathered in the main world each frame.
 #[derive(Resource, Clone, ExtractResource, Default)]
 pub struct WaterParams {
     uniform: WaterUniform,
+    drift: waves::Drift,
 }
 
 impl WaterParams {
@@ -197,9 +144,10 @@ impl WaterParams {
 /// See `Water` in water_surface.wgsl.
 #[derive(ShaderType, Clone, Copy, Default)]
 struct WaterUniform {
-    waves: [Vec4; MAX_OCTAVES],
-    weights: [Vec4; MAX_OCTAVES / 4],
+    layers: [Vec4; LAYERS],
+    phases: [Vec4; LAYERS],
     origin: Vec4,
+    flow_origin: Vec4,
     zenith: Vec4,
     horizon: Vec4,
     sun: Vec4,
@@ -209,8 +157,10 @@ struct WaterUniform {
 }
 
 /// Wave positions are measured from the camera snapped to this many blocks, so they stay
-/// small without moving every frame.
+/// small without moving every frame. Flowing water's streaks turn with the flow, so their
+/// pattern cannot be carried across a snap exactly; they snap far more rarely.
 const ORIGIN_SNAP: f64 = 256.0;
+const FLOW_ORIGIN_SNAP: f64 = 4096.0;
 
 #[allow(clippy::too_many_arguments)]
 fn update_params(
@@ -226,32 +176,33 @@ fn update_params(
 ) {
     let Ok(camera) = camera.single() else { return };
     let look = &pack.water;
-    let (count, steps, refinements) = quality.budget();
+    let (layers, steps, refinements) = quality.budget();
     let at = camera.translation().as_dvec3();
     let origin = (DVec2::new(at.x, at.z) / ORIGIN_SNAP).floor() * ORIGIN_SNAP;
-    let seconds = time.elapsed_secs_f64();
-    let octaves = octaves(count, wind.mean());
+    params.drift.advance(wind.mean(), time.delta_secs_f64());
     let mut uniform = WaterUniform::default();
-    for (i, octave) in octaves.iter().enumerate() {
-        uniform.waves[i] = octave.direction.extend(octave.frequency).extend(phase(octave, origin, seconds));
-        uniform.weights[i / 4][i % 4] = octave.weight;
-    }
-    // Calm water still ripples; wind raises the waves up to a strong breeze.
-    let roughness = 0.45 + 0.55 * (wind.mean().length() / 8.0).min(1.0);
-    uniform.origin = Vec4::new(origin.x as f32, 0.0, origin.y as f32, look.waves * roughness);
+    (uniform.layers, uniform.phases) = params.drift.uniform(origin);
+    // Waves grow with the wind, from a faint stir in calm air to their full height in a
+    // strong breeze; how open the water is scales them further, per vertex.
+    let windiness = (wind.mean().length() / WINDY).min(1.0);
+    let height = look.waves * (CALM_WAVES + (1.0 - CALM_WAVES) * windiness);
+    uniform.origin = Vec4::new(origin.x as f32, windiness, origin.y as f32, height);
+    let flow_origin = (DVec2::new(at.x, at.z) / FLOW_ORIGIN_SNAP).floor() * FLOW_ORIGIN_SNAP;
+    uniform.flow_origin = Vec4::new(flow_origin.x as f32, 0.0, flow_origin.y as f32, 0.0);
     if let Some(sky) = sky_handle.and_then(|handle| sky_materials.get(&handle.0)) {
         uniform.zenith = sky.params.zenith;
         uniform.horizon = sky.params.horizon;
         uniform.sun = sky.params.sun;
     }
     uniform.optics = Vec4::new(look.absorption, look.scattering, look.refraction, if cycle.underwater { 1.0 } else { 0.0 });
-    uniform.strengths = Vec4::new(look.reflections, look.foam, if look.pixelated { 1.0 } else { 0.0 }, 0.0);
-    uniform.budget = UVec4::new(octaves.len() as u32, steps, refinements, 0);
+    uniform.strengths = Vec4::new(look.reflections, look.foam, if look.pixelated { 1.0 } else { 0.0 }, look.waves);
+    uniform.budget = UVec4::new(layers, steps, refinements, 0);
     params.uniform = uniform;
 }
 
 /// The water bind group's layout (group 4 of the translucent terrain pipeline): the scene's
-/// depth and colour, a sampler, the uniform and the half-resolution depth.
+/// depth and colour, a sampler, the uniform, the half-resolution depth, and the wave
+/// texture with its sampler.
 pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
     let entries = if multisampled {
         BindGroupLayoutEntries::sequential(
@@ -262,6 +213,8 @@ pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
                 sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<WaterUniform>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
             ),
         )
     } else {
@@ -273,6 +226,8 @@ pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
                 sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<WaterUniform>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
             ),
         )
     };
@@ -283,6 +238,9 @@ pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
 struct WaterGpu {
     uniform: Buffer,
     sampler: Sampler,
+    /// The wave texture (`waves`), and its sampler, which repeats and filters its mips.
+    waves: TextureView,
+    wave_sampler: Sampler,
     /// The half-resolution depth's layouts and pipelines, without and with MSAA.
     depth_layouts: [BindGroupLayoutDescriptor; 2],
     depth_pipelines: [CachedRenderPipelineId; 2],
@@ -294,6 +252,7 @@ const MARCH_DEPTH_FORMAT: TextureFormat = TextureFormat::R32Float;
 fn init_gpu(
     mut commands: Commands,
     device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
     pipeline_cache: Res<PipelineCache>,
     fullscreen: Res<FullscreenShader>,
     asset_server: Res<AssetServer>,
@@ -310,6 +269,34 @@ fn init_gpu(
         address_mode_v: AddressMode::ClampToEdge,
         mag_filter: FilterMode::Linear,
         min_filter: FilterMode::Linear,
+        ..default()
+    });
+    let (texels, levels) = waves::texture();
+    let waves = device
+        .create_texture_with_data(
+            &queue,
+            &TextureDescriptor {
+                label: Some("water_waves"),
+                size: Extent3d { width: waves::TEXELS, height: waves::TEXELS, depth_or_array_layers: 1 },
+                mip_level_count: levels,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8Snorm,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            TextureDataOrder::LayerMajor,
+            &texels,
+        )
+        .create_view(&TextureViewDescriptor::default());
+    let wave_sampler = device.create_sampler(&SamplerDescriptor {
+        label: Some("water_wave_sampler"),
+        address_mode_u: AddressMode::Repeat,
+        address_mode_v: AddressMode::Repeat,
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        mipmap_filter: MipmapFilterMode::Linear,
+        anisotropy_clamp: 8,
         ..default()
     });
     let shader = asset_server.load("embedded://voxmar/render/water_depth.wgsl");
@@ -331,7 +318,7 @@ fn init_gpu(
             ..default()
         })
     });
-    commands.insert_resource(WaterGpu { uniform, sampler, depth_layouts, depth_pipelines });
+    commands.insert_resource(WaterGpu { uniform, sampler, waves, wave_sampler, depth_layouts, depth_pipelines });
 }
 
 /// Each camera's half-resolution depth, while it has water in sight.
@@ -507,7 +494,15 @@ fn water_pass(
     let bind_group = ctx.render_device().create_bind_group(
         "water_bind_group",
         &pipeline_cache.get_bind_group_layout(&layout(multisampled)),
-        &BindGroupEntries::sequential((depth.view(), write.source, &gpu.sampler, gpu.uniform.as_entire_binding(), &march.default_view)),
+        &BindGroupEntries::sequential((
+            depth.view(),
+            write.source,
+            &gpu.sampler,
+            gpu.uniform.as_entire_binding(),
+            &march.default_view,
+            &gpu.waves,
+            &gpu.wave_sampler,
+        )),
     );
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
@@ -543,44 +538,4 @@ fn water_pass(
         }
     }
     span.end(&mut pass);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn octave_weights_sum_to_one() {
-        for count in [1, 8, MAX_OCTAVES] {
-            let sum: f32 = octaves(count, Vec2::new(3.0, 1.0)).iter().map(|o| o.weight).sum();
-            assert!((sum - 1.0).abs() < 1e-5, "{count} octaves weigh {sum}");
-        }
-        assert!(octaves(0, Vec2::ZERO).is_empty());
-    }
-
-    #[test]
-    fn wind_lines_up_the_long_waves() {
-        let wind = Vec2::new(0.0, 10.0);
-        let along = |octaves: &[Octave]| octaves[..4].iter().map(|o| o.direction.dot(wind.normalize()).abs()).sum::<f32>();
-        let calm = octaves(MAX_OCTAVES, Vec2::ZERO);
-        let windy = octaves(MAX_OCTAVES, wind);
-        assert!(along(&windy) > along(&calm) + 0.5);
-        assert!(windy.iter().all(|o| (o.direction.length() - 1.0).abs() < 1e-5));
-    }
-
-    #[test]
-    fn phases_are_continuous_across_origins() {
-        // Far from the world's origin, a point's phase measured from either of the two
-        // snapped origins around it is the same, so waves never jump as the camera moves.
-        let octave = octaves(MAX_OCTAVES, Vec2::new(4.0, -2.0))[5];
-        let point = DVec2::new(1_000_123.25, -7_654_321.5);
-        let seconds = 12_345.678;
-        let first = (point / ORIGIN_SNAP).floor() * ORIGIN_SNAP;
-        let shader = |origin: DVec2| {
-            let offset = (point - origin).as_vec2();
-            phase(&octave, origin, seconds) + octave.direction.dot(offset) * octave.frequency
-        };
-        let difference = (shader(first) - shader(first + DVec2::new(ORIGIN_SNAP, 0.0))).rem_euclid(std::f32::consts::TAU);
-        assert!(difference.min(std::f32::consts::TAU - difference) < 1e-3, "{difference}");
-    }
 }

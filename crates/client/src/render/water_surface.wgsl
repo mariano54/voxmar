@@ -1,12 +1,9 @@
 // The surface of real water, drawn by the water pass (water.rs) with the scene behind it
 // bound for reading: its depth, and its colour so far.
 //
-// - Waves: octaves of afl_ext's exp(sin) waves, each dragging the next along its slope
-//   ("Very fast procedural ocean", https://www.shadertoy.com/view/MdXyzX, MIT, as adapted
-//   in Glimmer's waveNormals.glsl by jbritain, MIT). Their directions, frequencies and
-//   phases come from water.rs, where the wind turns them; here the slope is summed
-//   analytically in one pass instead of three height samples, and octaves shorter than a
-//   few pixels fade out so distant water does not sparkle.
+// - Waves: a tiling texture of swells (water/waves.rs) in four layers of unrelated sizes and
+//   turns drifting with the wind, as high as the wind and the open water around let them
+//   grow, so puddles lie still; flowing water carries streaks along its flow.
 // - What lies behind: how far the view travels through water to the scene behind, so
 //   shallows are clear and deep water takes its colour; the bed bent by the waves; the
 //   light reaching the bed dimmed by the water above it.
@@ -19,27 +16,29 @@
 #define_import_path voxmar::water_surface
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, air_between, water_normal}
+#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, air_between}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct Water {
-    // Wave octaves: xy the direction crests travel, z radians per block, w phase at
-    // `origin` now.
-    waves: array<vec4<f32>, 16>,
-    // Weight of each octave; the octaves in use sum to one.
-    weights: array<vec4<f32>, 4>,
-    // xz: where wave positions are measured from; w: how high the waves are (the pack's
-    // strength times the wind's).
+    // Wave layers (water/waves.rs): cos and sin of the layer's turn, 1 / its size in
+    // blocks, and its weight.
+    layers: array<vec4<f32>, 4>,
+    // xy: the texture coordinates of `origin` in each layer.
+    phases: array<vec4<f32>, 4>,
+    // xz: where wave positions are measured from; y: how windy it is, 0..1; w: how high the
+    // waves are on open water (the pack's strength times the wind's).
     origin: vec4<f32>,
+    // xz: where flowing water's waves are measured from (snapped more coarsely).
+    flow_origin: vec4<f32>,
     zenith: vec4<f32>,
     horizon: vec4<f32>,
     // xyz: towards the sun, w: daylight 0..1
     sun: vec4<f32>,
     // x: absorption, y: scattering, z: refraction (the pack's), w: 1 with the eye under water
     optics: vec4<f32>,
-    // x: reflections, y: foam (the pack's), z: 1 for pixelated water
+    // x: reflections, y: foam (the pack's), z: 1 for pixelated water, w: waves (the pack's)
     strengths: vec4<f32>,
-    // x: wave octaves, y: steps of the reflection march, z: halvings that refine a hit
+    // x: wave layers, y: steps of the reflection march, z: halvings that refine a hit
     budget: vec4<u32>,
 };
 
@@ -53,29 +52,30 @@ struct Water {
 @group(4) @binding(3) var<uniform> water: Water;
 // The nearest depth of each 2×2 pixels (water_depth.wgsl), which the reflection march reads.
 @group(4) @binding(4) var march_depth: texture_2d<f32>;
+// The swells the waves are made of (water/waves.rs): slope along u and v, height.
+@group(4) @binding(5) var wave_texture: texture_2d<f32>;
+@group(4) @binding(6) var wave_sampler: sampler;
 
-// How far each wave drags the next along its slope (afl_ext's 0.2 to 0.38 for weights that
-// start at one; ours sum to one).
-const DRAG: f32 = 1.0;
-// Height of the waves at strength one, in blocks, and of the ripples over them.
-const WAVE_HEIGHT: f32 = 0.14;
-const RIPPLE_HEIGHT: f32 = 0.05;
-// Ripples per block.
-const RIPPLE_SCALE: f32 = 2.5;
+// Texels along a side of the wave texture, and the waves' steepest slope at full height.
+const WAVE_TEXELS: f32 = 256.0;
+const WAVE_SLOPE: f32 = 0.16;
+// How high waves are on water with hardly any open water around it (a puddle, a sheltered
+// pool), as a fraction of those on open water.
+const SHELTERED: f32 = 0.06;
 // Texels per block of the block textures.
 const TEXELS: f32 = 16.0;
-// Flowing water: seconds its waves are carried along before a layer starts again, octaves
-// per layer (it draws two), how much choppier it is per block per second of speed, and the
-// speed from which it froths.
-const FLOW_CYCLE: f32 = 1.6;
-const FLOWING_OCTAVES: u32 = 10u;
-const FLOW_CHOP: f32 = 0.35;
-const RAPIDS = vec2(1.6, 2.8);
-// How far the waves bend the view through the surface.
-const BEND: f32 = 0.6;
-// Furthest the bent view reaches beyond the surface, in blocks, so a far bed does not
-// swing across the screen.
-const BEND_REACH: f32 = 6.0;
+// Flowing water: its swells are this many blocks across and stretched this much along the
+// flow, into streaks; they are carried along in two layers that start again every
+// FLOW_CYCLE seconds; their slope at the slowest and fastest flows; and the speed from
+// which it froths.
+const FLOW_SIZE = vec2(11.0, 4.3);
+const FLOW_STRETCH: f32 = 4.0;
+const FLOW_CYCLE: f32 = 2.0;
+const FLOW_SLOPE = vec2(0.05, 0.16);
+const RAPIDS = vec2(2.0, 3.2);
+// How far the waves move the point the bed is seen through, in blocks per unit of slope,
+// over the first block of depth.
+const REFRACTION: f32 = 2.5;
 // Depth thickness assumed of what a reflected ray passes behind, in blocks.
 const THICKNESS: f32 = 1.5;
 // Each step of the reflection march is this much longer than the last.
@@ -87,6 +87,14 @@ const GLINT_STRENGTH = vec2(40.0, 0.6);
 const MIN_REFLECTION: f32 = 0.03;
 // Foam lines shores where the water is shallower than this, in blocks.
 const FOAM_DEPTH: f32 = 0.3;
+// How much of its own colour, lit, water shows however shallow it is, as a glaze over the
+// bed (Complementary's water is never quite clear).
+const GLAZE: f32 = 0.28;
+// How much of the biome colour's saturation the glaze keeps.
+const GLAZE_SATURATION: f32 = 0.6;
+// Over the first fraction of a block of depth at the very edge of the water, the glaze and
+// the reflection fade in, so the shoreline is soft rather than a hard rim.
+const EDGE: f32 = 0.06;
 // Falling water: how fast its streaks run down, in blocks per second, how many there are
 // per block across and along the fall, and how deep they are.
 const FALL_SPEED: f32 = 7.0;
@@ -115,6 +123,28 @@ fn pixel(uv: vec2<f32>) -> vec2<i32> {
 // Depth of the scene behind the water (reverse-Z: 1 at the eye, 0 at infinity).
 fn depth_at(uv: vec2<f32>) -> f32 {
     return textureLoad(scene_depth, pixel(uv), 0);
+}
+
+// Depth of what lies behind a surface at depth `surface` in the pixel at `uv`. With MSAA
+// the pixel's samples may straddle the edge of something in front of the water (a bank,
+// a plant); the nearest sample that is behind the surface stands for the pixel, where the
+// first sample alone would put the bank under the water and draw foam along every edge.
+fn depth_behind(uv: vec2<f32>, surface: f32) -> f32 {
+#ifdef MULTISAMPLED
+    let at = pixel(uv);
+    var behind = 0.0;
+    var farthest = 1.0;
+    for (var i = 0; i < 4; i++) {
+        let d = textureLoad(scene_depth, at, i);
+        farthest = min(farthest, d);
+        if d < surface && d > behind {
+            behind = d;
+        }
+    }
+    return select(farthest, behind, behind > 0.0);
+#else
+    return depth_at(uv);
+#endif
 }
 
 // The half-resolution depth at `uv`, for the march.
@@ -152,76 +182,80 @@ fn noise_slope(p: vec2<f32>) -> vec2<f32> {
     return du * vec2(b - a + k * u.y, d - a + k * u.x);
 }
 
-// Small ripples over the waves: two layers of noise drifting across each other, along and
-// against the longest wave.
-fn ripple_slope(p: vec2<f32>, footprint: f32) -> vec2<f32> {
-    let fade = saturate(2.0 - RIPPLE_SCALE * 2.0 * footprint * 0.64);
-    if fade <= 0.0 {
-        return vec2(0.0);
-    }
-    let t = globals.time;
-    let along = water.waves[0].xy;
-    let first = noise_slope(p * RIPPLE_SCALE + along * (t * 0.7)) * RIPPLE_SCALE;
-    // The second layer turned by 37 degrees, so the two lattices never line up.
-    let turn = mat2x2<f32>(0.8, 0.6, -0.6, 0.8);
-    let second = transpose(turn) * noise_slope(turn * p * (RIPPLE_SCALE * 2.0) - along * (t * 1.1)) * (RIPPLE_SCALE * 2.0);
-    return (first + second * 0.5) * fade;
+// The wave texture at `uv`: slope along u and v (the steepest ±1) and height. `texels` is
+// how many texels a pixel spans, which picks the mip level, so waves smaller than a pixel
+// average out instead of sparkling.
+fn swell(uv: vec2<f32>, texels: f32) -> vec3<f32> {
+    return textureSampleLevel(wave_texture, wave_sampler, uv, log2(max(texels, 1.0))).xyz;
 }
 
-// The slope of the waves at `xz` (d height / d xz), from the first `octaves` octaves.
-// `footprint` is the blocks a pixel spans there: octaves shorter than about three pixels
-// fade out, and the loop stops at the first that has. Pixelated water (a shader pack's
-// choice, after Complementary's Reimagined style) takes one slope per texel of the block
-// textures, so the surface glitters in little squares, until texels are smaller than pixels.
-fn wave_slope(xz: vec2<f32>, footprint: f32, octaves: u32) -> vec2<f32> {
+// The slope of the wind's waves on still water at `xz` (d height / d xz), at full height,
+// from the first `count` layers. `footprint` is the blocks a pixel spans there. Pixelated
+// water (a shader pack's choice, after Complementary's Reimagined style) takes one slope per
+// texel of the block textures, so the surface glitters in little squares, until texels are
+// smaller than pixels.
+fn wave_slope(xz: vec2<f32>, footprint: f32, count: u32) -> vec2<f32> {
     var at = xz;
     if water.strengths.z > 0.5 && footprint < 1.0 / TEXELS {
         at = (floor(xz * TEXELS) + 0.5) / TEXELS;
     }
-    var p = at - water.origin.xz;
+    let p = at - water.origin.xz;
     var slope = vec2(0.0);
-    for (var i = 0u; i < octaves; i++) {
-        let wave = water.waves[i];
-        let fade = saturate(2.0 - wave.z * footprint * 0.64);
-        if fade <= 0.0 {
-            break;
-        }
-        let weight = water.weights[i / 4u][i % 4u];
-        let x = dot(wave.xy, p) * wave.z + wave.w;
-        let height = exp(sin(x) - 1.0);
-        let dx = height * cos(x);
-        p -= wave.xy * (dx * weight * DRAG);
-        slope += wave.xy * (dx * wave.z * weight * fade);
+    var weights = 0.0;
+    for (var i = 0u; i < count; i++) {
+        let layer = water.layers[i];
+        let turned = vec2(layer.x * p.x - layer.y * p.y, layer.y * p.x + layer.x * p.y);
+        let g = swell(turned * layer.z + water.phases[i].xy, footprint * layer.z * WAVE_TEXELS).xy;
+        // Back from the layer's turned axes to x and z.
+        slope += vec2(layer.x * g.x + layer.y * g.y, layer.x * g.y - layer.y * g.x) * layer.w;
+        weights += layer.w;
     }
-    return slope * WAVE_HEIGHT + ripple_slope(at, footprint) * RIPPLE_HEIGHT;
+    return slope * (WAVE_SLOPE / max(weights, 1e-3));
 }
 
-// The normal of the waves on a top face at `xz`, flowing at `flow` blocks per second.
-// Flowing water carries its waves along in two layers half a cycle apart, each fading out
-// as it starts again, so the pattern moves with the water without ever stretching; it is
-// choppier the faster it runs.
-fn wave_normal(xz: vec2<f32>, footprint: f32, strength: f32, flow: vec2<f32>) -> vec3<f32> {
-    let octaves = water.budget.x;
-    if octaves == 0u {
-        return water_normal(vec3(xz.x, 0.0, xz.y));
+// The slope of flowing water's streaks at `xz`, for a flow of `speed` blocks per second
+// along `along`, carried `travelled` blocks: the swells stretched along the flow, so the
+// surface reads as running water, as Minecraft's (and the Streams mod's) flowing texture
+// does.
+fn streak_slope(p: vec2<f32>, along: vec2<f32>, travelled: f32, footprint: f32) -> vec2<f32> {
+    let across = vec2(-along.y, along.x);
+    let q = vec2(dot(p, along) - travelled, dot(p, across));
+    var slope = vec2(0.0);
+    for (var i = 0u; i < 2u; i++) {
+        let size = FLOW_SIZE[i];
+        let uv = vec2(q.x / (size * FLOW_STRETCH), q.y / size) + f32(i) * vec2(0.37, 0.71);
+        // Two mip levels softer than the pixel needs: running water reads as long, smooth
+        // streaks, not grain.
+        let g = swell(uv, footprint / size * WAVE_TEXELS * 4.0).xy;
+        let local = vec2(g.x / FLOW_STRETCH, g.y) * (1.0 - 0.45 * f32(i));
+        slope += along * local.x + across * local.y;
+    }
+    return slope / 1.55;
+}
+
+// The normal of the waves on a top face at `xz`: the wind's waves, as high as `height`
+// (0..1), and where the water flows at `flow` blocks per second, streaks running with it.
+// The streaks are carried along in two layers half a cycle apart, each fading out as it
+// starts again, so the pattern moves with the water without ever stretching.
+fn wave_normal(xz: vec2<f32>, footprint: f32, height: f32, flow: vec2<f32>) -> vec3<f32> {
+    var slope = vec2(0.0);
+    if height > 0.002 {
+        slope = wave_slope(xz, footprint, water.budget.x) * height;
     }
     let speed = length(flow);
-    var slope: vec2<f32>;
-    if speed < 0.05 {
-        slope = wave_slope(xz, footprint, octaves);
-    } else {
+    if speed > 0.05 {
+        let along = flow / speed;
+        let p = xz - water.flow_origin.xz;
         let cycle = fract(globals.time / FLOW_CYCLE);
         let later = fract(cycle + 0.5);
         let weight = 1.0 - abs(2.0 * cycle - 1.0);
-        let fewer = min(octaves, FLOWING_OCTAVES);
-        let a = wave_slope(xz - flow * (cycle * FLOW_CYCLE), footprint, fewer);
-        let b = wave_slope(xz - flow * (later * FLOW_CYCLE), footprint, fewer);
+        let a = streak_slope(p, along, speed * cycle * FLOW_CYCLE, footprint);
+        let b = streak_slope(p + vec2(13.1, 7.7), along, speed * later * FLOW_CYCLE, footprint);
         // Two independent layers mixed lose contrast in the middle; this keeps it.
-        slope = (a * weight + b * (1.0 - weight)) / sqrt(weight * weight + (1.0 - weight) * (1.0 - weight));
-        slope *= 1.0 + speed * FLOW_CHOP;
+        let streaks = (a * weight + b * (1.0 - weight)) / sqrt(weight * weight + (1.0 - weight) * (1.0 - weight));
+        slope += streaks * mix(FLOW_SLOPE.x, FLOW_SLOPE.y, saturate(speed / 2.8)) * water.strengths.w;
     }
-    let s = slope * (water.origin.w * strength);
-    return normalize(vec3(-s.x, 1.0, -s.y));
+    return normalize(vec3(-slope.x, 1.0, -slope.y));
 }
 
 // Marches `direction` from `origin` through the depth buffer in screen space, where a
@@ -313,8 +347,19 @@ fn foam_noise(p: vec2<f32>) -> f32 {
 // reflection, a sun glint and foam. `normal` is the face's, `tint` the biome's water
 // colour, `sky` the sky light at the surface (0..1), `frag` the fragment's position and
 // `footprint` how many blocks its pixel spans, `flow` the water's flow (blocks per second
-// along x and z) and `falling` whether it falls.
-fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: f32, frag: vec4<f32>, footprint: f32, flow: vec2<f32>, falling: bool) -> vec3<f32> {
+// along x and z), `falling` whether it falls, and `open_water` how much open water is
+// around (0 in a puddle, 1 on a lake), which wind waves need.
+fn shade_water(
+    world: vec3<f32>,
+    normal: vec3<f32>,
+    tint: vec3<f32>,
+    sky_light: f32,
+    frag: vec4<f32>,
+    footprint: f32,
+    flow: vec2<f32>,
+    falling: bool,
+    open_water: f32,
+) -> vec3<f32> {
     // Saturated: seen edge-on, a face interpolates at pixel centres outside it.
     let sky = saturate(sky_light);
     let eye = view.world_position;
@@ -326,26 +371,34 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     let distance_to_eye = distance(eye, world);
     let air = air_to(world);
 
-    // Waves on top, calmer where little sky reaches (in caves), frothing where it runs fast.
-    // Where it falls, or pours over an edge, streaks run down the sides, partly white.
+    // Waves on top: the wind's, as high as the open water around lets them grow and calmer
+    // where little sky reaches (in caves), and streaks where it flows, frothing where it
+    // runs fast. Where it falls, or pours over an edge, streaks run down the sides, partly
+    // white.
     var waves = normal;
     var aerated = 0.0;
+    let height = water.origin.w * mix(SHELTERED, 1.0, saturate(open_water)) * (0.3 + 0.7 * open);
     if normal.y > 0.5 {
         // Tilted with the surface where flowing water slopes.
-        waves = normalize(wave_normal(world.xz, footprint, 0.3 + 0.7 * open, flow) + normal - vec3(0.0, 1.0, 0.0));
+        waves = normalize(wave_normal(world.xz, footprint, height, flow) + normal - vec3(0.0, 1.0, 0.0));
         let froth = smoothstep(RAPIDS.x, RAPIDS.y, length(flow));
         if froth > 0.0 {
             let t = globals.time;
             let along = world.xz - flow * t;
-            aerated = froth * smoothstep(0.45, 0.8, foam_noise(along * 2.0) * 0.6 + foam_noise(along * 6.0 + 9.0) * 0.4);
+            aerated = froth * 0.35 * smoothstep(0.5, 0.8, foam_noise(along * 7.0) * 0.55 + foam_noise(along * 17.0 + 9.0) * 0.45);
         }
-    } else if abs(normal.y) < 0.5 && (falling || dot(flow, normal.xz) > 0.5) {
+    } else if abs(normal.y) < 0.5 && falling {
         let across = vec2(-normal.z, normal.x);
         let streak = vec2(dot(world.xz, across) * STREAKS.x, (world.y + globals.time * FALL_SPEED) * STREAKS.y);
         let slope = noise_slope(streak) * STREAKS * STREAK_HEIGHT;
         waves = normalize(normal + vec3(across.x, 0.0, across.y) * slope.x + vec3(0.0, slope.y, 0.0));
         let fine = vec2(streak.x * 2.3, streak.y * 0.6 + 17.0);
-        aerated = 0.25 + 0.5 * smoothstep(0.3, 0.8, foam_noise(fine));
+        aerated = 0.12 + 0.33 * smoothstep(0.3, 0.8, foam_noise(fine));
+    } else if abs(normal.y) < 0.5 {
+        // The side of water that does not pour (the thin edge of a flow, water against
+        // glass) is the edge of its surface, and looks like it rather than like a wall of
+        // water catching the sky.
+        waves = vec3(0.0, 1.0, 0.0);
     }
     let facing = dot(waves, to_eye);
 
@@ -357,37 +410,53 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
         let deep = inscattered(absorbed, scattered, 1e4, light);
         var seen_above = deep;
         if dot(out, out) > 0.0 {
+            // The sky through the window, or what stands above the water where the bent
+            // view finds it on screen behind the surface.
+            var above = sky_gradient(out, water.zenith.rgb, water.horizon.rgb) * open;
             let bent = project(world + out * 4.0);
-            seen_above = mix(color_at(bent.xy), deep, 1.0 - saturate(dot(out, -normal) * 3.0));
+            if all(bent.xy == saturate(bent.xy)) && depth_at(bent.xy) < frag.z {
+                above = color_at(bent.xy);
+            }
+            seen_above = mix(above, deep, 1.0 - saturate(dot(out, -normal) * 3.0));
         }
         // The water between the eye and the surface, as the air under water paints it.
         return seen_above * air.through + air.light;
     }
 
-    // What lies behind the surface along the view, and the same along the view bent by the
-    // waves, unless what is there is nearer than the surface.
+    // What lies behind the surface along the view, and what is seen through the waves: the
+    // view through a point of the surface moved by their slope, more so over the first
+    // block of depth, so at the very edge of the shore nothing wobbles. A point the move
+    // lands on in front of the water is not behind it: there the straight view is kept.
     let surface_depth = frag.z;
-    let straight = unproject(vec3(uv, depth_at(uv)));
-    let thickness = max(distance(eye, straight) - distance_to_eye, 0.0);
+    let straight_depth = depth_behind(uv, surface_depth);
+    let straight = unproject(vec3(uv, straight_depth));
     var behind_uv = uv;
-    let bend = (waves - normal) * (BEND * water.optics.z);
+    var behind_depth = straight_depth;
+    let bend = (waves - normal).xz * (REFRACTION * water.optics.z * saturate(world.y - straight.y));
     if dot(bend, bend) > 1e-8 {
-        let bent = project(world + normalize(-to_eye + bend) * min(thickness, BEND_REACH));
-        if all(bent.xy == saturate(bent.xy)) && depth_at(bent.xy) < surface_depth {
+        let bent = project(world + vec3(bend.x, 0.0, bend.y));
+        let bent_depth = depth_behind(bent.xy, surface_depth);
+        if all(bent.xy == saturate(bent.xy)) && bent_depth < surface_depth {
             behind_uv = bent.xy;
+            behind_depth = bent_depth;
         }
     }
-    let behind = unproject(vec3(behind_uv, depth_at(behind_uv)));
+    let behind = unproject(vec3(behind_uv, behind_depth));
     let path = max(distance(eye, behind) - distance_to_eye, 0.0);
     // Sun and sky light at the surface, and what is left of it at the bed.
     let light = shade_normal(vec3(1.0), world, vec3(0.0, 1.0, 0.0), 1.0, sky, 0.0, 1.0, false, frag.xy);
+    // Light reached the bed through the water above it too (the mesher lights the bed as
+    // the surface is, leaving the dimming to this).
     let down = max(world.y - behind.y, 0.0);
     let through = transmittance(absorbed, scattered, path + down);
     // The scene behind already has the air between it and the eye; the air in front of the
     // surface is taken back out, the water's effect applied, and the air put back.
-    let seen = through * max(color_at(behind_uv) - air.light, vec3(0.0))
-        + air.through * inscattered(absorbed, scattered, path, light)
-        + air.light;
+    var seen = through * max(color_at(behind_uv) - air.light, vec3(0.0))
+        + air.through * inscattered(absorbed, scattered, path, light);
+    // A glaze of the water's own colour, lit, however shallow it is.
+    let edge = smoothstep(0.0, EDGE, path);
+    let glaze = mix(vec3(dot(tint, vec3(0.2126, 0.7152, 0.0722))), tint, GLAZE_SATURATION);
+    seen = mix(seen, glaze * light * air.through, GLAZE * edge) + air.light;
 
     // The reflection: the scene, where the march finds it; otherwise the sky, where sky
     // light reaches, and the dim water around elsewhere.
@@ -396,8 +465,7 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     if rise < 0.02 {
         r = normalize(r + normal * (0.02 - rise));
     }
-    // Thin water at the very edge of the shore hardly reflects, so the edge stays soft.
-    let reflectance = fresnel(facing) * water.strengths.x * smoothstep(0.0, 0.3, path);
+    let reflectance = fresnel(facing) * water.strengths.x * edge;
     let sky_color = sky_gradient(r, water.zenith.rgb, water.horizon.rgb);
     var reflected = mix(seen, sky_color * air.through + air.light, open);
     if reflectance > MIN_REFLECTION {
@@ -419,18 +487,21 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     }
     var color = mix(seen, reflected, reflectance) + sun_color() * glint * air.through;
 
-    // Foam along the shore, where the bed comes up to the surface: broken patches that
-    // drift and change slowly, thickest right at the edge. Falling and fast water froths.
+    // Foam: where waves break on the shore, as the bed comes up to the surface (none on
+    // still water), in broken patches that drift and change slowly; where water falls or
+    // runs fast. It takes a little of the water's colour.
     var foam = aerated;
     let shore = 1.0 - saturate((world.y - straight.y) / FOAM_DEPTH);
-    if normal.y > 0.5 && shore > 0.0 {
+    let surf = saturate(height * 2.5);
+    if normal.y > 0.5 && shore > 0.0 && surf > 0.0 {
         let t = globals.time * 0.25;
         let bubbles = foam_noise(world.xz * 2.5 + vec2(t, -t * 0.7)) * 0.65 + foam_noise(world.xz * 9.0 - vec2(t * 1.6, t)) * 0.35;
-        foam = max(foam, smoothstep(0.45, 0.75, bubbles) * shore * shore * 0.5);
+        foam = max(foam, smoothstep(0.5, 0.8, bubbles) * shore * shore * 0.4 * surf);
     }
     foam = saturate(foam * water.strengths.y);
     if foam > 0.0 {
-        color = mix(color, (light * 0.8 + 0.02) * air.through + air.light, foam);
+        let white = mix(vec3(0.85), tint, 0.25) * light;
+        color = mix(color, white * air.through + air.light, foam);
     }
     return color;
 }

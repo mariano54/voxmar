@@ -22,7 +22,7 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --inventory | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
 time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
@@ -40,9 +40,20 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
-(hold), right mouse place, 1-9 or wheel select hotbar slot, E inventory (click a slot, then
-another to move it), T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
+(hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
+inventory, T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
+
+The inventory works as Minecraft's: click picks up, puts down, merges or swaps a stack;
+right click (or Control-click) takes half or puts down one; dragging a held stack spreads it
+evenly over the slots crossed (right button: one each); a double click gathers the item onto
+the pointer; Shift-click moves a stack between the hotbar and the pack (Shift double click:
+every stack of it); 1-9 over a slot swaps it with that hotbar slot. Hovering an item names it,
+coloured by rarity, with what it is good for. Esc or E closes it and puts back what you hold.
+
+The interface (menus, HUD, inventory) has one look: a pixel font drawn in
+`assets/ui/font.txt` and pixel-art pieces that are `ui/*` textures of the default pack
+(`recipes/ui.ron`), so a texture pack can reskin it. Menus blur the world behind them.
 
 ### Console and commands
 
@@ -82,7 +93,9 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
+Esc opens the settings menu, in tabs (Video, Graphics, Audio, Controls, Interface) with a
+line explaining the setting under the pointer; a choice steps forward on click and back on
+right click, and the wheel moves a slider. The settings: render distance, far detail (Balanced, Fast or Full: how soon
 distant chunks merge two or four columns into one, which draws far terrain much faster), field
 of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
@@ -156,7 +169,8 @@ texel, optionally beside the same name from another pack (`--pack DIR` picks the
 `--columns`, `--zoom` and `--out` the layout).
 
 Code and assets adapted from other open source projects are listed, with their licences, in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Every mod, shader pack and project whose
+ideas we used is credited in [INSPIRATIONS.md](INSPIRATIONS.md).
 
 ## Layout
 
@@ -285,8 +299,11 @@ no two worlds share a rarity table. Everything else is a continuous field:
 **Biomes** are data in content packages (`assets/content/base/biomes.ron`, with the climate
 bands in `climate.ron` and rock provinces in `rocks.ron`), loaded like blocks, so a mod adds
 one the same way. The temperature, moisture, continentalness and landform bands form a table
-in which every cell belongs to some biome (checked at load); rarer biomes take the extremes of
-the weirdness field, so they appear in whole regions of some worlds and not in others;
+in which every cell belongs to some biome (checked at load); the picker sees temperature and
+landform averaged over a few hundred blocks, so a range, hill country or plain is one place
+rather than a scatter of hills and summits; commons share a cell along the slow weirdness
+field in the same slices wherever they meet, and rarer biomes take its extremes, so they
+appear in whole regions of some worlds and not in others;
 variants take shares of their parent; ecotones sit on borders; fantastical biomes claim cells
 where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
@@ -299,7 +316,17 @@ each says what climate, ground and habitat it likes, biomes select from the pool
 name, and the climate at each spot weighs the candidates, so a new plant with the right
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
-runs high. Forests have structure: one field grades them from dense old-growth cores with the
+runs high: wonder plants scattered, wonder trees as a find (a lone tree or a tiny grove every
+few kilometres) except in the fantasy biomes that name them. Each biome keeps to a palette
+(`crates/worldgen/src/hue.rs`): every candidate's colour is worked out at load (its block's
+colour, or the grass or foliage colour where tinted) and weighed by how near it lies to the
+biome's foliage, grass or ground colour (or a `palette` colour the biome sets, as maple woods
+and cherry groves do), so many kinds of similar colour grow together while a clashing one is
+a rare accent; flowers grow a few neighbouring hues per place, mixed ground blocks keep to
+their main block's colour, and ground patches unlike the ground grow fewer and smaller.
+Forests grow in stands: a slow noise picks each stand's kind, with a few of the others among
+it, and stands of different biomes meet along the border rather than mixing across it.
+Forests have structure: one field grades them from dense old-growth cores with the
 giant trees through ordinary woodland to scrubby edges and gaps, and a global field opens
 clearings with a soft edge. Ground decoration (`decorations.ron`, another shared pool biomes
 select by tag) is placed in a fixed order of stages: patches of dirt, gravel and moss; boulders
@@ -341,8 +368,9 @@ tinted by terrain shape, `FIELD=erosion` and so on, `X`, `Z`
 and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
 rivers and creeks in their own blues, trails over them (brown, with fords cyan, bridges red,
 and the places they join marked; `TRAILS=0` leaves them out), and prints each biome's share of
-it, how large biome regions are (variants counted with their parent) and which picker axis
-draws the borders. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
+it, how large biome regions are (variants counted with their parent, the shore the sea's
+biome reaches left out) and which picker axis draws the borders, with the pairs of biomes
+along each. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
 generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
@@ -395,10 +423,12 @@ dries, and thick cloud rains, which dries the air again. Typical land rains 8-20
 rainforests 30-50%, deserts almost never. Rain wets the ground, which dries over minutes, and
 snow lies where it is cold enough and melts above freezing; as it deepens, grass turns snowy
 block by block and turns back as it melts. The air is colder at night and warmer in the
-afternoon, more so in dry climates and under clear skies, and it snows below about 0 °C. A
-downpour under strong updrafts is a thunderstorm: each second it may raise a lightning strike
-somewhere in the cell, which nearby clients see as a flash and a bolt and hear as thunder once
-the sound has travelled. A cell coming into range first catches up on its last ten minutes, so
+afternoon, more so in dry climates and under clear skies, and it snows below about 0 °C. Only a
+heavy downpour under strong updrafts is a thunderstorm: each second it may, rarely, raise a
+lightning strike somewhere in the cell (a few flashes a minute in the heart of the fiercest
+storm), which nearby clients see as a flash and a bolt and hear as thunder once the sound has
+travelled: a crack, boom and roll close by, a muffled rip and roll farther off, only a low
+roll from far away. A cell coming into range first catches up on its last ten minutes, so
 the weather at a place does not depend on when anyone arrived, and cells left behind return to
 their baseline. The process uses only exact arithmetic on seeded hash streams, so it is
 deterministic on every machine. It runs on the simulation clock, so it carries on when the
@@ -513,6 +543,8 @@ range with a fade, and rain ducks layers rather than silencing them. Captures ru
 and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
 writes about twenty seconds of each of nine typical places to `target/ambience_preview.wav`, and
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
+`weather_sound_preview -- --ignored` writes rain at four strengths, thunder near to far, the
+brook, gurgles, swimming and a splash to `target/sound_preview/`, as the game plays them.
 
 ## Rendering and performance
 

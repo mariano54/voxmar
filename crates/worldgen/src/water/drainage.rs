@@ -227,6 +227,38 @@ fn steepest(at: &mut impl FnMut(IVec2) -> (f32, i32), cell: IVec2, skip: Option<
     best.map(|(_, k)| k)
 }
 
+/// `steepest` for every cell of a square window of heights (rows of `width`) but its
+/// outermost ring, rows of `width - 2`: the same rule, read straight from the window.
+fn steepest_inside(heights: &[f32], width: i32) -> Vec<Option<u8>> {
+    let inner = width - 2;
+    let offsets = DIRS.map(|d| (d.y * width + d.x) as isize);
+    // Of two cells of equal height, the lower in the total order is the one first by x,
+    // then by z: the neighbour, where it lies towards −x, or straight towards −z.
+    let first_on_ties = DIRS.map(|d| (d.x, d.y) < (0, 0));
+    (0..inner * inner)
+        .map(|i| {
+            let at = ((i / inner + 1) * width + i % inner + 1) as isize;
+            let here = heights[at as usize];
+            let mut best: Option<(f32, u8)> = None;
+            for k in 0..8 {
+                let height = heights[(at + offsets[k]) as usize];
+                let lower = match height.total_cmp(&here) {
+                    Ordering::Less => true,
+                    Ordering::Equal => first_on_ties[k],
+                    Ordering::Greater => false,
+                };
+                if lower {
+                    let slope = (here - height) / LENGTH[k];
+                    if best.is_none_or(|(steepest, _)| slope > steepest) {
+                        best = Some((slope, k as u8));
+                    }
+                }
+            }
+            best.map(|(_, k)| k)
+        })
+        .collect()
+}
+
 /// Where water at a cell goes before pits are resolved: a direction, `SEA`, `ABSORBED`
 /// or `SINK`.
 fn route(at: &mut impl FnMut(IVec2) -> (f32, i32), cell: IVec2) -> u8 {
@@ -845,7 +877,7 @@ impl Drainage {
         // Each cell's steepest descent is found once, one cell short of the edge, then
         // shared by the crossing rule of its neighbours.
         let inner = width - 2;
-        let best: Vec<Option<u8>> = (0..inner * inner).map(|i| steepest(&mut at, low + 1 + IVec2::new(i % inner, i / inner), None)).collect();
+        let best = steepest_inside(&heights, width);
         let span = width - 4;
         let raw: Vec<u8> = (0..span * span)
             .map(|i| {
@@ -1025,6 +1057,31 @@ impl Drainage {
             lakes,
             flow: Arc::new(Flow { entries, exits }),
             totals: OnceLock::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The steepest descent read straight from a window is the rule's, ties included.
+    #[test]
+    fn steepest_inside_matches_steepest() {
+        let mut rng = crate::rng::Rng::new(5, 6, 7, 8);
+        for width in [3, 4, 9, 40] {
+            // Few distinct heights, so many neighbours tie.
+            let heights: Vec<f32> = (0..width * width).map(|_| 120.0 + rng.range(0, 5) as f32 * 0.5).collect();
+            let low = IVec2::new(-17, 30);
+            let mut at = |c: IVec2| {
+                let w = c - low;
+                (heights[(w.y * width + w.x) as usize], DRY)
+            };
+            let inside = steepest_inside(&heights, width);
+            for (i, &best) in inside.iter().enumerate() {
+                let cell = low + 1 + IVec2::new(i as i32 % (width - 2), i as i32 / (width - 2));
+                assert_eq!(best, steepest(&mut at, cell, None), "at {cell} in a window {width} wide");
+            }
         }
     }
 }

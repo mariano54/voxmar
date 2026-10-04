@@ -5,7 +5,8 @@ use bevy::prelude::*;
 use voxmar_engine::coords::ColumnPos;
 
 use super::Screen;
-use super::widgets::{ACCENT, MUTED, TEXT, TRACK, UiFont, strong, text};
+use crate::ui::skin::{PX, Piece};
+use crate::ui::widgets::{BODY, GOLD, LARGE, MUTED, UiFont, shadowed};
 use crate::net::Net;
 use crate::player::LocalPlayer;
 use crate::world::ClientWorld;
@@ -28,8 +29,8 @@ struct Detail;
 #[derive(Component)]
 struct Pulse;
 
-const BAR: f32 = 220.0;
-const PULSE: f32 = 64.0;
+const BAR: f32 = 110.0 * PX;
+const PULSE: f32 = 30.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -40,24 +41,23 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         flex_direction: FlexDirection::Column,
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
-        row_gap: Val::Px(10.0),
+        row_gap: Val::Px(5.0 * PX),
         ..default()
     };
     // Above the HUD and the settings panel, which may open meanwhile.
-    let cover = (Cover, DespawnOnExit(Screen::InGame), root, BackgroundColor(Color::srgb(0.06, 0.07, 0.08)), GlobalZIndex(2));
+    let cover = (Cover, DespawnOnExit(Screen::InGame), root, BackgroundColor(Color::srgb(0.05, 0.055, 0.085)), GlobalZIndex(2));
     commands.spawn(cover).with_children(|cover| {
-        cover.spawn((Title, strong(font, "Joining", 24.0, TEXT, FontWeight::SEMIBOLD)));
-        cover.spawn((Detail, text(font, "", 15.0, MUTED)));
+        cover.spawn((Title, shadowed(font, "Joining", LARGE, GOLD)));
+        cover.spawn((Detail, shadowed(font, "", BODY, MUTED)));
         let track = Node {
             width: Val::Px(BAR),
-            height: Val::Px(4.0),
-            margin: UiRect::top(Val::Px(18.0)),
-            border_radius: BorderRadius::all(Val::Px(2.0)),
-            overflow: Overflow::clip(),
+            height: Val::Px(6.0 * PX),
+            margin: UiRect::top(Val::Px(8.0 * PX)),
+            padding: UiRect::all(Val::Px(PX)),
             ..default()
         };
-        let pulse = Node { width: Val::Px(PULSE), height: Val::Percent(100.0), border_radius: BorderRadius::all(Val::Px(2.0)), ..default() };
-        cover.spawn((track, BackgroundColor(TRACK))).with_child((Pulse, pulse, BackgroundColor(ACCENT)));
+        let pulse = Node { width: Val::Px(PULSE), height: Val::Percent(100.0), ..default() };
+        cover.spawn((track, Piece::Well.image())).with_child((Pulse, pulse, Piece::Bar.image()));
     });
 }
 
@@ -97,6 +97,6 @@ fn update(
     if let Ok(mut node) = pulse.single_mut() {
         // Back and forth along the track.
         let phase = (time.elapsed_secs() * 1.4).sin() * 0.5 + 0.5;
-        node.left = Val::Px(phase * (BAR - PULSE));
+        node.left = Val::Px((phase * (BAR - 2.0 * PX - PULSE) / PX).round() * PX);
     }
 }

@@ -22,7 +22,10 @@ pub struct ActionId(pub u16);
 pub enum ActionTarget {
     None,
     Block { block: IVec3, face: Face },
-    Slots { from: u8, to: u8 },
+    /// Inventory slots, [`crate::inventory::CURSOR`] for the stack on the pointer, and
+    /// how many items to move.
+    Slots { from: u8, to: u8, count: u8 },
+    Slot(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -62,8 +65,13 @@ pub enum Effect {
     ClearTarget,
     /// Take one held item and put it into the placement cell of the target.
     PlaceHeld,
-    /// Move a stack between the actor's inventory slots.
-    MoveStack,
+    /// Move items between the actor's inventory slots (see
+    /// [`crate::inventory::Inventory::move_items`]).
+    MoveItems,
+    /// Move a stack between the hotbar and the rest of the inventory.
+    QuickMove,
+    /// Put the stack on the pointer back into the inventory.
+    StowCursor,
     /// Restore the actor's health and return it to spawn.
     Respawn,
 }

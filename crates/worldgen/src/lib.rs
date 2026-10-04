@@ -22,6 +22,7 @@ mod dials;
 mod ecology;
 mod features;
 mod geology;
+mod hue;
 mod lattice;
 mod noise;
 mod parallel;
@@ -247,7 +248,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 13;
+    pub const VERSION: u32 = 14;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -270,7 +271,7 @@ impl Overworld {
             .shapes
             .iter()
             .map(|shape| {
-                let surface = rules.compile(shape.surface.as_ref()?, &registry, &rocks);
+                let surface = rules.compile(shape.surface.as_ref()?, &registry, &rocks, None);
                 Some(ShapeSurface { surface, strata: shape.strata.iter().map(|name| registry.expect(name)).collect() })
             })
             .collect();
@@ -574,9 +575,7 @@ impl Sampler<'_> {
     /// The climate's colours at a site (grass, foliage, water), and the palette noise there.
     fn climate_colors(&self, site: &Site, x: i32, z: i32) -> ([[f32; 3]; 3], f32) {
         let [t, h] = site.tint().map(|c| c as f32 / 255.0);
-        // Blue-green when cold, olive when hot and dry, deep green when hot and wet.
-        let grass = mix3([128.0, 167.0, 140.0], mix3([191.0, 183.0, 85.0], [71.0, 176.0, 26.0], h), t);
-        let foliage = mix3([97.0, 140.0, 110.0], mix3([174.0, 164.0, 42.0], [48.0, 150.0, 18.0], h), t);
+        let [grass, foliage] = hue::climate_tints(t, h);
         let water = mix3([61.0, 87.0, 214.0], [67.0, 213.0, 238.0], t * (0.4 + 0.6 * h));
         let n = self.world.tint.get_noise_2d(x as f32, z as f32);
         ([palette(grass, n), palette(foliage, n), water], n)
@@ -948,13 +947,49 @@ mod tests {
     /// Logs, stumps, rocks and trees rest on the ground: every solid block above the ground
     /// joins it through other solid blocks (leaves aside, which hang from branches), and
     /// every small plant stands on something solid.
+    /// Wherever a forest biome has tree cover, some tree suits the climate: no forest is
+    /// left bare because the climate there lies outside every species' comfort.
+    #[test]
+    fn forests_have_trees() {
+        for seed in [42, 7] {
+            let world = Overworld::new(seed, registry());
+            let sampler = world.sampler(IVec2::splat(-2048), IVec2::splat(2048));
+            let (mut forested, mut bare) = (0, Vec::new());
+            let mut chances = Vec::new();
+            for i in 0..64 * 64 {
+                let (x, z) = (i % 64 * 64 - 2048, i / 64 * 64 - 2048);
+                let site = sampler.site(x, z);
+                if !world.biomes.get(site.home).has_tag("forest") || site.forest < 0.3 || site.height <= site.water {
+                    continue;
+                }
+                forested += 1;
+                world.ecology.tree_chances(&site, None, x, z, &mut chances);
+                if chances.is_empty() {
+                    bare.push((x, z, site.temperature, site.soil_moisture()));
+                }
+            }
+            assert!(forested > 50, "seed {seed}: only {forested} forest samples");
+            assert!(bare.len() * 50 <= forested, "seed {seed}: {} of {forested} forest samples grow no tree: {:?}", bare.len(), &bare[..bare.len().min(5)]);
+        }
+    }
+
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
         let places = [(42, "forest"), (7, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (9, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
         for (seed, biome) in places {
             let world = Overworld::new(seed, registry.clone());
+            let id = world.biomes.id(&format!("base:{biome}")).unwrap();
+            // Dry land well inside the biome, near the first place found.
             let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {biome}"));
+            let at = (0..60 * 60)
+                .map(|i| spiral(i / 60, i % 60))
+                .map(|(dx, dz)| at + IVec2::new(dx * 8, dz * 8))
+                .find(|p| {
+                    let site = world.site(p.x, p.y);
+                    site.home == id && site.height > site.water
+                })
+                .unwrap_or_else(|| panic!("seed {seed}: no dry {biome}"));
             let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
             let columns = generate_area(&world, first, 3);
             let origin = first.origin();
@@ -1006,7 +1041,7 @@ mod tests {
                     }
                 }
             }
-            assert!(pieces >= 10 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome}");
+            assert!(pieces >= 10 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome} at {at}: {:?}", world.site(at.x, at.y));
         }
     }
 
@@ -1092,11 +1127,15 @@ mod tests {
         if let Ok(names) = std::env::var("BIOMES") {
             for name in names.split(',') {
                 let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
-                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 6000).and_then(|at| {
-                    (0..400).map(|i| spiral(i / 16, i % 16)).map(|(dx, dz)| at + IVec2::new(dx * 16, dz * 16)).find(|p| {
-                        let site = world.site(p.x, p.y);
-                        site.home == id && site.edge > 24.0 && dry(&site) && site.slope <= 2
-                    })
+                // The first place found, then the point deepest inside the biome around it.
+                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 12000).and_then(|at| {
+                    let sampler = world.sampler(at - 256, at + 256);
+                    (0..64 * 64)
+                        .map(|i| at + IVec2::new(i % 64 * 8 - 256, i / 64 * 8 - 256))
+                        .map(|p| (p, sampler.site(p.x, p.y)))
+                        .filter(|(_, site)| site.home == id && dry(site) && site.slope <= 2)
+                        .max_by(|a, b| a.1.edge.total_cmp(&b.1.edge))
+                        .map(|(p, _)| p)
                 });
                 let Some(at) = found else {
                     println!("{name}: not found");
@@ -1304,11 +1343,15 @@ mod tests {
                     let local = |p: IVec3| IVec3::new(p.x & 31, p.y, p.z & 31);
                     let middle = column.block(local(centre));
                     assert!(!registry.info(middle).solid, "seed {seed}: a geode at {centre} is not hollow: {}", registry.def(middle).name);
-                    // Straight up and down from the centre, through the lining, unless a cave cut it.
+                    // Straight up and down from the centre, the first solid block is the
+                    // crystal lining, unless a cave cut through it.
                     for dir in [IVec3::Y, IVec3::NEG_Y] {
-                        let p = centre + dir * (geode.radius + 0.6).floor() as i32;
-                        let block = column.block(local(p));
-                        assert!(crystal.contains(&block) || !registry.info(block).solid, "seed {seed}: {} at {p} lines the geode at {centre}", registry.def(block).name);
+                        let reach = (geode.radius + caves::GEODE_SHELL).ceil() as i32;
+                        let first = (1..=reach).map(|i| centre + dir * i).find(|&p| registry.info(column.block(local(p))).solid);
+                        if let Some(p) = first {
+                            let block = column.block(local(p));
+                            assert!(crystal.contains(&block), "seed {seed}: {} at {p} lines the geode at {centre}", registry.def(block).name);
+                        }
                     }
                     checked += 1;
                 }
@@ -1761,7 +1804,9 @@ mod tests {
                 let surface = sampler.surface(ax(x), az(z), h, slope);
                 let site = sampler.site(ax(x), az(z));
                 area[site.biome.0 as usize] += 1;
-                if !site.body.eq(&Body::Sea) || site.height >= site.water {
+                // Land, leaving out the shore the sea's biome reaches onto.
+                let shore = world.biomes.get(site.home).has_tag("ocean");
+                if (!site.body.eq(&Body::Sea) || site.height >= site.water) && !shore {
                     homes[(z * SIZE + x) as usize] = world.biomes.parent_of(site.home).0;
                     bands[(z * SIZE + x) as usize] = world.biomes.bands(&world.point(&sampler.grid.at(ax(x), az(z))));
                 }
@@ -1905,6 +1950,7 @@ mod tests {
         // Which axis changes across each border between biomes (a border can count twice).
         let mut causes = [0usize; 5];
         let mut pairs: rustc_hash::FxHashMap<(u16, u16), usize> = Default::default();
+        let mut crossing: [rustc_hash::FxHashMap<(u16, u16), usize>; 4] = Default::default();
         for z in 0..SIZE - 1 {
             for x in 0..SIZE - 1 {
                 let i = (z * SIZE + x) as usize;
@@ -1919,6 +1965,7 @@ mod tests {
                     }
                     for a in differ {
                         causes[a] += 1;
+                        *crossing[a].entry((homes[i].min(homes[j]), homes[i].max(homes[j]))).or_default() += 1;
                     }
                 }
             }
@@ -1936,6 +1983,11 @@ mod tests {
         pairs.sort_by_key(|p| std::cmp::Reverse(p.1));
         let name = |b: u16| world.biomes.get(BiomeId(b)).name.trim_start_matches("base:").to_owned();
         println!("within-cell borders: {}", pairs.iter().take(12).map(|((a, b), n)| format!("{}|{} {}", name(*a), name(*b), n)).collect::<Vec<_>>().join(", "));
+        for (axis, crossing) in ["temperature", "moisture", "continentalness", "landform"].iter().zip(crossing) {
+            let mut crossing: Vec<((u16, u16), usize)> = crossing.into_iter().collect();
+            crossing.sort_by_key(|p| std::cmp::Reverse(p.1));
+            println!("{axis} borders: {}", crossing.iter().take(10).map(|((a, b), n)| format!("{}|{} {}", name(*a), name(*b), n)).collect::<Vec<_>>().join(", "));
+        }
     }
 
     /// How large the land biomes' regions are on a map of `homes` (a biome per pixel,
@@ -1984,6 +2036,17 @@ mod tests {
             100.0 * big as f32 / land.max(1) as f32,
             100.0 * mid as f32 / land.max(1) as f32,
             median.map_or(0.0, |r| r.0)
+        );
+        // Which biomes hold the land in regions under 600 m across.
+        let mut small: rustc_hash::FxHashMap<u16, usize> = Default::default();
+        for r in regions.iter().filter(|r| diameter(r.1) < 600.0) {
+            *small.entry(r.0).or_default() += r.1;
+        }
+        let mut small: Vec<(u16, usize)> = small.into_iter().collect();
+        small.sort_by_key(|s| std::cmp::Reverse(s.1));
+        println!(
+            "land in regions under 600 m: {}",
+            small.iter().take(12).map(|(b, n)| format!("{} {:.1}%", world.biomes.get(BiomeId(*b)).name.trim_start_matches("base:"), 100.0 * *n as f32 / land.max(1) as f32)).collect::<Vec<_>>().join(", ")
         );
         // The largest region of each base biome (not variants, ecotones or water).
         let mut largest: Vec<(f32, &str)> = (0..world.biomes.len())
@@ -2137,8 +2200,9 @@ mod tests {
                     let site = sampler.site(x, z);
                     let top = world.surface_layers(&site, x, z).top;
                     snow[(j * SIZE + i) as usize] = snowy.contains(&top);
-                    // Sand away from beaches and banks is desert.
-                    if (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 {
+                    // Sand away from beaches, banks and the sea's islands is desert.
+                    let shore = world.biomes.get(site.home).has_tag("ocean");
+                    if (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 && !shore {
                         deserts.push((i, j));
                     }
                 }
@@ -2164,21 +2228,15 @@ mod tests {
         let world = Overworld::new(5, registry());
         let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
         let sites: Vec<Site> = (0..150 * 150).map(|i| sampler.site(i % 150 * 80 - 6000, i / 150 * 80 - 6000)).collect();
-        // Evenly spread fields put a tenth of the land in each tenth of their range. Weirdness
-        // varies over many kilometres, so a few worlds' worth of it is pooled.
-        let others: Vec<Site> = [6, 7]
-            .into_iter()
-            .flat_map(|seed| {
-                let world = Overworld::new(seed, registry());
-                let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
-                (0..75 * 75).map(|i| sampler.site(i % 75 * 160 - 6000, i / 75 * 160 - 6000)).collect::<Vec<_>>()
-            })
+        // Evenly spread fields put a tenth of the land in each tenth of their range.
+        // Weirdness varies over many kilometres, so it is sampled over a wider area.
+        let weirdness: Vec<f32> = (0..100 * 100)
+            .map(|i| world.geology.climate().regional_at(&world.geology, IVec2::new(i % 100 * 600 - 30000, i / 100 * 600 - 30000)).weirdness)
             .collect();
         type Field = fn(&Site) -> f32;
-        let fields: [(&str, Field); 3] = [("weirdness", |s| s.weirdness), ("fertility", |s| s.fertility), ("variant", |s| s.variant)];
-        for (name, field) in fields {
-            let pooled = if name == "weirdness" { &others[..] } else { &[] };
-            let values: Vec<f32> = sites.iter().chain(pooled).map(field).collect();
+        let fields: [(&str, Field); 2] = [("fertility", |s| s.fertility), ("variant", |s| s.variant)];
+        let fields = fields.map(|(name, field)| (name, sites.iter().map(field).collect::<Vec<f32>>()));
+        for (name, values) in [("weirdness", weirdness)].into_iter().chain(fields) {
             assert!(values.iter().all(|v| (0.0..=1.0).contains(v)), "{name} out of range");
             for decile in 0..10 {
                 let share = values.iter().filter(|&&v| (v * 10.0) as i32 == decile).count() as f32 / values.len() as f32;

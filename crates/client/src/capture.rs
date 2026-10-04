@@ -54,6 +54,8 @@ pub struct CapturePlugin {
     pub mine: Option<f32>,
     /// Show the settings menu.
     pub menu: bool,
+    /// Show the inventory screen.
+    pub inventory: bool,
     /// Measure flicker for a small camera step or as time passes (see the module docs).
     pub flicker: Option<FlickerKind>,
     /// Seconds of game time to record frame by frame (see the module docs).
@@ -84,7 +86,7 @@ const CLIP_RATE: u32 = 30;
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(UiState { menu_open: self.menu, ..default() }).insert_resource(Capture {
+        app.insert_resource(UiState { menu_open: self.menu, inventory_open: self.inventory, ..default() }).insert_resource(Capture {
             path: self.path.clone(),
             pose: self.pose,
             flight: self.flight,

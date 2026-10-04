@@ -6,8 +6,9 @@ use bevy::prelude::*;
 use voxmar_server::ServerConfig;
 use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
 
-use super::widgets::{
-    ACCENT, ButtonStyle, ERROR, MUTED, Pressed, SCRIM, SOFT, TEXT, TextField, UiFont, button_row, heading, label, panel,
+use crate::ui::skin::PX;
+use crate::ui::widgets::{
+    BODY, ButtonStyle, ERROR, MUTED, Pressed, SCRIM, Selected, TextField, UiFont, button_row, label, panel, spawn_heading,
     screen, spawn_button, spawn_text_field, text,
 };
 use super::{Screen, worlds_dir};
@@ -44,8 +45,8 @@ struct ErrorText;
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
     commands.spawn((DespawnOnExit(Screen::CreateWorld), screen(SCRIM))).with_children(|root| {
-        root.spawn(panel(520.0)).with_children(|panel| {
-            panel.spawn(heading(font, "Create world"));
+        root.spawn(panel(260.0 * PX)).with_children(|panel| {
+            spawn_heading(panel, font, "Create world");
             panel.spawn(label(font, "World name"));
             spawn_text_field(panel, font, "New world", "World name", 32, 0, true, NameField);
             panel.spawn(label(font, "Seed"));
@@ -55,9 +56,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 spawn_button(row, font, "Survival", ButtonStyle::Secondary, Action::Mode(GameMode::Survival));
                 spawn_button(row, font, "Creative", ButtonStyle::Secondary, Action::Mode(GameMode::Creative));
             });
-            panel.spawn((ModeHint, Node { margin: UiRect::top(Val::Px(10.0)), ..default() }, text(font, "", 14.0, MUTED)));
-            panel.spawn((ErrorText, Node { margin: UiRect::top(Val::Px(10.0)), ..default() }, text(font, "", 14.0, ERROR)));
-            panel.spawn(button_row(18.0)).with_children(|row| {
+            panel.spawn((ModeHint, Node { margin: UiRect::top(Val::Px(4.0 * PX)), ..default() }, text(font, "", BODY, MUTED)));
+            panel.spawn((ErrorText, Node { margin: UiRect::top(Val::Px(4.0 * PX)), ..default() }, text(font, "", BODY, ERROR)));
+            panel.spawn(button_row(6.0 * PX)).with_children(|row| {
                 spawn_button(row, font, "Create world", ButtonStyle::Primary, Action::Create);
                 spawn_button(row, font, "Back", ButtonStyle::Secondary, Action::Back);
             });
@@ -116,21 +117,16 @@ fn create(name: &str, seed: u64, mode: GameMode) -> Result<PathBuf, String> {
 }
 
 /// Marks the chosen mode and explains it.
-fn show_mode(
-    mode: Res<Mode>,
-    mut buttons: Query<(&Action, &Children, &mut BorderColor)>,
-    mut texts: Query<&mut TextColor>,
-    mut hint: Query<&mut Text, With<ModeHint>>,
-) {
+fn show_mode(mut commands: Commands, mode: Res<Mode>, buttons: Query<(Entity, &Action)>, mut hint: Query<&mut Text, With<ModeHint>>) {
     if !mode.is_changed() {
         return;
     }
-    for (action, children, mut border) in &mut buttons {
+    for (entity, action) in &buttons {
         let Action::Mode(choice) = *action else { continue };
-        let chosen = choice == mode.0;
-        border.set_if_neq(BorderColor::all(if chosen { ACCENT } else { Color::NONE }));
-        if let Some(mut color) = children.first().and_then(|&label| texts.get_mut(label).ok()) {
-            color.0 = if chosen { TEXT } else { SOFT };
+        if choice == mode.0 {
+            commands.entity(entity).insert(Selected);
+        } else {
+            commands.entity(entity).remove::<Selected>();
         }
     }
     if let Ok(mut hint) = hint.single_mut() {
