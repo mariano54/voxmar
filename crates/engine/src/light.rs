@@ -138,26 +138,42 @@ impl LitRegion {
     fn sky_light(&mut self, attenuation: &[u8], queue: &mut Vec<u32>) {
         // Lowest y reached by full-strength sky light, per (x, z).
         let mut floor = vec![H; PLANE];
-        for z in 0..W {
-            for x in 0..W {
-                let mut level = MAX_LIGHT;
-                let mut full = true;
-                for y in (0..H).rev() {
-                    let i = index(x, y, z);
-                    let att = attenuation[i];
-                    if att >= MAX_LIGHT {
-                        break;
-                    }
-                    level = level.saturating_sub(att - 1);
-                    if level == 0 {
-                        break;
-                    }
-                    self.light[i] |= level << 4;
-                    full &= level == MAX_LIGHT;
-                    if full {
-                        floor[(z * W + x) as usize] = y;
-                    }
+        // Down through the planes that hold nothing but clear air (most of the sky), the
+        // light stays at full strength everywhere.
+        let mut y = H;
+        while y > 0 && attenuation[(y - 1) as usize * PLANE..y as usize * PLANE].as_chunks::<{ W as usize }>().0.iter().all(|row| row.iter().fold(0, |odd, &a| odd | (a ^ 1)) == 0) {
+            y -= 1;
+            for light in &mut self.light[y as usize * PLANE..(y + 1) as usize * PLANE] {
+                *light |= MAX_LIGHT << 4;
+            }
+            floor.fill(y);
+        }
+        // Then plane by plane, each (x, z) until its light is spent or blocked; 0 marks one
+        // that has stopped. Whether it is still at full strength, per (x, z).
+        let mut level = vec![MAX_LIGHT; PLANE];
+        let mut full = vec![true; PLANE];
+        for y in (0..y).rev() {
+            let plane = y as usize * PLANE;
+            let (light, attenuation) = (&mut self.light[plane..plane + PLANE], &attenuation[plane..plane + PLANE]);
+            let mut lit = false;
+            for i in 0..PLANE {
+                if level[i] == 0 {
+                    continue;
                 }
+                let att = attenuation[i];
+                level[i] = if att >= MAX_LIGHT { 0 } else { level[i].saturating_sub(att - 1) };
+                if level[i] == 0 {
+                    continue;
+                }
+                light[i] |= level[i] << 4;
+                lit = true;
+                full[i] &= level[i] == MAX_LIGHT;
+                if full[i] {
+                    floor[i] = y;
+                }
+            }
+            if !lit {
+                break;
             }
         }
 

@@ -144,9 +144,11 @@ impl Weigh for Tile {
 }
 
 /// Where a tier reads the ground.
-pub trait Ground {
+pub trait Ground: Sync {
     /// The samples of the tile at `key` (in tile units).
     fn tile(&self, key: IVec2) -> Arc<Tile>;
+    /// Whether the tile at `key` is made or being made.
+    fn has(&self, key: IVec2) -> bool;
     /// How humid the climate is at a cell, 0 (arid) ..= 1 (wet enough that lakes stay
     /// full).
     fn humidity(&self, cell: IVec2) -> f32;
@@ -507,6 +509,7 @@ impl Drainage {
     /// (rows of `Tier::side` cells).
     pub fn totals<'b>(&self, ground: &dyn Ground, basin: &'b Basin) -> &'b [f32] {
         basin.totals.get_or_init(|| {
+            self.prepare_upstream(ground, basin.flow.entries.iter());
             let mut totals = basin.local.clone();
             let side = self.tier.side;
             let origin = basin.region * side;
@@ -546,10 +549,24 @@ impl Drainage {
             debug_assert!(false, "water loops through {cell}");
             return exit.local;
         }
-        let total =
-            *exit.total.get_or_init(|| exit.local + exit.upstream.iter().map(|&e| self.inflow(ground, &flow.entries[e as usize])).sum::<f32>());
+        let total = *exit.total.get_or_init(|| {
+            self.prepare_upstream(ground, exit.upstream.iter().map(|&e| &flow.entries[e as usize]));
+            exit.local + exit.upstream.iter().map(|&e| self.inflow(ground, &flow.entries[e as usize])).sum::<f32>()
+        });
         PENDING.with(|pending| pending.borrow_mut().remove(&key));
         total
+    }
+
+    /// Makes on every core the border records of the regions that feed `entries` and are
+    /// not made yet, which working out their inflow reads next.
+    fn prepare_upstream<'e>(&self, ground: &dyn Ground, entries: impl Iterator<Item = &'e Entry>) {
+        let mut regions: Vec<IVec2> = entries.flat_map(|e| e.feeders.iter().map(|&f| self.region_of(f))).collect();
+        regions.sort_unstable_by_key(|r| (r.x, r.y));
+        regions.dedup();
+        regions.retain(|&r| !self.flows.has(r));
+        crate::parallel::for_each(&regions, |&r| {
+            self.flow(ground, r);
+        });
     }
 
     fn inflow(&self, ground: &dyn Ground, entry: &Entry) -> f32 {
@@ -787,26 +804,31 @@ impl Drainage {
         let width = side + 2 * halo;
         let mut reader = Reader::new(tier, ground);
 
-        // A dense copy of the window, and the runoff of the region.
+        // The tiles of the window, made on every core, then a dense copy of the window and
+        // the runoff of the region.
+        let size = tier.tile;
+        let (first, last) = (low.div_euclid(IVec2::splat(size)), (low + width - 1).div_euclid(IVec2::splat(size)));
+        let keys: Vec<IVec2> = (first.y..=last.y).flat_map(|ty| (first.x..=last.x).map(move |tx| IVec2::new(tx, ty))).collect();
+        let missing: Vec<IVec2> = keys.iter().copied().filter(|&key| !ground.has(key)).collect();
+        crate::parallel::for_each(&missing, |&key| {
+            ground.tile(key);
+        });
         let mut heights = vec![0.0f32; (width * width) as usize];
         let mut covered = vec![DRY; (width * width) as usize];
         let mut runoff = vec![0.0f32; (side * side) as usize];
-        let size = tier.tile;
-        for ty in low.y.div_euclid(size)..=(low.y + width - 1).div_euclid(size) {
-            for tx in low.x.div_euclid(size)..=(low.x + width - 1).div_euclid(size) {
-                let tile = reader.tile(IVec2::new(tx, ty)).clone();
-                for j in 0..size {
-                    for i in 0..size {
-                        let cell = IVec2::new(tx, ty) * size + IVec2::new(i, j);
-                        let (w, t) = (cell - low, (j * size + i) as usize);
-                        if (0..width).contains(&w.x) && (0..width).contains(&w.y) {
-                            heights[(w.y * width + w.x) as usize] = tile.height[t];
-                            covered[(w.y * width + w.x) as usize] = tile.absorbed[t];
-                        }
-                        let r = cell - origin;
-                        if (0..side).contains(&r.x) && (0..side).contains(&r.y) {
-                            runoff[(r.y * side + r.x) as usize] = tile.runoff[t];
-                        }
+        for &key in &keys {
+            let tile = reader.tile(key).clone();
+            for j in 0..size {
+                for i in 0..size {
+                    let cell = key * size + IVec2::new(i, j);
+                    let (w, t) = (cell - low, (j * size + i) as usize);
+                    if (0..width).contains(&w.x) && (0..width).contains(&w.y) {
+                        heights[(w.y * width + w.x) as usize] = tile.height[t];
+                        covered[(w.y * width + w.x) as usize] = tile.absorbed[t];
+                    }
+                    let r = cell - origin;
+                    if (0..side).contains(&r.x) && (0..side).contains(&r.y) {
+                        runoff[(r.y * side + r.x) as usize] = tile.runoff[t];
                     }
                 }
             }

@@ -20,7 +20,7 @@ it rebuilds in seconds rather than minutes after an edit and runs nearly as fast
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
-`storm` or `rain:0.3`, instead of the server's), `--command LINE` (run a console line once in game, such as
+`cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
 `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
@@ -335,6 +335,13 @@ there; `decor_sights` prints `--pose` arguments for captures of old-growth fores
 edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
 `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+`generation_stages` breaks generation time per column down by stage (climate, biomes, rivers
+and their region builds, trails and their planning, surface, caves, cave biomes, fill, ores,
+trees, decoration, packing), cold and warm, and reports lighting and meshing per column;
+`first_column` times a new world's spawn point, spawn column and first 9×9 columns, building
+regions on one core and on all. `output_is_unchanged` and `light_is_unchanged` (ordinary tests)
+hash generated columns and their light on three seeds, so performance work cannot change a
+block; when a change is meant, they print the hashes to put in `crates/worldgen/src/perf.rs`.
 
 ## Worn paths
 

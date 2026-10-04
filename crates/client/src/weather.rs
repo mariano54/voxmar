@@ -432,19 +432,24 @@ fn draw_bolts(weather: Res<ClientWeather>, mut gizmos: Gizmos) {
     }
 }
 
-/// A kind of weather by name (`clear`, `storm`, `aurora`, …), as the content packages
-/// define it, optionally at an intensity (`rain:0.3`, `snow:heavy`), for `--weather`: its
-/// values and effects over a fair day, with any fog lying on the sea.
-pub fn preset(name: &str) -> Option<Weather> {
-    let content = voxmar_server::load_content(&voxmar_server::assets_dir()).ok()?;
-    forced(&content.weather, name)
+/// A kind of weather by name (`clear`, `storm`, `aurora`, …), as the content packages in
+/// `table` define it, optionally at an intensity (`rain:0.3`, `snow:heavy`, or
+/// `rain 0.3`), for `--weather`: its values and effects over a fair day, with any fog lying
+/// on the sea. Names ignore case, and `-` stands for `_` (`sea-fog`). An error names the
+/// kinds there are.
+pub fn preset(table: &WeatherTable, asked: &str) -> Result<Weather, String> {
+    forced(table, asked).ok_or_else(|| {
+        let kinds: Vec<&str> = table.presets().iter().map(|p| p.short_name()).collect();
+        format!("--weather: no weather `{asked}`; kinds are {}, optionally with :INTENSITY (0..1, light, moderate, heavy or max)", kinds.join(", "))
+    })
 }
 
 /// `name`'s values and effects from `table` over a fair day; see `preset`.
 fn forced(table: &WeatherTable, name: &str) -> Option<Weather> {
-    let (name, intensity) = match name.split_once(':') {
-        Some((name, intensity)) => (name, Some(parse_intensity(intensity)?)),
-        None => (name, None),
+    let name = name.trim().to_ascii_lowercase().replace('-', "_");
+    let (name, intensity) = match name.split_once([':', ' ']) {
+        Some((name, intensity)) => (name, Some(parse_intensity(intensity.trim())?)),
+        None => (name.as_str(), None),
     };
     let preset = table.preset(name)?;
     let preset = preset.at(intensity.unwrap_or(preset.intensity));
@@ -480,5 +485,11 @@ mod tests {
         assert_eq!(forced(&table, "rain:0.3").unwrap().precipitation, 0.3);
         assert_eq!(forced(&table, "rain:max").unwrap().precipitation, 1.0);
         assert!(forced(&table, "rain:loud").is_none());
+        // Every name captures and the README have used still works, in any case.
+        for name in ["clear", "cirrus", "cumulus", "cloudy", "overcast", "rain", "storm", "snow", "Cumulus", "sea-fog", "rain 0.3"] {
+            assert!(forced(&table, name).is_some(), "{name}");
+        }
+        let error = preset(&table, "hurricane").unwrap_err();
+        assert!(error.contains("cumulus") && error.contains("INTENSITY"), "{error}");
     }
 }
