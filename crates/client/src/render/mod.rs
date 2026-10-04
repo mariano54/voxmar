@@ -5,7 +5,7 @@
 //! day/night cycle never modifies material assets (which would respecialise every chunk).
 
 use bevy::asset::{RenderAssetUsages, embedded_asset};
-use bevy::camera::Hdr;
+use bevy::camera::{CameraMainTextureUsages, Hdr};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::core_pipeline::Core3dSystems;
 use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin};
@@ -235,8 +235,10 @@ pub fn setup(
         .build(),
     ));
     commands.spawn((
-        // Water reads the depth of the scene behind it (see `water`).
+        // Water reads the depth of the scene behind it, and without MSAA copies the scene
+        // into the image it draws in (see `water`).
         Camera3d { depth_texture_usages: (TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING).into(), ..default() },
+        CameraMainTextureUsages::default().with(TextureUsages::COPY_DST),
         Projection::Perspective(PerspectiveProjection { fov: 75f32.to_radians(), near: 0.05, ..default() }),
         Hdr,
         // No depth prepass: it doubles opaque vertex work and measured slower than the

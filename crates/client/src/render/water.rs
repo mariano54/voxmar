@@ -2,9 +2,10 @@
 //!
 //! Water and ice are the terrain's translucent faces (`TerrainPass::Translucent`). They are
 //! drawn after the opaque terrain and before Bevy's transparent pass, with the scene so far
-//! bound for reading (`water.wgsl`): its depth, through a read-only depth attachment, so
-//! nothing is copied, and its colour, which with MSAA is the resolved image (the pass draws
-//! into the multisampled one) and otherwise a copy. From those the water shader finds
+//! bound for reading (`water_surface.wgsl`): its depth, through a read-only depth
+//! attachment, so nothing is copied, and its colour, the main image so far, while the pass
+//! writes the other main image (Bevy's post-processing ping-pong), resolving into it under
+//! MSAA and drawing over a copy of the scene otherwise. From those the water shader finds
 //!
 //! - how far light travels through the water to whatever is behind it, so shallows are
 //!   clear and deep water takes its colour, with no bands at whole blocks;
@@ -18,29 +19,27 @@
 
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
-use bevy::pbr::{SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, main_transmissive_pass_3d};
 use bevy::math::DVec2;
+use bevy::pbr::{SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, main_transmissive_pass_3d};
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_phase::{
     AddRenderCommand, CachedRenderPipelinePhaseItem, DrawFunctionId, DrawFunctions, PhaseItem, PhaseItemExtraIndex,
-    SetItemPipeline, ViewSortedRenderPhases,
+    SetItemPipeline,
 };
 use bevy::render::render_resource::{
     AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
     BufferUsages, CachedRenderPipelineId, Extent3d, FilterMode, LoadOp, Operations, PipelineCache, RenderPassColorAttachment,
     RenderPassDepthStencilAttachment, RenderPassDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-    ShaderType, StoreOp, TextureDescriptor, TextureDimension, TextureSampleType, TextureUsages, encase,
+    ShaderType, StoreOp, TextureSampleType, encase,
     binding_types::{sampler, texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
-use bevy::render::texture::{CachedTexture, TextureCache};
-use bevy::render::view::{ExtractedView, ViewDepthTexture, ViewTarget};
+use bevy::render::view::{ViewDepthTexture, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
-use bevy::core_pipeline::core_3d::Transparent3d;
 use bevy::shader::load_shader_library;
 use serde::{Deserialize, Serialize};
 
@@ -70,7 +69,7 @@ impl Plugin for WaterPlugin {
             .add_systems(RenderStartup, init_gpu)
             .add_systems(
                 Render,
-                (write_uniform, prepare_scene_copies).in_set(RenderSystems::PrepareResources),
+                write_uniform.in_set(RenderSystems::PrepareResources),
             )
             .add_systems(
                 Core3d,
@@ -297,40 +296,6 @@ fn write_uniform(params: Res<WaterParams>, gpu: Option<Res<WaterGpu>>, queue: Re
     queue.write_buffer(&gpu.uniform, 0, buffer.as_ref());
 }
 
-/// Without MSAA the image water is drawn into is the one it must read, so the scene so far
-/// is copied for it.
-#[derive(Component)]
-struct SceneCopy(CachedTexture);
-
-fn prepare_scene_copies(
-    mut commands: Commands,
-    mut cache: ResMut<TextureCache>,
-    device: Res<RenderDevice>,
-    views: Query<(Entity, &ExtractedCamera, &ExtractedView, &Msaa, Option<&TerrainDraws>)>,
-) {
-    for (entity, camera, view, msaa, draws) in &views {
-        let wanted = *msaa == Msaa::Off && draws.is_some_and(TerrainDraws::has_water);
-        let Some(size) = camera.physical_target_size.filter(|_| wanted) else {
-            commands.entity(entity).remove::<SceneCopy>();
-            continue;
-        };
-        let texture = cache.get(
-            &device,
-            TextureDescriptor {
-                label: Some("water_scene_copy"),
-                size: Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: view.target_format,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-        );
-        commands.entity(entity).insert(SceneCopy(texture));
-    }
-}
-
 /// Stands for the translucent terrain in the water pass, to run its draw commands.
 pub struct WaterItem {
     pub pipeline: CachedRenderPipelineId,
@@ -382,59 +347,55 @@ impl CachedRenderPipelinePhaseItem for WaterItem {
 type DrawWater = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>, DrawTerrain);
 
 /// What the water pass needs of a camera.
-type WaterView = (
-    &'static ExtractedCamera,
-    &'static ExtractedView,
-    &'static ViewTarget,
-    &'static ViewDepthTexture,
-    &'static Msaa,
-    &'static TerrainDraws,
-    Option<&'static SceneCopy>,
-);
+type WaterView = (&'static ExtractedCamera, &'static ViewTarget, &'static ViewDepthTexture, &'static Msaa, &'static TerrainDraws);
 
 /// Draws the translucent terrain of a camera with the scene so far bound for reading. With
-/// MSAA it draws into the multisampled image and reads the resolved one, then resolves
-/// again unless Bevy's transparent pass, which follows, will.
+/// MSAA it draws into the multisampled image, reading the resolved one, and resolves into
+/// the other main image; without, it copies the scene into the other main image and draws
+/// there. Either way that image becomes the main one, and Bevy's transparent pass carries
+/// on in it.
 fn water_pass(
     world: &World,
     view: ViewQuery<WaterView>,
     gpu: Option<Res<WaterGpu>>,
     pipeline_cache: Res<PipelineCache>,
-    transparent_phases: Res<ViewSortedRenderPhases<Transparent3d>>,
     mut ctx: RenderContext,
 ) {
     let view_entity = view.entity();
-    let (camera, extracted, target, depth, msaa, draws, copy) = view.into_inner();
-    let (Some(gpu), Some(water)) = (gpu, draws.water()) else { return };
+    let (camera, target, depth, msaa, draws) = view.into_inner();
+    let (Some(gpu), Some(water), Some(size)) = (gpu, draws.water(), camera.physical_target_size) else { return };
     let multisampled = *msaa != Msaa::Off;
-    let layout = pipeline_cache.get_bind_group_layout(&layout(multisampled));
-    let scene = if multisampled {
-        target.main_texture_view()
-    } else {
-        let Some(SceneCopy(copy)) = copy else { return };
-        let Some(size) = camera.physical_target_size else { return };
-        ctx.command_encoder().copy_texture_to_texture(
-            target.main_texture().as_image_copy(),
-            copy.texture.as_image_copy(),
-            Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
-        );
-        &copy.default_view
-    };
-    let bind_group = ctx.render_device().create_bind_group(
-        "water_bind_group",
-        &layout,
-        &BindGroupEntries::sequential((depth.view(), scene, &gpu.sampler, gpu.uniform.as_entire_binding())),
-    );
-
+    // The scene so far stays the source the water reads, and the water's result goes to the
+    // other main image, which then becomes the main one.
+    let write = target.post_process_write();
     let color = match target.sampled_main_texture_view().filter(|_| multisampled) {
+        // The multisampled image, resolved at the end of the pass.
         Some(samples) => RenderPassColorAttachment {
             view: samples,
             depth_slice: None,
-            resolve_target: None,
+            resolve_target: Some(write.destination),
             ops: Operations { load: LoadOp::Load, store: StoreOp::Store },
         },
-        None => target.get_color_attachment(),
+        // Without samples to draw into, the destination starts as a copy of the scene.
+        None => {
+            ctx.command_encoder().copy_texture_to_texture(
+                write.source_texture.as_image_copy(),
+                write.destination_texture.as_image_copy(),
+                Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
+            );
+            RenderPassColorAttachment {
+                view: write.destination,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations { load: LoadOp::Load, store: StoreOp::Store },
+            }
+        }
     };
+    let bind_group = ctx.render_device().create_bind_group(
+        "water_bind_group",
+        &pipeline_cache.get_bind_group_layout(&layout(multisampled)),
+        &BindGroupEntries::sequential((depth.view(), write.source, &gpu.sampler, gpu.uniform.as_entire_binding())),
+    );
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
     let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
@@ -469,21 +430,6 @@ fn water_pass(
         }
     }
     span.end(&mut pass);
-    drop(pass);
-
-    // Nothing else resolves the multisampled image this frame: resolve it here.
-    let transparent_follows =
-        transparent_phases.get(&extracted.retained_view_entity).is_some_and(|phase| !phase.items.is_empty());
-    if multisampled && !transparent_follows {
-        ctx.begin_tracked_render_pass(RenderPassDescriptor {
-            label: Some("water_resolve"),
-            color_attachments: &[Some(target.get_color_attachment())],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-    }
 }
 
 #[cfg(test)]
