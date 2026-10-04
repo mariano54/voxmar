@@ -283,7 +283,8 @@ F3 shows the weather.
 ## Sound
 
 Music is in `assets/music` (generated offline with `tools/generate_music.py`) and plays now and
-then with long quiet gaps; `M` toggles it. Sound effects are synthesized at startup from each
+then with long quiet gaps; `M` toggles it. Starting a game fades the menu's music out, so a world
+opens in quiet; returning to the menus brings it back. Sound effects are synthesized at startup from each
 block's material (`sound: Wood` in its definition), so new blocks sound right without new audio:
 short, soft and warm, with several variants per cue and a small random pitch change so nothing
 repeats exactly. Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain
