@@ -342,6 +342,8 @@
             members: {"maple_leaves": (tint: Some(None), color: (210, 80, 30), tags: ["dye:orange"]), "maple_log": (tags: ["flavour:sweet"])},
         ),
         (template: "wood", name: "redwood", tags: ["conifer", "evergreen", "temperate", "wet"], all: (color: (130, 60, 40))),
+        // Scots pine: flaking orange bark, pale resinous wood and blue-green needles.
+        (template: "wood", name: "pine", tags: ["conifer", "evergreen", "cold", "dry"], all: (color: (160, 92, 48)), members: {"pine_leaves": (color: (44, 82, 72)), "pine_log": (tags: ["flavour:resin"])}),
         (template: "wood", name: "cypress", tags: ["conifer", "evergreen", "wetland", "warm"], all: (color: (110, 95, 80))),
         (template: "wood", name: "willow", tags: ["broadleaf", "wetland", "riverbank", "temperate"], all: (color: (150, 130, 90)), members: {"willow_log": (tags: ["alchemy:healing"])}),
         (template: "wood", name: "baobab", tags: ["broadleaf", "savanna", "hot", "dry"], all: (color: (140, 120, 110)), members: {"baobab_leaves": (tags: ["edible"])}),

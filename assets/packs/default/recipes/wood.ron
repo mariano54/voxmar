@@ -39,6 +39,11 @@
         "redwood_wood": ["#742f21", "#863928", "#984330", "#a94e39", "#b85a43", "#c5674e"],
         "redwood_leaves": ["#363636", "#484848", "#5b5b5b", "#6f6f6f", "#838383", "#989898"],
         "redwood_sapling": ["#1b3a22", "#244a2a", "#2d5a33", "#386b3d", "#457d48"],
+        "pine_bark": ["#4a2814", "#64351a", "#7e4420", "#985427", "#b06631", "#c67a3e"],
+        "pine_bark_old": ["#2e2420", "#3d302a", "#4d3d35", "#5d4a40"],
+        "pine_wood": ["#9c7a46", "#ae8a51", "#bf9b5d", "#cdab6a", "#d9ba79", "#e4c98a"],
+        "pine_leaves": ["#454b51", "#5a6067", "#70767d", "#868c94", "#9ca2aa", "#b3b9c1"],
+        "pine_sapling": ["#1c3832", "#25473e", "#2e574a", "#396857", "#467a65"],
         "cypress_bark": ["#3a322c", "#473e37", "#554a42", "#62564d", "#706359"],
         "cypress_wood": ["#9a8262", "#aa916f", "#b9a07c", "#c7ae8a", "#d3bb98", "#ddc7a5"],
         "cypress_leaves": ["#383838", "#4a4a4a", "#5d5d5d", "#717171", "#858585", "#9a9a9a"],
@@ -141,6 +146,7 @@
         (template: "wood", name: "mangrove", palettes: {"bark": "mangrove_bark", "wood": "mangrove_wood"}),
         (template: "wood", name: "maple", palettes: {"bark": "maple_bark", "wood": "maple_wood", "leaves": "maple_leaves", "sapling": "maple_sapling"}),
         (template: "wood", name: "redwood", palettes: {"bark": "redwood_bark", "wood": "redwood_wood", "leaves": "redwood_leaves", "sapling": "redwood_sapling"}),
+        (template: "wood", name: "pine", palettes: {"bark": "pine_bark", "wood": "pine_wood", "leaves": "pine_leaves", "sapling": "pine_sapling"}),
         (template: "wood", name: "cypress", palettes: {"bark": "cypress_bark", "wood": "cypress_wood", "leaves": "cypress_leaves", "sapling": "cypress_sapling"}),
         (template: "wood", name: "willow", palettes: {"bark": "willow_bark", "wood": "willow_wood", "leaves": "willow_leaves", "sapling": "willow_sapling"}),
         (template: "wood", name: "baobab", palettes: {"bark": "baobab_bark", "wood": "baobab_wood"}),
@@ -172,6 +178,25 @@
                 Noise(cells: (16, 2), octaves: 2, amount: 0.5),
                 Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.4, warp: 1.0),
             ], clean: true),
+        ]),
+        // Pine (Scots pine): thin orange plates flaking off in papery scales, cracked by
+        // dark grey-brown fissures where the old bark shows through.
+        "block/pine_log": (palettes: {"bark": "pine_bark", "old": "pine_bark_old"}, layers: [
+            Paint(palette: "bark", base: 0.5, shade: [
+                Cells(count: (4, 3), jitter: 0.6, value: 0.45, edge: -0.15, bevel: 0.3, warp: 1.0),
+                Noise(cells: (16, 4), octaves: 2, amount: 0.3),
+                Grain(0.15),
+            ], clean: true),
+            Paint(palette: "old", base: 0.4, shade: [Noise(cells: (16, 16), amount: 0.5)], mask: [Cells(count: (4, 3), jitter: 0.6, value: 0.0, edge: 1.0, width: 1.0, bevel: 0.0, warp: 1.0), Stripes(vertical: true, period: 4.0, width: 0.25, amount: 0.3, warp: 1.0), Noise(cells: (4, 8), amount: 0.4)], above: 0.75, light: 1),
+        ]),
+        // Pine needles: fine strokes leaning both ways in tufts, with gaps, rather than
+        // the round clumps of broadleaf leaves. Grey, for the foliage colour to tint, with
+        // a cool cast that tints to blue-green.
+        "block/pine_leaves": (palettes: {"leaves": "pine_leaves"}, layers: [
+            Paint(palette: "leaves", base: 0.22, shade: [Noise(cells: (8, 8), amount: 0.25)]),
+            Paint(palette: "leaves", base: 0.55, shade: [Noise(cells: (8, 8), amount: 0.2)], mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, slope: 1.0, warp: 0.5), Noise(cells: (4, 4), amount: 0.7)], above: 0.8, shadow: -1),
+            Paint(palette: "leaves", base: 0.8, shade: [Noise(cells: (8, 8), amount: 0.2, seed: 3)], mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, slope: -1.0, warp: 0.5, phase: 2.0), Noise(cells: (4, 4), amount: 0.7, seed: 5)], above: 0.85, shadow: -1),
+            Cut(mask: [Noise(cells: (8, 8), amount: 0.9), Grain(0.7)], above: 0.2),
         ]),
         // Silverwood: bright bark with faint blue glints.
         "block/silverwood_log": (palettes: {"bark": "silverwood_bark", "glint": ["#b7e6ff", "#e8f8ff"]}, layers: [
@@ -229,5 +254,6 @@
         ]),
         "block/redwood_sapling": (base: "block/spruce_sapling", palettes: {"bark": "redwood_bark", "sapling": "redwood_sapling"}),
         "block/cypress_sapling": (base: "block/spruce_sapling", palettes: {"bark": "cypress_bark", "sapling": "cypress_sapling"}),
+        "block/pine_sapling": (base: "block/spruce_sapling", palettes: {"bark": "pine_bark", "sapling": "pine_sapling"}),
     },
 )

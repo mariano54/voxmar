@@ -58,7 +58,7 @@
         ),
         (
             name: "pine", tags: ["conifer", "cold", "dry", "evergreen"],
-            log: "spruce_log", leaves: "spruce_leaves", height: (11, 17), lean: 0.8,
+            log: "pine_log", leaves: "pine_leaves", height: (11, 17), lean: 0.8,
             crown: Pine(radius: (3.0, 4.2), start: 0.5),
             ground: [Soil, Snow],
             comfort: (temperature: (-10.0, 9.0), moisture: (0.2, 1.0)),
