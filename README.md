@@ -44,7 +44,7 @@ T opens the console to chat with everyone on the server; / opens it with a comma
 recall earlier lines, Tab completes a command's name, Enter sends and Esc closes. Replies and
 chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
 like actions: admins (the singleplayer host, and players named with `--admin` on a dedicated
-server) may use them all, everyone else `/help`, `/seed` and `/list`.
+server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
 
 - `/time` tells the time; `/time set sunrise|day|morning|noon|afternoon|sunset|dusk|night|midnight|dawn|TICKS`
   moves forward to that time of day (a day is 24000 ticks, 0 is sunrise), `/time add 100|30s|2h|1d`
@@ -60,6 +60,8 @@ server) may use them all, everyone else `/help`, `/seed` and `/list`.
 - `/tp X Y Z`, `/tp X Z` (onto the ground), `/tp PLAYER`, `/tp PLAYER X Y Z`, `/tp PLAYER PLAYER`;
   `~` means where the player is, so `/tp ~ ~10 ~` goes ten blocks up.
 - `/gamemode survival|creative [PLAYER]` switches a player's mode, which is kept with them.
+- `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
+  (within 4000 blocks unless you say).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
 Commands are data: each package's `commands.ron` names its commands, who may use them, their
@@ -68,11 +70,11 @@ lines with the arguments filled in (`$1`, `$*`), which is how a package adds its
 is `time set day`).
 
 Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
-sits above the bottom edge (Raise HUD), VSync, debug overlay, music and sound volume, mouse
-sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom (the
-view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins, with
-Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved to
-`voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
+sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
+mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
+(the view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins,
+with Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved
+to `voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
 `$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces
 `…/voxmar`); `--view-distance` and `--no-vsync` override them. On a dedicated server, name
 admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
@@ -295,6 +297,23 @@ short, soft and warm, with several variants per cue and a small random pitch cha
 repeats exactly. Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain
 is heavy and quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes
 every cue to `target/sfx_preview.wav`.
+
+Ambience is synthesized the same way and follows where the player is. About once a second a
+flood fill from the eye (on a worker, capped at 16,000 cells) measures how much air is around,
+how much of it is open to the sky or under leaves, and the leaves, wood, water, grass, rock,
+sand and snow it meets, nearer ones counting more. With the climate and biome from the world
+generator, height above the land around, depth underground, the weather and the time of day,
+that makes an environment vector, and `ambience.ron` in any content package lists what plays
+where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
+streams, surf, cave air) as stereo segments that crossfade and never repeat back to back, and
+one-shots at a rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker
+on a trunk, owls, a cricket in the grass, frogs and plops in the water, gusts on heights,
+creaking trees, drips and rumbles in caves). One-shots sound from real blocks the fill found,
+panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
+range with a fade, and rain ducks layers rather than silencing them. Captures run it silently
+and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
+writes about twenty seconds of each of nine typical places to `target/ambience_preview.wav`, and
+`ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
 
 ## Rendering and performance
 
