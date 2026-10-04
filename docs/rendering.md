@@ -158,7 +158,25 @@ now the clouds) 1.2 ms, the four shadow cascades about 1.7 ms plus 0.7 ms of fil
 the terrain's pixels, SMAA 0.5 ms. View distance 16 instead of 32 saved only 0.9 ms. At
 75% and 50% the frame was limited by the CPU (about 10 and 7.6 ms) rather than the GPU.
 For the CPU side, `cargo build --release --features chrome` records a Chrome trace of
-every system (`trace-*.json` in the working directory, large: keep runs short).
+every system (`trace-*.json` in the working directory, large: keep runs short). Its spans
+cost enough to distort small systems and wgpu's own work (a submit measured four times
+its untraced cost), so check what it points at with `sample`.
+
+Low Power Mode holds the GPU at its minimum or medium performance state ("induced by
+device conditions"): adding the Metal GPU Counters instrument to a Metal System Trace
+records the state over time (`gpu-performance-state-intervals`). GPU times taken in Low
+Power Mode are therefore long, and change with how loaded the GPU is. Dividing a pass's
+time by the display transform's, a fixed full-screen pass, in the same trace cancels
+most of that: across six runs with different shading switched off, the volumetric pass
+stayed at 8.4–8.5 times the display pass while its time in milliseconds moved by 25%.
+That is how each part of the terrain's shading was weighed: a scratch build passes
+`VOXMAR_ABLATE` to the terrain pipelines as shader defs that switch parts off (fog,
+shadows, cloud shade, biome tint, weathering, all lighting), one run each.
+
+A run at a tiny size (640×416) shows the CPU's limit, as the GPU then does little:
+about 3.6–4.2 ms a frame in Low Power Mode. No thread is busy for all of it (the render
+thread about 40%): the frame waits on hand-offs between the main and render threads and
+the task pool more than on any one system.
 
 ### Render scale
 
