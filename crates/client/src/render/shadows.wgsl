@@ -21,7 +21,8 @@
 #import bevy_pbr::mesh_view_bindings::{view, lights, directional_shadow_textures, directional_shadow_textures_comparison_sampler}
 #import voxmar::atmosphere::Atmosphere
 
-const GOLDEN_ANGLE: f32 = 2.39996323;
+// A turn by the golden angle (2.39996323 radians), as its cosine and sine.
+const GOLDEN_TURN = vec2(-0.73736888, 0.67549029);
 const BLOCKER_TAPS: u32 = 8u;
 // The widest blocker search and penumbra, in shadow texels: wide enough for soft shade
 // under a canopy, narrow enough that the fixed spiral's taps blur into each other.
@@ -30,11 +31,25 @@ const MAX_RADIUS: f32 = 5.0;
 // Shadows fade out over this last fraction of the shadow distance.
 const FADE: f32 = 0.15;
 
-// A point `k` of `n` on a golden-angle spiral filling the unit disc.
-fn spiral(k: u32, n: u32) -> vec2<f32> {
-    let r = sqrt((f32(k) + 0.5) / f32(n));
-    let angle = f32(k) * GOLDEN_ANGLE;
-    return r * vec2(cos(angle), sin(angle));
+// The points of a golden-angle spiral filling the unit disc: point `k` of `n` lies
+// sqrt((k + 0.5) / n) out, `k` golden angles round. Its direction is turned from the last
+// point's, which spares each tap a sine and a cosine.
+struct Spiral {
+    n: f32,
+    k: f32,
+    direction: vec2<f32>,
+};
+
+fn spiral(n: u32) -> Spiral {
+    return Spiral(f32(n), 0.0, vec2(1.0, 0.0));
+}
+
+fn next_point(s: ptr<function, Spiral>) -> vec2<f32> {
+    let point = sqrt(((*s).k + 0.5) / (*s).n) * (*s).direction;
+    let d = (*s).direction;
+    (*s).direction = vec2(d.x * GOLDEN_TURN.x - d.y * GOLDEN_TURN.y, d.x * GOLDEN_TURN.y + d.y * GOLDEN_TURN.x);
+    (*s).k += 1.0;
+    return point;
 }
 
 // Fraction of the sun reaching `world` from one cascade, or -1 outside it.
@@ -72,8 +87,9 @@ fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>
     let search = clamp(a.shadow.w / texel, 1.5, MAX_SEARCH);
     var blockers = 0.0;
     var blocker_depth = 0.0;
+    var around = spiral(BLOCKER_TAPS);
     for (var k = 0u; k < BLOCKER_TAPS; k++) {
-        let offset = spiral(k, BLOCKER_TAPS) * search;
+        let offset = next_point(&around) * search;
         let at = clamp(vec2<i32>(floor(uv * size + offset)), vec2(0), vec2<i32>(size) - 1);
         let stored = textureLoad(directional_shadow_textures, at, layer, 0);
         // A blocker is nearer the light than the face itself is at that texel.
@@ -97,8 +113,9 @@ fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>
     // texel. The taps' spacing, so how they blur into each other, stays the same.
     let count = clamp(u32(ceil(f32(taps) * (radius / widest) * (radius / widest))), min(taps, 4u), taps);
     var lit = 0.0;
+    var taps_around = spiral(count);
     for (var k = 0u; k < count; k++) {
-        let offset = spiral(k, count) * radius;
+        let offset = next_point(&taps_around) * radius;
         let receiver = clip.z + dot(slope, offset);
         lit += textureSampleCompareLevel(
             directional_shadow_textures,

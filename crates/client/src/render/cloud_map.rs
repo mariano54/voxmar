@@ -18,7 +18,8 @@
 //!
 //! The maps' places go to the shaders in the atmosphere uniform (`cloud_map` and
 //! `cloud_shade`); pipelines that read them set `CLOUD_MAP` and bind them at group 2,
-//! bindings 8 and 10, with the sampler at 9.
+//! bindings 8 and 10, with the sampler at 9. The resource also holds the cloud noise's
+//! lattices as textures, which pipelines that set `NOISE_TEXTURES` bind at 11 to 13.
 
 use bevy::asset::embedded_asset;
 use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
@@ -28,13 +29,12 @@ use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_resource::{
     AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, CachedRenderPipelineId,
     ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState, LoadOp, Operations, PipelineCache,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerDescriptor,
-    ShaderStages, StoreOp, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
-    TextureViewDescriptor,
-    SamplerBindingType, TextureSampleType,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderStages, StoreOp, TextureDataOrder, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
     binding_types::{sampler as sampler_binding, texture_2d, uniform_buffer},
 };
-use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::{RenderApp, RenderStartup};
 
 use super::atmosphere::{Atmosphere, AtmosphereBuffer};
@@ -68,6 +68,81 @@ fn corner_of(eye: DVec2, centre: DVec2, size: u32, extent: f32) -> Vec2 {
     (corner - eye).as_vec2()
 }
 
+/// Cells before the cloud noise's 2D and 3D lattices repeat (clouds.wgsl).
+const NOISE_2D: u32 = 256;
+const NOISE_3D: u32 = 64;
+
+/// The cloud noise's lattices as textures, which shaders sample with the hardware's filter
+/// instead of hashing every corner (clouds.wgsl, NOISE_TEXTURES): one filtered read for a
+/// value noise instead of four or eight hashes.
+pub struct CloudNoise {
+    pub plane: TextureView,
+    pub volume: TextureView,
+    pub sampler: Sampler,
+}
+
+/// The PCG hash and its 0..1 value, as clouds.wgsl has them.
+fn pcg(v: u32) -> u32 {
+    let state = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
+    (word >> 22) ^ word
+}
+
+fn unit(h: u32) -> f32 {
+    (h >> 8) as f32 / 16_777_216.0
+}
+
+fn to_byte(v: f32) -> u8 {
+    (v * 255.0).round() as u8
+}
+
+impl CloudNoise {
+    fn new(device: &RenderDevice, queue: &RenderQueue) -> Self {
+        let plane: Vec<u8> = (0..NOISE_2D * NOISE_2D)
+            .map(|i| to_byte(unit(pcg((i % NOISE_2D).wrapping_add(pcg((i / NOISE_2D) ^ 0x9e37_79b9))))))
+            .collect();
+        let volume: Vec<u8> = (0..NOISE_3D.pow(3))
+            .map(|i| {
+                let (x, y, z) = (i % NOISE_3D, i / NOISE_3D % NOISE_3D, i / (NOISE_3D * NOISE_3D));
+                to_byte(unit(pcg(x.wrapping_add(pcg(y.wrapping_add(pcg(z ^ 0x2545_f491)))))))
+            })
+            .collect();
+        let texture = |label, size: u32, layers: u32, dimension, data: &[u8]| {
+            device
+                .create_texture_with_data(
+                    queue,
+                    &TextureDescriptor {
+                        label: Some(label),
+                        size: Extent3d { width: size, height: size, depth_or_array_layers: layers },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension,
+                        format: TextureFormat::R8Unorm,
+                        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    },
+                    TextureDataOrder::LayerMajor,
+                    data,
+                )
+                .create_view(&TextureViewDescriptor::default())
+        };
+        let sampler = device.create_sampler(&SamplerDescriptor {
+            label: Some("cloud_noise"),
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            address_mode_w: AddressMode::Repeat,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..default()
+        });
+        Self {
+            plane: texture("cloud_noise_2d", NOISE_2D, 1, TextureDimension::D2, &plane),
+            volume: texture("cloud_noise_3d", NOISE_3D, NOISE_3D, TextureDimension::D3, &volume),
+            sampler,
+        }
+    }
+}
+
 pub struct CloudMapPlugin;
 
 impl Plugin for CloudMapPlugin {
@@ -84,6 +159,7 @@ pub struct CloudMap {
     pub view: TextureView,
     pub shade: TextureView,
     pub sampler: Sampler,
+    pub noise: CloudNoise,
     /// The body map's and the shade map's.
     pipelines: [CachedRenderPipelineId; 2],
     layouts: [BindGroupLayoutDescriptor; 2],
@@ -93,6 +169,7 @@ pub struct CloudMap {
 fn init(
     mut commands: Commands,
     device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
     asset_server: Res<AssetServer>,
     fullscreen: Res<FullscreenShader>,
     cache: Res<PipelineCache>,
@@ -158,6 +235,7 @@ fn init(
         view: texture("cloud_map", SIZE),
         shade: texture("cloud_shade_map", SHADE_SIZE),
         sampler,
+        noise: CloudNoise::new(&device, &queue),
         pipelines,
         layouts,
         groups: None,

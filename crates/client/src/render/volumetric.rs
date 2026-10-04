@@ -22,15 +22,14 @@ use bevy::pbr::{MeshPipeline, MeshPipelineKey, MeshViewBindGroup, ViewKeyCache};
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_resource::{
-    AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BindGroupLayoutEntryBuilder,
+    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BindGroupLayoutEntryBuilder,
     BlendComponent, BlendFactor, BlendOperation, BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
-    FilterMode, LoadOp, MultisampleState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, SpecializedMeshPipeline, StoreOp,
-    TextureDataOrder, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-    TextureViewDescriptor, VertexAttribute, VertexStepMode,
+    LoadOp, MultisampleState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
+    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedMeshPipeline, StoreOp, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, VertexAttribute, VertexStepMode,
     binding_types::{sampler, texture_2d, texture_3d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
 };
-use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
+use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
 use bevy::render::texture::{CachedTexture, TextureCache};
 use bevy::render::view::{ExtractedView, ViewDepthTexture, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
@@ -83,11 +82,10 @@ impl Layouts {
 #[derive(Resource)]
 struct VolumetricPipelines {
     shader: Handle<Shader>,
-    /// The march reads depth, the atmosphere and the noise; the composite depth and the
-    /// march.
+    /// The march reads depth, the atmosphere and the cloud maps and noise; the composite
+    /// depth and the march.
     march: Layouts,
     composite: Layouts,
-    noise: Noise,
     /// A vertex layout to hand the mesh pipeline, which our full-screen triangle ignores.
     vertex_layout: MeshVertexBufferLayout,
     /// The march and composite pipelines for each view key.
@@ -106,82 +104,7 @@ struct VolumetricView {
     ray_depths: CachedTexture,
 }
 
-/// Cells before the cloud noise's 2D and 3D lattices repeat (clouds.wgsl).
-const NOISE_2D: u32 = 256;
-const NOISE_3D: u32 = 64;
-
-/// The cloud noise's lattices as textures, which the march samples with the hardware's
-/// filter instead of hashing every corner (clouds.wgsl, NOISE_TEXTURES): one filtered read
-/// for a value noise instead of four or eight hashes.
-struct Noise {
-    plane: TextureView,
-    volume: TextureView,
-    sampler: Sampler,
-}
-
-/// The PCG hash and its 0..1 value, as clouds.wgsl has them.
-fn pcg(v: u32) -> u32 {
-    let state = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
-    let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
-    (word >> 22) ^ word
-}
-
-fn unit(h: u32) -> f32 {
-    (h >> 8) as f32 / 16_777_216.0
-}
-
-fn to_byte(v: f32) -> u8 {
-    (v * 255.0).round() as u8
-}
-
-impl Noise {
-    fn new(device: &RenderDevice, queue: &RenderQueue) -> Self {
-        let plane: Vec<u8> = (0..NOISE_2D * NOISE_2D)
-            .map(|i| to_byte(unit(pcg((i % NOISE_2D).wrapping_add(pcg((i / NOISE_2D) ^ 0x9e37_79b9))))))
-            .collect();
-        let volume: Vec<u8> = (0..NOISE_3D.pow(3))
-            .map(|i| {
-                let (x, y, z) = (i % NOISE_3D, i / NOISE_3D % NOISE_3D, i / (NOISE_3D * NOISE_3D));
-                to_byte(unit(pcg(x.wrapping_add(pcg(y.wrapping_add(pcg(z ^ 0x2545_f491)))))))
-            })
-            .collect();
-        let texture = |label, size: u32, layers: u32, dimension, data: &[u8]| {
-            device
-                .create_texture_with_data(
-                    queue,
-                    &TextureDescriptor {
-                        label: Some(label),
-                        size: Extent3d { width: size, height: size, depth_or_array_layers: layers },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension,
-                        format: TextureFormat::R8Unorm,
-                        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                        view_formats: &[],
-                    },
-                    TextureDataOrder::LayerMajor,
-                    data,
-                )
-                .create_view(&TextureViewDescriptor::default())
-        };
-        let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("cloud_noise"),
-            address_mode_u: AddressMode::Repeat,
-            address_mode_v: AddressMode::Repeat,
-            address_mode_w: AddressMode::Repeat,
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
-            ..default()
-        });
-        Self {
-            plane: texture("cloud_noise_2d", NOISE_2D, 1, TextureDimension::D2, &plane),
-            volume: texture("cloud_noise_3d", NOISE_3D, NOISE_3D, TextureDimension::D3, &volume),
-            sampler,
-        }
-    }
-}
-
-fn init(mut commands: Commands, asset_server: Res<AssetServer>, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
+fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
     let vertex_layout = MeshVertexBufferLayout::new(
         vec![ATTRIBUTE_VOXEL.id],
         VertexBufferLayout {
@@ -201,13 +124,13 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>, device: Res<Rend
                     (
                         (0, depth),
                         (1, uniform_buffer::<Atmosphere>(false)),
-                        // The cloud noise (clouds.wgsl) and the cloud maps (cloud_map.rs).
-                        (2, texture_2d(noise)),
-                        (3, texture_3d(noise)),
-                        (4, sampler(SamplerBindingType::Filtering)),
+                        // The cloud maps and noise (cloud_map.rs).
                         (8, texture_2d(noise)),
                         (9, sampler(SamplerBindingType::Filtering)),
                         (10, texture_2d(noise)),
+                        (11, texture_2d(noise)),
+                        (12, texture_3d(noise)),
+                        (13, sampler(SamplerBindingType::Filtering)),
                     ),
                 ),
             )
@@ -221,7 +144,6 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>, device: Res<Rend
                 ),
             )
         }),
-        noise: Noise::new(&device, &queue),
         vertex_layout,
         pipelines: FxHashMap::default(),
     });
@@ -347,12 +269,12 @@ fn prepare(
             &BindGroupEntries::with_indices((
                 (0, depth.view()),
                 (1, buffer.0.as_entire_binding()),
-                (2, &pipelines.noise.plane),
-                (3, &pipelines.noise.volume),
-                (4, &pipelines.noise.sampler),
                 (8, &cloud_map.view),
                 (9, &cloud_map.sampler),
                 (10, &cloud_map.shade),
+                (11, &cloud_map.noise.plane),
+                (12, &cloud_map.noise.volume),
+                (13, &cloud_map.noise.sampler),
             )),
         );
         let composite_group = device.create_bind_group(

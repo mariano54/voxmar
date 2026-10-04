@@ -1,8 +1,8 @@
 // Noise for clouds and ground fog: the body of cloud, the billows at its edges and 3D noise,
 // from integer hashes on lattices that repeat every 256 cells (2D) and 64 cells (3D), far
-// wider than anything they shape. The volumetric pass, which samples them most, reads the
-// same lattices from two small textures (render/volumetric.rs, NOISE_TEXTURES) instead of
-// hashing, so the cloud it draws and the shadows the terrain takes stay one. The low cloud
+// wider than anything they shape. The volumetric pass and the terrain read the same
+// lattices from two small textures (render/cloud_map.rs, NOISE_TEXTURES) instead of
+// hashing, so the cloud drawn and the shadows anything else takes stay one. The low cloud
 // is a layer in the world (atmosphere.wgsl, `cloud_density`); the sky draws the higher
 // sheet and cirrus.
 
@@ -36,24 +36,28 @@ fn hash3(p: vec3<i32>) -> f32 {
 }
 
 #ifdef NOISE_TEXTURES
-@group(2) @binding(2) var noise_2d: texture_2d<f32>;
-@group(2) @binding(3) var noise_3d: texture_3d<f32>;
-@group(2) @binding(4) var noise_sampler: sampler;
+@group(2) @binding(11) var noise_2d: texture_2d<f32>;
+@group(2) @binding(12) var noise_3d: texture_3d<f32>;
+@group(2) @binding(13) var noise_sampler: sampler;
 
 // Value noise, 0..1: the lattice's texels blended by the filter at the smoothed fraction.
+// The cell is wrapped to the lattice first, so far from the origin the texture coordinate
+// keeps its precision.
 fn value_noise(p: vec2<f32>) -> f32 {
     let i = floor(p);
-    let f = fract(p);
+    let f = p - i;
     let u = f * f * (3.0 - 2.0 * f);
-    return textureSampleLevel(noise_2d, noise_sampler, (i + u + 0.5) / f32(NOISE_2D), 0.0).r;
+    let texel = 1.0 / f32(NOISE_2D);
+    return textureSampleLevel(noise_2d, noise_sampler, fract(i * texel) + (u + 0.5) * texel, 0.0).r;
 }
 
 // 3D value noise, 0..1, for billows and ground fog.
 fn value_noise3(p: vec3<f32>) -> f32 {
     let i = floor(p);
-    let f = fract(p);
+    let f = p - i;
     let u = f * f * (3.0 - 2.0 * f);
-    return textureSampleLevel(noise_3d, noise_sampler, (i + u + 0.5) / f32(NOISE_3D), 0.0).r;
+    let texel = 1.0 / f32(NOISE_3D);
+    return textureSampleLevel(noise_3d, noise_sampler, fract(i * texel) + (u + 0.5) * texel, 0.0).r;
 }
 #else
 // Value noise, 0..1.
