@@ -52,48 +52,11 @@ SOFTWARE.
   exactly the crate's values; other noise still comes from the crate itself.
 - Where: `crates/worldgen/src/noise.rs`.
 
-## "Very fast procedural ocean" (water waves)
-
-- Source: https://www.shadertoy.com/view/MdXyzX, as carried in Glimmer's
-  `shaders/lib/water/waveNormals.glsl` (https://github.com/jbritain/glimmer-shaders)
-- Author: afl_ext
-- Licence: MIT (the source reads "afl_ext 2017-2024 // MIT License")
-- Became: `crates/client/src/render/water_surface.wgsl` (`wave_normal`) and
-  `crates/client/src/render/water.rs` (`octaves`): octaves of `exp(sin x - 1)` waves whose
-  frequency, speed and weight grow and decay by afl_ext's factors, turned by afl_ext's
-  direction step, each dragging the next along its slope.
-- Changed: the slope is summed analytically in one pass instead of from three height
-  samples; phases are worked out on the CPU in double precision around the camera; the long
-  waves turn towards the weather's wind; octaves fade out as they shrink below a few pixels.
-
-```
-Copyright (c) 2017-2024 afl_ext
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
 ## Glimmer shaders (water reflections, refraction and absorption)
 
 - Source: https://github.com/jbritain/glimmer-shaders, files
   `shaders/lib/util/screenSpaceRayTrace.glsl` (itself after a public gist by Belmu),
-  `shaders/program/c3_translucents.glsl`, `shaders/lib/water/waterFog.glsl` and
-  `shaders/lib/water/waveNormals.glsl`
+  `shaders/program/c3_translucents.glsl` and `shaders/lib/water/waterFog.glsl`
 - Author: Josh Britain (jbritain)
 - Licence: MIT
 - Became: `crates/client/src/render/water_surface.wgsl` (`trace`, the screen-space march

@@ -1,12 +1,9 @@
 // The surface of real water, drawn by the water pass (water.rs) with the scene behind it
 // bound for reading: its depth, and its colour so far.
 //
-// - Waves: octaves of afl_ext's exp(sin) waves, each dragging the next along its slope
-//   ("Very fast procedural ocean", https://www.shadertoy.com/view/MdXyzX, MIT, as adapted
-//   in Glimmer's waveNormals.glsl by jbritain, MIT). Their directions, frequencies and
-//   phases come from water.rs, where the wind turns them; here the slope is summed
-//   analytically in one pass instead of three height samples, and octaves shorter than a
-//   few pixels fade out so distant water does not sparkle.
+// - Waves: a tiling texture of swells (water/waves.rs) in four layers of unrelated sizes and
+//   turns drifting with the wind, as high as the wind and the open water around let them
+//   grow, so puddles lie still; flowing water carries streaks along its flow.
 // - What lies behind: how far the view travels through water to the scene behind, so
 //   shallows are clear and deep water takes its colour; the bed bent by the waves; the
 //   light reaching the bed dimmed by the water above it.
