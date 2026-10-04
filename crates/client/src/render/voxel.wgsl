@@ -55,6 +55,7 @@ const PLANT_STACK_SHIFT: u32 = 25u;
 const SURFACE_DROP_SHIFT: u32 = 25u;
 const FLOW_DIRECTION_SHIFT: u32 = 28u;
 const FLOW_SPEEDS = array<f32, 4>(0.0, 0.7, 1.4, 2.8);
+const OPEN_WATER_SHIFT: u32 = 14u;
 const FLAG_FALLING: u32 = 1u << 24u;
 const FLAG_FRINGE: u32 = 1u << 27u;
 // Leaf fringes shrink back into their block between these distances, in blocks (the
@@ -289,9 +290,11 @@ struct VertexOutput {
     // Where the chunk's column colours start in `column_colours`.
     @location(6) @interpolate(flat) colours: u32,
 #ifdef TRANSLUCENT
-    // Water's flow, blocks per second along x and z, and whether it is falling.
+    // Water's flow, blocks per second along x and z, whether it is falling, and how much
+    // open water is around (0..1).
     @location(7) flow: vec2<f32>,
     @location(8) @interpolate(flat) falling: u32,
+    @location(9) open_water: f32,
 #endif
 };
 
@@ -321,6 +324,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     if water {
         let turn = f32(w0 >> FLOW_DIRECTION_SHIFT) / 16.0 * 6.2831853;
         out.flow = vec2(cos(turn), sin(turn)) * FLOW_SPEEDS[(w0 >> 21u) & 3u];
+        out.open_water = f32((w1 >> OPEN_WATER_SHIFT) & 15u) / 15.0;
         out.falling = select(0u, 1u, (w0 & FLAG_FALLING) != 0u);
     }
 #endif
@@ -419,7 +423,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
                 let sloped = normalize(tilt) * sign(tilt.y);
                 normal = select(normal, sloped, sloped.y > 0.7);
             }
-            let water = shade_water(in.world_position, normal, biome_tint(in.surface, in.colours, in.world_position, in.face), in.light.y, in.clip_position, footprint, in.flow, in.falling != 0u);
+            let water = shade_water(in.world_position, normal, biome_tint(in.surface, in.colours, in.world_position, in.face), in.light.y, in.clip_position, footprint, in.flow, in.falling != 0u, in.open_water);
             return vec4(water, 1.0);
         }
     } else {

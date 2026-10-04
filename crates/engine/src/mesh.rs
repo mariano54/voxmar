@@ -28,15 +28,19 @@
 //!
 //! ```text
 //! word 0: x:6 | y:6 | z:6 | face:3 | flow speed:2 | covered:1 | falling:1 | drop:3 | flow direction:4
+//! word 1: layer:12 | tint:2 | open water:4 | free:6 | block:4 | sky:4
 //! ```
 //!
 //! `drop` is how far the surface lies below the top of the block at the vertex, in eighths
-//! (from `fluid::corner_heights`, so flows slope down from their source), on the top face and
-//! the top edge of side faces. The flow (`fluid::flow`) is a direction in 16ths of a turn
-//! counter-clockwise from +x towards +z and a speed (`FLOW_SPEEDS`), averaged over the cells
-//! around each corner of a top face so it changes smoothly from cell to cell. `falling`
-//! marks the faces of falling cells. Faces between two cells of the same fluid are hidden,
-//! whatever their states.
+//! (from `fluid::corner_heights`, so flows slope down from their source), on the top face
+//! and the top edge of side faces. The flow (`fluid::flow`) is a direction in 16ths of a
+//! turn counter-clockwise from +x towards +z and a speed (`FLOW_SPEEDS`), the cell's own,
+//! the same at every corner.
+//! `falling` marks the faces of falling cells, and the sides over which water pours down an
+//! edge. `open water` is how much of the surface around the vertex (24 blocks across) is
+//! open water at its level, in 15ths: a puddle or a sheltered pool is nearly 0, the middle
+//! of a lake 15, so only open water carries wind waves. Faces between two cells of the same
+//! fluid are hidden, whatever their states.
 
 use std::cell::RefCell;
 
@@ -45,7 +49,7 @@ use glam::{IVec2, IVec3, UVec3, Vec2};
 use crate::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use crate::coords::{CHUNK_SIZE, Face, WORLD_HEIGHT};
 use crate::fluid::{self, FluidState};
-use crate::light::{LitRegion, MAX_LIGHT};
+use crate::light::{LIGHT_PAD, LitRegion, MAX_LIGHT};
 use crate::visibility::Connectivity;
 use crate::world::Column;
 
@@ -69,6 +73,10 @@ const SURFACE_DROP_SHIFT: u32 = 25;
 const FLOW_DIRECTION_SHIFT: u32 = 28;
 /// Speeds a flow is rounded to, in blocks per second: still, then `fluid::Current`'s.
 pub const FLOW_SPEEDS: [f32; 4] = [0.0, 0.7, 1.4, 2.8];
+/// On fluid faces, word 1 bits 14..17 hold how open the water around the vertex is.
+const OPEN_WATER_SHIFT: u32 = 14;
+/// Half the side of the square of surface whose open water a vertex counts, in blocks.
+const OPEN_WATER_REACH: i32 = 12;
 /// On plant vertices, bits 25..27 hold how many plant cells lie below in the same stack.
 const PLANT_STACK_SHIFT: u32 = 25;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
@@ -306,7 +314,7 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     join_leaves(leaves, occ, joins);
 
     let mut mesher =
-        Mesher { registry, looks, region, cells, chunk_y: cy * CHUNK_SIZE, detail, planes: [[0; S]; S], keys: [[0; S]; S] };
+        Mesher { registry, looks, region, cells, chunk_y: cy * CHUNK_SIZE, detail, open_water: RefCell::default(), planes: [[0; S]; S], keys: [[0; S]; S] };
     let mut mesh = ChunkMesh { connectivity: Connectivity::compute(|x, y, z| cells[pidx(x + 1, y + 1, z + 1)].occludes), ..Default::default() };
     for face in Face::ALL {
         mesher.mesh_faces(face, occ, opaque, joins, &mut mesh.opaque);
@@ -603,6 +611,9 @@ struct Mesher<'a> {
     chunk_y: i32,
     /// Blocks merged along x and z (see `mesh_chunk`).
     detail: i32,
+    /// Open water surface around the column at each height water has a surface at, as
+    /// summed-area tables (see `open_water`).
+    open_water: RefCell<Vec<(i32, Vec<u32>)>>,
     /// `planes[slice][row]`: bit `col` set where a face is visible.
     planes: [[u32; S]; S],
     keys: [[u128; S]; S],
@@ -702,6 +713,10 @@ impl Mesher<'_> {
         let front = pos + face.normal();
         let (du, dv) = (unit(fa.col), unit(fa.row));
         let center = self.padded(front);
+        // Faces under water are lit as the water's surface above them is: the water shader
+        // dims what lies beneath by the path light really takes through the water, which
+        // the light engine's falloff per block of water would only darken a second time.
+        let surface_sky = self.sky_above_water(front);
         let mut ao = 0u64;
         let mut light = 0u64;
         for (corner, (su, sv)) in [(-1, -1), (1, -1), (1, 1), (-1, 1)].into_iter().enumerate() {
@@ -726,7 +741,8 @@ impl Mesher<'_> {
                     count += 1;
                 }
             }
-            let packed = (((sky + count / 2) / count) << 4) | ((block + count / 2) / count);
+            let sky = ((sky + count / 2) / count).max(surface_sky);
+            let packed = (sky << 4) | ((block + count / 2) / count);
             light |= (packed as u64) << (corner * 8);
         }
         // Faces of see-through fluids carry the fluid's surface and flow in place of ambient
@@ -734,8 +750,17 @@ impl Mesher<'_> {
         let mut fluid = 0u128;
         let mut falling = false;
         let state = (info.render == RenderKind::Translucent && info.fluid != 0).then(|| self.registry.fluid(self.padded(pos).block)).flatten();
+        let mut open = 0u128;
         if let Some(state) = state {
             ao = 0;
+            if face == Face::PosY {
+                let (du, dv) = (unit(fa.col), unit(fa.row));
+                for (corner, (su, sv)) in [(-1, -1), (1, -1), (1, 1), (-1, 1)].into_iter().enumerate() {
+                    let o = du * su + dv * sv;
+                    let at = self.in_column(pos) + (o + 1) / 2;
+                    open |= (self.open_water(state, at.y, at.x, at.z) as u128) << (corner * 4);
+                }
+            }
             // Chunks merged for distance keep whole, still blocks: the flow's detail would
             // not show.
             if self.detail == 1 {
@@ -743,7 +768,15 @@ impl Mesher<'_> {
                     ao |= (speed as u64) << (corner * 2);
                     fluid |= (drop as u128) << (corner * 3) | (direction as u128) << (12 + corner * 4);
                 }
-                falling = state.falling;
+                // Falling water, and the side over which water pours down an edge (open in
+                // front, nothing solid beneath that), streams downwards; other sides are the
+                // edge of a surface.
+                let pours = || {
+                    let front = self.in_column(pos + face.normal());
+                    let open = |p: IVec3| self.region.block(p).is_some_and(|b| !self.registry.info(b).solid);
+                    face.normal().y == 0 && open(front) && open(front - IVec3::Y)
+                };
+                falling = state.falling || pours();
             }
         }
         if inner && info.render == RenderKind::Leaves {
@@ -754,7 +787,68 @@ impl Mesher<'_> {
             light = (average(4) | average(0)) * 0x0101_0101;
             ao = INNER_LEAF_AO * 0b0101_0101;
         }
-        (surface | ao << 24 | light << 32) as u128 | (inner as u128) << 64 | ((backed || falling) as u128) << 65 | fluid << 66
+        (surface | ao << 24 | light << 32) as u128
+            | (inner as u128) << 64
+            | ((backed || falling) as u128) << 65
+            | fluid << 66
+            | open << 94
+    }
+
+    /// How much of the surface within `OPEN_WATER_REACH` of the corner at column-relative
+    /// (x, z) is open water of the fluid at height `y` (water there, no solid or more of it
+    /// above), in 15ths. Each height's table is built once per chunk.
+    fn open_water(&self, state: FluidState, y: i32, x: i32, z: i32) -> u8 {
+        const W: i32 = CHUNK_SIZE + 2 * LIGHT_PAD;
+        let mut tables = self.open_water.borrow_mut();
+        let table = match tables.iter().position(|(level, _)| *level == y) {
+            Some(i) => &tables[i].1,
+            None => {
+                let open = |x: i32, z: i32| {
+                    let here = self.region.block(IVec3::new(x, y, z)).and_then(|b| self.registry.fluid(b));
+                    let above = self.region.block(IVec3::new(x, y + 1, z));
+                    here.is_some_and(|s| s.fluid == state.fluid)
+                        && above.is_some_and(|b| self.registry.fluid(b).is_none_or(|s| s.fluid != state.fluid) && !self.registry.info(b).solid)
+                };
+                // sums[(z + 1) * (W + 1) + x + 1]: open cells in [−PAD, x] × [−PAD, z].
+                let mut sums = vec![0u32; ((W + 1) * (W + 1)) as usize];
+                for j in 0..W {
+                    let mut row = 0;
+                    for i in 0..W {
+                        row += open(i - LIGHT_PAD, j - LIGHT_PAD) as u32;
+                        sums[((j + 1) * (W + 1) + i + 1) as usize] = sums[(j * (W + 1) + i + 1) as usize] + row;
+                    }
+                }
+                tables.push((y, sums));
+                &tables.last().expect("just pushed").1
+            }
+        };
+        let at = |x: i32, z: i32| {
+            let (i, j) = ((x + LIGHT_PAD).clamp(0, W), (z + LIGHT_PAD).clamp(0, W));
+            table[(j * (W + 1) + i) as usize] as i32
+        };
+        let (x0, x1, z0, z1) = (x - OPEN_WATER_REACH, x + OPEN_WATER_REACH, z - OPEN_WATER_REACH, z + OPEN_WATER_REACH);
+        let count = at(x1, z1) - at(x0, z1) - at(x1, z0) + at(x0, z0);
+        let area = (2 * OPEN_WATER_REACH * 2 * OPEN_WATER_REACH) as f32;
+        (count as f32 / area * 15.0).round() as u8
+    }
+
+    /// The sky light just above the surface of the see-through fluid filling the padded
+    /// cell `front`, or 0 when `front` holds none or the fluid is roofed over.
+    fn sky_above_water(&self, front: IVec3) -> u32 {
+        let cell = self.padded(front);
+        if cell.fluid == 0 || self.looks[cell.block.0 as usize].render != RenderKind::Translucent {
+            return 0;
+        }
+        let mut p = self.in_column(front);
+        for _ in 0..WORLD_HEIGHT {
+            p.y += 1;
+            match self.region.block(p) {
+                Some(b) if self.looks[b.0 as usize].fluid == cell.fluid => {}
+                Some(b) if !self.looks[b.0 as usize].occludes => return (self.region.light(p) >> 4) as u32,
+                _ => return 0,
+            }
+        }
+        0
     }
 
     /// Column-relative position of a cell of the chunk.
@@ -763,35 +857,23 @@ impl Mesher<'_> {
     }
 
     /// A fluid face's corners, in the face's corner order: how far the surface lies below
-    /// the block's top there (eighths), and the flow's speed level and direction (16ths).
-    /// Only the top face and the top edge of the sides drop, and not under more of the same
-    /// fluid, which fills the cell. A top face's flow is the mean over the cells around each
-    /// corner, so it changes smoothly from cell to cell; the sides take the cell's own.
+    /// the block's top there (eighths), and the cell's flow's speed level and direction
+    /// (16ths). Only the top face and the top edge of the sides drop, and not under more of
+    /// the same fluid, which fills the cell.
     fn fluid_corners(&self, face: Face, fa: &FaceAxes, pos: IVec3, state: FluidState) -> [(u8, u8, u8); 4] {
         let block = |p: IVec3| self.region.block(p);
         let at = self.in_column(pos);
         let same = |p: IVec3| block(p).and_then(|b| self.registry.fluid(b)).is_some_and(|s| s.fluid == state.fluid);
         let heights = if same(at + IVec3::Y) { [1.0; 4] } else { fluid::corner_heights(self.registry, block, at) };
-        // Flows of the 3×3 cells around this one, for the corners to share; open cells and
-        // other fluids have none to give. Where water falls beside a cell, or into the pool
-        // beside it, the surface churns away from the fall as fast as rapids.
+        // The cell's flow. Where water falls beside it, or into the pool beside it, its
+        // surface churns away from the fall.
         let falling = |p: IVec3| block(p).and_then(|b| self.registry.fluid(b)).is_some_and(|s| s.fluid == state.fluid && s.falling);
-        let mut flows = [None; 9];
-        if face == Face::PosY {
-            for (i, flow) in flows.iter_mut().enumerate() {
-                let p = at + IVec3::new(i as i32 % 3 - 1, 0, i as i32 / 3 - 1);
-                *flow = same(p).then(|| {
-                    let churn: Vec2 = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z]
-                        .into_iter()
-                        .filter(|&side| falling(p + side) || falling(p + side + IVec3::Y))
-                        .map(|side| -Vec2::new(side.x as f32, side.z as f32) * FLOW_SPEEDS[3])
-                        .sum();
-                    fluid::flow(self.registry, block, p) + churn
-                });
-            }
-        } else {
-            flows[4] = Some(fluid::flow(self.registry, block, at));
-        }
+        let churn: Vec2 = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z]
+            .into_iter()
+            .filter(|&side| face == Face::PosY && (falling(at + side) || falling(at + side + IVec3::Y)))
+            .map(|side| -Vec2::new(side.x as f32, side.z as f32) * FLOW_SPEEDS[2])
+            .sum();
+        let flow = fluid::flow(self.registry, block, at) + churn;
         let (du, dv) = (unit(fa.col), unit(fa.row));
         [(-1, -1), (1, -1), (1, 1), (-1, 1)].map(|(su, sv)| {
             // Which way from the cell's centre the corner lies.
@@ -803,14 +885,10 @@ impl Mesher<'_> {
                 _ => 3,
             }];
             let drop = if o.y > 0 { ((1.0 - height) * 8.0).round().clamp(0.0, 7.0) as u8 } else { 0 };
-            let around = if face == Face::PosY {
-                let (x, z) = (o.x.max(0), o.z.max(0));
-                [(x, z), (x + 1, z), (x, z + 1), (x + 1, z + 1)].map(|(i, j)| flows[(j * 3 + i) as usize])
-            } else {
-                [flows[4], None, None, None]
-            };
-            let (sum, count) = around.into_iter().flatten().fold((Vec2::ZERO, 0.0), |(sum, n), f| (sum + f, n + 1.0));
-            let (speed, direction) = quantise_flow(if count > 0.0 { sum / count } else { Vec2::ZERO });
+            // The cell's own flow at every corner: its streaks turn as a whole, so where the
+            // flow changes, the pattern changes at the edge of the block, as Minecraft's
+            // flowing water does, rather than along a diagonal through it.
+            let (speed, direction) = quantise_flow(flow);
             (drop, speed, direction)
         })
     }
@@ -878,6 +956,7 @@ fn emit_quad(
         let light = ((key >> (32 + i * 8)) & 0xFF) as u32;
         let drop = ((key >> (66 + i * 3)) & 7) as u32;
         let direction = ((key >> (78 + i * 4)) & 15) as u32;
+        let open = ((key >> (94 + i * 4)) & 15) as u32;
         let w0 = p.x as u32
             | (p.y as u32) << 6
             | (p.z as u32) << 12
@@ -886,7 +965,7 @@ fn emit_quad(
             | flags << 23
             | drop << SURFACE_DROP_SHIFT
             | direction << FLOW_DIRECTION_SHIFT;
-        out.vertices.push([w0, surface | light << 24]);
+        out.vertices.push([w0, surface | open << OPEN_WATER_SHIFT | light << 24]);
     }
 
     // Split along the darker diagonal so AO interpolates without anisotropic streaks.
@@ -1280,5 +1359,53 @@ mod tests {
         assert_eq!(quantise_flow(Vec2::new(-2.6, 0.1)), (3, 8));
         assert_eq!(quantise_flow(Vec2::new(0.6, -0.6)), (1, 14));
         assert_eq!(quantise_flow(Vec2::new(0.1, 0.1)), (0, 0));
+    }
+
+    #[test]
+    fn only_open_water_is_open() {
+        let open = |mesh: &MeshBuffers| -> Vec<u32> {
+            mesh.vertices.iter().filter(|v| unpack(**v).1 == Face::PosY as u32).map(|v| v[1] >> OPEN_WATER_SHIFT & 15).collect()
+        };
+        // A lake filling the columns (the neighbours are the same column): open everywhere.
+        let lake = water_mesh(|_, water, column| {
+            for z in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    column.set_block(IVec3::new(x, 32, z), water.source);
+                }
+            }
+        });
+        assert!(open(&lake).iter().all(|&o| o == 15), "{:?}", open(&lake));
+        // A puddle two blocks across: hardly open at all.
+        let puddle = water_mesh(|_, water, column| {
+            for (x, z) in [(10, 10), (11, 10), (10, 11), (11, 11)] {
+                column.set_block(IVec3::new(x, 32, z), water.source);
+            }
+        });
+        assert!(open(&puddle).iter().all(|&o| o == 0), "{:?}", open(&puddle));
+    }
+
+    #[test]
+    fn beds_are_lit_as_the_surface_is() {
+        // A pool five deep: its floor's top faces carry the sky light above the water.
+        let mesh = |reg: &BlockRegistry, column: Column| {
+            let column = Arc::new(column);
+            let region = LitRegion::compute(reg, &std::array::from_fn(|_| column.clone()));
+            mesh_chunk(reg, &region, &column, 0, 1).opaque
+        };
+        let reg = BlockRegistry::from_ron("test", FLUIDS).unwrap();
+        let stone = reg.expect("test:stone");
+        let mut column = Column::default();
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                column.set_block(IVec3::new(x, 31, z), stone);
+                for y in 32..37 {
+                    column.set_block(IVec3::new(x, y, z), reg.fluids()[0].source);
+                }
+            }
+        }
+        let floor = mesh(&reg, column);
+        let sky = |v: &Vertex| v[1] >> 28;
+        let tops: Vec<u32> = floor.vertices.iter().filter(|v| unpack(**v).1 == Face::PosY as u32).map(sky).collect();
+        assert!(!tops.is_empty() && tops.iter().all(|&s| s == 15), "{tops:?}");
     }
 }
