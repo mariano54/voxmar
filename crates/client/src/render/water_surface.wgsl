@@ -239,6 +239,19 @@ fn trace(origin: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
     return vec4(ray, 1.0 - smoothstep(0.85, 1.0, edge));
 }
 
+// The air between the eye and a point: how much of the point shows through it, and the
+// light it adds on the way.
+struct Air {
+    through: f32,
+    light: vec3<f32>,
+};
+
+fn air_to(world: vec3<f32>) -> Air {
+    let offset = world - view.world_position;
+    let haze = fog_amount(offset);
+    return Air(1.0 - haze, haze * fog_color(normalize(offset)));
+}
+
 // A smooth noise for foam.
 fn foam_noise(p: vec2<f32>) -> f32 {
     let i = floor(p);
@@ -267,7 +280,7 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     let scattered = scattering(tint, water.optics.y);
     let open = smoothstep(0.5, 0.95, sky);
     let distance_to_eye = distance(eye, world);
-    let haze = fog_amount(world - eye);
+    let air = air_to(world);
 
     // Waves on top, calmer where little sky reaches (in caves). Sides of water open to the
     // air are where it falls, generated water being sealed everywhere else: streaks run
@@ -297,8 +310,8 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
             let bent = project(world + out * 4.0);
             seen_above = mix(color_at(bent.xy), deep, 1.0 - saturate(dot(out, -normal) * 3.0));
         }
-        // The water between the eye and the surface, as the haze under water paints it.
-        return mix(seen_above, fog_color(-to_eye), haze);
+        // The water between the eye and the surface, as the air under water paints it.
+        return seen_above * air.through + air.light;
     }
 
     // What lies behind the surface along the view, and the same along the view bent by the
@@ -320,12 +333,11 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     let light = shade_normal(vec3(1.0), world, vec3(0.0, 1.0, 0.0), 1.0, sky, 0.0, 1.0, false, frag.xy);
     let down = max(world.y - behind.y, 0.0);
     let through = transmittance(absorbed, scattered, path + down);
-    // The scene behind already has the haze between it and the eye; the haze in front of
-    // the surface is taken back out, the water's effect applied, and the haze put back.
-    let fog = fog_color(-to_eye);
-    let seen = through * max(color_at(behind_uv) - haze * fog, vec3(0.0))
-        + (1.0 - haze) * inscattered(absorbed, scattered, path, light)
-        + haze * fog;
+    // The scene behind already has the air between it and the eye; the air in front of the
+    // surface is taken back out, the water's effect applied, and the air put back.
+    let seen = through * max(color_at(behind_uv) - air.light, vec3(0.0))
+        + air.through * inscattered(absorbed, scattered, path, light)
+        + air.light;
 
     // The reflection: the scene, where the march finds it; otherwise the sky, where sky
     // light reaches, and the dim water around elsewhere.
@@ -337,7 +349,7 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     // Thin water at the very edge of the shore hardly reflects, so the edge stays soft.
     let reflectance = fresnel(facing) * water.strengths.x * smoothstep(0.0, 0.3, path);
     let sky_color = sky_gradient(r, water.zenith.rgb, water.horizon.rgb);
-    var reflected = mix(sky_color * open + seen * (1.0 - open), fog_color(r), haze);
+    var reflected = mix(seen, sky_color * air.through + air.light, open);
     if reflectance > MIN_REFLECTION {
         let hit = trace(world + normal * 0.02, r);
         // Nothing under the surface can be reflected.
@@ -351,7 +363,7 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     let toward_sun = max(dot(reflect(-to_eye, waves), sun_direction()), 0.0);
     let glint = (pow(toward_sun, GLINT.x) * GLINT_STRENGTH.x + pow(toward_sun, GLINT.y) * GLINT_STRENGTH.y)
         * open * sun_shadow(world, normal, frag.xy) * water.strengths.x;
-    var color = mix(seen, reflected, reflectance) + sun_color() * glint * (1.0 - haze);
+    var color = mix(seen, reflected, reflectance) + sun_color() * glint * air.through;
 
     // Foam along the shore, where the bed comes up to the surface: broken patches that
     // drift and change slowly, thickest right at the edge. Falling water is white in streaks.
@@ -364,7 +376,7 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     }
     foam = saturate(foam * water.strengths.y);
     if foam > 0.0 {
-        color = mix(color, (light * 0.8 + 0.02) * (1.0 - haze) + haze * fog, foam);
+        color = mix(color, (light * 0.8 + 0.02) * air.through + air.light, foam);
     }
     return color;
 }
