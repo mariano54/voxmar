@@ -193,7 +193,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         present_mode: if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync },
         ..default()
     };
-    let plugins = DefaultPlugins.set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() });
+    // Our few Bevy meshes (the sky, rain, cracks, other players) are batched on the CPU:
+    // building their instances on the GPU takes four compute passes and two checks of
+    // indirect draws a frame, and every pass costs about 0.2 ms on Metal however little it
+    // does (see docs/rendering.md).
+    let plugins = DefaultPlugins
+        .set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() })
+        .set(bevy::pbr::PbrPlugin { use_gpu_instance_buffer_builder: false, ..default() });
     if options.capture.is_some() {
         // Headless: render offscreen as fast as possible, independent of any display.
         app.add_plugins((

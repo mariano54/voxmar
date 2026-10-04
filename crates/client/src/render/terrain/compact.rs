@@ -16,7 +16,7 @@ use bevy::render::render_resource::{
     BufferDescriptor, BufferUsages, CachedComputePipelineId, CommandEncoderDescriptor, ComputePassDescriptor,
     ComputePipelineDescriptor, PipelineCache, ShaderStages,
 };
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::{PendingCommandBuffers, RenderDevice, RenderQueue};
 use rustc_hash::FxHashMap;
 
 use super::{TerrainDraws, TerrainGpu};
@@ -157,11 +157,13 @@ pub(super) fn dispatch(
     cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
+    mut pending: ResMut<PendingCommandBuffers>,
 ) {
     let Some(pipeline) = cache.get_compute_pipeline(compact.pipeline) else { return };
     let layout = cache.get_bind_group_layout(&compact.layout);
     let stride = device.limits().min_uniform_buffer_offset_alignment as u64;
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor { label: Some("terrain_compact") });
+    let mut dispatched = false;
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor { label: Some("terrain_compact"), ..default() });
         pass.set_pipeline(pipeline);
@@ -219,11 +221,17 @@ pub(super) fn dispatch(
                 });
                 pass.set_bind_group(0, &*bind_group, &[(i as u64 * stride) as u32]);
                 pass.dispatch_workgroups(groups, 1, 1);
+                dispatched = true;
             }
             compaction.ready = true;
         }
     }
-    queue.submit([encoder.finish()]);
+    // Submitted with the frame's own command buffers, ahead of them, rather than on its
+    // own: every submission costs time on Metal (see docs/rendering.md), and most frames
+    // have nothing to copy at all.
+    if dispatched {
+        pending.push([encoder.finish()]);
+    }
 }
 
 /// Makes sure a view's buffers hold this frame's indices, copies and parameters, growing
