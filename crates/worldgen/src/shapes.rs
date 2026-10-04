@@ -345,7 +345,7 @@ impl Shapes {
                 let crest = |along: f32| 1.0 - n0.get_noise_2d(along, across).abs();
                 // Sampled upwind as well, the lee side of each crest falls away steeply.
                 let here = crest(along);
-                let dune = (here + 0.9 * (here - crest(along - 0.35))).clamp(0.0, 1.3);
+                let dune = (here + 0.6 * (here - crest(along - 0.35))).clamp(0.0, 1.3);
                 // Fields of tall dunes with calm margins, and some flattened crests.
                 let amount = n1.get_noise_2d(x / (spacing * 14.0), z / (spacing * 14.0));
                 let size = (1.0 - (amount / 0.6).powi(2)).clamp(0.2, 1.0);

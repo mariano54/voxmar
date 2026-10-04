@@ -22,8 +22,21 @@
         ),
         (
             name: "dunes",
-            kind: Dunes(height: 11.0, spacing: 46.0),
+            kind: Dunes(height: 10.0, spacing: 46.0),
             climate: [(temperature: ("warm", "hot"), moisture: ("arid", "arid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
+            // Sand right down the slip faces, with the desert's wind streaks.
+            surface: (
+                rules: [
+                    (
+                        when: [Tapered((name: "desert_streaks", scale: 45.0), (name: "desert_streak_width", scale: 400.0, octaves: 2), [(0.35, 0.06), (0.15, 0.03), (0.0, 0.012)])],
+                        place: (top: Block("red_sand"), filler: Block("sandstone"), depth: 5),
+                    ),
+                ],
+                ground: (top: Block("sand"), filler: Block("sandstone"), depth: 6),
+                underwater: (top: Block("sand")),
+                shore: (top: Block("sand")),
+                cliff: Block("sand"),
+            ),
         ),
         (
             // Badlands: flat-topped tiers of banded clay stepping down to the valleys.
