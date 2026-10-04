@@ -301,6 +301,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             }
             rock.profile(x, z, &mut rock_profile);
             let rocky = underground.rocky(x, z);
+            // Strata wobble the same all the way down a block column.
+            let mut wobble = None;
+            let mut band = |strata: &[BlockId], y: i32| strata[(y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))).rem_euclid(strata.len() as i32) as usize];
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -323,13 +326,13 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 } else if below_surface <= layers.depth && layers.filler != Fill::Stones {
                     match layers.filler {
                         Fill::Block(block) => block,
-                        _ => terrain.band(strata, y, wx, wz),
+                        _ => band(strata, y),
                     }
                 } else {
                     let rock = rock_profile.at(y);
-                    match underground.rock(x, y, z).filter(|_| rocky) {
+                    match if rocky { underground.rock(x, y, z) } else { None } {
                         Some(Rock::Stones(stones)) => stones.pick((0.5 + rock * 0.53).clamp(0.0, 0.9999)),
-                        Some(Rock::Strata(strata)) => terrain.band(strata, y, wx, wz),
+                        Some(Rock::Strata(strata)) => band(strata, y),
                         None => stone_at(ids, stones, rock, world.seed, y, wx, wz),
                     }
                 };
@@ -537,10 +540,10 @@ impl Terrain {
         (0.8 * patch + 0.2 * speckle).clamp(0.0, 0.9999)
     }
 
-    /// Strata: bands of rock, one block each, that wobble gently.
-    fn band(&self, strata: &[BlockId], y: i32, x: i32, z: i32) -> BlockId {
-        let wobble = (self.patches.get_noise_2d(x as f32 * 0.25, z as f32 * 0.25) * 2.5).round() as i32;
-        strata[(y + wobble).rem_euclid(strata.len() as i32) as usize]
+    /// How far strata (bands of rock, one block each) are shifted up or down at (x, z):
+    /// they wobble gently.
+    fn wobble(&self, x: i32, z: i32) -> i32 {
+        (self.patches.get_noise_2d(x as f32 * 0.25, z as f32 * 0.25) * 2.5).round() as i32
     }
 
     /// The frozen surface of sea, lake or river water at this site, if it freezes: ice
@@ -682,8 +685,8 @@ fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) ->
 /// The stone at a block: deepslate in the depths, otherwise one of `stones` in blobs and
 /// veins that follow a 3D noise (`rock`, its value here).
 fn stone_at(ids: &Ids, stones: &Palette, rock: f32, seed: u64, y: i32, wx: i32, wz: i32) -> BlockId {
-    // Deepslate below `DEEPSLATE`, dithered over 8 blocks.
-    if y < DEEPSLATE + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
+    // Deepslate below `DEEPSLATE`, dithered over 8 blocks (hashed only within them).
+    if y < DEEPSLATE || y < DEEPSLATE + 7 && y < DEEPSLATE + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
         return ids.deepslate;
     }
     // A single octave of simplex noise is spread nearly evenly over about ±0.94.
