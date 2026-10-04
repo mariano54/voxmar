@@ -47,6 +47,9 @@ pub struct Regional {
     pub sea_temperature: f32,
     /// Annual precipitation, mm.
     pub precipitation: f32,
+    /// Precipitation without the extra rain of windward slopes, which changes from one
+    /// slope to the next: the regional wetness biomes are chosen by.
+    pub rainfall: f32,
     /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland.
     pub continentalness: f32,
     /// 0 at the equator ..= 1 at a pole.
@@ -74,6 +77,7 @@ impl Regional {
         Self {
             sea_temperature: mix(self.sea_temperature, other.sea_temperature),
             precipitation: mix(self.precipitation, other.precipitation),
+            rainfall: mix(self.rainfall, other.rainfall),
             continentalness: mix(self.continentalness, other.continentalness),
             latitude: mix(self.latitude, other.latitude),
             elevation: mix(self.elevation, other.elevation),
@@ -177,6 +181,11 @@ impl Climate {
         0.5 - 0.5 * (ROUNDING * (z / pole * PI).sin()).asin() / ROUNDING.asin()
     }
 
+    /// The regional climate at a lattice-free position, for sparse searches.
+    pub fn regional_at(&self, geology: &Geology, at: IVec2) -> Regional {
+        self.regional(geology, at.x as f32, at.y as f32)
+    }
+
     /// The regional climate at one position. Expensive: it follows the wind upwind.
     fn regional(&self, geology: &Geology, x: f32, z: f32) -> Regional {
         let sea = SEA_LEVEL as f32;
@@ -225,6 +234,7 @@ impl Climate {
         Regional {
             sea_temperature,
             precipitation,
+            rainfall: precipitation / orographic,
             continentalness: continentalness(relief.continental),
             latitude,
             elevation: relief.elevation,
