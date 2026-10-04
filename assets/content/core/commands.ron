@@ -44,6 +44,27 @@
             permission: Admin,
             run: GameMode,
         ),
+        (
+            name: "setblock",
+            usage: "<x> <y> <z> <block>",
+            help: "Puts a block at a position (~ is where you are, so ~ ~-1 ~ is under your feet), replacing what is there. Water and lava placed this way flow.",
+            permission: Admin,
+            run: SetBlock,
+        ),
+        (
+            name: "fill",
+            usage: "<x1> <y1> <z1> <x2> <y2> <z2> <block>",
+            help: "Fills the box between two corners with a block, up to 32768 of them; air empties it.",
+            permission: Admin,
+            run: Fill,
+        ),
+        (
+            name: "give",
+            usage: "<block> [count]",
+            help: "Gives you blocks, 64 unless you say: /give water to pour some.",
+            permission: Admin,
+            run: Give,
+        ),
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (
             name: "locate",

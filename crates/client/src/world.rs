@@ -137,6 +137,7 @@ impl ClientWorld {
     }
 
     pub fn insert_column(&mut self, pos: ColumnPos, column: Arc<Column>) {
+        self.terrain.upload_column(pos, column.colors.clone());
         self.voxels.insert(pos, column);
         for dz in -1..=1 {
             for dx in -1..=1 {
@@ -157,6 +158,7 @@ impl ClientWorld {
                 self.terrain.upload_blades(chunk, Vec::new());
             }
         }
+        self.terrain.remove_column(pos);
         self.visibility_dirty = true;
     }
 

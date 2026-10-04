@@ -3,10 +3,12 @@
 
 mod actions;
 mod commands;
+mod fluids;
 mod player;
 mod process;
 pub mod save;
 mod weather;
+mod wear;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,8 +20,9 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
 use voxmar_engine::content::Content;
-use voxmar_engine::field::Field;
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, WORLD_HEIGHT};
+use voxmar_engine::field::Field;
+use voxmar_engine::fluid::{Budget, Fluids};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
@@ -97,6 +100,7 @@ pub fn assets_dir() -> PathBuf {
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let content = Content::load(&assets.join("content"))?;
     WorldContent::load(&content)?;
+    wear::WearRules::load(&content.files, &content.blocks, 0)?;
     Ok(content)
 }
 
@@ -178,16 +182,33 @@ fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, 
     Ok((Some(save), meta))
 }
 
-/// A saved column if there is one, otherwise a freshly generated one. Runs on workers.
-fn load_column(save: Option<&WorldSave>, generator: &dyn Generator, registry: &BlockRegistry, pos: ColumnPos) -> Column {
+/// A column as it was loaded: from a save (`saved`), or freshly generated.
+pub(crate) struct Loaded {
+    column: Column,
+    saved: bool,
+}
+
+/// A saved column if there is one, with its worn ground healed up to `today`, otherwise a
+/// freshly generated one. Runs on workers.
+pub(crate) fn load_column(
+    save: Option<&WorldSave>,
+    generator: &dyn Generator,
+    registry: &BlockRegistry,
+    wear: &wear::WearRules,
+    today: u32,
+    pos: ColumnPos,
+) -> Loaded {
     if let Some(save) = save {
         match save.read_column(pos, registry) {
-            Ok(Some(column)) => return column,
+            Ok(Some(mut column)) => {
+                wear.heal(&mut column, pos.origin(), today, registry);
+                return Loaded { column, saved: true };
+            }
             Ok(None) => {}
             Err(e) => tracing::error!("could not load column {pos:?}, generating it again: {e}"),
         }
     }
-    generator.generate(pos)
+    Loaded { column: generator.generate(pos), saved: false }
 }
 
 pub(crate) struct Server {
@@ -202,16 +223,23 @@ pub(crate) struct Server {
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
+    /// How ground wears under feet and heals.
+    wear_rules: Arc<wear::WearRules>,
     /// Humidity, cloud and precipitation, evolved by the weather process, and the weather
     /// admins have forced.
     weather: WeatherState,
     world: VoxelWorld,
+    /// Water and lava waiting to flow, and how much of it a tick may move.
+    fluids: Fluids,
+    fluid_budget: Budget,
+    /// Seconds the last tick took.
+    tick_seconds: f64,
     /// Columns edited since they were last saved. They stay loaded until saved; without a
     /// save, that is forever.
     dirty: FxHashSet<ColumnPos>,
     generating: FxHashSet<ColumnPos>,
-    generated_tx: Sender<(ColumnPos, Column)>,
-    generated_rx: Receiver<(ColumnPos, Column)>,
+    generated_tx: Sender<(ColumnPos, Loaded)>,
+    generated_rx: Receiver<(ColumnPos, Loaded)>,
     incoming: Receiver<ServerConnection>,
     /// Lines typed into the server's own console.
     console: Receiver<String>,
@@ -252,11 +280,16 @@ impl Server {
         let mut world = VoxelWorld::default();
         let spawn_block = generator.spawn_point();
         let spawn_column = ColumnPos::of_block(spawn_block);
-        world.insert(spawn_column, Arc::new(load_column(save.as_ref(), &*generator, &content.blocks, spawn_column)));
+        let tick = meta.time.max(FIRST_TICK);
+        let wear_rules = Arc::new(wear::WearRules::load(&content.files, &content.blocks, meta.seed).expect("checked by load_content"));
+        let today = wear::day(meta.day.unwrap_or(tick) as f64);
+        let loaded = load_column(save.as_ref(), &*generator, &content.blocks, &wear_rules, today, spawn_column);
+        world.insert(spawn_column, Arc::new(loaded.column));
+        let mut fluids = Fluids::default();
+        fluids.column_loaded(&content.blocks, &world, spawn_column, tick, loaded.saved);
         let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", meta.seed);
-        let tick = meta.time.max(FIRST_TICK);
         Self {
             config,
             tick,
@@ -270,8 +303,12 @@ impl Server {
             executor: Executor::default(),
             processes,
             temperature,
+            wear_rules,
             weather,
             world,
+            fluids,
+            fluid_budget: Budget::default(),
+            tick_seconds: 0.0,
             dirty: FxHashSet::default(),
             generating: FxHashSet::default(),
             generated_tx,
@@ -319,10 +356,19 @@ impl Server {
     }
 
     fn receive_generated(&mut self) {
-        while let Ok((pos, column)) = self.generated_rx.try_recv() {
+        while let Ok((pos, loaded)) = self.generated_rx.try_recv() {
             self.generating.remove(&pos);
-            self.world.insert(pos, Arc::new(column));
+            // A command may have loaded (and edited) the column in the meantime.
+            if !self.world.contains(pos) {
+                self.insert_column(pos, loaded);
+            }
         }
+    }
+
+    /// Adds a loaded column to the world, and lets fluid waiting for it flow on.
+    pub(crate) fn insert_column(&mut self, pos: ColumnPos, loaded: Loaded) {
+        self.world.insert(pos, Arc::new(loaded.column));
+        self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
     }
 
     fn handle_messages(&mut self) {
@@ -344,10 +390,12 @@ impl Server {
 
     fn tick(&mut self) {
         let _span = tracing::info_span!("server_tick").entered();
+        let started = Instant::now();
         self.tick += 1;
         self.day += self.day_speed as f64;
         self.complete_actions();
         self.run_processes();
+        self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for &id in &ids {
@@ -361,6 +409,7 @@ impl Server {
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
         }
+        self.tick_seconds = started.elapsed().as_secs_f64();
     }
 
     /// Writes edited columns, joined players and the world's metadata. Failures are
@@ -445,9 +494,10 @@ impl Server {
                     }
                 } else if self.generating.len() < MAX_GENERATING && self.generating.insert(pos) {
                     let (generator, save, registry) = (self.generator.clone(), self.save.clone(), self.content.blocks.clone());
+                    let (wear, today) = (self.wear_rules.clone(), wear::day(self.day));
                     let tx = self.generated_tx.clone();
                     rayon::spawn(move || {
-                        let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, pos)));
+                        let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, &wear, today, pos)));
                     });
                 }
             }
@@ -478,6 +528,7 @@ impl Server {
             .collect();
         for pos in unload {
             self.world.remove(pos);
+            self.fluids.column_unloaded(pos);
         }
     }
 
@@ -489,10 +540,42 @@ impl Server {
         self.block(pos).is_some_and(|b| self.content.blocks.info(b).solid)
     }
 
+    /// Changes many blocks at once (a command's), telling each player about those in columns
+    /// they have in one message, and waking any fluid they let flow.
+    pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
+        let mut done = Vec::with_capacity(changes.len());
+        for &(pos, block) in changes {
+            if self.world.set_block(pos, block).is_some() {
+                self.dirty.insert(ColumnPos::of_block(pos));
+                done.push((pos, block));
+            }
+        }
+        for &(pos, _) in &done {
+            self.fluids.changed(&self.content.blocks, &self.world, pos, self.tick);
+        }
+        self.send_changes(done);
+    }
+
+    /// Sends each player the changes in columns it has.
+    pub(crate) fn send_changes(&self, changes: Vec<(IVec3, BlockId)>) {
+        for player in self.players.values().filter(|p| p.joined) {
+            let seen: Vec<_> = changes.iter().copied().filter(|(pos, _)| player.sent.contains(&ColumnPos::of_block(*pos))).collect();
+            if !seen.is_empty() {
+                player.connection.send(ServerMessage::Blocks { changes: seen });
+            }
+        }
+    }
+
+    /// Changes a block, telling only the players who have its column (the others get the
+    /// change with the column), and wakes any fluid it lets flow.
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
+        let column = ColumnPos::of_block(pos);
         if self.world.set_block(pos, block).is_some() {
-            self.dirty.insert(ColumnPos::of_block(pos));
-            self.broadcast(ServerMessage::BlockChanged { pos, block });
+            self.dirty.insert(column);
+            for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
+                player.connection.send(ServerMessage::BlockChanged { pos, block });
+            }
+            self.fluids.changed(&self.content.blocks, &self.world, pos, self.tick);
         }
     }
 }

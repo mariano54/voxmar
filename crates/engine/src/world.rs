@@ -23,6 +23,23 @@ pub struct Column {
     /// Grass, foliage and water colours (sRGB) per (x, z), indexed `z * 32 + x`: the
     /// biomes' and the climate's, blended across borders.
     pub colors: Vec<[[u8; 3]; 3]>,
+    /// Ground worn by feet, sparse and sorted by position. Only the server changes it.
+    pub wear: Vec<Wear>,
+}
+
+/// Ground worn by feet at one (x, z) of a column: how much it has been walked on since it
+/// last changed, how many stages of wear feet have brought it through (what healing may
+/// undo; ground generated worn, such as a trail's tread, does not count), and when it was
+/// last walked on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Wear {
+    /// `z * 32 + x`.
+    pub at: u16,
+    /// Steps, in quarters.
+    pub steps: u8,
+    pub stages: u8,
+    /// Days since the world began.
+    pub day: u32,
 }
 
 /// Colours for a column nothing has coloured: a mild green and blue.
@@ -30,7 +47,12 @@ pub const DEFAULT_COLORS: [[u8; 3]; 3] = [[124, 189, 107], [96, 161, 63], [63, 1
 
 impl Default for Column {
     fn default() -> Self {
-        Self { chunks: Default::default(), climate: vec![[128, 128]; COLUMN_AREA], colors: vec![DEFAULT_COLORS; COLUMN_AREA] }
+        Self {
+            chunks: Default::default(),
+            climate: vec![[128, 128]; COLUMN_AREA],
+            colors: vec![DEFAULT_COLORS; COLUMN_AREA],
+            wear: Vec::new(),
+        }
     }
 }
 
@@ -52,6 +74,25 @@ impl Column {
     /// Grass, foliage and water colours at (x, z) relative to the column origin.
     pub fn colors_at(&self, x: i32, z: i32) -> [[u8; 3]; 3] {
         self.colors[(z * CHUNK_SIZE + x) as usize]
+    }
+
+    /// The wear at (x, z) relative to the column origin, if any.
+    pub fn wear_at(&self, x: i32, z: i32) -> Option<&Wear> {
+        let at = (z * CHUNK_SIZE + x) as u16;
+        self.wear.binary_search_by_key(&at, |w| w.at).ok().map(|i| &self.wear[i])
+    }
+
+    /// The wear at (x, z), made if there is none yet.
+    pub fn wear_mut(&mut self, x: i32, z: i32) -> &mut Wear {
+        let at = (z * CHUNK_SIZE + x) as u16;
+        let i = match self.wear.binary_search_by_key(&at, |w| w.at) {
+            Ok(i) => i,
+            Err(i) => {
+                self.wear.insert(i, Wear { at, ..Wear::default() });
+                i
+            }
+        };
+        &mut self.wear[i]
     }
 }
 
@@ -102,6 +143,11 @@ impl VoxelWorld {
         }
         let column = self.columns.get(&ColumnPos::of_block(pos))?;
         Some(column.block(IVec3::new(pos.x & (CHUNK_SIZE - 1), pos.y, pos.z & (CHUNK_SIZE - 1))))
+    }
+
+    /// A loaded column to change, copied first if a job still reads it.
+    pub fn column_mut(&mut self, pos: ColumnPos) -> Option<&mut Column> {
+        self.columns.get_mut(&pos).map(Arc::make_mut)
     }
 
     /// Sets a block, returning the previous one. Fails if the column is not loaded.

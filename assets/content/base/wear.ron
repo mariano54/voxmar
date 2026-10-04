@@ -1,0 +1,30 @@
+// Ground worn by feet (see crates/server/src/wear.rs).
+//
+// Each step onto a block wears it by one step, the blocks to either side by half a step
+// and the block ahead by a quarter. Plants on the ground go first, then the ground passes
+// through its stages; every block draws how many steps each takes from `steps` (a range).
+//
+// stages: what a block of ground wears to.
+// trample: what a plant is trampled to (`from` may be `#tag`); `top` is the upper half of
+//   a tall plant, cleared with it.
+// heal_days: days for worn ground to heal back a stage when nobody walks on it (half that
+//   for a lone patch). Ground generated worn, like a trail's tread, never heals further.
+// tuft: a plant that may sprout on ground healing back to grass, and the chance.
+(
+    stages: [
+        (from: "grass_block", to: "worn_grass_block", steps: (2, 4)),
+        (from: "worn_grass_block", to: "packed_earth", steps: (8, 12)),
+        (from: "packed_earth", to: "coarse_dirt", steps: (12, 20)),
+        (from: "dirt", to: "packed_earth", steps: (8, 12)),
+        (from: "podzol", to: "packed_earth", steps: (8, 12)),
+    ],
+    trample: [
+        (from: "tall_grass", top: "tall_grass_top", to: "short_grass", steps: (2, 3)),
+        (from: "large_fern", top: "large_fern_top", to: "fern", steps: (2, 3)),
+        (from: "short_grass", to: "core:air", steps: (2, 3)),
+        (from: "fern", to: "core:air", steps: (2, 3)),
+        (from: "#flower", to: "core:air", steps: (2, 3)),
+    ],
+    heal_days: 5,
+    tuft: ("short_grass", 0.05),
+)

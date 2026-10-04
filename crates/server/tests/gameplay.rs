@@ -110,6 +110,11 @@ impl Client {
             ServerMessage::BlockChanged { pos, block } => {
                 self.world.set_block(pos, block);
             }
+            ServerMessage::Blocks { changes } => {
+                for (pos, block) in changes {
+                    self.world.set_block(pos, block);
+                }
+            }
             ServerMessage::PlayerState { health, inventory } => {
                 self.health = health.current;
                 self.inventory = inventory;
@@ -389,6 +394,36 @@ fn players_are_told_the_weather() {
     assert!(weather.wind.is_finite());
 }
 
+/// Water placed by a command flows, and players see it flow through batched updates; the
+/// commands that build and give blocks work for admins.
+#[test]
+fn water_flows_for_everyone_to_see() {
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    let (x, y, z) = (feet.x, feet.y + 20, feet.z);
+    let home = ColumnPos::of_block(feet);
+    client.pump_until(|c| (-1..=1).all(|dz| (-1..=1).all(|dx| c.world.contains(home.offset(dx, dz)))));
+    // A stone floor in the sky, with a water source on it.
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", x - 9, y, z - 9, x + 9, y, z + 9));
+    client.pump_until(|c| c.world.block(IVec3::new(x + 9, y, z + 9)) == c.content.blocks.id("base:stone"));
+    client.ok(&format!("/setblock {x} {} {z} water", y + 1));
+    let water = client.content.blocks.expect("base:water");
+    let flowing = |c: &Client, dx: i32| c.world.block(IVec3::new(x + dx, y + 1, z)).and_then(|b| c.content.blocks.fluid(b)).map(|s| s.amount);
+    client.pump_until(|c| flowing(c, 7) == Some(1));
+    assert_eq!(flowing(&client, 0), Some(8));
+    assert_eq!(flowing(&client, 3), Some(5));
+    assert_eq!(client.world.block(IVec3::new(x, y + 1, z)), Some(water));
+    // Water runs off the edge of the floor and falls.
+    client.ok(&format!("/setblock {} {} {z} air", x + 5, y));
+    client.pump_until(|c| c.world.block(IVec3::new(x + 5, y - 1, z)).and_then(|b| c.content.blocks.fluid(b)).is_some_and(|s| s.falling));
+    // Give hands out blocks to place.
+    let answer = client.ok("/give water 3");
+    assert!(answer.contains("Gave 3 base:water"), "{answer}");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == water && s.count == 3));
+    let errors = client.command("/setblock ~ ~ ~ no_such_block");
+    assert_eq!(errors[0].0, ChatKind::Error);
+}
+
 #[test]
 fn the_server_console_runs_commands_as_an_admin() {
     let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
@@ -402,4 +437,33 @@ fn the_server_console_runs_commands_as_an_admin() {
     guest.pump_until(|c| c.chat.iter().any(|(_, text)| text == "[Server] hello"));
     guest._server.console("gamemode creative guest");
     guest.pump_until(|c| c.allow_flight);
+}
+
+#[test]
+fn walking_wears_a_path() {
+    let mut client = Client::join();
+    let start = client.position;
+    let feet = start.floor().as_ivec3();
+    let solid = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| c.content.blocks.info(b).solid);
+    // A neighbouring block of ground at the same height to pace to and fro across.
+    let step = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z]
+        .into_iter()
+        .find(|&d| solid(&client, feet + d - IVec3::Y) && !solid(&client, feet + d) && !solid(&client, feet + d + IVec3::Y))
+        .expect("level ground beside spawn");
+    let under = feet - IVec3::Y;
+    let before = client.world.block(under).unwrap();
+    let blocks = client.content.blocks.clone();
+    let id = |name: &str| blocks.expect(&format!("base:{name}"));
+    let worn = [id("worn_grass_block"), id("packed_earth"), id("coarse_dirt")];
+    assert_eq!(before, id("grass_block"), "spawn is on grass");
+    // Each crossing is a step onto the other block: forty steps on each.
+    let (here, there) = (start + step.as_vec3() * 0.3, start + step.as_vec3() * 0.7);
+    for i in 0..80 {
+        client.send_position(if i % 2 == 0 { there } else { here }, false);
+        std::thread::sleep(Duration::from_millis(110));
+    }
+    client.pump_until(|c| c.world.block(under).is_some_and(|b| worn.contains(&b)));
+    // Plants on the path are trampled away.
+    let plant = client.world.block(feet).unwrap();
+    assert!(plant.is_air() || plant == id("short_grass"), "{}", blocks.def(plant).name);
 }

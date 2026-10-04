@@ -190,7 +190,6 @@
                 plants: [Tag("meadow", 1.0), Name("pink_tulip", 2.0)],
             ),
             rarity: Rare,
-            colors: (foliage: (236, 168, 196)),
         ),
         (
             name: "dark_forest",

@@ -2,6 +2,7 @@
 //! Processes never decide; they change values and raise events (here: death).
 
 use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::fluid::FluidId;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits::{self, Replication};
@@ -25,7 +26,7 @@ pub(crate) trait Process: Send {
 }
 
 pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
-    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::default())]
+    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::default()), Box::new(crate::wear::Footsteps::default())]
 }
 
 /// Fall damage, burning in lava and the void, from the server's own view of where
@@ -38,8 +39,9 @@ impl Process for Falling {
     }
 
     fn run(&mut self, server: &mut Server) {
-        let water = server.content.blocks.id("base:water");
-        let lava = server.content.blocks.id("base:lava");
+        let blocks = &server.content.blocks;
+        let fluid = |name: &str| blocks.id(name).and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
+        let (water, lava) = (fluid("base:water"), fluid("base:lava"));
         let burns = server.tick.is_multiple_of(BURN_TICKS);
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
@@ -52,8 +54,11 @@ impl Process for Falling {
             let mut below = aabb;
             below.translate(Vec3::new(0.0, -0.05, 0.0));
             let on_ground = below.intersects(|p| server.is_solid(p));
-            let in_water = aabb.intersects(|p| server.block(p).is_some() && server.block(p) == water);
-            let in_lava = lava.is_some() && aabb.intersects(|p| server.block(p) == lava);
+            // Any state of the fluid counts: flowing water breaks a fall, flowing lava burns.
+            let touching = |fluid: Option<FluidId>| {
+                fluid.is_some() && aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| Some(f.fluid) == fluid))
+            };
+            let (in_water, in_lava) = (touching(water), touching(lava));
 
             let player = server.players.get_mut(&id).unwrap();
             let mut damage = 0.0;
