@@ -19,7 +19,7 @@
 #define_import_path voxmar::water_surface
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, fog_amount, fog_color, water_normal}
+#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, air_between, water_normal}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct Water {
@@ -291,9 +291,8 @@ struct Air {
 };
 
 fn air_to(world: vec3<f32>) -> Air {
-    let offset = world - view.world_position;
-    let haze = fog_amount(offset);
-    return Air(1.0 - haze, haze * fog_color(normalize(offset)));
+    let air = air_between(world);
+    return Air(air.transmittance, air.light);
 }
 
 // A smooth noise for foam.
