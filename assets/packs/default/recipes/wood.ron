@@ -2,8 +2,8 @@
 // `wood` (the inside: planks, stripped logs, log ends), `leaves` and `sapling`. Leaves are
 // grey for woods whose leaves the game tints with the climate's foliage colour, and in
 // colour for woods whose leaves keep their own (maple, cherry, the fantasy woods).
-// `{name}_leaves_bushy` is a round leaf cluster with clear margins, for drawing leaves as
-// tilted cards around a crown.
+// `{name}_leaves_bushy` is a round 32×32 leaf cluster with clear margins, for drawing
+// leaves as tilted cards around a crown (the renderer does not use it yet).
 (
     palettes: {
         "leaf_grey": ["#555555", "#6d6d6d", "#858585", "#9d9d9d", "#b5b5b5", "#cdcdcd"],
@@ -92,10 +92,14 @@
                 // A dark mass, lit clumps of leaves on it, then gaps.
                 Paint(palette: "leaves", base: 0.35, shade: [Noise(cells: (8, 8), amount: 0.3)]),
                 Clusters(palette: "leaves", count: 40, size: (3, 5), spacing: 2.2, shade: 2, shadow: -1),
-                Cut(mask: [Noise(cells: (5, 5), amount: 1.0), Speckle(chance: 0.15, amount: 0.4)], above: 0.12),
+                Cut(mask: [Noise(cells: (8, 8), amount: 1.0), Speckle(chance: 0.2, amount: 0.4)], above: 0.17),
             ]),
-            "block/{name}_leaves_bushy": (base: "block/{name}_leaves", layers: [
-                Cut(mask: [Circle(radius: 7.2, rough: 1.6)], below: 0.5),
+            // As Better Leaves Lite bakes them (MIT; the technique, not its images): the
+            // leaf tile 3×3 on a canvas twice its size, so the pattern runs on past every
+            // edge, cut to a ragged round cluster whose middle is the tile itself.
+            "block/{name}_leaves_bushy": (size: (32, 32), layers: [
+                Stamp(texture: "block/{name}_leaves", at: [(-8, -8), (8, -8), (24, -8), (-8, 8), (8, 8), (24, 8), (-8, 24), (8, 24), (24, 24)]),
+                Cut(mask: [Circle(radius: 14.0, rough: 2.5)], below: 0.5),
             ]),
             "block/{name}_sapling": (palettes: {"sapling": "sapling_green"}, layers: [
                 Grid(
