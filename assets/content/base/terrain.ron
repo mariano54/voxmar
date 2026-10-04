@@ -1,0 +1,131 @@
+#![enable(implicit_some)]
+// Terrain shapes: landforms that rise where the climate calls for them, on top of the
+// continents, ranges, plateaus and valleys every world has.
+//
+// A shape claims boxes on the bands of climate.ron, as biomes do (an axis left out claims
+// all its bands), so dunes rise where deserts lie and mesas where badlands do, with the same
+// edges; the terrain never asks which biome won. Each fades in over a short ramp inside its
+// boxes. `rarity` keeps a shape to some regions of its climate (common: all of it), or for
+// shapes that stand alone (volcanoes, arches) sets how many there are; `province` keeps it
+// over rock provinces with that name or tag; `surface` (with `strata` for its `Strata`)
+// replaces the biome's ground where the shape stands tallest.
+//
+// Sizes are in blocks. Kinds: Hills, Dunes, Mesas, Canyons, Towers, Spires, Volcanoes,
+// Mountain, Arches, SeaCliffs and Fjords (see `ShapeKind` in crates/worldgen/src/content.rs).
+(
+    shapes: [
+        (
+            // Rounded hills with creased valleys, across mild, moist lowlands.
+            name: "rolling_hills",
+            kind: Hills(height: 7.0, spacing: 110.0),
+            climate: [(temperature: ("cool", "warm"), moisture: ("dry", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
+        ),
+        (
+            name: "dunes",
+            kind: Dunes(height: 10.0, spacing: 46.0),
+            climate: [(temperature: ("warm", "hot"), moisture: ("arid", "arid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
+            // Sand right down the slip faces, with the desert's wind streaks.
+            surface: (
+                rules: [
+                    (
+                        when: [Tapered((name: "desert_streaks", scale: 45.0), (name: "desert_streak_width", scale: 400.0, octaves: 2), [(0.35, 0.06), (0.15, 0.03), (0.0, 0.012)])],
+                        place: (top: Block("red_sand"), filler: Block("sandstone"), depth: 5),
+                    ),
+                ],
+                ground: (top: Block("sand"), filler: Block("sandstone"), depth: 6),
+                underwater: (top: Block("sand")),
+                shore: (top: Block("sand")),
+                cliff: Block("sand"),
+            ),
+        ),
+        (
+            // Badlands: flat-topped tiers of banded clay stepping down to the valleys.
+            name: "mesas",
+            kind: Mesas(height: 46.0, spacing: 300.0),
+            climate: [(temperature: ("warm", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), erosion: ("hills", "peaks"))],
+            // Risers banded in clay, tops of red sand and scrub.
+            strata: [
+                "orange_terracotta", "terracotta", "yellow_terracotta", "white_terracotta",
+                "orange_terracotta", "red_terracotta", "terracotta", "brown_terracotta",
+                "light_gray_terracotta", "orange_terracotta", "yellow_terracotta", "red_terracotta",
+            ],
+            surface: (
+                rules: [
+                    (when: [Slope(1.5, 3.0)], place: (top: Strata, filler: Strata, depth: 10)),
+                    (when: [Patch((name: "mesa_scrub", scale: 14.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("terracotta", 1.0)]), filler: Strata, depth: 10)),
+                ],
+                ground: (top: Block("red_sand"), filler: Strata, depth: 10),
+                underwater: (top: Block("red_sand")),
+                shore: (top: Block("red_sand")),
+                cliff: Strata,
+            ),
+        ),
+        (
+            name: "canyons",
+            kind: Canyons(depth: 44.0, width: 64.0),
+            rarity: Uncommon,
+            climate: [(temperature: ("temperate", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"))],
+        ),
+        (
+            // Tower karst on limestone in warm, wet country.
+            name: "karst_towers",
+            kind: Towers(height: 52.0, spacing: 60.0),
+            province: "karst",
+            climate: [(temperature: ("temperate", "hot"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
+        ),
+        (
+            name: "frost_spires",
+            kind: Spires(height: 36.0, spacing: 22.0, lean: 0.25),
+            rarity: Rare,
+            climate: [(temperature: ("frozen", "cool"), continentalness: ("coast", "far_inland"), erosion: ("hills", "slopes"))],
+        ),
+        (
+            name: "shattered_spires",
+            kind: Spires(height: 28.0, spacing: 26.0, lean: 0.15),
+            rarity: Rare,
+            climate: [(temperature: ("warm", "hot"), moisture: ("arid", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
+        ),
+        (
+            // Wherever the world is volcanic, on land or out at sea as islands.
+            name: "volcanoes",
+            kind: Volcanoes(height: 120.0, radius: 230.0),
+            rarity: Rare,
+            surface: (
+                rules: [
+                    (when: [Patch((name: "volcanic_ash", scale: 18.0, octaves: 2), 0.25)], place: (top: Mix([Name("gravel", 2.0), Name("coarse_dirt", 1.0)]), filler: Block("tuff"))),
+                ],
+                ground: (top: Mix([Name("tuff", 3.0), Name("andesite", 1.0), Name("deepslate", 1.0)]), filler: Block("tuff"), depth: 4),
+                underwater: (top: Mix([Name("gravel", 2.0), Name("tuff", 1.0)])),
+                shore: (top: Mix([Name("gravel", 2.0), Name("deepslate", 1.0)])),
+                cliff: Mix([Name("deepslate", 2.0), Name("tuff", 2.0), Name("andesite", 1.0)]),
+            ),
+        ),
+        (
+            // Now and then a massif far taller than anything around it, alone on the plain,
+            // seen from far away.
+            name: "lone_mountain",
+            kind: Mountain(height: 200.0, radius: 480.0),
+            rarity: VeryRare,
+            climate: [(continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
+        ),
+        (
+            // Rock bridges over the open ground of dry country.
+            name: "arches",
+            kind: Arches(span: 36.0, height: 22.0),
+            rarity: VeryRare,
+            climate: [(temperature: ("temperate", "hot"), moisture: ("arid", "moderate"), continentalness: ("coast", "far_inland"))],
+        ),
+        (
+            // Glaciated valleys drowned by the sea where they reach a cold coast.
+            name: "fjords",
+            kind: Fjords(depth: 24.0),
+            climate: [(temperature: ("frozen", "cool"), continentalness: ("ocean", "inland"))],
+        ),
+        (
+            name: "sea_cliffs",
+            kind: SeaCliffs(height: 24.0),
+            rarity: Rare,
+            climate: [(continentalness: ("ocean", "inland"))],
+        ),
+    ],
+)

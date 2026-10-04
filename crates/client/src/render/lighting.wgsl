@@ -1,12 +1,18 @@
-// Shared terrain lighting: sky ambient, sun or moon with cascaded shadows, block light,
-// water ripples, and aerial perspective glowing towards the sun. Everything dynamic comes
-// from the view bind group (directional light, ambient light, fog), so day/night never
-// touches material assets.
+// Shared terrain lighting: warm sun or moon with soft cascaded shadows, cool sky light that
+// falls off steeply into shade, ambient occlusion, block light, leaves glowing against
+// the sun, water ripples, and the air between the eye and the surface. The sun, sky light
+// and shadows come from the view bind group (directional and ambient light) and the
+// atmosphere uniform, so day and night never touch material assets.
 
 #define_import_path voxmar::lighting
 
-#import bevy_pbr::mesh_view_bindings::{view, lights, fog, globals}
-#import bevy_pbr::shadows::fetch_directional_shadow
+#import bevy_pbr::mesh_view_bindings::{view, lights, globals}
+#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_light, far_color}
+#import voxmar::clouds::value_noise
+#import voxmar::shadows::soft_shadow
+
+// Bound with every terrain material (terrain.rs, binding 6 of group 2).
+@group(2) @binding(6) var<uniform> atmosphere: Atmosphere;
 
 // Per face index: the six cube faces, then a plant's two diagonal quads, which are lit
 // as if facing up so both sides and every blade of a tuft read alike.
@@ -36,18 +42,15 @@ fn sun_color() -> vec3<f32> {
     return lights.directional_lights[0].color.rgb;
 }
 
-// Fraction of direct sun reaching `world`, from the cascaded shadow maps.
-fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
-    let light = lights.directional_lights[0];
-    if lights.n_directional_lights == 0u || (light.flags & 1u) == 0u {
-        return 1.0;
-    }
-    let view_z = (view.view_from_world * vec4(world, 1.0)).z;
-    return fetch_directional_shadow(0u, vec4(world, 1.0), normal, view_z, frag_xy);
+// Fraction of direct sun reaching `world` on a face with `normal`, from the cascaded
+// shadow maps (see shadows.wgsl). Filtering depends on the world position alone, so
+// `_frag_xy` (the pixel) is not needed.
+fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, _frag_xy: vec2<f32>) -> f32 {
+    return soft_shadow(atmosphere, world, normal);
 }
 
 // Lit colour of a voxel face. `sky` and `block` are 0..1 light levels, `ao` the occlusion
-// factor, `foliage` softens the sun term for leaves so crowns glow when back-lit.
+// factor, `foliage` lights leaves and plants as thin and translucent.
 fn shade(
     albedo: vec3<f32>,
     world: vec3<f32>,
@@ -78,23 +81,88 @@ fn shade_normal(
     if foliage {
         facing = 0.35 + 0.65 * abs(facing);
     }
-    // Sunlight only reaches places open to the sky; shadow maps add the exact shapes.
-    let open = smoothstep(0.5, 0.95, sky);
-    var direct = vec3(0.0);
+    // Sunlight only reaches places open to the sky (never into caves, whatever the shadow
+    // maps missed); the shadow maps add the exact shapes, and passing clouds their shade.
+    let open = smoothstep(0.35, 0.75, sky);
+    var sunlit = 0.0;
     if facing > 0.0 && open > 0.0 {
-        direct = sun_color() * facing * open * sun_shadow(world, normal, frag_xy);
+        sunlit = open * sun_shadow(world, normal, frag_xy);
+        if sunlit > 0.0 {
+            sunlit *= cloud_light(atmosphere, view.world_position, world, to_sun);
+        }
     }
-    let ambient = lights.ambient_color.rgb * light_curve(sky) * ambient_shade * ao;
+    let direct = sun_color() * facing * sunlit;
+    // Sky light falls off steeply with the sky light level, so forest floors, overhangs and
+    // the inside of crowns are much darker than open ground; occlusion grounds corners.
+    let occlusion = pow(ao, atmosphere.surface.y);
+    let ambient = lights.ambient_color.rgb * pow(sky, atmosphere.surface.x) * ambient_shade * occlusion;
     let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
     let floor = vec3(0.010, 0.010, 0.014) * ao;
     // Sunlight bounced off the sunlit ground around: a wall sees half ground, an underside
     // all of it. Without it the shaded side of a one-block step was lit by the sky alone,
     // several times darker than the sunlit ground beside it, and the corners of terraced
-    // beaches and grass ledges stood out as dark teeth. fog.directional_light_color.a
-    // carries the shader pack's strength.
+    // beaches and grass ledges stood out as dark teeth.
     let bounce = sun_color() * max(to_sun.y, 0.0) * GROUND_ALBEDO * 0.5 * (1.0 - normal.y) * open * ao
-        * fog.directional_light_color.a;
-    return albedo * (ambient + bounce + direct * mix(1.0, ao, 0.5) + torch + floor);
+        * atmosphere.ground.w;
+    var light = ambient + bounce + direct * mix(1.0, ao, 0.3) + torch + floor;
+    if foliage && sunlit > 0.0 {
+        // Sunlight through leaves and blades, brightest looking towards the sun.
+        let to_eye = normalize(view.world_position - world);
+        let through = pow(max(dot(-to_eye, to_sun), 0.0), 4.0);
+        light += sun_color() * sunlit * atmosphere.surface.z * (0.15 + through);
+    }
+    return albedo * light;
+}
+
+// A surface after the weather: darker where rain has wet it, darker still in puddles on
+// open level ground (which rise and dry with the wetness), whitened by frost, and dusted
+// with snow on top once enough lies around (the server turns grass snowy itself). Returns
+// the albedo, and in w how wet it is (1 in a puddle), for `wet_sheen`.
+fn weathered(albedo: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, sky: f32) -> vec4<f32> {
+    let wetness = atmosphere.ground.x;
+    let frost = atmosphere.ground.y;
+    let snow = atmosphere.ground.z;
+    if wetness <= 0.0 && frost <= 0.0 && snow <= 0.3 {
+        return vec4(albedo, 0.0);
+    }
+    // Rain and frost settle where the sky is open, most on top faces.
+    let exposed = smoothstep(0.8, 1.0, sky);
+    var wet = wetness * exposed * saturate(0.35 + 0.65 * normal.y);
+    if normal.y > 0.9 && wetness > 0.0 {
+        let patches = value_noise(world.xz * 0.21) * 0.65 + value_noise(world.xz * 0.53 + 7.3) * 0.35;
+        let level = 0.75 - 0.3 * wetness;
+        wet = max(wet, smoothstep(level, level + 0.04, patches) * smoothstep(0.3, 0.6, wetness) * exposed);
+    }
+    var color = albedo * (1.0 - 0.4 * min(wet, 1.0));
+    let rime = frost * exposed * saturate(normal.y * 0.8 + 0.2) * smoothstep(0.35, 0.6, value_noise(world.xz * 1.7 + world.y));
+    color = mix(color, vec3(0.78, 0.84, 0.9), rime * 0.6);
+    if snow > 0.3 && normal.y > 0.9 {
+        let drifts = value_noise(world.xz * 0.37 + 3.1) * 0.7 + value_noise(world.xz * 1.9) * 0.3;
+        let dusting = smoothstep(1.0 - snow, 1.15 - snow, drifts) * exposed;
+        color = mix(color, vec3(0.9, 0.93, 0.96), dusting * 0.85);
+    }
+    return vec4(color, wet);
+}
+
+// The sky mirrored by a wet surface, most at a glancing angle and in puddles.
+fn wet_sheen(color: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, wet: f32, sky: f32) -> vec3<f32> {
+    if wet <= 0.0 {
+        return color;
+    }
+    let to_eye = normalize(view.world_position - world);
+    let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(normal, to_eye), 0.0), 5.0);
+    let mirrored = reflect(-to_eye, normal);
+    let reflection = far_color(atmosphere, view.world_position, mirrored, sun_direction());
+    let puddle = smoothstep(0.6, 1.0, wet);
+    return mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.9, puddle));
+}
+
+// Light a glowing block gives off by itself (`glow` 0..1, from its light level): its bright
+// texels, as the lit part of a lantern or the cracks of magma, glow brightly enough to
+// bloom at full strength; its dark texels do not glow.
+fn self_glow(albedo: vec3<f32>, texel: vec3<f32>, glow: f32) -> vec3<f32> {
+    let bright = smoothstep(0.2, 0.6, dot(texel, vec3(0.2126, 0.7152, 0.0722)));
+    return albedo * glow * bright * atmosphere.surface.w;
 }
 
 // Small animated ripples for the water surface normal. Their slopes have a variance of
@@ -107,38 +175,16 @@ fn water_normal(world: vec3<f32>) -> vec3<f32> {
     return normalize(vec3(dx * 0.08, 1.0, dz * 0.08));
 }
 
-// Aerial perspective. Haze is densest at sea level and thins with altitude, so valleys and
-// distant lowlands fade sooner than peaks; the edge of the distant terrain (fog.be.x to
-// fog.be.y) fades out completely. Real chunks, distant terrain and the sky's horizon all
-// meet in the same colour.
-const HAZE_DENSITY: f32 = 0.0002;
-// Sea level (voxmar_worldgen::SEA_LEVEL).
-const HAZE_BASE: f32 = 128.0;
-const HAZE_HEIGHT: f32 = 90.0;
-
-// How much of what lies `offset` from the eye is hidden by haze.
-fn fog_amount(offset: vec3<f32>) -> f32 {
-    let distance = length(offset);
-    // Mean density along the ray, for density falling off exponentially above sea level.
-    let start = max(view.world_position.y - HAZE_BASE, 0.0) / HAZE_HEIGHT;
-    let end = max(view.world_position.y + offset.y - HAZE_BASE, 0.0) / HAZE_HEIGHT;
-    let rise = end - start;
-    let density = select((exp(-start) - exp(-end)) / rise, exp(-start), abs(rise) < 1e-3);
-    // fog.directional_light_exponent carries the shader pack's haze multiplier.
-    let haze = 1.0 - exp(-HAZE_DENSITY * fog.directional_light_exponent * distance * density);
-    let edge = smoothstep(fog.be.x, fog.be.y, distance);
-    return 1.0 - (1.0 - haze) * (1.0 - edge);
+// The air between the eye and `world`: haze, ground fog and the weather's fog (see
+// atmosphere.wgsl), as how much of what lies there shows through and the light the air
+// adds on the way.
+fn air_between(world: vec3<f32>) -> Aerial {
+    return aerial(atmosphere, view.world_position, world - view.world_position, sun_direction());
 }
 
-// The haze looking along `direction`: the horizon colour, glowing around the sun with the
-// same falloff as the sky (fog.directional_light_color carries the glow's colour).
-fn fog_color(direction: vec3<f32>) -> vec3<f32> {
-    let toward_sun = max(dot(direction, sun_direction()), 0.0);
-    let glow = pow(toward_sun, 48.0) * 0.35 + pow(toward_sun, 6.0) * 0.1;
-    return fog.base_color.rgb + fog.directional_light_color.rgb * glow;
-}
-
+// `color` at `world` seen through the air. Real chunks, distant terrain, water and the
+// sky's horizon all fade into the same colours.
 fn apply_fog(color: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
-    let offset = world - view.world_position;
-    return mix(color, fog_color(normalize(offset)), fog_amount(offset));
+    let air = air_between(world);
+    return color * air.transmittance + air.light;
 }

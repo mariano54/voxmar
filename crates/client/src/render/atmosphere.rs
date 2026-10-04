@@ -1,0 +1,346 @@
+//! The atmosphere uniform: everything the terrain, sky and volumetric light shaders need
+//! about the air and the light besides Bevy's sun and ambient light. Shadow filtering and
+//! how surfaces take light (sky light falloff, occlusion, leaves glowing against the sun),
+//! clear-air haze, ground fog (valley fog, dawn mist, sea fog), the weather's fog, rain and
+//! dust, and the volumetric light's reach and strength.
+//!
+//! It is computed once a frame on the main thread from the time of day, the weather, the
+//! air of the place, the shader pack and the quality settings ([`Atmosphere::new`], pure,
+//! so it is tested without a GPU), extracted, and written to one small uniform buffer that
+//! every terrain bind group, the sky material and the volumetric pass bind. See
+//! atmosphere.wgsl for how the shaders use it.
+
+use bevy::color::ColorToComponents;
+use bevy::prelude::*;
+use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
+use bevy::render::render_resource::{Buffer, BufferDescriptor, BufferUsages, ShaderType, encase};
+use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::shader::load_shader_library;
+use voxmar_protocol::Weather;
+
+use super::pack::ShaderPack;
+use super::Quality;
+
+pub struct AtmospherePlugin;
+
+impl Plugin for AtmospherePlugin {
+    fn build(&self, app: &mut App) {
+        load_shader_library!(app, "clouds.wgsl");
+        load_shader_library!(app, "atmosphere.wgsl");
+        load_shader_library!(app, "shadows.wgsl");
+        app.init_resource::<Atmosphere>().add_plugins(ExtractResourcePlugin::<Atmosphere>::default());
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
+        render_app
+            .add_systems(RenderStartup, create_buffer)
+            .add_systems(Render, write_buffer.in_set(RenderSystems::PrepareResources));
+    }
+}
+
+/// Clear-air haze, per block at its base, before the shader pack scales it.
+const HAZE_DENSITY: f32 = 0.0002;
+/// Clear air is densest at sea level (`voxmar_worldgen::SEA_LEVEL`) and thins by e every
+/// this many blocks above it.
+const HAZE_BASE: f32 = 128.0;
+const HAZE_HEIGHT: f32 = 90.0;
+/// Distant terrain fades completely into the sky over its last 40%.
+const EDGE_FADE: f32 = 0.6;
+/// Ground fog at full density takes this much light out per block (about 65 blocks of
+/// visibility inside it), and thins over a few blocks above its top.
+const GROUND_FOG: f32 = 0.06;
+const GROUND_FOG_SOFTNESS: f32 = 2.5;
+/// The weather's fog is thick up to this far below the eye, whose weather it is, and thins
+/// by e every `FOG_HEIGHT` blocks above that.
+const FOG_BELOW_EYE: f32 = 16.0;
+const FOG_HEIGHT: f32 = 120.0;
+/// How far one sees in clear air, in blocks (as `Weather::visibility`).
+const CLEAR_VISIBILITY: f32 = 3030.0;
+/// Under water, the view closes in over this many blocks.
+const UNDERWATER_VIEW: f32 = 40.0;
+/// Volumetric light: how far its rays reach, in blocks, how many steps they take, how
+/// much light scatters evenly in every direction besides the glow around the sun, and how
+/// much more clear air scatters sunlight into shafts than it dims the view.
+const RAY_REACH: f32 = 96.0;
+const RAY_STEPS: f32 = 12.0;
+const RAY_ISOTROPIC: f32 = 0.015;
+const RAY_CLEAR_AIR: f32 = 10.0;
+/// The widest shadow penumbra, in blocks, and how far shadow lookups step off a surface,
+/// in shadow texels.
+const MAX_PENUMBRA: f32 = 0.6;
+const NORMAL_OFFSET: f32 = 1.0;
+/// How much brighter than its lit texture a block giving full light glows (enough to bloom).
+const GLOW: f32 = 3.0;
+
+/// See atmosphere.wgsl for each field.
+#[derive(Resource, ShaderType, ExtractResource, Clone, Copy, Debug, PartialEq)]
+pub struct Atmosphere {
+    pub shadow: Vec4,
+    pub surface: Vec4,
+    pub haze: Vec4,
+    pub haze_shape: Vec4,
+    pub glow: Vec4,
+    pub fog: Vec4,
+    pub fog_shape: Vec4,
+    pub mist: Vec4,
+    pub rays: Vec4,
+    pub clouds: Vec4,
+    pub cloud_shadow: Vec4,
+    pub ground: Vec4,
+}
+
+impl Default for Atmosphere {
+    fn default() -> Self {
+        Self::new(&Light::default(), &Weather::NONE, &Air::default(), &ShaderPack::default(), Quality::default(), View::new(4096.0))
+    }
+}
+
+/// Where the eye is and how far it sees.
+#[derive(Clone, Copy, Debug)]
+pub struct View {
+    /// The edge of the distant terrain, in blocks.
+    pub distance: f32,
+    pub eye_height: f32,
+    pub underwater: bool,
+}
+
+impl View {
+    pub fn new(distance: f32) -> Self {
+        Self { distance, eye_height: 130.0, underwater: false }
+    }
+}
+
+/// The light of the moment, from the day cycle (see `Environment` in render/mod.rs).
+#[derive(Clone, Copy, Debug)]
+pub struct Light {
+    /// Colour of the horizon, which clear-air haze takes.
+    pub horizon: Vec3,
+    /// Sky light reaching surfaces in shade.
+    pub ambient: Vec3,
+    /// Direct sun or moon.
+    pub sun: Vec3,
+    /// Colour of the glow around the sun, as the sky draws it.
+    pub glow: Vec3,
+    /// Height of the sun or moon in the sky, the sine of its elevation.
+    pub elevation: f32,
+}
+
+impl Default for Light {
+    fn default() -> Self {
+        Self {
+            horizon: Vec3::new(0.62, 0.78, 0.98),
+            ambient: Vec3::new(0.4, 0.45, 0.55),
+            sun: Vec3::splat(0.7),
+            glow: Vec3::new(1.0, 0.8, 0.55),
+            elevation: 0.7,
+        }
+    }
+}
+
+/// The air of the place: haze colour and density as the land and climate have them (the
+/// colour parts of `weather::atmosphere::ClientAtmosphere`), applied within the pack.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Air {
+    /// Haze colour, linear RGB, or `None` for the horizon's own.
+    pub haze: Option<Vec3>,
+    /// Haze density relative to the pack's, around 1.
+    pub density: f32,
+}
+
+impl Default for Air {
+    fn default() -> Self {
+        Self { haze: None, density: 1.0 }
+    }
+}
+
+impl Atmosphere {
+    /// The air and light for this moment, seen from `view`.
+    pub fn new(light: &Light, weather: &Weather, air: &Air, pack: &ShaderPack, quality: Quality, view: View) -> Self {
+        let View { distance: view_distance, eye_height, underwater } = view;
+        let shadow = Vec4::new(quality.shadows.taps() as f32, pack.shadow_softness, NORMAL_OFFSET, MAX_PENUMBRA);
+        let surface = Vec4::new(pack.sky_falloff, pack.ambient_occlusion, pack.subsurface, pack.glow * GLOW);
+        if underwater {
+            return Self {
+                shadow,
+                surface,
+                haze: light.horizon.extend(0.0),
+                haze_shape: Vec4::new(HAZE_BASE, HAZE_HEIGHT, 0.0, UNDERWATER_VIEW),
+                glow: Vec4::ZERO,
+                fog: light.horizon.extend(0.0),
+                fog_shape: Vec4::new(0.0, FOG_HEIGHT, 0.0, 0.0),
+                mist: Vec4::new(0.0, 0.0, 1.0, 0.0),
+                rays: Vec4::ZERO,
+                clouds: Vec4::ZERO,
+                cloud_shadow: Vec4::new(0.0, 0.0, CLOUD_HEIGHT, 0.0),
+                ground: Vec4::new(0.0, 0.0, 0.0, pack.bounce),
+            };
+        }
+
+        // The place's haze colour nudges the horizon's, as much as the pack lets it; its
+        // brightness stays the sky's.
+        let mut haze_color = light.horizon;
+        if let Some(tint) = air.haze {
+            let tinted = tint * luminance(light.horizon) / luminance(tint).max(1e-4);
+            haze_color = haze_color.lerp(tinted, pack.local_air.clamp(0.0, 1.0));
+        }
+        let haze_density = HAZE_DENSITY * pack.haze * (1.0 + (air.density - 1.0) * pack.local_air);
+
+        // Fog is lit by the sky and the sun, paler than the horizon behind it, and takes the
+        // colour of blowing dust.
+        let grey = Vec3::splat(luminance(light.horizon));
+        let mut fog_color = light.horizon.lerp(grey, 0.6) * 0.8 + light.ambient * 0.25 + light.sun * 0.15;
+        let dust = weather.dust.clamp(0.0, 1.0);
+        if dust > 0.0 {
+            let [r, g, b] = weather.dust_color;
+            let sand = Color::srgb_u8(r, g, b).to_linear().to_vec3();
+            fog_color = fog_color.lerp(sand * luminance(fog_color) / luminance(sand).max(1e-4), dust.sqrt());
+        }
+        let weather_fog = weather_extinction(weather) * pack.fog;
+        let ground_fog = weather.ground_fog.clamp(0.0, 1.0) * GROUND_FOG * pack.mist;
+
+        let rays = quality.volumetric_light && pack.rays > 0.0;
+        // Shafts show most when the sun is low, as in the mornings and evenings of shader
+        // packs, where its light crosses the most air.
+        let clear_air = RAY_CLEAR_AIR * (1.0 + 2.0 * (1.0 - smoothstep(0.15, 0.6, light.elevation)));
+        Self {
+            shadow,
+            surface,
+            haze: haze_color.extend(haze_density),
+            haze_shape: Vec4::new(HAZE_BASE, HAZE_HEIGHT, view_distance * EDGE_FADE, view_distance),
+            glow: light.glow.extend(if rays { RAY_REACH } else { 0.0 }),
+            fog: fog_color.extend(weather_fog),
+            fog_shape: Vec4::new(eye_height - FOG_BELOW_EYE, FOG_HEIGHT, 0.0, 0.0),
+            mist: Vec4::new(ground_fog, weather.fog_top, GROUND_FOG_SOFTNESS, 0.0),
+            rays: Vec4::new(if rays { pack.rays } else { 0.0 }, RAY_STEPS, RAY_ISOTROPIC, clear_air),
+            clouds: Vec4::ZERO,
+            cloud_shadow: Vec4::new(0.0, 0.0, CLOUD_HEIGHT, 0.0),
+            ground: Vec4::new(
+                weather.wetness.clamp(0.0, 1.0) * pack.wet_ground,
+                weather.frost.clamp(0.0, 1.0) * pack.frost,
+                weather.snow_cover.clamp(0.0, 1.0) * pack.frost,
+                pack.bounce,
+            ),
+        }
+    }
+
+    /// Adds the shadows of the low cloud the sky draws: its layer's coordinates over the
+    /// eye (`SkyParams::weather.xy`) and how long it has been forming (`SkyParams::clouds.x`).
+    /// They fade as the sky closes over, when the cloud's dimming of the whole sky (in the
+    /// sun's colour) takes over.
+    pub fn with_clouds(mut self, weather: &Weather, layer: Vec2, seconds: f32, pack: &ShaderPack) -> Self {
+        // As the sky draws it, rain only falls from a well covered sky.
+        let cover = (weather.cover + 0.25 * weather.precipitation).min(1.0);
+        let strength = pack.cloud_shadows * (1.0 - smoothstep(0.6, 0.95, cover));
+        self.clouds = Vec4::new(layer.x, layer.y, cover, weather.convection);
+        self.cloud_shadow = Vec4::new(seconds, strength, CLOUD_HEIGHT, 0.0);
+        self
+    }
+}
+
+/// The low cloud's height above the eye, in blocks, as the sky draws it: two of its
+/// coordinate units (see clouds.wgsl).
+const CLOUD_HEIGHT: f32 = 2.0 * super::CLOUD_UNIT as f32;
+
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Light the weather takes out of the view per block, beyond clear air's: fog and mist,
+/// dust, and falling rain and snow, so that at `Weather::visibility` (ground fog aside,
+/// which lies in its own layer) about 2% of what lies there still shows. Rain murks the air
+/// more than that function counts it for gameplay, as in the hiking video: a downpour
+/// leaves about 150 blocks of view, steady rain about a kilometre, drizzle most of it.
+pub fn weather_extinction(weather: &Weather) -> f32 {
+    let rain = 0.8 * smoothstep(0.0, 1.0, weather.precipitation) * (1.0 - weather.snow);
+    let falling = 0.6 * weather.precipitation * (0.35 + 0.65 * weather.snow);
+    let murk = (weather.fog + 0.8 * weather.dust + falling.max(rain)).clamp(0.0, 1.0);
+    let visibility = 3000.0 * (1.0 - murk) * (1.0 - murk) + 30.0;
+    (3.912 / visibility - 3.912 / CLEAR_VISIBILITY).max(0.0)
+}
+
+fn luminance(color: Vec3) -> f32 {
+    color.dot(Vec3::new(0.2126, 0.7152, 0.0722))
+}
+
+/// The atmosphere uniform on the GPU: one buffer for the whole session, so bind groups
+/// that hold it never need rebuilding.
+#[derive(Resource)]
+pub struct AtmosphereBuffer(pub Buffer);
+
+fn create_buffer(mut commands: Commands, device: Res<RenderDevice>) {
+    commands.insert_resource(AtmosphereBuffer(device.create_buffer(&BufferDescriptor {
+        label: Some("atmosphere"),
+        size: Atmosphere::min_size().get(),
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })));
+}
+
+fn write_buffer(atmosphere: Res<Atmosphere>, buffer: Res<AtmosphereBuffer>, queue: Res<RenderQueue>) {
+    let mut uniform = encase::UniformBuffer::new(Vec::<u8>::new());
+    uniform.write(atmosphere.as_ref()).expect("the atmosphere fits a uniform");
+    queue.write_buffer(&buffer.0, 0, uniform.as_ref());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weather_fog_leaves_two_percent_at_the_visibility() {
+        assert_eq!(weather_extinction(&Weather::NONE), 0.0);
+        let fog = Weather { fog: 0.6, ..Weather::NONE };
+        let visibility = fog.visibility();
+        let clear = 3.912 / CLEAR_VISIBILITY;
+        let through = (-(weather_extinction(&fog) + clear) * visibility).exp();
+        assert!((through - 0.02).abs() < 0.002, "{through}");
+        // Ground fog lies in its own layer and does not thicken the air everywhere.
+        let ground = Weather { ground_fog: 1.0, fog_top: 80.0, ..Weather::NONE };
+        assert_eq!(weather_extinction(&ground), 0.0);
+        // A downpour closes the view to about 150 blocks.
+        let downpour = Weather { precipitation: 1.0, ..Weather::NONE };
+        let through = (-(weather_extinction(&downpour) + clear) * 150.0).exp();
+        assert!((0.01..0.05).contains(&through), "{through}");
+    }
+
+    #[test]
+    fn ground_fog_follows_the_weather_and_the_pack() {
+        let pack = ShaderPack::default();
+        let quality = Quality::default();
+        let light = Light::default();
+        let clear = Atmosphere::new(&light, &Weather::NONE, &Air::default(), &pack, quality, View::new(2000.0));
+        assert_eq!(clear.mist.x, 0.0);
+        let valley = Weather { ground_fog: 0.9, fog_top: 82.0, ..Weather::NONE };
+        let foggy = Atmosphere::new(&light, &valley, &Air::default(), &pack, quality, View::new(2000.0));
+        assert!(foggy.mist.x > 0.04 && foggy.mist.y == 82.0);
+        let none = ShaderPack { mist: 0.0, ..ShaderPack::default() };
+        assert_eq!(Atmosphere::new(&light, &valley, &Air::default(), &none, quality, View::new(2000.0)).mist.x, 0.0);
+    }
+
+    #[test]
+    fn local_air_tints_the_haze_within_the_pack() {
+        let light = Light::default();
+        let air = Air { haze: Some(Vec3::new(0.9, 0.6, 0.3)), density: 2.0 };
+        let quality = Quality::default();
+        let follows = ShaderPack { local_air: 1.0, ..ShaderPack::default() };
+        let ignores = ShaderPack { local_air: 0.0, ..ShaderPack::default() };
+        let tinted = Atmosphere::new(&light, &Weather::NONE, &air, &follows, quality, View::new(2000.0));
+        let plain = Atmosphere::new(&light, &Weather::NONE, &air, &ignores, quality, View::new(2000.0));
+        assert_eq!(plain.haze.truncate(), light.horizon);
+        assert!(tinted.haze.x > tinted.haze.z, "dusty air should warm the haze");
+        // The tint keeps the horizon's brightness; density doubles.
+        assert!((luminance(tinted.haze.truncate()) - luminance(light.horizon)).abs() < 1e-4);
+        assert!((tinted.haze.w / plain.haze.w - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn volumetric_light_follows_the_setting() {
+        let pack = ShaderPack { rays: 1.0, ..ShaderPack::default() };
+        let on = Quality { volumetric_light: true, ..Quality::default() };
+        let off = Quality { volumetric_light: false, ..Quality::default() };
+        let light = Light::default();
+        // Forward fog scatters all sunlight when the pass is off (reach 0).
+        assert_eq!(Atmosphere::new(&light, &Weather::NONE, &Air::default(), &pack, off, View::new(2000.0)).glow.w, 0.0);
+        assert!(Atmosphere::new(&light, &Weather::NONE, &Air::default(), &pack, on, View::new(2000.0)).glow.w > 0.0);
+    }
+}

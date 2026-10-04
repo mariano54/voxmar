@@ -1,7 +1,8 @@
 //! GPU side of the voxel world: terrain material, texture arrays, camera, sun and sky.
 //!
 //! Time of day drives a real directional light (with cascaded shadow maps), the camera's
-//! ambient light and distance fog. Shaders read those from the view bind group, so the
+//! ambient light and the atmosphere uniform (haze, fog, shadow filtering; see
+//! `atmosphere`). Shaders read those from the view bind group and that one buffer, so the
 //! day/night cycle never modifies material assets (which would respecialise every chunk).
 
 use bevy::asset::{RenderAssetUsages, embedded_asset};
@@ -13,7 +14,7 @@ use bevy::core_pipeline::tonemapping::{Tonemapping, tonemapping};
 use bevy::ecs::schedule::ScheduleConfigs;
 use bevy::ecs::system::BoxedSystem;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
-use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
+use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
 use bevy::math::DVec2;
 use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
@@ -25,17 +26,21 @@ use bevy::render::render_resource::{
     TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexFormat,
 };
 use bevy::shader::{ShaderRef, load_shader_library};
+use serde::{Deserialize, Serialize};
 use voxmar_protocol::{TICKS_PER_DAY, Weather};
 
 use crate::textures::Rgba;
+use crate::weather::atmosphere::ClientAtmosphere;
 use crate::weather::{ClientWeather, DRIFT_WRAP};
 
+pub mod atmosphere;
 pub mod cracks;
 pub mod lod;
 pub mod pack;
 pub mod particles;
 pub mod precipitation;
 pub mod terrain;
+pub mod volumetric;
 pub mod water;
 pub mod wind;
 
@@ -59,6 +64,7 @@ impl Plugin for RenderPlugin {
         embedded_asset!(app, "sky.wgsl");
         embedded_asset!(app, "display.wgsl");
         app.add_plugins((
+            atmosphere::AtmospherePlugin,
             terrain::TerrainPlugin,
             water::WaterPlugin,
             wind::WindPlugin,
@@ -68,11 +74,13 @@ impl Plugin for RenderPlugin {
             precipitation::PrecipitationPlugin,
             particles::ParticlePlugin,
             cracks::CrackPlugin,
+            volumetric::VolumetricPlugin,
         ))
-            .insert_resource(DirectionalLightShadowMap { size: 2048 })
+            .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
+            .init_resource::<Quality>()
             .init_resource::<pack::ActivePack>()
-            .add_systems(Update, pack::apply_pack)
+            .add_systems(Update, (pack::apply_pack, apply_quality.run_if(resource_changed::<Quality>)))
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
     }
 }
@@ -91,11 +99,85 @@ pub enum TerrainPass {
     Fringe,
 }
 
+/// How sun shadows are drawn: none, one sharp tap, or soft with a penumbra that widens
+/// with distance from the caster (more taps, a longer reach, at higher quality).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShadowQuality {
+    Off,
+    Low,
+    Medium,
+    #[default]
+    High,
+}
+
+impl ShadowQuality {
+    pub const ALL: [ShadowQuality; 4] = [ShadowQuality::Off, ShadowQuality::Low, ShadowQuality::Medium, ShadowQuality::High];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ShadowQuality::Off => "Off",
+            ShadowQuality::Low => "Low",
+            ShadowQuality::Medium => "Medium",
+            ShadowQuality::High => "High",
+        }
+    }
+
+    /// Filter taps per shadow lookup (see shadows.wgsl): 0 none, 1 a single hard tap.
+    pub fn taps(self) -> u32 {
+        match self {
+            ShadowQuality::Off => 0,
+            ShadowQuality::Low => 1,
+            ShadowQuality::Medium => 8,
+            ShadowQuality::High => 16,
+        }
+    }
+
+    fn map_size(self) -> usize {
+        if self == ShadowQuality::Low { 1024 } else { 2048 }
+    }
+
+    /// The cascades: how many, how far the first reaches and how far shadows reach, in
+    /// blocks. A short first cascade keeps texels small where shadows are seen up close.
+    fn cascades(self) -> CascadeShadowConfig {
+        let (num_cascades, first_cascade_far_bound, maximum_distance) = match self {
+            ShadowQuality::Off | ShadowQuality::Low => (2, 16.0, 96.0),
+            ShadowQuality::Medium => (3, 12.0, 160.0),
+            ShadowQuality::High => (4, 12.0, 200.0),
+        };
+        CascadeShadowConfigBuilder { num_cascades, first_cascade_far_bound, maximum_distance, ..default() }.build()
+    }
+}
+
+/// The quality settings the renderer follows (the player's, from settings.rs).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct Quality {
+    pub shadows: ShadowQuality,
+    pub volumetric_light: bool,
+}
+
+impl Default for Quality {
+    fn default() -> Self {
+        Self { shadows: ShadowQuality::default(), volumetric_light: true }
+    }
+}
+
+/// Applies the shadow quality to the sun's shadow maps.
+fn apply_quality(quality: Res<Quality>, mut map: ResMut<DirectionalLightShadowMap>, mut sun: Query<(&mut DirectionalLight, &mut CascadeShadowConfig), With<Sun>>) {
+    let shadows = quality.shadows;
+    if map.size != shadows.map_size() {
+        map.size = shadows.map_size();
+    }
+    for (mut light, mut cascades) in &mut sun {
+        light.shadow_maps_enabled = shadows != ShadowQuality::Off;
+        *cascades = shadows.cascades();
+    }
+}
+
 /// Maps the HDR image to the screen in place of a tonemapper (see `display.wgsl`): colours
 /// up to 0.8 pass through unchanged, so blocks keep their texture colours in daylight as in
 /// Minecraft, and brighter ones (the sun, glints, light sources) roll off to white. The
 /// shader pack's colour grading is applied first.
-#[derive(Component, ExtractComponent, ShaderType, Clone, Copy)]
+#[derive(Component, ExtractComponent, ShaderType, Clone, Copy, PartialEq)]
 pub struct DisplayTransform {
     /// Scales the image before the curve.
     pub exposure: f32,
@@ -152,12 +234,15 @@ pub struct SkyParams {
 
 /// Blocks per unit of the sky shader's cloud noise. The cloud layer's offset wraps every
 /// 4096 units, which the wind drift's wrapping matches, so wrapping never shows.
-const CLOUD_UNIT: f64 = DRIFT_WRAP as f64 / 4096.0;
+pub(crate) const CLOUD_UNIT: f64 = DRIFT_WRAP as f64 / 4096.0;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct SkyMaterial {
     #[uniform(0)]
     pub params: SkyParams,
+    /// The terrain's air, so fog hides the sky as it hides the land.
+    #[uniform(1)]
+    pub atmosphere: atmosphere::Atmosphere,
 }
 
 impl Material for SkyMaterial {
@@ -203,18 +288,21 @@ pub struct SkyDome;
 #[derive(Component)]
 pub struct Sun;
 
-/// Creates the texture arrays, materials, camera, sun and sky dome.
+/// Creates the texture arrays, materials, camera, sun and sky dome. `glow` is how brightly
+/// each block texture layer glows by itself, 0..1 (see `glow_table`).
 pub fn setup(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
     sky_materials: &mut Assets<SkyMaterial>,
     block_textures: &[Rgba],
+    glow: &[f32],
 ) {
     commands.insert_resource(particles::TexturePieces::new(block_textures));
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat));
-    commands.insert_resource(terrain::TerrainTextures { textures });
-    let sky = sky_materials.add(SkyMaterial { params: SkyParams::default() });
+    let glow = images.add(glow_table(glow));
+    commands.insert_resource(terrain::TerrainTextures { textures, glow });
+    let sky = sky_materials.add(SkyMaterial { params: SkyParams::default(), atmosphere: default() });
     commands.insert_resource(SkyHandle(sky.clone()));
     commands.spawn((
         SkyDome,
@@ -226,17 +314,11 @@ pub fn setup(
     commands.spawn((
         Sun,
         DirectionalLight { shadow_maps_enabled: true, illuminance: 1.0, ..default() },
-        CascadeShadowConfigBuilder {
-            num_cascades: 4,
-            first_cascade_far_bound: 20.0,
-            maximum_distance: 200.0,
-            ..default()
-        }
-        .build(),
+        ShadowQuality::default().cascades(),
     ));
     commands.spawn((
-        // Water reads the depth of the scene behind it, and without MSAA copies the scene
-        // into the image it draws in (see `water`).
+        // Water reads the depth of the scene behind it, and so does the volumetric light; without
+        // MSAA water copies the scene into the image it draws in (see `water`).
         Camera3d { depth_texture_usages: (TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING).into(), ..default() },
         CameraMainTextureUsages::default().with(TextureUsages::COPY_DST),
         Projection::Perspective(PerspectiveProjection { fov: 75f32.to_radians(), near: 0.05, ..default() }),
@@ -307,6 +389,22 @@ fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode) -> Ima
         mipmap_filter: ImageFilterMode::Linear,
         ..default()
     });
+    image
+}
+
+/// How brightly each block texture layer glows by itself, one texel per layer: alpha the
+/// strength (0..1), colour white for now, room for coloured light later. The terrain shader
+/// adds the glow to the texels bright enough to be the glowing part (see voxel.wgsl).
+fn glow_table(glow: &[f32]) -> Image {
+    let data = glow.iter().flat_map(|&g| [255, 255, 255, (g.clamp(0.0, 1.0) * 255.0).round() as u8]).collect::<Vec<u8>>();
+    let mut image = Image::new(
+        Extent3d { width: glow.len().max(1) as u32, height: 1, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        if data.is_empty() { vec![0; 4] } else { data },
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
     image
 }
 
@@ -404,20 +502,39 @@ const DUSK_HORIZON: Vec3 = Vec3::new(1.9, 0.78, 0.32);
 const DUSK_AMBIENT: Vec3 = Vec3::new(1.3, 0.95, 0.75);
 const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 
+/// The direction towards the sun at a time of day (0..1, 0 = sunrise): a slightly tilted
+/// arc across the sky.
+fn sun_path(day_fraction: f32) -> Vec3 {
+    let angle = day_fraction * std::f32::consts::TAU;
+    Vec3::new(angle.cos(), angle.sin(), 0.25).normalize()
+}
+
+/// The sun's light moves across the sky in steps of this fraction of a day (a tenth of a
+/// degree of its arc, about a third of a second at the normal pace). Between steps the
+/// shadow maps are drawn from exactly the same direction, so nothing in them changes and
+/// shadows stand still; each step moves a shadow cast from eight blocks up by under a
+/// texel of the nearest shadow map, which the soft filter hides.
+const LIGHT_STEP: f32 = 0.1 / 360.0;
+
+/// The time of day the sun's light is drawn at: `day_fraction` to the nearest step.
+fn light_time(day_fraction: f32) -> f32 {
+    (day_fraction / LIGHT_STEP).round() * LIGHT_STEP
+}
+
 impl Environment {
     fn at(day_fraction: f32) -> Self {
-        // The sun crosses the sky along a slightly tilted arc.
-        let angle = day_fraction * std::f32::consts::TAU;
-        let to_sun = Vec3::new(angle.cos(), angle.sin(), 0.25).normalize();
+        let to_sun = sun_path(day_fraction);
         let daylight = smoothstep(-0.2, 0.15, to_sun.y);
         let dusk = (1.0 - (to_sun.y.abs() * 4.0).min(1.0)) * smoothstep(-0.25, 0.0, to_sun.y);
 
         // One shadow-casting light: the sun by day, the moon (opposite it) by night. Both
-        // fade to zero at the horizon, so swapping between them is invisible.
+        // fade to zero at the horizon, so swapping between them is invisible. Its direction
+        // moves in steps; its colour and the sky change smoothly.
+        let stepped = sun_path(light_time(day_fraction));
         let (light_direction, light_color) = if to_sun.y > 0.0 {
-            (to_sun, LOW_SUN.lerp(SUN, smoothstep(0.0, 0.35, to_sun.y)) * smoothstep(0.0, 0.2, to_sun.y))
+            (stepped, LOW_SUN.lerp(SUN, smoothstep(0.0, 0.35, to_sun.y)) * smoothstep(0.0, 0.2, to_sun.y))
         } else {
-            (-to_sun, MOON * smoothstep(0.0, 0.2, -to_sun.y))
+            (-stepped, MOON * smoothstep(0.0, 0.2, -to_sun.y))
         };
 
         let zenith = fade(NIGHT_ZENITH, DAY_ZENITH, daylight);
@@ -462,7 +579,7 @@ fn tint(color: Vec3, hue: Vec3, amount: f32) -> Vec3 {
 /// Colour of the glow around the sun in sky.wgsl, which the haze shares.
 const SUN_GLOW: Vec3 = Vec3::new(1.0, 0.8, 0.55);
 
-/// Advances time of day and moves the sun, light colours, fog and sky to match.
+/// Advances time of day and moves the sun, light colours, the air and sky to match.
 #[allow(clippy::too_many_arguments)]
 fn update_environment(
     time: Res<Time>,
@@ -474,7 +591,7 @@ fn update_environment(
     mut sun: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>)>,
     mut clear: ResMut<ClearColor>,
-    pack: Res<pack::ActivePack>,
+    (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
 ) {
     let Some(sky_handle) = sky_handle else { return };
     let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
@@ -483,12 +600,19 @@ fn update_environment(
     let shown = &weather.current;
     let flash = weather.flash();
     let mut env = Environment::at(days.fract() as f32).under(shown, flash);
-    env.light_color *= pack.sun;
+    env.light_color *= pack.sun * pack.sun_tint;
     env.ambient *= pack.ambient * pack.shade_tint;
-    env.horizon *= pack.haze_tint;
+    // The place's sky tint, as far as the pack lets it show.
+    let tint = Vec3::ONE.lerp(air.sky, pack.local_air.clamp(0.0, 1.0));
+    env.zenith *= tint;
+    env.horizon *= pack.haze_tint * tint;
 
     if let Ok((mut transform, mut light)) = sun.single_mut() {
-        *transform = Transform::default().looking_to(-env.light_direction, Vec3::Y);
+        let rotation = Transform::default().looking_to(-env.light_direction, Vec3::Y).rotation;
+        // Only a new step moves the light, so the shadow maps stay exactly as they were.
+        if transform.rotation != rotation {
+            transform.rotation = rotation;
+        }
         light.color = Color::linear_rgb(env.light_color.x, env.light_color.y, env.light_color.z);
     }
     if let Ok(mut dome) = dome.single_mut() {
@@ -496,19 +620,10 @@ fn update_environment(
     }
 
     let mut horizon = env.horizon;
-    // Haze in the shaders (see lighting.wgsl) does the gradual fading; the linear falloff
-    // only fades out the edge of the distant terrain.
-    let (fog_start, fog_end) = if cycle.underwater {
+    if cycle.underwater {
         let water = Vec3::new(0.04, 0.13, 0.32);
         horizon = fade(water * 0.03, water, env.daylight);
-        (0.0, 40.0)
-    } else {
-        // Rain and, more so, snow close in the view, and humid air brings the haze nearer.
-        // Every surface fades through these, so the weather thickens fog everywhere alike.
-        let murk = (shown.precipitation * (0.7 + 0.6 * shown.snow)).min(1.0);
-        let end = cycle.view_distance * (1.0 - 0.9 * murk.sqrt());
-        (end * (0.6 - 0.57 * murk) * (1.0 - 0.4 * smoothstep(0.5, 1.0, shown.humidity)), end)
-    };
+    }
     // Haze glows around the sun like the sky does, while the sun is the light, and as
     // dully as the sky's glow under thick cloud.
     let overcast = smoothstep(0.4, 1.0, shown.cover);
@@ -517,30 +632,38 @@ fn update_environment(
     } else {
         SUN_GLOW * (env.daylight * 2.0).min(1.0) * (1.0 - 0.7 * overcast)
     };
+    let light = atmosphere::Light { horizon, ambient: env.ambient, sun: env.light_color, glow, elevation: env.light_direction.y };
+    let air = atmosphere::Air { haze: Some(air.haze), density: air.haze_density };
+    let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
+    let position = camera.translation().as_dvec3();
+    let layer = ((DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT).rem_euclid(DVec2::splat(4096.0)).as_vec2();
+    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation().y, underwater: cycle.underwater };
+    let mut air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, *quality, view);
+    if !cycle.underwater {
+        air = air.with_clouds(shown, layer, seconds, &pack);
+    }
+    atmosphere.set_if_neq(air);
+
     let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
     clear.0 = horizon_color;
     ambient.color = Color::linear_rgb(env.ambient.x, env.ambient.y, env.ambient.z);
+    // Water reflects the horizon's colour from here (`fog.base_color`); the air itself is
+    // the atmosphere uniform's.
     fog.color = horizon_color;
-    // The alpha, unused by Bevy, carries the pack's ground bounce to lighting.wgsl.
-    fog.directional_light_color = Color::linear_rgba(glow.x, glow.y, glow.z, pack.bounce);
-    fog.falloff = FogFalloff::Linear { start: fog_start, end: fog_end };
-    // Unused by our shaders as Bevy means it; lighting.wgsl reads it as the haze density.
-    fog.directional_light_exponent = pack.haze;
+    fog.falloff = FogFalloff::Linear { start: air.haze_shape.z, end: air.haze_shape.w };
 
     // The sky dome is the only entity using its material, so updating it is cheap.
     if let Some(mut sky) = sky_materials.get_mut(&sky_handle.0) {
-        let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
-        let position = camera.translation().as_dvec3();
-        let layer = (DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT;
         sky.params = SkyParams {
             zenith: env.zenith.extend(1.0),
             horizon: horizon.extend(1.0),
             sun: env.to_sun.extend(env.daylight),
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
             stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
-            weather: layer.rem_euclid(DVec2::splat(4096.0)).as_vec2().extend(shown.precipitation).extend(flash),
+            weather: layer.extend(shown.precipitation).extend(flash),
             wind: shown.wind.normalize_or(Vec2::X).extend(0.0).extend(0.0),
         };
+        sky.atmosphere = air;
     }
 }
 

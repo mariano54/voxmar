@@ -29,8 +29,9 @@ use crate::lattice::{self, Lattice, Profile};
 use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
+use crate::shapes::{Anchors, Piece};
 use crate::stage::{self, Stage};
-use crate::surface::{Fill, Layers, Palette, Spot};
+use crate::surface::{Fill, Layers, Palette, Spot, Surface};
 use crate::trails::Marker;
 use crate::trees::TreeId;
 use crate::underground::Rock;
@@ -318,7 +319,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let surface = stage::enter(Stage::Surface);
             let layers = world.surface_layers(&site, wx, wz);
             let stones = world.stones(&site);
-            let strata = &world.biomes.get(site.biome).strata;
+            let strata = world.surface_of(&site, wx, wz).1;
             drop(surface);
             {
                 let _stage = stage::enter(Stage::Caves);
@@ -442,6 +443,10 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     }
 
     {
+        let _stage = stage::enter(Stage::Shapes);
+        sculpt(world, &geology, origin, &surfaces, &mut blocks);
+    }
+    {
         let _stage = stage::enter(Stage::Ores);
         terrain.resources.place(world.seed, pos, &mut blocks);
     }
@@ -514,6 +519,82 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         *chunk = Chunk::from_dense(&blocks.data[cy * CHUNK_VOLUME..(cy + 1) * CHUNK_VOLUME]);
     }
     column
+}
+
+/// Height of the sections 3D shapes are worked in.
+const SECTION: i32 = 16;
+/// How far into a sea cliff waves cut a notch at the waterline, in blocks.
+const NOTCH: i32 = 3;
+
+/// The 3D work of terrain shapes on a column: arches and leaning spires of the rock
+/// beneath, section by section wherever they reach, and notches cut by the waves at the
+/// foot of sea cliffs.
+fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, surfaces: &[(Site, BlockId)], blocks: &mut Blocks) {
+    let terrain = &world.terrain;
+    let corner = IVec2::new(origin.x, origin.z);
+    let rock = |site: &Site, x: i32, y: i32, z: i32| {
+        let strata = &world.biomes.get(site.biome).strata;
+        if strata.is_empty() {
+            stone_at(&terrain.ids, world.stones(site), terrain.rock.get_noise_3d(x as f32, y as f32, z as f32), world.seed, y, x, z)
+        } else {
+            terrain.band(strata, y, x, z)
+        }
+    };
+    let shapes = world.geology.shapes();
+    for piece in world.pieces(corner) {
+        let (low, high) = piece.heights();
+        let (low, high) = (low.max(1), high.min(WORLD_HEIGHT - 1));
+        for section in low.div_euclid(SECTION)..=high.div_euclid(SECTION) {
+            let (y0, y1) = ((section * SECTION).max(low), (section * SECTION + SECTION - 1).min(high));
+            let Some((min, max)) = piece.extent(y0, y1) else { continue };
+            let (min, max) = ((min - corner).max(IVec2::ZERO), (max - corner).min(IVec2::splat(CHUNK_SIZE - 1)));
+            for z in min.y..=max.y {
+                for x in min.x..=max.x {
+                    let (wx, wz) = (origin.x + x, origin.z + z);
+                    // Only over the ground: caves beneath are left open.
+                    let site = &surfaces[(z * CHUNK_SIZE + x) as usize].0;
+                    for y in y0.max(site.height + 1)..=y1 {
+                        let here = blocks.get_local(x, y, z);
+                        if (here.is_air() || here == terrain.ids.water) && shapes.solid(&piece, wx, y, wz) {
+                            blocks.set_local(x, y, z, rock(site, wx, y, wz));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Notches at the foot of sea cliffs, deepest at the face, where no fresh water is near.
+    const SIDES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+    for z in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            let site = &surfaces[(z * CHUNK_SIZE + x) as usize].0;
+            if !site.form.shape.is_some_and(|s| shapes.sea_cliff(s)) || site.height < SEA_LEVEL + NOTCH + 3 || site.river > 0.0 {
+                continue;
+            }
+            let (wx, wz) = (origin.x + x, origin.z + z);
+            if terrain.patches.get_noise_2d(wx as f32 * 2.0, wz as f32 * 2.0) < -0.25 {
+                continue;
+            }
+            let sea = |dx: i32, dz: i32| {
+                let g = geology.get(wx + dx, wz + dz);
+                g.body == Body::Sea && g.submerged() && g.water == SEA_LEVEL && g.cavity.is_none()
+            };
+            let fresh = SIDES.iter().any(|&(dx, dz)| {
+                let g = geology.get(wx + dx, wz + dz);
+                g.water > SEA_LEVEL && (g.submerged() || g.river > 0.0)
+            });
+            let Some(d) = (1..=NOTCH).find(|&d| SIDES.iter().any(|&(dx, dz)| sea(dx * d, dz * d))) else { continue };
+            if fresh {
+                continue;
+            }
+            for y in SEA_LEVEL + 1..=SEA_LEVEL + 1 + NOTCH - d {
+                if blocks.get_local(x, y, z) != terrain.ids.water {
+                    blocks.set_local(x, y, z, BlockId::AIR);
+                }
+            }
+        }
+    }
 }
 
 impl Terrain {
@@ -697,6 +778,31 @@ impl Terrain {
 }
 
 impl Overworld {
+    /// The arches and leaning spires that reach the column whose corner is `corner`.
+    pub(crate) fn pieces(&self, corner: IVec2) -> Vec<Piece> {
+        let anchors = Anchors {
+            regional: &|x, z| self.geology.regional(x, z),
+            ground: &|x, z| {
+                let geo = self.geo(x, z);
+                if geo.submerged() { f32::NAN } else { geo.height as f32 }
+            },
+            edge: &|x, z| self.site(x, z).edge,
+        };
+        self.geology.shapes().pieces(corner, corner + CHUNK_SIZE - 1, &anchors)
+    }
+
+    /// The surface rules a site's ground follows and the strata they band with: its biome's,
+    /// or those of a terrain shape with ground of its own where the shape stands tallest.
+    pub(crate) fn surface_of(&self, site: &Site, x: i32, z: i32) -> (&Surface, &[BlockId]) {
+        let biome = self.biomes.get(site.biome);
+        match site.form.shape.and_then(|shape| self.shape_surfaces[shape.0 as usize].as_ref()) {
+            Some(own) if site.form.strength > 0.3 + 0.3 * self.terrain.dither(x, z) => {
+                (&own.surface, if own.strata.is_empty() { &biome.strata } else { &own.strata })
+            }
+            _ => (&biome.surface, &biome.strata),
+        }
+    }
+
     /// The stones beneath a site: its biome's own, or its rock province's.
     pub(crate) fn stones(&self, site: &Site) -> &Palette {
         self.biomes.get(site.biome).stones.as_ref().unwrap_or(&self.rocks.get(site.province).stones)
@@ -706,11 +812,12 @@ impl Overworld {
     pub(crate) fn surface_layers(&self, site: &Site, x: i32, z: i32) -> Layers {
         let terrain = &self.terrain;
         let ids = &terrain.ids;
-        let biome = self.biomes.get(site.biome);
         let d = terrain.dither(x, z);
         let mix = || terrain.mix(x, z);
         let spot = Spot { site, x, z, dither: d, mix: &mix, chance: terrain.chance(x, z), sampled: Default::default() };
-        let (stones, strata) = (self.stones(site), &biome.strata);
+        let biome = self.biomes.get(site.biome);
+        let (surface, strata) = self.surface_of(site, x, z);
+        let stones = self.stones(site);
         let rules = &self.rules;
         // Whether `v` lies past a threshold that is dithered across `lo..hi`.
         let past = |v: f32, lo: f32, hi: f32| v > lo + (hi - lo) * d;
@@ -720,14 +827,14 @@ impl Overworld {
         let shore = (site.height - site.water) as f32;
 
         if shore < 0.0 {
-            return rules.underwater(&biome.surface, &spot, stones, strata);
+            return rules.underwater(surface, &spot, stones, strata);
         }
         if site.body == Body::Salt {
             // A dry closed basin crusts over with salt.
             return Layers { top: if d < 0.75 { ids.salt } else { ids.sand }, filler: Fill::Block(ids.sand), depth: 3 };
         }
         // Bare rock on cliffs, and on high ground exposed to the weather where no snow lies.
-        let cliff = || rules.cliff(&biome.surface, &spot, stones, strata);
+        let cliff = || rules.cliff(surface, &spot, stones, strata);
         if past(site.slope as f32, 3.0, 5.5) {
             return cliff();
         }
@@ -743,7 +850,7 @@ impl Overworld {
         // Beaches along the sea. Banks of rivers and lakes are the river biome's own
         // (`Site::biome` takes it near fresh water).
         let beach = site.body == Body::Sea && site.continentalness < 0.7 && !past(above, 0.5, 2.5);
-        let mut ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
+        let mut ground = rules.ground(surface, &spot, beach, stones, strata);
         // A trail's worn tread, thinning out at its edges into trodden grass.
         if site.trail * 0.95 > d {
             ground.top = terrain.tread(&biome.tags, x, z);

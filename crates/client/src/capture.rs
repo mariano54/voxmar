@@ -8,15 +8,20 @@
 //! the camera 4 cm sideways, takes another, and reports the share of pixels that changed
 //! by more than 60 levels (of 255) in any channel. Animation is frozen, so only aliasing
 //! (geometry, texture and shading detail smaller than a pixel) moves pixels that much.
-//! Changed pixels are marked in red in `OUT-flicker.png`.
+//! Changed pixels are marked in red in `OUT-flicker.png`. `--flicker-still` measures the
+//! other kind: the camera stands still while the game runs on by exactly one 60 fps frame
+//! between the shots (the sun moving, the wind blowing), which is how shadows and leaves
+//! flicker as time passes.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::camera::RenderTarget;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
+use bevy::time::TimeUpdateStrategy;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 
 use voxmar_protocol::TICKS_PER_DAY;
@@ -45,8 +50,17 @@ pub struct CapturePlugin {
     pub mine: Option<f32>,
     /// Show the settings menu.
     pub menu: bool,
-    /// Measure flicker for a small camera step (see the module docs).
-    pub flicker: bool,
+    /// Measure flicker for a small camera step or as time passes (see the module docs).
+    pub flicker: Option<FlickerKind>,
+}
+
+/// What changes between the two shots of a flicker measurement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlickerKind {
+    /// The camera steps 4 cm sideways with the clock stopped (`--flicker`).
+    Step,
+    /// The game runs on one 60 fps frame with the camera still (`--flicker-still`).
+    Still,
 }
 
 /// How far `--flicker` steps the camera sideways, in blocks.
@@ -55,6 +69,8 @@ const FLICKER_STEP: f32 = 0.04;
 const FLICKER_LEVELS: u8 = 60;
 /// Frames to let a change of pose or clock reach the screen before a flicker shot.
 const FLICKER_FRAMES: u32 = 3;
+/// Game time between the shots of `--flicker-still`: one frame at 60 fps.
+const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
@@ -72,7 +88,7 @@ impl Plugin for CapturePlugin {
             taken_at: None,
             saved: false,
             frame_times: Vec::new(),
-            flicker: self.flicker.then(Flicker::default),
+            flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
         })
         .add_systems(PostStartup, render_offscreen)
         .add_systems(Update, (target_ui, capture, measure_flicker.after(capture)))
@@ -108,15 +124,23 @@ struct Capture {
 }
 
 /// Progress of a `--flicker` measurement, which starts once the world has settled.
-#[derive(Default)]
 struct Flicker {
+    kind: FlickerKind,
     started: bool,
+    /// For `--flicker-still`, when the game clock started stepping (seconds).
+    since: Option<f64>,
     /// Frames since the clock stopped.
     frames: u32,
     /// The camera's sideways step, once the first shot is taken.
     step: Vec3,
     /// The two shots, as they arrive.
     shots: Arc<Mutex<Vec<Image>>>,
+}
+
+impl Default for Flicker {
+    fn default() -> Self {
+        Self { kind: FlickerKind::Step, started: false, since: None, frames: 0, step: Vec3::ZERO, shots: default() }
+    }
 }
 
 fn render_offscreen(
@@ -197,9 +221,11 @@ fn mine(
     }
 }
 
-fn hold_time(state: Res<Capture>, mut cycle: ResMut<DayCycle>) {
-    if let Some(time) = state.time {
-        cycle.ticks = time as f64 * TICKS_PER_DAY as f64;
+/// Holds the time of day, or during `--flicker-still` runs it on from there.
+fn hold_time(state: Res<Capture>, time: Res<Time>, mut cycle: ResMut<DayCycle>) {
+    if let Some(day) = state.time {
+        let since = state.flicker.as_ref().and_then(|f| f.since).map_or(0.0, |start| time.elapsed_secs_f64() - start);
+        cycle.ticks = day as f64 * TICKS_PER_DAY as f64 + since * voxmar_protocol::TICKS_PER_SECOND as f64;
     }
 }
 
@@ -323,7 +349,14 @@ fn measure_flicker(
 ) {
     let (target, path) = (state.target.clone(), state.path.clone());
     let Some(flicker) = state.flicker.as_mut().filter(|f| f.started) else { return };
-    virtual_time.pause();
+    let kind = flicker.kind;
+    if flicker.kind == FlickerKind::Step {
+        virtual_time.pause();
+    } else if flicker.since.is_none() {
+        // From the next frame on, every frame advances the game by exactly one 60 fps step.
+        commands.insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
+        flicker.since = Some(virtual_time.elapsed_secs_f64());
+    }
     flicker.frames += 1;
     let shot = |name: PathBuf, commands: &mut Commands, shots: &Arc<Mutex<Vec<Image>>>| {
         let shots = shots.clone();
@@ -332,12 +365,19 @@ fn measure_flicker(
             .observe(save_to_disk(name))
             .observe(move |captured: On<ScreenshotCaptured>| shots.lock().expect("flicker shots").push(captured.image.clone()));
     };
+    // A step is taken with the clock stopped, a few frames after the first shot; time
+    // passing is the very next frame.
+    let second = match flicker.kind {
+        FlickerKind::Step => 2 * FLICKER_FRAMES + 1,
+        FlickerKind::Still => FLICKER_FRAMES + 1,
+    };
     if flicker.frames == FLICKER_FRAMES {
         shot(path.clone(), &mut commands, &flicker.shots);
-    } else if flicker.frames == FLICKER_FRAMES + 1 {
+    } else if flicker.frames == FLICKER_FRAMES + 1 && flicker.kind == FlickerKind::Step {
         let Ok(camera) = camera.single() else { return };
         flicker.step = camera.right() * FLICKER_STEP;
-    } else if flicker.frames == 2 * FLICKER_FRAMES + 1 {
+    }
+    if flicker.frames == second {
         shot(sibling(&path, "moved"), &mut commands, &flicker.shots);
     }
     let shots = flicker.shots.clone();
@@ -350,10 +390,13 @@ fn measure_flicker(
     let mut marked = shots[0].clone();
     marked.data = Some(map);
     let pixels = (a.len() / 4).max(1);
+    let between = match kind {
+        FlickerKind::Step => format!("a {:.0} cm step", FLICKER_STEP * 100.0),
+        FlickerKind::Still => "one frame of time with the camera still".into(),
+    };
     info!(
-        "flicker: {changed} of {pixels} pixels ({:.3}%) changed by more than {FLICKER_LEVELS} levels for a {:.0} cm step",
+        "flicker: {changed} of {pixels} pixels ({:.3}%) changed by more than {FLICKER_LEVELS} levels for {between}",
         changed as f64 * 100.0 / pixels as f64,
-        FLICKER_STEP * 100.0,
     );
     let marked_path = sibling(&path, "flicker");
     match marked.try_into_dynamic() {

@@ -75,6 +75,18 @@ pub struct Regional {
 }
 
 impl Regional {
+    /// Air temperature at the regional elevation, °C: what biomes and terrain shapes are
+    /// placed by, without the hills, valleys and features of each spot.
+    pub fn temperature(&self) -> f32 {
+        self.sea_temperature - LAPSE_RATE * (self.elevation - SEA_LEVEL as f32).max(0.0)
+    }
+
+    /// Precipitation over potential evaporation at the regional elevation, from the
+    /// regional rainfall: what biomes and terrain shapes are placed by.
+    pub fn moisture(&self) -> f32 {
+        moisture(self.rainfall, self.temperature())
+    }
+
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         let mix = |a: f32, b: f32| a + (b - a) * t;
         Self {
@@ -101,9 +113,12 @@ impl Regional {
 pub fn landform(relief: &Relief) -> f32 {
     let inland = smoothstep(-0.06, 0.1, relief.continental);
     let hills = smoothstep(0.42, 0.58, relief.roughness * inland) / 3.0;
-    let slopes = smoothstep(0.3, 0.42, relief.mountain) * 2.0 / 3.0;
-    let peaks = smoothstep(0.22, 0.34, relief.peak);
-    hills.max(slopes).max(peaks)
+    hills.max(range(relief)).max(smoothstep(0.22, 0.34, relief.peak))
+}
+
+/// The slopes of a range: 2/3 on them, 0 off them.
+fn range(relief: &Relief) -> f32 {
+    smoothstep(0.3, 0.42, relief.mountain) * 2.0 / 3.0
 }
 
 /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland, from the continental noise.
@@ -263,9 +278,10 @@ impl Climate {
             latitude,
             // Averaged over a few hundred blocks, so a range's flanks share one climate
             // rather than banding with every few dozen blocks of height, and the landform
-            // follows ranges, hill country and plains rather than every hill and summit.
+            // follows hill country, plains and broad summits rather than every hill and
+            // peak; a range's slopes stay slopes, so lowland biomes never climb them.
             elevation: 0.4 * relief.elevation.max(sea) + 0.15 * around.iter().map(|r| r.elevation.max(sea)).sum::<f32>(),
-            erosion: 0.4 * landform(&relief) + 0.15 * around.iter().map(landform).sum::<f32>(),
+            erosion: (0.4 * landform(&relief) + 0.15 * around.iter().map(landform).sum::<f32>()).max(range(&relief)),
             weirdness: even(&self.weirdness),
             aether: even(&self.aether).powf(self.aether_exponent),
             fertility: even(&self.fertility),
@@ -275,7 +291,7 @@ impl Climate {
     }
 }
 
-/// The regional climate over an area, computed once per lattice point and bilinearly
+/// The regional climate over an area, from the lattice points the land caches, bilinearly
 /// interpolated, so every caller sees exactly the same smooth fields.
 pub struct ClimateGrid {
     /// Lattice coordinates of the first point.
@@ -286,13 +302,10 @@ pub struct ClimateGrid {
 
 impl ClimateGrid {
     /// Covers the blocks from `min` to `max` inclusive.
-    pub fn new(climate: &Climate, geology: &Geology, min: IVec2, max: IVec2) -> Self {
+    pub fn new(geology: &Geology, min: IVec2, max: IVec2) -> Self {
         let origin = min.div_euclid(IVec2::splat(CELL));
         let size = max.div_euclid(IVec2::splat(CELL)) + 2 - origin;
-        let points = (0..size.y)
-            .flat_map(|j| (0..size.x).map(move |i| (origin + IVec2::new(i, j)) * CELL))
-            .map(|p| climate.regional(geology, p.x as f32, p.y as f32))
-            .collect();
+        let points = (0..size.y).flat_map(|j| (0..size.x).map(move |i| origin + IVec2::new(i, j))).map(|p| geology.regional_point(p)).collect();
         Self { origin, width: size.x, points }
     }
 

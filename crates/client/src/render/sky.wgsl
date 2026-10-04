@@ -4,6 +4,8 @@
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
+#import voxmar::atmosphere::{Atmosphere, edge_fog}
+#import voxmar::clouds::{CLOUD_SCALE, pcg, unit, value_noise, cloud_body, cloud_threshold}
 
 struct SkyParams {
     zenith: vec4<f32>,
@@ -23,6 +25,8 @@ struct SkyParams {
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> sky: SkyParams;
+// The terrain's air (atmosphere.wgsl): fog and ground fog hide the sky as they hide the land.
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> atmosphere: Atmosphere;
 
 const PI: f32 = 3.14159265;
 const TAU: f32 = 6.28318531;
@@ -92,34 +96,6 @@ fn hash(p: vec3<f32>) -> f32 {
     return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
 }
 
-// For whole-numbered `p`. An integer hash stays random however far the clouds drift.
-fn hash2(p: vec2<f32>) -> f32 {
-    let i = vec2<i32>(p);
-    return unit(pcg(u32(i.x) + pcg(u32(i.y) ^ 0x9e3779b9u)));
-}
-
-// Integer hash (PCG) for star cells, free of the banding a sine hash shows at large inputs.
-fn pcg(v: u32) -> u32 {
-    let state = v * 747796405u + 2891336453u;
-    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
-fn unit(h: u32) -> f32 {
-    return f32(h >> 8u) / 16777216.0;
-}
-
-fn value_noise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash2(i);
-    let b = hash2(i + vec2(1.0, 0.0));
-    let c = hash2(i + vec2(0.0, 1.0));
-    let d = hash2(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
 // Cloud noise. The finer octaves slide slowly over the coarse ones as seconds `t` pass,
 // so shapes keep forming and breaking up as they drift.
 fn fbm(p: vec2<f32>, t: f32) -> f32 {
@@ -134,27 +110,12 @@ fn fbm(p: vec2<f32>, t: f32) -> f32 {
     return value;
 }
 
-// Feature sizes of the low cloud's body and the billows at its edges, and of the higher
-// sheet, relative to the layers' coordinates.
-const CLOUD_SCALE: f32 = 0.6;
+// Feature sizes of the billows at the low cloud's edges and of the higher sheet,
+// relative to the layers' coordinates (the body's is clouds.wgsl's CLOUD_SCALE).
 const DETAIL_SCALE: f32 = 7.0;
 const SHEET_SCALE: f32 = 0.5;
-
-// The broad body of low cloud, about 0..1: three coarse octaves over a smooth warp, so
-// outlines bulge and curl instead of following the noise grid. Like `fbm`, the finer
-// octaves slide slowly over the coarse one.
-fn cloud_body(p: vec2<f32>, t: f32) -> f32 {
-    let warp = vec2(value_noise(p * 0.5 + vec2(5.2, 1.3)), value_noise(p * 0.5 + vec2(-3.7, 8.1))) - 0.5;
-    var q = p + warp * 0.8;
-    var value = 0.0;
-    var amplitude = 0.5;
-    for (var i = 0; i < 3; i++) {
-        value += value_noise(q) * amplitude;
-        q = q * 2.03 + vec2(17.1, 9.3) + t * vec2(0.006, -0.004);
-        amplitude *= 0.5;
-    }
-    return value / 0.875;
-}
+// Brightness of cloud in full sun, relative to the light on the land.
+const CLOUD_LIT: f32 = 1.0;
 
 // Billows and wisps, 0..1, that shape only the edges of cloud.
 fn cloud_detail(p: vec2<f32>, t: f32) -> f32 {
@@ -473,7 +434,7 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
     let body = cloud_body(at * CLOUD_SCALE, t);
     // How far above the threshold for cloud the body rises, from 0 at its edge: the
     // threshold sets how much of the sky is covered.
-    let threshold = mix(0.72, 0.0, pow(cover, 1.3));
+    let threshold = cloud_threshold(cover);
     let core = (body - threshold) / (1.0 - threshold);
     // Fine detail bites into and bulges out of the edges but leaves the cores whole: billows
     // on heaped cloud, soft frays on layers, and little of either once the sky is covered.
@@ -499,8 +460,10 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
         // darkest where they are thickest.
         dark += 0.2 * smoothstep(0.6, 1.0, cover) * (1.0 - convection) + rain * mix(0.25, 0.4, convection) * (0.5 + thick);
         dark = clamp(dark, 0.0, 0.95);
-        var color = mix(lit * 1.4 * through, shade * (1.3 - 0.6 * thick * storm), dark);
-        color += vec3(1.0, 0.85, 0.6) * glow * (1.0 - depth) * 2.0 + flash * (0.5 + 0.5 * depth);
+        // Sunlit sides are as bright as a sunlit white block, no brighter, so grading and
+        // bloom keep them white and shaded rather than washing them out.
+        var color = mix(lit * CLOUD_LIT * through, shade * (1.3 - 0.6 * thick * storm), dark);
+        color += vec3(1.0, 0.85, 0.6) * glow * (1.0 - depth) + flash * (0.5 + 0.5 * depth);
         color = mix(color, behind, haze);
         result = vec4(color * density + result.rgb * (1.0 - density), density + result.a * (1.0 - density));
     }
@@ -584,5 +547,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         color = mix(color, vec3(1.5, 1.55, 1.7) * limb * (1.0 - 0.22 * seas), moon.z * night);
     }
 
-    return vec4(color * (1.0 - cloud.a) + cloud.rgb, 1.0);
+    // Fog and ground fog hide the sky exactly as they hide the far edge of the land.
+    color = color * (1.0 - cloud.a) + cloud.rgb;
+    return vec4(mix(color, atmosphere.fog.rgb, edge_fog(atmosphere, view.world_position, dir)), 1.0);
 }

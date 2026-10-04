@@ -139,22 +139,24 @@ fn first_column() {
         for parallel in [false, true] {
             crate::parallel::set_enabled(parallel);
             let world = Overworld::new(seed, registry.clone());
-            let start = Instant::now();
+            let (start, cpu) = (Instant::now(), thread_time());
             let spawn = ColumnPos::of_block(world.spawn_point());
-            let found = start.elapsed();
-            let start = Instant::now();
+            let found = (start.elapsed(), thread_time() - cpu);
+            let (start, cpu) = (Instant::now(), thread_time());
             let (_, times) = stage::measure(|| world.generate(spawn));
-            let generated = start.elapsed();
+            let generated = (start.elapsed(), thread_time() - cpu);
             let start = Instant::now();
             std::hint::black_box(crate::tests::generate_area(&world, spawn.offset(-4, -4), 9));
             let area = start.elapsed();
             let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
             stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
+            // On one core all the work is this thread's, so its CPU time counts it all.
+            let both = |(wall, cpu): (Duration, Duration)| if parallel { format!("{:.0} ms", ms(wall)) } else { format!("{:.0} ms ({:.0} CPU)", ms(wall), ms(cpu)) };
             println!(
-                "seed {seed}, {}: spawn point {:.0} ms, spawn column {:.0} ms ({}), then 9×9 columns {:.0} ms",
+                "seed {seed}, {}: spawn point {}, spawn column {} ({}), then 9×9 columns {:.0} ms",
                 if parallel { "every core" } else { "one core" },
-                ms(found),
-                ms(generated),
+                both(found),
+                both(generated),
                 stages.iter().map(|(s, d)| format!("{s:?} {:.0}", ms(*d))).collect::<Vec<_>>().join(", "),
                 ms(area),
             );
@@ -188,7 +190,7 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0xcd2fed7fd8111e41, 0xc315db504c0b745f, 0x9a6322ee0267b291];
+const EXPECTED: [u64; 3] = [0x8c0af92174e70d60, 0x63cd23984d70003a, 0xa5eb59784b2483b5];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -213,7 +215,7 @@ fn output_is_unchanged() {
 }
 
 /// The hash of the light over three 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
-const LIGHT: u64 = 0xd80f4138550d547a;
+const LIGHT: u64 = 0x127bd267373ea260;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
 /// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on

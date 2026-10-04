@@ -891,7 +891,9 @@
                 forest: 0.14,
                 trees: [Name("acacia", 1.0), Name("shrub", 0.4), Name("palm", 1.0), Name("baobab", 0.5)],
                 cover: 0.75, flowers: 0.02,
-                plants: [Tag("grass", 1.0), Tag("savanna", 1.0), Name("tall_grass", 0.6), Name("dead_bush", 1.0)],
+                // Mostly green grass under the climate's dry tint; straw-coloured bunchgrass
+                // in tufts among it, pampas plumes only in drifts.
+                plants: [Name("short_grass", 3.0), Name("tall_grass", 1.0), Name("bunchgrass", 0.6), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 1.0), Name("chili", 0.2)],
             ),
             surface: (
                 include: ["soil_slopes", "washes"],
@@ -914,7 +916,7 @@
                 forest: 0.12,
                 trees: [Name("baobab", 2.0), Name("acacia", 0.4), Name("shrub", 0.3)],
                 cover: 0.75, flowers: 0.02,
-                plants: [Tag("grass", 1.0), Tag("savanna", 1.0), Name("tall_grass", 0.4), Name("dead_bush", 1.0)],
+                plants: [Name("short_grass", 3.0), Name("tall_grass", 0.8), Name("bunchgrass", 0.6), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 1.0), Name("chili", 0.2)],
             ),
             variants: [],
         ),

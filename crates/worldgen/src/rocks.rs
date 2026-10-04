@@ -81,19 +81,132 @@ impl Rocks {
     pub fn at(&self, x: i32, z: i32, warp: [f32; 2]) -> ProvinceId {
         let (px, pz) = ((x as f32 + warp[0]) / CELL, (z as f32 + warp[1]) / CELL);
         let (cx, cz) = (px.floor() as i32, pz.floor() as i32);
-        let mut best = (f32::MAX, 0u64);
+        let mut best = (f32::MAX, ProvinceId(0));
         for dz in -1..=1 {
             for dx in -1..=1 {
-                let h = hash3(self.seed, cx + dx, 0, cz + dz);
-                let jitter = |bits: u64| 0.1 + 0.8 * (bits & 0xffff) as f32 / 65536.0;
-                let (ox, oz) = ((cx + dx) as f32 + jitter(h), (cz + dz) as f32 + jitter(h >> 16));
-                let d = (ox - px).powi(2) + (oz - pz).powi(2);
+                let (centre, province) = self.cell(cx + dx, cz + dz);
+                let d = (centre[0] - px).powi(2) + (centre[1] - pz).powi(2);
+                if d < best.0 {
+                    best = (d, province);
+                }
+            }
+        }
+        best.1
+    }
+
+    /// The centre of a cell, in cells, and its province.
+    fn cell(&self, cx: i32, cz: i32) -> ([f32; 2], ProvinceId) {
+        let (centre, h) = self.centre(cx, cz);
+        (centre, self.province(h))
+    }
+
+    /// The centre of a cell, in cells, and the hash its province is drawn from.
+    fn centre(&self, cx: i32, cz: i32) -> ([f32; 2], u64) {
+        let h = hash3(self.seed, cx, 0, cz);
+        let jitter = |bits: u64| 0.1 + 0.8 * (bits & 0xffff) as f32 / 65536.0;
+        ([cx as f32 + jitter(h), cz as f32 + jitter(h >> 16)], h)
+    }
+
+    /// The province drawn from a cell's hash.
+    fn province(&self, h: u64) -> ProvinceId {
+        let roll = (h >> 40) as f32 / (1u64 << 24) as f32;
+        ProvinceId(self.shares.iter().position(|&s| roll < s).unwrap_or(self.shares.len() - 1) as u8)
+    }
+
+    /// Where the provinces named or tagged `name` lie, for shapes that only rise over them.
+    pub fn mask(&self, name: &str) -> ProvinceMask {
+        ProvinceMask {
+            rocks: Rocks { provinces: Vec::new(), shares: self.shares.clone(), seed: self.seed },
+            matching: (0..self.len()).map(|i| self.matches(ProvinceId(i as u8), name)).collect(),
+        }
+    }
+}
+
+/// Some of a world's provinces, and how far inside them a position lies.
+pub struct ProvinceMask {
+    /// The world's province cells, without their stones.
+    rocks: Rocks,
+    matching: Vec<bool>,
+}
+
+impl ProvinceMask {
+    /// Whether (x, z) lies in a matching province, whose borders are displaced by `warp`.
+    pub fn contains(&self, x: f32, z: f32, warp: [f32; 2]) -> bool {
+        let (px, pz) = ((x + warp[0]) / CELL, (z + warp[1]) / CELL);
+        let (cx, cz) = (px.floor() as i32, pz.floor() as i32);
+        let mut best = (f32::MAX, 0);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let (centre, h) = self.rocks.centre(cx + dx, cz + dz);
+                let d = (centre[0] - px).powi(2) + (centre[1] - pz).powi(2);
                 if d < best.0 {
                     best = (d, h);
                 }
             }
         }
-        let roll = (best.1 >> 40) as f32 / (1u64 << 24) as f32;
-        ProvinceId(self.shares.iter().position(|&s| roll < s).unwrap_or(self.shares.len() - 1) as u8)
+        self.matching[self.rocks.province(best.1).0 as usize]
+    }
+
+    /// Blocks from (x, z) to the nearest border between a matching province and another:
+    /// positive inside a matching one, negative outside, with borders displaced by `warp`.
+    /// Exact up to about a third of a cell (a kilometre) from the border.
+    pub fn depth(&self, x: f32, z: f32, warp: [f32; 2]) -> f32 {
+        let p = [(x + warp[0]) / CELL, (z + warp[1]) / CELL];
+        let (cx, cz) = (p[0].floor() as i32, p[1].floor() as i32);
+        let mut cells = [([0.0f32; 2], false); 25];
+        let mut nearest = (f32::MAX, 0);
+        for (i, cell) in cells.iter_mut().enumerate() {
+            let (centre, province) = self.rocks.cell(cx + i as i32 % 5 - 2, cz + i as i32 / 5 - 2);
+            *cell = (centre, self.matching[province.0 as usize]);
+            let d = (centre[0] - p[0]).powi(2) + (centre[1] - p[1]).powi(2);
+            if d < nearest.0 {
+                nearest = (d, i);
+            }
+        }
+        let (a, inside) = cells[nearest.1];
+        // The nearest border with a cell on the other side: the bisector of the two centres.
+        let border = cells
+            .iter()
+            .filter(|(_, m)| *m != inside)
+            .map(|(b, _)| {
+                let n = [b[0] - a[0], b[1] - a[1]];
+                let len = n[0].hypot(n[1]);
+                let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+                -((p[0] - middle[0]) * n[0] + (p[1] - middle[1]) * n[1]) / len
+            })
+            .fold(1.0f32, f32::min);
+        border * CELL * if inside { 1.0 } else { -1.0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voxmar_engine::block::BlockRegistry;
+
+    #[test]
+    fn province_depth_measures_to_the_border() {
+        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let content = WorldContent::base(&registry).unwrap();
+        let rocks = Rocks::new(5, &content, &registry, &crate::rarity::Featured::new(5, 0.5));
+        let mask = rocks.mask("karst");
+        let karst = |x: i32, z: i32| rocks.matches(rocks.at(x, z, [0.0; 2]), "karst");
+        let (mut inside, mut outside) = (0, 0);
+        for i in 0..120 * 120 {
+            let (x, z) = (i % 120 * 251 - 15000, i / 120 * 251 - 15000);
+            let depth = mask.depth(x as f32, z as f32, [0.0; 2]);
+            assert_eq!(depth > 0.0, karst(x, z), "at {x}, {z}: depth {depth}");
+            if depth > 0.0 { inside += 1 } else { outside += 1 }
+            // The border is no nearer than the depth says: a step short of it in any
+            // direction stays in the same kind of province.
+            if depth.abs() > 40.0 && depth.abs() < 900.0 {
+                let short = depth.abs() - 20.0;
+                for (dx, dz) in [(1.0f32, 0.0f32), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)] {
+                    let p = (x as f32 + dx * short, z as f32 + dz * short);
+                    assert_eq!(karst(p.0 as i32, p.1 as i32), depth > 0.0, "at {x}, {z}: depth {depth} but the border is nearer");
+                }
+            }
+        }
+        assert!(inside > 0 && outside > 0);
     }
 }

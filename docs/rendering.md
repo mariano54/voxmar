@@ -45,9 +45,12 @@ driver turned into milliseconds of CPU time. Instead:
   finds its chunk's origin through the table, so any set of chunks in a page can be drawn
   with one draw call.
 - Culling writes, per view, where each surviving chunk's indices go in that view's own
-  index buffer, and a compute pass (`terrain/compact.wgsl`) copies them there, in pieces
-  of at most 2,048 indices so the copy spreads over the GPU. Translucent chunks are
-  gathered back to front.
+  index buffer, and a compute pass (`terrain/compact.wgsl`) writes them there, a thread
+  per quad. Pages keep no indices at all: a quad's four vertices are consecutive, and
+  the pass splits it along its darker diagonal from the ambient occlusion of its corners,
+  exactly as the mesher does, which saves 24 of every 56 bytes of chunk geometry.
+  Translucent chunks are gathered back to front. When neither a view's chunks nor their
+  meshes changed since the last frame, the pass is skipped.
 - Each view then draws once per page and stream: about 100 draws for the camera and 5–10
   per shadow cascade at view distance 32.
 
@@ -480,6 +483,92 @@ grading). Particle sets showing only by day, at night or at twilight, in dry or 
 weather, are already filtered; hovering ones settle out of a strong wind; night-time ones
 (fireflies) come out on six nights in ten. The precipitation particles draw the four
 densest sets. docs/weather-effects.md has the rest of the weather's handover.
+
+## Light, shadow and the air
+
+Mariano's playtest (2026-10-04): shadows flickered, the look still did not read like
+Complementary Reimagined, and there was no atmospheric light, mist or fog. What changed,
+and why:
+
+**Shadows stand still.** Bevy already snaps each cascade to its texels, so a static
+scene rasterises identically as the camera moves; what kept shadows moving was the sun,
+which turned a little every frame and so redrew every shadow edge, leaf hole and grazing
+face at a new sub-texel position. The light now moves in steps of a tenth of a degree of
+its arc (about a third of a second at the normal pace; `LIGHT_STEP` in render/mod.rs).
+Between steps nothing in the shadow maps changes; a step moves a shadow cast from eight
+blocks up by under a texel of the nearest cascade, which the soft filter hides, so there
+is nothing to blend. Leaves cut out of the shadow maps at the mip whose texels are half
+again as large as the cascade's (voxel.wgsl, `alpha_test`), so their holes are never finer
+than the map holds and the dappled shade under a crown does not sparkle as cascades move.
+
+**Soft shadows with a penumbra** (shadows.wgsl, our own sampling of Bevy's cascades): a
+blocker search finds how far the caster is and the filter widens with that distance
+(percentage-closer soft shadows), so a trunk's contact shadow is crisp and a canopy's
+shade on the forest floor soft-edged, as under a sun of real size. Taps are hardware 2×2
+comparisons on a fixed golden-angle spiral at most five texels wide, so a shadow depends
+only on where a point is and nothing in it changes as the camera moves (a per-pixel noise
+pattern, the usual way to hide the taps, swims with the camera and sparkles at the edges
+of bright sunflecks unless temporal anti-aliasing resolves it, which we do not have).
+Receiver plane depth bias makes each tap compare against the face's own depth there; voxel
+faces are flat with exact normals, so a wide filter never shades the face itself. Cascades
+blend over their overlap and shadows fade over the last 15% of their reach instead of
+ending in a line. The first cascade ends at 12 blocks (texels of about 2 cm), shadows reach 200
+blocks at High. Settings: Shadows Off, Low (one hard tap, two cascades to 96 blocks),
+Medium (8 taps, three to 160), High (16 taps, four to 200, the default).
+
+**Light and shade** (lighting.wgsl), after Complementary's way of lighting a voxel world
+rather than its numbers: warm direct sun against cool sky light; sky light falls off
+steeply with the sky light level (`sky_falloff`, an exponent), so forest floors, overhangs
+and the inside of crowns are far darker than open ground, and only sunflecks are bright
+there; voxel ambient occlusion grounds corners and wall bases (`ambient_occlusion`);
+sunlit leaves and plants glow, most when seen against the sun (`subsurface`); passing
+clouds shade the land (`cloud_shadows`): the sky's low cloud is a plane two cloud units
+above the eye, so a point's cloud is where its ray to the sun meets that plane, and the
+same noise (clouds.wgsl) draws the cloud and its shadow. Rain darkens and wets open
+surfaces, fills puddles on level ground that mirror the sky, and frost whitens what lies
+under the open sky (`wet_ground`, `frost`).
+
+**Glowing blocks** glow by themselves, not only light their surroundings: every texture
+layer of a block that gives off light gets a glow strength from its light level (a table of
+one texel per layer, built in main.rs, `glow_table` in render/mod.rs), and the terrain
+shader adds the tinted texel times that strength to its bright texels only (a lantern's
+flame, magma's cracks, lichen's spots; dark texels stay dark), up to three times the lit
+texture at full light, so the brightest bloom. The table's colour channels are white for
+now, room for coloured block light later; a per-texel mask texture can replace the
+brightness test when a pack ships one. Strength: the pack's `glow`.
+
+**The air** (atmosphere.wgsl, render/atmosphere.rs): clear-air haze densest at sea level
+and thinning with height, a layer of ground fog under the weather's `fog_top` (valley fog,
+dawn mist, sea fog), and the weather's fog, dust and falling rain and snow, each
+integrated analytically along the view ray (the ground fog's density profile is a
+logistic step whose integral is a softplus), so fog costs a few exponentials per pixel and
+never bands. Weather fog is an extinction set from `Weather::visibility` (2% shows at that
+distance, so a blizzard closes the view to ~60 blocks); fog is lit by the sky and sun and
+takes the colour of blowing dust; the haze takes the place's colour and density from
+`ClientAtmosphere` as far as the pack's `local_air` lets it. The sky is fogged by the same
+functions as the far edge of the land, so they always meet. Everything shares one uniform
+(`Atmosphere`), bound with the terrain and the sky.
+
+**Volumetric light** (volumetric.wgsl, after the main passes, before bloom): marches each
+view ray through the cascaded shadow maps out to 96 blocks in 12 steps spaced more closely
+near the eye, adding the sunlight the air scatters towards the eye where the sun reaches it:
+shafts through gaps in canopies, mist and fog glowing in the sun, the sun's glow in haze.
+Rays are marched at half resolution (the light is soft) with each ray's length kept beside
+its light, and added at full resolution from the nearby rays that ended about as far away
+as the pixel's own surface, so shafts keep sharp edges against trunks and ridges in front
+of them. Clear air scatters it more than it dims the view (an artistic
+boost, as shader packs do), so shafts show in clear weather too. Forward fog leaves the
+sunlight within the pass's reach to it, so nothing is counted twice. Setting: Light shafts.
+
+**Grading** (display.wgsl): contrast is now an S-curve on the display image (below mid
+grey exactly the old power curve, above it rolling into white instead of past it), warmth
+leaves highlights neutral, and clouds in full sun are as bright as a sunlit white block,
+never above the bloom threshold. So bright cumulus and cloudy skies under Verdant stay
+white and shaded instead of washing out to cream.
+
+**Shader packs** gained `sun_tint`, `shadow_softness`, `sky_falloff`, `ambient_occlusion`,
+`subsurface`, `cloud_shadows`, `glow`, `rays`, `mist`, `fog`, `wet_ground`, `frost` and
+`local_air`; Classic keeps the plain look (no volumetric light).
 
 ## Fluid state
 

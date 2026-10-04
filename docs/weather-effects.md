@@ -57,62 +57,29 @@ captures log the weather and air they show. Every kind: `/weather list`.
 - Snow lying on the ground: the server turns grass blocks snowy as the snow cover deepens
   and back as it melts (`snow_cover` in weather.rs; data in `weather.ron`).
 - Cloud cover, heaped and layered cloud, cirrus, storm gloom (existing sky).
+- Fog, mist, whiteout, rain murk and dust haze (graphics thread, render/atmosphere.rs and
+  atmosphere.wgsl): the weather's `fog`, `dust` and falling rain and snow are an extinction
+  set from `Weather::visibility` (2% shows at that distance), thick around and below the
+  eye and thinning above it, so a blizzard closes the view to ~60 blocks and the sky turns
+  pale rather than white through mist. Fog is lit by the sky and sun (glowing at dawn) and
+  takes the colour of blowing dust. `ClientAtmosphere`'s haze colour and density tint and
+  thicken the clear-air haze, and `sky`, `warmth` and `saturation` nudge the sky and the
+  grading, as far as the shader pack's `local_air` lets them.
+- Ground fog (`ground_fog`, `fog_top`: valley fog, dawn mist, sea fog): a layer, full below
+  the top and thinning over a few blocks above it, integrated in closed form along each
+  view ray, so from a hill it lies as a white sea between ridges and from inside it is fog.
+  Volumetric light scatters sunlight in it, so it glows where the sun reaches.
+- Wet ground and puddles (`wetness`), frost (`frost`) and a snow dusting on top faces
+  (`snow_cover` over 0.3), on surfaces open to the sky (render/lighting.wgsl, `weathered`
+  and `wet_sheen`): wet surfaces darken and mirror the sky at glancing angles, puddles
+  gather on level ground as it gets wetter and mirror it strongly.
 
 ## Waiting on the graphics thread
 
 In order of how much they show. Each is a few lines to a small pass; all read
 `ClientWeather::current` (call it `w`) unless said.
 
-### 1. Fog, mist, whiteout and dust haze (most visible; affects every common effect)
-
-Today `render/mod.rs` closes the distance fog in only for rain, snow and humidity
-(`murk`). Weather now also has `fog` (mist, sea fog, whiteout in blizzards, drizzle and
-downpours), `dust` (dust and sandstorms) and `Weather::visibility()` (blocks), and
-`ClientAtmosphere` has the haze colour and density for the place. Replace the `murk` lines
-in `update_environment` with:
-
-```rust
-let visibility = shown.visibility();                       // ~3000 clear .. 30 in thick fog
-let end = (cycle.view_distance).min(visibility * 1.6);
-let murk = 1.0 - (visibility / 3000.0).clamp(0.0, 1.0);
-(end * (0.6 - 0.55 * murk), end)
-```
-
-and tint the fog colour (and the haze in lighting.wgsl) towards the air's haze:
-
-```rust
-let air = &atmosphere;                                     // Res<ClientAtmosphere>
-let thick = (shown.fog + shown.dust).min(1.0);
-horizon = horizon.lerp(air.haze * horizon.length().max(0.05) * 1.6, thick * 0.8);
-// and the pack's haze density: pack.haze * air.haze_density
-```
-
-So in a blizzard the world fades to white-grey within ~60 blocks, in a sandstorm to the
-sand's colour within ~150, and mist after rain softens the distance without hiding it.
-`ClientAtmosphere::haze_density` is already about 1 in clear air and grows with fog, dust,
-rain and humidity; the pack's own haze setting stays in charge of the look.
-
-### 2. Ground fog: valley fog at dawn, sea fog, dawn mist
-
-`w.ground_fog` (0..1) is a layer of fog whose top is `w.fog_top` (world height): thick
-below it, thinning over about 6 blocks above. Valley fog fills hollows to about 14 blocks
-over the lowest land nearby; sea fog lies 30 blocks over the sea; dawn mist 6 blocks.
-Height fog in the lighting/haze path, per fragment from the camera at `c` to the point `p`:
-
-```wgsl
-// density(y) = ground_fog * k for y < top, falling smoothly to 0 by top + 6.
-fn ground_fog(c: vec3<f32>, p: vec3<f32>, top: f32, amount: f32) -> f32 {
-    let k = 0.06;                                   // per block at full density
-    let below = clamp((top + 3.0 - min(c.y, p.y)) / max(abs(p.y - c.y), 1e-3), 0.0, 1.0);
-    let inside = select(below, 1.0, max(c.y, p.y) < top + 3.0);
-    return 1.0 - exp(-amount * k * length(p - c) * inside);
-}
-```
-
-mixed towards the haze colour (lit like the haze, so it glows at dawn). From above (a hill
-over a valley) the layer should read as a white sea between ridges; from inside, as fog.
-
-### 3. Lightning bolts
+### 1. Lightning bolts
 
 `ClientWeather::bolts()` yields each visible bolt: `channel` (points from the cloud base,
 150–220 blocks up, to the strike point, about 10 blocks apart), `branches` (forks that
@@ -122,7 +89,7 @@ additive, colour `(0.75, 0.8, 1.0) * 8.0 * brightness` (HDR, so bloom gives the 
 fogged by more than half. Then delete `draw_bolts` in weather.rs. Thunder is already
 delayed by distance (343 blocks/s) and played by sfx.rs.
 
-### 4. Rainbows
+### 2. Rainbows
 
 `w.rainbow`: 0.6 a rainbow, 1.0 a double one. In sky.wgsl, with `a` the angle between the
 view direction and the antisolar point (`-sun`), when the sun is above the horizon:
@@ -135,14 +102,14 @@ view direction and the antisolar point (`-sun`), when the sun is above the horiz
 - it only exists below the horizon line of the sky dome and fades where cloud cover is
   thick in that direction.
 
-### 5. Halo and sun dogs
+### 3. Halo and sun dogs
 
 `w.halo`: up to 0.5 a 22° halo, above that sun dogs too. Ring at 21.5°–23° around the sun,
 reddish on the inner edge, `0.25 * halo * daylight`. Sun dogs: two bright, slightly
 coloured spots at ±22° of azimuth from the sun at the sun's height, strength
 `2 * (halo - 0.5)`, strongest with a low sun. Also around the moon at night, fainter.
 
-### 6. Aurora
+### 4. Aurora
 
 `w.aurora` (0..1; 0.6 for the rare aurora far from the poles). Night sky only: curtains
 towards the pole (north is −z), from about 10° to 60° above the horizon. Vertical rays from
@@ -150,7 +117,7 @@ a 1D noise along azimuth, folded ribbons drifting slowly (a few degrees a second
 `(0.2, 1.0, 0.45)` at the bottom fading to violet `(0.6, 0.3, 1.0)` at the top, brightness
 `aurora * night * (1 - cover)` at about the Milky Way's peak, so it needs a dark sky.
 
-### 7. Falling stars and meteor showers
+### 5. Falling stars and meteor showers
 
 `w.falling_stars`: about `2 × falling_stars` stars a second, so 0.01 (an ordinary clear
 night) is one every 50 s or so and 1.0 (a meteor shower) a couple a second, all from one
@@ -158,28 +125,13 @@ radiant point per night. Night sky: short-lived
 (0.3–0.8 s) streaks 5°–15° long, brightening then fading, from hashes of the second (use
 the `pcg` already in sky.wgsl with the world seconds), only through clear sky.
 
-### 8. Heat haze
+### 6. Heat haze
 
 `w.heat_haze` (0..1): hot, dry, sunny afternoons. A post-process shimmer near the horizon:
 offset the screen UV by a scrolling noise of amplitude `1.5 px * heat_haze`, masked to
 pixels farther than ~30 blocks and within ~8° of the horizon, rising slowly.
 
-### 9. Wet ground and puddles
-
-`w.wetness` (0..1): rises in rain, halves in 300 s (faster in sun and warmth), 0 under snow.
-In the terrain shader, on faces open to the sky (sky light 15): darken albedo by
-`0.3 * wetness`, raise specular/reflectance; on flat top faces, puddles where a world-space
-noise is below `wetness - 0.4` reflect the sky. Never under roofs, in caves or under dense
-leaves. (W12 shader pack.)
-
-### 10. Frost and lying snow on surfaces
-
-`w.frost` (0..1, clear cold nights and mornings): whiten top faces and plants with a
-blue-white rime, `0.5 * frost`, on surfaces open to the sky. `w.snow_cover` (0..1): the
-server already turns grass snowy block by block; a shader can add a thin white dusting on
-other top faces (stone, sand, leaves) at `snow_cover > 0.3`, open to the sky.
-
-### 11. Wisps and fantastical storms
+### 7. Wisps and fantastical storms
 
 `w.wisps` (ball lightning in storms, marsh lights on calm wet nights): a few (up to about
 12) large glowing orbs, 0.3–0.6 blocks, drifting 0.5–3 blocks above the ground within 30
@@ -189,25 +141,15 @@ motes and wisps are grounded, so ball lightning shows nothing until it has its o
 with `aether_storm` in `ClientWeather::effects` mark the rare aether storm: a violet tint to
 the storm cloud and the lightning would sell it.
 
-### 12. The air's colour
-
-`ClientAtmosphere::{haze, haze_density, sky, warmth, saturation}`: apply within the shader
-pack: haze colour and density as in 1, `sky` multiplied into the sky colours, `warmth` and
-`saturation` as small nudges to the pack's grading (warmth ±1 ≈ a few hundred kelvin).
-
-### 13. Rain and snow: what the mods and the hiking video still have that we don't
+### 8. Rain and snow: what the mods and the hiking video still have that we don't
 
 Compared side by side with Particle Rain (MIT; read for its techniques, nothing copied) and
 the hiking video's rain frames (`voxmar-reference/hiking-video-frames/0440`, `0449`), what
 the precipitation particles cannot do on their own:
 
-- **Haze in and after rain** (biggest): in the video, rain turns the distance grey-white
-  within a hundred blocks and the near land loses saturation; ours keeps hills sharp at
-  3 km in a downpour. Item 1 (fog from `visibility()`) plus `ClientAtmosphere::haze_density`
-  and `saturation` do it. Max-intensity rain should leave about 150 blocks of view, light
-  rain most of it.
-- **Wet surfaces**: rain darkens exposed blocks and leaves and makes them glossy (item 9);
-  in the video every top face reads wet.
+- **Haze in and after rain**: drawn now (the weather's fog from `visibility()`, and
+  `ClientAtmosphere`'s haze and saturation), see "Already drawn".
+- **Wet surfaces**: drawn now (wet ground and puddles).
 - **Near streaks as glassy sheets**: the video's closest streaks are wide, refracting
   smears. A refraction pass sampling the scene behind each near streak (offset by its
   normal) would give it; our streaks are only tinted.
@@ -225,8 +167,7 @@ the precipitation particles cannot do on their own:
 - **Lightning inside clouds**: most flashes now stay within the cloud
   (`ClientWeather::cloud_flashes()`: position about 160 blocks up and brightness). Light the
   cloud layer around that point (a soft glow of 200–400 blocks) rather than the whole sky.
-- **Snow on leaves and other surfaces**: `w.snow_cover` whitens grass blocks already; tops of
-  leaves, stone and sand should whiten in the shader too (item 10).
+- **Snow on leaves and other surfaces**: drawn now (a dusting on top faces).
 - **A rainbow over waterfall mist**: once waterfalls are known (the ambience track finds
   them at meshing time), a small bow in the spray when the sun is behind the player.
 

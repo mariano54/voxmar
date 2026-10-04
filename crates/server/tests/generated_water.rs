@@ -26,7 +26,7 @@ fn generated_water_does_not_move() {
     // lakes, confluences, river mouths, and tunnels, islands and hot springs where there
     // are any), found afresh so the test follows any reseed, and land with caves.
     let mut kinds = std::collections::HashSet::new();
-    for (seed, near_spawn, also) in [(1, true, None), (42, true, None), (7, true, Some(IVec2::new(1500, 5200))), (0x5eed, false, Some(IVec2::ZERO))] {
+    for (seed, near_spawn, also) in [(3, true, None), (11, true, None), (2, true, None), (5, true, None), (7, true, Some(IVec2::new(1500, 5200))), (0x5eed, false, Some(IVec2::ZERO))] {
         let generator = Overworld::with_content(seed, registry.clone(), &world_content);
         let mut places: Vec<IVec2> = also.into_iter().collect();
         if near_spawn {
