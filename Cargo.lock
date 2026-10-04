@@ -5028,6 +5028,7 @@ name = "voxmar_worldgen"
 version = "0.1.0"
 dependencies = [
  "fastnoise-lite",
+ "libc",
  "tracing",
  "voxmar_engine",
 ]

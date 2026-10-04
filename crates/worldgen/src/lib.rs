@@ -355,6 +355,54 @@ mod tests {
         println!("{:#?}\nwater {water:.2}, spawn {spawn}: {:#?}\nwrote {path}", world.dials(), world.site(spawn.x, spawn.z));
     }
 
+    /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
+    /// processes compete for the cores.
+    fn thread_time() -> std::time::Duration {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `t` is a valid timespec for the call to fill.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+    }
+
+    /// `cargo test --release -p voxmar_worldgen generation_speed -- --ignored --nocapture`
+    /// measures, in CPU time on one thread, full column generation over areas in several
+    /// climates and seeds, and the distant-terrain surface samples of the same areas.
+    #[test]
+    #[ignore]
+    fn generation_speed() {
+        use std::time::Duration;
+        let registry = registry();
+        let (mut columns, mut generating) = (0, Duration::ZERO);
+        let (mut samples, mut sampling) = (0, Duration::ZERO);
+        for seed in [1, 3, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            for (cx, cz) in [(0, 0), (60, -90), (-120, 40), (150, 150), (-40, -200)] {
+                let start = thread_time();
+                for i in 0..64 {
+                    std::hint::black_box(world.generate(ColumnPos::new(cx + i % 8, cz + i / 8)));
+                }
+                generating += thread_time() - start;
+                columns += 64;
+
+                // A distant-terrain tile: 33×33 samples, 8 blocks apart.
+                let origin = IVec2::new(cx, cz) * voxmar_engine::coords::CHUNK_SIZE;
+                let start = thread_time();
+                let sampler = world.sampler(origin - 8, origin + 33 * 8);
+                for i in 0..33 * 33 {
+                    let (x, z) = (origin.x + i % 33 * 8, origin.y + i / 33 * 8);
+                    std::hint::black_box(sampler.surface(x, z, world.height(x, z), 0));
+                }
+                sampling += thread_time() - start;
+                samples += 33 * 33;
+            }
+        }
+        println!(
+            "{:.3} ms per column ({columns} columns), {:.2} µs per surface sample ({samples} samples)",
+            generating.as_secs_f64() * 1e3 / columns as f64,
+            sampling.as_secs_f64() * 1e6 / samples as f64,
+        );
+    }
+
     #[test]
     fn temperature_changes_smoothly_and_in_order() {
         let world = Overworld::new(11, registry());
