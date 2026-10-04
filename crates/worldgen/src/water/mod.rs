@@ -22,6 +22,7 @@
 pub(crate) mod cache;
 mod channel;
 mod drainage;
+mod sights;
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -39,6 +40,7 @@ use crate::geology::{GeoSample, Geology, noise, smoothstep};
 use crate::{SEA_LEVEL, rng};
 
 pub use self::channel::{Body, Cavity, Current};
+pub use self::sights::WaterSight;
 
 /// Blocks along a side of a region, the unit in which rivers are routed and cached.
 pub const REGION: i32 = 1024;
