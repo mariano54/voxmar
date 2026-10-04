@@ -22,6 +22,7 @@ mod ecology;
 mod features;
 mod geology;
 mod lattice;
+mod noise;
 mod parallel;
 #[cfg(test)]
 mod perf;
