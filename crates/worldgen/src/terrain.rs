@@ -478,7 +478,7 @@ fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) ->
     }
     let ids = &world.terrain.ids;
     let damp = site.soil_moisture() > 0.85 && site.temperature > 0.0;
-    let stone = |bits: u64| if damp && bits % 3 != 0 { ids.mossy_boulder } else { ids.boulder };
+    let stone = |bits: u64| if damp && !bits.is_multiple_of(3) { ids.mossy_boulder } else { ids.boulder };
     Some([Some(stone(hash >> 8)), (hash >> 16 & 3 == 0).then(|| stone(hash >> 20))])
 }
 
