@@ -33,6 +33,8 @@ pub(crate) enum Stage {
     CaveBiomes,
     /// Filling the ground with stone, strata and deepslate.
     Fill,
+    /// Terrain shapes built in 3D: arches, leaning spires and the notches of sea cliffs.
+    Shapes,
     Ores,
     Trees,
     /// Ground decoration, trail markers, small plants and the snow blanket.
@@ -43,7 +45,7 @@ pub(crate) enum Stage {
 
 impl Stage {
     #[cfg(test)]
-    pub const ALL: [Stage; 15] = [
+    pub const ALL: [Stage; 16] = [
         Stage::Other,
         Stage::Climate,
         Stage::Biomes,
@@ -55,6 +57,7 @@ impl Stage {
         Stage::Caves,
         Stage::CaveBiomes,
         Stage::Fill,
+        Stage::Shapes,
         Stage::Ores,
         Stage::Trees,
         Stage::Decoration,

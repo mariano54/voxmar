@@ -469,8 +469,10 @@ impl Caves {
                 }
                 let y = rng.range(LAVA_LEVEL + 12, SEA_LEVEL - 20);
                 let radius = 2.2 + 2.3 * rng.unit();
-                // Well inside the ground, clear of river beds.
-                if geology.get(x, z).height - y < 18 {
+                // Well inside the ground, clear of river beds, and not under the sea or a
+                // lake, whose water tables would wall the hollow up.
+                let ground = geology.get(x, z);
+                if ground.height - y < 18 || ground.submerged() {
                     continue;
                 }
                 found.push(Geode { centre: Vec3::new(x as f32, y as f32, z as f32) + 0.5, radius, seed: rng.next_u64() });
@@ -878,7 +880,16 @@ impl CaveColumn<'_> {
         let noodle = smoothstep(caves.noodle_cut, caves.noodle_cut + 0.12, self.noodle_regions.at(x, z));
         let labyrinth = smoothstep(caves.labyrinth_cut, caves.labyrinth_cut + 0.08, self.labyrinth_regions.at(x, z));
         let entrance = smoothstep(caves.entrance_cut, caves.entrance_cut + 0.1, self.entrances.at(x, z));
-        let clearance = Caves::clearance(&geo);
+        // Beside water, rock all the way down past its bed, however deep the water lies
+        // below this column's ground (the wall of a gorge a creek runs in).
+        let beside = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .into_iter()
+            .map(|(dx, dz)| self.geology.get(wx + dx, wz + dz))
+            .filter(|n| n.submerged())
+            .map(|n| height - n.height + 4)
+            .max()
+            .unwrap_or(0);
+        let clearance = Caves::clearance(&geo).max(beside);
 
         let p = &mut *self.profiles;
         for (lattice, profile) in self.tunnels.iter().zip(&mut p.tunnels) {
