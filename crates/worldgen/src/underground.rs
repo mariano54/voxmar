@@ -363,12 +363,32 @@ impl UndergroundColumn<'_> {
 
     /// The rock of the cave biome at (x, y, z), if it has its own.
     pub(crate) fn rock(&self, x: i32, y: i32, z: i32) -> Option<Rock<'_>> {
-        let biome = self.world.biomes.get(self.biome(x, y, z)?);
+        self.rock_of(self.biome(x, y, z))
+    }
+
+    /// The rock of a cave biome, if it has its own.
+    pub(crate) fn rock_of(&self, biome: Option<BiomeId>) -> Option<Rock<'_>> {
+        let biome = self.world.biomes.get(biome?);
         if !biome.strata.is_empty() {
             Some(Rock::Strata(&biome.strata))
         } else {
             biome.stones.as_ref().map(Rock::Stones)
         }
+    }
+
+    /// For the block column at (x, z), by lattice layer: the cave biome of the blocks
+    /// from that layer up to the next, where the eight lattice points around them agree
+    /// on it (as they do away from borders), so that `biome` needs no hash to choose;
+    /// `None` where they differ.
+    pub(crate) fn settled(&self, x: i32, z: i32, out: &mut Vec<Option<Option<BiomeId>>>) {
+        let (lx, lz) = ((x / STEP) as usize, (z / STEP) as usize);
+        let column = |dx: usize, dz: usize| &self.picks[((lz + dz) * SIDE + lx + dx) * self.layers..][..self.layers];
+        let around = [column(0, 0), column(1, 0), column(0, 1), column(1, 1)];
+        out.clear();
+        out.extend((0..self.layers).map(|layer| {
+            let (pick, up) = (around[0][layer], (layer + 1).min(self.layers - 1));
+            around.iter().all(|c| c[layer] == pick && c[up] == pick).then_some(pick)
+        }));
     }
 
     /// Lines the floors and ceilings of the caves in the block column at (x, z) (relative

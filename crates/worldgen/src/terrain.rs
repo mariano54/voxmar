@@ -272,6 +272,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         Lattice::noise(&terrain.rock, origin, low, top, lattice::STEP, 1.0)
     };
     let mut rock_profile = Profile::default();
+    let mut settled = Vec::new();
     let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
     let mut blocks = Blocks {
@@ -303,11 +304,29 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             }
             rock.profile(x, z, &mut rock_profile);
             let rocky = underground.rocky(x, z);
+            if rocky {
+                underground.settled(x, z, &mut settled);
+            }
             // Strata wobble the same all the way down a block column.
             let mut wobble = None;
-            // Below this the ground is plain stone (from bedrock up), unless a cave biome's
-            // rock is near: the bulk of the column, taken first.
-            let body = if rocky { 0 } else { height - if layers.filler != Fill::Stones { layers.depth } else { 0 } };
+            // The ground's own stone at a height below the surface's layers: a cave biome's
+            // rock, deepslate, or the stones beneath.
+            let mut stone = |y: i32| {
+                let rock = match rocky.then(|| settled[(y >> 3) as usize]) {
+                    Some(Some(pick)) => underground.rock_of(pick),
+                    Some(None) => underground.rock(x, y, z),
+                    None => None,
+                };
+                match rock {
+                    Some(Rock::Stones(stones)) => stones.pick((0.5 + rock_profile.at(y) * 0.53).clamp(0.0, 0.9999)),
+                    Some(Rock::Strata(strata)) => stratum(strata, y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))),
+                    None if y < DEEPSLATE => ids.deepslate,
+                    None => stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz),
+                }
+            };
+            // Below this the ground is that stone (from bedrock up): the bulk of the column,
+            // taken first.
+            let body = height - if layers.filler != Fill::Stones { layers.depth } else { 0 };
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -324,7 +343,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     }
                 }
                 let block = if y >= 4 && y < body {
-                    if y < DEEPSLATE { ids.deepslate } else { stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz) }
+                    stone(y)
                 } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
                     ids.bedrock
                 } else if below_surface == 0 {
@@ -335,12 +354,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         _ => terrain.band(strata, y, wx, wz),
                     }
                 } else {
-                    match if rocky { underground.rock(x, y, z) } else { None } {
-                        Some(Rock::Stones(stones)) => stones.pick((0.5 + rock_profile.at(y) * 0.53).clamp(0.0, 0.9999)),
-                        Some(Rock::Strata(strata)) => stratum(strata, y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))),
-                        None if y < DEEPSLATE => ids.deepslate,
-                        None => stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz),
-                    }
+                    stone(y)
                 };
                 blocks.set_local(x, y, z, block);
             }
