@@ -12,7 +12,7 @@ use crate::menu::Screen;
 use crate::net::{Net, RemotePlayers};
 use crate::player::{LocalPlayer, UiState};
 use crate::render::DayCycle;
-use crate::render::lod::{Lod, LodMaterial};
+use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::world::ClientWorld;
 
@@ -67,12 +67,11 @@ fn end_session(
     settings: Res<Settings>,
     mut world: ResMut<ClientWorld>,
     mut lod: ResMut<Lod>,
-    mut lod_materials: ResMut<Assets<LodMaterial>>,
     mut cycle: ResMut<DayCycle>,
 ) {
     commands.remove_resource::<Net>();
     world.reset(settings.view_distance);
-    lod.clear(&mut commands, &mut lod_materials);
+    lod.clear();
     cycle.underwater = false;
     commands.insert_resource(LocalPlayer::default());
     commands.insert_resource(UiState::default());
