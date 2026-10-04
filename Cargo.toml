@@ -15,6 +15,7 @@ voxmar_engine = { path = "crates/engine" }
 voxmar_worldgen = { path = "crates/worldgen" }
 voxmar_protocol = { path = "crates/protocol" }
 voxmar_server = { path = "crates/server" }
+voxmar_texgen = { path = "crates/texgen" }
 
 bevy = { version = "0.19.1", default-features = false }
 glam = { version = "0.32", features = ["serde"] }
