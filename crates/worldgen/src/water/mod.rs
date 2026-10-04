@@ -16,9 +16,8 @@
 //! demand and cached in caches bounded by bytes (about 400 MB in all, at most). No result depends on which column, region or
 //! thread came first.
 //!
-//! Generated water is sealed: every water block lies on ground or water, and beside it
-//! is ground, water, or the lower water a waterfall drops into, so nothing generated
-//! needs to settle.
+//! Generated water is settled: it is a fixed point of the fluid rule, so loading it costs
+//! nothing (see `settle`, and the curtains of falls the terrain stamps).
 
 pub(crate) mod cache;
 mod channel;
@@ -408,6 +407,11 @@ impl Rivers {
             None => carved.near.map_or(SEA_LEVEL, |near| top_block(near).min(height)),
         };
         let submerged = water > height || carved.cavity.is_some_and(|c| water > c.floor);
+        // Eighths of the top block the surface fills; the sea, and rivers meeting it, fill it.
+        let top = match carved.water {
+            Some(surface) if top_block(surface) == water => (surface - 8 * water) as u8,
+            _ => 8,
+        };
         let body = match carved.body {
             Some(body) => body,
             None => Body::Sea,
@@ -418,6 +422,7 @@ impl Rivers {
                 mountain: ground.mountain,
                 river: carved.wet,
                 water,
+                top,
                 body: if height < SEA_LEVEL && carved.water.is_none() { Body::Sea } else { body },
                 current: if submerged { carved.current } else { None },
                 cavity: carved.cavity,
@@ -431,11 +436,11 @@ impl Rivers {
     pub fn sample(&self, land: Stages, x: i32, z: i32) -> GeoSample {
         let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
         let column = self.unsealed(land, &tiers, x, z);
-        if !column.near || column.sample.water > column.sample.height {
+        if !column.near {
             return column.sample;
         }
         let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, &tiers, x + dx, z + dz).sample);
-        seal(column.sample, &neighbours)
+        settle(column.sample, &neighbours)
     }
 
     /// The geology of every column of a `size`×`size` square from `min`, with rivers and
@@ -448,11 +453,11 @@ impl Rivers {
             .map(|i| {
                 let (x, z) = (i % size + 1, i / size + 1);
                 let column = &columns[(z * wide + x) as usize];
-                if !column.near || column.sample.water > column.sample.height {
+                if !column.near {
                     return column.sample;
                 }
                 let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| columns[((z + dz) * wide + x + dx) as usize].sample);
-                seal(column.sample, &neighbours)
+                settle(column.sample, &neighbours)
             })
             .collect()
     }
@@ -487,12 +492,33 @@ struct Column {
     near: bool,
 }
 
-/// Raises a dry column beside water to the water's surface, so no water stands beside air.
-/// Water beside lower water is a waterfall and stays.
-fn seal(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
+/// Shapes a column so its water is a fixed point of the fluid rule (see "Generated water"
+/// in `voxmar_engine::fluid`), given its four neighbours before this:
+/// - a dry column beside water rises to the water's level, so water never stands beside
+///   air, except at a fall, and takes that level as the water it borders;
+/// - water whose top block stands above a neighbour's fills that block by one eighth
+///   only, which pours nothing over the step;
+/// - water two or more blocks above a neighbour's runs over a sill of ground just above
+///   that neighbour's water, so the curtain a fall pours (which the terrain stamps) has no
+///   upper water beside its foot, where water lying on more water would spread.
+fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
+    let Some((_, top)) = sample.wet() else {
+        // The water beside it is the water it is the bank of, which trails cut down to.
+        for n in neighbours {
+            if n.water > n.height && n.cavity.is_none() {
+                sample.height = sample.height.max(n.water);
+                sample.water = sample.water.max(n.water);
+            }
+        }
+        return sample;
+    };
     for n in neighbours {
-        if n.water > n.height && n.water > sample.height && n.cavity.is_none() {
-            sample.height = n.water;
+        let Some((_, below)) = n.wet() else { continue };
+        if below < top {
+            sample.top = 1;
+        }
+        if below <= top - 2 && sample.cavity.is_none() {
+            sample.height = sample.height.max(below + 1);
         }
     }
     sample

@@ -15,6 +15,7 @@ use fastnoise_lite::{FastNoiseLite, FractalType};
 use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::chunk::Chunk;
 use voxmar_engine::coords::{CHUNK_SIZE, CHUNK_VOLUME, COLUMN_CHUNKS, ColumnPos, WORLD_HEIGHT, local_index};
+use voxmar_engine::fluid::{self, Fluid, FluidState};
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
@@ -59,6 +60,9 @@ struct Ids {
 
 pub struct Terrain {
     ids: Ids,
+    /// Water's states: rivers' pinned water with its current, partial tops, and the
+    /// flowing and falling water of a fall's curtain.
+    water: Fluid,
     rock: FastNoiseLite,
     /// Patches that dither the borders between surface materials.
     patches: FastNoiseLite,
@@ -96,7 +100,10 @@ impl Terrain {
         let frost = &content.climate.frost;
         let water = id("water");
         let by_id = |f: &dyn Fn(BlockId) -> bool| (0..registry.len()).map(|i| f(BlockId(i as u16))).collect::<Vec<bool>>();
-        let soft = by_id(&|block| block.is_air() || block == water || registry.def(block).name.ends_with("_leaves"));
+        let water_fluid = registry.fluid_def(registry.fluid(water).expect("water is a fluid").fluid).clone();
+        let soft = by_id(&|block| {
+            block.is_air() || registry.fluid(block).is_some_and(|s| s.fluid == water_fluid.id) || registry.def(block).name.ends_with("_leaves")
+        });
         let mut stones: Vec<BlockId> = rocks.stones().chain([id("stone"), id("deepslate")]).collect();
         stones.extend(biomes.iter().filter_map(|(_, b)| b.stones.as_ref()).flat_map(|p| p.blocks()));
         // What a block offers plants follows its tags: snow over soil, then soil, sand.
@@ -126,6 +133,7 @@ impl Terrain {
             .map(|i| content.snow_cover.iter().find(|(ground, _)| registry.def(BlockId(i as u16)).name == *ground).map(|(_, snowy)| registry.expect(snowy)))
             .collect();
         Self {
+            water: water_fluid,
             ids: Ids {
                 bedrock: id("bedrock"),
                 deepslate: id("deepslate"),
@@ -321,20 +329,27 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             }
             underground.decorate(x, z, &site, &cave, &mut blocks);
             underground.bury(x, z, &cave, &mut blocks);
-            // Fast water stays open in the cold.
-            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring);
+            // Rivers' water is pinned with its current, and every body's top block holds its
+            // surface's eighths. Fast water stays open in the cold, and so does water a fall
+            // pours into.
+            let sides = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| geology.get(wx + dx, wz + dz));
+            let fall = sides.iter().any(|n| n.wet().is_some_and(|(_, top)| top >= geo.water + 2));
+            let ice = terrain
+                .ice(&site, wx, wz)
+                .filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring && !fall);
             for y in height + 1..=geo.water {
-                blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
+                let block = match y == geo.water {
+                    true => ice.unwrap_or_else(|| terrain.water_block(geo.top, geo.current)),
+                    false => terrain.water_block(8, geo.current),
+                };
+                blocks.set_local(x, y, z, block);
             }
-            // Rocks break the surface of rapids, though not right under a fall, whose water
-            // must land in water.
+            // Rocks break the surface of rapids, though not by a step in the water, where
+            // the water on one side must meet water on the other.
             if geo.current.is_some_and(|c| c.speed >= 3)
                 && matches!(geo.body, Body::Creek | Body::River)
                 && hash3(world.seed ^ 0xb01d, wx, 0, wz) % 100 < 9
-                && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().all(|&(dx, dz)| {
-                    let n = geology.get(wx + dx, wz + dz);
-                    !n.submerged() || n.water <= geo.water
-                })
+                && sides.iter().all(|n| n.wet().is_none_or(|(_, top)| top == geo.water))
             {
                 let rock = stones.pick((hash3(world.seed ^ 0xb01e, wx, 0, wz) & 0xffff) as f32 / 65536.0);
                 for y in height + 1..=geo.water {
@@ -358,7 +373,12 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             // A river running in a tunnel under the ground.
             if let Some(cavity) = geo.cavity {
                 for y in cavity.floor + 1..=cavity.ceiling.min(height - 3) {
-                    blocks.set_local(x, y, z, if y <= geo.water { ids.water } else { BlockId::AIR });
+                    let block = match y.cmp(&geo.water) {
+                        std::cmp::Ordering::Less => terrain.water_block(8, geo.current),
+                        std::cmp::Ordering::Equal => terrain.water_block(geo.top, geo.current),
+                        std::cmp::Ordering::Greater => BlockId::AIR,
+                    };
+                    blocks.set_local(x, y, z, block);
                 }
             }
             surfaces.push((site, layers.top));
@@ -368,6 +388,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     terrain.resources.place(world.seed, pos, &mut blocks);
     terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
     terrain.markers(world, &area, &geology, pos, &mut blocks);
+    terrain.curtains(&geology, origin, &mut blocks);
 
     // Ground plants, wherever trees, decorations, caves and water left the ground open.
     for z in 0..CHUNK_SIZE {
@@ -431,6 +452,50 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
 }
 
 impl Terrain {
+    /// A block of water filling `amount` eighths of its cell, pinned with a river's current
+    /// where it has one.
+    fn water_block(&self, amount: u8, current: Option<crate::Current>) -> BlockId {
+        let current = current.filter(|c| c.speed > 0).map(|c| fluid::Current { direction: c.direction, speed: c.speed });
+        self.water.block(FluidState { amount, current, ..FluidState::source(self.water.id) })
+    }
+
+    /// Where water stands two or more blocks above a column's, it pours down into it as the
+    /// fluid rule would pour it, so generated water is a fixed point of the rule (see
+    /// "Generated water" in `voxmar_engine::fluid`): each air cell beside the upper water
+    /// holds the deepest flowing water, or falling water under more water, and every cell
+    /// below, down to the column's own water, falling water. The upper water's top block
+    /// holds an eighth (see `water::settle`), which pours nothing, so the curtain starts a
+    /// block below it.
+    fn curtains(&self, geology: &GeoGrid, origin: IVec3, blocks: &mut Blocks) {
+        let (flowing, falling) = (self.water.flowing(7), self.water.falling());
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let (wx, wz) = (origin.x + x, origin.z + z);
+                let Some((_, top)) = geology.get(wx, wz).wet() else { continue };
+                let upper: Vec<(i32, i32)> = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                    .into_iter()
+                    .filter_map(|(dx, dz)| geology.get(wx + dx, wz + dz).wet())
+                    .filter(|&(_, above)| above >= top + 2)
+                    .collect();
+                let Some(highest) = upper.iter().map(|&(_, above)| above).max() else { continue };
+                let mut pouring = false;
+                for y in (top + 1..highest).rev() {
+                    let open = blocks.get_local(x, y, z).is_air();
+                    let beside = upper.iter().any(|&(bottom, above)| bottom < y && y < above);
+                    pouring = if pouring && (open || self.soft[blocks.get_local(x, y, z).0 as usize]) {
+                        blocks.set_local(x, y, z, falling);
+                        true
+                    } else if beside && open {
+                        blocks.set_local(x, y, z, flowing);
+                        true
+                    } else {
+                        false
+                    };
+                }
+            }
+        }
+    }
+
     /// Builds what stands beside trails in and around a column: cairns where trees do not
     /// grow, larger cairns on summits, and old waymarkers at trailheads. Each stone stands
     /// on its own column's ground, so they settle onto uneven ground.
