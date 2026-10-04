@@ -304,33 +304,34 @@ impl Geology {
         &self.shapes
     }
 
-    /// Continents, ranges, plateaus and valleys at (x, z).
+    /// Continents, ranges, plateaus and valleys at (x, z). (Their fractal noise goes through
+    /// `crate::noise::get_2d`, which works out the octaves side by side: the same values, sooner.)
     pub fn relief(&self, x: f32, z: f32) -> Relief {
         let (wx, wz) = self.warp.domain_warp_2d(x, z);
         let sea = SEA_LEVEL as f32;
 
         // Land where the folded continental noise is large; the sea along its zero lines,
         // deepest in their middle.
-        let fold = self.continental.get_noise_2d(wx, wz).abs() - self.coast_fold;
+        let fold = crate::noise::get_2d(&self.continental, wx, wz).abs() - self.coast_fold;
         let continental = COAST + if fold > 0.0 { 1.4 * fold } else { 0.75 * fold / self.coast_fold };
         let mut above = spline(&BASE, continental);
         if continental < -0.2 {
-            let ridge = 1.0 - 6.0 * self.seabed.get_noise_2d(x, z).abs();
+            let ridge = 1.0 - 6.0 * crate::noise::get_2d(&self.seabed, x, z).abs();
             above += 7.0 * ridge.max(0.0) * smoothstep(-0.2, -0.45, continental);
         }
         // Ranges and plateaus rise over a few hundred blocks inland of the coast.
         let inland = smoothstep(-0.03, 0.3, continental);
 
         // Ranges along the folded range noise, rising and falling along their length.
-        let strength = smoothstep(self.range_threshold - 0.12, self.range_threshold + 0.12, self.range_strength.get_noise_2d(x, z));
+        let strength = smoothstep(self.range_threshold - 0.12, self.range_threshold + 0.12, crate::noise::get_2d(&self.range_strength, x, z));
         let half = RANGE_HALF_WIDTH * (0.7 + 0.6 * strength);
-        let e = self.ranges.get_noise_2d(wx, wz);
+        let e = crate::noise::get_2d(&self.ranges, wx, wz);
         let across = spline(&ACROSS, e.abs() / half);
         let mountain = across * strength * inland;
         let mut rise = 0.0;
         let mut peak = 0.0;
         if mountain > 0.005 {
-            let ridge = self.ridges.get_noise_2d(wx, wz) * 0.5 + 0.5;
+            let ridge = crate::noise::get_2d(&self.ridges, wx, wz) * 0.5 + 0.5;
             let massif = mountain * (0.35 + 0.65 * ridge);
             peak = mountain * ridge * ridge;
             // Crags on the upper slopes, stretched down the fall line (across the range,
@@ -339,10 +340,10 @@ impl Geology {
             let spine = smoothstep(0.35, 0.8, mountain) * self.jaggedness;
             let crags = if spine > 0.0 {
                 let step = 8.0;
-                let gx = self.ranges.get_noise_2d(wx + step, wz) - e;
-                let gz = self.ranges.get_noise_2d(wx, wz + step) - e;
+                let gx = crate::noise::get_2d(&self.ranges, wx + step, wz) - e;
+                let gz = crate::noise::get_2d(&self.ranges, wx, wz + step) - e;
                 let along_x = gx * gx / (gx * gx + gz * gz).max(1e-12);
-                let stretched = |sx: f32, sz: f32| self.crags.get_noise_2d(wx * sx, wz * sz) * 0.5 + 0.5;
+                let stretched = |sx: f32, sz: f32| crate::noise::get_2d(&self.crags, wx * sx, wz * sz) * 0.5 + 0.5;
                 spine * (along_x * stretched(0.3, 1.0) + (1.0 - along_x) * stretched(1.0, 0.3))
             } else {
                 0.0
@@ -352,14 +353,14 @@ impl Geology {
 
         // Plateaus where their noise is high, off the ranges, in two tiers. Each edge is an
         // escarpment: a talus slope under a cliff band, where rivers fall.
-        let hilliness = self.hilliness.get_noise_2d(x, z);
-        let p = self.plateaus.get_noise_2d(wx, wz) + 0.04 * hilliness;
+        let hilliness = crate::noise::get_2d(&self.hilliness, x, z);
+        let p = crate::noise::get_2d(&self.plateaus, wx, wz) + 0.04 * hilliness;
         let escarpment = |edge: f32| 0.3 * smoothstep(edge - 0.07, edge, p) + 0.7 * smoothstep(edge - 0.012, edge + 0.004, p);
         let off_ranges = inland * (1.0 - smoothstep(0.1, 0.4, mountain));
         let shelf = off_ranges * (26.0 * escarpment(0.26) + 24.0 * escarpment(0.46));
 
         // Broad valleys, and passes where they cross the ranges.
-        let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, self.valleys.get_noise_2d(wx, wz).abs());
+        let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, crate::noise::get_2d(&self.valleys, wx, wz).abs());
         let land = above.max(0.0) + shelf + rise;
         // Valleys cut into what rises above the lowest land, so they never sink low plains
         // into the sea.
@@ -407,7 +408,7 @@ impl Geology {
 
     fn compute_land(&self, x: i32, z: i32) -> Landform {
         let relief = self.relief(x as f32, z as f32);
-        let hills = self.hills.get_noise_2d(x as f32, z as f32);
+        let hills = crate::noise::get_2d(&self.hills, x as f32, z as f32);
         let inland = smoothstep(-0.06, 0.1, relief.continental);
         let hills = hills * (3.0 + 14.0 * relief.roughness) * self.hill_scale * inland;
         let ground = relief.elevation + hills;

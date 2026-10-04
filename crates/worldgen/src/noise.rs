@@ -1,11 +1,16 @@
-//! FastNoiseLite's 3D OpenSimplex2, four points at a time.
+//! FastNoiseLite's OpenSimplex2, four at a time: 3D noise at four points, and the octaves
+//! of 2D fractal noise at one.
 //!
 //! Generation samples 3D noise on lattices of thousands of points per column (caves, rock),
-//! one call at a time. Each call branches on which corners of the simplex grids contribute,
-//! which no branch predictor can guess, and works on one point while the core could work on
-//! four. Here the same arithmetic runs on four points in step, in NEON vectors, with the
-//! branches turned into selects and the gradient lookups into byte table lookups (every 3D
-//! gradient component is -1, 0 or 1).
+//! and fractal 2D noise of up to five octaves everywhere (the land's continents, ranges and
+//! hills, the climate), one call and one octave at a time. Each octave branches on which
+//! corners of the simplex grids contribute, which no branch predictor can guess, and works
+//! on one point while the core could work on four. Here the same arithmetic runs four wide,
+//! in NEON vectors, with the branches turned into selects: across four points of a lattice
+//! in 3D, and across the octaves of one point in 2D, which are independent (each octave
+//! scales the point by the lacunarity and adds its value times an amplitude that, without
+//! FastNoiseLite's weighting, does not depend on the octaves before it). 3D gradient
+//! components are all -1, 0 or 1, so their lookups are byte table lookups.
 //!
 //! The results are exactly FastNoiseLite's, bit for bit: every value comes from the same
 //! operations in the same order, never fused (a contribution that a branch would skip adds
@@ -25,6 +30,69 @@ pub fn supported_3d(noise: &FastNoiseLite) -> bool {
         && matches!(noise.fractal_type, FractalType::None | FractalType::FBm)
         // Weighting would give each point its own amplitude.
         && noise.weighted_strength == 0.
+}
+
+/// Whether this module evaluates the 2D `noise` itself: fractal OpenSimplex2 of three
+/// octaves or more (four side by side cost about as much as two one after the other, so
+/// fewer gain nothing).
+pub fn supported_2d(noise: &FastNoiseLite) -> bool {
+    cfg!(target_arch = "aarch64")
+        && noise.noise_type == NoiseType::OpenSimplex2
+        && matches!(noise.fractal_type, FractalType::FBm | FractalType::Ridged)
+        && noise.octaves >= 3
+        && noise.weighted_strength == 0.
+}
+
+/// `noise.get_noise_2d(x, y)`, with its octaves worked out side by side when it is
+/// `supported_2d`.
+#[inline]
+pub fn get_2d(noise: &FastNoiseLite, x: f32, y: f32) -> f32 {
+    #[cfg(target_arch = "aarch64")]
+    if supported_2d(noise) {
+        return fractal_2d(noise, x, y);
+    }
+    noise.get_noise_2d(x, y)
+}
+
+/// Fractal 2D OpenSimplex2 as FastNoiseLite sums it, the octaves four at a time.
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::excessive_precision)]
+fn fractal_2d(noise: &FastNoiseLite, x: f32, y: f32) -> f32 {
+    // The frequency, then OpenSimplex2's skew.
+    let (mut x, mut y) = (x * noise.frequency, y * noise.frequency);
+    let sqrt3: f32 = 1.7320508075688772935274463415059;
+    let f2 = 0.5 * (sqrt3 - 1.);
+    let t = (x + y) * f2;
+    x += t;
+    y += t;
+    let ridged = noise.fractal_type == FractalType::Ridged;
+    let (mut seed, mut amp, mut sum) = (noise.seed, fractal_bounding(noise), 0.0f32);
+    let mut octave = 0;
+    while octave < noise.octaves {
+        let n = (noise.octaves - octave).min(4) as usize;
+        // Each octave's seed and point, as FastNoiseLite steps them.
+        let (mut seeds, mut xs, mut ys) = ([0i32; 4], [0.0f32; 4], [0.0f32; 4]);
+        for k in 0..n {
+            (seeds[k], xs[k], ys[k]) = (seed, x, y);
+            seed = seed.wrapping_add(1);
+            x *= noise.lacunarity;
+            y *= noise.lacunarity;
+        }
+        // SAFETY: NEON is part of every aarch64 processor.
+        let values = unsafe { neon::simplex_2d(seeds, xs, ys) };
+        for &value in &values[..n] {
+            // FastNoiseLite also multiplies the amplitude by its weighting, which at
+            // strength 0 is exactly 1.
+            if ridged {
+                sum += (value.abs() * -2. + 1.) * amp;
+            } else {
+                sum += value * amp;
+            }
+            amp *= noise.gain;
+        }
+        octave += n as i32;
+    }
+    sum
 }
 
 /// `noise.get_noise_3d` at every point, into `out`.
@@ -63,6 +131,45 @@ fn fractal_bounding(noise: &FastNoiseLite) -> f32 {
     1. / amp_fractal
 }
 
+/// FastNoiseLite's 2D gradients, as pairs.
+#[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
+#[rustfmt::skip]
+#[allow(clippy::excessive_precision, clippy::approx_constant)]
+const GRADIENTS_2D: [f32; 256] = [
+    0.130526192220052, 0.99144486137381, 0.38268343236509, 0.923879532511287, 0.608761429008721, 0.793353340291235, 0.793353340291235, 0.608761429008721,
+    0.923879532511287, 0.38268343236509, 0.99144486137381, 0.130526192220051, 0.99144486137381, -0.130526192220051, 0.923879532511287, -0.38268343236509,
+    0.793353340291235, -0.60876142900872, 0.608761429008721, -0.793353340291235, 0.38268343236509, -0.923879532511287, 0.130526192220052, -0.99144486137381,
+    -0.130526192220052, -0.99144486137381, -0.38268343236509, -0.923879532511287, -0.608761429008721, -0.793353340291235, -0.793353340291235, -0.608761429008721,
+    -0.923879532511287, -0.38268343236509, -0.99144486137381, -0.130526192220052, -0.99144486137381, 0.130526192220051, -0.923879532511287, 0.38268343236509,
+    -0.793353340291235, 0.608761429008721, -0.608761429008721, 0.793353340291235, -0.38268343236509, 0.923879532511287, -0.130526192220052, 0.99144486137381,
+    0.130526192220052, 0.99144486137381, 0.38268343236509, 0.923879532511287, 0.608761429008721, 0.793353340291235, 0.793353340291235, 0.608761429008721,
+    0.923879532511287, 0.38268343236509, 0.99144486137381, 0.130526192220051, 0.99144486137381, -0.130526192220051, 0.923879532511287, -0.38268343236509,
+    0.793353340291235, -0.60876142900872, 0.608761429008721, -0.793353340291235, 0.38268343236509, -0.923879532511287, 0.130526192220052, -0.99144486137381,
+    -0.130526192220052, -0.99144486137381, -0.38268343236509, -0.923879532511287, -0.608761429008721, -0.793353340291235, -0.793353340291235, -0.608761429008721,
+    -0.923879532511287, -0.38268343236509, -0.99144486137381, -0.130526192220052, -0.99144486137381, 0.130526192220051, -0.923879532511287, 0.38268343236509,
+    -0.793353340291235, 0.608761429008721, -0.608761429008721, 0.793353340291235, -0.38268343236509, 0.923879532511287, -0.130526192220052, 0.99144486137381,
+    0.130526192220052, 0.99144486137381, 0.38268343236509, 0.923879532511287, 0.608761429008721, 0.793353340291235, 0.793353340291235, 0.608761429008721,
+    0.923879532511287, 0.38268343236509, 0.99144486137381, 0.130526192220051, 0.99144486137381, -0.130526192220051, 0.923879532511287, -0.38268343236509,
+    0.793353340291235, -0.60876142900872, 0.608761429008721, -0.793353340291235, 0.38268343236509, -0.923879532511287, 0.130526192220052, -0.99144486137381,
+    -0.130526192220052, -0.99144486137381, -0.38268343236509, -0.923879532511287, -0.608761429008721, -0.793353340291235, -0.793353340291235, -0.608761429008721,
+    -0.923879532511287, -0.38268343236509, -0.99144486137381, -0.130526192220052, -0.99144486137381, 0.130526192220051, -0.923879532511287, 0.38268343236509,
+    -0.793353340291235, 0.608761429008721, -0.608761429008721, 0.793353340291235, -0.38268343236509, 0.923879532511287, -0.130526192220052, 0.99144486137381,
+    0.130526192220052, 0.99144486137381, 0.38268343236509, 0.923879532511287, 0.608761429008721, 0.793353340291235, 0.793353340291235, 0.608761429008721,
+    0.923879532511287, 0.38268343236509, 0.99144486137381, 0.130526192220051, 0.99144486137381, -0.130526192220051, 0.923879532511287, -0.38268343236509,
+    0.793353340291235, -0.60876142900872, 0.608761429008721, -0.793353340291235, 0.38268343236509, -0.923879532511287, 0.130526192220052, -0.99144486137381,
+    -0.130526192220052, -0.99144486137381, -0.38268343236509, -0.923879532511287, -0.608761429008721, -0.793353340291235, -0.793353340291235, -0.608761429008721,
+    -0.923879532511287, -0.38268343236509, -0.99144486137381, -0.130526192220052, -0.99144486137381, 0.130526192220051, -0.923879532511287, 0.38268343236509,
+    -0.793353340291235, 0.608761429008721, -0.608761429008721, 0.793353340291235, -0.38268343236509, 0.923879532511287, -0.130526192220052, 0.99144486137381,
+    0.130526192220052, 0.99144486137381, 0.38268343236509, 0.923879532511287, 0.608761429008721, 0.793353340291235, 0.793353340291235, 0.608761429008721,
+    0.923879532511287, 0.38268343236509, 0.99144486137381, 0.130526192220051, 0.99144486137381, -0.130526192220051, 0.923879532511287, -0.38268343236509,
+    0.793353340291235, -0.60876142900872, 0.608761429008721, -0.793353340291235, 0.38268343236509, -0.923879532511287, 0.130526192220052, -0.99144486137381,
+    -0.130526192220052, -0.99144486137381, -0.38268343236509, -0.923879532511287, -0.608761429008721, -0.793353340291235, -0.793353340291235, -0.608761429008721,
+    -0.923879532511287, -0.38268343236509, -0.99144486137381, -0.130526192220052, -0.99144486137381, 0.130526192220051, -0.923879532511287, 0.38268343236509,
+    -0.793353340291235, 0.608761429008721, -0.608761429008721, 0.793353340291235, -0.38268343236509, 0.923879532511287, -0.130526192220052, 0.99144486137381,
+    0.38268343236509, 0.923879532511287, 0.923879532511287, 0.38268343236509, 0.923879532511287, -0.38268343236509, 0.38268343236509, -0.923879532511287,
+    -0.38268343236509, -0.923879532511287, -0.923879532511287, -0.38268343236509, -0.923879532511287, 0.38268343236509, -0.38268343236509, 0.923879532511287,
+];
+
 /// FastNoiseLite's 3D gradients, by axis, in the order of its table (whose offsets are four
 /// times these indices).
 #[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
@@ -95,7 +202,7 @@ mod neon {
 
     use fastnoise_lite::{FastNoiseLite, FractalType};
 
-    use super::GRADIENTS_3D;
+    use super::{GRADIENTS_2D, GRADIENTS_3D};
 
     const PRIME_X: i32 = 501125321;
     const PRIME_Y: i32 = 1136930381;
@@ -140,6 +247,71 @@ mod neon {
         // SAFETY: `out` holds four floats.
         unsafe { vst1q_f32(out.as_mut_ptr(), sum) };
         out
+    }
+
+    /// One octave of 2D OpenSimplex2 (the same algorithm as ordinary simplex noise) at
+    /// skewed, scaled points, each with its own seed.
+    #[target_feature(enable = "neon")]
+    #[allow(clippy::excessive_precision)]
+    pub(super) fn simplex_2d(seeds: [i32; 4], x: [f32; 4], y: [f32; 4]) -> [f32; 4] {
+        let sqrt3: f32 = 1.7320508075688772935274463415059;
+        let g2 = (3. - sqrt3) / 6.;
+        let load = |v: [f32; 4]| {
+            // SAFETY: four floats.
+            unsafe { vld1q_f32(v.as_ptr()) }
+        };
+        let (x, y, seeds) = (load(x), load(y), {
+            // SAFETY: four integers.
+            unsafe { vld1q_s32(seeds.as_ptr()) }
+        });
+        let zero = vdupq_n_f32(0.);
+        // FastNoiseLite's `fast_floor`: truncated, less one below zero (even at whole
+        // numbers).
+        let floor = |v: float32x4_t| vsubq_s32(vcvtq_s32_f32(v), vreinterpretq_s32_u32(vandq_u32(vcltq_f32(v, zero), vdupq_n_u32(1))));
+        let (i, j) = (floor(x), floor(y));
+        let (xi, yi) = (vsubq_f32(x, vcvtq_f32_s32(i)), vsubq_f32(y, vcvtq_f32_s32(j)));
+        let t = vmulq_f32(vaddq_f32(xi, yi), vdupq_n_f32(g2));
+        let (x0, y0) = (vsubq_f32(xi, t), vsubq_f32(yi, t));
+        let (i, j) = (vmulq_s32(i, vdupq_n_s32(PRIME_X)), vmulq_s32(j, vdupq_n_s32(PRIME_Y)));
+        let falloff = |w: float32x4_t, g: float32x4_t| {
+            let w2 = vmulq_f32(w, w);
+            vmulq_f32(vmulq_f32(w2, w2), g)
+        };
+        let a = vsubq_f32(vsubq_f32(vdupq_n_f32(0.5), vmulq_f32(x0, x0)), vmulq_f32(y0, y0));
+        let n0 = vbslq_f32(vcleq_f32(a, zero), zero, falloff(a, gradient_2d(seeds, i, j, x0, y0)));
+        let c = vaddq_f32(
+            vmulq_f32(vdupq_n_f32(2. * (1. - 2. * g2) * (1. / g2 - 2.)), t),
+            vaddq_f32(vdupq_n_f32(-2. * (1. - 2. * g2) * (1. - 2. * g2)), a),
+        );
+        let (x2, y2) = (vaddq_f32(x0, vdupq_n_f32(2. * g2 - 1.)), vaddq_f32(y0, vdupq_n_f32(2. * g2 - 1.)));
+        let (ip, jp) = (vaddq_s32(i, vdupq_n_s32(PRIME_X)), vaddq_s32(j, vdupq_n_s32(PRIME_Y)));
+        let n2 = vbslq_f32(vcleq_f32(c, zero), zero, falloff(c, gradient_2d(seeds, ip, jp, x2, y2)));
+        // The middle corner: towards y where the point lies above the diagonal.
+        let upper = vcgtq_f32(y0, x0);
+        let x1 = vaddq_f32(x0, vbslq_f32(upper, vdupq_n_f32(g2), vdupq_n_f32(g2 - 1.)));
+        let y1 = vaddq_f32(y0, vbslq_f32(upper, vdupq_n_f32(g2 - 1.), vdupq_n_f32(g2)));
+        let b = vsubq_f32(vsubq_f32(vdupq_n_f32(0.5), vmulq_f32(x1, x1)), vmulq_f32(y1, y1));
+        let (i1, j1) = (vbslq_s32(upper, i, ip), vbslq_s32(upper, jp, j));
+        let n1 = vbslq_f32(vcleq_f32(b, zero), zero, falloff(b, gradient_2d(seeds, i1, j1, x1, y1)));
+        let value = vmulq_f32(vaddq_f32(vaddq_f32(n0, n1), n2), vdupq_n_f32(99.83685446303647));
+        let mut out = [0.0f32; 4];
+        // SAFETY: `out` holds four floats.
+        unsafe { vst1q_f32(out.as_mut_ptr(), value) };
+        out
+    }
+
+    /// The dot product of offsets with the 2D gradient of each lane's lattice corner.
+    #[target_feature(enable = "neon")]
+    fn gradient_2d(seed: int32x4_t, i: int32x4_t, j: int32x4_t, dx: float32x4_t, dy: float32x4_t) -> float32x4_t {
+        let hash = vmulq_s32(veorq_s32(veorq_s32(seed, i), j), vdupq_n_s32(0x27d4eb2d));
+        let hash = vandq_s32(veorq_s32(hash, vshrq_n_s32::<15>(hash)), vdupq_n_s32(127 << 1));
+        let mut offsets = [0i32; 4];
+        // SAFETY: `offsets` holds four integers.
+        unsafe { vst1q_s32(offsets.as_mut_ptr(), hash) };
+        let (gx, gy) = (offsets.map(|o| GRADIENTS_2D[o as usize]), offsets.map(|o| GRADIENTS_2D[o as usize | 1]));
+        // SAFETY: four floats each.
+        let (gx, gy) = unsafe { (vld1q_f32(gx.as_ptr()), vld1q_f32(gy.as_ptr())) };
+        vaddq_f32(vmulq_f32(dx, gx), vmulq_f32(dy, gy))
     }
 
     /// FastNoiseLite's `fast_round`: half away from zero, then truncated.
@@ -252,6 +424,36 @@ mod tests {
         }
     }
 
+    /// The 2D octaves too, for the land's and the climate's settings and others.
+    #[test]
+    fn fractal_2d_matches_fastnoise_lite_exactly() {
+        let mut rng = Rng::new(8, 8, 8, 8);
+        let mut checked = 0;
+        for (salt, frequency, fractal, octaves) in [
+            (2, 1.0 / 2800.0, FractalType::FBm, 5),
+            (3, 0.0011, FractalType::FBm, 3),
+            (4, 0.0022, FractalType::Ridged, 5),
+            (5, 0.008, FractalType::FBm, 4),
+            (30, 1.0 / 220.0, FractalType::FBm, 2),
+            (41, 1.0 / 45.0, FractalType::FBm, 2),
+            (9, 0.37, FractalType::Ridged, 3),
+            (11, 1.3, FractalType::FBm, 8),
+        ] {
+            let n = noise(0x5eed ^ salt, salt as u32, frequency, fractal, octaves);
+            assert_eq!(supported_2d(&n), cfg!(target_arch = "aarch64") && octaves >= 3);
+            for i in 0..40_000 {
+                let (x, y) = if i % 4 == 0 {
+                    (rng.unit() * 2e6 - 1e6, rng.unit() * 2e6 - 1e6)
+                } else {
+                    (rng.range(-60_000, 60_000) as f32, rng.range(-60_000, 60_000) as f32 + 0.5 * (i % 3) as f32)
+                };
+                assert_eq!(get_2d(&n, x, y).to_bits(), n.get_noise_2d(x, y).to_bits(), "({x}, {y}) at {frequency} {fractal:?} {octaves}");
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 320_000);
+    }
+
     /// `cargo test --release -p voxmar_worldgen noise_speed -- --ignored --nocapture`
     /// compares the time per point of the tunnels' noise, one point at a time and here.
     #[test]
@@ -272,7 +474,17 @@ mod tests {
         let many = crate::perf::thread_time() - start;
         assert_eq!(check, out.iter().sum::<f32>());
         let ns = |d: std::time::Duration| d.as_secs_f64() * 1e9 / points.len() as f64;
-        println!("one at a time {:.1} ns per point, four at a time {:.1} ns", ns(one), ns(many));
+        println!("3D: one at a time {:.1} ns per point, four at a time {:.1} ns", ns(one), ns(many));
+        // The land's continents: five octaves of 2D noise.
+        let n = noise(1, 2, 1.0 / 2800.0, FractalType::FBm, 5);
+        let start = crate::perf::thread_time();
+        let one: f32 = points.iter().map(|p| n.get_noise_2d(p[0], p[2])).sum();
+        let scalar = crate::perf::thread_time() - start;
+        let start = crate::perf::thread_time();
+        let many: f32 = points.iter().map(|p| get_2d(&n, p[0], p[2])).sum();
+        let side_by_side = crate::perf::thread_time() - start;
+        assert_eq!(one, many);
+        println!("2D, 5 octaves: one octave at a time {:.1} ns per point, four at a time {:.1} ns", ns(scalar), ns(side_by_side));
     }
 }
 
