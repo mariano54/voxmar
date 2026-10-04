@@ -1,0 +1,16 @@
+// Verdant: a warm, contrasty look after Complementary Reimagined. Strong sun against cool,
+// deep shade, a blue haze over the distance, and richer greens.
+(
+    name: "Verdant",
+    sun: 1.4,
+    ambient: 0.55,
+    shade_tint: (0.82, 0.95, 1.2),
+    haze: 2.6,
+    haze_tint: (0.9, 0.97, 1.06),
+    exposure: 1.0,
+    contrast: 1.18,
+    saturation: 1.15,
+    vibrance: 0.35,
+    warmth: 0.05,
+    bloom: 0.12,
+)
