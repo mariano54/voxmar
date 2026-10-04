@@ -305,7 +305,8 @@ impl Geology {
             let ridge = 1.0 - 6.0 * self.seabed.get_noise_2d(x, z).abs();
             above += 7.0 * ridge.max(0.0) * smoothstep(-0.2, -0.45, continental);
         }
-        let inland = smoothstep(-0.02, 0.14, continental);
+        // Ranges and plateaus rise over a few hundred blocks inland of the coast.
+        let inland = smoothstep(-0.03, 0.3, continental);
 
         // Ranges along the folded range noise, rising and falling along their length.
         let strength = smoothstep(self.range_threshold - 0.12, self.range_threshold + 0.12, self.range_strength.get_noise_2d(x, z));

@@ -978,7 +978,7 @@ mod tests {
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
-        for (seed, biome) in [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest")] {
+        for (seed, biome) in [(42, "forest"), (7, "birch_taiga"), (3, "dark_forest")] {
             let world = Overworld::new(seed, registry.clone());
             let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {biome}"));
             let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
@@ -1290,7 +1290,7 @@ mod tests {
     #[test]
     fn geodes_are_hollow_and_lined() {
         let registry = registry();
-        let world = Overworld::new(5, registry.clone());
+        let world = Overworld::new(7, registry.clone());
         let crystal = [registry.expect("base:crystal_block")];
         let mut checked = 0;
         for i in 0..400 {

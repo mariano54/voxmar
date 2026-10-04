@@ -463,10 +463,11 @@ fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, surfaces: &[(Site
             for z in min.y..=max.y {
                 for x in min.x..=max.x {
                     let (wx, wz) = (origin.x + x, origin.z + z);
-                    for y in y0..=y1 {
+                    // Only over the ground: caves beneath are left open.
+                    let site = &surfaces[(z * CHUNK_SIZE + x) as usize].0;
+                    for y in y0.max(site.height + 1)..=y1 {
                         let here = blocks.get_local(x, y, z);
                         if (here.is_air() || here == terrain.ids.water) && shapes.solid(&piece, wx, y, wz) {
-                            let site = &surfaces[(z * CHUNK_SIZE + x) as usize].0;
                             blocks.set_local(x, y, z, rock(site, wx, y, wz));
                         }
                     }
@@ -640,7 +641,10 @@ impl Overworld {
     pub(crate) fn pieces(&self, corner: IVec2) -> Vec<Piece> {
         let anchors = Anchors {
             regional: &|x, z| self.geology.regional(x, z),
-            ground: &|x, z| self.height(x, z) as f32,
+            ground: &|x, z| {
+                let geo = self.geo(x, z);
+                if geo.submerged() { f32::NAN } else { geo.height as f32 }
+            },
             edge: &|x, z| self.site(x, z).edge,
         };
         self.geology.shapes().pieces(corner, corner + CHUNK_SIZE - 1, &anchors)

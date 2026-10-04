@@ -130,7 +130,8 @@ pub enum Piece {
 }
 
 /// The context 3D pieces are anchored in: the regional climate, the ground (rivers cut
-/// in), and how far a position lies from the nearest biome border.
+/// in; not a number under water, where nothing is anchored), and how far a position lies
+/// from the nearest biome border.
 pub struct Anchors<'a> {
     pub regional: &'a dyn Fn(i32, i32) -> Regional,
     pub ground: &'a dyn Fn(i32, i32) -> f32,
@@ -221,8 +222,9 @@ impl Shapes {
                             let ends = [centre - along * half, centre + along * half];
                             let feet = ends.map(|e| (anchors.ground)(e.x as i32, e.y as i32));
                             let rise = height * (0.6 + 0.6 * unit(5)) * (0.7 + 0.3 * weight);
-                            // Not buried under a hill between its feet.
-                            if (anchors.ground)(x, z) > feet[0].max(feet[1]) + 0.4 * rise {
+                            // On dry feet, and not buried under a hill between them (a river
+                            // between them is fine: the arch bridges it).
+                            if feet.iter().any(|f| f.is_nan()) || (anchors.ground)(x, z) > feet[0].max(feet[1]) + 0.4 * rise {
                                 continue;
                             }
                             pieces.push(Piece::Arch { centre, along, half, feet, height: rise, thick: 3.0 + 3.0 * unit(6), wide: 2.0 + 2.0 * unit(7) });
@@ -248,11 +250,15 @@ impl Shapes {
                             if weight < 0.3 {
                                 continue;
                             }
+                            let foot = (anchors.ground)(x, z);
+                            if foot.is_nan() {
+                                continue;
+                            }
                             let rise = height * (0.5 + 0.7 * u[2]) * weight;
                             let tilt = 0.25 + 0.35 * (u[3] / lean);
                             let lean = Vec2::from_angle(u[1] * 97.0) * tilt * rise;
                             let radius = spacing * (0.09 + 0.08 * u[1]) + 1.0;
-                            pieces.push(Piece::Spire { base, foot: (anchors.ground)(x, z), height: rise, radius, lean });
+                            pieces.push(Piece::Spire { base, foot, height: rise, radius, lean });
                         }
                     }
                 }

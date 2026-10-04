@@ -469,8 +469,10 @@ impl Caves {
                 }
                 let y = rng.range(LAVA_LEVEL + 12, SEA_LEVEL - 20);
                 let radius = 2.2 + 2.3 * rng.unit();
-                // Well inside the ground, clear of river beds.
-                if geology.get(x, z).height - y < 18 {
+                // Well inside the ground, clear of river beds, and not under the sea or a
+                // lake, whose water tables would wall the hollow up.
+                let ground = geology.get(x, z);
+                if ground.height - y < 18 || ground.submerged() {
                     continue;
                 }
                 found.push(Geode { centre: Vec3::new(x as f32, y as f32, z as f32) + 0.5, radius, seed: rng.next_u64() });
