@@ -1042,6 +1042,11 @@ pub(super) struct TerrainDraws {
     distant: Vec<TileDraw>,
     /// Grass blades near the camera, nearest first; cameras only.
     blades: Vec<BladeDraw>,
+    /// Each stream's surviving ranges with their page, kept between frames so culling
+    /// reuses their memory.
+    ranges: [Vec<(u32, Range<u32>)>; STREAMS],
+    /// Room to group a stream's ranges by page.
+    grouped: Vec<(u32, Range<u32>)>,
 }
 
 /// The translucent terrain's pipeline and item entity, for the water pass (see `water`).
@@ -1102,7 +1107,7 @@ fn cull(
         let casters = light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer));
         let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
         // Each stream's surviving ranges, and the translucent ones with their distance.
-        let mut ranges: [Vec<(u32, Range<u32>)>; STREAMS] = Default::default();
+        let mut ranges = std::mem::take(&mut draws.ranges);
         let mut translucent = Vec::new();
         let mut blades = Vec::new();
         for &(min, record) in &candidates {
@@ -1144,11 +1149,12 @@ fn cull(
             pass.clear();
         }
         // Each stream's ranges are gathered page by page, in page order.
+        let mut grouped = std::mem::take(&mut draws.grouped);
         for pass in PASSES {
             for stream in streams(pass) {
                 let ranges = &mut ranges[stream];
-                ranges.sort_unstable_by_key(|(page, vertices)| (*page, vertices.start));
-                for run in ranges.chunk_by(|a, b| a.0 == b.0) {
+                group_by_page(ranges, &mut grouped);
+                for run in grouped.chunk_by(|a, b| a.0 == b.0) {
                     let page = run[0].0;
                     let quads = run.iter().map(|(_, vertices)| vertices.clone());
                     let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
@@ -1157,6 +1163,8 @@ fn cull(
                 ranges.clear();
             }
         }
+        draws.ranges = ranges;
+        draws.grouped = grouped;
         // Translucent chunks keep their back-to-front order across pages.
         translucent.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
         let stream = streams(TerrainPass::Translucent).start;
@@ -1230,6 +1238,27 @@ fn slice(light: &LightEntity, lights: &Query<&ExtractedDirectionalLight>) -> Opt
         i => config.bounds[i - 1] * (1.0 - config.overlap_proportion),
     };
     Some((near, far))
+}
+
+/// Puts `ranges` into `grouped` ordered by page, each page's in the order they came, with a
+/// counting sort: gathering needs them grouped by page and nothing more, and this is
+/// linear in their number where sorting them was most of culling's time.
+fn group_by_page(ranges: &[(u32, Range<u32>)], grouped: &mut Vec<(u32, Range<u32>)>) {
+    grouped.clear();
+    let Some(pages) = ranges.iter().map(|(page, _)| *page as usize + 1).max() else { return };
+    let mut starts = vec![0usize; pages + 1];
+    for (page, _) in ranges {
+        starts[*page as usize + 1] += 1;
+    }
+    for page in 0..pages {
+        starts[page + 1] += starts[page];
+    }
+    grouped.resize(ranges.len(), (0, 0..0));
+    for (page, vertices) in ranges {
+        let at = &mut starts[*page as usize];
+        grouped[*at] = (*page, vertices.clone());
+        *at += 1;
+    }
 }
 
 /// The planes of a view frustum, as `normal · p + d >= 0` inside.
