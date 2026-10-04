@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::action::ActionRegistry;
-use crate::block::{BlockDef, BlockRegistry, RegistryError};
+use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::weather::WeatherTable;
 
@@ -31,14 +31,14 @@ impl Content {
             .collect();
         packages.sort();
 
-        let mut blocks: Vec<BlockDef> = Vec::new();
+        let mut blocks = Vec::new();
         let mut actions = ActionRegistry::default();
         let mut commands = CommandRegistry::default();
         let mut weather = WeatherTable::default();
         for package in &packages {
             let path = dir.join(package);
             if let Ok(source) = std::fs::read_to_string(path.join("blocks.ron")) {
-                blocks.extend(BlockRegistry::parse(package, &source)?);
+                blocks.push((package.clone(), BlockRegistry::read(package, &source)?));
             }
             if let Ok(source) = std::fs::read_to_string(path.join("actions.ron")) {
                 actions.extend(package, &source)?;
@@ -50,6 +50,7 @@ impl Content {
                 weather.extend(package, &source)?;
             }
         }
+        let blocks = BlockRegistry::expand(blocks)?;
         Ok(Self {
             blocks: Arc::new(BlockRegistry::new(blocks)?),
             actions: Arc::new(actions),

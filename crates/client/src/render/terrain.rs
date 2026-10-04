@@ -576,13 +576,17 @@ struct TerrainDraws {
     distant: Vec<Draw>,
 }
 
+/// A view whose draws `cull` fills: a camera or a shadow cascade.
+type CulledView = (Entity, &'static ExtractedView, Has<LightEntity>, Option<&'static mut TerrainDraws>);
+type CulledViewFilter = Or<(With<LightEntity>, With<ExtractedCamera>)>;
+
 /// Culls the visible chunks against each view's frustum, in parallel over views.
 /// Translucent chunks are sorted back to front; the rest keep page order, so pages rarely
 /// switch.
 fn cull(
     mut commands: Commands,
     gpu: Res<TerrainGpu>,
-    mut views: Query<(Entity, &ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>), Or<(With<LightEntity>, With<ExtractedCamera>)>>,
+    mut views: Query<CulledView, CulledViewFilter>,
 ) {
     // Chunks cave culling leaves visible, with their bounds' minimum corner.
     let candidates: Vec<(Vec3, &ChunkRecord)> = gpu
