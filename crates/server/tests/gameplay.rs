@@ -387,3 +387,18 @@ fn players_are_told_the_weather() {
     assert!(fractions.iter().all(|f| (0.0..=1.0).contains(f)), "{weather:?}");
     assert!(weather.wind.is_finite());
 }
+
+#[test]
+fn the_server_console_runs_commands_as_an_admin() {
+    let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
+    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let mut guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
+    guest.pump_until(|c| c.day.is_some());
+    // The console speaks for the server, and needs no admin rights.
+    guest._server.console("/time set midnight");
+    guest.pump_until(|c| c.day.is_some_and(|(day, _)| day % TICKS_PER_DAY == 18_000));
+    guest._server.console("say hello");
+    guest.pump_until(|c| c.chat.iter().any(|(_, text)| text == "[Server] hello"));
+    guest._server.console("gamemode creative guest");
+    guest.pump_until(|c| c.allow_flight);
+}

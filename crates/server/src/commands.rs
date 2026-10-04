@@ -31,12 +31,33 @@ const TICKS_PER_HOUR: u64 = TICKS_PER_DAY / 24;
 /// What a command says back: a line for the console, or why it could not run.
 type Reply = Result<String, String>;
 
+/// Who runs a command: a player, or the dedicated server's own console, which is an admin
+/// and stands at the world's spawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Source {
+    Player(PlayerId),
+    Console,
+}
+
 impl Server {
     /// Runs a command line a player typed (with or without the leading `/`).
     pub(crate) fn command(&mut self, id: PlayerId, line: &str) {
         let line: String = line.chars().filter(|c| !c.is_control()).take(MAX_LINE).collect();
         tracing::info!("{}: /{}", self.players[&id].name, line.trim().trim_start_matches('/'));
-        self.run_line(id, &line, 0);
+        self.run_line(Source::Player(id), &line, 0);
+    }
+
+    /// A line typed into the dedicated server's console: a command, with or without the
+    /// `/`, or with a leading `say ` something to tell everyone.
+    pub(crate) fn console(&mut self, line: &str) {
+        let line: String = line.chars().filter(|c| !c.is_control()).take(MAX_LINE).collect();
+        if let Some(text) = line.trim().strip_prefix("say ") {
+            let text = format!("[Server] {}", text.trim());
+            tracing::info!("{text}");
+            self.broadcast(ServerMessage::Chat { kind: ChatKind::Chat, text });
+        } else {
+            self.run_line(Source::Console, &line, 0);
+        }
     }
 
     /// Says `text` to everyone, as the player.
@@ -51,13 +72,52 @@ impl Server {
         self.broadcast(ServerMessage::Chat { kind: ChatKind::Chat, text: line });
     }
 
-    pub(crate) fn tell(&self, id: PlayerId, kind: ChatKind, text: impl Into<String>) {
-        if let Some(player) = self.players.get(&id) {
-            player.connection.send(ServerMessage::Chat { kind, text: text.into() });
+    /// Tells whoever ran a command something, in their console.
+    pub(crate) fn tell(&self, to: Source, kind: ChatKind, text: impl Into<String>) {
+        let text = text.into();
+        match to {
+            Source::Player(id) => {
+                if let Some(player) = self.players.get(&id) {
+                    player.connection.send(ServerMessage::Chat { kind, text });
+                }
+            }
+            Source::Console if kind == ChatKind::Error => text.lines().for_each(|line| tracing::warn!("{line}")),
+            Source::Console => text.lines().for_each(|line| tracing::info!("{line}")),
         }
     }
 
-    fn run_line(&mut self, id: PlayerId, line: &str, depth: usize) {
+    fn is_admin(&self, source: Source) -> bool {
+        match source {
+            Source::Player(id) => self.players.get(&id).is_some_and(|p| p.admin),
+            Source::Console => true,
+        }
+    }
+
+    /// The name others are told did something.
+    fn name_of(&self, source: Source) -> String {
+        match source {
+            Source::Player(id) => self.players.get(&id).map_or_else(String::new, |p| p.name.clone()),
+            Source::Console => "The server".into(),
+        }
+    }
+
+    /// Where a command runs: the player's feet, or the world's spawn for the console.
+    fn position_of(&self, source: Source) -> Vec3 {
+        match source {
+            Source::Player(id) => self.players.get(&id).map_or(self.spawn, |p| p.position),
+            Source::Console => self.spawn,
+        }
+    }
+
+    /// The player a command acts on when it names none: whoever ran it.
+    fn me(source: Source) -> Result<PlayerId, String> {
+        match source {
+            Source::Player(id) => Ok(id),
+            Source::Console => Err("The console is nobody; name a player.".into()),
+        }
+    }
+
+    fn run_line(&mut self, id: Source, line: &str, depth: usize) {
         let words = command::split(line);
         let Some((name, args)) = words.split_first() else { return };
         let def = match self.content.commands.find(name) {
@@ -68,7 +128,7 @@ impl Server {
                 return self.tell(id, ChatKind::Error, format!("Several packages add /{name}: use one of {names}."));
             }
         };
-        if def.permission == Permission::Admin && !self.players.get(&id).is_some_and(|p| p.admin) {
+        if def.permission == Permission::Admin && !self.is_admin(id) {
             return self.tell(id, ChatKind::Error, format!("Only admins may use /{}.", def.short_name()));
         }
         let reply = match &def.run {
@@ -102,8 +162,8 @@ impl Server {
         }
     }
 
-    fn help(&self, id: PlayerId, args: &[String]) -> Reply {
-        let admin = self.players[&id].admin;
+    fn help(&self, id: Source, args: &[String]) -> Reply {
+        let admin = self.is_admin(id);
         let allowed = |def: &CommandDef| admin || def.permission == Permission::Anyone;
         if let Some(name) = args.first() {
             let name = name.trim_start_matches('/');
@@ -173,13 +233,13 @@ impl Server {
         format!("Day {}, {hours:02}:{minutes:02} (tick {of_day} of {TICKS_PER_DAY}), {pace}.", ticks / TICKS_PER_DAY + 1)
     }
 
-    fn teleport(&mut self, id: PlayerId, args: &[String]) -> Reply {
+    fn teleport(&mut self, id: Source, args: &[String]) -> Reply {
         let coordinate = |word: &String| word.starts_with('~') || word.parse::<f32>().is_ok();
         let (who, place) = match args {
-            [name] if !coordinate(name) => (id, Place::Player(name.clone())),
-            [a, b] if coordinate(a) && coordinate(b) => (id, Place::Ground(a.clone(), b.clone())),
+            [name] if !coordinate(name) => (Self::me(id)?, Place::Player(name.clone())),
+            [a, b] if coordinate(a) && coordinate(b) => (Self::me(id)?, Place::Ground(a.clone(), b.clone())),
             [name, other] => (self.find_player(name)?, Place::Player(other.clone())),
-            [x, y, z] if coordinate(x) => (id, Place::At(x.clone(), y.clone(), z.clone())),
+            [x, y, z] if coordinate(x) => (Self::me(id)?, Place::At(x.clone(), y.clone(), z.clone())),
             [name, x, z] => (self.find_player(name)?, Place::Ground(x.clone(), z.clone())),
             [name, x, y, z] => (self.find_player(name)?, Place::At(x.clone(), y.clone(), z.clone())),
             _ => return Err("Where to?".into()),
@@ -207,10 +267,10 @@ impl Server {
         player.connection.send(ServerMessage::Teleport { position });
         let name = player.name.clone();
         let place = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
-        if who == id {
+        if id == Source::Player(who) {
             Ok(format!("Teleported to {place}."))
         } else {
-            self.tell(who, ChatKind::Info, format!("{} teleported you to {place}.", self.players[&id].name));
+            self.tell(Source::Player(who), ChatKind::Info, format!("{} teleported you to {place}.", self.name_of(id)));
             Ok(format!("Teleported {name} to {place}."))
         }
     }
@@ -227,9 +287,9 @@ impl Server {
         (0..WORLD_HEIGHT).rev().find(|&y| self.is_solid(IVec3::new(block.x, y, block.y))).map_or(WORLD_HEIGHT, |y| y + 1)
     }
 
-    fn game_mode(&mut self, id: PlayerId, args: &[String]) -> Reply {
+    fn game_mode(&mut self, id: Source, args: &[String]) -> Reply {
         let (mode, who) = match args {
-            [mode] => (mode, id),
+            [mode] => (mode, Self::me(id)?),
             [mode, name] => (mode, self.find_player(name)?),
             _ => return Err("Which mode?".into()),
         };
@@ -244,16 +304,16 @@ impl Server {
         player.fall_start = None;
         player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin: player.admin });
         let (name, mode) = (player.name.clone(), if player.allow_flight { "creative" } else { "survival" });
-        if who == id {
+        if id == Source::Player(who) {
             Ok(format!("You are now in {mode} mode."))
         } else {
-            self.tell(who, ChatKind::Info, format!("You are now in {mode} mode."));
+            self.tell(Source::Player(who), ChatKind::Info, format!("You are now in {mode} mode."));
             Ok(format!("{name} is now in {mode} mode."))
         }
     }
 
-    fn weather_command(&mut self, id: PlayerId, args: &[String]) -> Reply {
-        let position = self.players[&id].position;
+    fn weather_command(&mut self, id: Source, args: &[String]) -> Reply {
+        let position = self.position_of(id);
         let at = Vec2::new(position.x, position.z);
         let (tick, day) = (self.tick, self.day);
         match args.first().map(String::as_str) {
@@ -297,8 +357,8 @@ impl Server {
         }
     }
 
-    fn wind_command(&mut self, id: PlayerId, args: &[String]) -> Reply {
-        let position = self.players[&id].position;
+    fn wind_command(&mut self, id: Source, args: &[String]) -> Reply {
+        let position = self.position_of(id);
         let at = Vec2::new(position.x, position.z);
         let (tick, day) = (self.tick, self.day);
         match args.first().map(String::as_str) {
@@ -331,8 +391,8 @@ impl Server {
     }
 
     /// The biome the player stands in, and what makes it.
-    fn biome(&self, id: PlayerId) -> String {
-        let at = self.players[&id].position.floor().as_ivec3();
+    fn biome(&self, id: Source) -> String {
+        let at = self.position_of(id).floor().as_ivec3();
         let site = self.overworld.site(at.x, at.z);
         let biome = self.overworld.biome_at(at.x, at.z);
         let tags = if biome.tags.is_empty() { String::new() } else { format!(" ({})", biome.tags.join(", ")) };
@@ -343,7 +403,7 @@ impl Server {
     }
 
     /// `/locate biome NAME [RADIUS]`: the nearest place of a biome.
-    fn locate(&self, id: PlayerId, args: &[String]) -> Reply {
+    fn locate(&self, id: Source, args: &[String]) -> Reply {
         let (name, radius) = match args {
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
             [kind, name, radius] if kind == "biome" => {
@@ -356,7 +416,7 @@ impl Server {
         if self.overworld.biomes().id(name).or_else(|| self.overworld.biomes().id(&format!("base:{name}"))).is_none() {
             return Err(format!("There is no biome called `{name}`."));
         }
-        let position = self.players[&id].position;
+        let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
         match self.overworld.locate_biome(name, from, radius) {
             Some(at) => {

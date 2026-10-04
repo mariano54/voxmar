@@ -96,7 +96,9 @@ and when it stops (leaving to the title screen or quitting). Every file is writt
 temporary file and renamed, so a crash never leaves half a file. Saved columns are unloaded
 like any other. The dedicated server keeps its world in `--world DIR` (default `./world`),
 created with `--seed N` and, given `--no-flight`, in survival mode if it does not exist yet;
-type `stop` to save and quit.
+type `stop` to save and quit. Anything else typed there runs as a command, as an admin
+standing at spawn (`time set noon`, `weather storm 600`, `gamemode creative Ada`), and
+`say …` tells everyone.
 
 ### Textures
 
