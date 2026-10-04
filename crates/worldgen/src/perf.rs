@@ -80,7 +80,7 @@ fn generation_stages() {
                     let region = LitRegion::compute(&registry, &around);
                     let lighting = thread_time();
                     for cy in 0..COLUMN_CHUNKS {
-                        std::hint::black_box(mesh_chunk(&registry, &region, &around[4], cy));
+                        std::hint::black_box(mesh_chunk(&registry, &region, &around[4], cy, 1));
                     }
                     light += lighting - start;
                     mesh += thread_time() - lighting;
