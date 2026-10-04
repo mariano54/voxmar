@@ -96,11 +96,21 @@ impl Rocks {
 
     /// The centre of a cell, in cells, and its province.
     fn cell(&self, cx: i32, cz: i32) -> ([f32; 2], ProvinceId) {
+        let (centre, h) = self.centre(cx, cz);
+        (centre, self.province(h))
+    }
+
+    /// The centre of a cell, in cells, and the hash its province is drawn from.
+    fn centre(&self, cx: i32, cz: i32) -> ([f32; 2], u64) {
         let h = hash3(self.seed, cx, 0, cz);
         let jitter = |bits: u64| 0.1 + 0.8 * (bits & 0xffff) as f32 / 65536.0;
+        ([cx as f32 + jitter(h), cz as f32 + jitter(h >> 16)], h)
+    }
+
+    /// The province drawn from a cell's hash.
+    fn province(&self, h: u64) -> ProvinceId {
         let roll = (h >> 40) as f32 / (1u64 << 24) as f32;
-        let province = self.shares.iter().position(|&s| roll < s).unwrap_or(self.shares.len() - 1);
-        ([cx as f32 + jitter(h), cz as f32 + jitter(h >> 16)], ProvinceId(province as u8))
+        ProvinceId(self.shares.iter().position(|&s| roll < s).unwrap_or(self.shares.len() - 1) as u8)
     }
 
     /// Where the provinces named or tagged `name` lie, for shapes that only rise over them.
@@ -120,6 +130,23 @@ pub struct ProvinceMask {
 }
 
 impl ProvinceMask {
+    /// Whether (x, z) lies in a matching province, whose borders are displaced by `warp`.
+    pub fn contains(&self, x: f32, z: f32, warp: [f32; 2]) -> bool {
+        let (px, pz) = ((x + warp[0]) / CELL, (z + warp[1]) / CELL);
+        let (cx, cz) = (px.floor() as i32, pz.floor() as i32);
+        let mut best = (f32::MAX, 0);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let (centre, h) = self.rocks.centre(cx + dx, cz + dz);
+                let d = (centre[0] - px).powi(2) + (centre[1] - pz).powi(2);
+                if d < best.0 {
+                    best = (d, h);
+                }
+            }
+        }
+        self.matching[self.rocks.province(best.1).0 as usize]
+    }
+
     /// Blocks from (x, z) to the nearest border between a matching province and another:
     /// positive inside a matching one, negative outside, with borders displaced by `warp`.
     /// Exact up to about a third of a cell (a kilometre) from the border.

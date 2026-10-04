@@ -72,6 +72,14 @@ impl LitRegion {
         }
     }
 
+    /// Blocks and light of `len` cells along x from column-relative (x, y, z), with y
+    /// inside the world.
+    #[inline]
+    pub fn row(&self, x: i32, y: i32, z: i32, len: usize) -> (&[BlockId], &[u8]) {
+        let start = index(x + LIGHT_PAD, y, z + LIGHT_PAD);
+        (&self.blocks[start..start + len], &self.light[start..start + len])
+    }
+
     /// Packed light (sky << 4 | block) at a column-relative position.
     #[inline]
     pub fn light(&self, pos: IVec3) -> u8 {
