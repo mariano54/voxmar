@@ -37,6 +37,7 @@ use crate::dials::WorldDials;
 use fastnoise_lite::FractalType;
 
 use crate::geology::{GeoSample, Geology, noise, smoothstep};
+use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
 
 pub use self::channel::{Body, Cavity, Current};
@@ -361,9 +362,11 @@ impl Rivers {
         }
         let channels = match level {
             Level::Trunk => self.trunk_channels.get(region, || {
+                let _stage = stage::enter(Stage::RiverRegions);
                 Arc::new(self.build_channels(level, &TrunkGround { rivers: self, land }, region))
             }),
             Level::Stream => self.stream_channels.get(region, || {
+                let _stage = stage::enter(Stage::RiverRegions);
                 Arc::new(self.build_channels(level, &StreamGround { rivers: self, land }, region))
             }),
         };
@@ -396,7 +399,10 @@ impl Rivers {
 
     /// A column with both tiers carved in, before sealing.
     fn unsealed(&self, land: Stages, (trunks, streams): &(Near, Near), x: i32, z: i32) -> Column {
-        let ground = land.geology.land(x, z);
+        let ground = {
+            let _stage = stage::enter(Stage::Land);
+            land.geology.land(x, z)
+        };
         let trunks = carve(&self.trunk_style, trunks.list(), x, z, Carved::land(ground.height));
         let carved = carve(&self.stream_style, streams.list(), x, z, trunks);
         let height = (carved.ground.floor() as i32).max(4);

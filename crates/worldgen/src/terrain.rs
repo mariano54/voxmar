@@ -28,6 +28,7 @@ use crate::lattice::{self, Lattice, Profile};
 use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
+use crate::stage::{self, Stage};
 use crate::surface::{Fill, Layers, Palette, Spot};
 use crate::trails::Marker;
 use crate::trees::TreeId;
@@ -255,10 +256,19 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let geology = GeoGrid::new(world, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
     let top = geology.samples().iter().map(|g| g.height.max(g.water)).max().unwrap_or(0).max(SEA_LEVEL);
 
-    let rock = Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0);
+    let rock = {
+        let _stage = stage::enter(Stage::Fill);
+        Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0)
+    };
     let mut rock_profile = Profile::default();
-    let mut caves = world.caves.column(&geology, origin, top);
-    let underground = world.underground.column(world, &area, &geology, origin, top);
+    let mut caves = {
+        let _stage = stage::enter(Stage::Caves);
+        world.caves.column(&geology, origin, top)
+    };
+    let underground = {
+        let _stage = stage::enter(Stage::CaveBiomes);
+        world.underground.column(world, &area, &geology, origin, top)
+    };
     let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
     let mut blocks = Blocks {
@@ -272,6 +282,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
+            let _fill = stage::enter(Stage::Fill);
             let (wx, wz) = (origin.x + x, origin.z + z);
             let geo = geology.get(wx, wz);
             let height = geo.height;
@@ -279,10 +290,15 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             column.climate[(z * CHUNK_SIZE + x) as usize] = site.tint();
             let colors = area.colors_of(&site, wx, wz);
             column.colors[(z * CHUNK_SIZE + x) as usize] = [colors.grass, colors.foliage, colors.water];
+            let surface = stage::enter(Stage::Surface);
             let layers = world.surface_layers(&site, wx, wz);
             let stones = world.stones(&site);
             let strata = &world.biomes.get(site.biome).strata;
-            caves.carve(x, z, &mut cave);
+            drop(surface);
+            {
+                let _stage = stage::enter(Stage::Caves);
+                caves.carve(x, z, &mut cave);
+            }
             rock.profile(x, z, &mut rock_profile);
             let rocky = underground.rocky(x, z);
 
@@ -319,8 +335,11 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 };
                 blocks.set_local(x, y, z, block);
             }
-            underground.decorate(x, z, &site, &cave, &mut blocks);
-            underground.bury(x, z, &cave, &mut blocks);
+            {
+                let _stage = stage::enter(Stage::CaveBiomes);
+                underground.decorate(x, z, &site, &cave, &mut blocks);
+                underground.bury(x, z, &cave, &mut blocks);
+            }
             // Fast water stays open in the cold.
             let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring);
             for y in height + 1..=geo.water {
@@ -365,9 +384,16 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         }
     }
 
-    terrain.resources.place(world.seed, pos, &mut blocks);
+    {
+        let _stage = stage::enter(Stage::Ores);
+        terrain.resources.place(world.seed, pos, &mut blocks);
+    }
+    let decoration = stage::enter(Stage::Decoration);
     terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
-    terrain.markers(world, &area, &geology, pos, &mut blocks);
+    {
+        let _stage = stage::enter(Stage::Trails);
+        terrain.markers(world, &area, &geology, pos, &mut blocks);
+    }
 
     // Ground plants, wherever trees, decorations, caves and water left the ground open.
     for z in 0..CHUNK_SIZE {
@@ -424,6 +450,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         }
     }
 
+    drop(decoration);
+    let _stage = stage::enter(Stage::Pack);
     for (cy, chunk) in column.chunks.iter_mut().enumerate() {
         *chunk = Chunk::from_dense(&blocks.data[cy * CHUNK_VOLUME..(cy + 1) * CHUNK_VOLUME]);
     }

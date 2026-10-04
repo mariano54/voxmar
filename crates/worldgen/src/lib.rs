@@ -22,10 +22,13 @@ mod ecology;
 mod features;
 mod geology;
 mod lattice;
+#[cfg(test)]
+mod perf;
 mod rarity;
 mod resources;
 mod rng;
 mod rocks;
+mod stage;
 mod surface;
 mod terrain;
 mod trails;
@@ -60,6 +63,7 @@ use crate::climate::{Climate, ClimateGrid, Regional};
 use crate::ecology::Ecology;
 use crate::geology::{GeoSample, Geology, smoothstep};
 use crate::rocks::Rocks;
+use crate::stage::Stage;
 use crate::surface::SurfaceRules;
 use crate::trails::Land;
 
@@ -369,13 +373,22 @@ impl Overworld {
     /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
         let land = self.land();
-        self.trails.apply(&land, land.sample(x, z), x, z)
+        let sample = {
+            let _stage = stage::enter(Stage::Rivers);
+            land.sample(x, z)
+        };
+        let _stage = stage::enter(Stage::Trails);
+        self.trails.apply(&land, sample, x, z)
     }
 
     /// The ground over the `size`×`size` positions from (x, z), row by row.
     pub(crate) fn geo_area(&self, x: i32, z: i32, size: i32) -> Vec<GeoSample> {
         let land = self.land();
-        let mut area = self.rivers.area(self.stages(), IVec2::new(x, z), size);
+        let mut area = {
+            let _stage = stage::enter(Stage::Rivers);
+            self.rivers.area(self.stages(), IVec2::new(x, z), size)
+        };
+        let _stage = stage::enter(Stage::Trails);
         for (i, sample) in area.iter_mut().enumerate() {
             *sample = self.trails.apply(&land, *sample, x + i as i32 % size, z + i as i32 / size);
         }
@@ -412,7 +425,12 @@ impl Overworld {
     /// A sampler that picks the biomes of every cell in its area up front, for sampling
     /// it block by block.
     pub(crate) fn dense_sampler(&self, min: IVec2, max: IVec2) -> Sampler<'_> {
-        let mut sampler = Sampler { world: self, grid: self.grid(min, max), picks: None };
+        let grid = {
+            let _stage = stage::enter(Stage::Climate);
+            self.grid(min, max)
+        };
+        let _stage = stage::enter(Stage::Biomes);
+        let mut sampler = Sampler { world: self, grid, picks: None };
         let (first, last) = (min.div_euclid(IVec2::splat(biome::CELL)), max.div_euclid(IVec2::splat(biome::CELL)));
         let size = last - first + 1;
         let picks = (0..size.x * size.y).map(|i| sampler.pick_cell(first + IVec2::new(i % size.x, i / size.x))).collect();
@@ -499,6 +517,7 @@ impl Sampler<'_> {
 
     /// The colours at a site already sampled at (x, z).
     pub(crate) fn colors_of(&self, site: &Site, x: i32, z: i32) -> BiomeColors {
+        let _stage = stage::enter(Stage::Climate);
         let (climate, n) = self.climate_colors(site, x, z);
         // Bilinear between the four nearest cell centres, so identity colours fade in
         // block by block rather than in steps of a cell.
@@ -576,6 +595,7 @@ impl Sampler<'_> {
 
     /// The site on already sampled geology.
     fn site_on(&self, geo: &GeoSample, x: i32, z: i32, slope: i32) -> Site {
+        let _stage = stage::enter(Stage::Climate);
         let regional = self.grid.at(x, z);
         let temperature = regional.sea_temperature - LAPSE_RATE * (geo.height - SEA_LEVEL).max(0) as f32;
         let mut site = Site {
@@ -676,6 +696,7 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perf::thread_time;
     use voxmar_engine::coords::COLUMN_CHUNKS;
     use voxmar_engine::light::LitRegion;
     use voxmar_engine::mesh::mesh_chunk;
@@ -735,7 +756,7 @@ mod tests {
     }
 
     /// Generates the `count`×`count` columns from `first` on all cores.
-    fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
+    pub(crate) fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let mut columns: Vec<Option<Column>> = (0..count * count).map(|_| None).collect();
         let chunk = columns.len().div_ceil(threads);
@@ -1773,15 +1794,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
-    /// processes compete for the cores.
-    fn thread_time() -> std::time::Duration {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: `t` is a valid timespec for the call to fill.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
     }
 
     /// `cargo test --release -p voxmar_worldgen river_speed -- --ignored --nocapture`

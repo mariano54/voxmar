@@ -33,6 +33,7 @@ use self::path::{Path, Paths, Stamp};
 use self::sites::{CELL, CELLS, Cell, Grid, REGION};
 use crate::geology::GeoSample;
 use crate::rng;
+use crate::stage::{self, Stage};
 use crate::water::cache::{Cache, Weigh};
 
 /// What a trail does to a column, as the rest of generation sees it.
@@ -301,6 +302,7 @@ impl Trails {
             return tile;
         }
         let tile = self.tiles.get(key, || {
+            let _stage = stage::enter(Stage::TrailPlans);
             let region = (key * TILE).div_euclid(IVec2::splat(REGION));
             let owners: Vec<Arc<Paths>> =
                 (-1..=1).flat_map(|dz| (-1..=1).map(move |dx| IVec2::new(dx, dz))).map(|d| self.paths(land, region + d)).collect();
