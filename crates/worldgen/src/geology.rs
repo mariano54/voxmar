@@ -99,7 +99,7 @@ pub struct Form {
 }
 
 /// The land before rivers and lakes cut into it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Landform {
     /// Height of the ground, in blocks (the top ground block is its whole part).
     pub height: f32,
@@ -109,7 +109,7 @@ pub struct Landform {
 }
 
 /// Continents, ranges, plateaus and valleys, without hills, shapes, rivers or lakes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Relief {
     /// Large-scale surface height.
     pub elevation: f32,
@@ -304,103 +304,169 @@ impl Geology {
         &self.shapes
     }
 
-    /// Continents, ranges, plateaus and valleys at (x, z). (Their fractal noise goes through
-    /// `crate::noise::get_2d`, which works out the octaves side by side: the same values, sooner.)
+    /// Continents, ranges, plateaus and valleys at (x, z).
     pub fn relief(&self, x: f32, z: f32) -> Relief {
-        let (wx, wz) = self.warp.domain_warp_2d(x, z);
+        self.relief_lanes(&[(x, z)])[0]
+    }
+
+    /// The relief at each position: the same as `relief` at each, sooner.
+    pub fn reliefs(&self, points: &[(f32, f32)]) -> Vec<Relief> {
+        let mut out = Vec::with_capacity(points.len());
+        for four in points.chunks(4) {
+            out.extend_from_slice(&self.relief_lanes(four)[..four.len()]);
+        }
+        out
+    }
+
+    /// The relief at one to four positions side by side, one in each lane of the noises
+    /// (`crate::noise`), exactly as at each alone. A noise some lanes do not need is still
+    /// sampled in all of them when any does, and left unused where it is not needed; lanes
+    /// past the positions repeat the last, and their results mean nothing.
+    fn relief_lanes(&self, points: &[(f32, f32)]) -> [Relief; 4] {
+        let n = points.len();
+        debug_assert!((1..=4).contains(&n));
+        let x: [f32; 4] = std::array::from_fn(|k| points[k.min(n - 1)].0);
+        let z: [f32; 4] = std::array::from_fn(|k| points[k.min(n - 1)].1);
+        let sample = |noise: &FastNoiseLite, x: [f32; 4], z: [f32; 4]| crate::noise::get_2d_lanes(noise, x, z, n);
+        let any = |need: &dyn Fn(usize) -> bool| (0..n).any(need);
+        let (wx, wz) = crate::noise::warp_2d_lanes(&self.warp, x, z, n);
         let sea = SEA_LEVEL as f32;
 
         // Land where the folded continental noise is large; the sea along its zero lines,
         // deepest in their middle.
-        let fold = crate::noise::get_2d(&self.continental, wx, wz).abs() - self.coast_fold;
-        let continental = COAST + if fold > 0.0 { 1.4 * fold } else { 0.75 * fold / self.coast_fold };
-        let mut above = spline(&BASE, continental);
-        if continental < -0.2 {
-            let ridge = 1.0 - 6.0 * crate::noise::get_2d(&self.seabed, x, z).abs();
-            above += 7.0 * ridge.max(0.0) * smoothstep(-0.2, -0.45, continental);
+        let folded = sample(&self.continental, wx, wz);
+        let continental: [f32; 4] = std::array::from_fn(|k| {
+            let fold = folded[k].abs() - self.coast_fold;
+            COAST + if fold > 0.0 { 1.4 * fold } else { 0.75 * fold / self.coast_fold }
+        });
+        let mut above = continental.map(|c| spline(&BASE, c));
+        if any(&|k| continental[k] < -0.2) {
+            let seabed = sample(&self.seabed, x, z);
+            for k in (0..n).filter(|&k| continental[k] < -0.2) {
+                let ridge = 1.0 - 6.0 * seabed[k].abs();
+                above[k] += 7.0 * ridge.max(0.0) * smoothstep(-0.2, -0.45, continental[k]);
+            }
         }
         // Ranges and plateaus rise over a few hundred blocks inland of the coast.
-        let inland = smoothstep(-0.03, 0.3, continental);
+        let inland = continental.map(|c| smoothstep(-0.03, 0.3, c));
 
         // Ranges along the folded range noise, rising and falling along their length. Out at
         // sea and far from a range's line, nothing rises, so the noises are left unsampled.
-        let (mut mountain, mut e) = (0.0, 0.0);
-        if inland > 0.0 {
-            e = crate::noise::get_2d(&self.ranges, wx, wz);
-            if e.abs() < RANGE_HALF_WIDTH * 1.3 * ACROSS[ACROSS.len() - 1].0 {
-                let strength = smoothstep(self.range_threshold - 0.12, self.range_threshold + 0.12, crate::noise::get_2d(&self.range_strength, x, z));
-                let half = RANGE_HALF_WIDTH * (0.7 + 0.6 * strength);
-                mountain = spline(&ACROSS, e.abs() / half) * strength * inland;
+        let (mut mountain, mut e) = ([0.0f32; 4], [0.0f32; 4]);
+        if any(&|k| inland[k] > 0.0) {
+            let ranges = sample(&self.ranges, wx, wz);
+            let near: [bool; 4] = std::array::from_fn(|k| inland[k] > 0.0 && ranges[k].abs() < RANGE_HALF_WIDTH * 1.3 * ACROSS[ACROSS.len() - 1].0);
+            for k in (0..n).filter(|&k| inland[k] > 0.0) {
+                e[k] = ranges[k];
+            }
+            if any(&|k| near[k]) {
+                let strength = sample(&self.range_strength, x, z);
+                for k in (0..n).filter(|&k| near[k]) {
+                    let strength = smoothstep(self.range_threshold - 0.12, self.range_threshold + 0.12, strength[k]);
+                    let half = RANGE_HALF_WIDTH * (0.7 + 0.6 * strength);
+                    mountain[k] = spline(&ACROSS, e[k].abs() / half) * strength * inland[k];
+                }
             }
         }
-        let mut rise = 0.0;
-        let mut peak = 0.0;
-        if mountain > 0.005 {
-            let ridge = crate::noise::get_2d(&self.ridges, wx, wz) * 0.5 + 0.5;
-            let massif = mountain * (0.35 + 0.65 * ridge);
-            peak = mountain * ridge * ridge;
+        let (mut rise, mut peak) = ([0.0f32; 4], [0.0f32; 4]);
+        if any(&|k| mountain[k] > 0.005) {
+            let ridges = sample(&self.ridges, wx, wz);
             // Crags on the upper slopes, stretched down the fall line (across the range,
             // along the range noise's gradient) into gullies and arêtes: a blend of crags
             // stretched along x and along z, by how the fall line runs.
-            let spine = smoothstep(0.35, 0.8, mountain) * self.jaggedness;
-            let crags = if spine > 0.0 {
+            let spine = mountain.map(|m| smoothstep(0.35, 0.8, m) * self.jaggedness);
+            let crags = if any(&|k| mountain[k] > 0.005 && spine[k] > 0.0) {
                 let step = 8.0;
-                let gx = crate::noise::get_2d(&self.ranges, wx + step, wz) - e;
-                let gz = crate::noise::get_2d(&self.ranges, wx, wz + step) - e;
-                let along_x = gx * gx / (gx * gx + gz * gz).max(1e-12);
-                let stretched = |sx: f32, sz: f32| crate::noise::get_2d(&self.crags, wx * sx, wz * sz) * 0.5 + 0.5;
-                spine * (along_x * stretched(0.3, 1.0) + (1.0 - along_x) * stretched(1.0, 0.3))
+                let east = sample(&self.ranges, wx.map(|wx| wx + step), wz);
+                let south = sample(&self.ranges, wx, wz.map(|wz| wz + step));
+                let stretched = |sx: f32, sz: f32| sample(&self.crags, wx.map(|wx| wx * sx), wz.map(|wz| wz * sz)).map(|c| c * 0.5 + 0.5);
+                let (along_x_stretched, along_z_stretched) = (stretched(0.3, 1.0), stretched(1.0, 0.3));
+                std::array::from_fn(|k| {
+                    let (gx, gz) = (east[k] - e[k], south[k] - e[k]);
+                    let along_x = gx * gx / (gx * gx + gz * gz).max(1e-12);
+                    if spine[k] > 0.0 { spine[k] * (along_x * along_x_stretched[k] + (1.0 - along_x) * along_z_stretched[k]) } else { 0.0 }
+                })
             } else {
-                0.0
+                [0.0f32; 4]
             };
-            rise = self.peak_height * (1.15 * massif + 0.16 * crags);
+            for k in (0..n).filter(|&k| mountain[k] > 0.005) {
+                let ridge = ridges[k] * 0.5 + 0.5;
+                let massif = mountain[k] * (0.35 + 0.65 * ridge);
+                peak[k] = mountain[k] * ridge * ridge;
+                rise[k] = self.peak_height * (1.15 * massif + 0.16 * crags[k]);
+            }
         }
 
         // Plateaus where their noise is high, off the ranges, in two tiers. Each edge is an
         // escarpment: a talus slope under a cliff band, where rivers fall.
-        let hilliness = crate::noise::get_2d(&self.hilliness, x, z);
-        let off_ranges = inland * (1.0 - smoothstep(0.1, 0.4, mountain));
-        let shelf = if off_ranges > 0.0 {
-            let p = crate::noise::get_2d(&self.plateaus, wx, wz) + 0.04 * hilliness;
-            let escarpment = |edge: f32| 0.3 * smoothstep(edge - 0.07, edge, p) + 0.7 * smoothstep(edge - 0.012, edge + 0.004, p);
-            off_ranges * (26.0 * escarpment(0.26) + 24.0 * escarpment(0.46))
-        } else {
-            0.0
-        };
+        let hilliness = sample(&self.hilliness, x, z);
+        let off_ranges: [f32; 4] = std::array::from_fn(|k| inland[k] * (1.0 - smoothstep(0.1, 0.4, mountain[k])));
+        let mut shelf = [0.0f32; 4];
+        if any(&|k| off_ranges[k] > 0.0) {
+            let plateaus = sample(&self.plateaus, wx, wz);
+            for k in (0..n).filter(|&k| off_ranges[k] > 0.0) {
+                let p = plateaus[k] + 0.04 * hilliness[k];
+                let escarpment = |edge: f32| 0.3 * smoothstep(edge - 0.07, edge, p) + 0.7 * smoothstep(edge - 0.012, edge + 0.004, p);
+                shelf[k] = off_ranges[k] * (26.0 * escarpment(0.26) + 24.0 * escarpment(0.46));
+            }
+        }
 
         // Broad valleys, and passes where they cross the ranges.
-        let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, crate::noise::get_2d(&self.valleys, wx, wz).abs());
-        let land = above.max(0.0) + shelf + rise;
-        // Valleys cut into what rises above the lowest land, so they never sink low plains
-        // into the sea.
-        let depth = VALLEY_DEPTH + (PASS_DEPTH - VALLEY_DEPTH) * mountain;
-        let above = above.min(0.0) + land - depth * valley * smoothstep(0.0, 0.1, continental) * (land - 5.0).max(0.0);
-
-        let hilly = 1.0 - smoothstep(-0.4, 0.5, hilliness);
-        Relief {
-            elevation: sea + lift(above),
-            continental,
-            mountain,
-            peak,
-            roughness: hilly.max(mountain * 1.2).min(1.0),
-            valley,
-        }
+        let valleys = sample(&self.valleys, wx, wz);
+        std::array::from_fn(|k| {
+            let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, valleys[k].abs());
+            let land = above[k].max(0.0) + shelf[k] + rise[k];
+            // Valleys cut into what rises above the lowest land, so they never sink low
+            // plains into the sea.
+            let depth = VALLEY_DEPTH + (PASS_DEPTH - VALLEY_DEPTH) * mountain[k];
+            let above = above[k].min(0.0) + land - depth * valley * smoothstep(0.0, 0.1, continental[k]) * (land - 5.0).max(0.0);
+            let hilly = 1.0 - smoothstep(-0.4, 0.5, hilliness[k]);
+            Relief {
+                elevation: sea + lift(above),
+                continental: continental[k],
+                mountain: mountain[k],
+                peak: peak[k],
+                roughness: hilly.max(mountain[k] * 1.2).min(1.0),
+                valley,
+            }
+        })
     }
 
     /// The land at (x, z), before rivers and lakes.
     pub fn land(&self, x: i32, z: i32) -> Landform {
-        let relief = self.relief(x as f32, z as f32);
-        let hills = crate::noise::get_2d(&self.hills, x as f32, z as f32);
-        let inland = smoothstep(-0.06, 0.1, relief.continental);
-        let hills = hills * (3.0 + 14.0 * relief.roughness) * self.hill_scale * inland;
-        let ground = relief.elevation + hills;
-        let regional = self.regional(x, z);
-        let anywhere = |x: i32, z: i32| self.regional(x, z);
-        let shaped = self.shapes.shape(x, z, &Ground { regional: &anywhere, height: ground, hills, relief: &relief }, &regional);
-        let sea = SEA_LEVEL as f32;
-        let base = sea + ease(ground + shaped.terrain - sea);
-        let height = sea + ease(ground + shaped.terrain + shaped.features - sea);
-        Landform { height, mountain: relief.mountain, form: Form { shape: shaped.shape, strength: shaped.strength, base } }
+        let mut out = [Landform::default()];
+        self.land_lanes(&[(x, z)], &mut out);
+        out[0]
+    }
+
+    /// The land at each position: the same as `land` at each, sooner.
+    pub fn lands(&self, points: &[(i32, i32)]) -> Vec<Landform> {
+        let mut out = vec![Landform::default(); points.len()];
+        for (four, out) in points.chunks(4).zip(out.chunks_mut(4)) {
+            self.land_lanes(four, out);
+        }
+        out
+    }
+
+    /// The land at one to four positions, their relief and hills side by side.
+    fn land_lanes(&self, points: &[(i32, i32)], out: &mut [Landform]) {
+        let n = points.len();
+        let at: [(f32, f32); 4] = std::array::from_fn(|k| (points[k.min(n - 1)].0 as f32, points[k.min(n - 1)].1 as f32));
+        let reliefs = self.relief_lanes(&at[..n]);
+        let hills = crate::noise::get_2d_lanes(&self.hills, at.map(|p| p.0), at.map(|p| p.1), n);
+        for (k, (&(x, z), out)) in points.iter().zip(out).enumerate() {
+            let relief = &reliefs[k];
+            let inland = smoothstep(-0.06, 0.1, relief.continental);
+            let hills = hills[k] * (3.0 + 14.0 * relief.roughness) * self.hill_scale * inland;
+            let ground = relief.elevation + hills;
+            let regional = self.regional(x, z);
+            let anywhere = |x: i32, z: i32| self.regional(x, z);
+            let shaped = self.shapes.shape(x, z, &Ground { regional: &anywhere, height: ground, hills, relief }, &regional);
+            let sea = SEA_LEVEL as f32;
+            let base = sea + ease(ground + shaped.terrain - sea);
+            let height = sea + ease(ground + shaped.terrain + shaped.features - sea);
+            *out = Landform { height, mountain: relief.mountain, form: Form { shape: shaped.shape, strength: shaped.strength, base } };
+        }
     }
 
     /// The regional climate at a lattice point (in lattice cells).
@@ -505,6 +571,31 @@ fn probit(p: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Land worked out four positions at a time is exactly the land at each alone, over
+    /// sea, coast, plains and ranges, in any grouping.
+    #[test]
+    fn lands_match_land_alone() {
+        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        for seed in [7, 42] {
+            let world = crate::Overworld::new(seed, registry.clone());
+            let geology = &world.geology;
+            let mut rng = crate::rng::Rng::new(seed, 1, 2, 3);
+            // Rows of a grid, so that neighbouring lanes are alike, and scattered positions,
+            // so that they are not; seven at a time leaves groups of four and of three.
+            let mut points: Vec<(i32, i32)> = (0..4000).map(|i| (i % 80 * 37 - 1500, i / 80 * 41 - 1000)).collect();
+            points.extend((0..4000).map(|_| (rng.range(-20_000, 20_000), rng.range(-20_000, 20_000))));
+            for group in points.chunks(7) {
+                let lands = geology.lands(group);
+                let floats: Vec<(f32, f32)> = group.iter().map(|&(x, z)| (x as f32 + 0.5, z as f32 - 0.25)).collect();
+                let reliefs = geology.reliefs(&floats);
+                for (k, &(x, z)) in group.iter().enumerate() {
+                    assert_eq!(format!("{:?}", lands[k]), format!("{:?}", geology.land(x, z)), "land at ({x}, {z})");
+                    assert_eq!(format!("{:?}", reliefs[k]), format!("{:?}", geology.relief(floats[k].0, floats[k].1)), "relief at {:?}", floats[k]);
+                }
+            }
+        }
+    }
 
     /// `cargo test --release -p voxmar_worldgen land_timing -- --ignored --nocapture` prints
     /// the time the relief, the land with its shapes, and the regional climate take per

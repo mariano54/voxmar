@@ -229,8 +229,13 @@ impl Climate {
         let mut last: Option<(f32, f32)> = None;
         let mut lift = 0.0;
         let mut here = None;
-        for distance in UPWIND.into_iter().chain([0.0]) {
-            let relief = geology.relief(x - wind_x * distance, z - wind_z * distance);
+        // The relief along the walk and around the position, all at once (`Geology::reliefs`).
+        let around = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
+        let walk = UPWIND.into_iter().chain([0.0]);
+        let points: Vec<(f32, f32)> =
+            walk.clone().map(|distance| (x - wind_x * distance, z - wind_z * distance)).chain(around.map(|(dx, dz)| (x + dx * UPLAND, z + dz * UPLAND))).collect();
+        let reliefs = geology.reliefs(&points);
+        for (distance, &relief) in walk.zip(&reliefs) {
             let ground = relief.elevation.max(sea);
             if let Some((last_distance, last_ground)) = last {
                 if relief.elevation >= sea {
@@ -274,10 +279,7 @@ impl Climate {
             elevation: {
                 // Averaged over a few hundred blocks, so a range's flanks share one
                 // climate rather than banding with every few dozen blocks of height.
-                let around: f32 = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
-                    .iter()
-                    .map(|(dx, dz)| geology.relief(x + dx * UPLAND, z + dz * UPLAND).elevation.max(sea))
-                    .sum();
+                let around: f32 = reliefs[UPWIND.len() + 1..].iter().map(|r| r.elevation.max(sea)).sum();
                 0.4 * relief.elevation.max(sea) + 0.15 * around
             },
             erosion: landform(&relief),
