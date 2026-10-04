@@ -456,6 +456,9 @@ fn split(pass: TerrainPass, mesh: &MeshBuffers) -> Vec<Range<usize>> {
 struct ChunkRecord {
     /// Index into the origin table, which the shader finds from the vertex's block.
     slot: u32,
+    /// Whether cave culling leaves the chunk visible (a copy of `TerrainGpu::visible`, so
+    /// culling each view needs no lookup per chunk).
+    visible: bool,
     streams: [Option<Allocation>; STREAMS],
     /// Where the chunk's grass blade seeds are in the seed buffer.
     blades: Option<Range<u32>>,
@@ -652,12 +655,21 @@ impl TerrainGpu {
     }
 
     /// The chunk's record, made if it has none.
+    /// Takes cave culling's new set of visible chunks, marking each record.
+    fn set_visible(&mut self, visible: FxHashSet<ChunkPos>) {
+        for (pos, record) in &mut self.chunks {
+            record.visible = visible.contains(pos);
+        }
+        self.visible = visible;
+    }
+
     fn record(&mut self, chunk: ChunkPos) -> &mut ChunkRecord {
         if !self.chunks.contains_key(&chunk) {
             let column = IVec2::new(chunk.0.x, chunk.0.z);
             let colours = self.column_colours.get(&column).or(self.default_colours.as_ref()).map_or(0, |range| range.start);
             let slot = self.new_slot(chunk.origin().extend(colours as i32));
-            self.chunks.insert(chunk, ChunkRecord { slot, streams: Default::default(), blades: None });
+            let visible = self.visible.contains(&chunk);
+            self.chunks.insert(chunk, ChunkRecord { slot, visible, streams: Default::default(), blades: None });
             *self.columns.entry(IVec2::new(chunk.0.x, chunk.0.z)).or_default() += 1;
         }
         self.chunks.get_mut(&chunk).expect("record was just ensured")
@@ -923,7 +935,7 @@ fn receive(
             Message::Blades { chunk, seeds } => gpu.upload_blades(&device, &queue, chunk, &seeds),
             Message::ColumnColours { column, colours } => gpu.upload_column_colours(&device, &queue, column, &colours),
             Message::RemoveColumn(column) => gpu.remove_column_colours(column),
-            Message::Visible(visible) => gpu.visible = visible,
+            Message::Visible(visible) => gpu.set_visible(visible),
             Message::UploadTile(tile) => gpu.upload_tile(&device, &queue, *tile),
             Message::RemoveTile(key) => gpu.remove_tile(key),
             Message::RealColumns(columns) => gpu.real_columns = columns,
@@ -1066,12 +1078,8 @@ fn cull(
     mut views: Query<CulledView, CulledViewFilter>,
 ) {
     // Chunks cave culling leaves visible, with their bounds' minimum corner.
-    let candidates: Vec<(Vec3, &ChunkRecord)> = gpu
-        .chunks
-        .iter()
-        .filter(|(pos, _)| gpu.visible.contains(*pos))
-        .map(|(pos, record)| (pos.origin().as_vec3(), record))
-        .collect();
+    let candidates: Vec<(Vec3, &ChunkRecord)> =
+        gpu.chunks.iter().filter(|(_, record)| record.visible).map(|(pos, record)| (pos.origin().as_vec3(), record)).collect();
     for (entity, _, _, draws) in &views {
         if draws.is_none() {
             commands.entity(entity).insert(TerrainDraws::default());

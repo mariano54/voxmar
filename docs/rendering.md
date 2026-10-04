@@ -147,6 +147,19 @@ than ground 160 blocks above what it shades would throw it at the sun's height. 
 halves the shadow quads with the sun high (2.84 to 1.41 million) and cuts a fifth with it
 low, where long shadows really do reach far.
 
+### Measuring
+
+Other threads' games share the GPU, and Metal timings of two identical runs differed by
+2–3× while they ran; measure in a quiet window (`~/Projects/voxmar-wt/QUIET`), and check
+`pgrep -fl voxmar` first. In one such window (Low Power Mode, battery, the player's
+settings, the window at 75%: 2268×1473), a frame's GPU passes took 7.8 ms in all: the
+terrain's pixels 1.8 ms and vertices 1.0 ms, the volumetric pass (light shafts, mist and
+now the clouds) 1.2 ms, the four shadow cascades about 1.7 ms plus 0.7 ms of filtering in
+the terrain's pixels, SMAA 0.5 ms. View distance 16 instead of 32 saved only 0.9 ms. At
+75% and 50% the frame was limited by the CPU (about 10 and 7.6 ms) rather than the GPU.
+For the CPU side, `cargo build --release --features chrome` records a Chrome trace of
+every system (`trace-*.json` in the working directory, large: keep runs short).
+
 ### Render scale
 
 Most of what is left scales with pixels (shading the terrain, light shafts, SMAA, the

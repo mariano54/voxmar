@@ -92,8 +92,10 @@ fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>
     let widest = min(MAX_RADIUS * sqrt(f32(taps) / 16.0), search);
     let radius = clamp(distance * a.shadow.y / texel, 1.0, widest);
 
-    // A penumbra hardly wider than a texel needs few taps (far cascades, contact shadows).
-    let count = select(taps, min(taps, 4u), radius < 1.5);
+    // Taps as dense as the widest penumbra's: a narrower one (far cascades, contact
+    // shadows, most of a sunny scene) needs fewer, down to 4 for one hardly wider than a
+    // texel. The taps' spacing, so how they blur into each other, stays the same.
+    let count = clamp(u32(ceil(f32(taps) * (radius / widest) * (radius / widest))), min(taps, 4u), taps);
     var lit = 0.0;
     for (var k = 0u; k < count; k++) {
         let offset = spiral(k, count) * radius;
