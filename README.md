@@ -20,7 +20,7 @@ it rebuilds in seconds rather than minutes after an edit and runs nearly as fast
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
-`storm` or `rain:0.3`, instead of the server's), `--command LINE` (run a console line once in game, such as
+`cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
 `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
@@ -77,7 +77,9 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, anti-aliasing, particles (All,
+Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
+distant chunks merge two or four columns into one, which draws far terrain much faster),
+field of view, anti-aliasing, particles (All,
 Fewer or Off: the pieces that fly from broken blocks and the chips while mining), how far the hotbar
 sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
 mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
@@ -338,9 +340,10 @@ it. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) d
 generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
-`--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
-near spawn; `shape_sights` does the same for the best example of each terrain shape and the
-highest peak, with a `/tp` command and `--pose` for each.
+`--pose` arguments for captures of the places water makes near spawn (highland lakes,
+waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
+`Overworld::water_sights` finds; `shape_sights` does the same for the best example of each
+terrain shape and the highest peak, with a `/tp` command and `--pose` for each.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
@@ -351,6 +354,13 @@ there; `decor_sights` prints `--pose` arguments for captures of old-growth fores
 edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
 `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+`generation_stages` breaks generation time per column down by stage (climate, biomes, rivers
+and their region builds, trails and their planning, surface, caves, cave biomes, fill, ores,
+trees, decoration, packing), cold and warm, and reports lighting and meshing per column;
+`first_column` times a new world's spawn point, spawn column and first 9×9 columns, building
+regions on one core and on all. `output_is_unchanged` and `light_is_unchanged` (ordinary tests)
+hash generated columns and their light on three seeds, so performance work cannot change a
+block; when a change is meant, they print the hashes to put in `crates/worldgen/src/perf.rs`.
 
 ## Worn paths
 

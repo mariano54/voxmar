@@ -1,0 +1,120 @@
+//! Finding the notable places water makes: a lake high in the hills, a waterfall, a
+//! confluence, a river's mouth, a tunnel, an island, a hot spring. Tools and tests use it
+//! to look at them without knowing where a seed put them, and gameplay can use it to point
+//! players at them.
+
+use voxmar_engine::glam::{IVec2, IVec3};
+
+use crate::geology::GeoSample;
+use crate::{Body, Overworld, SEA_LEVEL};
+
+/// A kind of place water makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WaterSight {
+    /// A lake at least 20 blocks above the sea.
+    HighlandLake,
+    /// The tallest drop in a creek or river.
+    Waterfall,
+    /// Three or more arms of creek or river meeting.
+    Confluence,
+    /// A river or creek meeting the sea.
+    RiverMouth,
+    /// A river running under the ground.
+    RiverTunnel,
+    /// Ground inside a river, with river on both sides.
+    RiverIsland,
+    HotSpring,
+}
+
+impl WaterSight {
+    pub const ALL: [Self; 7] =
+        [Self::HighlandLake, Self::Waterfall, Self::Confluence, Self::RiverMouth, Self::RiverTunnel, Self::RiverIsland, Self::HotSpring];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::HighlandLake => "highland lake",
+            Self::Waterfall => "waterfall",
+            Self::Confluence => "confluence",
+            Self::RiverMouth => "river mouth",
+            Self::RiverTunnel => "river tunnel",
+            Self::RiverIsland => "river island",
+            Self::HotSpring => "hot spring",
+        }
+    }
+}
+
+impl Overworld {
+    /// The best place of each kind within `range` blocks of `centre` (searched every two
+    /// blocks), each as the column and the height of its water, preferring nearer ones.
+    /// Kinds none of which lie within range are left out. Costs about a second for a
+    /// range of 400.
+    pub fn water_sights(&self, centre: IVec2, range: i32) -> Vec<(WaterSight, IVec3)> {
+        const STEP: i32 = 2;
+        let n = 2 * range / STEP + 1;
+        let geos: Vec<GeoSample> = (0..n * n).map(|i| self.geo(centre.x - range + i % n * STEP, centre.y - range + i / n * STEP)).collect();
+        let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
+        let mut best: [Option<(f32, IVec3)>; WaterSight::ALL.len()] = [None; WaterSight::ALL.len()];
+        for j in 1..n - 1 {
+            for i in 1..n - 1 {
+                let g = at(i, j);
+                let p = IVec2::new(centre.x - range + i * STEP, centre.y - range + j * STEP);
+                let near = 1.0 / (1.0 + (p - centre).as_vec2().length() / 200.0);
+                let mut consider = |sight: WaterSight, score: f32| {
+                    let score = score * near;
+                    let slot = &mut best[sight as usize];
+                    if slot.is_none_or(|(s, _)| score > s) {
+                        *slot = Some((score, IVec3::new(p.x, g.water, p.y)));
+                    }
+                };
+                if g.cavity.is_some() {
+                    consider(WaterSight::RiverTunnel, 1.0);
+                }
+                let river = |o: GeoSample| o.submerged() && o.body == Body::River;
+                if !g.submerged() && g.body == Body::River && (river(at(i - 2, j)) && river(at(i + 2, j)) || river(at(i, j - 2)) && river(at(i, j + 2))) {
+                    consider(WaterSight::RiverIsland, 1.0);
+                }
+                if !g.submerged() {
+                    continue;
+                }
+                if g.body == Body::Spring {
+                    consider(WaterSight::HotSpring, 1.0);
+                }
+                if g.body == Body::Lake && g.water > SEA_LEVEL + 20 {
+                    consider(WaterSight::HighlandLake, (g.water - SEA_LEVEL) as f32);
+                }
+                // From the top of the drop.
+                let drop = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(di, dj)| at(i + di, j + dj)).iter().filter(|o| o.submerged()).map(|o| g.water - o.water).max();
+                if let Some(drop) = drop.filter(|&d| d >= 3)
+                    && g.body != Body::Lake
+                {
+                    consider(WaterSight::Waterfall, (drop * drop) as f32);
+                }
+                let channel = |o: GeoSample| o.submerged() && matches!(o.body, Body::Creek | Body::River);
+                if channel(g) {
+                    // Arms of water crossing a ring around the point.
+                    let ring: Vec<bool> = (0..32)
+                        .map(|k| {
+                            let a = k as f32 / 32.0 * std::f32::consts::TAU;
+                            channel(at(i + (a.cos() * 5.0).round() as i32, j + (a.sin() * 5.0).round() as i32))
+                        })
+                        .collect();
+                    let arms = (0..32).filter(|&k| ring[k] && !ring[(k + 31) % 32]).count();
+                    if arms >= 3 && ring.iter().filter(|&&w| w).count() < 16 {
+                        consider(WaterSight::Confluence, arms as f32 + if g.body == Body::River { 2.0 } else { 0.0 });
+                    }
+                    let sea = (-6..=6)
+                        .flat_map(|dj| (-6..=6).map(move |di| (di, dj)))
+                        .filter(|&(di, dj)| {
+                            let o = at(i + di, j + dj);
+                            o.body == Body::Sea && o.submerged()
+                        })
+                        .count();
+                    if g.water == SEA_LEVEL && sea > 0 {
+                        consider(WaterSight::RiverMouth, sea as f32 + if g.body == Body::River { 20.0 } else { 0.0 });
+                    }
+                }
+            }
+        }
+        WaterSight::ALL.into_iter().zip(best).filter_map(|(sight, found)| found.map(|(_, at)| (sight, at))).collect()
+    }
+}

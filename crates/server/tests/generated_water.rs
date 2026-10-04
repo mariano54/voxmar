@@ -1,16 +1,17 @@
 //! Generated water must not move: loading it schedules no fluid updates, and ticking any of
 //! it would change nothing (it is a fixed point of the fluid kernel), so a world full of
-//! lakes, rivers and caves costs the kernel nothing until a player changes something.
+//! lakes, rivers, waterfalls and caves costs the kernel nothing until a player changes
+//! something.
 
 use std::sync::Arc;
 
 use voxmar_engine::block::BlockRegistry;
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::fluid::{Fluids, unsettled};
-use voxmar_engine::glam::IVec3;
+use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::VoxelWorld;
 use voxmar_server::load_content;
-use voxmar_worldgen::{Generator, Overworld, WorldContent};
+use voxmar_worldgen::{Generator, Overworld, WaterSight, WorldContent};
 
 /// Columns along a side of each generated area; the middle ones have all their neighbours.
 const SIDE: i32 = 5;
@@ -20,69 +21,82 @@ fn generated_water_does_not_move() {
     let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
-    let (mut fluid_cells, mut faces) = (0, 0);
-    // Creeks, waterfalls (seed 1 at 348, 84 and seed 42 at -124, -502), a highland lake, a
-    // confluence, and land with caves.
-    for (seed, x, z) in [(1, 10, 88), (1, 348, 84), (1, 218, 96), (42, -124, -502), (42, -306, -70), (0x5eed, 0, 0), (7, 1500, 5200)] {
+    let (mut fluid_cells, mut curtain, mut pinned) = (0, 0, 0);
+    // Around every place water makes near spawn on a few seeds (waterfalls, highland
+    // lakes, confluences, river mouths, and tunnels, islands and hot springs where there
+    // are any), found afresh so the test follows any reseed, and land with caves.
+    let mut kinds = std::collections::HashSet::new();
+    for (seed, near_spawn, also) in [(1, true, None), (42, true, None), (7, true, Some(IVec2::new(1500, 5200))), (0x5eed, false, Some(IVec2::ZERO))] {
         let generator = Overworld::with_content(seed, registry.clone(), &world_content);
-        let first = ColumnPos::of_block(IVec3::new(x, 0, z)).offset(-SIDE / 2, -SIDE / 2);
-        let world = generate(&generator, first);
-        let mut fluids = Fluids::default();
-        for dz in 0..SIDE {
-            for dx in 0..SIDE {
-                let pos = first.offset(dx, dz);
-                assert_eq!(fluids.column_loaded(&registry, &world, pos, 1, false), 0);
-            }
+        let mut places: Vec<IVec2> = also.into_iter().collect();
+        if near_spawn {
+            let spawn = generator.spawn_point();
+            let sights = generator.water_sights(IVec2::new(spawn.x, spawn.z), 600);
+            kinds.extend(sights.iter().map(|&(kind, _)| kind));
+            places.extend(sights.into_iter().map(|(_, at)| IVec2::new(at.x, at.z)));
         }
-        assert_eq!(fluids.pending(), 0);
-        for dz in 1..SIDE - 1 {
-            for dx in 1..SIDE - 1 {
-                let pos = first.offset(dx, dz);
-                fluid_cells += count_fluid(&registry, &world, pos);
-                for (cell, writes) in unsettled(&registry, &world, pos) {
-                    // Until the rivers stamp the curtain of water a fall pours (see
-                    // "Generated water" in engine/src/fluid.rs), a waterfall's face pours.
-                    assert!(
-                        waterfall_face(&registry, &world, cell),
-                        "seed {seed}: {} at {cell} would change: {:?}",
-                        registry.def(world.block(cell).unwrap()).name,
-                        writes.iter().map(|&(p, b)| (p, registry.def(b).name.as_str())).collect::<Vec<_>>()
-                    );
-                    faces += 1;
+        for place in places {
+            let (fluids, falls, rivers) = check_area(&registry, &generator, seed, place);
+            (fluid_cells, curtain, pinned) = (fluid_cells + fluids, curtain + falls, pinned + rivers);
+        }
+    }
+    println!("{fluid_cells} fluid cells: {pinned} of rivers with a current, {curtain} pouring down falls; found {kinds:?}");
+    for kind in [WaterSight::Waterfall, WaterSight::HighlandLake, WaterSight::Confluence, WaterSight::RiverMouth] {
+        assert!(kinds.contains(&kind), "no {} near any spawn", kind.name());
+    }
+    assert!(fluid_cells > 10_000 && pinned > 500 && curtain > 20);
+}
+
+/// Generates the area around `place` and checks that none of its water would move: none is
+/// scheduled when its columns load, and ticking any of it would change nothing. Counts its
+/// fluid cells as `count_fluid` does.
+fn check_area(registry: &BlockRegistry, generator: &Overworld, seed: u64, place: IVec2) -> (usize, usize, usize) {
+    let first = ColumnPos::of_block(IVec3::new(place.x, 0, place.y)).offset(-SIDE / 2, -SIDE / 2);
+    let world = generate(generator, first);
+    let mut fluids = Fluids::default();
+    for dz in 0..SIDE {
+        for dx in 0..SIDE {
+            assert_eq!(fluids.column_loaded(registry, &world, first.offset(dx, dz), 1, false), 0);
+        }
+    }
+    assert_eq!(fluids.pending(), 0);
+    let mut counts = (0, 0, 0);
+    for dz in 1..SIDE - 1 {
+        for dx in 1..SIDE - 1 {
+            let pos = first.offset(dx, dz);
+            let (all, pouring, rivers) = count_fluid(registry, &world, pos);
+            counts = (counts.0 + all, counts.1 + pouring, counts.2 + rivers);
+            let moving = unsettled(registry, &world, pos);
+            assert!(
+                moving.is_empty(),
+                "seed {seed}: {} generated fluid cells would change, first {} at {}: {:?}",
+                moving.len(),
+                registry.def(world.block(moving[0].0).unwrap()).name,
+                moving[0].0,
+                moving[0].1.iter().map(|&(p, b)| (p, registry.def(b).name.as_str())).collect::<Vec<_>>()
+            );
+        }
+    }
+    counts
+}
+
+/// Fluid cells in a column: all, those flowing or falling (the curtains of waterfalls),
+/// and rivers' pinned water.
+fn count_fluid(registry: &BlockRegistry, world: &VoxelWorld, pos: ColumnPos) -> (usize, usize, usize) {
+    let origin = pos.origin();
+    let (mut all, mut pouring, mut pinned) = (0, 0, 0);
+    for y in 0..WORLD_HEIGHT {
+        for z in 0..32 {
+            for x in 0..32 {
+                if let Some(state) = world.block(origin + IVec3::new(x, y, z)).and_then(|b| registry.fluid(b)) {
+                    all += 1;
+                    pouring += !state.source as usize;
+                    pinned += state.current.is_some() as usize;
                 }
             }
         }
     }
-    println!("{fluid_cells} fluid cells, {faces} on waterfall faces");
-    assert!(fluid_cells > 10_000);
-}
-
-/// Water with air beside it over lower water (or ice): the face of a waterfall.
-fn waterfall_face(registry: &BlockRegistry, world: &VoxelWorld, cell: IVec3) -> bool {
-    let water = registry.expect("base:water");
-    world.block(cell) == Some(water)
-        && [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().any(|side| {
-            let beside = cell + side;
-            world.block(beside).is_some_and(|b| b.is_air())
-                && (0..beside.y)
-                    .rev()
-                    .filter_map(|y| world.block(beside.with_y(y)))
-                    .find(|b| !b.is_air())
-                    .is_some_and(|b| registry.fluid(b).is_some() || registry.def(b).name.ends_with("ice"))
-        })
-}
-
-fn count_fluid(registry: &BlockRegistry, world: &VoxelWorld, pos: ColumnPos) -> usize {
-    let origin = pos.origin();
-    let mut count = 0;
-    for y in 0..WORLD_HEIGHT {
-        for z in 0..32 {
-            for x in 0..32 {
-                count += world.block(origin + IVec3::new(x, y, z)).is_some_and(|b| registry.fluid(b).is_some()) as usize;
-            }
-        }
-    }
-    count
+    (all, pouring, pinned)
 }
 
 /// A `SIDE` × `SIDE` area of columns from `first`, generated on all cores.
