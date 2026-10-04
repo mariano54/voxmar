@@ -315,13 +315,15 @@ behind the surface, and what lies around it.
 
 **Its own pass** (`render/water.rs`). Water and ice (`TerrainPass::Translucent`) are drawn
 after the opaque terrain and before Bevy's transparent pass, with the scene so far bound at
-group 4 (`water_surface.wgsl`; group 3 is the chunks of a page). Nothing is copied that need not be:
+group 4 (`water_surface.wgsl`; group 3 is the chunks of a page). Nothing is copied that
+need not be:
 
 - Depth is sampled through a read-only depth attachment, so the pass reads the depth buffer
   it tests against (water writes no depth).
-- With MSAA the pass draws into the multisampled image and reads the resolved one, which the
-  opaque pass has just written; it resolves again only if Bevy's transparent pass, which
-  normally does, has nothing to draw. Without MSAA it copies the colour image once.
+- Colour is read from the main image as the opaque pass left it, while the pass writes the
+  other main image of Bevy's post-processing ping-pong, which then becomes the main one.
+  With MSAA the pass draws into the multisampled image and resolves into it, so no extra
+  pass or copy is needed; without MSAA it first copies the scene into it.
 
 The water shader then composes the surface over the scene itself (alpha 1):
 
@@ -361,10 +363,21 @@ The water shader then composes the surface over the scene itself (alpha 1):
   surface, which lines every shore with a broken edge.
 - **Under water**, looking up, the surface shows the world above inside Snell's window and
   mirrors the deep water outside it.
+- **Flowing water** (see "Fluid state" below for what the mesher reads). The surface slopes
+  down from its source, the top edge of the sides with it, and the normal tilts with the
+  slope. The waves are carried along the flow in two layers half a cycle (1.6 s) apart,
+  each fading out as it starts again, so the pattern moves with the water without ever
+  stretching; each layer sums at most ten octaves, and the water gets choppier the faster
+  it runs. From 1.6 blocks a second it froths, as do pools where water falls in (the mesher
+  gives their surface a churning flow away from the fall). Falling water, and water pouring
+  over an edge, is streaked white and runs down its sides.
 
 Distant water (`lod.wgsl`) uses the same optics: the floor seen through a depth derived from
 the sky light at the floor, the water's own colour where deep, and the fog colour as the
 reflected sky, so the two meet in the same colour where real chunks give way to tiles.
+
+The water's colour is the biome's (`Column::colors`, looked up per block like grass), so
+absorption and the colour of deep water follow it.
 
 The Water setting picks how much work this is: Low (the old ripples, sky reflections only),
 Medium (8 wave octaves, a 16-step march) and High (16 octaves, 28 steps, the default). Shader
@@ -431,6 +444,14 @@ whole water blocks. A mesher reads it like this:
   calls the same function, so what scrolls is what pushes a swimmer.
 - **Falling.** `falling` cells are full columns of water pouring down; scroll their sides
   downwards.
+
+The mesher (`engine/src/mesh.rs`) does all of this for see-through fluids. Faces between
+cells of one fluid are hidden; water faces carry, where ambient occlusion would be, how far
+the surface lies below the block's top at each corner (eighths, from `corner_heights`, on
+the top face and the top edge of the sides), the flow (a direction in 16ths and one of the
+speeds 0, 0.7, 1.4 and 2.8; the mean over the cells around each top corner, so it changes
+smoothly), and whether the cell falls. Lava is opaque and keeps whole blocks: lowering its
+top would open holes where neighbours' faces were culled against it.
 
 Fluid changes reach the client as `ServerMessage::Blocks` (one message per tick with every
 change in columns the player has) and go through `ClientWorld::set_block` like any edit.

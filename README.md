@@ -434,7 +434,8 @@ lava source turns to obsidian, flowing lava to basalt, and lava pouring into wat
 water to broken basalt (`cobbled_basalt`). Every state is its own block (`water_flow_1` to
 `water_flow_7`, `water_falling`; rivers also have pinned water that carries a current), so
 chunks, saves and the network treat them like any block. Flowing water and river currents
-carry swimmers along.
+carry swimmers along, and they look it: flows slope down from their source, waves run with
+the flow and rapids froth, and falling water is streaked white (see docs/rendering.md).
 
 The server's kernel is event-driven: a block change wakes only the fluid beside it, each cell
 moves on its fluid's tick (water every five ticks, lava every thirty, with a little hashed jitter
