@@ -335,29 +335,37 @@ fn setup(
         texture
     };
     let as_image = |t: Rgba| voxmar_texgen::Image { width: t.width, height: t.height, pixels: t.pixels };
-    let icons = (0..registry.len())
-        .map(|id| {
-            let block = voxmar_engine::block::BlockId(id as u16);
-            let (info, def) = (registry.info(block), registry.def(block));
-            let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
-            let icon = own.unwrap_or_else(|| match info.render {
-                RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
-                _ => {
-                    // Leaves would show only their holes' rims: draw them as a solid bush.
-                    let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {
-                        let mut texture = face_texture(info, face);
-                        if info.render == RenderKind::Leaves {
-                            texture.fill_transparent();
-                        }
-                        as_image(texture)
-                    });
-                    let cube = voxmar_texgen::icon::isometric(&top, &left, &right, 32);
-                    Rgba { width: cube.width, height: cube.height, pixels: cube.pixels }
-                }
-            });
-            images.add(ui_image(&icon))
-        })
-        .collect();
+    let mut icons: Vec<Handle<Image>> = Vec::with_capacity(registry.len());
+    for id in 0..registry.len() {
+        let block = voxmar_engine::block::BlockId(id as u16);
+        // A fluid's flowing, falling and river states (hundreds of blocks) show their
+        // source's icon, which comes before them.
+        if let Some(state) = registry.fluid(block) {
+            let fluid_source = registry.fluid_def(state.fluid).source;
+            if fluid_source != block {
+                icons.push(icons[fluid_source.0 as usize].clone());
+                continue;
+            }
+        }
+        let (info, def) = (registry.info(block), registry.def(block));
+        let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
+        let icon = own.unwrap_or_else(|| match info.render {
+            RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
+            _ => {
+                // Leaves would show only their holes' rims: draw them as a solid bush.
+                let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {
+                    let mut texture = face_texture(info, face);
+                    if info.render == RenderKind::Leaves {
+                        texture.fill_transparent();
+                    }
+                    as_image(texture)
+                });
+                let cube = voxmar_texgen::icon::isometric(&top, &left, &right, 32);
+                Rgba { width: cube.width, height: cube.height, pixels: cube.pixels }
+            }
+        });
+        icons.push(images.add(ui_image(&icon)));
+    }
     let mut sprite = |name: &str, size: (u32, u32), color: [u8; 4]| images.add(ui_image(&source.sprite(name, (size.0, size.1, color))));
     commands.insert_resource(HudImages {
         icons,
