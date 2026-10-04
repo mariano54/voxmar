@@ -114,6 +114,8 @@ pub struct ClientWorld {
     detail_range: [i32; 2],
     /// Set when the detail range changed, so every column's detail is checked again.
     details_dirty: bool,
+    /// The column the camera was over when details were last checked.
+    detail_center: ColumnPos,
     terrain: Terrain,
     /// Set when chunk meshes or connectivity changed, so culling must rerun.
     visibility_dirty: bool,
@@ -145,6 +147,7 @@ impl ClientWorld {
             details: FxHashMap::default(),
             detail_range: [i32::MAX; 2],
             details_dirty: false,
+            detail_center: ColumnPos::new(0, 0),
             terrain,
             visibility_dirty: true,
             view_distance,
@@ -254,6 +257,7 @@ fn dispatch_jobs(
         .unwrap_or(ColumnPos::new(0, 0));
 
     let world = &mut *world;
+    world.detail_center = center;
     if *last_center != Some(center) || world.details_dirty {
         *last_center = Some(center);
         world.details_dirty = false;
@@ -308,6 +312,12 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
             continue;
         }
         world.details.insert(result.pos, result.detail);
+        // Meshed for where the camera was when the job started: if it has moved since
+        // (say, the player arriving at their spawn), the column may want another level,
+        // which no later check would notice once the camera stops.
+        if detail_at(result.pos.distance(world.detail_center), Some(result.detail), world.detail_range) != result.detail {
+            world.dirty.insert(result.pos);
+        }
         for (cy, chunk_result) in result.chunks.into_iter().enumerate() {
             let chunk = result.pos.chunk(cy as i32);
             let render = world.chunks.entry(chunk).or_default();

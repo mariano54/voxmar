@@ -393,6 +393,8 @@ struct Allocation {
 /// cut-out faces, so they are skipped where they have sunk away. Streams 0-5 are opaque
 /// faces by `Face`, then cut-out faces, plants, inner, translucent and fringe.
 const STREAMS: usize = 11;
+/// The cut-out stream: leaves, glass and other blocks drawn with holes.
+const CUTOUT: usize = 6;
 const PLANTS: usize = 7;
 const FRINGE: usize = 10;
 /// Plants have sunk into the ground by this distance, in blocks (`PLANT_FADE` in
@@ -1105,6 +1107,7 @@ fn cull(
         let eye = view.world_from_view.translation();
         let light = is_light.then(|| view.world_from_view.forward().as_vec3());
         let casters = light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer));
+        let solid_leaves = light_entity.is_some_and(|light| last_of_many(light, &lights));
         let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
         // Each stream's surviving ranges, and the translucent ones with their distance.
         let mut ranges = std::mem::take(&mut draws.ranges);
@@ -1158,6 +1161,7 @@ fn cull(
                     let page = run[0].0;
                     let quads = run.iter().map(|(_, vertices)| vertices.clone());
                     let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
+                    let pass = if solid_leaves && stream == CUTOUT { TerrainPass::Opaque } else { pass };
                     draws.passes[pass as usize].push(ChunkDraw { stream: stream as u8, page, indices });
                 }
                 ranges.clear();
@@ -1226,6 +1230,17 @@ impl Casters {
         let end = (centre + self.towards * self.reach - self.eye).dot(self.forward);
         start.max(end) + radius >= self.depths.0 && start.min(end) - radius <= self.depths.1
     }
+}
+
+/// Whether a view is the farthest of three or more sun cascades. Its texels are larger
+/// than a leaf's holes, so it draws leaves and other cut-out blocks as solid casters
+/// without the alpha test, which on Apple GPUs is what makes them expensive (no hidden
+/// surface removal); the nearer cascades keep the dappled shade under trees.
+fn last_of_many(light: &LightEntity, lights: &Query<&ExtractedDirectionalLight>) -> bool {
+    let LightEntity::Directional { light_entity, cascade_index } = *light else { return false };
+    let Ok(light) = lights.get(light_entity) else { return false };
+    let cascades = light.cascade_shadow_config.bounds.len();
+    cascades >= 3 && cascade_index + 1 == cascades
 }
 
 /// The range of view depth a sun cascade serves, if the view is one.
