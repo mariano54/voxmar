@@ -30,10 +30,13 @@ flight and makes you the world's admin, Survival does neither.
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, 1-9 or wheel select hotbar slot, E inventory (click a slot, then
-another to move it), F3 debug overlay, Esc menu, R respawn.
+another to move it), F3 debug overlay, Esc menu, R respawn, C (hold) zoom in creative: the wheel
+changes the magnification while zoomed, and mouse look slows to match.
 
-Esc opens the settings menu: render distance, field of view, VSync, debug overlay, music and
-sound volume, mouse sensitivity, and fly speed for admins, with Resume, Save and quit to title
+Esc opens the settings menu: render distance, field of view, anti-aliasing, VSync, debug
+overlay, music and sound volume, mouse sensitivity, the zoom key (click it, then press a key),
+zoom magnification, cinematic zoom (the view follows the mouse smoothly while zoomed), zoom in
+survival, and fly speed for admins, with Resume, Save and quit to title
 (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in the OS
 config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config`
 on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`); `--view-distance` and
