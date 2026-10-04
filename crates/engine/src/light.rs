@@ -141,7 +141,7 @@ impl LitRegion {
         // Down through the planes that hold nothing but clear air (most of the sky), the
         // light stays at full strength everywhere.
         let mut y = H;
-        while y > 0 && attenuation[(y - 1) as usize * PLANE..y as usize * PLANE].chunks_exact(W as usize).all(|row| row.iter().fold(0, |odd, &a| odd | (a ^ 1)) == 0) {
+        while y > 0 && attenuation[(y - 1) as usize * PLANE..y as usize * PLANE].as_chunks::<{ W as usize }>().0.iter().all(|row| row.iter().fold(0, |odd, &a| odd | (a ^ 1)) == 0) {
             y -= 1;
             for light in &mut self.light[y as usize * PLANE..(y + 1) as usize * PLANE] {
                 *light |= MAX_LIGHT << 4;

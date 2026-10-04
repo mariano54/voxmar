@@ -73,6 +73,13 @@ pub(crate) fn enter(_stage: Stage) -> Guard {
 #[cfg(not(test))]
 pub(crate) struct Guard;
 
+/// Empty, but there, so that ending a stage early with `drop` reads the same in every build.
+#[cfg(not(test))]
+impl Drop for Guard {
+    #[inline(always)]
+    fn drop(&mut self) {}
+}
+
 #[cfg(test)]
 pub(crate) use clock::{Times, enter, measure};
 

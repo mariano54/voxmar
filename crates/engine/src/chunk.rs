@@ -47,7 +47,7 @@ impl Chunk {
         assert_eq!(blocks.len(), CHUNK_VOLUME);
         // Many chunks are all air or all stone. Compared in runs, which vectorise.
         let first = blocks[0];
-        if blocks.chunks_exact(64).all(|run| run.iter().fold(0, |any, b| any | (b.0 ^ first.0)) == 0) {
+        if blocks.as_chunks::<64>().0.iter().all(|run| run.iter().fold(0, |any, b| any | (b.0 ^ first.0)) == 0) {
             return Self::uniform(first);
         }
         let mut palette: Vec<BlockId> = Vec::new();
