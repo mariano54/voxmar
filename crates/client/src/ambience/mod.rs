@@ -26,7 +26,7 @@ mod tests;
 
 use std::sync::{Arc, OnceLock};
 
-use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, GlobalVolume, PlaybackSettings, Volume};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::prelude::*;
@@ -358,6 +358,7 @@ fn play(
     time: Res<Time>,
     player: Res<LocalPlayer>,
     settings: Res<Settings>,
+    global: Res<GlobalVolume>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut segments: Query<(Entity, &BedSegment, &mut AudioSink)>,
     mut sources: ResMut<Assets<AudioSource>>,
@@ -365,7 +366,9 @@ fn play(
 ) {
     let ambient = &mut *ambient;
     let (Some(clips), Ok(camera), true) = (&ambient.clips, camera.single(), player.joined) else { return };
-    let master = AMBIENCE_GAIN * sfx::MASTER * settings.sound_volume as f32 / 100.0 * settings.ambience_volume as f32 / 100.0;
+    // Bevy applies the global volume only as a sound starts, and beds play on (see main.rs).
+    let master = AMBIENCE_GAIN * sfx::MASTER * settings.sound_volume as f32 / 100.0 * settings.ambience_volume as f32 / 100.0
+        * global.volume.to_linear();
     let ears = camera.translation();
     let mut cues = std::mem::take(&mut ambient.cues);
     let length = |sound: usize, variant: usize| clips.sounds[sound].get(variant).map_or(1.0, |c| c.dry.len() as f32 / sfx::RATE as f32);

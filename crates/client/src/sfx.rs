@@ -30,7 +30,7 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
-use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, GlobalVolume, PlaybackSettings, Volume};
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
@@ -380,11 +380,13 @@ fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Optio
 
 /// Fades the rain loops with how hard it rains (snow is silent) and how open the sky is
 /// above the player: light rain is the patter alone, heavier rain crossfades into the roar.
+#[allow(clippy::too_many_arguments)]
 fn rain(
     time: Res<Time>,
     weather: Res<ClientWeather>,
     map: Res<SkyMap>,
     settings: Res<Settings>,
+    global: Res<GlobalVolume>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut sinks: Query<(&RainSound, &mut AudioSink)>,
     mut level: Local<(f32, f32)>,
@@ -407,7 +409,8 @@ fn rain(
             }
             continue;
         }
-        sink.set_volume(Volume::Linear(level * master));
+        // Bevy applies the global volume only as a sound starts (see main.rs).
+        sink.set_volume(Volume::Linear(level * master) * global.volume);
         if sink.is_paused() {
             sink.play();
         }
