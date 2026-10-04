@@ -239,6 +239,9 @@ pub enum Term {
     Ridge(Ridge),
     /// Each texel independently gets `amount` with probability `chance`.
     Speckle(Speckle),
+    /// Each texel independently gets a value in -amount/2..amount/2: the per-texel grain
+    /// of soil, grass and leaves (`Grain(0.6)`, or `Grain(0.6, 3)` with a seed).
+    Grain(f32, #[serde(default)] u32),
     /// Irregular cells (stones, pebbles, leaf clumps).
     Cells(Cells),
     /// Brick courses.

@@ -37,7 +37,7 @@
 use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
+use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS, ColumnPos};
 use voxmar_engine::world::Column;
 use voxmar_engine::field::Field;
@@ -145,7 +145,13 @@ impl Land for OverworldLand {
             vegetation: site.vegetation,
             forest: site.forest,
             aether: site.aether,
-            dust_color: if underwater { LocalWeather::NONE.dust_color } else { self.blocks.def(ground).color },
+            // Dust is the ground's own colour where it is bare (sand, red sand, snow), and dry
+            // earth's where plants cover it.
+            dust_color: if underwater || self.blocks.def(ground).tint != Tint::None {
+                LocalWeather::NONE.dust_color
+            } else {
+                self.blocks.def(ground).color
+            },
         }
     }
 
@@ -676,7 +682,7 @@ impl WeatherState {
             cover,
             convection,
             cirrus,
-            humidity,
+            humidity: near_ground(humidity, mean - celsius),
             temperature: celsius,
             wind: direction.as_vec2() * speed,
             gusts,
@@ -903,6 +909,16 @@ fn now_temperature(mean: f32, cover: f32, moisture: f32, day: f64) -> f32 {
         1.0 - 2.0 * smoothstep(0.0, 1.0, ((day - PEAK) / (1.0 - PEAK)) as f32)
     };
     mean + swing * curve
+}
+
+/// The relative humidity near the ground of air whose humidity is `humidity` at the day's
+/// mean temperature, when it is `cooler` degrees cooler than that (warmer if negative):
+/// cool air holds less water, so its relative humidity roughly doubles with every 10 °C
+/// of cooling. That is why mist forms on clear, calm nights and lifts by midday.
+fn near_ground(humidity: f32, cooler: f32) -> f32 {
+    // 2^(cooler / 10), from a polynomial (exact arithmetic) over the day's swing.
+    let c = cooler.clamp(-12.0, 12.0);
+    (humidity * (1.0 + 0.0693 * c + 0.0024 * c * c)).clamp(0.0, 1.0)
 }
 
 /// How much falls as snow at an air temperature.

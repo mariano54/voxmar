@@ -473,8 +473,9 @@ impl Decor {
 
     /// Whether the block at `cell` is open soil an ornament may repaint or grow on.
     fn soil(&self, area: &Area, blocks: &Blocks, cell: IVec3) -> bool {
-        blocks.get(cell).is_some_and(|b| area.world.terrain.ground(b) == Ground::Soil)
-            && blocks.get(cell + IVec3::Y).is_some_and(|b| b.is_air() || area.world.terrain.is_plant(b))
+        let above = blocks.get(cell + IVec3::Y);
+        area.world.terrain.ground(blocks.get(cell)) == Ground::Soil
+            && (above.is_air() || area.world.terrain.is_plant(above))
             && !area.geology.get(cell.x, cell.z).submerged()
     }
 
@@ -539,7 +540,7 @@ impl Decor {
                     if y > ground {
                         blocks.put_if_air(cell, rock);
                     } else if y >= ground - 1
-                        && blocks.get(cell).is_some_and(|b| matches!(area.world.terrain.ground(b), Ground::Soil | Ground::Sand | Ground::Snow))
+                        && matches!(area.world.terrain.ground(blocks.get(cell)), Ground::Soil | Ground::Sand | Ground::Snow)
                         && !area.geology.get(x, z).submerged()
                     {
                         blocks.set(cell, rock);
@@ -764,7 +765,7 @@ impl Log {
 
 /// Puts a small plant at `at`, where it and the cells it needs above are open.
 fn put_plant(blocks: &mut Blocks, at: IVec3, plant: Plant) {
-    let open = |blocks: &Blocks, p: IVec3| blocks.get(p).is_some_and(|b| b.is_air());
+    let open = |blocks: &Blocks, p: IVec3| blocks.get(p).is_air();
     match plant {
         Plant::One(block) => {
             blocks.put_if_air(at, block);

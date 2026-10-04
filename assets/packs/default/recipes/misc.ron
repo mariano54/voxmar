@@ -2,7 +2,7 @@
 (
     textures: {
         // Grey and see-through: the game tints water by climate.
-        "block/water_still": (palettes: {"main": ["#9fa4adb0", "#adb2bbb0", "#bcc1c9b4", "#cbd0d6b8", "#dadee3bc"]}, layers: [
+        "block/water_still": (palettes: {"main": ["#8e939cb0", "#a0a5adb0", "#b2b6bdb4", "#c5c8cdb8", "#d8dadebc"]}, layers: [
             Paint(palette: "main", base: 0.45, shade: [
                 Noise(cells: (4, 4), octaves: 2, amount: 0.35),
                 Stripes(period: 8.0, width: 0.25, amount: 0.2, slope: 0.5, warp: 1.5),
@@ -79,8 +79,12 @@
             Grid(legend: {'S': "spine:1"}, rows: ["................", "................", "..S...S...S..S..", "................", "................", "..S..........S..", "................", "................", "..S..........S..", "................", "................", "..S..........S..", "................", "..S...S..S...S..", "................", "................"]),
         ]),
         "block/cactus_bottom": (base: "block/cactus_top", layers: [Shift(by: [Flat(-1.0)])]),
+        // A tangle of roots: two sets of wavy diagonal strands crossing, gaps between.
         "block/mangrove_roots_side": (palettes: {"root": ["#2f2118", "#40301f", "#523e28", "#644d33", "#765c3e"]}, layers: [
-            Paint(palette: "root", base: 0.5, shade: [Noise(cells: (4, 16), amount: 0.6)], mask: [Ridge(cells: (3, 2), octaves: 1, width: 0.35, amount: 1.0), Ridge(cells: (2, 3), octaves: 1, width: 0.3, amount: 1.0, seed: 4)], above: 0.55, shadow: 0),
+            Paint(palette: "root", base: 0.5, shade: [Noise(cells: (4, 4), amount: 0.5), Grain(0.3), Stripes(period: 8.0, width: 0.125, amount: 0.25, slope: 1.0, warp: 1.0)], mask: [
+                Stripes(period: 8.0, width: 0.25, amount: 1.0, slope: 1.0, warp: 1.2),
+                Stripes(period: 8.0, width: 0.25, amount: 1.0, slope: -1.0, warp: 1.2, phase: 3.0, seed: 2),
+            ], above: 0.5, shadow: -1),
         ]),
         "block/mangrove_roots_top": (base: "block/mangrove_roots_side", seed: 77),
         "block/azalea_leaves": (base: "block/oak_leaves", palettes: {"leaves": ["#33501c", "#406223", "#4f752b", "#5f8834", "#709b3e", "#82ae4a"]}),
@@ -88,8 +92,8 @@
             Clusters(palette: "bloom", count: 6, size: (2, 4), spacing: 4.5, shade: 1, seed: 5),
         ]),
         // Climate colour maps: left hot, right cold; top wet, bottom dry.
-        "colormap/grass": (size: (256, 256), layers: [Corners("#4ab434", "#57a266", "#b8b046", "#7cab6c")]),
-        "colormap/foliage": (size: (256, 256), layers: [Corners("#2aa812", "#3e9450", "#aaa428", "#5aa25a")]),
+        "colormap/grass": (size: (256, 256), layers: [Corners("#50ca36", "#7cb48e", "#b4bb56", "#84b694")]),
+        "colormap/foliage": (size: (256, 256), layers: [Corners("#2cba0e", "#60a272", "#9ea82a", "#66a37a")]),
         // HUD.
         "gui/sprites/hud/hotbar": (size: (182, 22), palettes: {"frame": ["#1b1d22", "#3d4048", "#6d717b", "#a3a7b0"]}, layers: [
             Corners("#14161ab0", "#14161ab0", "#14161ab0", "#14161ab0"),

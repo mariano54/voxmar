@@ -15,6 +15,7 @@ use crate::player::LocalPlayer;
 use crate::render::DayCycle;
 use crate::render::lod::Lod;
 use crate::weather::ClientWeather;
+use crate::weather::atmosphere::ClientAtmosphere;
 use crate::world::ClientWorld;
 
 pub struct NetPlugin;
@@ -110,7 +111,7 @@ fn receive(
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
-    (time, mut clock, mut console): (Res<Time>, ResMut<Clock>, ResMut<Console>),
+    (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
@@ -127,6 +128,7 @@ fn receive(
         match message {
             ServerMessage::Welcome { position, yaw, flying, allow_flight, admin, seed, weather_seed, .. } => {
                 weather.set_seed(weather_seed);
+                air.start(seed);
                 lod.start(seed, world.registry.clone());
                 player.position = position;
                 player.yaw = yaw;

@@ -212,6 +212,33 @@ puts its fronts at `mean * seconds`, so when the mean changes by δ they jump by
 `δ * seconds` (with `seconds` in the hundreds of thousands, a whole meadow would lurch
 as the wind veered).
 
+## The air (ClientAtmosphere)
+
+`weather::atmosphere::ClientAtmosphere`, next to `ClientWeather`, is the air around the
+player: the land's (`Overworld::atmosphere_at`, sampled twice a second from the client's
+own generator and eased over a few seconds, so biome borders pass gradually) with the
+weather, wind and time of day applied.
+
+```rust
+pub struct ClientAtmosphere {
+    pub haze: Vec3,          // haze colour, linear RGB; towards the dust colour in dust,
+                             // towards grey-white in fog and rain
+    pub haze_density: f32,   // relative to the pack's haze, ~1; up to ~4 in fog and dust
+    pub sky: Vec3,           // tint multiplied into the sky, linear; white leaves it
+    pub warmth: f32,         // grading, -1 cooler ..= 1 warmer, ~0
+    pub saturation: f32,     // grading, ~1; less under overcast, rain and fog
+    pub particles: Vec<AmbientParticles>, // sets showing now, densest first:
+                             // name, density 0..1, color (linear), size, motion, glow
+}
+```
+
+The colour parts are for the shader pack to apply within its own look (haze colour and
+density into the haze, `sky` into the sky colours, `warmth` and `saturation` into the
+grading). Particle sets showing only by day, at night or at twilight, in dry or wet
+weather, are already filtered; hovering ones settle out of a strong wind; night-time ones
+(fireflies) come out on six nights in ten. The precipitation particles draw the four
+densest sets. docs/weather-effects.md has the rest of the weather's handover.
+
 ## What we took from Voxy
 
 Voxy (Fabric LOD mod, read from its source) stores the world as 32³ voxel sections mipped
