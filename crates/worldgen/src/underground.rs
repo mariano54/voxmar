@@ -20,7 +20,8 @@
 //! - lines cave floors with its surface's `ground` (`underwater` under water) and ceilings
 //!   with its `cliff`, unless those are the stones beneath;
 //! - grows its `cave_decoration` from floors and ceilings: plants and mushrooms,
-//!   stalagmites and stalactites, icicles, roots and vines, crystals, some of them glowing.
+//!   stalagmites and stalactites, icicles, roots and vines, crystals, some of them glowing;
+//! - freezes the surface of its pools, when it is tagged `frozen`.
 //!
 //! Decorations grow straight up or down within their block column and only into open air,
 //! so they never cross a column border, never displace water or lava and never leave a
@@ -72,6 +73,8 @@ struct Work {
     floor: bool,
     ceiling: bool,
     decorations: bool,
+    /// Pools freeze over (cave biomes tagged `frozen`).
+    freezes: bool,
 }
 
 /// The cave biomes of one world.
@@ -84,6 +87,8 @@ pub struct Underground {
     rocky: Vec<bool>,
     /// What each biome does to its caves, by biome id.
     work: Vec<Work>,
+    /// What still water freezes into.
+    ice: BlockId,
     seed: u64,
 }
 
@@ -126,6 +131,7 @@ impl Underground {
                     floor: def.layer == Layer::Underground && (lined(&s.ground) || lined(&s.underwater) || !s.rules.is_empty()),
                     ceiling: def.layer == Layer::Underground && s.cliff.as_ref().is_some_and(|c| *c != Material::Stones),
                     decorations: !def.cave_decoration.is_empty(),
+                    freezes: def.layer == Layer::Underground && def.tags.iter().any(|t| t == "frozen"),
                 }
             })
             .collect();
@@ -135,6 +141,7 @@ impl Underground {
             decorations,
             rocky,
             work,
+            ice: registry.expect(&content.climate.frost.ice),
             seed: seed ^ PURPOSE,
         }
     }
@@ -246,6 +253,13 @@ impl UndergroundColumn<'_> {
         let mix = || *mix.get_or_init(|| world.terrain.mix(wx, wz));
         let column_stones = world.stones(site);
         for y in 1..cave.len() as i32 - 1 {
+            if cave[y as usize] == Cave::Water && cave[y as usize + 1] == Cave::Air {
+                // The surface of a pool, which freezes in frozen caves.
+                if self.biome(x, y, z).is_some_and(|id| self.underground.work[id.0 as usize].freezes) {
+                    blocks.set(IVec3::new(wx, y, wz), self.underground.ice);
+                }
+                continue;
+            }
             if cave[y as usize] != Cave::Rock {
                 continue;
             }

@@ -153,6 +153,13 @@ impl Blocks<'_> {
         low.cmple(high).all().then_some((low, high))
     }
 
+    /// Sets the block at `pos`, if it is in the column.
+    pub fn set(&mut self, pos: IVec3, block: BlockId) {
+        if let Some(i) = self.index(pos) {
+            self.data[i] = block;
+        }
+    }
+
     /// The block at `pos`; air outside the column.
     pub fn get(&self, pos: IVec3) -> BlockId {
         self.index(pos).map_or(BlockId::AIR, |i| self.data[i])
