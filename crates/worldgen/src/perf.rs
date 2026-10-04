@@ -54,6 +54,8 @@ const SEEDS: [u64; 3] = [1, 3, 0x5eed];
 #[test]
 #[ignore]
 fn generation_stages() {
+    // CPU time on this thread measures all the work only if it all stays here.
+    crate::parallel::set_enabled(false);
     let registry = registry();
     // Cold and warm: stage times, CPU time, columns.
     let mut passes = [(Times::default(), Duration::ZERO); 2];
@@ -106,39 +108,44 @@ fn generation_stages() {
     println!("{:>14} {:9.3} {:>6} {:9.3}   (CPU time)", "generation", ms(passes[0].1, columns), "", ms(passes[1].1, columns));
     println!("{:>14} {:9.3}   ({lit} columns)", "light", ms(light, lit));
     println!("{:>14} {:9.3}   (all {COLUMN_CHUNKS} chunks of each)", "mesh", ms(mesh, lit));
+    crate::parallel::set_enabled(true);
 }
 
 /// `cargo test --release -p voxmar_worldgen first_column -- --ignored --nocapture`
-/// reports, for new worlds, the time to find the spawn point, to generate the spawn
-/// column after it (where the game waits before letting the player in), stage by stage,
-/// and to fill the 9×9 columns around spawn on every core, the way the game first loads.
+/// reports, for new worlds, the wall-clock time to find the spawn point, to generate the
+/// spawn column after it (the game waits for both before letting the player in; the
+/// spawn column's stages are listed), and to fill the 9×9 columns around spawn on every
+/// core, the way the game first loads: once building regions on the asking thread
+/// alone, once on every core.
 #[test]
 #[ignore]
 fn first_column() {
     let registry = registry();
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
     for seed in SEEDS {
-        let world = Overworld::new(seed, registry.clone());
-        let (wall, cpu) = (Instant::now(), thread_time());
-        let spawn = ColumnPos::of_block(world.spawn_point());
-        let found = (wall.elapsed(), thread_time() - cpu);
-        let (wall, cpu) = (Instant::now(), thread_time());
-        let (_, times) = stage::measure(|| world.generate(spawn));
-        let generated = (wall.elapsed(), thread_time() - cpu);
-        let wall = Instant::now();
-        std::hint::black_box(crate::tests::generate_area(&world, spawn.offset(-4, -4), 9));
-        let area = wall.elapsed();
-        let ms = |d: Duration| d.as_secs_f64() * 1e3;
-        println!(
-            "seed {seed}: spawn point {:.0} ms ({:.0} CPU), spawn column {:.0} ms ({:.0} CPU), then 9×9 columns {:.0} ms",
-            ms(found.0),
-            ms(found.1),
-            ms(generated.0),
-            ms(generated.1),
-            ms(area),
-        );
-        let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
-        stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
-        println!("  spawn column: {}", stages.iter().map(|(s, d)| format!("{s:?} {:.0} ms", ms(*d))).collect::<Vec<_>>().join(", "));
+        for parallel in [false, true] {
+            crate::parallel::set_enabled(parallel);
+            let world = Overworld::new(seed, registry.clone());
+            let start = Instant::now();
+            let spawn = ColumnPos::of_block(world.spawn_point());
+            let found = start.elapsed();
+            let start = Instant::now();
+            let (_, times) = stage::measure(|| world.generate(spawn));
+            let generated = start.elapsed();
+            let start = Instant::now();
+            std::hint::black_box(crate::tests::generate_area(&world, spawn.offset(-4, -4), 9));
+            let area = start.elapsed();
+            let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
+            stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
+            println!(
+                "seed {seed}, {}: spawn point {:.0} ms, spawn column {:.0} ms ({}), then 9×9 columns {:.0} ms",
+                if parallel { "every core" } else { "one core" },
+                ms(found),
+                ms(generated),
+                stages.iter().map(|(s, d)| format!("{s:?} {:.0}", ms(*d))).collect::<Vec<_>>().join(", "),
+                ms(area),
+            );
+        }
     }
 }
 

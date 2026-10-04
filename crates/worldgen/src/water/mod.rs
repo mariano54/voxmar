@@ -98,6 +98,10 @@ impl Ground for TrunkGround<'_> {
         self.rivers.coarse.get(key, || Arc::new(self.rivers.coarse_tile(self.land, key)))
     }
 
+    fn has(&self, key: IVec2) -> bool {
+        self.rivers.coarse.has(key)
+    }
+
     fn humidity(&self, cell: IVec2) -> f32 {
         self.rivers.humidity(self.land, self.rivers.trunks.tier.centre(cell))
     }
@@ -106,6 +110,10 @@ impl Ground for TrunkGround<'_> {
 impl Ground for StreamGround<'_> {
     fn tile(&self, key: IVec2) -> Arc<Tile> {
         self.rivers.fine.get(key, || Arc::new(self.rivers.fine_tile(self.land, key)))
+    }
+
+    fn has(&self, key: IVec2) -> bool {
+        self.rivers.fine.has(key)
     }
 
     fn humidity(&self, cell: IVec2) -> f32 {

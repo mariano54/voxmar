@@ -22,6 +22,7 @@ mod ecology;
 mod features;
 mod geology;
 mod lattice;
+mod parallel;
 #[cfg(test)]
 mod perf;
 mod rarity;
@@ -739,6 +740,8 @@ mod tests {
     #[test]
     #[ignore]
     fn column_timing() {
+        // CPU time on this thread measures all the work only if it all stays here.
+        crate::parallel::set_enabled(false);
         let registry = registry();
         let mut total = std::time::Duration::ZERO;
         let mut count = 0;
@@ -1806,6 +1809,8 @@ mod tests {
     #[test]
     #[ignore]
     fn river_speed() {
+        // CPU time on this thread measures all the work only if it all stays here.
+        crate::parallel::set_enabled(false);
         let registry = registry();
         let (mut first, mut warm, mut columns) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
         for seed in [1, 3, 0x5eed] {
@@ -1830,6 +1835,8 @@ mod tests {
     #[test]
     #[ignore]
     fn generation_speed() {
+        // CPU time on this thread measures all the work only if it all stays here.
+        crate::parallel::set_enabled(false);
         use std::time::Duration;
         let registry = registry();
         let (mut columns, mut generating) = (0, Duration::ZERO);
