@@ -112,6 +112,17 @@ impl Chunk {
         }
     }
 
+    /// The palette indices of the `out.len()` blocks from `start`, in storage order.
+    pub fn indices(&self, start: usize, out: &mut [u16]) {
+        if self.bits == 0 {
+            out.fill(0);
+            return;
+        }
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = self.read_index(start + i);
+        }
+    }
+
     /// Writes every block into `out` (length `CHUNK_VOLUME`).
     pub fn copy_to_dense(&self, out: &mut [BlockId]) {
         assert_eq!(out.len(), CHUNK_VOLUME);
