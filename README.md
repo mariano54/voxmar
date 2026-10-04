@@ -276,10 +276,11 @@ near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
-labyrinths, ravines, sinkholes, entrances and the best view of each cave biome near spawn
-(or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the `--command "/tp X Z"`
-that takes a capture there), with each cave biome's share of the caves there;
-`column_timing` reports generation time per column (all `-- --ignored --nocapture`).
+labyrinths, ravines, sinkholes, entrances, geodes, bare fossils and the best view of each cave
+biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the
+`--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
+there; `column_timing` reports generation time per column, and `river_speed` the cost of
+building a region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
 
 ## Weather
 

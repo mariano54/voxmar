@@ -212,7 +212,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 9;
+    pub const VERSION: u32 = 10;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -722,8 +722,9 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen river_sights -- --ignored --nocapture`
-    /// finds a highland lake, a waterfall, a confluence and a river mouth near spawn and
-    /// prints `--pose` arguments that look at each, for in-game captures.
+    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth and a river
+    /// tunnel near spawn and prints `--pose` arguments that look at each, for in-game
+    /// captures.
     #[test]
     #[ignore]
     fn river_sights() {
@@ -737,7 +738,7 @@ mod tests {
         let geos: Vec<GeoSample> = (0..n * n).map(|i| world.geo(spawn.x - range + i % n * step, spawn.z - range + i / n * step)).collect();
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         // (score, x, z, y)
-        let mut best: [(f32, i32, i32, i32); 4] = [(0.0, 0, 0, 0); 4];
+        let mut best: [(f32, i32, i32, i32); 5] = [(0.0, 0, 0, 0); 5];
         for j in 1..n - 1 {
             for i in 1..n - 1 {
                 let g = at(i, j);
@@ -748,15 +749,19 @@ mod tests {
                         best[k] = (score * near, x, z, g.water);
                     }
                 };
+                if g.cavity.is_some() {
+                    consider(4, 1.0);
+                }
                 if !g.submerged() {
                     continue;
                 }
                 if g.body == Body::Lake && g.water > SEA_LEVEL + 20 {
                     consider(0, (g.water - SEA_LEVEL) as f32);
                 }
+                // Steps of two samples, so a fall is found from its top.
                 let drop = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|&(di, dj)| at(i + di, j + dj)).filter(|o| o.submerged()).map(|o| g.water - o.water).max().unwrap_or(0);
                 if drop >= 3 && g.body != Body::Lake {
-                    consider(1, drop as f32);
+                    consider(1, (drop * drop) as f32);
                 }
                 let channel = |o: GeoSample| o.submerged() && matches!(o.body, Body::Creek | Body::River);
                 if channel(g) {
@@ -779,7 +784,7 @@ mod tests {
             }
         }
         println!("seed {seed}, spawn {spawn}");
-        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth"].into_iter().zip(best) {
+        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel"].into_iter().zip(best) {
             if score == 0.0 {
                 println!("{name}: none within {range}");
                 continue;
@@ -1466,6 +1471,30 @@ mod tests {
         // SAFETY: `t` is a valid timespec for the call to fill.
         unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
         std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+    }
+
+    /// `cargo test --release -p voxmar_worldgen river_speed -- --ignored --nocapture`
+    /// separates the two costs rivers add, in CPU time on one thread: building a region's
+    /// rivers (once, for its 32×32 columns) and generating columns once it is built.
+    #[test]
+    #[ignore]
+    fn river_speed() {
+        let registry = registry();
+        let (mut first, mut warm, mut columns) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
+        for seed in [1, 3, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            let start = ColumnPos::of_block(world.spawn_point());
+            let t = thread_time();
+            std::hint::black_box(world.generate(start));
+            first += thread_time() - t;
+            let t = thread_time();
+            for i in 0..100 {
+                std::hint::black_box(world.generate(start.offset(i % 10, i / 10)));
+            }
+            warm += thread_time() - t;
+            columns += 100;
+        }
+        println!("first column (cold caches) {:.0} ms, then {:.3} ms per column", first.as_secs_f64() * 1e3 / 3.0, warm.as_secs_f64() * 1e3 / columns as f64);
     }
 
     /// `cargo test --release -p voxmar_worldgen generation_speed -- --ignored --nocapture`
