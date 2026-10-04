@@ -908,12 +908,49 @@ mod tests {
         assert!(found.iter().filter(|&&n| n > 0).count() >= 5, "{found:?}");
     }
 
+    /// Everything hanging (glow berries, roots, stalactite tips) hangs under solid rock or
+    /// under more of its own column, as the game requires of blocks with `support: Above`.
+    #[test]
+    fn hanging_blocks_hang_from_rock() {
+        use voxmar_engine::block::Support;
+        let registry = registry();
+        let mut hanging = 0;
+        // Lush caves, glowroot hollows and dripstone caves near spawn (see `cave_sights`).
+        for (seed, place) in [(1, (-271, 38)), (7, (261, 150)), (1, (-47, -126)), (42, (-43, -354))] {
+            let world = Overworld::new(seed, registry.clone());
+            let first = ColumnPos::of_block(IVec3::new(place.0, 0, place.1)).offset(-3, -3);
+            let columns = generate_area(&world, first, 6);
+            let origin = first.origin();
+            let block = |p: IVec3| {
+                let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+                columns[(cz * 6 + cx) as usize].block(IVec3::new(p.x & 31, p.y, p.z & 31))
+            };
+            for z in origin.z..origin.z + 192 {
+                for x in origin.x..origin.x + 192 {
+                    for y in 1..voxmar_engine::coords::WORLD_HEIGHT - 1 {
+                        let p = IVec3::new(x, y, z);
+                        if registry.info(block(p)).support != Support::Above {
+                            continue;
+                        }
+                        hanging += 1;
+                        let mut up = p + IVec3::Y;
+                        while registry.info(block(up)).support == Support::Above {
+                            up += IVec3::Y;
+                        }
+                        assert!(registry.info(block(up)).solid, "seed {seed}: {} at {p} hangs from {} at {up}", registry.def(block(p)).name, registry.def(block(up)).name);
+                    }
+                }
+            }
+        }
+        assert!(hanging > 100, "only {hanging} hanging blocks");
+    }
+
     /// Geodes are hollow and lined with crystal, in calcite and dark rock.
     #[test]
     fn geodes_are_hollow_and_lined() {
         let registry = registry();
         let world = Overworld::new(5, registry.clone());
-        let crystal = [registry.expect("base:crystal_block"), registry.expect("base:glowstone")];
+        let crystal = [registry.expect("base:crystal_block")];
         let mut checked = 0;
         for i in 0..400 {
             let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);

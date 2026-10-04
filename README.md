@@ -260,12 +260,13 @@ crystal caves are rare, and two fantasy caves, glowroot hollows and the starlit 
 only where aether runs high. Each lines its floors and ceilings through its surface rules,
 replaces the rock around it with its own stones or strata, and grows decorations from floors
 and ceilings (`cave_decoration`): plants and mushrooms, stalagmites and stalactites, icicles,
-hanging roots and vines, crystals, some with glowing tips; frozen caves freeze their pools,
-and lush caves and glowroot hollows have pools that glow from below. Wherever daylight falls
-straight down a shaft to a cave floor, a small garden of turf, grass, ferns and flowers grows
-in the light. Buried in the rock are geodes (hollows lined with glowing crystal, calcite and
-dark rock) and fossil skeletons, found by digging or where a cave cuts through them. Lava burns
-(4 health every half second). `Overworld::cave_biome_at` gives the cave biome at a block.
+hanging roots and glowing berries, crystals and lichen, which light the caves; hanging growth
+always hangs under rock. Frozen caves freeze their pools, and lush caves and glowroot hollows
+have pools that glow from below. Wherever daylight falls straight down a shaft to a cave
+floor, a small garden of turf, grass, ferns and flowers grows in the light. Buried in the rock
+are geodes (hollows lined with crystal, calcite and basalt, glowing clusters on their floors)
+and fossil skeletons, found by digging or where a cave cuts through them. Lava burns (4 health
+every half second). `Overworld::cave_biome_at` gives the cave biome at a block.
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and

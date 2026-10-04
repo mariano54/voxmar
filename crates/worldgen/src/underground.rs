@@ -26,7 +26,7 @@
 //! Wherever daylight falls straight down a shaft to a cave floor (a sinkhole, a ravine, an
 //! entrance), the floor grows a small garden of turf, grass, ferns and flowers, or snow
 //! where it is cold. Buried in the rock lie two kinds of finds, seeded per region cell:
-//! geodes (hollows lined with glowing crystal in calcite in dark rock, carved by
+//! geodes (hollows lined with crystal in calcite in basalt, carved by
 //! `crate::caves` so the water tables can flood them) and fossil skeletons (a spine, ribs
 //! and a skull of pale stone), seen only where a cave cuts through them or by digging.
 //!
@@ -37,7 +37,7 @@
 use std::sync::LazyLock;
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
-use voxmar_engine::block::{BlockId, BlockRegistry};
+use voxmar_engine::block::{BlockId, BlockRegistry, Support};
 use voxmar_engine::coords::CHUNK_SIZE;
 use voxmar_engine::glam::{IVec3, Vec3};
 
@@ -93,8 +93,7 @@ struct Ids {
     /// Plants of a sunlit floor, by weight out of 1 (the rest stays bare).
     garden: Vec<(BlockId, f32)>,
     crystal: BlockId,
-    glowing_crystal: BlockId,
-    /// Crystals growing on a geode's floor.
+    /// Crystals growing on a geode's floor, which light it.
     cluster: BlockId,
     calcite: BlockId,
     dark_rock: BlockId,
@@ -139,6 +138,9 @@ pub struct Underground {
     /// What each biome does to its caves, by biome id.
     work: Vec<Work>,
     ids: Ids,
+    /// Each block's support and whether it is solid, by block id, so decorations only hang
+    /// under (and stand on) something that holds them.
+    supports: Vec<(Support, bool)>,
     seed: u64,
 }
 
@@ -207,7 +209,6 @@ impl Underground {
                         (id("lily_of_the_valley"), 0.02),
                     ],
                     crystal: id("crystal_block"),
-                    glowing_crystal: id("glowstone"),
                     cluster: id("crystal_cluster"),
                     calcite: id("calcite"),
                     dark_rock: id("basalt"),
@@ -215,6 +216,7 @@ impl Underground {
                     bone: id("chalk"),
                 }
             },
+            supports: (0..registry.len()).map(|i| (registry.info(BlockId(i as u16)).support, registry.info(BlockId(i as u16)).solid)).collect(),
             seed: seed ^ PURPOSE,
         }
     }
@@ -453,11 +455,11 @@ impl UndergroundColumn<'_> {
                 let block = match depth {
                     d if d < 0.0 || d >= GEODE_SHELL => continue,
                     d if d < 1.2 => {
-                        // Clusters grow on the floor; one block in sixteen glows bright.
-                        if (h >> 8) & 3 == 0 && cave.get(y as usize + 1) == Some(&Cave::Air) && geode.distance(pos + IVec3::Y) < geode.radius {
+                        // Clusters grow on the floor.
+                        if h % 3 == 0 && cave.get(y as usize + 1) == Some(&Cave::Air) && geode.distance(pos + IVec3::Y) < geode.radius {
                             blocks.put_if_air(pos + IVec3::Y, ids.cluster);
                         }
-                        if h & 15 == 0 { ids.glowing_crystal } else { ids.crystal }
+                        ids.crystal
                     }
                     d if d < 2.2 => ids.calcite,
                     _ => ids.dark_rock,
@@ -536,8 +538,24 @@ impl UndergroundColumn<'_> {
                 let block = match tip {
                     Some((tip, _)) if k == length => tip,
                     _ => &d.block,
+                }
+                .pick(u, stones, strata, at.y);
+                // Hanging things hang under something solid or more of their column, and
+                // plants stand on something solid or more of their stalk.
+                let supports = &self.underground.supports;
+                let holds = |p: IVec3, need: Support| {
+                    let (support, solid) = supports[blocks.get(p).0 as usize];
+                    solid || support == need
                 };
-                blocks.put_if_air(at, block.pick(u, stones, strata, at.y));
+                let held = match supports[block.0 as usize].0 {
+                    Support::Above => holds(at + IVec3::Y, Support::Above),
+                    Support::Below => holds(at - IVec3::Y, Support::Below),
+                    Support::None => true,
+                };
+                if !held {
+                    break;
+                }
+                blocks.put_if_air(at, block);
             }
             return;
         }
