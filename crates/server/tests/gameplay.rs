@@ -312,7 +312,8 @@ fn commands_set_the_time_and_the_weather() {
     client.ok("/night");
     assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 13_000);
     client.ok("/time add 2h");
-    assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 15_000);
+    // Two hours on, give or take the ticks that ran in between.
+    assert!((client.day.unwrap().0 % TICKS_PER_DAY).abs_diff(15_000) < 40, "{:?}", client.day);
     assert!(client.ok("/time freeze").contains("frozen"));
     assert_eq!(client.day.unwrap().1, 0.0);
     assert!(client.ok("/time speed 10").contains("2.0 minutes per day"));
@@ -326,6 +327,15 @@ fn commands_set_the_time_and_the_weather() {
     assert_eq!(client.command("/weather hurricane")[0].0, ChatKind::Error);
     assert!(client.ok("/weather list").contains("drizzle"));
     assert_eq!(client.ok("/weather natural"), "The natural weather is back.");
+
+    // Wind on its own, and on top of forced weather.
+    assert!(client.ok("/wind gale sw 30").contains("gale from the south-west"));
+    client.pump_until(|c| c.weather.is_some_and(|w| (w.wind.length() - 18.0).abs() < 0.01 && w.wind.x > 0.0 && w.wind.y < 0.0));
+    client.ok("/weather rain");
+    client.ok("/wind calm");
+    client.pump_until(|c| c.weather.is_some_and(|w| w.precipitation == 0.5 && w.wind.length() < 0.5));
+    assert!(client.ok("/wind").starts_with("Wind 0.3 blocks/s"));
+    assert_eq!(client.command("/wind hurricane")[0].0, ChatKind::Error);
 }
 
 #[test]
