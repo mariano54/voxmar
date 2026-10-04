@@ -2,7 +2,8 @@
 // makes its cobbled, polished and brick forms from the rock's `main` palette.
 (
     palettes: {
-        "stone": ["#56575c", "#65666a", "#747477", "#828283", "#8f8f8f", "#9d9c9a"],
+        "moss_overlay": ["#3d5a24", "#4f7029", "#628532", "#779a3c"],
+        "stone": ["#5e5f63", "#6c6d70", "#7a7a7c", "#878788", "#949493", "#a3a2a0"],
         "granite": ["#6a4840", "#7d574d", "#90665a", "#a27667", "#b38877", "#c39b8a"],
         "diorite": ["#8f8f8e", "#a6a6a4", "#bbbbb8", "#cbcbc8", "#dadad6", "#e9e8e3"],
         "andesite": ["#5d5f61", "#6c6e70", "#7b7c7e", "#898a8b", "#97989a", "#a7a8a8"],
@@ -26,9 +27,10 @@
                 Paint(palette: "main", base: 0.55, shade: [Noise(cells: (3, 6), octaves: 3, gain: 0.6, amount: 0.7)], clean: true),
             ]),
             "block/cobbled_{name}": (palettes: {"main": "{name}"}, layers: [
-                Paint(palette: "main", base: 0.62, shade: [
-                    Cells(count: (3, 3), jitter: 0.9, value: 0.3, edge: -0.8, bevel: 0.3, round: 0.25, warp: 1.5),
+                Paint(palette: "main", base: 0.66, shade: [
+                    Cells(count: (3, 3), jitter: 0.9, value: 0.4, edge: -0.85, bevel: 0.45, round: 0.25, warp: 1.5),
                     Noise(cells: (8, 8), amount: 0.25),
+                    Grain(0.2),
                 ], clean: true),
             ]),
             "block/polished_{name}": (palettes: {"main": "{name}"}, layers: [
@@ -45,9 +47,17 @@
                     Noise(cells: (8, 8), amount: 0.2),
                 ], clean: true),
             ]),
+            "block/mossy_cobbled_{name}": (base: "block/cobbled_{name}", palettes: {"moss": "moss_overlay"}, layers: [
+                Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.8), Grain(0.3)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.25, amount: 0.25)], above: 0.42, clean: true),
+            ]),
+            // Bricks split by a few dark cracks with a lit lip.
+            "block/cracked_{name}_bricks": (base: "block/{name}_bricks", layers: [
+                Paint(palette: "main", base: 0.0, mask: [Ridge(cells: (2, 2), octaves: 1, width: 0.12, amount: 1.0), Noise(cells: (3, 3), amount: 0.9)], above: 0.72, light: 1),
+            ]),
         },
     },
     families: [
+        (template: "stone", name: "stone"),
         (template: "stone", name: "granite"),
         (template: "stone", name: "diorite"),
         (template: "stone", name: "andesite"),
@@ -65,12 +75,15 @@
     ],
     textures: {
         "block/stone": (palettes: {"main": "stone"}, layers: [
-            Paint(palette: "main", base: 0.56, shade: [Noise(cells: (3, 6), octaves: 3, gain: 0.6, amount: 0.7)], clean: true),
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (3, 6), octaves: 3, gain: 0.6, amount: 0.7), Grain(0.2)], clean: true),
             Paint(palette: "main", base: 0.25, mask: [Ridge(cells: (2, 3), width: 0.12, amount: 1.0), Noise(cells: (4, 4), amount: 0.8)], above: 0.85, light: 1),
         ]),
         "block/cobblestone": (base: "block/cobbled_andesite", palettes: {"main": "stone"}, seed: 11),
-        "block/mossy_cobblestone": (base: "block/cobblestone", palettes: {"moss": ["#3d5a24", "#4f7029", "#628532", "#779a3c"]}, layers: [
-            Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.8)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.25, amount: 0.25)], above: 0.62, clean: true),
+        "block/mossy_stone_bricks": (base: "block/stone_bricks", palettes: {"moss": "moss_overlay"}, layers: [
+            Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.8), Grain(0.3)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.25, amount: 0.25)], above: 0.42, clean: true),
+        ]),
+        "block/mossy_cobblestone": (base: "block/cobblestone", palettes: {"moss": "moss_overlay"}, layers: [
+            Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.8)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.25, amount: 0.25)], above: 0.42, clean: true),
         ]),
         "block/bedrock": (palettes: {"main": "bedrock"}, layers: [
             Paint(palette: "main", base: 0.5, shade: [Cells(count: (5, 5), jitter: 1.0, value: 0.9, edge: -0.3, bevel: 0.3, warp: 1.5), Speckle(chance: 0.2, amount: 0.3)], clean: true),

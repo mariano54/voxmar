@@ -141,6 +141,9 @@ cargo run --release -p voxmar_texgen -- export --out DIR       # write every rec
 texel, optionally beside the same name from another pack (`--pack DIR` picks the pack,
 `--columns`, `--zoom` and `--out` the layout).
 
+Code and assets adapted from other open source projects are listed, with their licences, in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Layout
 
 | crate | role |
@@ -161,7 +164,10 @@ the top of `blocks.ron`: what a block is, where it grows, what it is good for, s
 `edible`, `alchemy:calming`, `dye:blue`, `wonder`), a rarity and an optional inventory icon, so
 biomes, food and alchemy select blocks without naming them. A plant's `variants` are other looks
 of it, each its own block that drops the plant itself, as many as its size;
-`BlockRegistry::looks` lists them for generators. The inventory shows plants as their sprite and
+`BlockRegistry::looks` lists them for generators. A block's `support` says what it rests on:
+plants stand on solid ground (the default for plants), hanging ones (`support: Above`: glow
+berries, hanging roots, stalactites) need a solid block above; either can only be placed with
+that support, and goes, with the column resting on it, when the support is broken. The inventory shows plants as their sprite and
 full blocks as a shaded cube. Templates
 make whole families from one line (a wood's log, stripped log, wood, planks, leaves and sapling;
 a rock's raw, cobbled, polished and brick blocks), and templates are shared across packages, so
@@ -217,6 +223,22 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
+- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`) join the places worth walking
+  to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
+  of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
+  are joined into a sparse network (a Gabriel graph, with no two trails setting off side by
+  side), each trail routed by A* over the land with costs adapted from RoadWeaver: walking
+  along the contour is cheaper, grades past soft and hard limits cost more, and so does the
+  fall line, so trails traverse slopes and switch back up them. Trails that run within 18
+  blocks of a longer one join it, making junctions. Each is drawn as a smooth curve cut into
+  hillsides and raised on low banks, its tread worn to packed earth, gravel or mud by biome
+  with trodden grass at its edges, across shallow water on stepping stones, across creeks on
+  logs and across rivers on plank bridges with piers (crossings over 100 blocks are not built).
+  Cairns mark trails above the treeline and stand on summits, old waymarkers stand at
+  trailheads, and summits and viewpoints keep a clearing. Everything is a pure function of the
+  seed and the land, planned region by region in caches bounded by bytes, so nothing depends
+  on generation order. Coarse sampling (`Overworld::height`, `site`, `surface_sample`, used by
+  distant terrain and the weather) leaves trails out; generated columns have them.
 - **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
   everywhere, more tangled with depth, opening to the surface as entrances in some places;
   cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
@@ -238,15 +260,26 @@ the weirdness field, so they appear in whole regions of some worlds and not in o
 variants take shares of their parent; ecotones sit on borders; fantastical biomes claim cells
 where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
-lines such as game trails) over the stones of its rock province, while snow, ice and bare rock
-follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
+lines such as game trails; shared sets in `surfaces.ron` break every soil slope up into
+coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
+rock follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
 birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
 and plants (`plants.ron`, with nutrition, alchemy and dye properties) are a shared pool:
 each says what climate, ground and habitat it likes, biomes select from the pool by tag or
 name, and the climate at each spot weighs the candidates, so a new plant with the right
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
-runs high. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
+runs high. Forests have structure: one field grades them from dense old-growth cores with the
+giant trees through ordinary woodland to scrubby edges and gaps, and a global field opens
+clearings with a soft edge. Ground decoration (`decorations.ron`, another shared pool biomes
+select by tag) is placed in a fixed order of stages: patches of dirt, gravel and moss; boulders
+and scattered stones of the rock province, mossy on their north side in damp woods; bushes of
+the trees growing there; ornaments each tree makes of its own blocks (needle and leaf litter,
+fallen leaves, fungi at the trunk's foot); fallen logs (some thick and hollow, with branches and
+the stump they broke from) and stumps, each laid only where the ground holds it; then flowers
+(sparse, a few kinds at a time, thicker at forest edges and along creeks), fungi and a carpet
+of grasses and ferns over most open ground; and last a snow blanket on every level open to the
+sky where snow lies, using the same snowy blocks as snow that falls in play. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
 colour-grading nudges, and ambient particle sets from `ambient.ron` such as pollen,
 fireflies, spores, dust, drifting snow and aether motes), taken from the climate unless a
 biome sets parts of it, and blended across borders.
@@ -261,8 +294,13 @@ crystal caves are rare, and two fantasy caves, glowroot hollows and the starlit 
 only where aether runs high. Each lines its floors and ceilings through its surface rules,
 replaces the rock around it with its own stones or strata, and grows decorations from floors
 and ceilings (`cave_decoration`): plants and mushrooms, stalagmites and stalactites, icicles,
-hanging roots and vines, crystals, some with glowing tips. Lava burns (4 health every half
-second). `Overworld::cave_biome_at` gives the cave biome at a block.
+hanging roots and glowing berries, crystals and lichen, which light the caves; hanging growth
+always hangs under rock. Frozen caves freeze their pools, and lush caves and glowroot hollows
+have pools that glow from below. Wherever daylight falls straight down a shaft to a cave
+floor, a small garden of turf, grass, ferns and flowers grows in the light. Buried in the rock
+are geodes (hollows lined with crystal, calcite and basalt, glowing clusters on their floors)
+and fossil skeletons, found by digging or where a cave cuts through them. Lava burns (4 health
+every half second). `Overworld::cave_biome_at` gives the cave biome at a block.
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
@@ -270,15 +308,31 @@ its biome, the biome next door and the distance to their border; `Overworld::bio
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
 `SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on, `X`, `Z`
 and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
-rivers and creeks in their own blues, and prints each biome's share of it. `river_sights` prints
+rivers and creeks in their own blues, trails over them (brown, with fords cyan, bridges red,
+and the places they join marked; `TRAILS=0` leaves them out), and prints each biome's share of
+it. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
+generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
+arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
+and routes that failed. `river_sights` prints
 `--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
 near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
+<<<<<<< HEAD
 labyrinths, ravines, sinkholes, entrances and the best view of each cave biome near spawn,
 with each cave biome's share of the caves there;
-`column_timing` reports generation time per column (all `-- --ignored --nocapture`).
+`decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest edge,
+a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
+`column_timing` reports generation time per column, and `river_speed` the cost of building a
+region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+=======
+labyrinths, ravines, sinkholes, entrances, geodes, bare fossils and the best view of each cave
+biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the
+`--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
+there; `column_timing` reports generation time per column, and `river_speed` the cost of
+building a region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+>>>>>>> main
 
 ## Weather
 
