@@ -44,6 +44,12 @@ pub enum Run {
     Teleport,
     /// Switches a player between survival and creative.
     GameMode,
+    /// Puts a block at a position.
+    SetBlock,
+    /// Fills a box with a block.
+    Fill,
+    /// Gives the player blocks.
+    Give,
     /// Names the biome the player stands in.
     Biome,
     /// Finds the nearest place of a kind, such as a biome.

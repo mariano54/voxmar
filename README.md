@@ -19,13 +19,14 @@ it rebuilds in seconds rather than minutes after an edit and runs nearly as fast
 
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
-frame rate), `--weather KIND` (show a kind of weather from `weather.ron`, such as `storm`,
-instead of the server's), `--command LINE` (run a console line once in game, such as
+frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
+`storm` or `rain:0.3`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
-time of day (a fraction of the day, 0 at sunrise).
+time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
+the view that far (0..1, cracks and chips showing; 1 breaks it just before the screenshot).
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
@@ -51,15 +52,22 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   moves it on, `/time speed 10` runs days ten times as fast, `/time freeze` stops the sun and
   `/time resume` lets it run normally. `/day` and `/night` are shortcuts. The time of day and its
   speed are saved with the world; the weather keeps its own pace.
-- `/weather` describes the weather where you are. `/weather KIND [SECONDS]` brings that kind
-  (`/weather list`) to the land within about a kilometre of you, for five minutes unless you
-  say; then the natural weather takes over again, slowly. `/weather natural` ends it at once.
+- `/weather` describes the weather where you are. `/weather KIND [INTENSITY] [SECONDS]` brings
+  that kind (`/weather list`) to the land within about a kilometre of you, as intense as you say
+  (`light`, `moderate`, `heavy`, `max` or 0 to 1; each kind has its usual intensity, and 1 is its
+  fiercest), for five minutes unless you say; then the natural weather takes over again, slowly.
+  `/weather natural` ends it at once.
 - `/wind` describes the wind; `/wind calm|breeze|strong|gale [FROM] [SECONDS]` brings that
   wind (from a compass point, `n` to `nw`, or degrees from north) on top of any forced
   weather.
 - `/tp X Y Z`, `/tp X Z` (onto the ground), `/tp PLAYER`, `/tp PLAYER X Y Z`, `/tp PLAYER PLAYER`;
   `~` means where the player is, so `/tp ~ ~10 ~` goes ten blocks up.
 - `/gamemode survival|creative [PLAYER]` switches a player's mode, which is kept with them.
+- `/setblock X Y Z BLOCK` puts a block somewhere (`~` again means where you are), and
+  `/fill X1 Y1 Z1 X2 Y2 Z2 BLOCK` fills a box (at most 32768 blocks and 128 across; `air`
+  empties it). Both load the columns they touch first. `/give BLOCK [COUNT]` hands you blocks
+  (64 unless you say), so `/give water` lets you pour water. Block names may leave out the
+  package (`water` for `base:water`).
 - `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
   (within 4000 blocks unless you say).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
@@ -69,7 +77,8 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
+Esc opens the settings menu: render distance, field of view, anti-aliasing, particles (All,
+Fewer or Off: the pieces that fly from broken blocks and the chips while mining), how far the hotbar
 sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
 mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
 (the view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins,
@@ -96,7 +105,9 @@ and when it stops (leaving to the title screen or quitting). Every file is writt
 temporary file and renamed, so a crash never leaves half a file. Saved columns are unloaded
 like any other. The dedicated server keeps its world in `--world DIR` (default `./world`),
 created with `--seed N` and, given `--no-flight`, in survival mode if it does not exist yet;
-type `stop` to save and quit.
+type `stop` to save and quit. Anything else typed there runs as a command, as an admin
+standing at spawn (`time set noon`, `weather storm 600`, `gamemode creative Ada`), and
+`say …` tells everyone.
 
 ### Textures
 
@@ -183,7 +194,7 @@ How the design primitives map to the code today:
   predict. Mining, placing, moving items and respawning are all actions.
 - **Process**: continuous server rules at a scheduling tier (`High` every tick, `Low` once a
   second): falling damage, regeneration, which heals slower where the temperature field
-  is freezing, and the weather (below).
+  is freezing, the weather (below), and footsteps, which wear paths (below).
 - **Trait**: typed data with declared replication and persistence (`core:health`,
   `core:inventory`, `core:position`); owner-replicated traits are sent when they change.
 - **Field**: coarse grids (16 blocks per cell unless a field chooses otherwise), generated
@@ -315,20 +326,27 @@ near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
-<<<<<<< HEAD
-labyrinths, ravines, sinkholes, entrances and the best view of each cave biome near spawn,
-with each cave biome's share of the caves there;
-`decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest edge,
-a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
-`column_timing` reports generation time per column, and `river_speed` the cost of building a
-region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
-=======
 labyrinths, ravines, sinkholes, entrances, geodes, bare fossils and the best view of each cave
 biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the
 `--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
-there; `column_timing` reports generation time per column, and `river_speed` the cost of
-building a region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
->>>>>>> main
+there; `decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest
+edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
+`column_timing` reports generation time per column, and `river_speed` the cost of building a
+region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+
+## Worn paths
+
+Feet wear the ground (`crates/server/src/wear.rs`, rules in `assets/content/base/wear.ron`).
+Each step onto a block wears it by a step, the blocks to either side by half and the one ahead
+by a quarter, so paths form about three blocks wide. Plants go first: tall grass is trampled to
+short grass, short grass, ferns and flowers to nothing. Then the ground passes through stages,
+grass to worn grass to packed earth to coarse dirt, each block drawing how many steps each stage
+takes from a hash of the seed and its position, so paths fray irregularly at their edges. The
+steps are kept sparsely per surface column in the column (`Column::wear`), so they save and
+load with it; only the changed blocks are sent, and only to players who have the column. Worn
+ground heals a stage every five days nobody walks on it (twice as fast for a lone patch),
+applied when a saved column loads, and grass coming back sometimes sprouts a tuft. Healing only
+undoes what feet did, so generated trails keep their tread.
 
 ## Weather
 
@@ -361,16 +379,21 @@ later gameplay agree.
 Effects come on top, as data in `assets/content/base/weather.ron`: each is a product of
 smooth conditions on the weather, the local climate and land (coast, valley, altitude,
 latitude, moisture, vegetation, aether) and the time of day, raises channels of the weather
-clients draw, and has a rarity. There are drizzle and downpours, thunderstorms, sleet, hail,
-blizzards, thundersnow, squalls, drifting snow, dust and sandstorms, mist after rain, dawn
-mist, valley fog, sea fog, frost, heat haze, rainbows (and rarely double ones), halos and sun
-dogs, the aurora near the poles (and rarely far from them), shooting stars, meteor showers,
-ball lightning, marsh lights, and where the land's aether is high glowing motes, the very rare
-aether storm and the legendary starfall. Rarity is drawn per stretch of land (1.5 km) and time
+clients draw, and has a rarity. There are drizzle and downpours, thunderstorms (and the
+towering supercells of hot, wet country, common there and rare elsewhere), heat lightning on
+humid summer nights, sleet, freezing rain, hail, blizzards, thundersnow, squalls, drifting
+snow, dust and sandstorms, mist after rain, dawn mist, mist off lakes on cool mornings, steam
+off hot ground after rain, valley fog, sea fog, frost, diamond dust in bitter cold, heat haze,
+rainbows (and rarely double ones), halos and sun dogs, the aurora near the poles (and rarely
+far from them), shooting stars, meteor showers, ball lightning, marsh lights, and where the
+land's aether is high glowing motes, the very rare aether storm and the legendary starfall.
+Light rain and cloud are everyday; heavy rain is uncommon outside the tropics; wind is calm
+to a light breeze most of the time, strong now and then, and a gale only in storms. Rarity is drawn per stretch of land (1.5 km) and time
 (the effect's typical length) from the seed, and each world features a few rare effects and
 suppresses a common one, so drizzle and mist are everyday sights and a meteor shower is an
 event. `cargo test -p voxmar_server effect_spread -- --ignored --nocapture` prints how often
-each shows across kinds of country.
+each shows across kinds of country, and `climate_spread` how often each kind of country is
+cloudy, rains or snows at each intensity and how hard the wind blows.
 
 Each player is sent `ServerMessage::Weather` for where they stand when it changes or every five
 seconds, with the effects showing, and the client eases towards it: cloud builds and clears
@@ -392,15 +415,45 @@ and change over in a second or two. When its time is up it fades over a minute, 
 released cells drift back to the natural weather over the next few minutes. `/wind` does the
 same for the wind alone, on top of any forced weather.
 
+## Water
+
+Water and lava flow as in Minecraft (`engine/src/fluid.rs`): a source spreads seven blocks over
+flat ground (lava three), heading for the nearest edge within four blocks (lava two), falls as
+far as it can, and dries up once nothing feeds it. Two sources make a third between them, so
+water taken out of a pool comes back, and water that fills a hollow it cannot run out of stays
+there as a pond. Lava cools: where a flow stops, its thin edge crusts over with basalt after
+twenty seconds, and a flow left without its source hardens where it lay. Water quenches it: a
+lava source turns to obsidian, flowing lava to basalt, and lava pouring into water turns the
+water to broken basalt (`cobbled_basalt`). Every state is its own block (`water_flow_1` to
+`water_flow_7`, `water_falling`; rivers also have pinned water that carries a current), so
+chunks, saves and the network treat them like any block. Flowing water and river currents
+carry swimmers along.
+
+The server's kernel is event-driven: a block change wakes only the fluid beside it, each cell
+moves on its fluid's tick (water every five ticks, lava every thirty, with a little hashed jitter
+so fronts do not move in lockstep), and water that has settled costs nothing. Generated water is
+already settled, so loading the world wakes nothing. A tick runs at most a budget of updates
+that adapts to what they cost and how busy the server is (aiming at 4 ms), and the rest wait;
+each player is sent one `Blocks` message per tick with the changes in columns they have. A lake
+48 blocks across pouring 60 blocks into a cave (`a_large_flood_is_fast`: 312 thousand updates
+and 154 thousand changed cells over 413 ticks) takes about 0.1 s of work in all, 0.3 µs per
+update, and never more than 2 ms in one tick.
+
 ## Sound
 
 Music is in `assets/music` (generated offline with `tools/generate_music.py`) and plays now and
-then with long quiet gaps; `M` toggles it. Sound effects are synthesized at startup from each
-block's material (`sound: Wood` in its definition), so new blocks sound right without new audio:
-short, soft and warm, with several variants per cue and a small random pitch change so nothing
-repeats exactly. Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain
-is heavy and quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes
-every cue to `target/sfx_preview.wav`.
+then with long quiet gaps; `M` toggles it. Starting a game fades the menu's music out, so a world
+opens in quiet; returning to the menus brings it back.
+
+Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
+in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps
+while mining and breaking come from the player's own Minecraft install when it has them (the
+official launcher's or Prism Launcher's asset store; nothing from Minecraft is shipped), with
+Minecraft's own volumes and pitches. Otherwise they are synthesized at startup: short, soft and
+warm, with several variants per cue and a small random pitch change so nothing repeats exactly.
+Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain is heavy and
+quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
+synthesized cue to `target/sfx_preview.wav`.
 
 Ambience is synthesized the same way and follows where the player is. About once a second a
 flood fill from the eye (on a worker, capped at 16,000 cells) measures how much air is around,

@@ -17,7 +17,8 @@
 // canopy (share of that under leaves), reverb (0 outdoors .. 1 large cave), sun (-1
 // midnight .. 1 noon), temperature (°C), moisture, continentalness (-1 ocean, 0 coast, 1
 // inland), river, forest, height (above sea), relief (above the land around), depth
-// (below the ground surface here), rain, snow, storm (0..1), wind (blocks/s), cover,
+// (below the ground surface here), rain, snow, storm (0..1), wind (blocks/s, gusts
+// included), gusts (how gusty, 0..1), hail, sleet, dust (0..1, as heard here), cover,
 // underwater, and the groups below.
 (
     groups: [
@@ -45,6 +46,26 @@
             name: "storm_wind", sound: Gale, volume: 0.32,
             when: {"storm": (min: 0.6, fade: 0.5), "sky": (min: 0.3, fade: 0.4)},
         ),
+        // Ice falling: hail rattling on everything, sleet's fine patter.
+        (
+            name: "hail", sound: Hail, volume: 0.42, fade: 2,
+            when: {"hail": (min: 0.25, fade: 0.25)},
+        ),
+        (
+            name: "sleet", sound: Sleet, volume: 0.3, fade: 3,
+            when: {"sleet": (min: 0.2, fade: 0.2)},
+        ),
+        // Sand and dust driven by a strong wind.
+        (
+            name: "sandstorm", sound: Sandstorm, volume: 0.45, fade: 4,
+            when: {"dust": (min: 0.4, fade: 0.35)},
+            duck: {"rain": 0.5},
+        ),
+        // Snow driven hard: a blizzard's howl.
+        (
+            name: "blizzard", sound: Gale, volume: 0.36, fade: 5,
+            when: {"snow": (min: 0.4, fade: 0.3), "wind": (min: 8, fade: 6), "sky": (min: 0.3, fade: 0.4)},
+        ),
         // Leaves in the breeze, under and among trees.
         (
             name: "leaves", sound: Rustle, volume: 0.24,
@@ -57,14 +78,14 @@
             name: "meadow", sound: Meadow, volume: 0.16,
             when: {"grass": (min: 0.4, fade: 0.4), "sun": (min: 0.15, fade: 0.15), "temperature": (min: 10, fade: 6), "sky": (min: 0.7, fade: 0.3), "leaves": (max: 0.15, fade: 0.25)},
             not_biome: ["desert", "frozen"],
-            duck: {"rain": 0.9, "high_wind": 0.6},
+            duck: {"rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
         ),
         // Crickets on warm nights wherever there is grass or trees.
         (
             name: "crickets", sound: Crickets, volume: 0.12, fade: 8,
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3), "sky": (min: 0.4, fade: 0.4)},
             not_biome: ["desert", "frozen"],
-            duck: {"rain": 0.9, "high_wind": 0.6},
+            duck: {"rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
         ),
         // Running water: rivers and streams, not lakes or the sea.
         (
@@ -172,6 +193,13 @@
             name: "gust", sound: Gust, volume: 0.38, at: Around(distance: (6, 16), height: (2, 8)), per_minute: 4, cooldown: 6,
             pitch: (0.85, 1.15), reach: 16,
             when: {"relief": (min: 20, fade: 20), "sky": (min: 0.6, fade: 0.3), "wind": (min: 6, fade: 10)},
+        ),
+        // Gusts anywhere out in the open on a gusty day, as often as the wind gusts.
+        (
+            name: "gusty", sound: Gust, volume: 0.3, at: Around(distance: (8, 20), height: (1, 6)), per_minute: 6, cooldown: 4,
+            pitch: (0.8, 1.2), reach: 18,
+            when: {"gusts": (min: 0.45, fade: 0.25), "wind": (min: 5, fade: 4), "sky": (min: 0.5, fade: 0.3)},
+            duck: {"high_wind": 0.5, "storm_wind": 0.5},
         ),
         // Trees creaking in strong wind.
         (

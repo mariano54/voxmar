@@ -14,6 +14,7 @@ pub mod command;
 pub mod content;
 pub mod coords;
 pub mod field;
+pub mod fluid;
 pub mod inventory;
 pub mod light;
 pub mod mesh;

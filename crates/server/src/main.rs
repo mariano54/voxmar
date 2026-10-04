@@ -3,7 +3,9 @@
 //!
 //! The world lives in `DIR` (default `./world`) and is created there if it does not exist
 //! yet, with `--seed` and, given `--no-flight`, in survival mode; an existing world keeps
-//! its own seed and mode. It is saved every 30 seconds and when `stop` is typed.
+//! its own seed and mode. It is saved every 30 seconds and when `stop` is typed. Anything
+//! else typed is run as a command, as an admin standing at spawn (`time set noon`,
+//! `weather storm`, `tp Ada 0 100 0`), or said to everyone with `say …`.
 
 use std::net::SocketAddr;
 
@@ -34,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry = load_content(&assets_dir())?;
     let server = spawn(config, registry)?;
     let addr = tcp::listen(bind, server.connections())?;
-    tracing::info!("listening on {addr}; type `stop` to save and quit");
+    tracing::info!("listening on {addr}; type a command (`help` lists them), `say …` or `stop` to save and quit");
     for line in std::io::stdin().lines() {
         match line?.trim() {
             "stop" => {
@@ -43,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             "" => {}
-            other => tracing::warn!("unknown command `{other}`; type `stop` to save and quit"),
+            line => server.console(line),
         }
     }
     // Without a console, run until stopped from outside.
