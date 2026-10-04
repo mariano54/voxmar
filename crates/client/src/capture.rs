@@ -10,7 +10,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::camera::RenderTarget;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 
 use voxmar_protocol::TICKS_PER_DAY;
 
@@ -33,6 +33,9 @@ pub struct CapturePlugin {
     pub wait: f32,
     /// Fixed time of day, as a fraction of the day from sunrise.
     pub time: Option<f32>,
+    /// Mine the block in the middle of the view this far (0..1); 1 breaks it just before
+    /// the screenshot.
+    pub mine: Option<f32>,
     /// Show the settings menu.
     pub menu: bool,
 }
@@ -45,14 +48,21 @@ impl Plugin for CapturePlugin {
             flight: self.flight,
             wait: self.wait,
             time: self.time,
+            mine: self.mine,
+            broken_at: None,
             target: Handle::default(),
             settled_at: None,
             flight_started: None,
             taken_at: None,
+            saved: false,
             frame_times: Vec::new(),
         })
         .add_systems(PostStartup, render_offscreen)
         .add_systems(Update, (target_ui, capture))
+        .add_systems(
+            Update,
+            mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
+        )
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time).before(TransformSystems::Propagate),
@@ -67,10 +77,15 @@ struct Capture {
     flight: Option<f32>,
     wait: f32,
     time: Option<f32>,
+    mine: Option<f32>,
+    /// When `--mine 1` broke its block, which the screenshot follows by a moment.
+    broken_at: Option<f32>,
     target: Handle<Image>,
     settled_at: Option<f32>,
     flight_started: Option<f32>,
     taken_at: Option<f32>,
+    /// Whether the screenshot has been written, which can take a while on a busy machine.
+    saved: bool,
     frame_times: Vec<f32>,
 }
 
@@ -108,6 +123,49 @@ fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&
     transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
 }
 
+/// Seconds between a `--mine 1` break and the screenshot.
+const BROKEN_FOR: f32 = 0.3;
+
+/// Mines the solid block the camera looks at (through plants), in place of a held mouse
+/// button, once the world has settled; a full break happens a moment before the screenshot
+/// so its pieces are in the air, and takes a plant on top with it.
+fn mine(
+    time: Res<Time>,
+    mut state: ResMut<Capture>,
+    mut world: ResMut<ClientWorld>,
+    mut target: ResMut<crate::interact::Target>,
+    mut broken: MessageWriter<crate::breaking::BlockBroken>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
+) {
+    let (Some(progress), Some(settled), Ok(camera)) = (state.mine, state.settled_at, camera.single()) else { return };
+    let since = time.elapsed_secs() - settled;
+    let reach = voxmar_engine::physics::player::REACH * 2.0;
+    let hit = voxmar_engine::physics::raycast(camera.translation(), camera.forward().as_vec3(), reach, |p| {
+        world.block(p).is_some_and(|b| world.registry.info(b).solid)
+    });
+    target.hit = hit;
+    let Some(hit) = hit.filter(|_| state.broken_at.is_none() && since > 1.0) else {
+        target.breaking = None;
+        return;
+    };
+    let full = 4.0 + state.wait - BROKEN_FOR;
+    if progress < 1.0 {
+        target.breaking = Some((hit.block, progress));
+    } else if since > full {
+        state.broken_at = Some(time.elapsed_secs());
+        target.breaking = None;
+        for pos in [hit.block, hit.block + IVec3::Y] {
+            let Some(block) = world.block(pos) else { continue };
+            if pos == hit.block || world.registry.info(block).needs_support {
+                broken.write(crate::breaking::BlockBroken { pos, block });
+                world.set_block(pos, voxmar_engine::block::BlockId::AIR);
+            }
+        }
+    } else {
+        target.breaking = Some((hit.block, (since / full).min(0.99)));
+    }
+}
+
 fn hold_time(state: Res<Capture>, mut cycle: ResMut<DayCycle>) {
     if let Some(time) = state.time {
         cycle.ticks = time as f64 * TICKS_PER_DAY as f64;
@@ -139,7 +197,7 @@ fn capture(
 ) {
     let now = time.elapsed_secs();
     if let Some(taken) = state.taken_at {
-        if now - taken > 1.0 {
+        if state.saved || now - taken > 30.0 {
             exit.write(AppExit::Success);
         }
         return;
@@ -158,13 +216,15 @@ fn capture(
         || world.voxels.len() < 9
         || lod_tiles < lod_wanted;
     let flying = state.flight_started.is_some();
-    if busy && !flying && now < 60.0 {
+    // A mined block's pieces are caught in the air, while its column remeshes.
+    let broken = state.broken_at.map(|at| now - at);
+    if busy && !flying && broken.is_none() && now < 60.0 {
         state.settled_at = None;
         return;
     }
     // Measure a few seconds of steady-state rendering before capturing.
     let settled = *state.settled_at.get_or_insert(now);
-    if now - settled < 4.0 + state.wait {
+    if broken.map_or(now - settled < 4.0 + state.wait, |since| since < BROKEN_FOR) {
         return;
     }
     if let Some(duration) = state.flight
@@ -201,6 +261,9 @@ fn capture(
     );
     let shown = &weather.current;
     info!("weather: {}: {}; effects: {}", shown.describe(), shown.summary(), weather.effects.join(", "));
-    commands.spawn(Screenshot::image(state.target.clone())).observe(save_to_disk(state.path.clone()));
+    commands
+        .spawn(Screenshot::image(state.target.clone()))
+        .observe(save_to_disk(state.path.clone()))
+        .observe(|_: On<ScreenshotCaptured>, mut state: ResMut<Capture>| state.saved = true);
     state.taken_at = Some(now);
 }

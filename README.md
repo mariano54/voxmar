@@ -22,10 +22,11 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND` (show a kind of weather from `weather.ron`, such as `storm`,
 instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
-time of day (a fraction of the day, 0 at sunrise).
+time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
+the view that far (0..1, cracks and chips showing; 1 breaks it just before the screenshot).
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
@@ -69,7 +70,8 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
+Esc opens the settings menu: render distance, field of view, anti-aliasing, particles (All,
+Fewer or Off: the pieces that fly from broken blocks and the chips while mining), how far the hotbar
 sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
 mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
 (the view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins,

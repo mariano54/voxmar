@@ -962,7 +962,7 @@ fn pass_setup(pass: TerrainPass) -> (&'static [&'static str], Option<Face>) {
 
 /// The mesh pipeline's descriptor for a view, with our own shader, vertex buffer and bind
 /// group 2 in place of a mesh's: the view setup, shader defs and targets stay Bevy's.
-fn mesh_like(
+pub(super) fn mesh_like(
     mesh_pipeline: &MeshPipeline,
     layouts: &mut MeshVertexBufferLayouts,
     key: MeshPipelineKey,
