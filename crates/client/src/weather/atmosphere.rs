@@ -2,8 +2,9 @@
 //! the land (`Overworld::atmosphere_at`, which follows the climate and lets biomes set
 //! their own), eased as the player walks so borders pass gradually, then combined with
 //! the weather, the wind and the time of day. Fog, dust and overcast skies thicken the
-//! haze and drain colour; rain grounds pollen and fireflies; wind stills hovering spores
-//! and blows dust along; fireflies come out only on some nights, and only at night.
+//! haze and drain colour; rain grounds pollen and fireflies; wind stills hovering spores,
+//! and dust is only blown about by a real wind; daytime sets (pollen) come out only on
+//! some days and fireflies only on some nights.
 //!
 //! `ClientAtmosphere` is what the renderer reads: the colour parts are applied within the
 //! active shader pack (see docs/rendering.md), and the particle sets are drawn by the
@@ -36,8 +37,10 @@ impl Plugin for AtmospherePlugin {
 /// Seconds between samples of the land's air, and to ease most of the way to each.
 const SAMPLE_EVERY: f32 = 0.5;
 const EASE: f32 = 4.0;
-/// Share of nights each night-time particle set (fireflies) comes out on.
+/// Share of nights each night-time particle set (fireflies) comes out on, and of days
+/// each daytime one (pollen, dust) does.
 const NIGHTS_OUT: f32 = 0.6;
+const DAYS_OUT: f32 = 0.35;
 
 /// The air around the player, for the renderer.
 #[derive(Resource)]
@@ -195,6 +198,7 @@ fn combine(mut air: ResMut<ClientAtmosphere>, weather: Res<ClientWeather>, cycle
     let shown = &weather.current;
     let day = (cycle.ticks / TICKS_PER_DAY as f64).rem_euclid(1.0) as f32;
     let night_index = (cycle.ticks / TICKS_PER_DAY as f64 + 0.25).floor() as i64;
+    let day_index = (cycle.ticks / TICKS_PER_DAY as f64 - 0.25).floor() as i64;
     let land = air.land.clone();
 
     // Fog, dust and humid air thicken the haze and tint it; overcast and rain drain colour.
@@ -221,15 +225,21 @@ fn combine(mut air: ResMut<ClientAtmosphere>, weather: Res<ClientWeather>, cycle
                 WeatherWhen::Dry => 1.0 - falling,
                 WeatherWhen::Wet => falling,
             };
-            // Hovering things settle out of a strong wind; drifting ones thin in it.
+            // Hovering things settle out of a strong wind; drifting ones thin in it; dust
+            // lies still until the wind picks it up.
             let calm = match set.motion {
                 Motion::Hover => 1.0 - smoothstep(4.0, 9.0, wind),
                 Motion::Drift => 1.0 - 0.6 * smoothstep(6.0, 14.0, wind),
+                Motion::Blow => smoothstep(3.5, 8.0, wind),
                 _ => 1.0,
             };
-            // Night creatures come out only on some nights.
-            let tonight = if set.time == DayTime::Night { out_tonight(seed, night_index, &set.name) } else { 1.0 };
-            let density = density * when * weather * calm * tonight;
+            // Night creatures come out only on some nights, pollen and dust on some days.
+            let out = match set.time {
+                DayTime::Night => out_on(seed, night_index, &set.name, NIGHTS_OUT),
+                DayTime::Day => out_on(seed, day_index, &set.name, DAYS_OUT),
+                _ => 1.0,
+            };
+            let density = density * when * weather * calm * out;
             (density > 0.005).then(|| AmbientParticles {
                 name: set.name.clone(),
                 density,
@@ -257,12 +267,12 @@ fn time_of_day(time: DayTime, day: f32) -> f32 {
     }
 }
 
-/// Whether a night-time set comes out on the night numbered `night`: on `NIGHTS_OUT` of
-/// nights, the same for every player of the world.
-fn out_tonight(seed: u64, night: i64, name: &str) -> f32 {
+/// Whether a set comes out on the day or night numbered `period`: on `share` of them, the
+/// same for every player of the world.
+fn out_on(seed: u64, period: i64, name: &str, share: f32) -> f32 {
     let name = name.bytes().fold(0u32, |h, b| pcg(h ^ b as u32));
-    let h = pcg(pcg((seed ^ (seed >> 32)) as u32 ^ name) ^ night as u32);
-    if ((h >> 8) as f32 / 16_777_216.0) < NIGHTS_OUT { 1.0 } else { 0.0 }
+    let h = pcg(pcg((seed ^ (seed >> 32)) as u32 ^ name) ^ period as u32);
+    if ((h >> 8) as f32 / 16_777_216.0) < share { 1.0 } else { 0.0 }
 }
 
 /// Linear RGB from sRGB components.
@@ -282,10 +292,12 @@ mod tests {
 
     #[test]
     fn fireflies_keep_to_some_nights() {
-        let nights: Vec<f32> = (0..400).map(|n| out_tonight(9, n, "base:fireflies")).collect();
+        let nights: Vec<f32> = (0..400).map(|n| out_on(9, n, "base:fireflies", NIGHTS_OUT)).collect();
         let out = nights.iter().sum::<f32>() / nights.len() as f32;
         assert!((0.5..0.7).contains(&out), "{out}");
-        assert_eq!(out_tonight(9, 12, "base:fireflies"), out_tonight(9, 12, "base:fireflies"));
+        assert_eq!(out_on(9, 12, "base:fireflies", NIGHTS_OUT), out_on(9, 12, "base:fireflies", NIGHTS_OUT));
+        let days = (0..400).map(|n| out_on(9, n, "base:pollen", DAYS_OUT)).sum::<f32>() / 400.0;
+        assert!((0.27..0.43).contains(&days), "{days}");
         assert!(time_of_day(DayTime::Night, 0.75) == 1.0 && time_of_day(DayTime::Night, 0.25) == 0.0);
         assert!(time_of_day(DayTime::Day, 0.25) == 1.0 && time_of_day(DayTime::Twilight, 0.0) > 0.9);
     }
