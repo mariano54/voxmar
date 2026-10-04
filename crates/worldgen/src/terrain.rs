@@ -480,7 +480,7 @@ impl Terrain {
 
 impl Overworld {
     /// The arches and leaning spires that reach the column whose corner is `corner`.
-    fn pieces(&self, corner: IVec2) -> Vec<Piece> {
+    pub(crate) fn pieces(&self, corner: IVec2) -> Vec<Piece> {
         let anchors = Anchors {
             regional: &|x, z| self.geology.regional(x, z),
             ground: &|x, z| self.height(x, z) as f32,

@@ -313,7 +313,7 @@ impl Geology {
         let mountain = across * strength * inland;
         let mut rise = 0.0;
         let mut peak = 0.0;
-        if mountain > 0.0 {
+        if mountain > 0.005 {
             let ridge = self.ridges.get_noise_2d(wx, wz) * 0.5 + 0.5;
             let massif = mountain * (0.35 + 0.65 * ridge);
             peak = mountain * ridge * ridge;
@@ -379,7 +379,7 @@ impl Geology {
     pub fn regional_point(&self, point: IVec2) -> Regional {
         let key = point.div_euclid(IVec2::splat(TILE));
         let local = point - key * TILE;
-        self.tile(key)[(local.y * (TILE + 1) + local.x) as usize]
+        self.with_tile(key, |tile| tile[(local.y * (TILE + 1) + local.x) as usize])
     }
 
     /// The regional climate at (x, z), bilinear between the lattice points around it: the
@@ -388,43 +388,44 @@ impl Geology {
         let cell = IVec2::new(x, z).div_euclid(IVec2::splat(climate::CELL));
         let key = cell.div_euclid(IVec2::splat(TILE));
         let local = cell - key * TILE;
-        let tile = self.tile(key);
-        let at = |i: i32, j: i32| tile[((local.y + j) * (TILE + 1) + local.x + i) as usize];
         let f = |v: i32| v.rem_euclid(climate::CELL) as f32 / climate::CELL as f32;
-        at(0, 0).lerp(at(1, 0), f(x)).lerp(at(0, 1).lerp(at(1, 1), f(x)), f(z))
+        self.with_tile(key, |tile| {
+            let at = |i: i32, j: i32| tile[((local.y + j) * (TILE + 1) + local.x + i) as usize];
+            at(0, 0).lerp(at(1, 0), f(x)).lerp(at(0, 1).lerp(at(1, 1), f(x)), f(z))
+        })
     }
 
-    fn tile(&self, key: IVec2) -> Arc<[Regional]> {
+    /// Calls `f` with a tile of the regional climate lattice. The tiles this thread used
+    /// last are kept at hand, which spares the shared cache's lock and the shared count of
+    /// the tile's owners on most calls.
+    fn with_tile<R>(&self, key: IVec2, f: impl FnOnce(&[Regional]) -> R) -> R {
         thread_local! {
-            /// The tiles this thread used last, which spares the shared cache's lock.
             static RECENT: RefCell<Vec<(u64, IVec2, Arc<[Regional]>)>> = const { RefCell::new(Vec::new()) };
         }
-        let found = RECENT.with(|recent| {
-            let mut recent = recent.borrow_mut();
-            let i = recent.iter().position(|(id, k, _)| *id == self.id && *k == key)?;
-            let entry = recent.remove(i);
-            let tile = entry.2.clone();
-            recent.insert(0, entry);
-            Some(tile)
-        });
-        if let Some(tile) = found {
-            return tile;
-        }
-        let tile = self.lattice.get(key, || {
-            let side = TILE + 1;
-            (0..side * side)
-                .map(|i| {
-                    let p = (key * TILE + IVec2::new(i % side, i / side)) * climate::CELL;
-                    self.climate.regional(self, p.x as f32, p.y as f32)
-                })
-                .collect()
-        });
         RECENT.with(|recent| {
             let mut recent = recent.borrow_mut();
-            recent.insert(0, (self.id, key, tile.clone()));
-            recent.truncate(6);
-        });
-        tile
+            match recent.iter().position(|(id, k, _)| *id == self.id && *k == key) {
+                Some(0) => {}
+                Some(i) => {
+                    let entry = recent.remove(i);
+                    recent.insert(0, entry);
+                }
+                None => {
+                    let tile = self.lattice.get(key, || {
+                        let side = TILE + 1;
+                        (0..side * side)
+                            .map(|i| {
+                                let p = (key * TILE + IVec2::new(i % side, i / side)) * climate::CELL;
+                                self.climate.regional(self, p.x as f32, p.y as f32)
+                            })
+                            .collect()
+                    });
+                    recent.insert(0, (self.id, key, tile));
+                    recent.truncate(6);
+                }
+            }
+            f(&recent[0].2)
+        })
     }
 }
 
@@ -474,6 +475,41 @@ fn probit(p: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `cargo test --release -p voxmar_worldgen land_timing -- --ignored --nocapture` prints
+    /// the time the relief, the land with its shapes, and the regional climate take per
+    /// position, on one thread.
+    #[test]
+    #[ignore]
+    fn land_timing() {
+        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
+        let geology = &world.geology;
+        let points: Vec<(i32, i32)> = (0..200_000).map(|i| (i % 400 * 3 - 600, i / 400 * 3 - 750)).collect();
+        // Warm the climate lattice first.
+        for &(x, z) in points.iter().step_by(97) {
+            std::hint::black_box(geology.land(x, z));
+        }
+        let time = |name: &str, f: &dyn Fn(i32, i32) -> f32| {
+            let start = std::time::Instant::now();
+            let mut sum = 0.0;
+            for &(x, z) in &points {
+                sum += f(x, z);
+            }
+            std::hint::black_box(sum);
+            println!("{name:10} {:.0} ns", start.elapsed().as_nanos() as f64 / points.len() as f64);
+        };
+        time("relief", &|x, z| geology.relief(x as f32, z as f32).elevation);
+        time("regional", &|x, z| geology.regional(x, z).rainfall);
+        time("land", &|x, z| geology.land(x, z).height);
+        let start = std::time::Instant::now();
+        let mut pieces = 0;
+        for i in 0..400 {
+            let corner = voxmar_engine::glam::IVec2::new(i % 20 * 32 - 320, i / 20 * 32 - 320);
+            pieces += world.pieces(corner).len();
+        }
+        println!("pieces     {:.1} µs per column ({pieces} pieces)", start.elapsed().as_secs_f64() * 1e6 / 400.0);
+    }
 
     /// `cargo test -p voxmar_worldgen noise_spreads -- --ignored --nocapture` prints how the
     /// relief noises are spread, for setting the constants above.

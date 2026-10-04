@@ -1814,6 +1814,11 @@ mod tests {
                 let Some(id) = land.form.shape else { continue };
                 shaped[id.0 as usize] += 1;
                 let def = content.shapes.iter().find(|s| s.name == shapes.name(id)).unwrap();
+                // Those that stand alone weigh the climate at their centre, and their flanks
+                // may reach past it.
+                if matches!(def.kind, content::ShapeKind::Volcanoes { .. } | content::ShapeKind::Mountain { .. }) {
+                    continue;
+                }
                 let regional = world.geology.regional(x, z);
                 let fields = [regional.temperature(), regional.moisture(), regional.continentalness, regional.erosion];
                 let inside = def.climate.is_empty()

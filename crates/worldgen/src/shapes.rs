@@ -423,8 +423,9 @@ impl Shapes {
                 (0.0, weight * height * spike, weight * spike)
             }
             ShapeKind::Volcanoes { height, radius } => {
+                // A clean cone: the hills under it are smoothed away towards its summit.
                 let (rise, summit) = self.volcano(shape, x, z, height, radius, ground);
-                (rise, 0.0, summit)
+                (rise - ground.hills * smoothstep(0.0, 0.5, summit), 0.0, summit)
             }
             ShapeKind::Mountain { height, radius } => {
                 let (rise, summit) = self.mountain(shape, x, z, height, radius, ground);
