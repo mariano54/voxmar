@@ -37,7 +37,7 @@
 use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
+use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS, ColumnPos};
 use voxmar_engine::world::Column;
 use voxmar_engine::field::Field;
@@ -145,7 +145,13 @@ impl Land for OverworldLand {
             vegetation: site.vegetation,
             forest: site.forest,
             aether: site.aether,
-            dust_color: if underwater { LocalWeather::NONE.dust_color } else { self.blocks.def(ground).color },
+            // Dust is the ground's own colour where it is bare (sand, red sand, snow), and dry
+            // earth's where plants cover it.
+            dust_color: if underwater || self.blocks.def(ground).tint != Tint::None {
+                LocalWeather::NONE.dust_color
+            } else {
+                self.blocks.def(ground).color
+            },
         }
     }
 
