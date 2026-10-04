@@ -689,9 +689,12 @@ and the volumetric pass.
 **The volumetric pass** (volumetric.wgsl, render/volumetric.rs) draws the air in front of
 the view over the opaque scene and the water, before Bevy's transparent pass, so rain and
 snow fall in front of it. Each view ray is marched at half resolution (all of this is
-soft) for the light the air adds and how much of the scene shows through, then blended
-over the image at full resolution from the nearby rays whose surfaces lie about as far
-away as the pixel's own, so nothing bleeds across a trunk or a ridge. It draws:
+soft) for the light the air adds and how much of the scene shows through, softened among
+its neighbours that ended about as far away (a 3×3 tent at half resolution), then blended
+over the image at full resolution from the four nearest rays whose surfaces lie about as
+far away as the pixel's own, so nothing bleeds across a trunk or a ridge. Softening
+before the upsample costs 0.31 ms at 2268×1473 where the single 4×4 depth-aware upsample
+it replaced cost 0.52, for the same blur. It draws:
 
 - *The low cloud*, a layer in the world (Mariano's playtest of 8e6c104: clouds were a
   picture on the sky, and on a mountain they should pass you). Its base lies 170 blocks
