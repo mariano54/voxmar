@@ -1127,8 +1127,17 @@ mod tests {
         if let Ok(names) = std::env::var("BIOMES") {
             for name in names.split(',') {
                 let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
-                // The first place found, then the point deepest inside the biome around it.
-                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 12000).and_then(|at| {
+                // The point deepest inside the biome within a few kilometres of spawn, else
+                // the deepest around the first place found further out.
+                let centre = IVec2::new(spawn.x, spawn.z);
+                let near = world.sampler(centre - 3000, centre + 3000);
+                let found = (0..188 * 188)
+                    .map(|i| centre + IVec2::new(i % 188 * 32 - 3000, i / 188 * 32 - 3000))
+                    .map(|p| (p, near.site(p.x, p.y)))
+                    .filter(|(_, site)| site.home == id && dry(site) && site.slope <= 2)
+                    .max_by(|a, b| a.1.edge.total_cmp(&b.1.edge))
+                    .map(|(p, _)| p);
+                let found = found.or_else(|| world.locate_biome(name, centre, 12000)).and_then(|at| {
                     let sampler = world.sampler(at - 256, at + 256);
                     (0..64 * 64)
                         .map(|i| at + IVec2::new(i % 64 * 8 - 256, i / 64 * 8 - 256))
