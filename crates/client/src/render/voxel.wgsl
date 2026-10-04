@@ -36,6 +36,9 @@ const FACE_PLANT: u32 = 6u;
 const FLAG_INNER: u32 = 1u << 23u;
 const FLAG_BACKED: u32 = 1u << 24u;
 const PLANT_STACK_SHIFT: u32 = 25u;
+const WATER_DEPTH_SHIFT: u32 = 25u;
+// How fast light fades through water, per block.
+const WATER_EXTINCTION: f32 = 0.32;
 const FLAG_FRINGE: u32 = 1u << 27u;
 // Leaf fringes shrink back into their block between these distances, in blocks (the
 // renderer stops drawing them a little beyond).
@@ -235,6 +238,8 @@ struct VertexOutput {
     @location(3) @interpolate(flat) surface: u32,
     @location(4) @interpolate(flat) face: u32,
     @location(5) @interpolate(flat) covered: u32,
+    // Depth of water below a water surface, in blocks.
+    @location(6) water_depth: f32,
 };
 
 @vertex
@@ -257,6 +262,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
+    out.water_depth = f32((w0 >> WATER_DEPTH_SHIFT) & 7u);
     return out;
 }
 
@@ -326,8 +332,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
             let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, to_eye), 0.0), 5.0);
             let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 220.0) * open
                 * sun_shadow(in.world_position, n, in.clip_position.xy);
+            // Shallows show their bed: light through the water fades with depth, and what
+            // remains takes the water's colour.
+            let through = exp(-in.water_depth * WATER_EXTINCTION);
+            color = mix(color, color * 0.55, 1.0 - through);
             color = mix(color, sky * open + color * (1.0 - open), fresnel) + sun_color() * glint * 4.0;
-            alpha = mix(0.72, 1.0, fresnel);
+            alpha = mix(mix(0.92, 0.18, through), 1.0, fresnel);
         }
     } else {
         // Solid see-through blocks (ice) show only their outside, like any solid block, so

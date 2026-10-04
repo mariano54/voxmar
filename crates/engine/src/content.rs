@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::action::ActionRegistry;
-use crate::block::{BlockDef, BlockRegistry, RegistryError};
+use crate::block::{BlockRegistry, RegistryError};
 
 #[derive(Clone)]
 pub struct Content {
@@ -43,7 +43,7 @@ impl Content {
             .collect();
         packages.sort();
 
-        let mut blocks: Vec<BlockDef> = Vec::new();
+        let mut blocks = Vec::new();
         let mut actions = ActionRegistry::default();
         let mut files = Vec::new();
         for package in &packages {
@@ -59,12 +59,13 @@ impl Content {
                 let file = path.join(&name);
                 let source = std::fs::read_to_string(&file).map_err(|e| read_error(&file, e))?;
                 match name.as_str() {
-                    "blocks.ron" => blocks.extend(BlockRegistry::parse(package, &source)?),
+                    "blocks.ron" => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
                     "actions.ron" => actions.extend(package, &source)?,
                     _ => files.push(ContentFile { package: package.clone(), name, source }),
                 }
             }
         }
+        let blocks = BlockRegistry::expand(blocks)?;
         Ok(Self { blocks: Arc::new(BlockRegistry::new(blocks)?), actions: Arc::new(actions), files: Arc::new(files) })
     }
 

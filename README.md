@@ -106,7 +106,13 @@ texel, optionally beside the same name from another pack (`--pack DIR` picks the
 | `texgen` | texture recipes and text sprites rendered to pixel art, and the `texgen` review tool |
 
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
-same registry a mod will use. Client and server compare a content fingerprint on join.
+same registry a mod will use. Client and server compare a content fingerprint on join. Templates
+make whole families from one line (a wood's log, stripped log, wood, planks, leaves and sapling;
+a rock's raw, cobbled, polished and brick blocks), and templates are shared across packages, so
+a mod's new wood is one line too. A plant can list variants, other looks of itself that become
+their own blocks and drop the plant, as many as their size. Blocks carry tags (`flower`,
+`wetland`, `edible`, `alchemy:calming`, `dye:blue`; the vocabulary is at the top of
+`blocks.ron`) and a rarity, so biomes, food and alchemy select them without naming them.
 
 How the design primitives map to the code today:
 
