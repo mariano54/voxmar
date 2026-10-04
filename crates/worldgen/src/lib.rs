@@ -4,13 +4,16 @@
 //! position: world dials (global parameters such as mean temperature, ocean fraction and
 //! wind), geology (continents, mountains, rivers and lakes), climate (temperature and
 //! precipitation as continuous fields), ecology (what grows where), resources (ore veins)
-//! and terrain (blocks, caves, trees, plants). There are no biomes: every surface
-//! decision follows smoothly from the parameters at that spot, which `Overworld::site`
-//! exposes for gameplay. Purity means any column can be generated alone, in any order,
-//! on any thread, and features that cross column borders (trees, veins) come out
-//! identical on both sides.
+//! and terrain (blocks, caves, trees, plants). Biomes are data (`biomes.ron` in content
+//! packages) placed over the continuous climate: they decide surface materials and what
+//! grows, while temperature, moisture and the rest stay continuous underneath, and
+//! `Overworld::site` exposes all of it for gameplay. Purity means any column can be
+//! generated alone, in any order, on any thread, and features that cross column borders
+//! (trees, veins) come out identical on both sides.
 
+mod biome;
 mod climate;
+mod content;
 mod dials;
 mod ecology;
 mod features;
@@ -18,6 +21,8 @@ mod geology;
 mod rarity;
 mod resources;
 mod rng;
+mod rocks;
+mod surface;
 mod terrain;
 mod trees;
 
@@ -28,13 +33,21 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
+pub use biome::{Biome, BiomeId, Biomes};
 pub use climate::LAPSE_RATE;
+pub use content::{ContentError, WorldContent};
 pub use dials::WorldDials;
 pub use rarity::{Featured, Rarity};
+pub use rocks::ProvinceId;
 
-use crate::climate::{Climate, ClimateGrid};
+use fastnoise_lite::{FastNoiseLite, FractalType};
+
+use crate::biome::{GRADIENT_STEP, Pick, Point};
+use crate::climate::{Climate, ClimateGrid, Regional};
 use crate::ecology::Ecology;
-use crate::geology::{GeoSample, Geology};
+use crate::geology::{GeoSample, Geology, smoothstep};
+use crate::rocks::Rocks;
+use crate::surface::SurfaceRules;
 
 /// Something that produces world columns. Generators are identified by a stable id that
 /// is mixed into their random streams.
@@ -91,6 +104,19 @@ pub struct Site {
     pub vegetation: f32,
     /// Tree cover, 0 (open) ..= 1 (dense forest).
     pub forest: f32,
+    /// The rock province beneath.
+    pub province: ProvinceId,
+    /// The biome whose rules make this block: near a border, the home biome or its
+    /// neighbour, dithered; in a river or lake, the river biome of the climate.
+    pub biome: BiomeId,
+    /// The biome this position belongs to.
+    pub home: BiomeId,
+    /// The nearest other biome, across the nearest border; `home` when none is near.
+    pub neighbour: BiomeId,
+    /// Distance to that border, in blocks, up to 128.
+    pub edge: f32,
+    /// 0 at the centre of the home biome's climate ..= 1 at its edge.
+    pub from_centre: f32,
 }
 
 impl Site {
@@ -120,6 +146,18 @@ pub struct SurfaceSample {
     pub canopy: Option<(BlockId, f32)>,
     /// Temperature and humidity, as stored in `Column::climate`.
     pub climate: [u8; 2],
+    /// Grass, foliage and water colours.
+    pub colors: BiomeColors,
+}
+
+/// The colours of grass, foliage and water at a position, sRGB. They follow a
+/// continuous climate colour map, broken up by palette noise, except where a biome sets
+/// its own; near a border the two biomes' colours blend, so there are no seams.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BiomeColors {
+    pub grass: [u8; 3],
+    pub foliage: [u8; 3],
+    pub water: [u8; 3],
 }
 
 /// The default overworld.
@@ -128,7 +166,14 @@ pub struct Overworld {
     geology: Geology,
     climate: Climate,
     ecology: Ecology,
+    biomes: Biomes,
+    rocks: Rocks,
+    rules: SurfaceRules,
     terrain: terrain::Terrain,
+    /// Clumps for dithering between biomes near their borders.
+    blend: FastNoiseLite,
+    /// Patches of lighter and darker grass and leaves.
+    tint: FastNoiseLite,
     seed: u64,
 }
 
@@ -137,17 +182,73 @@ impl Overworld {
     /// Bump when generation output changes.
     pub const VERSION: u32 = 5;
 
+    /// A generator with the base package's biomes, rock provinces and climate bands
+    /// alone, for tools and distant terrain; worlds are made `with_content`.
     pub fn new(seed: u64, registry: Arc<BlockRegistry>) -> Self {
+        let content = WorldContent::base(&registry).expect("the base package's world content is valid");
+        Self::with_content(seed, registry, &content)
+    }
+
+    /// A generator with the world content of loaded packages ([`WorldContent::load`]).
+    pub fn with_content(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
         let dials = WorldDials::sample(stream);
+        let rocks = Rocks::new(stream, content, &registry, &dials.featured);
+        let mut rules = SurfaceRules::new(stream, content, &registry);
+        let biomes = Biomes::new(content, &registry, &mut rules, &rocks, &dials.featured);
         Self {
             dials,
             geology: Geology::new(stream, &dials),
             climate: Climate::new(stream, &dials),
             ecology: Ecology::new(stream, &dials, &registry),
-            terrain: terrain::Terrain::new(stream, &registry),
+            terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
+            biomes,
+            rocks,
+            rules,
+            blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
+            tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
             seed: stream,
         }
+    }
+
+    /// The biomes of this world.
+    pub fn biomes(&self) -> &Biomes {
+        &self.biomes
+    }
+
+    /// The biome whose rules make the ground at (x, z).
+    pub fn biome_at(&self, x: i32, z: i32) -> &Biome {
+        self.biomes.get(self.site(x, z).biome)
+    }
+
+    /// The nearest place within `radius` blocks of `from` that belongs to the biome
+    /// named `name` (`base:taiga`, or `taiga` for the base package's), searched every 64
+    /// blocks outwards. `None` if there is no such biome or none is that close.
+    pub fn locate_biome(&self, name: &str, from: IVec2, radius: i32) -> Option<IVec2> {
+        let id = self.biomes.id(name).or_else(|| self.biomes.id(&format!("base:{name}")))?;
+        self.biomes.locate(id, from, radius, climate::CELL, |at| self.point(&self.climate.regional_at(&self.geology, at)))
+    }
+
+    /// The biome picker's fields from the regional climate.
+    fn point(&self, regional: &Regional) -> Point {
+        let temperature = regional.sea_temperature - LAPSE_RATE * (regional.elevation - SEA_LEVEL as f32).max(0.0);
+        let moisture = climate::moisture(regional.rainfall, temperature);
+        self.biomes.remap(Point([
+            temperature,
+            moisture,
+            regional.continentalness,
+            regional.erosion,
+            regional.weirdness,
+            regional.aether,
+            regional.variant,
+        ]))
+    }
+
+    /// Clumpy dither in 0..1 for choosing between two biomes near their border.
+    fn blend_dither(&self, x: i32, z: i32) -> f32 {
+        let speckle = (rng::hash3(self.seed ^ 0xb1e4, x, 0, z) & 0xffff) as f32 / 65536.0;
+        let patch = self.blend.get_noise_2d(x as f32, z as f32) * 0.6 + 0.5;
+        (0.6 * patch + 0.4 * speckle).clamp(0.0, 1.0)
     }
 
     /// The world's global parameters.
@@ -168,7 +269,24 @@ impl Overworld {
     /// Samples many positions within the blocks from `min` to `max` (inclusive) far
     /// faster than one at a time, by sharing the regional climate.
     pub fn sampler(&self, min: IVec2, max: IVec2) -> Sampler<'_> {
-        Sampler { world: self, grid: ClimateGrid::new(&self.climate, &self.geology, min, max) }
+        Sampler { world: self, grid: self.grid(min, max), picks: None }
+    }
+
+    /// A sampler that picks the biomes of every cell in its area up front, for sampling
+    /// it block by block.
+    pub(crate) fn dense_sampler(&self, min: IVec2, max: IVec2) -> Sampler<'_> {
+        let mut sampler = Sampler { world: self, grid: self.grid(min, max), picks: None };
+        let (first, last) = (min.div_euclid(IVec2::splat(biome::CELL)), max.div_euclid(IVec2::splat(biome::CELL)));
+        let size = last - first + 1;
+        let picks = (0..size.x * size.y).map(|i| sampler.pick_cell(first + IVec2::new(i % size.x, i / size.x))).collect();
+        sampler.picks = Some(Picks { first, width: size.x, picks });
+        sampler
+    }
+
+    /// The regional climate over an area, with room for the biome picker's probes.
+    fn grid(&self, min: IVec2, max: IVec2) -> ClimateGrid {
+        let margin = biome::CELL + GRADIENT_STEP;
+        ClimateGrid::new(&self.climate, &self.geology, min - margin, max + margin)
     }
 
     /// The parameters of the surface at one position.
@@ -187,6 +305,15 @@ impl Overworld {
 pub struct Sampler<'a> {
     world: &'a Overworld,
     grid: ClimateGrid,
+    picks: Option<Picks>,
+}
+
+/// Biome picks for every cell of an area.
+struct Picks {
+    /// The first cell.
+    first: IVec2,
+    width: i32,
+    picks: Vec<Pick>,
 }
 
 impl Sampler<'_> {
@@ -200,10 +327,87 @@ impl Sampler<'_> {
     pub fn surface(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
         let geo = GeoSample { height, ..self.world.geology.sample(x, z) };
         let site = self.site_on(&geo, x, z, slope);
-        let (ground, water) = self.world.terrain.surface_blocks(&site, x, z);
+        let (ground, water) = self.world.surface_blocks(&site, x, z);
         let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
             .map(|(tree, cover)| (self.world.terrain.leaves(tree), cover));
-        SurfaceSample { height, ground, water, canopy, climate: site.tint() }
+        // Distant terrain takes the colours of the cell alone.
+        let pick = self.pick(x, z);
+        let byte = |c: [f32; 3]| c.map(|v| v.round().clamp(0.0, 255.0) as u8);
+        let [grass, foliage, water_color] = self.blend_colors(&site, x, z, &pick, Biomes::blend(pick.edge, site.fertility)).map(byte);
+        let colors = BiomeColors { grass, foliage, water: water_color };
+        SurfaceSample { height, ground, water, canopy, climate: site.tint(), colors }
+    }
+
+    /// The grass, foliage and water colours at a position inside the sampler's area,
+    /// changing smoothly from block to block.
+    pub fn colors(&self, x: i32, z: i32) -> BiomeColors {
+        let site = self.site(x, z);
+        // Bilinear between the four nearest cell centres, so identity colours fade in
+        // block by block rather than in steps of a cell.
+        let p = IVec2::new(x, z) - biome::CELL / 2;
+        let cell = p.div_euclid(IVec2::splat(biome::CELL));
+        let f = (p - cell * biome::CELL).as_vec2() / biome::CELL as f32;
+        let mut sum = [[0.0f32; 3]; 3];
+        for (dx, dz, w) in [(0, 0, (1.0 - f.x) * (1.0 - f.y)), (1, 0, f.x * (1.0 - f.y)), (0, 1, (1.0 - f.x) * f.y), (1, 1, f.x * f.y)] {
+            let at = (cell + IVec2::new(dx, dz)) * biome::CELL;
+            let pick = self.pick(at.x, at.y);
+            let colors = self.blend_colors(&site, x, z, &pick, Biomes::blend(pick.edge, site.fertility));
+            for (total, c) in sum.iter_mut().zip(colors) {
+                for k in 0..3 {
+                    total[k] += w * c[k];
+                }
+            }
+        }
+        let byte = |c: [f32; 3]| c.map(|v| v.round().clamp(0.0, 255.0) as u8);
+        BiomeColors { grass: byte(sum[0]), foliage: byte(sum[1]), water: byte(sum[2]) }
+    }
+
+    /// Colours from the climate at `site` and the biomes of `pick`, the neighbour's taking
+    /// `share`: grass, foliage and water.
+    fn blend_colors(&self, site: &Site, x: i32, z: i32, pick: &Pick, share: f32) -> [[f32; 3]; 3] {
+        let [t, h] = site.tint().map(|c| c as f32 / 255.0);
+        let mix = |a: [f32; 3], b: [f32; 3], t: f32| -> [f32; 3] { std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t) };
+        // Blue-green when cold, olive when hot and dry, deep green when hot and wet.
+        let grass = mix([128.0, 167.0, 140.0], mix([191.0, 183.0, 85.0], [71.0, 176.0, 26.0], h), t);
+        let foliage = mix([97.0, 140.0, 110.0], mix([174.0, 164.0, 42.0], [48.0, 150.0, 18.0], h), t);
+        let water = mix([61.0, 87.0, 214.0], [67.0, 213.0, 238.0], t * (0.4 + 0.6 * h));
+        // Patches a little lighter or darker, warmer or cooler.
+        let n = self.world.tint.get_noise_2d(x as f32, z as f32);
+        let palette = |c: [f32; 3]| [c[0] * (1.0 + 0.06 * n), c[1] * (1.0 + 0.03 * n), c[2] * (1.0 - 0.04 * n)];
+        let climate = [palette(grass), palette(foliage), water];
+
+        let own = |biome: BiomeId| {
+            let colors = &self.world.biomes.get(biome).colors;
+            let mut own = climate;
+            for (c, set) in own.iter_mut().zip([colors.grass, colors.foliage, colors.water]) {
+                if let Some((r, g, b)) = set {
+                    *c = palette([r as f32, g as f32, b as f32]);
+                }
+            }
+            own
+        };
+        let (home, neighbour) = (own(pick.home), own(pick.neighbour));
+        std::array::from_fn(|i| mix(home[i], neighbour[i], share))
+    }
+
+    /// The biome pick of the cell holding (x, z).
+    fn pick(&self, x: i32, z: i32) -> Pick {
+        let cell = IVec2::new(x, z).div_euclid(IVec2::splat(biome::CELL));
+        if let Some(picks) = &self.picks {
+            let at = cell - picks.first;
+            if at.x >= 0 && at.y >= 0 && at.x < picks.width && ((at.y * picks.width + at.x) as usize) < picks.picks.len() {
+                return picks.picks[(at.y * picks.width + at.x) as usize];
+            }
+        }
+        self.pick_cell(cell)
+    }
+
+    /// Picks the biome of a cell from the fields at its centre.
+    fn pick_cell(&self, cell: IVec2) -> Pick {
+        let centre = cell * biome::CELL + biome::CELL / 2;
+        let point = |p: IVec2| self.world.point(&self.grid.at(p.x, p.y));
+        let around = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y].map(|d| point(centre + d * GRADIENT_STEP));
+        self.world.biomes.pick(&point(centre), &around)
     }
 
     /// The site on already sampled geology.
@@ -227,12 +431,30 @@ impl Sampler<'_> {
             river: geo.river,
             vegetation: 0.0,
             forest: 0.0,
+            province: self.world.rocks.at(x, z, regional.warp),
+            biome: BiomeId(0),
+            home: BiomeId(0),
+            neighbour: BiomeId(0),
+            edge: 0.0,
+            from_centre: 0.0,
         };
         if geo.height >= SEA_LEVEL {
             let water = site.soil_moisture();
             site.vegetation = ecology::ground_cover(temperature, water);
             site.forest = self.world.ecology.forest(x, z, temperature, water);
         }
+
+        let pick = self.pick(x, z);
+        let share = Biomes::blend(pick.edge, regional.fertility);
+        let dither = if share > 0.0 || geo.river > 0.0 { self.world.blend_dither(x, z) } else { 1.0 };
+        site.biome = if dither < share { pick.neighbour } else { pick.home };
+        // Rivers and lakes and their banks, with ragged edges.
+        if let Some(river) = pick.river
+            && geo.river > 0.4 + 0.35 * smoothstep(0.0, 1.0, dither)
+        {
+            site.biome = river;
+        }
+        (site.home, site.neighbour, site.edge, site.from_centre) = (pick.home, pick.neighbour, pick.edge, pick.from_centre);
         site
     }
 }
@@ -260,7 +482,7 @@ impl Generator for Overworld {
                 let site = self.site(x, z);
                 let pleasant = (8.0..20.0).contains(&site.temperature) && (0.6..1.6).contains(&site.soil_moisture());
                 let open = site.slope <= 1 && site.forest < 0.35 && site.river < 0.1;
-                if pleasant && open && self.terrain.is_grass(self.terrain.surface_layers(&site, x, z).top) {
+                if pleasant && open && self.terrain.is_grass(self.surface_layers(&site, x, z).top) {
                     return IVec3::new(x, height + 1, z);
                 }
             }
@@ -270,7 +492,7 @@ impl Generator for Overworld {
 }
 
 /// The `step`-th position on the square ring at Chebyshev distance `ring`.
-fn spiral(ring: i32, step: i32) -> (i32, i32) {
+pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
     if ring == 0 {
         return (0, 0);
     }
@@ -345,27 +567,64 @@ mod tests {
         println!("mean {:.2} ms per column", total.as_secs_f64() * 1000.0 / count as f64);
     }
 
-    /// `cargo test --release -p voxmar_worldgen map_preview -- --ignored` writes a shaded
-    /// top-down map (north up, 8 blocks per pixel) around the origin to
-    /// `target/map_preview.ppm`, for judging the climate layout at a glance. With
-    /// `FIELD=erosion` (or `continentalness`, `weirdness`, `aether`, `fertility`,
-    /// `variant`) it shows that selection field on land instead, dark to light.
+    /// `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture`
+    /// writes a shaded top-down map (north up, 8 blocks per pixel) around the origin to
+    /// `target/map_preview.ppm`, for judging the climate layout at a glance, and prints
+    /// each biome's share of the map and how many biomes lie within 5 km of spawn.
+    ///
+    /// - `SEED=n`, or `SEED=1,2,3` for several maps (`map_preview_<seed>.ppm`);
+    /// - `BIOMES=1` colours land by biome (a colour per biome, from its name);
+    /// - `FIELD=erosion` (or `continentalness`, `weirdness`, `aether`, `fertility`,
+    ///   `variant`) shows that selection field on land, dark to light.
     #[test]
     #[ignore]
     fn map_preview() {
-        let field: Option<fn(&Site) -> f32> = match std::env::var("FIELD").as_deref() {
+        let seeds: Vec<u64> = std::env::var("SEED").ok().map_or(vec![0x5eed], |s| s.split(',').filter_map(|s| s.trim().parse().ok()).collect());
+        for &seed in &seeds {
+            let path = if seeds.len() == 1 {
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/map_preview.ppm").to_owned()
+            } else {
+                format!("{}/../../target/map_preview_{seed}.ppm", env!("CARGO_MANIFEST_DIR"))
+            };
+            map(seed, &path);
+        }
+    }
+
+    /// A colour per biome, from its name.
+    fn biome_color(name: &str) -> [f32; 3] {
+        let h = rarity::name_hash(name);
+        let hue = (h % 360) as f32 / 60.0;
+        let (s, v) = (0.45 + (h >> 16 & 0xff) as f32 / 255.0 * 0.4, 0.55 + (h >> 24 & 0xff) as f32 / 255.0 * 0.4);
+        let c = v * s;
+        let x = c * (1.0 - (hue % 2.0 - 1.0).abs());
+        let (r, g, b) = match hue as i32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        [r + v - c, g + v - c, b + v - c]
+    }
+
+    fn map(seed: u64, path: &str) {
+        type Field = fn(&Site) -> f32;
+        let field: Option<Field> = match std::env::var("FIELD").as_deref() {
             Ok("erosion") => Some(|s| s.erosion),
             Ok("continentalness") => Some(|s| s.continentalness * 0.5 + 0.5),
             Ok("weirdness") => Some(|s| s.weirdness),
             Ok("aether") => Some(|s| s.aether),
             Ok("fertility") => Some(|s| s.fertility),
             Ok("variant") => Some(|s| s.variant),
+            Ok("moisture") => Some(|s| s.moisture / 2.0),
+            Ok("temperature") => Some(|s| (s.temperature + 10.0) / 40.0),
             _ => None,
         };
+        let by_biome = std::env::var("BIOMES").is_ok_and(|v| v != "0");
         const SIZE: i32 = 1024;
         const SCALE: i32 = 8;
         let registry = registry();
-        let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(0x5eed);
         let world = Overworld::new(seed, registry.clone());
         let half = SIZE * SCALE / 2;
         let sampler = world.sampler(IVec2::splat(-half - SCALE), IVec2::splat(half + SCALE));
@@ -373,20 +632,25 @@ mod tests {
         let heights: Vec<i32> = (0..SIZE * SIZE).map(|i| world.height(at(i % SIZE), at(i / SIZE))).collect();
         let height = |x: i32, z: i32| heights[(z.clamp(0, SIZE - 1) * SIZE + x.clamp(0, SIZE - 1)) as usize];
         let color = |block: BlockId| registry.def(block).color.map(|c| c as f32 / 255.0);
+        let spawn = world.spawn_point();
         let mut pixels = Vec::with_capacity((SIZE * SIZE * 3) as usize);
         let mut wet = 0;
+        let mut area = vec![0usize; world.biomes.len()];
+        let mut near_spawn = vec![false; world.biomes.len()];
         for z in 0..SIZE {
             for x in 0..SIZE {
                 let h = height(x, z);
                 let slope = (height(x + 1, z) - h).abs().max((height(x, z + 1) - h).abs()) / SCALE;
                 let surface = sampler.surface(at(x), at(z), h, slope);
+                let site = sampler.site(at(x), at(z));
+                area[site.biome.0 as usize] += 1;
+                if (at(x) - spawn.x).pow(2) + (at(z) - spawn.z).pow(2) < 5000 * 5000 {
+                    near_spawn[site.home.0 as usize] = true;
+                }
                 let mix = |a: [f32; 3], b: [f32; 3], t: f32| -> [f32; 3] { std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t) };
                 let mut rgb = color(surface.ground);
                 if world.terrain.is_grass(surface.ground) {
-                    // Roughly the grass colour map: blue-green when cold, yellow when hot and
-                    // dry, deep green when hot and wet.
-                    let [t, m] = surface.climate.map(|c| c as f32 / 255.0);
-                    rgb = mix([0.5, 0.65, 0.55], mix([0.75, 0.72, 0.36], [0.28, 0.69, 0.1], m), t);
+                    rgb = surface.colors.grass.map(|c| c as f32 / 255.0);
                 }
                 if let Some((leaves, cover)) = surface.canopy {
                     let name = &registry.def(leaves).name;
@@ -396,14 +660,18 @@ mod tests {
                         .map_or([0.25, 0.45, 0.15], |(_, crown)| crown);
                     rgb = mix(rgb, crown, cover);
                 }
+                if by_biome {
+                    rgb = biome_color(&world.biomes.get(site.biome).name);
+                }
                 if let Some(field) = field {
-                    let v = field(&sampler.site(at(x), at(z)));
+                    let v = field(&site);
                     rgb = [0.1 + 0.9 * v, 0.1 + 0.8 * v * v, 0.3 + 0.4 * v];
                 }
                 if let Some(water) = surface.water {
                     wet += 1;
                     let depth = ((SEA_LEVEL - h) as f32 / 30.0).min(1.0);
-                    rgb = if water == registry.expect("base:ice") { [0.75, 0.85, 0.95] } else { [0.15, 0.35 - 0.15 * depth, 0.7 - 0.25 * depth] };
+                    let sea = if water == registry.expect("base:ice") { [0.75, 0.85, 0.95] } else { [0.15, 0.35 - 0.15 * depth, 0.7 - 0.25 * depth] };
+                    rgb = if by_biome { mix(rgb, sea, 0.6) } else { sea };
                 } else {
                     // Light from the north-west.
                     let shade = 1.0 + ((height(x - 1, z - 1) - h) as f32 * 0.04).clamp(-0.4, 0.4);
@@ -412,13 +680,50 @@ mod tests {
                 pixels.extend(rgb.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8));
             }
         }
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/map_preview.ppm");
         let mut file = format!("P6 {SIZE} {SIZE} 255\n").into_bytes();
         file.extend(pixels);
         std::fs::write(path, file).unwrap();
         let water = wet as f32 / (SIZE * SIZE) as f32;
-        let spawn = world.spawn_point();
-        println!("{:#?}\nwater {water:.2}, spawn {spawn}: {:#?}\nwrote {path}", world.dials(), world.site(spawn.x, spawn.z));
+        println!("seed {seed}: {:?}\nwater {water:.2}, spawn {spawn}: {:?}", world.dials(), world.site(spawn.x, spawn.z));
+        let mut shares: Vec<(usize, &str)> = area.iter().enumerate().map(|(i, &a)| (a, world.biomes.get(BiomeId(i as u16)).name.as_str())).collect();
+        shares.sort_by_key(|s| std::cmp::Reverse(s.0));
+        for (a, name) in shares {
+            let [r, g, b] = biome_color(name).map(|c| (c * 255.0) as u8);
+            println!("  {:6.2}%  {name}  #{r:02x}{g:02x}{b:02x}", a as f32 * 100.0 / (SIZE * SIZE) as f32);
+        }
+        let near: Vec<&str> = (0..near_spawn.len()).filter(|&i| near_spawn[i]).map(|i| world.biomes.get(BiomeId(i as u16)).name.as_str()).collect();
+        println!("{} biomes within 5 km of spawn: {}\nwrote {path}", near.len(), near.join(", "));
+    }
+
+    /// `SEED=1,2 cargo test --release -p voxmar_worldgen biomes_near_spawn -- --ignored
+    /// --nocapture` lists the biomes within view of spawn, for in-game captures: each
+    /// one's nearest point as an offset from the spawn point.
+    #[test]
+    #[ignore]
+    fn biomes_near_spawn() {
+        let seeds: Vec<u64> = std::env::var("SEED").ok().map_or(vec![7], |s| s.split(',').filter_map(|s| s.trim().parse().ok()).collect());
+        for seed in seeds {
+            let world = Overworld::new(seed, registry());
+            let spawn = world.spawn_point();
+            let sampler = world.sampler(IVec2::new(spawn.x, spawn.z) - 450, IVec2::new(spawn.x, spawn.z) + 450);
+            let mut nearest: Vec<Option<(i32, IVec2, i32)>> = vec![None; world.biomes.len()];
+            for dz in (-448..=448).step_by(8) {
+                for dx in (-448..=448).step_by(8) {
+                    let site = sampler.site(spawn.x + dx, spawn.z + dz);
+                    let d = dx * dx + dz * dz;
+                    let slot = &mut nearest[site.biome.0 as usize];
+                    if slot.is_none_or(|(best, _, _)| d < best) {
+                        *slot = Some((d, IVec2::new(dx, dz), site.height - spawn.y));
+                    }
+                }
+            }
+            println!("seed {seed}, spawn {spawn}:");
+            for (i, n) in nearest.iter().enumerate() {
+                if let Some((_, at, dy)) = n {
+                    println!("  {:24} at {:4},{:4}, {dy:+} blocks", world.biomes.get(BiomeId(i as u16)).name, at.x, at.y);
+                }
+            }
+        }
     }
 
     /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
@@ -507,7 +812,7 @@ mod tests {
                 for j in 0..SIZE {
                     let (x, z) = (i * STEP - half, j * STEP - half);
                     let site = sampler.site(x, z);
-                    let top = world.terrain.surface_layers(&site, x, z).top;
+                    let top = world.surface_layers(&site, x, z).top;
                     snow[(j * SIZE + i) as usize] = snowy.contains(&top);
                     // Sand away from beaches and banks is desert.
                     if (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 {
@@ -537,7 +842,8 @@ mod tests {
         let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
         let sites: Vec<Site> = (0..150 * 150).map(|i| sampler.site(i % 150 * 80 - 6000, i / 150 * 80 - 6000)).collect();
         // Evenly spread fields put a tenth of the land in each tenth of their range.
-        let fields: [(&str, fn(&Site) -> f32); 3] = [("weirdness", |s| s.weirdness), ("fertility", |s| s.fertility), ("variant", |s| s.variant)];
+        type Field = fn(&Site) -> f32;
+        let fields: [(&str, Field); 3] = [("weirdness", |s| s.weirdness), ("fertility", |s| s.fertility), ("variant", |s| s.variant)];
         for (name, field) in fields {
             let values: Vec<f32> = sites.iter().map(field).collect();
             assert!(values.iter().all(|v| (0.0..=1.0).contains(v)), "{name} out of range");
@@ -572,6 +878,73 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn biomes_are_deterministic_in_any_sampler() {
+        let blocks = registry();
+        let (a, b) = (Overworld::new(9, blocks.clone()), Overworld::new(9, blocks.clone()));
+        let (min, max) = (IVec2::new(-700, 300), IVec2::new(-500, 520));
+        let (sparse, dense) = (a.sampler(min, max), b.dense_sampler(min, max));
+        for i in 0..2000 {
+            let (x, z) = (min.x + i * 37 % 201, min.y + i * 53 % 221);
+            let site = sparse.site(x, z);
+            assert_eq!(site, dense.site(x, z));
+            assert_eq!(site, a.site(x, z));
+            assert_eq!(sparse.colors(x, z), dense.colors(x, z));
+        }
+        // Worlds with other seeds pick other biomes.
+        let c = Overworld::new(10, blocks);
+        assert!((0..50).any(|i| a.site(i * 160, 0).home != c.site(i * 160, 0).home));
+    }
+
+    #[test]
+    fn borders_blend_smoothly() {
+        let world = Overworld::new(3, registry());
+        let sampler = world.sampler(IVec2::new(-4000, -4000), IVec2::new(4000, 4000));
+        let (mut borders, mut crossings, mut steps, mut jumps) = (0, 0, 0, 0);
+        for x in [-2500, -300, 1700] {
+            let line: Vec<Site> = (-4000..4000).map(|z| sampler.site(x, z)).collect();
+            let colors: Vec<BiomeColors> = (-4000..4000).map(|z| sampler.colors(x, z)).collect();
+            for i in 1..line.len() {
+                let (a, b) = (&line[i - 1], &line[i]);
+                // Colours never jump: no seams, even across borders. An identity colour may
+                // differ from its neighbour's by a lot, so it fades in over the blend width.
+                // (Banks are greener than the land around them; that is the climate's tint.)
+                for (ca, cb) in [(colors[i - 1].grass, colors[i].grass), (colors[i - 1].foliage, colors[i].foliage), (colors[i - 1].water, colors[i].water)] {
+                    let step = (0..3).map(|c| (ca[c] as i32 - cb[c] as i32).abs()).max().unwrap();
+                    assert!(step <= 24 || a.river > 0.0 || b.river > 0.0, "colour jumps by {step} at {x}, {}", i as i32 - 4000);
+                }
+                if a.home != b.home {
+                    crossings += 1;
+                    // Each side knows the other is next door and that the border is near.
+                    let near = a.neighbour == b.home && b.neighbour == a.home && a.edge < 12.0 && b.edge < 12.0;
+                    borders += near as i32;
+                } else if a.neighbour == b.neighbour && a.edge < 48.0 && b.edge < 48.0 {
+                    // Within blending range, the distance to the border changes about a block
+                    // per block (in steps of a 4-block cell), with rare jumps where the
+                    // estimate switches between borders.
+                    steps += 1;
+                    jumps += ((a.edge - b.edge).abs() >= 8.0) as i32;
+                }
+            }
+        }
+        println!("{crossings} borders, {jumps} jumps in {steps} steps");
+        assert!(crossings > 10, "only {crossings} borders crossed");
+        assert!(jumps * 50 < steps, "the distance to the border jumps {jumps} times in {steps} steps");
+        // Where three biomes meet, the nearest border may lead to a third one.
+        assert!(borders * 10 >= crossings * 7, "{borders} of {crossings} borders agree on both sides");
+    }
+
+    #[test]
+    fn biomes_can_be_located() {
+        let world = Overworld::new(3, registry());
+        for name in ["taiga", "base:plains", "ocean"] {
+            let at = world.locate_biome(name, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {name} within 6 km"));
+            let id = world.biomes().id(&format!("base:{}", name.trim_start_matches("base:"))).unwrap();
+            assert_eq!(world.site(at.x, at.y).home, id, "{name} at {at}");
+        }
+        assert_eq!(world.locate_biome("base:no_such_biome", IVec2::ZERO, 1000), None);
     }
 
     #[test]

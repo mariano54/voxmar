@@ -66,17 +66,19 @@ impl Featured {
     /// The multiplier this world applies to each of `items` (name and rarity) of one
     /// `kind` ("biome", "plant", "weather" and so on), in the order given.
     ///
-    /// About a tenth to a quarter of the uncommon-or-rarer items (at least one) are
-    /// boosted one or two tiers, and about a tenth of the common ones (at least one, given
-    /// four or more) are suppressed. Which ones depends only on the seed, the kind and the
-    /// names, not on the order of `items`.
+    /// About a tenth to a quarter of the uncommon-or-rarer items are boosted one or two
+    /// tiers (when that rounds to none, one is boosted with the matching chance), and about
+    /// a tenth of the common ones (at least one, given four or more) are suppressed. Which
+    /// ones depends only on the seed, the kind and the names, not on the order of `items`.
     pub fn multipliers(&self, kind: &str, items: &[(&str, Rarity)]) -> Vec<f32> {
         let rank = |salt: u64, name: &str| hash3(self.seed ^ salt ^ name_hash(kind), name_hash(name) as i32, 0, (name_hash(name) >> 32) as i32);
         let mut out = vec![1.0; items.len()];
 
         let mut rare: Vec<usize> = (0..items.len()).filter(|&i| items[i].1 != Rarity::Common).collect();
         rare.sort_by_key(|&i| (rank(1, items[i].0), i));
-        let boosted = ((rare.len() as f32 * (0.1 + 0.15 * self.biodiversity)).round() as usize).max(1).min(rare.len());
+        let expected = rare.len() as f32 * (0.1 + 0.15 * self.biodiversity);
+        let roll = (mix(self.seed ^ name_hash(kind)) >> 40) as f32 / (1u64 << 24) as f32;
+        let boosted = (expected.floor() as usize + usize::from(roll < expected.fract())).min(rare.len());
         for &i in &rare[..boosted] {
             let rarity = items[i].1;
             let steps = 1 + (rank(2, items[i].0) % 2) as usize;
