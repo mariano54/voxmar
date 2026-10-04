@@ -1,4 +1,5 @@
-//! Rain and snow falling around the camera.
+//! Rain, drizzle, snow, sleet and hail falling around the camera, and dust and glowing
+//! motes the wind carries through the air.
 //!
 //! Every drop has a fixed random place in a box that follows the camera and falls (and
 //! drifts with the wind) through it, wrapping around, so drops cost nothing on the CPU and
@@ -24,13 +25,16 @@ use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
 /// Drops in the box at the heaviest rain or snow, including the splashes the shader makes
-/// of some of them, and the box of falling drops around the camera, in blocks. The shader
-/// has the same constants.
-const DROPS: u32 = 16_000;
+/// of some of them and the specks of dust and motes it carries on the wind, and the box of
+/// falling drops around the camera, in blocks. The shader has the same constants.
+const DROPS: u32 = 20_000;
 const BOX: Vec3 = Vec3::new(40.0, 36.0, 40.0);
 /// Falling speeds, in blocks per second.
 const RAIN_SPEED: f32 = 14.0;
 const SNOW_SPEED: f32 = 1.6;
+const DRIZZLE_SPEED: f32 = 4.0;
+const SLEET_SPEED: f32 = 8.0;
+const HAIL_SPEED: f32 = 18.0;
 /// Columns along each side of the height map around the camera. It is re-read when the
 /// camera strays this many blocks from its centre (it still covers the drop box then), and
 /// every `REFRESH` seconds for blocks that changed.
@@ -67,6 +71,18 @@ struct PrecipitationParams {
     streak: Vec4,
     /// rgb: light falling on the drops.
     light: Vec4,
+    /// Of the rain that is not snow: xyz how far drizzle, sleet and hail have fallen, w
+    /// the fraction of it that is each.
+    drizzle: Vec4,
+    sleet: Vec4,
+    hail: Vec4,
+    /// xyz: how far dust and motes have drifted, w: how much of each the air holds.
+    dust: Vec4,
+    motes: Vec4,
+    /// rgb: the dust's colour (linear); w: unused.
+    dust_color: Vec4,
+    /// xyz: the wind, in blocks per second.
+    wind: Vec4,
     /// Top of the highest block plus one in each column of the map, 16 bits per column.
     heights: [UVec4; MAP_WORDS],
 }
@@ -211,11 +227,10 @@ struct Drops;
 /// does the rest.
 fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<PrecipitationMaterial>>) {
     let vertices: Vec<u32> = (0..DROPS * 4).collect();
-    let indices: Vec<u16> =
-        (0..DROPS as u16).flat_map(|d| [0, 1, 2, 2, 1, 3].map(|i| d * 4 + i)).collect();
+    let indices: Vec<u32> = (0..DROPS).flat_map(|d| [0, 1, 2, 2, 1, 3].map(|i| d * 4 + i)).collect();
     let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
         .with_inserted_attribute(ATTRIBUTE_DROP, VertexAttributeValues::Uint32(vertices))
-        .with_inserted_indices(Indices::U16(indices));
+        .with_inserted_indices(Indices::U32(indices));
     let params = PrecipitationParams {
         camera: Vec4::ZERO,
         map: Vec4::ZERO,
@@ -223,6 +238,13 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         snow: Vec4::ZERO,
         streak: Vec4::NEG_Y,
         light: Vec4::ZERO,
+        drizzle: Vec4::ZERO,
+        sleet: Vec4::ZERO,
+        hail: Vec4::ZERO,
+        dust: Vec4::ZERO,
+        motes: Vec4::ZERO,
+        dust_color: Vec4::ZERO,
+        wind: Vec4::ZERO,
         heights: [UVec4::ZERO; MAP_WORDS],
     };
     commands.spawn((
@@ -232,6 +254,18 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         NoFrustumCulling,
         NotShadowCaster,
     ));
+}
+
+/// How far each kind of drop has fallen and drifted, wrapped into the box.
+#[derive(Default)]
+struct Fallen {
+    rain: Vec3,
+    snow: Vec3,
+    drizzle: Vec3,
+    sleet: Vec3,
+    hail: Vec3,
+    dust: Vec3,
+    motes: Vec3,
 }
 
 /// Advances the falling drops, refreshes the height map and lights the drops like the sky.
@@ -244,18 +278,21 @@ fn update(
     camera: Query<(&GlobalTransform, &AmbientLight), With<Camera3d>>,
     drops: Query<&MeshMaterial3d<PrecipitationMaterial>, With<Drops>>,
     mut materials: ResMut<Assets<PrecipitationMaterial>>,
-    mut fallen: Local<(Vec3, Vec3)>,
+    mut fallen: Local<Fallen>,
 ) {
     let (Ok((camera, ambient)), Ok(handle)) = (camera.single(), drops.single()) else { return };
     let shown = &weather.current;
-    if shown.precipitation <= 0.01 {
+    if shown.precipitation <= 0.01 && shown.dust <= 0.01 && shown.motes <= 0.01 {
         // The drops stay drawn while nothing falls, every one culled in the vertex shader, so
         // their pipeline is built with the world rather than when the first rain starts:
         // where pipelines are built synchronously (macOS) that would stall a frame.
-        if materials.get(&handle.0).is_some_and(|m| m.params.rain.w > 0.0)
+        let showing = |p: &PrecipitationParams| p.rain.w > 0.0 || p.dust.w > 0.0 || p.motes.w > 0.0;
+        if materials.get(&handle.0).is_some_and(|m| showing(&m.params))
             && let Some(mut material) = materials.get_mut(&handle.0)
         {
             material.params.rain.w = 0.0;
+            material.params.dust.w = 0.0;
+            material.params.motes.w = 0.0;
         }
         return;
     }
@@ -270,19 +307,34 @@ fn update(
     let wind = Vec3::new(shown.wind.x, 0.0, shown.wind.y);
     let rain_velocity = wind - Vec3::Y * RAIN_SPEED;
     let snow_velocity = wind * 0.6 - Vec3::Y * SNOW_SPEED;
-    let (rain, snow) = &mut *fallen;
-    *rain = (*rain + rain_velocity * dt).rem_euclid(BOX);
-    *snow = (*snow + snow_velocity * dt).rem_euclid(BOX);
+    let fallen = &mut *fallen;
+    let fall = |at: &mut Vec3, velocity: Vec3| *at = (*at + velocity * dt).rem_euclid(BOX);
+    fall(&mut fallen.rain, rain_velocity);
+    fall(&mut fallen.snow, snow_velocity);
+    // Fine drizzle drifts with the wind, sleet less so, and hail falls hard.
+    fall(&mut fallen.drizzle, wind * 0.9 - Vec3::Y * DRIZZLE_SPEED);
+    fall(&mut fallen.sleet, wind * 0.7 - Vec3::Y * SLEET_SPEED);
+    fall(&mut fallen.hail, wind * 0.3 - Vec3::Y * HAIL_SPEED);
+    // Dust rides the wind, settling slowly; motes drift and rise.
+    fall(&mut fallen.dust, wind - Vec3::Y * 0.3);
+    fall(&mut fallen.motes, wind * 0.15 + Vec3::Y * 0.4);
 
     let Some(mut material) = materials.get_mut(&handle.0) else { return };
     let light = ambient.color.to_linear();
     material.params = PrecipitationParams {
         camera: eye.rem_euclid(BOX).extend(time.elapsed_secs_wrapped()),
         map: Vec4::new(eye.x - map.origin.x as f32, 0.0, eye.z - map.origin.y as f32, eye.y),
-        rain: rain.extend(shown.precipitation),
-        snow: snow.extend(shown.snow),
+        rain: fallen.rain.extend(shown.precipitation),
+        snow: fallen.snow.extend(shown.snow),
         streak: rain_velocity.normalize().extend(rain_velocity.length() * 0.045),
         light: Vec4::new(light.red, light.green, light.blue, 0.0),
+        drizzle: fallen.drizzle.extend(shown.drizzle),
+        sleet: fallen.sleet.extend(shown.sleet),
+        hail: fallen.hail.extend(shown.hail),
+        dust: fallen.dust.extend(shown.dust),
+        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3)),
+        dust_color: Color::srgb_u8(shown.dust_color[0], shown.dust_color[1], shown.dust_color[2]).to_linear().to_vec4(),
+        wind: wind.extend(0.0),
         heights: map.packed(),
     };
 }

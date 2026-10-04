@@ -93,6 +93,7 @@ struct LayersRule {
 enum Cond {
     Underwater,
     Deeper(f32, f32),
+    Water(Vec<crate::Body>),
     Slope(f32, f32),
     Altitude(f32, f32),
     Colder(f32, f32),
@@ -218,6 +219,7 @@ impl SurfaceRules {
         match c {
             Condition::Underwater => Cond::Underwater,
             Condition::Deeper(a, b) => Cond::Deeper(*a, *b),
+            Condition::Water(bodies) => Cond::Water(bodies.clone()),
             Condition::Slope(a, b) => Cond::Slope(*a, *b),
             Condition::Altitude(a, b) => Cond::Altitude(*a, *b),
             Condition::Colder(a, b) => Cond::Colder(*a, *b),
@@ -245,7 +247,8 @@ impl SurfaceRules {
         let above = (site.height - SEA_LEVEL) as f32;
         match c {
             Cond::Underwater => true,
-            Cond::Deeper(a, b) => -above > at(*a, *b),
+            Cond::Deeper(a, b) => (site.water - site.height) as f32 > at(*a, *b),
+            Cond::Water(bodies) => bodies.contains(&site.body),
             Cond::Slope(a, b) => site.slope as f32 > at(*a, *b),
             Cond::Altitude(a, b) => above > at(*a, *b),
             Cond::Colder(a, b) => site.temperature < at(*a, *b),

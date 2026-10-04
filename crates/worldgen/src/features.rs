@@ -13,7 +13,7 @@ use crate::rng::{Rng, hash3};
 use crate::terrain::Blocks;
 use crate::content::WorldContent;
 use crate::trees::{TreeParts, Trees};
-use crate::{Overworld, SEA_LEVEL, Sampler, Site};
+use crate::{Overworld, Sampler, Site};
 
 const PURPOSE: u64 = 0x7233;
 const CELL: i32 = 4;
@@ -58,7 +58,7 @@ impl Features {
                     continue;
                 }
                 let geo = geology.get(x, z);
-                if geo.height < SEA_LEVEL - 2 {
+                if geo.water - geo.height > 2 {
                     continue;
                 }
                 let site = area.site_on(&geo, x, z, 0);
@@ -71,14 +71,14 @@ impl Features {
                 let ecology = &world.ecology;
                 ecology.tree_chances(&site, None, x, z, &mut chances);
                 if roll >= chances.iter().map(|c| c.1).sum::<f32>() {
-                    if roll > 1.0 - boulder_chance(&site) && site.height > SEA_LEVEL {
+                    if roll > 1.0 - boulder_chance(&site) && site.height > site.water {
                         self.boulder(base, &mut rng, blocks);
                     }
                     continue;
                 }
                 // Only now find the ground, which needs the slope.
                 let site = Site { slope: geology.slope(x, z), ..site };
-                let ground = if site.height < SEA_LEVEL {
+                let ground = if site.height < site.water {
                     Ground::Shallows
                 } else {
                     world.terrain.ground(world.surface_layers(&site, x, z).top)

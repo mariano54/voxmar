@@ -2,7 +2,7 @@
 //! Processes never decide; they change values and raise events (here: death).
 
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::glam::{Vec2, Vec3};
+use voxmar_engine::glam::Vec3;
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits::{self, Replication};
 use voxmar_protocol::{PlayerId, ServerMessage};
@@ -21,9 +21,8 @@ pub(crate) trait Process: Send {
     fn run(&mut self, server: &mut Server);
 }
 
-/// `wind` is the direction (x, z) the world's prevailing wind blows towards.
-pub(crate) fn core_processes(seed: u64, wind: Vec2) -> Vec<Box<dyn Process>> {
-    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::new(seed, wind))]
+pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
+    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::default())]
 }
 
 /// Fall damage and the void, from the server's own view of where players stand.

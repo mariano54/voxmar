@@ -245,6 +245,10 @@ pub enum Condition {
     Underwater,
     /// Under more than this many blocks of water.
     Deeper(f32, f32),
+    /// The water over the column, or the nearest beside it, is one of these: `Creek`,
+    /// `River`, `Lake`, `Salt` (a dry salt flat) or `Sea`. For banks and beds that differ
+    /// by kind of water.
+    Water(Vec<crate::Body>),
     /// Steeper than this many blocks per block.
     Slope(f32, f32),
     /// Higher than this many blocks above the sea.
@@ -1138,6 +1142,13 @@ impl WorldContent {
         };
         match condition {
             Condition::Underwater => Ok(()),
+            Condition::Water(bodies) => {
+                if bodies.is_empty() {
+                    Err(ContentError(format!("{}: `Water` needs at least one kind of water", at())))
+                } else {
+                    Ok(())
+                }
+            }
             Condition::Deeper(a, b)
             | Condition::Slope(a, b)
             | Condition::Altitude(a, b)

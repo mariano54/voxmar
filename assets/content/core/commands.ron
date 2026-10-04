@@ -1,0 +1,66 @@
+// Console commands. Each runs one of the engine's built-in commands, or is an alias that
+// runs other command lines with its arguments filled in (`$1`, `$2`, … and `$*` for all of
+// them), which is how any package can add its own. Typed without the namespace: `/time`.
+(
+    commands: [
+        (
+            name: "help",
+            usage: "[command]",
+            help: "Lists the commands you can use, or explains one.",
+            run: Help,
+        ),
+        (
+            name: "time",
+            usage: "[set <sunrise|day|noon|sunset|night|midnight|TICKS> | add <TICKS|30s|2h|1d> | speed <X> | freeze | resume]",
+            help: "Shows or changes the time of day. A day is 24000 ticks, 20 minutes; 0 is sunrise and an in-game hour is 1000 ticks. set moves forward to the next such time, speed 10 runs days ten times as fast, freeze stops the sun and resume runs it at normal speed again.",
+            permission: Admin,
+            run: Time,
+        ),
+        (
+            name: "weather",
+            usage: "[KIND [SECONDS] | natural | list]",
+            help: "Shows the weather here, or brings a kind of weather (/weather list names them) to the land around you for a while, five minutes unless you say, after which the natural weather takes over again. natural ends it now.",
+            permission: Admin,
+            run: Weather,
+        ),
+        (
+            name: "wind",
+            usage: "[KIND [FROM] [SECONDS] | list]",
+            help: "Shows the wind here, or brings a wind (calm, breeze, strong or gale; /wind list names them) to the land around you, from a direction (n, ne, e, se, s, sw, w, nw or degrees from north) if you say, for five minutes unless you say. /weather natural ends it.",
+            permission: Admin,
+            run: Wind,
+        ),
+        (
+            name: "tp",
+            usage: "<x> <y> <z> | <x> <z> | <player> | <player> <x> <y> <z> | <player> <player>",
+            help: "Teleports you, or a player, to coordinates or to another player. ~ is where the player is now, so ~ ~10 ~ goes ten blocks up; with only x and z you land on the ground.",
+            permission: Admin,
+            run: Teleport,
+        ),
+        (
+            name: "gamemode",
+            usage: "<survival|creative> [player]",
+            help: "Switches you, or a player, between survival (on foot) and creative (flight allowed).",
+            permission: Admin,
+            run: GameMode,
+        ),
+        (name: "seed", help: "Tells the world's seed.", run: Seed),
+        (name: "list", help: "Lists who is online.", run: List),
+        // Shortcuts, as any package could add them.
+        (name: "day", usage: "", help: "Sets the time to morning: /time set day.", permission: Admin, run: Alias(["time set day"])),
+        (name: "night", usage: "", help: "Sets the time to night: /time set night.", permission: Admin, run: Alias(["time set night"])),
+    ],
+    // Times of day `/time set` knows by name, in ticks after sunrise.
+    times: [
+        ("sunrise", 0),
+        ("day", 1000),
+        ("morning", 2000),
+        ("noon", 6000),
+        ("afternoon", 8500),
+        ("sunset", 12000),
+        ("dusk", 12500),
+        ("night", 13000),
+        ("midnight", 18000),
+        ("dawn", 23500),
+    ],
+)

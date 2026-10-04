@@ -476,13 +476,22 @@ impl Biomes {
 
     /// Searches outwards from `from`, on a square spiral of points `step` blocks apart, for
     /// the nearest one within `radius` blocks that belongs to `biome`. `point` gives the
-    /// picker's fields at a position.
-    pub(crate) fn locate(&self, biome: BiomeId, from: IVec2, radius: i32, step: i32, point: impl Fn(IVec2) -> Point) -> Option<IVec2> {
+    /// picker's fields at a position, and `confirm` checks a candidate the way sites are
+    /// picked, which near a border can differ.
+    pub(crate) fn locate(
+        &self,
+        biome: BiomeId,
+        from: IVec2,
+        radius: i32,
+        step: i32,
+        point: impl Fn(IVec2) -> Point,
+        confirm: impl Fn(IVec2) -> bool,
+    ) -> Option<IVec2> {
         for ring in 0..=radius / step {
             for i in 0..(ring * 8).max(1) {
                 let (dx, dz) = crate::spiral(ring, i);
                 let at = from + IVec2::new(dx, dz) * step;
-                if self.resolve(&point(at)) == biome {
+                if self.resolve(&point(at)) == biome && confirm(at) {
                     return Some(at);
                 }
             }

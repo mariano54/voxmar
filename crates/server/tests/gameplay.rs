@@ -9,7 +9,8 @@ use voxmar_engine::coords::{ColumnPos, Face};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::VoxelWorld;
 use voxmar_protocol::{
-    ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, Weather, local_pair, tcp,
+    ChatKind, ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, TICKS_PER_DAY, Weather,
+    local_pair, tcp,
 };
 use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
 
@@ -25,6 +26,12 @@ struct Client {
     content: Content,
     inventory: voxmar_engine::inventory::Inventory,
     weather: Option<Weather>,
+    /// Whether the last weather report asked to change over quickly.
+    quick: bool,
+    /// Console lines received.
+    chat: Vec<(ChatKind, String)>,
+    /// The time of day and how fast it runs, as last told.
+    day: Option<(u64, f32)>,
     _server: ServerHandle,
 }
 
@@ -67,6 +74,9 @@ impl Client {
             content,
             inventory: Default::default(),
             weather: None,
+            quick: false,
+            chat: Vec::new(),
+            day: None,
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -104,7 +114,16 @@ impl Client {
                 self.health = health.current;
                 self.inventory = inventory;
             }
-            ServerMessage::Weather(weather) => self.weather = Some(weather),
+            ServerMessage::Weather { weather, quick, .. } => {
+                self.weather = Some(weather);
+                self.quick = quick;
+            }
+            ServerMessage::Chat { kind, text } => self.chat.push((kind, text)),
+            ServerMessage::Time { day, day_speed, .. } => self.day = Some((day, day_speed)),
+            ServerMessage::Abilities { allow_flight, admin } => {
+                self.allow_flight = allow_flight;
+                self.admin = admin;
+            }
             _ => {}
         }
     }
@@ -116,6 +135,21 @@ impl Client {
 
     fn send_position(&self, position: Vec3, flying: bool) {
         self.connection.send(ClientMessage::Input(PlayerInput { position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying }));
+    }
+
+    /// Runs a command and returns the console lines it answers with.
+    fn command(&mut self, line: &str) -> Vec<(ChatKind, String)> {
+        self.chat.clear();
+        self.connection.send(ClientMessage::Command { line: line.into() });
+        self.pump_until(|c| !c.chat.is_empty());
+        std::mem::take(&mut self.chat)
+    }
+
+    /// Runs a command that should succeed, returning its answer.
+    fn ok(&mut self, line: &str) -> String {
+        let lines = self.command(line);
+        assert!(lines.iter().all(|(kind, _)| *kind == ChatKind::Info), "{line}: {lines:?}");
+        lines.into_iter().map(|(_, text)| text).collect::<Vec<_>>().join("\n")
     }
 }
 
@@ -236,16 +270,106 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
 }
 
 #[test]
-fn game_mode_decides_flight_and_admin() {
+fn game_mode_decides_flight_and_the_host_is_admin() {
     use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
     for (mode, creative) in [(GameMode::Survival, false), (GameMode::Creative, true)] {
         let dir = world_dir(&format!("{mode:?}"));
         WorldSave::new(&dir).create(&WorldMeta::new("Mode", 9, mode)).unwrap();
-        let client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-        assert_eq!((client.allow_flight, client.admin), (creative, creative), "{mode:?}");
+        let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+        let mut client = Client::join_with(config());
+        assert_eq!((client.allow_flight, client.admin), (creative, true), "{mode:?}");
+        // An admin can switch modes, and the player keeps theirs.
+        let other = if creative { "survival" } else { "creative" };
+        assert_eq!(client.ok(&format!("/gamemode {other}")), format!("You are now in {other} mode."));
+        assert_eq!(client.allow_flight, !creative);
+        drop(client);
+        let client = Client::join_with(config());
+        assert_eq!(client.allow_flight, !creative, "{mode:?} world after /gamemode {other}");
         drop(client);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+}
+
+#[test]
+fn commands_set_the_time_and_the_weather() {
+    let mut client = Client::join();
+    client.pump_until(|c| c.day.is_some());
+    assert!(client.ok("/seed").starts_with("Seed: "));
+    assert!(client.ok("/help").contains("/weather"));
+    assert!(client.ok("help time").contains("set <sunrise"));
+    let (_, unknown) = &client.command("/nonsense")[0];
+    assert!(unknown.contains("/help"));
+    let errors = client.command("/time set teatime");
+    assert_eq!(errors[0].0, ChatKind::Error);
+    assert!(errors[0].1.contains("Usage: /time"), "{errors:?}");
+
+    // Setting the time moves forward to it, and every player is told.
+    let (before, _) = client.day.unwrap();
+    assert!(client.ok("/time set noon").contains("12:00"));
+    let (day, speed) = client.day.unwrap();
+    assert_eq!((day % TICKS_PER_DAY, speed), (6000, 1.0));
+    assert!(day >= before && day < before + TICKS_PER_DAY);
+    client.ok("/night");
+    assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 13_000);
+    client.ok("/time add 2h");
+    // Two hours on, give or take the ticks that ran in between.
+    assert!((client.day.unwrap().0 % TICKS_PER_DAY).abs_diff(15_000) < 40, "{:?}", client.day);
+    assert!(client.ok("/time freeze").contains("frozen"));
+    assert_eq!(client.day.unwrap().1, 0.0);
+    assert!(client.ok("/time speed 10").contains("2.0 minutes per day"));
+    assert_eq!(client.command("/time speed -1")[0].0, ChatKind::Error);
+
+    // Forced weather arrives quickly, and stays.
+    assert!(client.ok("/weather storm 60").contains("storm"));
+    client.pump_until(|c| c.quick && c.weather.is_some_and(|w| w.precipitation == 1.0));
+    let report = client.ok("/weather");
+    assert!(report.starts_with("thunderstorm, storm for 5"), "{report}");
+    assert_eq!(client.command("/weather hurricane")[0].0, ChatKind::Error);
+    assert!(client.ok("/weather list").contains("drizzle"));
+    assert_eq!(client.ok("/weather natural"), "The natural weather is back.");
+
+    // Wind on its own, and on top of forced weather.
+    assert!(client.ok("/wind gale sw 30").contains("gale from the south-west"));
+    client.pump_until(|c| c.weather.is_some_and(|w| (w.wind.length() - 18.0).abs() < 0.01 && w.wind.x > 0.0 && w.wind.y < 0.0));
+    client.ok("/weather rain");
+    client.ok("/wind calm");
+    client.pump_until(|c| c.weather.is_some_and(|w| w.precipitation == 0.5 && w.wind.length() < 0.5));
+    assert!(client.ok("/wind").starts_with("Wind 0.3 blocks/s"));
+    assert_eq!(client.command("/wind hurricane")[0].0, ChatKind::Error);
+}
+
+#[test]
+fn teleporting() {
+    let mut client = Client::join();
+    let start = client.position;
+    client.ok("/tp ~ ~20 ~");
+    assert_eq!(client.teleported, Some(start + Vec3::Y * 20.0));
+    client.ok("/tp 100 150 -40");
+    assert_eq!(client.position, Vec3::new(100.5, 150.0, -39.5));
+    // To the ground somewhere far away, which loads it.
+    client.ok("/tp 5000 5000");
+    let (x, z) = (5000, 5000);
+    client.pump_until(|c| c.world.contains(ColumnPos::of_block(IVec3::new(x, 0, z))));
+    let feet = client.position.floor().as_ivec3();
+    assert_eq!((feet.x, feet.z), (x, z));
+    assert!(client.world.block(feet - IVec3::Y).is_some_and(|b| !b.is_air()), "lands on the ground");
+    assert_eq!(client.world.block(feet), Some(BlockId::AIR));
+    assert_eq!(client.command("/tp nobody")[0].0, ChatKind::Error);
+    assert_eq!(client.command("/tp 1 2 3 4 5")[0].0, ChatKind::Error);
+}
+
+#[test]
+fn only_admins_run_admin_commands_and_everyone_chats() {
+    let server = spawn(ServerConfig { view_distance: 2, admins: vec!["boss".into()], ..Default::default() }, content()).unwrap();
+    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let mut guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
+    let errors = guest.command("/time set noon");
+    assert_eq!(errors, [(ChatKind::Error, "Only admins may use /time.".into())]);
+    assert!(guest.ok("/seed").starts_with("Seed: "));
+    assert!(!guest.ok("/help").contains("/weather"), "help lists only what the player may use");
+    assert!(guest.ok("/list").starts_with("1 online: guest"));
+    guest.connection.send(ClientMessage::Chat { text: "hello there".into() });
+    guest.pump_until(|c| c.chat.iter().any(|(kind, text)| *kind == ChatKind::Chat && text == "<guest> hello there"));
 }
 
 #[test]

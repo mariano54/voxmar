@@ -39,6 +39,17 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# The shipped build: whole-program optimisation, slow to link. Use it for performance
+# measurements and anything compared against them.
 [profile.release]
 codegen-units = 1
 lto = "thin"
+
+# Day-to-day optimised builds (`--profile iter`): incremental and without cross-crate LTO,
+# so a small edit relinks in seconds instead of minutes. Generation runs ~5-10% slower
+# than release, which is fine for captures, previews and tests but not for perf numbers.
+[profile.iter]
+inherits = "release"
+codegen-units = 256
+lto = false
+incremental = true
