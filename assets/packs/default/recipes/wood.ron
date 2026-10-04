@@ -1,0 +1,212 @@
+// Woods. The `wood` template draws every texture a wood needs from four palettes: `bark`,
+// `wood` (the inside: planks, stripped logs, log ends), `leaves` and `sapling`. Leaves are
+// grey for woods whose leaves the game tints with the climate's foliage colour, and in
+// colour for woods whose leaves keep their own (maple, cherry, the fantasy woods).
+// `{name}_leaves_bushy` is a round leaf cluster with clear margins, for drawing leaves as
+// tilted cards around a crown.
+(
+    palettes: {
+        "leaf_grey": ["#555555", "#6d6d6d", "#858585", "#9d9d9d", "#b5b5b5", "#cdcdcd"],
+        "sapling_green": ["#2d4a1c", "#3a5e22", "#4a742a", "#5c8a33", "#70a03f"],
+        "oak_bark": ["#3b2c1b", "#4a3722", "#59432a", "#685033", "#775d3d"],
+        "oak_wood": ["#6f5532", "#83643c", "#967447", "#a88452", "#b8935e", "#c6a26b"],
+        "birch_bark": ["#a9a49a", "#c0bcb1", "#d4d0c6", "#e4e1d8", "#f2efe8"],
+        "birch_wood": ["#9a8256", "#ad9563", "#bea771", "#ceb781", "#dbc591", "#e6d2a1"],
+        "birch_leaves": ["#555555", "#6c6c6c", "#838383", "#9a9a9a", "#b1b1b1", "#c8c8c8"],
+        "birch_sapling": ["#3f5a22", "#4f6e29", "#628432", "#769a3c", "#8bb047"],
+        "spruce_bark": ["#25190d", "#2f2011", "#3a2816", "#45301b", "#503921"],
+        "spruce_wood": ["#4a341d", "#583f24", "#664a2b", "#745533", "#82613b", "#906d44"],
+        "spruce_leaves": ["#3c3c3c", "#4f4f4f", "#636363", "#787878", "#8d8d8d", "#a2a2a2"],
+        "spruce_sapling": ["#1d3a26", "#264a2f", "#305b38", "#3c6d43", "#4a7f4f"],
+        "jungle_bark": ["#352b0e", "#443814", "#53451a", "#625320", "#716127"],
+        "jungle_wood": ["#74503a", "#855d42", "#966b4b", "#a67955", "#b48760", "#c1966c"],
+        "acacia_bark": ["#433f39", "#524d46", "#625c53", "#716b61", "#817a70"],
+        "acacia_wood": ["#843f1f", "#9a4b26", "#ad572e", "#bd6437", "#ca7141", "#d67f4d"],
+        "dark_oak_bark": ["#22180c", "#2b1f10", "#352614", "#3f2e19", "#49361e"],
+        "dark_oak_wood": ["#382512", "#432d18", "#4e361e", "#5a3f24", "#66492b", "#725333"],
+        "dark_oak_leaves": ["#3c3c3c", "#4f4f4f", "#636363", "#787878", "#8d8d8d", "#a2a2a2"],
+        "cherry_bark": ["#2a1a20", "#36222a", "#432b34", "#50353e", "#5d3f48"],
+        "cherry_wood": ["#a87470", "#b9837e", "#c9928c", "#d6a29b", "#e1b2aa", "#eac1b9"],
+        "cherry_leaves": ["#b0577f", "#c76a93", "#da82a8", "#e99cbc", "#f4b6cf", "#fbcfe0"],
+        "cherry_sapling": ["#a24f76", "#bd6690", "#d681a9", "#e99dbf", "#f5b9d3"],
+        "mangrove_bark": ["#3b281e", "#493126", "#573b2e", "#654536", "#734f3f"],
+        "mangrove_wood": ["#6a2823", "#7b302a", "#8c3931", "#9c4339", "#ab4e42", "#b85a4c"],
+        "maple_bark": ["#37291f", "#443328", "#513d31", "#5e483a", "#6b5344"],
+        "maple_wood": ["#9c6540", "#ad7249", "#bc8053", "#c98e5e", "#d49c6a", "#ddaa78"],
+        "maple_leaves": ["#7f1c10", "#a02a15", "#c13e1b", "#d95823", "#ea7a2f", "#f5a040"],
+        "maple_sapling": ["#8a2412", "#ad3618", "#cc4e1f", "#e2702b", "#f0963a"],
+        "redwood_bark": ["#461c12", "#572418", "#692d1e", "#7a3725", "#8a422d"],
+        "redwood_wood": ["#742f21", "#863928", "#984330", "#a94e39", "#b85a43", "#c5674e"],
+        "redwood_leaves": ["#363636", "#484848", "#5b5b5b", "#6f6f6f", "#838383", "#989898"],
+        "redwood_sapling": ["#1b3a22", "#244a2a", "#2d5a33", "#386b3d", "#457d48"],
+        "cypress_bark": ["#3a322c", "#473e37", "#554a42", "#62564d", "#706359"],
+        "cypress_wood": ["#9a8262", "#aa916f", "#b9a07c", "#c7ae8a", "#d3bb98", "#ddc7a5"],
+        "cypress_leaves": ["#383838", "#4a4a4a", "#5d5d5d", "#717171", "#858585", "#9a9a9a"],
+        "cypress_sapling": ["#1c3a2c", "#244a36", "#2e5b41", "#3a6d4d", "#487f5b"],
+        "willow_bark": ["#363126", "#433d2e", "#504936", "#5d553f", "#6a6149"],
+        "willow_wood": ["#958358", "#a59364", "#b5a271", "#c3b07e", "#cfbd8b", "#dac999"],
+        "willow_leaves": ["#5a5a5a", "#717171", "#888888", "#9f9f9f", "#b6b6b6", "#cdcdcd"],
+        "willow_sapling": ["#4a6a2a", "#5a7e31", "#6c933a", "#80a845", "#95bc52"],
+        "baobab_bark": ["#64544c", "#74625a", "#847168", "#937f76", "#a28e84"],
+        "baobab_wood": ["#9a8464", "#aa9372", "#b9a280", "#c6b08e", "#d2bd9c", "#dcc9aa"],
+        "palm_bark": ["#55452c", "#665435", "#77633f", "#877249", "#968154"],
+        "palm_wood": ["#9a7a4b", "#ac8957", "#bc9863", "#c9a670", "#d5b37d", "#dfc08b"],
+        "silverwood_bark": ["#7f8591", "#979eaa", "#b0b6c1", "#c7ccd5", "#dde1e8"],
+        "silverwood_wood": ["#8f99ad", "#a0a9bc", "#b1b9ca", "#c1c8d7", "#d0d6e2", "#dee3ec"],
+        "silverwood_leaves": ["#4d7a8e", "#6592a5", "#7eabbc", "#9cc5d3", "#bddde7", "#dff2f7"],
+        "silverwood_sapling": ["#527f93", "#6b98ab", "#86b2c2", "#a6cbd8", "#c7e3ec"],
+        "emberwood_bark": ["#1b1311", "#271b18", "#33231f", "#3f2c26", "#4b352e"],
+        "emberwood_wood": ["#702612", "#852f16", "#9a391b", "#ad4421", "#bd5028", "#cb5d31"],
+        "emberwood_leaves": ["#741a0b", "#962810", "#ba3c14", "#da581b", "#f17f26", "#fdab3a"],
+        "emberwood_sapling": ["#8c240e", "#b23814", "#d4541b", "#ec7a26", "#fba43a"],
+    },
+    templates: {
+        "wood": {
+            "block/{name}_log": (layers: [
+                Paint(palette: "bark", base: 0.52, shade: [
+                    Noise(cells: (8, 2), octaves: 2, amount: 0.6),
+                    Stripes(vertical: true, period: 4.0, width: 0.25, amount: -0.35, warp: 1.0),
+                    Noise(cells: (16, 16), amount: 0.2),
+                ], clean: true),
+            ]),
+            "block/{name}_log_top": (layers: [
+                Paint(palette: "wood", base: 0.62, shade: [Rings(spacing: 2.6, width: 0.35, amount: -0.3, wobble: 0.5, square: 0.45), Noise(cells: (16, 16), amount: 0.15)]),
+                Paint(palette: "bark", base: 0.45, shade: [Noise(cells: (16, 16), amount: 0.6)], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
+            ]),
+            "block/stripped_{name}_log": (layers: [
+                Paint(palette: "wood", base: 0.58, shade: [
+                    Noise(cells: (16, 2), octaves: 2, amount: 0.35),
+                    Stripes(vertical: true, period: 5.0, width: 0.2, amount: -0.22, warp: 0.8),
+                ], clean: true),
+            ]),
+            "block/stripped_{name}_log_top": (layers: [
+                Paint(palette: "wood", base: 0.66, shade: [Rings(spacing: 2.6, width: 0.35, amount: -0.25, wobble: 0.5, square: 0.45), Border(width: 1, amount: -0.25), Noise(cells: (16, 16), amount: 0.12)]),
+            ]),
+            "block/{name}_planks": (layers: [
+                Paint(palette: "wood", base: 0.56, shade: [
+                    Boards(height: 4, seam: -0.5, joint: -0.4, value: 0.22, bevel: 0.12),
+                    Noise(cells: (4, 16), octaves: 2, amount: 0.28),
+                ], clean: true),
+            ]),
+            "block/{name}_leaves": (palettes: {"leaves": "leaf_grey"}, layers: [
+                // A dark mass, lit clumps of leaves on it, then gaps.
+                Paint(palette: "leaves", base: 0.35, shade: [Noise(cells: (8, 8), amount: 0.3)]),
+                Clusters(palette: "leaves", count: 40, size: (3, 5), spacing: 2.2, shade: 2, shadow: -1),
+                Cut(mask: [Noise(cells: (5, 5), amount: 1.0), Speckle(chance: 0.15, amount: 0.4)], above: 0.12),
+            ]),
+            "block/{name}_leaves_bushy": (base: "block/{name}_leaves", layers: [
+                Cut(mask: [Circle(radius: 7.2, rough: 1.6)], below: 0.5),
+            ]),
+            "block/{name}_sapling": (palettes: {"sapling": "sapling_green"}, layers: [
+                Grid(
+                    legend: {
+                        'a': "sapling:0", 'b': "sapling:1", 'c': "sapling:2", 'd': "sapling:3", 'e': "sapling:4",
+                        's': "bark:2", 't': "bark:0",
+                    },
+                    rows: [
+                        "................",
+                        "................",
+                        "......abb.......",
+                        "....abccdb......",
+                        "...abcdedcb.....",
+                        "...bcdeedcba....",
+                        "..abcdddcbaab...",
+                        "...abccba.abcb..",
+                        "....aab.s.bdcb..",
+                        ".........sabba..",
+                        "........s.......",
+                        "........s.......",
+                        ".......ts.......",
+                        "........s.......",
+                        "........t.......",
+                        "........s.......",
+                    ],
+                ),
+            ]),
+        },
+    },
+    families: [
+        (template: "wood", name: "oak", palettes: {"bark": "oak_bark", "wood": "oak_wood"}),
+        (template: "wood", name: "birch", palettes: {"bark": "birch_bark", "wood": "birch_wood", "leaves": "birch_leaves", "sapling": "birch_sapling"}),
+        (template: "wood", name: "spruce", palettes: {"bark": "spruce_bark", "wood": "spruce_wood", "leaves": "spruce_leaves", "sapling": "spruce_sapling"}),
+        (template: "wood", name: "jungle", palettes: {"bark": "jungle_bark", "wood": "jungle_wood"}),
+        (template: "wood", name: "acacia", palettes: {"bark": "acacia_bark", "wood": "acacia_wood"}),
+        (template: "wood", name: "dark_oak", palettes: {"bark": "dark_oak_bark", "wood": "dark_oak_wood", "leaves": "dark_oak_leaves"}),
+        (template: "wood", name: "cherry", palettes: {"bark": "cherry_bark", "wood": "cherry_wood", "leaves": "cherry_leaves", "sapling": "cherry_sapling"}),
+        (template: "wood", name: "mangrove", palettes: {"bark": "mangrove_bark", "wood": "mangrove_wood"}),
+        (template: "wood", name: "maple", palettes: {"bark": "maple_bark", "wood": "maple_wood", "leaves": "maple_leaves", "sapling": "maple_sapling"}),
+        (template: "wood", name: "redwood", palettes: {"bark": "redwood_bark", "wood": "redwood_wood", "leaves": "redwood_leaves", "sapling": "redwood_sapling"}),
+        (template: "wood", name: "cypress", palettes: {"bark": "cypress_bark", "wood": "cypress_wood", "leaves": "cypress_leaves", "sapling": "cypress_sapling"}),
+        (template: "wood", name: "willow", palettes: {"bark": "willow_bark", "wood": "willow_wood", "leaves": "willow_leaves", "sapling": "willow_sapling"}),
+        (template: "wood", name: "baobab", palettes: {"bark": "baobab_bark", "wood": "baobab_wood"}),
+        (template: "wood", name: "palm", palettes: {"bark": "palm_bark", "wood": "palm_wood"}),
+        (template: "wood", name: "silverwood", palettes: {"bark": "silverwood_bark", "wood": "silverwood_wood", "leaves": "silverwood_leaves", "sapling": "silverwood_sapling"}),
+        (template: "wood", name: "emberwood", palettes: {"bark": "emberwood_bark", "wood": "emberwood_wood", "leaves": "emberwood_leaves", "sapling": "emberwood_sapling"}),
+    ],
+    textures: {
+        // Birch: pale bark with dark lenticels.
+        "block/birch_log": (palettes: {"bark": "birch_bark", "mark": ["#1c1814", "#2d2822", "#3e3830", "#57504a"]}, layers: [
+            Paint(palette: "bark", base: 0.62, shade: [Noise(cells: (8, 4), octaves: 2, amount: 0.4), Noise(cells: (16, 16), amount: 0.2)], clean: true),
+            Clusters(palette: "mark", count: 7, size: (2, 5), spread: (3.0, 0.3), spacing: 4.0, shade: 1, seed: 3),
+        ]),
+        // Palm: ringed trunk.
+        "block/palm_log": (palettes: {"bark": "palm_bark"}, layers: [
+            Paint(palette: "bark", base: 0.55, shade: [
+                Stripes(period: 4.0, width: 0.25, amount: -0.4, warp: 0.6),
+                Stripes(period: 4.0, width: 0.25, amount: 0.2, warp: 0.6, phase: 1.0),
+                Noise(cells: (16, 4), amount: 0.35),
+            ], clean: true),
+        ]),
+        // Baobab: smooth, swollen grey bark.
+        "block/baobab_log": (palettes: {"bark": "baobab_bark"}, layers: [
+            Paint(palette: "bark", base: 0.55, shade: [Noise(cells: (4, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 8.0, width: 0.125, amount: -0.25, warp: 1.5), Noise(cells: (16, 16), amount: 0.12)], clean: true),
+        ]),
+        // Redwood: deep fibrous furrows.
+        "block/redwood_log": (palettes: {"bark": "redwood_bark"}, layers: [
+            Paint(palette: "bark", base: 0.55, shade: [
+                Noise(cells: (16, 2), octaves: 2, amount: 0.5),
+                Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.4, warp: 1.0),
+            ], clean: true),
+        ]),
+        // Silverwood: bright bark with faint blue glints.
+        "block/silverwood_log": (palettes: {"bark": "silverwood_bark", "glint": ["#b7e6ff", "#e8f8ff"]}, layers: [
+            Paint(palette: "bark", base: 0.55, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 5.0, width: 0.2, amount: -0.3, warp: 1.0)], clean: true),
+            Paint(palette: "glint", base: 0.2, shade: [Speckle(chance: 0.5, amount: 0.6)], mask: [Speckle(chance: 0.05, amount: 1.0, seed: 7)]),
+        ]),
+        // Emberwood: charred bark split by glowing seams.
+        "block/emberwood_log": (palettes: {"bark": "emberwood_bark", "ember": ["#b33a0e", "#ee6a18", "#ffa63a", "#ffd27a"]}, layers: [
+            Paint(palette: "bark", base: 0.5, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.6), Noise(cells: (16, 16), amount: 0.25)], clean: true),
+            Paint(palette: "ember", base: 0.35, shade: [Noise(cells: (4, 16), amount: 0.9)], mask: [Stripes(vertical: true, period: 5.0, width: 0.2, amount: 1.0, warp: 1.0, phase: 2.0), Noise(cells: (2, 4), amount: 1.2)], above: 1.05, shadow: -1),
+        ]),
+        "block/emberwood_log_top": (base: "block/stripped_emberwood_log_top", palettes: {"bark": "emberwood_bark"}, layers: [
+            Paint(palette: "bark", base: 0.45, shade: [Noise(cells: (16, 16), amount: 0.6)], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
+        ]),
+        // Conifer saplings are narrow spires.
+        "block/spruce_sapling": (base: "block/oak_sapling", palettes: {"bark": "spruce_bark", "sapling": "spruce_sapling"}, layers: [
+            Grid(legend: {'x': "clear"}, rows: ["xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx"]),
+            Grid(
+                legend: {'a': "sapling:0", 'b': "sapling:1", 'c': "sapling:2", 'd': "sapling:3", 'e': "sapling:4", 's': "bark:2", 't': "bark:0"},
+                rows: [
+                    "................",
+                    ".......d........",
+                    "......cdc.......",
+                    "......bdc.......",
+                    ".....bcedb......",
+                    ".....abdcb......",
+                    "....abcdcba.....",
+                    ".....bcecb......",
+                    "....abcddcb.....",
+                    "...abcdedcba....",
+                    "...abbcdccba....",
+                    "......bsa.......",
+                    ".......s........",
+                    ".......t........",
+                    ".......s........",
+                    ".......s........",
+                ],
+            ),
+        ]),
+        "block/redwood_sapling": (base: "block/spruce_sapling", palettes: {"bark": "redwood_bark", "sapling": "redwood_sapling"}),
+        "block/cypress_sapling": (base: "block/spruce_sapling", palettes: {"bark": "cypress_bark", "sapling": "cypress_sapling"}),
+    },
+)

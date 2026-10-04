@@ -1,5 +1,5 @@
-//! Stage 4: turns sites and resources into blocks: surface materials, caves, water and
-//! ice, then trees and the small plants on the ground.
+//! Stage 4: turns sites and resources into blocks: surface materials, caves (see
+//! [`crate::caves`]), water and ice, then trees and the small plants on the ground.
 //!
 //! Surface materials come from the biome's surface rules (see `surface`), around a few
 //! physical rules every biome shares: bare rock on cliffs and exposed heights, snow where
@@ -15,12 +15,14 @@ use voxmar_engine::coords::{CHUNK_SIZE, CHUNK_VOLUME, COLUMN_CHUNKS, ColumnPos, 
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
+use crate::biome::Biomes;
+use crate::caves::{Cave, CaveFace};
+use crate::content::WorldContent;
 use crate::ecology::{Ground, Plant};
 use crate::features::{self, Features};
 use crate::geology::{GeoGrid, noise};
+use crate::lattice::{self, Lattice, Profile};
 use crate::resources::Resources;
-use crate::biome::Biomes;
-use crate::content::WorldContent;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
 use crate::surface::{Fill, Layers, Palette, Spot};
@@ -30,15 +32,12 @@ use crate::{Overworld, SEA_LEVEL, Site};
 /// Stone turns to deepslate below this height, 48 blocks under sea level.
 const DEEPSLATE: i32 = SEA_LEVEL - 48;
 
-/// Spacing of the lattice on which 3D noise is evaluated and then interpolated.
-const LATTICE: i32 = 4;
-const LX: usize = (CHUNK_SIZE / LATTICE + 1) as usize;
-
 struct Ids {
     bedrock: BlockId,
     deepslate: BlockId,
     grass: BlockId,
     water: BlockId,
+    lava: BlockId,
     snow: BlockId,
     powder: BlockId,
     snowy_ground: BlockId,
@@ -49,9 +48,6 @@ struct Ids {
 
 pub struct Terrain {
     ids: Ids,
-    cheese: FastNoiseLite,
-    tunnel_a: FastNoiseLite,
-    tunnel_b: FastNoiseLite,
     rock: FastNoiseLite,
     /// Patches that dither the borders between surface materials.
     patches: FastNoiseLite,
@@ -95,6 +91,7 @@ impl Terrain {
                 deepslate: id("deepslate"),
                 grass: id("grass_block"),
                 water,
+                lava: id("lava"),
                 snow: registry.expect(&frost.snow),
                 powder: registry.expect(&frost.powder),
                 snowy_ground: registry.expect(&frost.snowy_ground),
@@ -102,9 +99,6 @@ impl Terrain {
                 thick_ice: registry.expect(&frost.thick_ice),
                 rare_ice: registry.expect(&frost.rare_ice),
             },
-            cheese: noise(seed, 20, 0.012, FractalType::FBm, 2),
-            tunnel_a: noise(seed, 21, 0.014, FractalType::FBm, 2),
-            tunnel_b: noise(seed, 22, 0.014, FractalType::FBm, 2),
             rock: noise(seed, 23, 0.02, FractalType::None, 1),
             patches: noise(seed, 24, 0.04, FractalType::FBm, 2),
             mixes: noise(seed, 25, 1.0 / 9.0, FractalType::FBm, 2),
@@ -183,44 +177,6 @@ impl Blocks<'_> {
     }
 }
 
-/// Trilinearly interpolated 3D noise over the column, sampled every `LATTICE` blocks.
-struct Lattice {
-    values: Vec<f32>,
-    layers: usize,
-}
-
-impl Lattice {
-    fn new(noise: &FastNoiseLite, origin: IVec3, top: i32, scale_y: f32) -> Self {
-        let layers = (top / LATTICE + 2) as usize;
-        let mut values = Vec::with_capacity(LX * LX * layers);
-        for ly in 0..layers {
-            for lz in 0..LX {
-                for lx in 0..LX {
-                    let p = origin + IVec3::new(lx as i32, ly as i32, lz as i32) * LATTICE;
-                    values.push(noise.get_noise_3d(p.x as f32, p.y as f32 * scale_y, p.z as f32));
-                }
-            }
-        }
-        Self { values, layers }
-    }
-
-    fn get(&self, x: i32, y: i32, z: i32) -> f32 {
-        let (gx, gy, gz) = ((x / LATTICE) as usize, (y / LATTICE) as usize, (z / LATTICE) as usize);
-        if gy + 1 >= self.layers {
-            return 0.0;
-        }
-        let f = |v: i32| (v % LATTICE) as f32 / LATTICE as f32;
-        let (fx, fy, fz) = (f(x), f(y), f(z));
-        let at = |dx: usize, dy: usize, dz: usize| self.values[((gy + dy) * LX + gz + dz) * LX + gx + dx];
-        let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
-        let x00 = lerp(at(0, 0, 0), at(1, 0, 0), fx);
-        let x10 = lerp(at(0, 1, 0), at(1, 1, 0), fx);
-        let x01 = lerp(at(0, 0, 1), at(1, 0, 1), fx);
-        let x11 = lerp(at(0, 1, 1), at(1, 1, 1), fx);
-        lerp(lerp(x00, x10, fy), lerp(x01, x11, fy), fz)
-    }
-}
-
 pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let terrain = &world.terrain;
     let ids = &terrain.ids;
@@ -233,10 +189,10 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let geology = GeoGrid::new(&world.geology, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
     let top = geology.samples().iter().map(|g| g.height).max().unwrap_or(0).max(SEA_LEVEL);
 
-    let cheese = Lattice::new(&terrain.cheese, origin, top, 1.6);
-    let tunnel_a = Lattice::new(&terrain.tunnel_a, origin, top, 1.0);
-    let tunnel_b = Lattice::new(&terrain.tunnel_b, origin, top, 1.0);
-    let rock = Lattice::new(&terrain.rock, origin, top, 1.0);
+    let rock = Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0);
+    let mut rock_profile = Profile::default();
+    let mut caves = world.caves.column(&geology, origin, top);
+    let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
     let mut blocks = Blocks {
         origin,
@@ -257,11 +213,34 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let layers = world.surface_layers(&site, wx, wz);
             let stones = world.stones(&site);
             let strata = &world.biomes.get(site.biome).strata;
-            let underwater = height < SEA_LEVEL;
+            caves.carve(x, z, &mut cave);
+            rock.profile(x, z, &mut rock_profile);
 
             for y in 0..=height {
                 let below_surface = height - y;
-                let block = if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
+                match cave[y as usize] {
+                    Cave::Rock => {}
+                    Cave::Air => continue,
+                    Cave::Water => {
+                        blocks.set_local(x, y, z, ids.water);
+                        continue;
+                    }
+                    Cave::Lava => {
+                        blocks.set_local(x, y, z, ids.lava);
+                        continue;
+                    }
+                }
+                let open = |y: i32| cave.get(y as usize).is_some_and(|&c| c != Cave::Rock);
+                let lining = if open(y + 1) {
+                    world.caves.decoration(IVec3::new(wx, y, wz), below_surface, CaveFace::Floor)
+                } else if open(y - 1) {
+                    world.caves.decoration(IVec3::new(wx, y, wz), below_surface, CaveFace::Ceiling)
+                } else {
+                    None
+                };
+                let block = if let Some(lining) = lining {
+                    lining
+                } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
                     ids.bedrock
                 } else if below_surface == 0 {
                     layers.top
@@ -271,16 +250,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         _ => terrain.band(strata, y, wx, wz),
                     }
                 } else {
-                    stone_at(ids, stones, &rock, world.seed, x, y, z, wx, wz)
+                    stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz)
                 };
-
-                // Caves stay dry: they never open into the floor of a sea, lake or river. They
-                // keep to the depths they had in the 256-block world, leaving the deepest 64
-                // blocks solid.
-                let carvable = y > SEA_LEVEL - 60 && (!underwater || below_surface > 6);
-                if carvable && is_cave(&cheese, &tunnel_a, &tunnel_b, x, y, z, below_surface) {
-                    continue;
-                }
                 blocks.set_local(x, y, z, block);
             }
             let ice = terrain.ice(&site, wx, wz);
@@ -292,7 +263,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     }
 
     terrain.resources.place(world.seed, pos, &mut blocks);
-    terrain.features.place(world, &area, &geology, world.seed, pos, &mut blocks);
+    terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
 
     // Ground plants last, wherever trees, caves and water left the surface open.
     for z in 0..CHUNK_SIZE {
@@ -433,24 +404,12 @@ impl Overworld {
 }
 
 /// The stone at a block: deepslate in the depths, otherwise one of `stones` in blobs and
-/// veins that follow a 3D noise.
-#[allow(clippy::too_many_arguments)]
-fn stone_at(ids: &Ids, stones: &Palette, rock: &Lattice, seed: u64, x: i32, y: i32, z: i32, wx: i32, wz: i32) -> BlockId {
+/// veins that follow a 3D noise (`rock`, its value here).
+fn stone_at(ids: &Ids, stones: &Palette, rock: f32, seed: u64, y: i32, wx: i32, wz: i32) -> BlockId {
     // Deepslate below `DEEPSLATE`, dithered over 8 blocks.
     if y < DEEPSLATE + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
         return ids.deepslate;
     }
     // A single octave of simplex noise is spread nearly evenly over about ±0.94.
-    stones.pick((0.5 + rock.get(x, y, z) * 0.53).clamp(0.0, 0.9999))
-}
-
-fn is_cave(cheese: &Lattice, a: &Lattice, b: &Lattice, x: i32, y: i32, z: i32, depth: i32) -> bool {
-    // Large caverns well below the surface.
-    if depth > 12 && cheese.get(x, y, z) > 0.62 {
-        return true;
-    }
-    // Winding tunnels where two noise fields are both near zero; they may break the
-    // surface, which forms cave entrances.
-    let (a, b) = (a.get(x, y, z), b.get(x, y, z));
-    a * a + b * b < 0.0045
+    stones.pick((0.5 + rock * 0.53).clamp(0.0, 0.9999))
 }
