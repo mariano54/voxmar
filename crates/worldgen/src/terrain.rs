@@ -175,6 +175,13 @@ impl Blocks<'_> {
         low.cmple(high).all().then_some((low, high))
     }
 
+    /// Sets the block at `pos`, if it is in the column.
+    pub fn set(&mut self, pos: IVec3, block: BlockId) {
+        if let Some(i) = self.index(pos) {
+            self.data[i] = block;
+        }
+    }
+
     /// The block at `pos`; air outside the column.
     pub fn get(&self, pos: IVec3) -> BlockId {
         self.index(pos).map_or(BlockId::AIR, |i| self.data[i])
@@ -288,6 +295,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 blocks.set_local(x, y, z, block);
             }
             underground.decorate(x, z, &site, &cave, &mut blocks);
+            underground.bury(x, z, &cave, &mut blocks);
             // Fast water stays open in the cold.
             let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring);
             for y in height + 1..=geo.water {

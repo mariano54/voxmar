@@ -11,16 +11,24 @@
 //! one, a frozen grotto that gives way to plain rock. The fields vary over about 600
 //! blocks across and 150 up and down, so cave biomes are wide regions stacked in layers.
 //!
-//! Picks are made on a lattice every 8 blocks, and each block takes the pick of a nearby
-//! lattice point, jittered per block, so the borders between cave biomes are ragged clumps
-//! rather than planes and a column costs a few hundred picks.
+//! Picks are made on a lattice every 8 blocks, and each block takes the pick of one of the
+//! eight lattice points around it, chosen by trilinear weight, so one cave biome gives way
+//! to the next in a dithered gradient and a column costs a few hundred picks.
 //!
 //! A cave biome then
 //! - replaces the rock in its volume with its own stones or strata, when it has them;
 //! - lines cave floors with its surface's `ground` (`underwater` under water) and ceilings
 //!   with its `cliff`, unless those are the stones beneath;
 //! - grows its `cave_decoration` from floors and ceilings: plants and mushrooms,
-//!   stalagmites and stalactites, icicles, roots and vines, crystals, some of them glowing.
+//!   stalagmites and stalactites, icicles, roots and vines, crystals, some of them glowing;
+//! - freezes the surface of its pools, when it is tagged `frozen`.
+//!
+//! Wherever daylight falls straight down a shaft to a cave floor (a sinkhole, a ravine, an
+//! entrance), the floor grows a small garden of turf, grass, ferns and flowers, or snow
+//! where it is cold. Buried in the rock lie two kinds of finds, seeded per region cell:
+//! geodes (hollows lined with crystal in calcite in basalt, carved by
+//! `crate::caves` so the water tables can flood them) and fossil skeletons (a spine, ribs
+//! and a skull of pale stone), seen only where a cave cuts through them or by digging.
 //!
 //! Decorations grow straight up or down within their block column and only into open air,
 //! so they never cross a column border, never displace water or lava and never leave a
@@ -29,15 +37,15 @@
 use std::sync::LazyLock;
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
-use voxmar_engine::block::{BlockId, BlockRegistry};
+use voxmar_engine::block::{BlockId, BlockRegistry, Support};
 use voxmar_engine::coords::CHUNK_SIZE;
-use voxmar_engine::glam::IVec3;
+use voxmar_engine::glam::{IVec3, Vec3};
 
 use crate::biome::{BiomeId, Biomes, Point};
-use crate::caves::Cave;
+use crate::caves::{Cave, GEODE_SHELL, Geode, LAVA_LEVEL};
 use crate::content::{Layer, Material, Side, WorldContent};
 use crate::geology::{GeoGrid, noise};
-use crate::rng::hash3;
+use crate::rng::{Rng, hash3};
 use crate::rocks::{ProvinceId, Rocks};
 use crate::surface::{Conditions, Fill, Mat, Palette, Spot, SurfaceRules};
 use crate::terrain::Blocks;
@@ -72,7 +80,52 @@ struct Work {
     floor: bool,
     ceiling: bool,
     decorations: bool,
+    /// Pools freeze over (cave biomes tagged `frozen`).
+    freezes: bool,
 }
+
+/// Blocks the underground uses whatever the biome.
+struct Ids {
+    ice: BlockId,
+    snow: BlockId,
+    turf: BlockId,
+    soil: BlockId,
+    /// Plants of a sunlit floor, by weight out of 1 (the rest stays bare).
+    garden: Vec<(BlockId, f32)>,
+    crystal: BlockId,
+    /// Crystals growing on a geode's floor, which light it.
+    cluster: BlockId,
+    calcite: BlockId,
+    dark_rock: BlockId,
+    bone: BlockId,
+}
+
+/// A fossil skeleton: line segments of bone and the ball of its skull.
+pub(crate) struct Fossil {
+    bones: Vec<(Vec3, Vec3)>,
+    skull: (Vec3, f32),
+    /// Its bounds, inclusive.
+    pub min: IVec3,
+    pub max: IVec3,
+}
+
+impl Fossil {
+    pub fn contains(&self, p: IVec3) -> bool {
+        let c = p.as_vec3() + 0.5;
+        if c.distance_squared(self.skull.0) < self.skull.1 * self.skull.1 {
+            return true;
+        }
+        self.bones.iter().any(|&(a, b)| {
+            let ab = b - a;
+            let t = ((c - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+            c.distance_squared(a + ab * t) < 0.36
+        })
+    }
+}
+
+/// Fossils are seeded per cell of this size.
+const FOSSIL_CELL: i32 = 160;
+const FOSSILS: u64 = 0xf055;
 
 /// The cave biomes of one world.
 pub struct Underground {
@@ -84,6 +137,10 @@ pub struct Underground {
     rocky: Vec<bool>,
     /// What each biome does to its caves, by biome id.
     work: Vec<Work>,
+    ids: Ids,
+    /// Each block's support and whether it is solid, by block id, so decorations only hang
+    /// under (and stand on) something that holds them.
+    supports: Vec<(Support, bool)>,
     seed: u64,
 }
 
@@ -126,6 +183,7 @@ impl Underground {
                     floor: def.layer == Layer::Underground && (lined(&s.ground) || lined(&s.underwater) || !s.rules.is_empty()),
                     ceiling: def.layer == Layer::Underground && s.cliff.as_ref().is_some_and(|c| *c != Material::Stones),
                     decorations: !def.cave_decoration.is_empty(),
+                    freezes: def.layer == Layer::Underground && def.tags.iter().any(|t| t == "frozen"),
                 }
             })
             .collect();
@@ -135,6 +193,30 @@ impl Underground {
             decorations,
             rocky,
             work,
+            ids: {
+                let id = |name: &str| registry.expect(&format!("base:{name}"));
+                Ids {
+                    ice: registry.expect(&content.climate.frost.ice),
+                    snow: registry.expect(&content.climate.frost.snow),
+                    turf: id("grass_block"),
+                    soil: id("dirt"),
+                    garden: vec![
+                        (id("short_grass"), 0.45),
+                        (id("fern"), 0.12),
+                        (id("dandelion"), 0.03),
+                        (id("poppy"), 0.03),
+                        (id("azure_bluet"), 0.04),
+                        (id("lily_of_the_valley"), 0.02),
+                    ],
+                    crystal: id("crystal_block"),
+                    cluster: id("crystal_cluster"),
+                    calcite: id("calcite"),
+                    dark_rock: id("basalt"),
+                    // A stand-in for bone.
+                    bone: id("chalk"),
+                }
+            },
+            supports: (0..registry.len()).map(|i| (registry.info(BlockId(i as u16)).support, registry.info(BlockId(i as u16)).solid)).collect(),
             seed: seed ^ PURPOSE,
         }
     }
@@ -172,7 +254,55 @@ impl Underground {
                 }
             }
         }
-        UndergroundColumn { underground: self, world, origin, layers, picks, rocky }
+        let geodes = world.caves.geodes_near(geology, origin);
+        let fossils = self.fossils_near(world, origin);
+        UndergroundColumn { underground: self, world, origin, layers, picks, rocky, geodes, fossils }
+    }
+
+    /// Fossil skeletons reaching into the column at `origin`.
+    pub(crate) fn fossils_near(&self, world: &Overworld, origin: IVec3) -> Vec<Fossil> {
+        const REACH: i32 = 16;
+        let cell = |v: i32| v.div_euclid(FOSSIL_CELL);
+        let mut found = Vec::new();
+        for fz in cell(origin.z - REACH)..=cell(origin.z + CHUNK_SIZE + REACH) {
+            for fx in cell(origin.x - REACH)..=cell(origin.x + CHUNK_SIZE + REACH) {
+                let mut rng = Rng::new(self.seed, FOSSILS, fx, fz);
+                if !rng.chance(0.3) {
+                    continue;
+                }
+                let span = (FOSSIL_CELL - 2 * REACH) as u32;
+                let (x, z) = (fx * FOSSIL_CELL + REACH + rng.below(span), fz * FOSSIL_CELL + REACH + rng.below(span));
+                let y = rng.range(LAVA_LEVEL + 14, SEA_LEVEL - 16);
+                let length = rng.range(10, 22) as f32;
+                let along = if rng.chance(0.5) { Vec3::X } else { Vec3::Z };
+                let side = Vec3::Y.cross(along);
+                let rib = 2.5 + 1.5 * rng.unit();
+                let centre = Vec3::new(x as f32, y as f32, z as f32) + 0.5;
+                let (tail, head) = (centre - along * length / 2.0, centre + along * length / 2.0);
+                let mut bones = vec![(tail, head)];
+                // Ribs every two blocks along the front two thirds, curving down.
+                let mut t = length * 0.3;
+                while t < length - 2.0 {
+                    let at = tail + along * t;
+                    let reach = rib * (1.0 - 0.5 * ((t / length - 0.65) * 2.4).powi(2)).max(0.4);
+                    for s in [side, -side] {
+                        let elbow = at + s * reach * 0.8 - Vec3::Y * 0.4;
+                        bones.push((at, elbow));
+                        bones.push((elbow, at + s * reach - Vec3::Y * (reach + 0.6)));
+                    }
+                    t += 2.0;
+                }
+                let skull = (head + along * 1.6, 1.7);
+                let extent = Vec3::splat(rib + 3.0) + along * length / 2.0;
+                let (min, max) = ((centre - extent).floor().as_ivec3(), (centre + extent).ceil().as_ivec3());
+                let touches = min.x < origin.x + CHUNK_SIZE && max.x >= origin.x && min.z < origin.z + CHUNK_SIZE && max.z >= origin.z;
+                // Buried well inside the ground.
+                if touches && world.height(x, z) - y >= 16 {
+                    found.push(Fossil { bones, skull, min, max });
+                }
+            }
+        }
+        found
     }
 
     /// The lattice point nearest to `pos`, whose pick its block most likely takes.
@@ -200,6 +330,8 @@ pub(crate) struct UndergroundColumn<'a> {
     picks: Vec<Option<BiomeId>>,
     /// Whether any pick of each lattice column has rock of its own.
     rocky: [bool; SIDE * SIDE],
+    geodes: Vec<Geode>,
+    fossils: Vec<Fossil>,
 }
 
 impl UndergroundColumn<'_> {
@@ -245,12 +377,28 @@ impl UndergroundColumn<'_> {
         let mix = std::cell::OnceCell::new();
         let mix = || *mix.get_or_init(|| world.terrain.mix(wx, wz));
         let column_stones = world.stones(site);
+        // Daylight falls straight down to every open block from here up.
+        let height = cave.len() as i32 - 1;
+        let sunlit = (0..=height).rev().take_while(|&y| cave[y as usize] == Cave::Air).last().unwrap_or(i32::MAX);
+        let geodes: Vec<(&Geode, std::ops::RangeInclusive<i32>)> = self.geodes.iter().filter_map(|g| Some((g, g.span(wx, wz)?))).collect();
+        let in_geode = |y: i32| geodes.iter().any(|(_, span)| span.contains(&y));
         for y in 1..cave.len() as i32 - 1 {
+            if cave[y as usize] == Cave::Water && cave[y as usize + 1] == Cave::Air {
+                // The surface of a pool, which freezes in frozen caves.
+                if self.biome(x, y, z).is_some_and(|id| self.underground.work[id.0 as usize].freezes) {
+                    blocks.set(IVec3::new(wx, y, wz), self.underground.ids.ice);
+                }
+                continue;
+            }
             if cave[y as usize] != Cave::Rock {
                 continue;
             }
             let (floor, ceiling) = (open(y + 1), open(y - 1));
-            if !floor && !ceiling {
+            if !floor && !ceiling || in_geode(y) {
+                continue;
+            }
+            if floor && y + 1 >= sunlit && y < height {
+                self.garden(IVec3::new(wx, y, wz), site, cave, blocks);
                 continue;
             }
             let Some(id) = self.biome(x, y, z) else { continue };
@@ -292,6 +440,71 @@ impl UndergroundColumn<'_> {
         }
     }
 
+    /// Finishes the block column at (x, z): lines the geodes and lays the fossils in it.
+    /// Both replace only rock the caves left whole.
+    pub(crate) fn bury(&self, x: i32, z: i32, cave: &[Cave], blocks: &mut Blocks) {
+        let ids = &self.underground.ids;
+        let (wx, wz) = (self.origin.x + x, self.origin.z + z);
+        let rock = |y: i32| y >= 0 && cave.get(y as usize) == Some(&Cave::Rock);
+        for geode in &self.geodes {
+            let Some(span) = geode.span(wx, wz) else { continue };
+            for y in span.filter(|&y| rock(y)) {
+                let pos = IVec3::new(wx, y, wz);
+                let depth = geode.distance(pos) - geode.radius;
+                let h = hash3(geode.seed, pos.x, pos.y, pos.z);
+                let block = match depth {
+                    d if d < 0.0 || d >= GEODE_SHELL => continue,
+                    d if d < 1.2 => {
+                        // Clusters grow on the floor.
+                        if h.is_multiple_of(3) && cave.get(y as usize + 1) == Some(&Cave::Air) && geode.distance(pos + IVec3::Y) < geode.radius {
+                            blocks.put_if_air(pos + IVec3::Y, ids.cluster);
+                        }
+                        ids.crystal
+                    }
+                    d if d < 2.2 => ids.calcite,
+                    _ => ids.dark_rock,
+                };
+                blocks.set(pos, block);
+            }
+        }
+        for fossil in &self.fossils {
+            if !(fossil.min.x..=fossil.max.x).contains(&wx) || !(fossil.min.z..=fossil.max.z).contains(&wz) {
+                continue;
+            }
+            for y in (fossil.min.y..=fossil.max.y).filter(|&y| rock(y)) {
+                let pos = IVec3::new(wx, y, wz);
+                if fossil.contains(pos) {
+                    blocks.set(pos, ids.bone);
+                }
+            }
+        }
+    }
+
+    /// Turns a sunlit cave floor at `pos` into a small garden: turf and plants, or snow
+    /// where it is cold.
+    fn garden(&self, pos: IVec3, site: &Site, cave: &[Cave], blocks: &mut Blocks) {
+        let ids = &self.underground.ids;
+        if site.temperature < 0.0 {
+            blocks.replace_stone(pos, ids.snow);
+            return;
+        }
+        blocks.replace_stone(pos, ids.turf);
+        if cave.get(pos.y as usize - 1) == Some(&Cave::Rock) {
+            blocks.replace_stone(pos - IVec3::Y, ids.soil);
+        }
+        if blocks.get(pos) != ids.turf {
+            return;
+        }
+        let mut roll = (hash3(self.underground.seed ^ 0x6a4d, pos.x, pos.y, pos.z) & 0xffff) as f32 / 65536.0;
+        for &(plant, share) in &ids.garden {
+            if roll < share {
+                blocks.put_if_air(pos + IVec3::Y, plant);
+                return;
+            }
+            roll -= share;
+        }
+    }
+
     /// Grows the first decoration of `biome` on `side` that the block at `pos` rolls.
     #[allow(clippy::too_many_arguments)]
     fn grow(&self, biome: BiomeId, side: Side, spot: &Spot, stones: &Palette, strata: &[BlockId], pos: IVec3, cave: &[Cave], blocks: &mut Blocks) {
@@ -325,8 +538,24 @@ impl UndergroundColumn<'_> {
                 let block = match tip {
                     Some((tip, _)) if k == length => tip,
                     _ => &d.block,
+                }
+                .pick(u, stones, strata, at.y);
+                // Hanging things hang under something solid or more of their column, and
+                // plants stand on something solid or more of their stalk.
+                let supports = &self.underground.supports;
+                let holds = |p: IVec3, need: Support| {
+                    let (support, solid) = supports[blocks.get(p).0 as usize];
+                    solid || support == need
                 };
-                blocks.put_if_air(at, block.pick(u, stones, strata, at.y));
+                let held = match supports[block.0 as usize].0 {
+                    Support::Above => holds(at + IVec3::Y, Support::Above),
+                    Support::Below => holds(at - IVec3::Y, Support::Below),
+                    Support::None => true,
+                };
+                if !held {
+                    break;
+                }
+                blocks.put_if_air(at, block);
             }
             return;
         }
