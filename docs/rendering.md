@@ -128,6 +128,12 @@ which plants do not use) and how many plant cells it stands on (bits 25..27), so
 vertex data is needed. Model variants with their own textures can come from block data
 later; the placement already varies every plant.
 
+Leaf blocks on the outside of a crown also get a fringe (bushy leaves): two crossed quads
+through the block, turned at random, grown 1.45–1.9× and leaning, in their own pass
+(`TerrainPass::Fringe`, mesh bit 27). Chunks farther than 96 blocks skip that pass, and
+within that the sprigs shrink back into their block from 56 blocks, so they cost nothing
+in the distance.
+
 ## What we took from Voxy
 
 Voxy (Fabric LOD mod, read from its source) stores the world as 32³ voxel sections mipped

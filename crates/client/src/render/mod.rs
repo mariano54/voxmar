@@ -72,6 +72,8 @@ pub enum TerrainPass {
     /// Cut-out, double-sided faces between two leaves, which cast no shadow.
     Inner,
     Translucent,
+    /// Leafy sprigs sticking out of crowns, drawn only near the camera.
+    Fringe,
 }
 
 /// Maps the HDR image to the screen in place of a tonemapper (see `display.wgsl`): colours
