@@ -218,7 +218,10 @@ pub fn smootherstep(e0: f32, e1: f32, x: f32) -> f32 {
 
 /// Piecewise-linear curve through `(x, y)` points sorted by x.
 pub fn spline(points: &[(f32, f32)], x: f32) -> f32 {
-    let i = points.iter().position(|&(px, _)| px > x).unwrap_or(points.len());
+    debug_assert!(points.windows(2).all(|w| w[0].0 < w[1].0), "spline points out of order");
+    // The first point past x. The points are sorted, so it is the number of points at or
+    // before x, which counts without a branch to mispredict. NaN lies past every point.
+    let i = if x.is_nan() { points.len() } else { points.iter().filter(|&&(px, _)| px <= x).count() };
     match i {
         0 => points[0].1,
         i if i == points.len() => points[i - 1].1,
