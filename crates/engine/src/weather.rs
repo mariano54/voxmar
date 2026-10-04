@@ -1,0 +1,752 @@
+//! Weather: what the weather at a place is described by, the effects that make it more
+//! than cloud and rain, the kinds of weather commands can ask for, and the gusting wind
+//! server and clients share.
+//!
+//! The server simulates the weather and tells each player the `Weather` where they are;
+//! clients only draw it. Everything a client draws (fog, hail, dust, rainbows, aurora, …)
+//! is a channel of `Weather`, a fixed vocabulary the renderer knows. What raises those
+//! channels is data: each package's `weather.ron` lists effects, each a product of smooth
+//! conditions on a fixed set of inputs (the simulated weather, the local climate and land,
+//! the time of day) with a rarity, and the channels it raises. So a mod adds effects (a
+//! pollen haze in spring meadows, ash falling near volcanoes) by combining what exists,
+//! and kinds of weather (`/weather storm`) by naming values and effects to force.
+
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
+
+use crate::block::{Rarity, RegistryError};
+use crate::glam::{DVec2, Vec2};
+
+/// The weather at one place. Clients ease towards each update, so it may change in steps.
+/// Fractions are 0..1. Gameplay reads the same values: how cold (`temperature`, `wind`),
+/// wet (`precipitation`, `wetness`) and hard to see through (`visibility`) it is.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Weather {
+    /// Fraction of the sky covered by low cloud.
+    pub cover: f32,
+    /// How that cloud is built: 0 flat layers (stratus) to 1 heaped towers (cumulus, and
+    /// cumulonimbus when it rains).
+    pub convection: f32,
+    /// High, thin ice cloud (cirrus). It often runs ahead of rain.
+    pub cirrus: f32,
+    /// Relative humidity of the air.
+    pub humidity: f32,
+    /// Air temperature now, °C: the climate's mean, warmer by day and colder at night.
+    pub temperature: f32,
+    /// Mean wind along x and z, in blocks per second; `gust` adds the gusts.
+    pub wind: Vec2,
+    /// How much the wind gusts around its mean.
+    pub gusts: f32,
+    /// Rain or snow reaching the ground, 0 (none) to 1 (downpour).
+    pub precipitation: f32,
+    /// How much of it falls as snow.
+    pub snow: f32,
+    /// How much of the rain is fine drizzle rather than drops.
+    pub drizzle: f32,
+    /// How much of what falls is hail, and how much is sleet (ice pellets).
+    pub hail: f32,
+    pub sleet: f32,
+    /// Fog or mist filling the air (whiteout and sea fog too), 0 clear to 1 about 30
+    /// blocks of visibility.
+    pub fog: f32,
+    /// Fog lying in a layer, thick below `fog_top` (a world height) and thinning above.
+    pub ground_fog: f32,
+    pub fog_top: f32,
+    /// Sand or dust carried by the wind, and its colour (sRGB).
+    pub dust: f32,
+    pub dust_color: [u8; 3],
+    /// How wet the ground is (puddles, dark wet surfaces), rising in rain and drying
+    /// over minutes.
+    pub wetness: f32,
+    /// Snow lying on the ground, 0 bare to 1 deep.
+    pub snow_cover: f32,
+    /// Hoar frost on the ground and plants.
+    pub frost: f32,
+    /// How often lightning strikes nearby beyond what thunderstorm cells make
+    /// (thundersnow, fantastical storms), 1 about once a minute.
+    pub lightning: f32,
+    /// Light shows the renderer draws where they belong: a rainbow opposite the sun, a
+    /// halo and sun dogs around it, the aurora on the night sky, shimmering heat haze
+    /// over hot ground, drifting balls of light, glowing motes in the air and shooting
+    /// stars.
+    pub rainbow: f32,
+    pub halo: f32,
+    pub aurora: f32,
+    pub heat_haze: f32,
+    pub wisps: f32,
+    pub motes: f32,
+    pub falling_stars: f32,
+}
+
+impl Weather {
+    /// No weather at all: a still, clear, dry day at 15 °C.
+    pub const NONE: Weather = Weather {
+        cover: 0.0,
+        convection: 0.0,
+        cirrus: 0.0,
+        humidity: 0.0,
+        temperature: 15.0,
+        wind: Vec2::ZERO,
+        gusts: 0.0,
+        precipitation: 0.0,
+        snow: 0.0,
+        drizzle: 0.0,
+        hail: 0.0,
+        sleet: 0.0,
+        fog: 0.0,
+        ground_fog: 0.0,
+        fog_top: 0.0,
+        dust: 0.0,
+        dust_color: [210, 180, 130],
+        wetness: 0.0,
+        snow_cover: 0.0,
+        frost: 0.0,
+        lightning: 0.0,
+        rainbow: 0.0,
+        halo: 0.0,
+        aurora: 0.0,
+        heat_haze: 0.0,
+        wisps: 0.0,
+        motes: 0.0,
+        falling_stars: 0.0,
+    };
+
+    /// Every fraction by name (all but `temperature`, `wind`, `fog_top` and `dust_color`),
+    /// for checks and the debug overlay.
+    pub fn fractions(&self) -> [(&'static str, f32); 24] {
+        let mut copy = *self;
+        let values = copy.fractions_mut().map(|v| *v);
+        std::array::from_fn(|i| (FRACTIONS[i], values[i]))
+    }
+
+    /// Every fraction, in the order of `fractions`, for easing all of them alike.
+    pub fn fractions_mut(&mut self) -> [&mut f32; 24] {
+        [
+            &mut self.cover,
+            &mut self.convection,
+            &mut self.cirrus,
+            &mut self.humidity,
+            &mut self.gusts,
+            &mut self.precipitation,
+            &mut self.snow,
+            &mut self.drizzle,
+            &mut self.hail,
+            &mut self.sleet,
+            &mut self.fog,
+            &mut self.ground_fog,
+            &mut self.dust,
+            &mut self.wetness,
+            &mut self.snow_cover,
+            &mut self.frost,
+            &mut self.lightning,
+            &mut self.rainbow,
+            &mut self.halo,
+            &mut self.aurora,
+            &mut self.heat_haze,
+            &mut self.wisps,
+            &mut self.motes,
+            &mut self.falling_stars,
+        ]
+    }
+
+    /// How far one can see, in blocks, near the ground: fog, dust, falling snow and
+    /// heavy rain close it in. For gameplay, and for a renderer without its own fog model.
+    pub fn visibility(&self) -> f32 {
+        let falling = self.precipitation * (0.35 + 0.65 * self.snow);
+        let murk = (self.fog + 0.8 * self.dust + 0.6 * falling + 0.5 * self.ground_fog).min(1.0);
+        // From about 3 km in clear air to about 30 blocks in the thickest fog.
+        3000.0 * (1.0 - murk) * (1.0 - murk) + 30.0
+    }
+
+    /// A short name for the weather: `heavy rain`, `cumulus`.
+    pub fn describe(&self) -> &'static str {
+        let falling = self.precipitation > 0.05;
+        match () {
+            _ if self.dust > 0.5 => "dust storm",
+            _ if falling && self.snow > 0.5 && self.fog > 0.5 => "blizzard",
+            _ if falling && self.snow > 0.5 => if self.precipitation > 0.5 { "heavy snow" } else { "snow" },
+            _ if falling && self.hail > 0.3 => "hail",
+            _ if falling && self.sleet > 0.3 => "sleet",
+            _ if falling && self.convection > 0.5 && self.precipitation > 0.4 => "thunderstorm",
+            _ if falling && self.drizzle > 0.5 => "drizzle",
+            _ if falling => if self.precipitation > 0.5 { "heavy rain" } else { "rain" },
+            _ if self.fog.max(self.ground_fog) > 0.4 => "fog",
+            _ if self.fog.max(self.ground_fog) > 0.15 => "mist",
+            _ if self.cover > 0.8 => "overcast",
+            _ if self.cover > 0.2 => if self.convection > 0.5 { "cumulus" } else { "cloudy" },
+            _ if self.cirrus > 0.3 => "cirrus",
+            _ => "clear",
+        }
+    }
+
+    /// The numbers behind it, for the debug overlay and `/weather`.
+    pub fn summary(&self) -> String {
+        let mut text = format!(
+            "{:.1} °C, cloud {:.0}% ({:.0}% heaped), cirrus {:.0}%, humidity {:.0}%, {} {:.0}%, wind {:.1} blocks/s, visibility {:.0} blocks",
+            self.temperature,
+            self.cover * 100.0,
+            self.convection * 100.0,
+            self.cirrus * 100.0,
+            self.humidity * 100.0,
+            if self.snow > 0.5 { "snow" } else { "rain" },
+            self.precipitation * 100.0,
+            self.wind.length(),
+            self.visibility(),
+        );
+        // The effects' channels, from gusts on.
+        for (name, value) in &self.fractions()[7..] {
+            if *value >= 0.05 {
+                text.push_str(&format!(", {} {:.0}%", name.replace('_', " "), value * 100.0));
+            }
+        }
+        text
+    }
+}
+
+/// Names of `Weather::fractions`.
+const FRACTIONS: [&str; 24] = [
+    "cover",
+    "convection",
+    "cirrus",
+    "humidity",
+    "gusts",
+    "precipitation",
+    "snow",
+    "drizzle",
+    "hail",
+    "sleet",
+    "fog",
+    "ground_fog",
+    "dust",
+    "wetness",
+    "snow_cover",
+    "frost",
+    "lightning",
+    "rainbow",
+    "halo",
+    "aurora",
+    "heat_haze",
+    "wisps",
+    "motes",
+    "falling_stars",
+];
+
+impl Default for Weather {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+/// What effects' conditions read: the simulated weather where the effect would show, the
+/// local climate and land, and the time of day.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Input {
+    /// Low cloud cover, 0..1.
+    Cover,
+    /// How heaped the cloud is, 0..1.
+    Convection,
+    Cirrus,
+    /// Relative humidity, 0..1.
+    Humidity,
+    /// Rain or snow falling, 0..1.
+    Precipitation,
+    /// How much of it is snow, 0..1.
+    Snow,
+    /// Mean wind speed, blocks per second.
+    Wind,
+    /// Rising air in showers and storms, 0..1.
+    Lift,
+    /// Air temperature now, °C.
+    Temperature,
+    /// The climate's annual rain and snow, mm.
+    Rainfall,
+    /// Rain over evaporation: about 0.1 in deserts, 1 balanced, 2 in rainforests.
+    Moisture,
+    /// 1 at and off the coast, falling to 0 inland.
+    Coast,
+    /// 1 over the sea, a lake or a river.
+    Water,
+    /// Blocks above sea level.
+    Altitude,
+    /// Blocks below the land around: positive in valleys and hollows.
+    Valley,
+    /// 0 at the equator, 1 at a pole.
+    Latitude,
+    /// Ground cover and tree cover the climate supports, 0..1.
+    Vegetation,
+    Forest,
+    /// How fantastical the land is, 0..1.
+    Aether,
+    /// 1 by day, 0 at night, with twilight between.
+    Daylight,
+    /// 1 around sunrise and the hours after, 0 otherwise; `Dusk` the same at sunset.
+    Dawn,
+    Dusk,
+    /// 1 at night.
+    Night,
+    /// Height of the sun: 1 overhead, 0 on the horizon, negative below it.
+    SunHeight,
+    /// How wet the ground is, 0..1: rain wets it and it dries over minutes.
+    Wetness,
+    /// Snow lying on the ground, 0..1.
+    SnowCover,
+}
+
+impl Input {
+    pub const COUNT: usize = Input::SnowCover as usize + 1;
+}
+
+/// Every input's value at one place and time, indexed by `Input`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Inputs(pub [f32; Input::COUNT]);
+
+impl Inputs {
+    pub fn get(&self, input: Input) -> f32 {
+        self.0[input as usize]
+    }
+
+    pub fn set(&mut self, input: Input, value: f32) {
+        self.0[input as usize] = value;
+    }
+}
+
+impl Default for Inputs {
+    fn default() -> Self {
+        Self([0.0; Input::COUNT])
+    }
+}
+
+/// What an effect raises: a channel of `Weather`, by an amount at full strength.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Show {
+    Fog(f32),
+    /// A layer of fog `depth` blocks deep over the lowest land nearby (or the sea).
+    GroundFog { density: f32, depth: f32 },
+    Gusts(f32),
+    Drizzle(f32),
+    Hail(f32),
+    Sleet(f32),
+    Dust(f32),
+    Frost(f32),
+    Lightning(f32),
+    Rainbow(f32),
+    Halo(f32),
+    Aurora(f32),
+    HeatHaze(f32),
+    Wisps(f32),
+    Motes(f32),
+    FallingStars(f32),
+}
+
+impl Show {
+    /// Raises the channel to this show at `strength`, if that is more than it has. The
+    /// strongest effect wins each channel, so the order effects load in never matters.
+    /// `floor` is the height ground fog lies on.
+    pub fn apply(&self, weather: &mut Weather, strength: f32, floor: f32) {
+        let raise = |channel: &mut f32, amount: f32| *channel = channel.max(amount * strength);
+        match *self {
+            Show::Fog(a) => raise(&mut weather.fog, a),
+            Show::GroundFog { density, depth } => {
+                if density * strength > weather.ground_fog {
+                    weather.ground_fog = density * strength;
+                    weather.fog_top = floor + depth;
+                }
+            }
+            Show::Gusts(a) => raise(&mut weather.gusts, a),
+            Show::Drizzle(a) => raise(&mut weather.drizzle, a),
+            Show::Hail(a) => raise(&mut weather.hail, a),
+            Show::Sleet(a) => raise(&mut weather.sleet, a),
+            Show::Dust(a) => raise(&mut weather.dust, a),
+            Show::Frost(a) => raise(&mut weather.frost, a),
+            Show::Lightning(a) => raise(&mut weather.lightning, a),
+            Show::Rainbow(a) => raise(&mut weather.rainbow, a),
+            Show::Halo(a) => raise(&mut weather.halo, a),
+            Show::Aurora(a) => raise(&mut weather.aurora, a),
+            Show::HeatHaze(a) => raise(&mut weather.heat_haze, a),
+            Show::Wisps(a) => raise(&mut weather.wisps, a),
+            Show::Motes(a) => raise(&mut weather.motes, a),
+            Show::FallingStars(a) => raise(&mut weather.falling_stars, a),
+        }
+    }
+}
+
+/// A weather effect: valley fog, hail, a sandstorm, the aurora.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Effect {
+    /// Namespaced once loaded (`base:valley_fog`).
+    pub name: String,
+    /// How often it may occur where its conditions hold: an uncommon effect in about a
+    /// third of the stretches of land and time, a legendary one in about one in five
+    /// hundred (the world generator's tiers). Each world also features a few rare effects
+    /// and suppresses a common one, from its seed.
+    #[serde(default)]
+    pub rarity: Rarity,
+    /// For gameplay and other systems to find effects by kind (`wet`, `cold`, `visibility`).
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Smooth ramps on one input each, `(input, from, to)`: 0 at `from`, 1 at `to` (which
+    /// may be below `from`, for a falling ramp). The effect's strength is their product.
+    #[serde(default)]
+    pub when: Vec<(Input, f32, f32)>,
+    pub shows: Vec<Show>,
+    /// Typical minutes an occurrence lasts, and so how long the stretches of time its
+    /// rarity is drawn for are.
+    #[serde(default = "default_minutes")]
+    pub minutes: f32,
+}
+
+fn default_minutes() -> f32 {
+    20.0
+}
+
+impl Effect {
+    /// The short name, without the namespace.
+    pub fn short_name(&self) -> &str {
+        self.name.rsplit(':').next().unwrap_or(&self.name)
+    }
+
+    /// How strongly the conditions hold, 0..1, before rarity.
+    pub fn strength(&self, inputs: &Inputs) -> f32 {
+        self.when.iter().map(|&(input, from, to)| ramp(from, to, inputs.get(input))).product()
+    }
+}
+
+/// A kind of weather, as `/weather` and `--weather` ask for it. Values left out are the
+/// natural ones where it is forced (rain falls as snow where it is freezing).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Preset {
+    /// Namespaced once loaded (`base:rain`); asked for without the namespace.
+    pub name: String,
+    pub cover: Option<f32>,
+    pub convection: Option<f32>,
+    pub cirrus: Option<f32>,
+    pub humidity: Option<f32>,
+    pub precipitation: Option<f32>,
+    pub snow: Option<f32>,
+    /// Wind speed in blocks per second; it keeps blowing from where it does unless
+    /// `direction` says otherwise.
+    pub wind: Option<f32>,
+    /// How much the wind gusts, 0..1.
+    pub gusts: Option<f32>,
+    /// The direction (x, z) the wind blows towards.
+    pub direction: Option<Vec2>,
+    /// Air temperature, °C: a cold snap lets snow lie, a heat wave dries the land.
+    pub temperature: Option<f32>,
+    /// Effects held at full strength, by name, whatever their conditions and rarity.
+    pub effects: Vec<String>,
+}
+
+impl Preset {
+    /// The short name, without the namespace.
+    pub fn short_name(&self) -> &str {
+        self.name.rsplit(':').next().unwrap_or(&self.name)
+    }
+
+    /// `natural` with this preset's values blended in by `weight` (0..1). Its effects are
+    /// applied separately, by `WeatherTable::apply`.
+    pub fn blend(&self, natural: &Weather, weight: f32) -> Weather {
+        let mix = |natural: f32, forced: Option<f32>| forced.map_or(natural, |f| natural + (f - natural) * weight);
+        let speed = natural.wind.length();
+        let mut direction = natural.wind.normalize_or(Vec2::X);
+        if let Some(forced) = self.direction.map(|d| d.normalize_or(direction)) {
+            direction = direction.lerp(forced, weight).normalize_or(forced);
+        }
+        Weather {
+            cover: mix(natural.cover, self.cover),
+            convection: mix(natural.convection, self.convection),
+            cirrus: mix(natural.cirrus, self.cirrus),
+            humidity: mix(natural.humidity, self.humidity),
+            precipitation: mix(natural.precipitation, self.precipitation),
+            snow: mix(natural.snow, self.snow),
+            temperature: mix(natural.temperature, self.temperature),
+            wind: direction * mix(speed, self.wind),
+            gusts: mix(natural.gusts, self.gusts),
+            ..*natural
+        }
+    }
+}
+
+/// `weather.ron`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WeatherFile {
+    #[serde(default)]
+    effects: Vec<Effect>,
+    #[serde(default)]
+    presets: Vec<Preset>,
+    /// Winds `/wind` can bring, as presets that set only the wind.
+    #[serde(default)]
+    winds: Vec<Preset>,
+    /// Ground blocks and the snowy blocks snow lying on them turns them into.
+    #[serde(default)]
+    snow_cover: Vec<(String, String)>,
+}
+
+/// Every package's weather effects and kinds of weather.
+#[derive(Debug, Default)]
+pub struct WeatherTable {
+    effects: Vec<Effect>,
+    presets: Vec<Preset>,
+    /// Effects and presets by namespaced name, and by short name for the first package
+    /// (in package order) to use it.
+    effect_names: FxHashMap<String, usize>,
+    preset_names: FxHashMap<String, usize>,
+    winds: Vec<Preset>,
+    snow_cover: Vec<(String, String)>,
+}
+
+impl WeatherTable {
+    pub fn from_ron(namespace: &str, source: &str) -> Result<Self, RegistryError> {
+        let mut table = Self::default();
+        table.extend(namespace, source)?;
+        Ok(table)
+    }
+
+    /// Adds a package's weather. Unqualified names are placed in `namespace`.
+    pub fn extend(&mut self, namespace: &str, source: &str) -> Result<(), RegistryError> {
+        let error = |message: String| RegistryError(format!("{namespace}/weather.ron: {message}"));
+        // Optional values are written plainly (`snow: 1.0`), not as `Some(1.0)`.
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let file: WeatherFile = options.from_str(source).map_err(|e| error(e.to_string()))?;
+        let qualify = |name: &mut String| {
+            if !name.contains(':') {
+                *name = format!("{namespace}:{name}");
+            }
+        };
+        for mut effect in file.effects {
+            qualify(&mut effect.name);
+            let flat = effect.when.iter().any(|&(_, from, to)| from == to || !from.is_finite() || !to.is_finite());
+            if flat || effect.minutes.is_nan() || effect.minutes <= 0.0 {
+                return Err(error(format!("effect `{}` has a ramp that goes nowhere or no duration", effect.name)));
+            }
+            let index = self.effects.len();
+            if self.effect_names.insert(effect.name.clone(), index).is_some() {
+                return Err(error(format!("duplicate effect `{}`", effect.name)));
+            }
+            self.effect_names.entry(effect.short_name().to_owned()).or_insert(index);
+            self.effects.push(effect);
+        }
+        for mut wind in file.winds {
+            qualify(&mut wind.name);
+            if wind.wind.is_none_or(|w| !(0.0..=40.0).contains(&w)) || wind.gusts.is_some_and(|g| !(0.0..=1.0).contains(&g)) {
+                return Err(error(format!("wind `{}` needs a speed from 0 to 40 and gusts from 0 to 1", wind.name)));
+            }
+            self.winds.push(wind);
+        }
+        for mut preset in file.presets {
+            qualify(&mut preset.name);
+            let values = [preset.cover, preset.convection, preset.cirrus, preset.humidity, preset.precipitation, preset.snow];
+            if values.into_iter().flatten().any(|v| !(0.0..=1.0).contains(&v))
+                || preset.wind.is_some_and(|w| !(0.0..=40.0).contains(&w))
+                || preset.gusts.is_some_and(|g| !(0.0..=1.0).contains(&g))
+                || preset.temperature.is_some_and(|t| !(-60.0..=60.0).contains(&t))
+            {
+                return Err(error(format!("weather `{}` has a value out of range", preset.name)));
+            }
+            let index = self.presets.len();
+            if self.preset_names.insert(preset.name.clone(), index).is_some() {
+                return Err(error(format!("duplicate weather `{}`", preset.name)));
+            }
+            self.preset_names.entry(preset.short_name().to_owned()).or_insert(index);
+            self.presets.push(preset);
+        }
+        self.snow_cover.extend(file.snow_cover);
+        Ok(())
+    }
+
+    /// Checks that every effect a preset forces exists, once all packages are loaded.
+    pub fn validate(&self) -> Result<(), RegistryError> {
+        for preset in &self.presets {
+            if let Some(missing) = preset.effects.iter().find(|name| self.effect(name).is_none()) {
+                return Err(RegistryError(format!("weather `{}` forces `{missing}`, which no package defines", preset.name)));
+            }
+        }
+        Ok(())
+    }
+
+    /// A preset by name, with or without its namespace.
+    pub fn preset(&self, name: &str) -> Option<&Preset> {
+        self.preset_names.get(name).map(|&i| &self.presets[i])
+    }
+
+    pub fn presets(&self) -> &[Preset] {
+        &self.presets
+    }
+
+    /// A wind `/wind` can bring, by short name.
+    pub fn wind(&self, name: &str) -> Option<&Preset> {
+        self.winds.iter().find(|w| w.short_name() == name || w.name == name)
+    }
+
+    pub fn winds(&self) -> &[Preset] {
+        &self.winds
+    }
+
+    /// An effect's index by name, with or without its namespace.
+    pub fn effect(&self, name: &str) -> Option<usize> {
+        self.effect_names.get(name).copied()
+    }
+
+    pub fn effects(&self) -> &[Effect] {
+        &self.effects
+    }
+
+    /// Ground blocks, by name, and the snowy blocks snow lying on them turns them into.
+    pub fn snow_cover(&self) -> &[(String, String)] {
+        &self.snow_cover
+    }
+
+    /// Applies effects at their strengths (indexed like `effects`) to `weather`. `floor`
+    /// is the height ground fog lies on.
+    pub fn apply(&self, weather: &mut Weather, strengths: &[f32], floor: f32) {
+        for (effect, &strength) in self.effects.iter().zip(strengths) {
+            if strength > 0.0 {
+                for show in &effect.shows {
+                    show.apply(weather, strength, floor);
+                }
+            }
+        }
+    }
+
+    /// `preset` forced over `natural` completely, effects and all, where nothing about
+    /// the place is known: what `--weather` shows. Ground fog lies on `floor`.
+    pub fn force(&self, preset: &Preset, natural: &Weather, floor: f32) -> Weather {
+        let mut weather = preset.blend(natural, 1.0);
+        let mut strengths = vec![0.0; self.effects.len()];
+        for index in preset.effects.iter().filter_map(|name| self.effect(name)) {
+            strengths[index] = 1.0;
+        }
+        self.apply(&mut weather, &strengths, floor);
+        weather
+    }
+}
+
+/// Smoothstep from `from` to `to`, falling if `to` is below `from`.
+pub fn ramp(from: f32, to: f32, x: f32) -> f32 {
+    let t = ((x - from) / (to - from)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The wind at a place and moment: `mean` (blocks per second) with gusts that sweep
+/// across the land with it, as strong as `gusts` (0..1) asks. A pure function of the world
+/// seed, place and time in seconds of world time, so the server (for gameplay) and every
+/// client (for swaying plants and blowing particles) agree on it. Uses only exact
+/// arithmetic on 32-bit hashes, so it is the same on every machine and easy to port to a
+/// shader (see docs/weather-effects.md).
+pub fn gust(seed: u64, at: Vec2, seconds: f64, mean: Vec2, gusts: f32) -> Vec2 {
+    if gusts <= 0.0 || mean == Vec2::ZERO {
+        return mean;
+    }
+    // Gust fronts some 40 blocks across travel with the wind and change over seconds.
+    let p = (at.as_dvec2() - mean.as_dvec2() * seconds) / 40.0;
+    let t = seconds / 5.0;
+    let seed = (seed ^ (seed >> 32)) as u32 ^ 0x6775_7374; // "gust"
+    let strength = value_noise(seed, p, t);
+    let veer = value_noise(seed ^ 0x9e37_79b9, p * 0.5, t * 0.7) - 0.5;
+    // Lulls a little below the mean, gusts well above it.
+    let speed = 1.0 + gusts * (1.8 * strength * strength - 0.45);
+    mean * speed + mean.perp() * (veer * 0.6 * gusts)
+}
+
+/// Smooth noise in 0..1 over a plane and time, from 32-bit hashes on an integer lattice.
+fn value_noise(seed: u32, p: DVec2, t: f64) -> f32 {
+    let (cell, cell_t) = (p.floor(), t.floor());
+    let fade = |x: f32| x * x * (3.0 - 2.0 * x);
+    let (fx, fz, ft) = (fade((p.x - cell.x) as f32), fade((p.y - cell.y) as f32), fade((t - cell_t) as f32));
+    let (ix, iz, it) = (cell.x as i64 as u32, cell.y as i64 as u32, cell_t as i64 as u32);
+    let corner = |dx: u32, dz: u32, dt: u32| {
+        let h = pcg(seed ^ pcg(ix.wrapping_add(dx) ^ pcg(iz.wrapping_add(dz) ^ pcg(it.wrapping_add(dt)))));
+        (h >> 8) as f32 / 16_777_216.0
+    };
+    let plane = |dt| {
+        let near = corner(0, 0, dt) + (corner(1, 0, dt) - corner(0, 0, dt)) * fx;
+        let far = corner(0, 1, dt) + (corner(1, 1, dt) - corner(0, 1, dt)) * fx;
+        near + (far - near) * fz
+    };
+    plane(0) + (plane(1) - plane(0)) * ft
+}
+
+/// PCG hash (Jarzynski and Olano), the same in WGSL.
+pub fn pcg(v: u32) -> u32 {
+    let state = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
+    (word >> 22) ^ word
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TABLE: &str = r#"(
+        effects: [
+            (name: "valley_fog", rarity: Uncommon, when: [(Humidity, 0.6, 0.9), (Wind, 3.0, 1.0)], shows: [GroundFog(density: 0.9, depth: 12.0)]),
+            (name: "mist", when: [(Wetness, 0.3, 0.8)], shows: [Fog(0.4)], minutes: 10.0),
+        ],
+        presets: [
+            (name: "rain", cover: 1.0, precipitation: 0.5, wind: 6.0),
+            (name: "fog", humidity: 1.0, effects: ["valley_fog", "mist"]),
+        ],
+        snow_cover: [("base:grass_block", "base:snowy_grass_block")],
+    )"#;
+
+    #[test]
+    fn presets_blend_over_the_natural_weather() {
+        let table = WeatherTable::from_ron("base", TABLE).unwrap();
+        table.validate().unwrap();
+        let rain = table.preset("rain").unwrap();
+        assert_eq!(table.preset("base:rain"), Some(rain));
+        let natural = Weather { cover: 0.2, snow: 1.0, wind: Vec2::new(0.0, -2.0), ..Weather::NONE };
+        assert_eq!(rain.blend(&natural, 0.0), natural);
+        let forced = rain.blend(&natural, 1.0);
+        assert_eq!((forced.cover, forced.precipitation, forced.snow), (1.0, 0.5, 1.0), "snow stays natural");
+        assert_eq!(forced.wind, Vec2::new(0.0, -6.0));
+        assert!((rain.blend(&natural, 0.5).cover - 0.6).abs() < 1e-6);
+
+        let fog = table.force(table.preset("fog").unwrap(), &natural, 70.0);
+        assert_eq!((fog.ground_fog, fog.fog_top, fog.fog, fog.humidity), (0.9, 82.0, 0.4, 1.0));
+        assert_eq!(table.snow_cover().len(), 1);
+
+        assert!(WeatherTable::from_ron("base", r#"(presets: [(name: "bad", cover: 2.0)])"#).is_err());
+        let unknown = WeatherTable::from_ron("base", r#"(presets: [(name: "odd", effects: ["nothing"])])"#).unwrap();
+        assert!(unknown.validate().is_err());
+        assert!(WeatherTable::from_ron("base", r#"(effects: [(name: "flat", when: [(Wind, 1.0, 1.0)], shows: [])])"#).is_err());
+    }
+
+    #[test]
+    fn effects_follow_their_conditions_and_the_strongest_wins() {
+        let table = WeatherTable::from_ron("base", TABLE).unwrap();
+        let fog = &table.effects()[table.effect("valley_fog").unwrap()];
+        let mut inputs = Inputs::default();
+        inputs.set(Input::Humidity, 0.95);
+        inputs.set(Input::Wind, 0.5);
+        assert_eq!(fog.strength(&inputs), 1.0);
+        inputs.set(Input::Wind, 2.0);
+        assert!((fog.strength(&inputs) - 0.5).abs() < 1e-6, "halfway down a falling ramp");
+        inputs.set(Input::Humidity, 0.5);
+        assert_eq!(fog.strength(&inputs), 0.0);
+
+        let mut weather = Weather::NONE;
+        table.apply(&mut weather, &[0.5, 1.0], 64.0);
+        table.apply(&mut weather, &[0.2, 0.5], 90.0);
+        assert_eq!((weather.ground_fog, weather.fog_top, weather.fog), (0.45, 76.0, 0.4));
+        assert_eq!(weather.fractions()[10], ("fog", 0.4));
+    }
+
+    #[test]
+    fn gusts_are_deterministic_and_bounded() {
+        let mean = Vec2::new(6.0, -2.0);
+        let at = Vec2::new(1234.5, -987.25);
+        assert_eq!(gust(7, at, 1e7, mean, 0.0), mean);
+        let speeds: Vec<f32> = (0..2000).map(|i| gust(7, at, 1e7 + i as f64 * 0.25, mean, 1.0).length()).collect();
+        assert_eq!(gust(7, at, 1e7 + 3.0, mean, 1.0), gust(7, at, 1e7 + 3.0, mean, 1.0));
+        assert_ne!(gust(7, at, 1e7 + 3.0, mean, 1.0), gust(8, at, 1e7 + 3.0, mean, 1.0));
+        let (low, high) = speeds.iter().fold((f32::MAX, 0.0f32), |(lo, hi), &s| (lo.min(s), hi.max(s)));
+        let base = mean.length();
+        assert!(low > base * 0.4 && high < base * 2.6 && high > base * 1.5, "{low}..{high} around {base}");
+        // Gusts change within seconds, not every frame.
+        let step = speeds.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+        assert!(step < base * 0.2, "jumps {step}");
+    }
+}

@@ -77,6 +77,8 @@ pub struct Settings {
     pub anti_aliasing: AntiAliasing,
     /// Key held to zoom in.
     pub zoom_key: Key,
+    /// Key that opens the console to chat (`/` always opens it for a command).
+    pub chat_key: Key,
     /// Magnification when zooming in, in percent.
     pub zoom: i32,
     /// Whether the view follows the mouse smoothly while zoomed.
@@ -132,6 +134,7 @@ impl Default for Settings {
             fly_speed: 100,
             anti_aliasing: AntiAliasing::default(),
             zoom_key: Key(KeyCode::KeyC),
+            chat_key: Key(KeyCode::KeyT),
             zoom: 400,
             cinematic_zoom: true,
             zoom_in_survival: false,
@@ -365,24 +368,28 @@ impl Choice {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Binding {
     Zoom,
+    Chat,
 }
 
 impl Binding {
     fn label(self) -> &'static str {
         match self {
             Binding::Zoom => "Zoom key",
+            Binding::Chat => "Chat key",
         }
     }
 
     fn get(self, settings: &Settings) -> Key {
         match self {
             Binding::Zoom => settings.zoom_key,
+            Binding::Chat => settings.chat_key,
         }
     }
 
     fn set(self, settings: &mut Settings, key: Key) {
         *match self {
             Binding::Zoom => &mut settings.zoom_key,
+            Binding::Chat => &mut settings.chat_key,
         } = key;
     }
 }
@@ -413,6 +420,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
         "Controls",
         &[
             Control::Slider(Slider::Sensitivity),
+            Control::Key(Binding::Chat),
             Control::Key(Binding::Zoom),
             Control::Slider(Slider::Zoom),
             Control::Switch(Toggle::CinematicZoom),
