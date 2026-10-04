@@ -23,6 +23,9 @@ use crate::rng::hash3;
 use crate::trees::Tree;
 use crate::{Overworld, SEA_LEVEL, Site};
 
+/// Stone turns to deepslate below this height, 48 blocks under sea level.
+const DEEPSLATE: i32 = SEA_LEVEL - 48;
+
 /// Spacing of the lattice on which 3D noise is evaluated and then interpolated.
 const LATTICE: i32 = 4;
 const LX: usize = (CHUNK_SIZE / LATTICE + 1) as usize;
@@ -293,8 +296,10 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     stone_at(ids, &rock, world.seed, x, y, z, wx, wz)
                 };
 
-                // Caves stay dry: they never open into the floor of a sea, lake or river.
-                let carvable = y > 4 && block != ids.bedrock && (!underwater || below_surface > 6);
+                // Caves stay dry: they never open into the floor of a sea, lake or river. They
+                // keep to the depths they had in the 256-block world, leaving the deepest 64
+                // blocks solid.
+                let carvable = y > SEA_LEVEL - 60 && (!underwater || below_surface > 6);
                 if carvable && is_cave(&cheese, &tunnel_a, &tunnel_b, x, y, z, below_surface) {
                     continue;
                 }
@@ -438,7 +443,7 @@ impl Terrain {
             return layers(ids.gravel, ids.stone, 2);
         }
         // Beaches along the sea, sandy (or in warm, wet places muddy) banks along rivers.
-        let coast = site.continentality < 0.45 || site.river > 0.3;
+        let coast = site.continentalness < 0.7 || site.river > 0.3;
         if coast && !past(above, 0.5, 2.5) {
             let top = match () {
                 _ if t < 3.0 => ids.gravel,
@@ -507,15 +512,15 @@ impl Terrain {
 
 #[allow(clippy::too_many_arguments)]
 fn stone_at(ids: &Ids, rock: &Lattice, seed: u64, x: i32, y: i32, z: i32, wx: i32, wz: i32) -> BlockId {
-    // Deepslate below y 16, dithered over 8 blocks.
-    if y < 16 + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
+    // Deepslate below `DEEPSLATE`, dithered over 8 blocks.
+    if y < DEEPSLATE + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
         return ids.deepslate;
     }
     match rock.get(x, y, z) {
         n if n > 0.6 => ids.granite,
         n if n < -0.6 => ids.diorite,
         n if (0.28..0.34).contains(&n) => ids.andesite,
-        n if y < 40 && (-0.36..-0.28).contains(&n) => ids.tuff,
+        n if y < DEEPSLATE + 24 && (-0.36..-0.28).contains(&n) => ids.tuff,
         _ => ids.stone,
     }
 }

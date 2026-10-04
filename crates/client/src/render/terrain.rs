@@ -34,12 +34,13 @@ use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
     BufferUsages, CachedRenderPipelineId, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
-    ShaderStages, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d_array},
+    ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
 use bevy::render::texture::GpuImage;
+use bevy::render::camera::ExtractedCamera;
 use bevy::render::view::ExtractedView;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderDefVal;
@@ -48,15 +49,19 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::coords::{CHUNK_SIZE, ChunkPos};
 use voxmar_engine::mesh::{MeshBuffers, Vertex};
 
-use super::{ATTRIBUTE_VOXEL, TerrainPass, VOXEL_SHADER};
+use super::lod::{LodVertex, TileKey, TileMesh};
+use super::{ATTRIBUTE_LOD, ATTRIBUTE_VOXEL, DISTANT_SHADER, TerrainPass, VOXEL_SHADER};
 
-/// Vertices and indices per page: 32 MB and 24 MB, room for about a million quads.
+/// Vertices per chunk page (32 MB, with 24 MB of indices): room for about a million quads.
 const PAGE_VERTICES: u32 = 4 << 20;
-const PAGE_INDICES: u32 = 6 << 20;
-const PASSES: [TerrainPass; 4] = [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent];
+const PASSES: [TerrainPass; 5] =
+    [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent, TerrainPass::Fringe];
 /// Only these passes cast shadows: leaf crowns' shells already shade, and water would
 /// shadow itself.
-const SHADOW_PASSES: [TerrainPass; 2] = [TerrainPass::Opaque, TerrainPass::Cutout];
+const SHADOW_PASSES: [TerrainPass; 3] = [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Fringe];
+/// Leaf fringes are drawn for chunks this close to the camera, in blocks; further out they
+/// would be sub-pixel.
+const FRINGE_DISTANCE: f32 = 96.0;
 
 pub struct TerrainPlugin;
 
@@ -65,13 +70,15 @@ impl Plugin for TerrainPlugin {
         let (tx, rx) = unbounded();
         app.insert_resource(Terrain { tx }).add_plugins(ExtractResourcePlugin::<TerrainTextures>::default());
         // Phase items are keyed by main world entity; these stand for the four passes.
-        let keys = TerrainKeys(PASSES.map(|_| MainEntity::from(app.world_mut().spawn_empty().id())));
+        let mut key = || MainEntity::from(app.world_mut().spawn_empty().id());
+        let keys = TerrainKeys { passes: PASSES.map(|_| key()), distant: key() };
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
             .insert_resource(TerrainInbox(rx))
             .insert_resource(keys)
             .init_resource::<TerrainGpu>()
             .add_render_command::<Opaque3d, DrawTerrainMain>()
+            .add_render_command::<Opaque3d, DrawDistantTerrain>()
             .add_render_command::<AlphaMask3d, DrawTerrainMain>()
             .add_render_command::<Transparent3d, DrawTerrainMain>()
             .add_render_command::<Shadow, DrawTerrainShadow>()
@@ -105,6 +112,9 @@ enum Message {
     Remove { chunk: ChunkPos, pass: TerrainPass },
     /// The chunks cave culling leaves visible; any other chunk is skipped.
     Visible(FxHashSet<ChunkPos>),
+    UploadTile(Box<TileMesh>),
+    RemoveTile(TileKey),
+    RealColumns(i32),
     Clear,
 }
 
@@ -123,6 +133,20 @@ impl Terrain {
         let _ = self.tx.send(Message::Visible(visible));
     }
 
+    /// Adds or replaces a distant terrain tile.
+    pub fn upload_tile(&self, tile: TileMesh) {
+        let _ = self.tx.send(Message::UploadTile(Box::new(tile)));
+    }
+
+    pub fn remove_tile(&self, key: TileKey) {
+        let _ = self.tx.send(Message::RemoveTile(key));
+    }
+
+    /// The radius of real chunks, which water ripples on distant terrain fade out from.
+    pub fn set_real_columns(&self, real_columns: i32) {
+        let _ = self.tx.send(Message::RealColumns(real_columns));
+    }
+
     /// Forgets every chunk, for leaving a world.
     pub fn clear(&self) {
         let _ = self.tx.send(Message::Clear);
@@ -133,7 +157,10 @@ impl Terrain {
 struct TerrainInbox(Receiver<Message>);
 
 #[derive(Resource)]
-struct TerrainKeys([MainEntity; 4]);
+struct TerrainKeys {
+    passes: [MainEntity; 5],
+    distant: MainEntity,
+}
 
 /// Ranges of a page handed out first-fit; freed ranges merge with their neighbours.
 struct RangeAllocator {
@@ -179,52 +206,23 @@ struct Page {
     indices: RangeAllocator,
 }
 
-/// Where one pass of a chunk's mesh lives.
-struct Allocation {
-    page: u32,
-    vertices: Range<u32>,
-    indices: Range<u32>,
-}
-
-struct ChunkRecord {
-    /// Index into the origin table, which the shader reads as the instance index.
-    slot: u32,
-    passes: [Option<Allocation>; 4],
-}
-
-/// Render world state: pages, chunk records and the bind group shared by every draw.
-#[derive(Resource, Default)]
-struct TerrainGpu {
+/// Pages of one vertex format.
+struct PagePool {
+    label: &'static str,
+    vertex_size: u64,
+    /// Vertices per page; indices get one and a half times as many.
+    page_vertices: u32,
     pages: Vec<Page>,
-    chunks: FxHashMap<ChunkPos, ChunkRecord>,
-    visible: FxHashSet<ChunkPos>,
-    free_slots: Vec<u32>,
-    /// Chunk origins by slot, as the shader reads them.
-    origins: Vec<IVec4>,
-    origins_buffer: Option<Buffer>,
-    origins_dirty: bool,
-    bind_group: Option<BindGroup>,
-    /// Whether the bind group must be rebuilt (the origin buffer was replaced).
-    bind_group_dirty: bool,
 }
 
-impl TerrainGpu {
-    fn release(&mut self, chunk: ChunkPos, pass: TerrainPass) {
-        let Some(record) = self.chunks.get_mut(&chunk) else { return };
-        if let Some(allocation) = record.passes[pass as usize].take() {
-            let page = &mut self.pages[allocation.page as usize];
-            page.vertices.release(allocation.vertices);
-            page.indices.release(allocation.indices);
-        }
-        if record.passes.iter().all(Option::is_none) {
-            self.free_slots.push(record.slot);
-            self.chunks.remove(&chunk);
-        }
+impl PagePool {
+    fn new(label: &'static str, vertex_size: usize, page_vertices: u32) -> Self {
+        Self { label, vertex_size: vertex_size as u64, page_vertices, pages: Vec::new() }
     }
 
-    fn upload(&mut self, device: &RenderDevice, queue: &RenderQueue, chunk: ChunkPos, pass: TerrainPass, mesh: &MeshBuffers) {
-        self.release(chunk, pass);
-        let (vertex_count, index_count) = (mesh.vertices.len() as u32, mesh.indices.len() as u32);
+    /// Copies a mesh into the first page with room, adding a page if none has.
+    fn allocate<V: bytemuck::Pod>(&mut self, device: &RenderDevice, queue: &RenderQueue, vertices: &[V], indices: &[u32]) -> Allocation {
+        let (vertex_count, index_count) = (vertices.len() as u32, indices.len() as u32);
         let found = self.pages.iter_mut().enumerate().find_map(|(i, page)| {
             let vertices = page.vertices.allocate(vertex_count)?;
             match page.indices.allocate(index_count) {
@@ -235,39 +233,209 @@ impl TerrainGpu {
                 }
             }
         });
-        let (page, vertices, indices) = found.unwrap_or_else(|| {
-            let mut page = Page::new(device, self.pages.len());
-            let vertices = page.vertices.allocate(vertex_count).expect("a chunk mesh fits a page");
-            let indices = page.indices.allocate(index_count).expect("a chunk mesh fits a page");
+        let (page, vertex_range, index_range) = found.unwrap_or_else(|| {
+            let mut page = self.new_page(device);
+            let vertices = page.vertices.allocate(vertex_count).expect("a mesh fits a page");
+            let indices = page.indices.allocate(index_count).expect("a mesh fits a page");
             self.pages.push(page);
             (self.pages.len() - 1, vertices, indices)
         });
         let target = &self.pages[page];
-        let vertex_bytes = size_of::<Vertex>() as u64;
-        queue.write_buffer(&target.vertex_buffer, vertices.start as u64 * vertex_bytes, bytemuck::cast_slice(&mesh.vertices));
-        queue.write_buffer(&target.index_buffer, indices.start as u64 * 4, bytemuck::cast_slice(&mesh.indices));
+        queue.write_buffer(&target.vertex_buffer, vertex_range.start as u64 * self.vertex_size, bytemuck::cast_slice(vertices));
+        queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices));
+        Allocation { page: page as u32, vertices: vertex_range, indices: index_range }
+    }
 
-        let slot = match self.chunks.get(&chunk) {
-            Some(record) => record.slot,
-            None => {
-                let slot = self.free_slots.pop().unwrap_or(self.origins.len() as u32);
-                if slot as usize == self.origins.len() {
-                    self.origins.push(IVec4::ZERO);
-                }
-                self.origins[slot as usize] = chunk.origin().extend(0);
-                self.origins_dirty = true;
-                self.chunks.insert(chunk, ChunkRecord { slot, passes: Default::default() });
-                slot
-            }
+    fn free(&mut self, allocation: Allocation) {
+        let page = &mut self.pages[allocation.page as usize];
+        page.vertices.release(allocation.vertices);
+        page.indices.release(allocation.indices);
+    }
+
+    fn new_page(&self, device: &RenderDevice) -> Page {
+        let index = self.pages.len();
+        let buffer = |kind: &str, size: u64, usage: BufferUsages| {
+            device.create_buffer(&BufferDescriptor {
+                label: Some(&format!("{}_{kind}_{index}", self.label)),
+                size,
+                usage: usage | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         };
+        let page_indices = self.page_vertices / 2 * 3;
+        Page {
+            vertex_buffer: buffer("vertices", self.page_vertices as u64 * self.vertex_size, BufferUsages::VERTEX),
+            index_buffer: buffer("indices", page_indices as u64 * 4, BufferUsages::INDEX),
+            vertices: RangeAllocator::new(self.page_vertices),
+            indices: RangeAllocator::new(page_indices),
+        }
+    }
+}
+
+/// Where a mesh lives.
+struct Allocation {
+    page: u32,
+    vertices: Range<u32>,
+    indices: Range<u32>,
+}
+
+struct ChunkRecord {
+    /// Index into the origin table, which the shader reads as the instance index.
+    slot: u32,
+    passes: [Option<Allocation>; 5],
+}
+
+/// A distant terrain tile (see `lod`).
+struct TileRecord {
+    slot: u32,
+    mesh: Allocation,
+    min: Vec3,
+    max: Vec3,
+}
+
+/// Columns around the camera that have real chunks, one bit each, for distant terrain to
+/// give way to exactly where real terrain is drawn.
+const COVERAGE_SIZE: i32 = 2 * 48 + 1;
+const COVERAGE_WORDS: usize = (COVERAGE_SIZE * COVERAGE_SIZE) as usize / 32 + 1;
+
+#[derive(ShaderType, Clone, Copy, Default)]
+struct DistantView {
+    /// xy: column of the coverage mask's first bit, z: its width in columns, w: the real
+    /// chunks' radius in columns.
+    coverage: IVec4,
+}
+
+/// Render world state: pages, chunk records and the bind group shared by every draw.
+#[derive(Resource)]
+struct TerrainGpu {
+    chunk_pages: PagePool,
+    tile_pages: PagePool,
+    chunks: FxHashMap<ChunkPos, ChunkRecord>,
+    tiles: FxHashMap<TileKey, TileRecord>,
+    /// Chunks with a mesh, per column.
+    columns: FxHashMap<IVec2, u32>,
+    visible: FxHashSet<ChunkPos>,
+    real_columns: i32,
+    /// Where the camera is this frame.
+    camera: Vec3,
+    free_slots: Vec<u32>,
+    /// Origin of each slot's mesh; for tiles, w is the cell size.
+    origins: Vec<IVec4>,
+    origins_buffer: Option<Buffer>,
+    origins_dirty: bool,
+    distant_view: Option<Buffer>,
+    coverage: Option<Buffer>,
+    bind_group: Option<BindGroup>,
+    distant_bind_group: Option<BindGroup>,
+    /// Whether the bind groups must be rebuilt (the origin buffer was replaced).
+    bind_group_dirty: bool,
+}
+
+impl Default for TerrainGpu {
+    fn default() -> Self {
+        Self {
+            chunk_pages: PagePool::new("terrain", size_of::<Vertex>(), PAGE_VERTICES),
+            tile_pages: PagePool::new("distant", size_of::<LodVertex>(), PAGE_VERTICES / 4),
+            chunks: FxHashMap::default(),
+            tiles: FxHashMap::default(),
+            columns: FxHashMap::default(),
+            visible: FxHashSet::default(),
+            real_columns: 0,
+            camera: Vec3::ZERO,
+            free_slots: Vec::new(),
+            origins: Vec::new(),
+            origins_buffer: None,
+            origins_dirty: false,
+            distant_view: None,
+            coverage: None,
+            bind_group: None,
+            distant_bind_group: None,
+            bind_group_dirty: false,
+        }
+    }
+}
+
+impl TerrainGpu {
+    fn new_slot(&mut self, origin: IVec4) -> u32 {
+        let slot = self.free_slots.pop().unwrap_or(self.origins.len() as u32);
+        if slot as usize == self.origins.len() {
+            self.origins.push(origin);
+        } else {
+            self.origins[slot as usize] = origin;
+        }
+        self.origins_dirty = true;
+        slot
+    }
+
+    fn release(&mut self, chunk: ChunkPos, pass: TerrainPass) {
+        let Some(record) = self.chunks.get_mut(&chunk) else { return };
+        let allocation = record.passes[pass as usize].take();
+        let empty = record.passes.iter().all(Option::is_none);
+        if let Some(allocation) = allocation {
+            self.chunk_pages.free(allocation);
+        }
+        if empty {
+            let record = self.chunks.remove(&chunk).expect("record exists");
+            self.free_slots.push(record.slot);
+            let column = IVec2::new(chunk.0.x, chunk.0.z);
+            if let Some(count) = self.columns.get_mut(&column) {
+                *count -= 1;
+                if *count == 0 {
+                    self.columns.remove(&column);
+                }
+            }
+        }
+    }
+
+    fn upload(&mut self, device: &RenderDevice, queue: &RenderQueue, chunk: ChunkPos, pass: TerrainPass, mesh: &MeshBuffers) {
+        self.release(chunk, pass);
+        let allocation = self.chunk_pages.allocate(device, queue, &mesh.vertices, &mesh.indices);
+        if !self.chunks.contains_key(&chunk) {
+            let slot = self.new_slot(chunk.origin().extend(1));
+            self.chunks.insert(chunk, ChunkRecord { slot, passes: Default::default() });
+            *self.columns.entry(IVec2::new(chunk.0.x, chunk.0.z)).or_default() += 1;
+        }
         let record = self.chunks.get_mut(&chunk).expect("record was just ensured");
-        debug_assert_eq!(record.slot, slot);
-        record.passes[pass as usize] = Some(Allocation { page: page as u32, vertices, indices });
+        record.passes[pass as usize] = Some(allocation);
+    }
+
+    fn remove_tile(&mut self, key: TileKey) {
+        if let Some(tile) = self.tiles.remove(&key) {
+            self.tile_pages.free(tile.mesh);
+            self.free_slots.push(tile.slot);
+        }
+    }
+
+    fn upload_tile(&mut self, device: &RenderDevice, queue: &RenderQueue, tile: TileMesh) {
+        self.remove_tile(tile.key);
+        let mesh = self.tile_pages.allocate(device, queue, &tile.vertices, &tile.indices);
+        let corner = tile.key.origin();
+        let slot = self.new_slot(IVec4::new(corner.x, 0, corner.y, tile.key.cell()));
+        let size = tile.key.size() as f32;
+        let corner = corner.as_vec2();
+        let min = Vec3::new(corner.x, tile.heights.start as f32, corner.y);
+        let max = Vec3::new(corner.x + size, tile.heights.end as f32, corner.y + size);
+        self.tiles.insert(tile.key, TileRecord { slot, mesh, min, max });
+    }
+
+    /// Whether every column under a tile has real chunks, so it need not be drawn.
+    fn covered_by_real(&self, key: TileKey) -> bool {
+        if key.size() > CHUNK_SIZE * COVERAGE_SIZE {
+            return false;
+        }
+        let first = key.origin().div_euclid(IVec2::splat(CHUNK_SIZE));
+        let side = (key.size() / CHUNK_SIZE).max(1);
+        (0..side * side).all(|i| self.columns.contains_key(&(first + IVec2::new(i % side, i / side))))
     }
 
     fn clear(&mut self) {
-        let origins_buffer = self.origins_buffer.take();
-        *self = Self { origins_buffer, bind_group_dirty: true, ..Self::default() };
+        *self = Self {
+            origins_buffer: self.origins_buffer.take(),
+            distant_view: self.distant_view.take(),
+            coverage: self.coverage.take(),
+            bind_group_dirty: true,
+            ..Self::default()
+        };
     }
 
     /// Writes the origin table, replacing the buffer when it outgrew it.
@@ -291,38 +459,68 @@ impl TerrainGpu {
             queue.write_buffer(buffer, 0, bytemuck::cast_slice(&self.origins));
         }
     }
-}
 
-impl Page {
-    fn new(device: &RenderDevice, index: usize) -> Self {
-        let buffer = |label: &str, size: u64, usage: BufferUsages| {
+    /// Writes which columns around `camera` have real chunks, and the real radius.
+    fn write_coverage(&mut self, device: &RenderDevice, queue: &RenderQueue, camera: Vec3) {
+        let first = IVec2::new(camera.x.floor() as i32, camera.z.floor() as i32).div_euclid(IVec2::splat(CHUNK_SIZE))
+            - COVERAGE_SIZE / 2;
+        let mut bits = [0u32; COVERAGE_WORDS];
+        for column in self.columns.keys() {
+            let at = *column - first;
+            if at.cmpge(IVec2::ZERO).all() && at.cmplt(IVec2::splat(COVERAGE_SIZE)).all() {
+                let i = (at.y * COVERAGE_SIZE + at.x) as usize;
+                bits[i / 32] |= 1 << (i % 32);
+            }
+        }
+        let coverage = self.coverage.get_or_insert_with(|| {
             device.create_buffer(&BufferDescriptor {
-                label: Some(&format!("terrain_{label}_{index}")),
-                size,
-                usage: usage | BufferUsages::COPY_DST,
+                label: Some("distant_coverage"),
+                size: (COVERAGE_WORDS * 4) as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
-        };
-        Self {
-            vertex_buffer: buffer("vertices", PAGE_VERTICES as u64 * size_of::<Vertex>() as u64, BufferUsages::VERTEX),
-            index_buffer: buffer("indices", PAGE_INDICES as u64 * 4, BufferUsages::INDEX),
-            vertices: RangeAllocator::new(PAGE_VERTICES),
-            indices: RangeAllocator::new(PAGE_INDICES),
-        }
+        });
+        queue.write_buffer(coverage, 0, bytemuck::cast_slice(&bits));
+        let view = DistantView { coverage: IVec4::new(first.x, first.y, COVERAGE_SIZE, self.real_columns) };
+        let mut uniform = encase::UniformBuffer::new(Vec::<u8>::new());
+        uniform.write(&view).expect("distant view fits a uniform");
+        let buffer = self.distant_view.get_or_insert_with(|| {
+            device.create_buffer(&BufferDescriptor {
+                label: Some("distant_view"),
+                size: DistantView::min_size().get(),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        queue.write_buffer(buffer, 0, uniform.as_ref());
     }
 }
 
 /// Applies the main world's messages: writes and frees mesh data, updates the origin table.
-fn receive(mut gpu: ResMut<TerrainGpu>, inbox: Res<TerrainInbox>, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
+fn receive(
+    mut gpu: ResMut<TerrainGpu>,
+    inbox: Res<TerrainInbox>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    cameras: Query<&ExtractedView, With<ExtractedCamera>>,
+) {
     for message in inbox.0.try_iter() {
         match message {
             Message::Upload { chunk, pass, mesh } => gpu.upload(&device, &queue, chunk, pass, &mesh),
             Message::Remove { chunk, pass } => gpu.release(chunk, pass),
             Message::Visible(visible) => gpu.visible = visible,
+            Message::UploadTile(tile) => gpu.upload_tile(&device, &queue, *tile),
+            Message::RemoveTile(key) => gpu.remove_tile(key),
+            Message::RealColumns(columns) => gpu.real_columns = columns,
             Message::Clear => gpu.clear(),
         }
     }
     gpu.write_origins(&device, &queue);
+    if let Some(camera) = cameras.iter().next() {
+        let position = camera.world_from_view.translation();
+        gpu.camera = position;
+        gpu.write_coverage(&device, &queue, position);
+    }
 }
 
 fn prepare_bind_group(
@@ -333,9 +531,16 @@ fn prepare_bind_group(
     device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
 ) {
-    if gpu.bind_group.is_some() && !gpu.bind_group_dirty {
+    if gpu.bind_group.is_some() && gpu.distant_bind_group.is_some() && !gpu.bind_group_dirty {
         return;
     }
+    let (Some(origins), Some(view), Some(coverage)) = (&gpu.origins_buffer, &gpu.distant_view, &gpu.coverage) else { return };
+    let distant = device.create_bind_group(
+        "distant_bind_group",
+        &pipeline_cache.get_bind_group_layout(&pipelines.distant_layout),
+        &BindGroupEntries::sequential((origins.as_entire_binding(), view.as_entire_binding(), coverage.as_entire_binding())),
+    );
+    gpu.distant_bind_group = Some(distant);
     let (Some(textures), Some(origins)) = (textures, gpu.origins_buffer.as_ref()) else { return };
     let (Some(blocks), Some(colormaps)) = (images.get(&textures.textures), images.get(&textures.colormaps)) else { return };
     let bind_group = device.create_bind_group(
@@ -364,7 +569,9 @@ struct Draw {
 /// The draws of each pass that survive a view's frustum, in drawing order.
 #[derive(Component, Default)]
 struct TerrainDraws {
-    passes: [Vec<Draw>; 4],
+    passes: [Vec<Draw>; 5],
+    /// Distant terrain tiles, cameras only.
+    distant: Vec<Draw>,
 }
 
 /// Culls the visible chunks against each view's frustum, in parallel over views.
@@ -373,7 +580,7 @@ struct TerrainDraws {
 fn cull(
     mut commands: Commands,
     gpu: Res<TerrainGpu>,
-    mut views: Query<(Entity, &ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>)>,
+    mut views: Query<(Entity, &ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>), Or<(With<LightEntity>, With<ExtractedCamera>)>>,
 ) {
     // Chunks cave culling leaves visible, with their bounds' minimum corner.
     let candidates: Vec<(Vec3, &ChunkRecord)> = gpu
@@ -403,7 +610,12 @@ fn cull(
             if !frustum.intersects(min, min + CHUNK_SIZE as f32) {
                 continue;
             }
+            // Distance from the camera (not a shadow view's light) to the chunk's bounds.
+            let near = (gpu.camera.clamp(min, min + CHUNK_SIZE as f32) - gpu.camera).length() < FRINGE_DISTANCE;
             for &pass in passes {
+                if pass == TerrainPass::Fringe && !near {
+                    continue;
+                }
                 let Some(allocation) = &record.passes[pass as usize] else { continue };
                 let draw = Draw {
                     page: allocation.page,
@@ -418,6 +630,20 @@ fn cull(
                     draws.passes[pass as usize].push(draw);
                 }
             }
+        }
+        draws.distant.clear();
+        if !is_light {
+            for (&key, tile) in &gpu.tiles {
+                if frustum.intersects(tile.min, tile.max) && !(key.level == 0 && gpu.covered_by_real(key)) {
+                    draws.distant.push(Draw {
+                        page: tile.mesh.page,
+                        indices: tile.mesh.indices.clone(),
+                        base_vertex: tile.mesh.vertices.start as i32,
+                        slot: tile.slot,
+                    });
+                }
+            }
+            draws.distant.sort_unstable_by_key(|draw| draw.page);
         }
         for pass in &mut draws.passes {
             pass.sort_unstable_by_key(|draw| draw.page);
@@ -465,9 +691,14 @@ struct TerrainPipelines {
     shader: Handle<Shader>,
     vertex_layout: MeshVertexBufferLayout,
     /// One render entity per pass.
-    items: [Entity; 4],
+    items: [Entity; 5],
     main: FxHashMap<(MeshPipelineKey, TerrainPass), CachedRenderPipelineId>,
     shadow: FxHashMap<TerrainPass, CachedRenderPipelineId>,
+    distant_layout: BindGroupLayoutDescriptor,
+    distant_shader: Handle<Shader>,
+    distant_vertex_layout: MeshVertexBufferLayout,
+    distant_item: Entity,
+    distant: FxHashMap<MeshPipelineKey, CachedRenderPipelineId>,
 }
 
 fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -498,6 +729,30 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
         },
     );
     let items = PASSES.map(|pass| commands.spawn(TerrainPassItem(pass)).id());
+    let distant_layout = BindGroupLayoutDescriptor::new(
+        "distant_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::VERTEX_FRAGMENT,
+            (
+                storage_buffer_read_only_sized(false, None),
+                uniform_buffer::<DistantView>(false),
+                storage_buffer_read_only_sized(false, None),
+            ),
+        ),
+    );
+    let distant_vertex_layout = MeshVertexBufferLayout::new(
+        vec![ATTRIBUTE_LOD.id],
+        VertexBufferLayout {
+            array_stride: size_of::<LodVertex>() as u64,
+            step_mode: bevy::render::render_resource::VertexStepMode::Vertex,
+            attributes: vec![bevy::render::render_resource::VertexAttribute {
+                format: ATTRIBUTE_LOD.format,
+                offset: 0,
+                shader_location: 0,
+            }],
+        },
+    );
+    let distant_item = commands.spawn_empty().id();
     commands.insert_resource(TerrainPipelines {
         layout,
         shader: asset_server.load(VOXEL_SHADER),
@@ -505,6 +760,11 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
         items,
         main: FxHashMap::default(),
         shadow: FxHashMap::default(),
+        distant_layout,
+        distant_shader: asset_server.load(DISTANT_SHADER),
+        distant_vertex_layout,
+        distant_item,
+        distant: FxHashMap::default(),
     });
 }
 
@@ -517,6 +777,8 @@ fn pass_setup(pass: TerrainPass) -> (&'static [&'static str], Option<Face>) {
         TerrainPass::Inner => (&["CUTOUT", "INNER"], None),
         // Water is visible from below too.
         TerrainPass::Translucent => (&["TRANSLUCENT"], None),
+        // Both windings are meshed.
+        TerrainPass::Fringe => (&["CUTOUT"], Some(Face::Back)),
     }
 }
 
@@ -536,7 +798,7 @@ impl TerrainPipelines {
         }
         let alpha = match pass {
             TerrainPass::Opaque => MeshPipelineKey::BLEND_OPAQUE,
-            TerrainPass::Cutout | TerrainPass::Inner => MeshPipelineKey::MAY_DISCARD,
+            TerrainPass::Cutout | TerrainPass::Inner | TerrainPass::Fringe => MeshPipelineKey::MAY_DISCARD,
             TerrainPass::Translucent => MeshPipelineKey::BLEND_ALPHA,
         };
         let key = view_key | alpha | MeshPipelineKey::from_primitive_topology_and_strip_index(PrimitiveTopology::TriangleList, None);
@@ -557,7 +819,8 @@ impl TerrainPipelines {
         descriptor.primitive.cull_mode = cull_mode;
         // With several samples per pixel, cut-outs cover samples by their alpha instead of
         // passing or failing whole: leaves and plants stay smooth in the distance.
-        let alpha_to_coverage = key.msaa_samples() > 1 && matches!(pass, TerrainPass::Cutout | TerrainPass::Inner);
+        let alpha_to_coverage =
+            key.msaa_samples() > 1 && matches!(pass, TerrainPass::Cutout | TerrainPass::Inner | TerrainPass::Fringe);
         descriptor.multisample.alpha_to_coverage_enabled = alpha_to_coverage;
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = self.shader.clone();
@@ -568,6 +831,39 @@ impl TerrainPipelines {
         }
         let id = cache.queue_render_pipeline(descriptor);
         self.main.insert((view_key, pass), id);
+        Some(id)
+    }
+
+    /// The distant terrain pipeline: like the main pass, with `lod.wgsl`.
+    fn distant(
+        &mut self,
+        view_key: MeshPipelineKey,
+        mesh_pipeline: &MeshPipeline,
+        layouts: &mut MeshVertexBufferLayouts,
+        cache: &PipelineCache,
+    ) -> Option<CachedRenderPipelineId> {
+        if let Some(&id) = self.distant.get(&view_key) {
+            return Some(id);
+        }
+        let key = view_key | MeshPipelineKey::from_primitive_topology_and_strip_index(PrimitiveTopology::TriangleList, None);
+        let vertex_layout = layouts.insert(self.distant_vertex_layout.clone());
+        let mut descriptor = match mesh_pipeline.specialize(key, &vertex_layout) {
+            Ok(descriptor) => descriptor,
+            Err(e) => {
+                error!("distant terrain pipeline: {e}");
+                return None;
+            }
+        };
+        descriptor.label = Some("distant_terrain".into());
+        descriptor.layout.truncate(2);
+        descriptor.layout.push(self.distant_layout.clone());
+        descriptor.vertex.shader = self.distant_shader.clone();
+        descriptor.vertex.buffers = vec![self.distant_vertex_layout.layout().clone()];
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader = self.distant_shader.clone();
+        }
+        let id = cache.queue_render_pipeline(descriptor);
+        self.distant.insert(view_key, id);
         Some(id)
     }
 
@@ -638,12 +934,14 @@ fn queue(
     keys: Res<TerrainKeys>,
     views: Query<(&ExtractedView, Has<LightEntity>)>,
 ) {
-    let items = PASSES.map(|pass| (pipelines.items[pass as usize], keys.0[pass as usize]));
+    let items = PASSES.map(|pass| (pipelines.items[pass as usize], keys.passes[pass as usize]));
+    let distant_item = (pipelines.distant_item, keys.distant);
     let registered = "terrain draw is registered";
     let opaque_draw = phases.opaque_draw.read().get_id::<DrawTerrainMain>().expect(registered);
     let mask_draw = phases.mask_draw.read().get_id::<DrawTerrainMain>().expect(registered);
     let transparent_draw = phases.transparent_draw.read().get_id::<DrawTerrainMain>().expect(registered);
     let shadow_draw = phases.shadow_draw.read().get_id::<DrawTerrainShadow>().expect(registered);
+    let distant_draw = phases.opaque_draw.read().get_id::<DrawDistantTerrain>().expect(registered);
     let bin = || Opaque3dBinKey { asset_id: AssetId::<Mesh>::default().untyped() };
 
     for (view, is_light) in &views {
@@ -661,6 +959,7 @@ fn queue(
             continue;
         }
         let Some(&view_key) = view_keys.get(retained) else { continue };
+        let distant = pipelines.distant(view_key, &mesh_pipeline, &mut layouts, &cache);
         let mut pipeline = |pass| pipelines.main(view_key, pass, &mesh_pipeline, &mut layouts, &cache);
         if let (Some(phase), Some(id)) = (phases.opaque.get_mut(retained), pipeline(TerrainPass::Opaque)) {
             let item = items[TerrainPass::Opaque as usize];
@@ -674,8 +973,21 @@ fn queue(
             };
             phase.add(key, bin(), item, InputUniformIndex::default(), BinnedRenderPhaseType::NonMesh);
         }
+        if let (Some(phase), Some(id)) =
+            (phases.opaque.get_mut(retained), distant)
+        {
+            phase.remove(distant_item.1);
+            let key = Opaque3dBatchSetKey {
+                pipeline: id,
+                draw_function: distant_draw,
+                material_bind_group_index: None,
+                slabs: default(),
+                lightmap_slab: None,
+            };
+            phase.add(key, bin(), distant_item, InputUniformIndex::default(), BinnedRenderPhaseType::NonMesh);
+        }
         if let Some(phase) = phases.mask.get_mut(retained) {
-            for pass in [TerrainPass::Cutout, TerrainPass::Inner] {
+            for pass in [TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Fringe] {
                 let Some(id) = pipeline(pass) else { continue };
                 let item = items[pass as usize];
                 phase.remove(item.1);
@@ -708,6 +1020,39 @@ fn queue(
 
 type DrawTerrainMain = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>, DrawTerrain);
 type DrawTerrainShadow = (SetItemPipeline, SetPrepassViewBindGroup<0>, SetPrepassViewEmptyBindGroup<1>, DrawTerrain);
+type DrawDistantTerrain = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>, DrawDistant);
+
+/// Draws a camera's culled distant terrain tiles.
+struct DrawDistant;
+
+impl<P: PhaseItem> RenderCommand<P> for DrawDistant {
+    type Param = SRes<TerrainGpu>;
+    type ViewQuery = Read<TerrainDraws>;
+    type ItemQuery = ();
+
+    fn render<'w>(
+        _item: &P,
+        draws: &'w TerrainDraws,
+        _: Option<()>,
+        gpu: SystemParamItem<'w, '_, Self::Param>,
+        render_pass: &mut TrackedRenderPass<'w>,
+    ) -> RenderCommandResult {
+        let gpu = gpu.into_inner();
+        let Some(bind_group) = &gpu.distant_bind_group else { return RenderCommandResult::Skip };
+        render_pass.set_bind_group(2, bind_group, &[]);
+        let mut current = None;
+        for draw in &draws.distant {
+            if current != Some(draw.page) {
+                let page = &gpu.tile_pages.pages[draw.page as usize];
+                render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(page.index_buffer.slice(..), IndexFormat::Uint32);
+                current = Some(draw.page);
+            }
+            render_pass.draw_indexed(draw.indices.clone(), draw.base_vertex, draw.slot..draw.slot + 1);
+        }
+        RenderCommandResult::Success
+    }
+}
 
 /// Draws a view's culled chunks of the item's pass.
 struct DrawTerrain;
@@ -732,7 +1077,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
         let mut current = None;
         for draw in &draws.passes[*pass as usize] {
             if current != Some(draw.page) {
-                let page = &gpu.pages[draw.page as usize];
+                let page = &gpu.chunk_pages.pages[draw.page as usize];
                 render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(page.index_buffer.slice(..), IndexFormat::Uint32);
                 current = Some(draw.page);

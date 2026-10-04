@@ -134,6 +134,34 @@ fn fbm(p: vec2<f32>, t: f32) -> f32 {
     return value;
 }
 
+// Feature sizes of the low cloud's body and the billows at its edges, and of the higher
+// sheet, relative to the layers' coordinates.
+const CLOUD_SCALE: f32 = 0.6;
+const DETAIL_SCALE: f32 = 7.0;
+const SHEET_SCALE: f32 = 0.5;
+
+// The broad body of low cloud, about 0..1: three coarse octaves over a smooth warp, so
+// outlines bulge and curl instead of following the noise grid. Like `fbm`, the finer
+// octaves slide slowly over the coarse one.
+fn cloud_body(p: vec2<f32>, t: f32) -> f32 {
+    let warp = vec2(value_noise(p * 0.5 + vec2(5.2, 1.3)), value_noise(p * 0.5 + vec2(-3.7, 8.1))) - 0.5;
+    var q = p + warp * 0.8;
+    var value = 0.0;
+    var amplitude = 0.5;
+    for (var i = 0; i < 3; i++) {
+        value += value_noise(q) * amplitude;
+        q = q * 2.03 + vec2(17.1, 9.3) + t * vec2(0.006, -0.004);
+        amplitude *= 0.5;
+    }
+    return value / 0.875;
+}
+
+// Billows and wisps, 0..1, that shape only the edges of cloud.
+fn cloud_detail(p: vec2<f32>, t: f32) -> f32 {
+    let q = p + t * vec2(0.01, -0.007);
+    return value_noise(q) * 0.65 + value_noise(q * 2.07 + vec2(7.0, 3.0)) * 0.35;
+}
+
 fn value_noise3(p: vec3<f32>) -> f32 {
     let i = floor(p);
     let f = fract(p);
@@ -381,20 +409,26 @@ fn disc(dir: vec3<f32>, ddx: vec3<f32>, ddy: vec3<f32>, center: vec3<f32>, radiu
 }
 
 // Cloud as seen from below, in premultiplied colour and opacity: a low layer whose cover,
-// build and darkness follow the weather, over high wisps of cirrus. Both drift with the
-// wind and sit at fixed places in the world, so they pass overhead as the player moves.
+// build and darkness follow the weather, a higher sheet that closes its gaps as the sky
+// clouds over, and high wisps of cirrus. All drift with the wind and sit at fixed places in
+// the world, so they pass overhead as the player moves.
 fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
-    let cover = sky.clouds.y;
+    let rain = sky.weather.z;
+    // Rain only falls from a well covered sky.
+    let cover = min(sky.clouds.y + 0.25 * rain, 1.0);
     let convection = sky.clouds.z;
     let cirrus = sky.clouds.w;
-    let rain = sky.weather.z;
     let t = sky.clouds.x;
     if dir.y <= 0.01 || cover + cirrus < 0.005 {
         return vec4(0.0);
     }
     let fade = smoothstep(0.01, 0.2, dir.y);
-    // The layers bend down towards the horizon so they do not stretch out to infinity.
+    // The layers bend down towards the horizon so they do not stretch out to infinity. Far
+    // away, low cloud fades into the sky's colour rather than thinning out.
     let to_layer = dir.xz / (dir.y + 0.08);
+    let edge_of_view = smoothstep(0.01, 0.05, dir.y);
+    let haze = (1.0 - smoothstep(0.02, 0.2, dir.y)) * 0.8;
+    let behind = mix(sky.horizon.rgb, sky.zenith.rgb, pow(dir.y, 0.55));
     let sun = sky.sun.xyz;
 
     // Light on the clouds: white by day, warm when the sun is low, pale blue moonlight.
@@ -414,42 +448,61 @@ fn clouds(dir: vec3<f32>, daylight: f32, glow: f32) -> vec4<f32> {
         let density = smoothstep(0.48, 0.75, streaks) * smoothstep(0.3, 0.7, patches) * min(cirrus * 0.9, 0.65) * fade;
         result = vec4((lit * 1.1 + flash) * density, density);
     }
-    if cover > 0.005 {
-        let at = to_layer * 2.0 + sky.weather.xy;
-        // Heaped cloud gets billowing, crisp outlines from two finer octaves.
-        var billows = 0.0;
-        if convection > 0.01 {
-            billows = (value_noise(at * 9.0) + 0.5 * value_noise(at * 19.0 + 7.0) - 0.75) * convection;
-        }
-        let n = fbm(at, t) + billows * 0.1;
-        // The threshold sets how much of the sky is covered; heaped cloud has crisp edges,
-        // layered cloud soft ones.
-        let threshold = mix(0.74, 0.17, cover);
-        let edge = mix(0.17, 0.035, convection);
-        let density = smoothstep(threshold - edge, threshold + edge, n) * smoothstep(0.0, 0.1, cover) * fade;
-        if density > 0.0 {
-            // Overhead we see the shaded undersides of thick cloud, towards the horizon
-            // its sunlit flanks. The side away from the sun lies in the shadow of the cloud
-            // towards it.
-            let depth = smoothstep(threshold, threshold + mix(0.4, 0.25, convection), n);
-            let underside = smoothstep(0.1, 0.7, dir.y);
-            let towards_sun = fbm(at + normalize(sun.xz + vec2(1e-4, 0.0)) * 0.06, t) + billows * 0.1;
-            let shadowed = clamp(0.5 + (towards_sun - n) * 8.0, 0.0, 1.0) * daylight;
-            var dark = depth * mix(0.15, 0.6, underside) + shadowed * 0.35 * depth;
-            // Layers are flatter and duller; rain clouds are dark, storm clouds darkest.
-            dark += 0.25 * smoothstep(0.6, 1.0, cover) * (1.0 - convection) + rain * mix(0.4, 0.75, convection);
-            dark = clamp(dark, 0.0, 0.95);
-            // A thick layer lets little light through even where it is thin, and rain and
-            // storm clouds hold back the most.
-            let storm = rain * (0.4 + 0.6 * convection);
-            let through = (1.0 - 0.45 * smoothstep(0.6, 1.0, cover)) * (1.0 - 0.8 * storm);
-            let grey = dot(sky.horizon.rgb, vec3(0.3, 0.55, 0.15));
-            let shade = (mix(sky.horizon.rgb, vec3(grey), 0.5) * 0.45 + vec3(0.05, 0.055, 0.07) * daylight) * (1.0 - 0.75 * storm);
-            var color = mix(lit * 1.4 * through, shade, dark) + vec3(1.0, 0.85, 0.6) * glow * (1.0 - depth);
-            color += flash * (0.5 + 0.5 * depth);
-            let opacity = density * mix(0.9, 1.0, smoothstep(0.5, 1.0, cover));
-            result = vec4(color * opacity + result.rgb * (1.0 - opacity), opacity + result.a * (1.0 - opacity));
-        }
+    if cover < 0.005 {
+        return result;
+    }
+    // A thick layer lets little light through even where it is thin, and rain and storm
+    // clouds hold back the most. Their shaded parts take the grey of the sky beneath.
+    let storm = rain * (0.4 + 0.6 * convection);
+    let through = (1.0 - 0.45 * smoothstep(0.6, 1.0, cover)) * (1.0 - 0.8 * storm);
+    let grey = dot(sky.horizon.rgb, vec3(0.3, 0.55, 0.15));
+    let shade = (mix(sky.horizon.rgb, vec3(grey), 0.5) * 0.45 + vec3(0.05, 0.055, 0.07) * daylight) * (1.0 - 0.75 * storm);
+
+    // As the sky clouds over, a higher, even sheet spreads above the low cloud, so its gaps
+    // show more cloud rather than blue sky.
+    let sheet_cover = smoothstep(0.45, 0.95, cover);
+    if sheet_cover > 0.0 {
+        let high = to_layer * 1.2 + sky.weather.xy * 0.3 + vec2(-23.0, 41.0);
+        let n = cloud_body(high * SHEET_SCALE, t);
+        let density = smoothstep(1.0 - sheet_cover, 1.35 - sheet_cover, n + 0.25) * edge_of_view;
+        let color = mix(mix(lit * through, shade, 0.3 + 0.35 * rain - 0.2 * n) + flash * 0.5, behind, haze);
+        result = vec4(color * density + result.rgb * (1.0 - density), density + result.a * (1.0 - density));
+    }
+
+    let at = to_layer * 2.0 + sky.weather.xy;
+    let body = cloud_body(at * CLOUD_SCALE, t);
+    // How far above the threshold for cloud the body rises, from 0 at its edge: the
+    // threshold sets how much of the sky is covered.
+    let threshold = mix(0.72, 0.0, pow(cover, 1.3));
+    let core = (body - threshold) / (1.0 - threshold);
+    // Fine detail bites into and bulges out of the edges but leaves the cores whole: billows
+    // on heaped cloud, soft frays on layers, and little of either once the sky is covered.
+    let detail = cloud_detail(at * DETAIL_SCALE, t) - 0.5;
+    let fray = mix(0.3, 0.4, convection) * (1.0 - 0.7 * smoothstep(0.6, 1.0, cover));
+    let d = core + (detail - 0.15) * fray * (1.0 - clamp(core * 3.0, 0.0, 1.0));
+    // Opacity rises quickly above the edge, so clouds are solid rather than see-through;
+    // heaped cloud has crisper edges than layers.
+    let density = smoothstep(0.0, mix(0.2, 0.1, convection), d) * smoothstep(0.0, 0.1, cover) * edge_of_view;
+    if density > 0.0 {
+        // Thin edges glow with the light coming through; thick cloud is dark underneath,
+        // most of all overhead, where we see its base rather than its sunlit flanks. The
+        // side away from the sun lies in the shadow of the cloud towards it.
+        let depth = smoothstep(0.0, 0.4, d);
+        let thick = smoothstep(0.2, 0.85, body);
+        let underside = smoothstep(0.1, 0.7, dir.y);
+        let towards_sun = cloud_body((at + normalize(sun.xz + vec2(1e-4, 0.0)) * 0.1) * CLOUD_SCALE, t);
+        let shadowed = clamp(0.5 + (towards_sun - body) * 6.0, 0.0, 1.0) * daylight;
+        // A low sun lights the bases from the side.
+        let base = thick * mix(0.2, 0.6, underside) * (1.0 - 0.5 * low_sun);
+        var dark = depth * (base + shadowed * 0.3) + detail * 0.25 * depth;
+        // Layers are flatter and duller; rain clouds are dark, storm clouds darkest, and
+        // darkest where they are thickest.
+        dark += 0.2 * smoothstep(0.6, 1.0, cover) * (1.0 - convection) + rain * mix(0.25, 0.4, convection) * (0.5 + thick);
+        dark = clamp(dark, 0.0, 0.95);
+        var color = mix(lit * 1.4 * through, shade * (1.3 - 0.6 * thick * storm), dark);
+        color += vec3(1.0, 0.85, 0.6) * glow * (1.0 - depth) * 2.0 + flash * (0.5 + 0.5 * depth);
+        color = mix(color, behind, haze);
+        result = vec4(color * density + result.rgb * (1.0 - density), density + result.a * (1.0 - density));
     }
     return result;
 }

@@ -24,7 +24,10 @@ pub struct Relief {
     /// Continental noise: below about −0.08 is sea, rising inland.
     pub continental: f32,
     pub mountain: f32,
-    roughness: f32,
+    /// How much of the range's full height rises here, 0 ..= 1: high along ridgelines.
+    pub peak: f32,
+    /// 0 on smooth lowland ..= 1 where hills are steep and mountains can rise.
+    pub roughness: f32,
 }
 
 pub struct Geology {
@@ -77,9 +80,9 @@ pub fn spline(points: &[(f32, f32)], x: f32) -> f32 {
     }
 }
 
-/// Heights above this are compressed so the highest peaks approach the top of the world
-/// smoothly instead of being cut flat.
-const PEAK_KNEE: f32 = (voxmar_engine::coords::WORLD_HEIGHT - 60) as f32;
+/// Heights above this are compressed so the highest peaks approach their ceiling (`PEAK_ROOM`
+/// higher) smoothly instead of being cut flat.
+const PEAK_KNEE: f32 = (SEA_LEVEL + 132) as f32;
 const PEAK_ROOM: f32 = 36.0;
 
 impl Geology {
@@ -99,8 +102,7 @@ impl Geology {
             rivers: noise(seed, 7, 0.0005 + 0.0007 * dials.river_density, FractalType::None, 1),
             lakes: noise(seed, 8, 0.0022, FractalType::FBm, 2),
             ocean_bias,
-            // Active worlds raise high ranges; old ones have worn theirs down.
-            peak_height: (100.0 + 80.0 * dials.tectonic_activity) * (1.0 - 0.25 * dials.erosion_age),
+            peak_height: dials.mountain_height,
             hill_scale: 1.25 - 0.5 * dials.erosion_age,
         }
     }
@@ -127,8 +129,9 @@ impl Geology {
         );
         let roughness = 1.0 - smoothstep(-0.4, 0.5, erosion);
         let mountain = smoothstep(0.02, 0.35, continental) * roughness;
-        let elevation = base + mountain * ridge.powf(2.2) * self.peak_height;
-        Relief { elevation, continental, mountain, roughness }
+        let peak = mountain * ridge.powf(2.2);
+        let elevation = base + peak * self.peak_height;
+        Relief { elevation, continental, mountain, peak, roughness }
     }
 
     pub fn sample(&self, x: i32, z: i32) -> GeoSample {

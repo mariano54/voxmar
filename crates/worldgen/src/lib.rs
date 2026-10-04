@@ -15,6 +15,7 @@ mod dials;
 mod ecology;
 mod features;
 mod geology;
+mod rarity;
 mod resources;
 mod rng;
 mod terrain;
@@ -29,6 +30,7 @@ use voxmar_engine::world::Column;
 
 pub use climate::LAPSE_RATE;
 pub use dials::WorldDials;
+pub use rarity::{Featured, Rarity};
 
 use crate::climate::{Climate, ClimateGrid};
 use crate::ecology::Ecology;
@@ -43,7 +45,8 @@ pub trait Generator: Send + Sync {
     fn spawn_point(&self) -> IVec3;
 }
 
-pub const SEA_LEVEL: i32 = 64;
+/// Height of the sea surface: 128 blocks of ground below it, 256 of air and mountains above.
+pub const SEA_LEVEL: i32 = 128;
 
 /// Everything the generator knows about the surface at one position. These are the
 /// continuous parameters every surface decision is made from, kept physical so that
@@ -61,12 +64,27 @@ pub struct Site {
     /// Precipitation over potential evaporation: around 0.1 in deserts, 1 where they
     /// balance, 2 in rainforests.
     pub moisture: f32,
-    /// 0 at the coast ..= 1 deep inland.
-    pub continentality: f32,
+    /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland.
+    pub continentalness: f32,
     /// 0 at the equator ..= 1 at a pole.
     pub latitude: f32,
     /// 0 on flat land, towards 1 on mountain ranges.
     pub mountain: f32,
+    /// The landform, in steps: 0 on flat land, 1/3 in hill country, 2/3 on the slopes of a
+    /// range and 1 along its peaks, with short ramps between. Like Minecraft's erosion
+    /// inverted: it grows with relief.
+    pub erosion: f32,
+    /// Evenly spread over 0 ..= 1 and varying over kilometres; rare biomes live in its
+    /// extremes.
+    pub weirdness: f32,
+    /// How fantastical the land is, 0 ..= 1. The world's fantasy dial is its median; where
+    /// it is high the strange is common.
+    pub aether: f32,
+    /// How rich the soil is, evenly spread over 0 ..= 1.
+    pub fertility: f32,
+    /// Evenly spread over 0 ..= 1, varying over a few hundred blocks: which sub-biome of a
+    /// biome grows here.
+    pub variant: f32,
     /// 1 in a river or lake, falling to 0 at the edge of its valley or shore.
     pub river: f32,
     /// Ground cover the climate supports, 0 (barren) ..= 1 (lush).
@@ -117,7 +135,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 3;
+    pub const VERSION: u32 = 5;
 
     pub fn new(seed: u64, registry: Arc<BlockRegistry>) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
@@ -198,9 +216,14 @@ impl Sampler<'_> {
             temperature,
             precipitation: regional.precipitation,
             moisture: climate::moisture(regional.precipitation, temperature),
-            continentality: regional.continentality,
+            continentalness: regional.continentalness,
             latitude: regional.latitude,
             mountain: geo.mountain,
+            erosion: regional.erosion,
+            weirdness: regional.weirdness,
+            aether: regional.aether,
+            fertility: regional.fertility,
+            variant: regional.variant,
             river: geo.river,
             vegetation: 0.0,
             forest: 0.0,
@@ -264,6 +287,7 @@ fn spiral(ring: i32, step: i32) -> (i32, i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voxmar_engine::coords::COLUMN_CHUNKS;
     use voxmar_engine::light::LitRegion;
     use voxmar_engine::mesh::mesh_chunk;
 
@@ -288,18 +312,56 @@ mod tests {
         let region = LitRegion::compute(&registry, &columns);
         let lit = start.elapsed();
         let start = std::time::Instant::now();
-        let quads: usize = (0..8).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy).opaque.vertices.len() / 4).sum();
+        let quads: usize = (0..COLUMN_CHUNKS).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy).opaque.vertices.len() / 4).sum();
         println!("9 columns {generated:?}, light {lit:?}, mesh {:?}, {quads} quads, spawn {spawn}", start.elapsed());
         println!("{:#?}", world.dials());
         assert!(quads > 0);
     }
 
+    /// `cargo test --release -p voxmar_worldgen column_timing -- --ignored --nocapture`
+    /// reports the mean time to generate one column on one thread, over a fixed spread of
+    /// places around spawn on a few seeds, for comparing generation before and after a
+    /// change.
+    #[test]
+    #[ignore]
+    fn column_timing() {
+        let registry = registry();
+        let mut total = std::time::Duration::ZERO;
+        let mut count = 0;
+        for seed in [1, 42, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            let spawn = ColumnPos::of_block(world.spawn_point());
+            let positions: Vec<ColumnPos> = (0..100).map(|i| spawn.offset(i % 10 * 7 - 35, i / 10 * 7 - 35)).collect();
+            world.generate(spawn);
+            let start = std::time::Instant::now();
+            for &pos in &positions {
+                std::hint::black_box(world.generate(pos));
+            }
+            let elapsed = start.elapsed();
+            println!("seed {seed}: {:.2} ms per column", elapsed.as_secs_f64() * 1000.0 / positions.len() as f64);
+            total += elapsed;
+            count += positions.len();
+        }
+        println!("mean {:.2} ms per column", total.as_secs_f64() * 1000.0 / count as f64);
+    }
+
     /// `cargo test --release -p voxmar_worldgen map_preview -- --ignored` writes a shaded
     /// top-down map (north up, 8 blocks per pixel) around the origin to
-    /// `target/map_preview.ppm`, for judging the climate layout at a glance.
+    /// `target/map_preview.ppm`, for judging the climate layout at a glance. With
+    /// `FIELD=erosion` (or `continentalness`, `weirdness`, `aether`, `fertility`,
+    /// `variant`) it shows that selection field on land instead, dark to light.
     #[test]
     #[ignore]
     fn map_preview() {
+        let field: Option<fn(&Site) -> f32> = match std::env::var("FIELD").as_deref() {
+            Ok("erosion") => Some(|s| s.erosion),
+            Ok("continentalness") => Some(|s| s.continentalness * 0.5 + 0.5),
+            Ok("weirdness") => Some(|s| s.weirdness),
+            Ok("aether") => Some(|s| s.aether),
+            Ok("fertility") => Some(|s| s.fertility),
+            Ok("variant") => Some(|s| s.variant),
+            _ => None,
+        };
         const SIZE: i32 = 1024;
         const SCALE: i32 = 8;
         let registry = registry();
@@ -334,6 +396,10 @@ mod tests {
                         .map_or([0.25, 0.45, 0.15], |(_, crown)| crown);
                     rgb = mix(rgb, crown, cover);
                 }
+                if let Some(field) = field {
+                    let v = field(&sampler.site(at(x), at(z)));
+                    rgb = [0.1 + 0.9 * v, 0.1 + 0.8 * v * v, 0.3 + 0.4 * v];
+                }
                 if let Some(water) = surface.water {
                     wet += 1;
                     let depth = ((SEA_LEVEL - h) as f32 / 30.0).min(1.0);
@@ -353,6 +419,54 @@ mod tests {
         let water = wet as f32 / (SIZE * SIZE) as f32;
         let spawn = world.spawn_point();
         println!("{:#?}\nwater {water:.2}, spawn {spawn}: {:#?}\nwrote {path}", world.dials(), world.site(spawn.x, spawn.z));
+    }
+
+    /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
+    /// processes compete for the cores.
+    fn thread_time() -> std::time::Duration {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `t` is a valid timespec for the call to fill.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+    }
+
+    /// `cargo test --release -p voxmar_worldgen generation_speed -- --ignored --nocapture`
+    /// measures, in CPU time on one thread, full column generation over areas in several
+    /// climates and seeds, and the distant-terrain surface samples of the same areas.
+    #[test]
+    #[ignore]
+    fn generation_speed() {
+        use std::time::Duration;
+        let registry = registry();
+        let (mut columns, mut generating) = (0, Duration::ZERO);
+        let (mut samples, mut sampling) = (0, Duration::ZERO);
+        for seed in [1, 3, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            for (cx, cz) in [(0, 0), (60, -90), (-120, 40), (150, 150), (-40, -200)] {
+                let start = thread_time();
+                for i in 0..64 {
+                    std::hint::black_box(world.generate(ColumnPos::new(cx + i % 8, cz + i / 8)));
+                }
+                generating += thread_time() - start;
+                columns += 64;
+
+                // A distant-terrain tile: 33×33 samples, 8 blocks apart.
+                let origin = IVec2::new(cx, cz) * voxmar_engine::coords::CHUNK_SIZE;
+                let start = thread_time();
+                let sampler = world.sampler(origin - 8, origin + 33 * 8);
+                for i in 0..33 * 33 {
+                    let (x, z) = (origin.x + i % 33 * 8, origin.y + i / 33 * 8);
+                    std::hint::black_box(sampler.surface(x, z, world.height(x, z), 0));
+                }
+                sampling += thread_time() - start;
+                samples += 33 * 33;
+            }
+        }
+        println!(
+            "{:.3} ms per column ({columns} columns), {:.2} µs per surface sample ({samples} samples)",
+            generating.as_secs_f64() * 1e3 / columns as f64,
+            sampling.as_secs_f64() * 1e6 / samples as f64,
+        );
     }
 
     #[test]
@@ -412,6 +526,49 @@ mod tests {
                             panic!("seed {seed}: desert at {desert:?} within {} blocks of snow at {snow:?}", GAP * STEP);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selection_fields_are_smooth_and_evenly_spread() {
+        let world = Overworld::new(5, registry());
+        let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
+        let sites: Vec<Site> = (0..150 * 150).map(|i| sampler.site(i % 150 * 80 - 6000, i / 150 * 80 - 6000)).collect();
+        // Evenly spread fields put a tenth of the land in each tenth of their range.
+        let fields: [(&str, fn(&Site) -> f32); 3] = [("weirdness", |s| s.weirdness), ("fertility", |s| s.fertility), ("variant", |s| s.variant)];
+        for (name, field) in fields {
+            let values: Vec<f32> = sites.iter().map(field).collect();
+            assert!(values.iter().all(|v| (0.0..=1.0).contains(v)), "{name} out of range");
+            for decile in 0..10 {
+                let share = values.iter().filter(|&&v| (v * 10.0) as i32 == decile).count() as f32 / values.len() as f32;
+                assert!((0.04..0.16).contains(&share), "{name}: {share} of the land in decile {decile}");
+            }
+        }
+        let median = |mut v: Vec<f32>| {
+            v.sort_by(f32::total_cmp);
+            v[v.len() / 2]
+        };
+        let aether = median(sites.iter().map(|s| s.aether).collect());
+        assert!((aether - world.dials().fantasy).abs() < 0.1, "median aether {aether}, fantasy {}", world.dials().fantasy);
+        assert!(sites.iter().all(|s| (-1.0..=1.0).contains(&s.continentalness) && (0.0..=1.0).contains(&s.erosion)));
+        assert!(sites.iter().any(|s| s.continentalness < -0.5) && sites.iter().any(|s| s.continentalness > 0.5));
+        assert!(sites.iter().any(|s| s.erosion > 0.9) && sites.iter().any(|s| s.erosion < 0.05));
+
+        // Block to block, nothing a biome is picked by jumps.
+        for x in [-1500, 400] {
+            let line: Vec<Site> = (-3000..3000).map(|z| sampler.site(x, z)).collect();
+            for pair in line.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                for (name, step) in [
+                    ("continentalness", (a.continentalness - b.continentalness).abs()),
+                    ("erosion", (a.erosion - b.erosion).abs()),
+                    ("weirdness", (a.weirdness - b.weirdness).abs()),
+                    ("aether", (a.aether - b.aether).abs()),
+                    ("variant", (a.variant - b.variant).abs()),
+                ] {
+                    assert!(step < 0.03, "{name} jumps by {step} at x {x}");
                 }
             }
         }

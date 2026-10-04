@@ -14,7 +14,7 @@ use voxmar_worldgen::{Generator, Overworld, SEA_LEVEL};
 
 use super::InMenu;
 use crate::render::DayCycle;
-use crate::render::lod::{self, Lod, LodMaterial};
+use crate::render::lod::{self, Lod};
 use crate::settings::Settings;
 use crate::world::ClientWorld;
 
@@ -55,7 +55,6 @@ fn start(
     time: Res<Time>,
     mut world: ResMut<ClientWorld>,
     mut lod: ResMut<Lod>,
-    mut lod_materials: ResMut<Assets<LodMaterial>>,
     mut cycle: ResMut<DayCycle>,
     mut spawn: Local<Option<ColumnPos>>,
 ) {
@@ -63,7 +62,7 @@ fn start(
     // Searching for the spawn point takes a moment; it never changes.
     let center = *spawn.get_or_insert_with(|| ColumnPos::of_block(generator.spawn_point()));
     world.reset(RADIUS);
-    lod.clear(&mut commands, &mut lod_materials);
+    lod.clear();
     lod.start(SEED, world.registry.clone());
     cycle.ticks = START_TICKS;
     cycle.view_distance = lod::view_distance(RADIUS);
@@ -100,14 +99,13 @@ fn stop(
     settings: Res<Settings>,
     mut world: ResMut<ClientWorld>,
     mut lod: ResMut<Lod>,
-    mut lod_materials: ResMut<Assets<LodMaterial>>,
 ) {
     if let Some(backdrop) = backdrop {
         backdrop.cancelled.store(true, Ordering::Relaxed);
     }
     commands.remove_resource::<Backdrop>();
     world.reset(settings.view_distance);
-    lod.clear(&mut commands, &mut lod_materials);
+    lod.clear();
 }
 
 fn receive_columns(backdrop: Res<Backdrop>, mut world: ResMut<ClientWorld>) {

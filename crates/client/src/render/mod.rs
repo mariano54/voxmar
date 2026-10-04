@@ -35,8 +35,10 @@ pub mod precipitation;
 pub mod terrain;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
+pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6433, VertexFormat::Uint32x4);
 
 const VOXEL_SHADER: &str = "embedded://voxmar/render/voxel.wgsl";
+const DISTANT_SHADER: &str = "embedded://voxmar/render/lod.wgsl";
 
 pub struct RenderPlugin;
 
@@ -44,6 +46,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "lighting.wgsl");
         embedded_asset!(app, "voxel.wgsl");
+        embedded_asset!(app, "lod.wgsl");
         embedded_asset!(app, "sky.wgsl");
         embedded_asset!(app, "display.wgsl");
         app.add_plugins((
@@ -69,6 +72,8 @@ pub enum TerrainPass {
     /// Cut-out, double-sided faces between two leaves, which cast no shadow.
     Inner,
     Translucent,
+    /// Leafy sprigs sticking out of crowns, drawn only near the camera.
+    Fringe,
 }
 
 /// Maps the HDR image to the screen in place of a tonemapper (see `display.wgsl`): colours

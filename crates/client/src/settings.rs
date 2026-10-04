@@ -21,7 +21,7 @@ use crate::menu::widgets::{
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::DayCycle;
-use crate::render::lod::{self, Lod, LodMaterial};
+use crate::render::lod::{self, Lod};
 use crate::world::ClientWorld;
 
 pub struct SettingsPlugin;
@@ -644,7 +644,6 @@ fn apply(
 fn fit_lod_hole(
     world: Res<ClientWorld>,
     mut lod: ResMut<Lod>,
-    mut materials: ResMut<Assets<LodMaterial>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let current = lod.real_columns();
@@ -665,7 +664,7 @@ fn fit_lod_hole(
         columns += 1;
     }
     if columns != current {
-        lod.set_real_columns(columns, &mut materials);
+        lod.set_real_columns(columns);
     }
 }
 
