@@ -434,7 +434,8 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
         // Grains of dust catch the light like the haze around them.
         let haze = dot(params.haze.rgb, vec3(0.2126, 0.7152, 0.0722));
         out.color = vec4(select(color * params.light.rgb * 2.6, dust_tint() * haze * 0.8, group == 0u), 0.0);
-        opacity *= mix(0.75, 0.2, smoothstep(0.15, 0.5, scale)) * select(1.0, 0.6 + 0.4 * params.light.w, group == 0u);
+        // Ambient specks (pollen, spores) are faint: seen when looked for, never a haze.
+        opacity *= mix(0.75, 0.2, smoothstep(0.15, 0.5, scale)) * select(select(0.5, 1.0, group < 2u), 0.6 + 0.4 * params.light.w, group == 0u);
         out.kind = 6u;
     }
     let reach = length(offset.xz) / (box.x * 0.5);

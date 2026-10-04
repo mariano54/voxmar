@@ -10,8 +10,9 @@
 (
     particles: [
         (
-            name: "pollen", tags: ["meadow", "temperate"],
-            density: 0.12, color: (250, 236, 170), size: 0.06, motion: Drift, time: Day, weather: Dry,
+            // A few faint motes hanging in the sun near flowers.
+            name: "pollen", tags: ["meadow", "temperate", "flowers"],
+            density: 0.05, color: (250, 236, 170), size: 0.035, motion: Hover, time: Day, weather: Dry,
             comfort: (temperature: (10.0, 26.0), moisture: (0.45, 1.5)),
         ),
         (

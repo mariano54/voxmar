@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use crate::menu::{InMenu, Screen};
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
+use crate::sfx::Audible;
 
 /// Volume at 100% in the settings.
 const VOLUME: f32 = 0.35;
@@ -30,7 +31,10 @@ impl Plugin for MusicPlugin {
         app.add_systems(Startup, load_tracks)
             .add_systems(OnEnter(Screen::InGame), start_game)
             .add_systems(OnExit(Screen::InGame), leave_game)
-            .add_systems(Update, (toggle_music, schedule_music, fade_out, set_volume.run_if(resource_changed::<Settings>)));
+            .add_systems(
+                Update,
+                (toggle_music, schedule_music.in_set(Audible), fade_out, set_volume.run_if(resource_changed::<Settings>)),
+            );
     }
 }
 

@@ -208,7 +208,11 @@ fn receive(
                 player.flying &= allow_flight;
                 player.admin = admin;
             }
-            ServerMessage::Chat { kind, text } => console.push(kind, &text, time.elapsed_secs()),
+            ServerMessage::Chat { kind, text } => {
+                // Logged too, so the replies to a capture's `--command`s are on record.
+                debug!("chat: {text}");
+                console.push(kind, &text, time.elapsed_secs())
+            }
             ServerMessage::Weather { weather: report, effects, nearby, quick } => {
                 weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }

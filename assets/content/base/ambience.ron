@@ -29,6 +29,8 @@
         (name: "rock", materials: [Stone, Gravel], range: (60, 700)),
         (name: "sand", materials: [Sand], range: (60, 600)),
         (name: "snowpack", materials: [Snow], range: (60, 600)),
+        // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
+        (name: "flowers", tags: ["flower"], range: (8, 120)),
     ],
     beds: [
         // A soft breeze anywhere outdoors, stronger with the wind.
