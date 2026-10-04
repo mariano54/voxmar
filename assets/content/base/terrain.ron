@@ -87,10 +87,10 @@
             climate: [(temperature: ("temperate", "hot"), moisture: ("arid", "moderate"), continentalness: ("coast", "far_inland"))],
         ),
         (
-            // Glaciated valleys drowned by the sea along cold, rugged coasts.
+            // Glaciated valleys drowned by the sea where they reach a cold coast.
             name: "fjords",
             kind: Fjords(depth: 24.0),
-            climate: [(temperature: ("frozen", "cool"), continentalness: ("ocean", "inland"), erosion: ("hills", "peaks"))],
+            climate: [(temperature: ("frozen", "cool"), continentalness: ("ocean", "inland"))],
         ),
         (
             name: "sea_cliffs",

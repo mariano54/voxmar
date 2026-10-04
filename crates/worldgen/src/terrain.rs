@@ -344,11 +344,10 @@ fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, surfaces: &[(Site
         let (low, high) = (low.max(1), high.min(WORLD_HEIGHT - 1));
         for section in low.div_euclid(SECTION)..=high.div_euclid(SECTION) {
             let (y0, y1) = ((section * SECTION).max(low), (section * SECTION + SECTION - 1).min(high));
-            if !piece.reaches(corner, corner + CHUNK_SIZE - 1, y0, y1) {
-                continue;
-            }
-            for z in 0..CHUNK_SIZE {
-                for x in 0..CHUNK_SIZE {
+            let Some((min, max)) = piece.extent(y0, y1) else { continue };
+            let (min, max) = ((min - corner).max(IVec2::ZERO), (max - corner).min(IVec2::splat(CHUNK_SIZE - 1)));
+            for z in min.y..=max.y {
+                for x in min.x..=max.x {
                     let (wx, wz) = (origin.x + x, origin.z + z);
                     for y in y0..=y1 {
                         let here = blocks.get_local(x, y, z);

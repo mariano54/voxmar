@@ -166,7 +166,7 @@ mod tests {
         let karst = |x: i32, z: i32| rocks.matches(rocks.at(x, z, [0.0; 2]), "karst");
         let (mut inside, mut outside) = (0, 0);
         for i in 0..120 * 120 {
-            let (x, z) = (i % 120 * 97 - 6000, i / 120 * 97 - 6000);
+            let (x, z) = (i % 120 * 251 - 15000, i / 120 * 251 - 15000);
             let depth = mask.depth(x as f32, z as f32, [0.0; 2]);
             assert_eq!(depth > 0.0, karst(x, z), "at {x}, {z}: depth {depth}");
             if depth > 0.0 { inside += 1 } else { outside += 1 }

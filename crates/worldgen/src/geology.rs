@@ -341,7 +341,7 @@ impl Geology {
         let p = self.plateaus.get_noise_2d(wx, wz) + 0.04 * hilliness;
         let escarpment = |edge: f32| 0.3 * smoothstep(edge - 0.07, edge, p) + 0.7 * smoothstep(edge - 0.012, edge + 0.004, p);
         let off_ranges = inland * (1.0 - smoothstep(0.1, 0.4, mountain));
-        let shelf = off_ranges * (26.0 * escarpment(0.2) + 24.0 * escarpment(0.42));
+        let shelf = off_ranges * (26.0 * escarpment(0.26) + 24.0 * escarpment(0.46));
 
         // Broad valleys, and passes where they cross the ranges.
         let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, self.valleys.get_noise_2d(wx, wz).abs());

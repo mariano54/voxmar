@@ -214,7 +214,7 @@ no two worlds share a rarity table. Everything else is a continuous field:
   stepped canyons, karst towers on limestone, clusters of spires (some leaning, built in 3D),
   volcanoes with craters where the world is volcanic, rare lone mountains seen from far away,
   very rare natural arches, sea cliffs notched at the waterline with stacks offshore, and fjords
-  along cold, rugged coasts. Rarer shapes take only some regions of their climate. Towers and
+  where valleys meet cold coasts. Rarer shapes take only some regions of their climate. Towers and
   spires do not cool the climate on their tops.
 - **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
   hot, temperate and cold land always lie in that order) and with altitude.

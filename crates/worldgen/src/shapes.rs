@@ -357,10 +357,10 @@ impl Shapes {
                 (rise - ground.hills * weight * smoothstep(0.0, 0.3, level), 0.0, weight * level)
             }
             ShapeKind::Canyons { depth, width } => {
-                // Distance from the canyon's line, in half widths (the noise's typical slope
-                // turns noise units into blocks).
+                // Distance from the canyon's line, in half widths: the noise's typical slope
+                // where it crosses zero (measured, about 3 per unit) turns its value into blocks.
                 let scale = width * 14.0;
-                let t = n0.get_noise_2d(x / scale, z / scale).abs() / (1.6 / scale * width * 0.5);
+                let t = n0.get_noise_2d(x / scale, z / scale).abs() / (3.0 / scale * width * 0.5);
                 if t >= 1.0 {
                     return (0.0, 0.0, 0.0);
                 }
@@ -373,16 +373,27 @@ impl Shapes {
                 (-cut, 0.0, cut / depth)
             }
             ShapeKind::Towers { height, spacing } => {
-                let (tower, _) = self.cells(shape, x, z, spacing, |u, t| {
-                    // Two in three cells hold a tower, of their own size.
-                    if u[0] > 0.66 {
+                // Towers in clusters, of every size, some merging into ridges, with ragged
+                // outlines; smaller knolls between them.
+                let cluster = n1.get_noise_2d(x / (spacing * 6.0), z / (spacing * 6.0));
+                let ragged = 1.0 + 0.1 * n0.get_noise_2d(x / 6.0, z / 6.0) + 0.2 * n2.get_noise_2d(x / 20.0, z / 20.0);
+                let profile = |t: f32| {
+                    let dome = (1.0 - 0.3 * t * t) * (1.0 - smoothstep(0.86, 1.0, t));
+                    dome.max(0.12 * (1.0 - smoothstep(0.9, 1.35, t)))
+                };
+                let (big, _) = self.cells(shape, x, z, spacing, |u, t| {
+                    if u[0] > 0.45 + 0.45 * cluster {
                         return 0.0;
                     }
-                    let t = t / (0.2 + 0.16 * u[1]) * (1.0 + 0.1 * n0.get_noise_2d(x / 7.0, z / 7.0));
-                    let dome = (1.0 - 0.3 * t * t) * (1.0 - smoothstep(0.86, 1.0, t));
-                    let skirt = 0.12 * (1.0 - smoothstep(0.9, 1.35, t));
-                    (0.45 + 0.55 * u[2]) * dome.max(skirt)
+                    (0.3 + 0.7 * u[2] * u[2].max(u[3])) * profile(t / (0.15 + 0.3 * u[1]) * ragged)
                 });
+                let (small, _) = self.cells(shape, x + 1e4, z, spacing * 0.45, |u, t| {
+                    if u[0] > 0.35 + 0.3 * cluster {
+                        return 0.0;
+                    }
+                    (0.12 + 0.25 * u[2]) * profile(t / (0.2 + 0.2 * u[1]) * ragged)
+                });
+                let tower = big.max(small);
                 // The plain between the towers is flat.
                 (-0.6 * ground.hills * weight, weight * height * tower, weight * tower)
             }
@@ -602,24 +613,23 @@ impl Piece {
         }
     }
 
-    /// Whether the piece may reach the columns of blocks from `min` to `max` between
-    /// heights `low` and `high`: a cheap test that lets whole sections of a column skip it.
-    pub fn reaches(&self, min: IVec2, max: IVec2, low: i32, high: i32) -> bool {
+    /// The square of columns the piece may reach between heights `low` and `high`, if it
+    /// reaches that high: a cheap bound that lets whole sections of a column skip it.
+    pub fn extent(&self, low: i32, high: i32) -> Option<(IVec2, IVec2)> {
         let (bottom, top) = self.heights();
         if high < bottom || low > top {
-            return false;
+            return None;
         }
         let (centre, radius) = match *self {
             Piece::Arch { centre, half, wide, .. } => (centre, half * 1.15 + wide * 2.5 + 2.0),
             Piece::Spire { base, foot, height, radius, lean } => {
-                // The axis between the section's heights, and the widest the spire is there.
+                // The axis between the two heights, and the widest the spire is there.
                 let t = |y: i32| ((y as f32 - foot + 3.0) / (height + 3.0)).clamp(0.0, 1.0);
                 let (a, b) = (base + lean * t(low).powf(1.7), base + lean * t(high).powf(1.7));
                 ((a + b) / 2.0, a.distance(b) / 2.0 + radius * 1.15 + 2.0)
             }
         };
-        let nearest = centre.clamp(min.as_vec2(), max.as_vec2() + 1.0);
-        nearest.distance(centre) <= radius
+        Some(((centre - radius).floor().as_ivec2(), (centre + radius).ceil().as_ivec2()))
     }
 }
 
