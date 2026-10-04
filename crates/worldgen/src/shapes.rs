@@ -482,7 +482,12 @@ impl Shapes {
         for dz in -1..=1 {
             for dx in -1..=1 {
                 let (centre, units) = cell(shape.seed, cx + dx, cz + dz);
-                let t = (centre[0] - px).hypot(centre[1] - pz);
+                let (ox, oz) = (centre[0] - px, centre[1] - pz);
+                // A distance is at least its larger part, which spares most cells the root.
+                if ox.abs() >= 1.0 || oz.abs() >= 1.0 {
+                    continue;
+                }
+                let t = ox.hypot(oz);
                 if t < 1.0 {
                     let v = f(units, t);
                     if v > best.0 {
@@ -508,8 +513,10 @@ impl Shapes {
         let unit = |k: usize| (([a, b][k / 4] >> (k % 4 * 16)) & 0xffff) as f32 / 65536.0;
         let units = std::array::from_fn(|k| unit(k));
         let centre = [(cx as f32 + 0.3 + 0.4 * unit(1)) * cell, (cz as f32 + 0.3 + 0.4 * unit(2)) * cell];
-        // Out of its reach, the climate at its centre need not be weighed.
-        if (x - centre[0]).hypot(z - centre[1]) >= reach {
+        // Out of its reach, the climate at its centre need not be weighed. (A distance is at
+        // least its larger part, which spares most positions the root.)
+        let (dx, dz) = (x - centre[0], z - centre[1]);
+        if dx.abs() >= reach || dz.abs() >= reach || dx.hypot(dz) >= reach {
             return None;
         }
         let regional = (ground.regional)(centre[0] as i32, centre[1] as i32);
@@ -572,8 +579,12 @@ impl Standalone {
     /// direction from the centre, and the distance. `None` outside it.
     fn reach(&self, shape: &Shape, x: f32, z: f32, r: f32, wander: f32) -> Option<(f32, f32, f32, f32)> {
         let (dx, dz) = (x - self.centre[0], z - self.centre[1]);
+        let outside = r * (1.0 + wander);
+        if dx.abs() >= outside || dz.abs() >= outside {
+            return None;
+        }
         let d = dx.hypot(dz);
-        if d >= r * (1.0 + wander) {
+        if d >= outside {
             return None;
         }
         // Noise sampled around a circle, so it wanders with the angle and closes up.
