@@ -98,6 +98,44 @@ pub struct Settings {
     pub textures: TextureOrder,
     /// How many particles effects show (breaking blocks).
     pub particles: ParticleAmount,
+    /// How coarsely far chunks are meshed.
+    pub far_detail: FarDetail,
+}
+
+/// How far from the player chunks keep every block, and how far they are meshed with two
+/// or four blocks merged into one along x and z (see `voxmar_engine::mesh::mesh_chunk`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FarDetail {
+    /// Every block everywhere.
+    Full,
+    #[default]
+    Balanced,
+    /// Coarser sooner, for slower machines and the largest view distances.
+    Fast,
+}
+
+impl FarDetail {
+    const ALL: [FarDetail; 3] = [FarDetail::Full, FarDetail::Balanced, FarDetail::Fast];
+
+    fn label(self) -> &'static str {
+        match self {
+            FarDetail::Full => "Full",
+            FarDetail::Balanced => "Balanced",
+            FarDetail::Fast => "Fast",
+        }
+    }
+
+    /// The distances in columns out to which chunks are meshed in full and half detail;
+    /// further ones get a quarter. A block 320 blocks away is under 4 pixels wide at
+    /// 1080p, so in Balanced merged blocks are never smaller on screen than a near
+    /// block's texel pattern.
+    pub fn range(self) -> [i32; 2] {
+        match self {
+            FarDetail::Full => [i32::MAX; 2],
+            FarDetail::Balanced => [10, 20],
+            FarDetail::Fast => [6, 12],
+        }
+    }
 }
 
 /// Which texture pack the game prefers (see `textures`). `$VOXMAR_TEXTURES` overrides both.
@@ -202,6 +240,7 @@ impl Default for Settings {
             water_quality: WaterQuality::default(),
             textures: TextureOrder::default(),
             particles: ParticleAmount::default(),
+            far_detail: FarDetail::default(),
         }
     }
 }
@@ -401,6 +440,7 @@ impl Toggle {
 /// A setting chosen from a few options; clicking steps to the next one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Choice {
+    FarDetail,
     AntiAliasing,
     ShaderPack,
     Water,
@@ -411,6 +451,7 @@ enum Choice {
 impl Choice {
     fn label(self) -> &'static str {
         match self {
+            Choice::FarDetail => "Far detail",
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
             Choice::Water => "Water",
@@ -421,6 +462,7 @@ impl Choice {
 
     fn text(self, settings: &Settings, packs: &ShaderPacks) -> String {
         match self {
+            Choice::FarDetail => settings.far_detail.label().into(),
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
             Choice::Water => settings.water_quality.label().into(),
@@ -431,6 +473,10 @@ impl Choice {
 
     fn step(self, settings: &mut Settings, packs: &ShaderPacks) {
         match self {
+            Choice::FarDetail => {
+                let i = FarDetail::ALL.iter().position(|&d| d == settings.far_detail).unwrap_or(0);
+                settings.far_detail = FarDetail::ALL[(i + 1) % FarDetail::ALL.len()];
+            }
             Choice::AntiAliasing => {
                 let i = AntiAliasing::ALL.iter().position(|&a| a == settings.anti_aliasing).unwrap_or(0);
                 settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
@@ -497,6 +543,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
         "Video",
         &[
             Control::Slider(Slider::ViewDistance),
+            Control::Choice(Choice::FarDetail),
             Control::Slider(Slider::Fov),
             Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::Textures),
@@ -893,6 +940,7 @@ fn apply(
         world.set_view_distance(settings.view_distance);
         cycle.view_distance = lod::view_distance(settings.view_distance);
     }
+    world.set_far_detail(settings.far_detail.range());
     let present_mode = if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     if let Ok(mut window) = window.single_mut()
         && window.present_mode != present_mode

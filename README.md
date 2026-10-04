@@ -77,17 +77,18 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, anti-aliasing, water quality,
-particles (All, Fewer or Off: the pieces that fly from broken blocks and the chips while
-mining), how far the hotbar sits above the bottom edge (Raise HUD), VSync, debug overlay,
-music, sound and ambience volume, mouse sensitivity, the zoom key (click it, then press a key),
-zoom magnification, cinematic zoom (the view follows the mouse smoothly while zoomed), zoom in
-survival, and fly speed for admins, with Resume, Save and quit to title (Disconnect on a
-server) and Quit game. Settings are saved to `voxmar/settings.ron` in the OS config directory
-(`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux,
-`%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`); `--view-distance` and
-`--no-vsync` override them. On a dedicated server, name admins with `--admin NAME`
-(repeatable), and cap render distance with `--view-distance N` (default 32).
+Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
+distant chunks merge two or four columns into one, which draws far terrain much faster), field
+of view, anti-aliasing, water quality, particles (All, Fewer or Off: the pieces that fly from
+broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
+HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key
+(click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
+smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
+to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
+the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
+`~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
+`--view-distance` and `--no-vsync` override them. On a dedicated server, name admins with
+`--admin NAME` (repeatable), and cap render distance with `--view-distance N` (default 32).
 
 ### Saved worlds
 
@@ -321,8 +322,9 @@ it. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) d
 generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
-`--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
-near spawn.
+`--pose` arguments for captures of the places water makes near spawn (highland lakes,
+waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
+`Overworld::water_sights` finds.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,

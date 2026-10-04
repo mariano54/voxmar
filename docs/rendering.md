@@ -51,6 +51,24 @@ driver turned into milliseconds of CPU time. Instead:
 - Each view then draws once per page and stream: about 100 draws for the camera and 5–10
   per shadow cascade at view distance 32.
 
+## Far chunks in less detail
+
+Most of a large view's faces are far away: at view distance 32, three quarters of the
+real chunks lie beyond 256 blocks, where a block is a few pixels wide. Those chunks are
+meshed with two or four columns merged into one along x and z (`mesh_chunk`'s `detail`,
+`LodGrid`): each layer of a group of columns shows its most common solid block when at
+least half the group is solid, and air otherwise, keeping pillars such as tree trunks so
+crowns do not float. Heights stay exact, so far chunks meet near ones without steps in
+the ground or the water; a face at a chunk border is only hidden by a block that every
+level of detail shows there, so chunks at different levels never leave holes between
+them. Far chunks grow no plants, fringes or grass blades.
+
+The Far detail setting picks where the levels change: Balanced (the default) keeps full
+detail out to 10 columns and half detail out to 20, Fast switches at 6 and 12, and Full
+keeps every block. A column keeps its level until it is a column past a boundary, so
+walking back and forth does not remesh. At view distance 32, Balanced draws about 2.2×
+fewer quads than Full, and loads much faster, since fewer quads are uploaded.
+
 ## Where a frame goes now
 
 Moving terrain off Bevy's mesh entities and trimming Bevy to the plugins in use took a
@@ -232,6 +250,12 @@ gets dark pieces; a light field kept from meshing would fix it.
 
 The particle setting (All, Fewer, Off) and the shader pack's `particles` scale how many
 are spawned, and the pack's `cracks` how strongly cracks show (0 hides them).
+
+Cost: with no particle alive nothing is drawn. A full ring (8,192 live particles, most of
+them in view in front of the camera) measured under 0.1 ms a frame, drawing and not
+drawing it on alternate halves of each second in one run so the load of the rest of the
+machine fell on both alike. A 64-piece burst takes about 12 µs of CPU when the block
+breaks (the sky light estimate and finding each piece's floor), and 4 KB of upload.
 
 ## Wind
 
