@@ -269,6 +269,7 @@ pub struct Actions(pub Arc<ActionRegistry>);
 fn setup(
     mut commands: Commands,
     registry: Res<Registry>,
+    settings: Res<Settings>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
@@ -276,7 +277,7 @@ fn setup(
     terrain: Res<render::terrain::Terrain>,
 ) {
     let registry = &registry.0;
-    let mut source = Source::discover();
+    let mut source = Source::discover(settings.textures);
     let (_, mut block_textures) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
