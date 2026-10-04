@@ -830,6 +830,8 @@ struct Profiles {
     giant: Profile,
     noodles: [Profile; 2],
     labyrinth: [Profile; 2],
+    /// The tunnel fields at every height of a block column, from `FLOOR`.
+    rows: [Vec<f32>; 3],
 }
 
 /// The caves of one column, ready to carve block column by block column.
@@ -932,41 +934,73 @@ impl CaveColumn<'_> {
         let noodle_radius = 1.25 * noodle.sqrt() * GRADIENT * NOODLE_FREQUENCY;
         let maze_gradient = GRADIENT * LABYRINTH_FREQUENCY;
 
-        for y in FLOOR..=height {
-            let depth = height - y;
-            // Ravines and sinkholes too leave a river or lake its bed: a bridge of rock.
-            let mut open = depth >= clearance && (ravines.iter().any(|r| r.contains(y)) || sinkholes.iter().any(|s| s.contains(column, y)));
-            if !open && depth >= clearance {
-                let deep = heights.deep[y as usize];
-                let r = tunnel_scale * heights.growth[y as usize] * tunnel_fade(entrance, depth);
-                let (a, b) = (p.tunnels[0].at(y), p.tunnels[1].at(y));
-                open = a * a + b * b < r * r;
+        // Every carver leaves the `clearance` blocks under the surface whole: a river or lake
+        // keeps its bed, ravines and sinkholes included.
+        let top = height - clearance;
+        // Tunnels, at every height at once.
+        if top >= FLOOR {
+            let n = (top - FLOOR + 1) as usize;
+            let deep = ((top.min(DEEP_TUNNELS) - FLOOR + 1).max(0) as usize).min(n);
+            let rows = &mut p.rows;
+            for (row, (profile, len)) in rows.iter_mut().zip(p.tunnels.iter().zip([n, n, deep])) {
+                row.resize(len, 0.0);
+                profile.fill(FLOOR, row);
+            }
+            let (ra, rb, rc) = (&rows[0], &rows[1], &rows[2]);
+            // Low down, where they close at no surface and the deep families join in.
+            let low = deep.min(((height - 10 - FLOOR + 1).max(0)) as usize);
+            for i in 0..low {
+                let y = FLOOR as usize + i;
+                let r = tunnel_scale * heights.growth[y];
+                let more = r * heights.more[y];
+                let (a, b, c) = (ra[i], rb[i], rc[i]);
+                let open = (a * a + b * b < r * r) | ((a * a + c * c).min(b * b + c * c) < more * more);
+                out[y] = if open { Cave::Air } else { out[y] };
+            }
+            for i in low..n {
+                let y = FLOOR + i as i32;
+                let r = tunnel_scale * heights.growth[y as usize] * tunnel_fade(entrance, height - y);
+                let (a, b) = (ra[i], rb[i]);
+                let mut open = a * a + b * b < r * r;
                 if !open && y <= DEEP_TUNNELS {
                     let r = r * heights.more[y as usize];
-                    let c = p.tunnels[2].at(y);
+                    let c = rc[i];
                     open = (a * a + c * c).min(b * b + c * c) < r * r;
                 }
-                if !open && cavern + giant > 0.0 && depth >= 10 {
-                    // Caverns grow with depth and stay well clear of the surface.
-                    let room = smoothstep(10.0, 36.0, depth as f32) * (0.6 + 0.4 * deep);
-                    let mut margin = p.cheese.at(y) - (0.78 - 0.42 * cavern * room);
-                    if giant > 0.0 {
-                        margin = margin.max(p.giant.at(y) - (0.8 - 0.7 * giant * room));
-                    }
-                    // Pillars: wide where they meet floor and ceiling, slender between.
-                    let inside = (margin / 0.12).clamp(0.0, 1.0);
-                    open = margin > 0.0 && pillar < 0.6 + 0.22 * inside;
+                if open {
+                    out[y as usize] = Cave::Air;
                 }
-                if !open && noodle > 0.0 && depth >= 5 {
-                    let (a, b) = (p.noodles[0].at(y), p.noodles[1].at(y));
-                    open = a * a + b * b < noodle_radius * noodle_radius;
+            }
+        }
+        // The rarer carvers, where there are any.
+        let others = !ravines.is_empty() || !sinkholes.is_empty() || cavern + giant > 0.0 || noodle > 0.0 || labyrinth > 0.0;
+        for y in (FLOOR..=top).filter(|_| others) {
+            if out[y as usize] == Cave::Air {
+                continue;
+            }
+            let depth = height - y;
+            let mut open = ravines.iter().any(|r| r.contains(y)) || sinkholes.iter().any(|s| s.contains(column, y));
+            let deep = heights.deep[y as usize];
+            if !open && cavern + giant > 0.0 && depth >= 10 {
+                // Caverns grow with depth and stay well clear of the surface.
+                let room = smoothstep(10.0, 36.0, depth as f32) * (0.6 + 0.4 * deep);
+                let mut margin = p.cheese.at(y) - (0.78 - 0.42 * cavern * room);
+                if giant > 0.0 {
+                    margin = margin.max(p.giant.at(y) - (0.8 - 0.7 * giant * room));
                 }
-                if !open && labyrinth > 0.0 && depth >= 10 && y >= 16 {
-                    // Passages about 4 blocks wide and 4 high.
-                    let a = p.labyrinth[0].at(y) / (0.85 * maze_gradient * 2.0);
-                    let b = p.labyrinth[1].at(y) / LABYRINTH_PASSAGE;
-                    open = a * a + b * b < labyrinth;
-                }
+                // Pillars: wide where they meet floor and ceiling, slender between.
+                let inside = (margin / 0.12).clamp(0.0, 1.0);
+                open = margin > 0.0 && pillar < 0.6 + 0.22 * inside;
+            }
+            if !open && noodle > 0.0 && depth >= 5 {
+                let (a, b) = (p.noodles[0].at(y), p.noodles[1].at(y));
+                open = a * a + b * b < noodle_radius * noodle_radius;
+            }
+            if !open && labyrinth > 0.0 && depth >= 10 && y >= 16 {
+                // Passages about 4 blocks wide and 4 high.
+                let a = p.labyrinth[0].at(y) / (0.85 * maze_gradient * 2.0);
+                let b = p.labyrinth[1].at(y) / LABYRINTH_PASSAGE;
+                open = a * a + b * b < labyrinth;
             }
             if open {
                 out[y as usize] = Cave::Air;

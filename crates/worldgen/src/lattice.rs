@@ -102,6 +102,24 @@ impl Profile {
         let t = (y & ((1 << self.shift_y) - 1)) as f32 * (1.0 / (1 << self.shift_y) as f32);
         lerp(self.values[layer], self.values[layer + 1], t)
     }
+
+    /// The values at heights `from..from + out.len()`, into `out`: the same as `at`, a layer
+    /// at a time.
+    pub fn fill(&self, from: i32, out: &mut [f32]) {
+        let (step, scale) = (1 << self.shift_y, 1.0 / (1 << self.shift_y) as f32);
+        let end = from + out.len() as i32;
+        let mut y = from;
+        while y < end {
+            let layer = ((y >> self.shift_y) - self.first) as usize;
+            debug_assert!(layer + 1 < self.layers, "height {y} outside the lattice");
+            let (a, b) = (self.values[layer], self.values[layer + 1]);
+            let next = (((y >> self.shift_y) + 1) << self.shift_y).min(end);
+            for (v, y) in out[(y - from) as usize..(next - from) as usize].iter_mut().zip(y..) {
+                *v = lerp(a, b, (y & (step - 1)) as f32 * scale);
+            }
+            y = next;
+        }
+    }
 }
 
 /// 2D values on a lattice over one column, bilinearly interpolated.
@@ -150,6 +168,9 @@ mod tests {
                 for y in [13, 64, 99, 200] {
                     assert!((profile.at(y) - field(origin + IVec3::new(x, y, z))).abs() < 1e-3);
                 }
+                let mut filled = vec![0.0; 150];
+                profile.fill(37, &mut filled);
+                assert!(filled.iter().zip(37..).all(|(&v, y)| v == profile.at(y)));
             }
         }
         let grid = Grid::new(origin, |x, z| (x - 3 * z) as f32);
