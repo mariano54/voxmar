@@ -43,6 +43,12 @@ use crate::{SEA_LEVEL, rng};
 pub use self::channel::{Body, Cavity, Current};
 pub use self::sights::WaterSight;
 
+/// How often generation had to break a circle of water across region borders, in tests.
+#[cfg(test)]
+pub(crate) fn drainage_loops_ended() -> usize {
+    drainage::LOOPS_ENDED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Blocks along a side of a region, the unit in which rivers are routed and cached.
 pub const REGION: i32 = 1024;
 /// Cell sizes of the two tiers, in blocks.

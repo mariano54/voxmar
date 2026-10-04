@@ -248,7 +248,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 14;
+    pub const VERSION: u32 = 15;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -1047,6 +1047,25 @@ mod tests {
 
     /// Features reaching across column borders (trees, logs, rocks) come out the same
     /// whichever column is generated first, on whichever thread.
+    /// Water crossing region borders never runs round in a circle that generation has to
+    /// break wherever it happened to start. On these seeds' land, regions that resolved a
+    /// lake on their shared border differently once passed water round in circles: river
+    /// sizes then depended on which column was made first, and with regions built on several
+    /// threads, two threads could each wait on the other's half of a circle forever (the
+    /// geode test hung). The area is the geode test's, built on helper threads as in play.
+    #[test]
+    fn rivers_never_loop_across_regions() {
+        let registry = registry();
+        for seed in [5, 1, 42, 7, 3, 11] {
+            let world = Overworld::new(seed, registry.clone());
+            for i in 0..400 {
+                let origin = ColumnPos::new(i % 20 - 10, i / 20 - 10).origin();
+                geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
+            }
+        }
+        assert_eq!(water::drainage_loops_ended(), 0, "water ran round in a circle across region borders");
+    }
+
     #[test]
     fn decorations_never_depend_on_generation_order() {
         let world = Overworld::new(42, registry());
