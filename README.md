@@ -113,7 +113,9 @@ How the design primitives map to the code today:
 
 ## World generation
 
-There are no biomes. Each world draws a few physically meaningful dials from its seed
+The world is 384 blocks tall (columns of 12 chunks) with the sea surface at 128: 128 blocks
+of ground and caves below it, 256 of land, mountains and sky above. There are no biomes. Each
+world draws a few physically meaningful dials from its seed
 (`Overworld::dials`: mean temperature, equator-to-pole temperature difference and distance,
 ocean fraction, continent size, humidity, prevailing wind, tectonic activity, erosion age,
 river density, vegetation), with sensible correlations. Everything else is a continuous field:

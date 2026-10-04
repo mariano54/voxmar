@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub const CHUNK_BITS: i32 = 5;
 pub const CHUNK_SIZE: i32 = 1 << CHUNK_BITS;
 pub const CHUNK_VOLUME: usize = (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize;
-pub const COLUMN_CHUNKS: i32 = 8;
+pub const COLUMN_CHUNKS: i32 = 12;
 pub const WORLD_HEIGHT: i32 = CHUNK_SIZE * COLUMN_CHUNKS;
 
 /// Position of a chunk column, in column units.

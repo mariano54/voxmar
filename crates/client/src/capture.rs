@@ -21,7 +21,7 @@ use crate::render::lod::Lod;
 use crate::world::ClientWorld;
 
 /// Height `--flight` climbs to before flying forward, above all but the highest peaks.
-const FLIGHT_HEIGHT: f32 = 170.0;
+const FLIGHT_HEIGHT: f32 = voxmar_worldgen::SEA_LEVEL as f32 + 106.0;
 
 pub struct CapturePlugin {
     pub path: PathBuf,

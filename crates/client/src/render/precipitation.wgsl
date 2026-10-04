@@ -16,8 +16,8 @@ struct Params {
     streak: vec4<f32>,
     // rgb: light falling on the drops
     light: vec4<f32>,
-    // Top of the highest block plus one in each column around the camera, a byte each.
-    heights: array<vec4<u32>, 256>,
+    // Top of the highest block plus one in each column around the camera, 16 bits each.
+    heights: array<vec4<u32>, 512>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: Params;
@@ -63,8 +63,8 @@ fn ground(offset: vec3<f32>) -> f32 {
         return -1.0e9;
     }
     let c = u32(column.y * MAP + column.x);
-    let word = params.heights[c / 16u][(c / 4u) % 4u];
-    return f32((word >> (8u * (c % 4u))) & 255u) - params.map.w;
+    let word = params.heights[c / 8u][(c / 2u) % 4u];
+    return f32((word >> (16u * (c % 2u))) & 0xffffu) - params.map.w;
 }
 
 fn project(world: vec3<f32>) -> vec4<f32> {

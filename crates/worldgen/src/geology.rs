@@ -80,9 +80,9 @@ pub fn spline(points: &[(f32, f32)], x: f32) -> f32 {
     }
 }
 
-/// Heights above this are compressed so the highest peaks approach the top of the world
-/// smoothly instead of being cut flat.
-const PEAK_KNEE: f32 = (voxmar_engine::coords::WORLD_HEIGHT - 60) as f32;
+/// Heights above this are compressed so the highest peaks approach their ceiling (`PEAK_ROOM`
+/// higher) smoothly instead of being cut flat.
+const PEAK_KNEE: f32 = (SEA_LEVEL + 132) as f32;
 const PEAK_ROOM: f32 = 36.0;
 
 impl Geology {

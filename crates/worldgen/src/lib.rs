@@ -45,7 +45,8 @@ pub trait Generator: Send + Sync {
     fn spawn_point(&self) -> IVec3;
 }
 
-pub const SEA_LEVEL: i32 = 64;
+/// Height of the sea surface: 128 blocks of ground below it, 256 of air and mountains above.
+pub const SEA_LEVEL: i32 = 128;
 
 /// Everything the generator knows about the surface at one position. These are the
 /// continuous parameters every surface decision is made from, kept physical so that
@@ -134,7 +135,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 4;
+    pub const VERSION: u32 = 5;
 
     pub fn new(seed: u64, registry: Arc<BlockRegistry>) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
@@ -286,6 +287,7 @@ fn spiral(ring: i32, step: i32) -> (i32, i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voxmar_engine::coords::COLUMN_CHUNKS;
     use voxmar_engine::light::LitRegion;
     use voxmar_engine::mesh::mesh_chunk;
 
@@ -310,10 +312,37 @@ mod tests {
         let region = LitRegion::compute(&registry, &columns);
         let lit = start.elapsed();
         let start = std::time::Instant::now();
-        let quads: usize = (0..8).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy).opaque.vertices.len() / 4).sum();
+        let quads: usize = (0..COLUMN_CHUNKS).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy).opaque.vertices.len() / 4).sum();
         println!("9 columns {generated:?}, light {lit:?}, mesh {:?}, {quads} quads, spawn {spawn}", start.elapsed());
         println!("{:#?}", world.dials());
         assert!(quads > 0);
+    }
+
+    /// `cargo test --release -p voxmar_worldgen column_timing -- --ignored --nocapture`
+    /// reports the mean time to generate one column on one thread, over a fixed spread of
+    /// places around spawn on a few seeds, for comparing generation before and after a
+    /// change.
+    #[test]
+    #[ignore]
+    fn column_timing() {
+        let registry = registry();
+        let mut total = std::time::Duration::ZERO;
+        let mut count = 0;
+        for seed in [1, 42, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            let spawn = ColumnPos::of_block(world.spawn_point());
+            let positions: Vec<ColumnPos> = (0..100).map(|i| spawn.offset(i % 10 * 7 - 35, i / 10 * 7 - 35)).collect();
+            world.generate(spawn);
+            let start = std::time::Instant::now();
+            for &pos in &positions {
+                std::hint::black_box(world.generate(pos));
+            }
+            let elapsed = start.elapsed();
+            println!("seed {seed}: {:.2} ms per column", elapsed.as_secs_f64() * 1000.0 / positions.len() as f64);
+            total += elapsed;
+            count += positions.len();
+        }
+        println!("mean {:.2} ms per column", total.as_secs_f64() * 1000.0 / count as f64);
     }
 
     /// `cargo test --release -p voxmar_worldgen map_preview -- --ignored` writes a shaded

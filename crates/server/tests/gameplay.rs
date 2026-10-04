@@ -159,10 +159,10 @@ fn falling_hurts() {
     let mut client = Client::join();
     let start = client.position;
     let feet = start.floor().as_ivec3();
-    // Climb as high as the open air above spawn allows (at most 10 blocks), one plausible
-    // step per input, then drop back down. Plants are no obstacle.
-    let open = |p: IVec3| client.world.block(p).is_some_and(|b| !client.content.blocks.info(b).solid);
-    let height = (1..=12).take_while(|&dy| open(feet + IVec3::Y * dy)).count() as i32 - 1;
+    // Climb as high as the open air (or grass) above spawn allows (at most 11 blocks), one
+    // plausible step per input, then drop back down.
+    let open = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| !c.content.blocks.info(b).solid);
+    let height = (1..=12).take_while(|&dy| open(&client, feet + IVec3::Y * dy)).count() as i32 - 1;
     assert!(height >= 6, "need open sky above spawn, have {height} blocks");
     let path = (1..=height).chain((0..height).rev());
     for y in path {
