@@ -324,7 +324,10 @@ impl Server {
     fn receive_generated(&mut self) {
         while let Ok((pos, loaded)) = self.generated_rx.try_recv() {
             self.generating.remove(&pos);
-            self.insert_column(pos, loaded);
+            // A command may have loaded (and edited) the column in the meantime.
+            if !self.world.contains(pos) {
+                self.insert_column(pos, loaded);
+            }
         }
     }
 

@@ -49,6 +49,7 @@ impl Plugin for CapturePlugin {
             settled_at: None,
             flight_started: None,
             taken_at: None,
+            saved_size: None,
             frame_times: Vec::new(),
         })
         .add_systems(PostStartup, render_offscreen)
@@ -71,6 +72,8 @@ struct Capture {
     settled_at: Option<f32>,
     flight_started: Option<f32>,
     taken_at: Option<f32>,
+    /// The screenshot file's size when last looked at.
+    saved_size: Option<u64>,
     frame_times: Vec<f32>,
 }
 
@@ -139,7 +142,12 @@ fn capture(
 ) {
     let now = time.elapsed_secs();
     if let Some(taken) = state.taken_at {
-        if now - taken > 1.0 {
+        // Writing the screenshot can take seconds on a busy machine: wait until the file
+        // has stopped growing (or give up after a while).
+        let size = std::fs::metadata(&state.path).map_or(0, |m| m.len());
+        let written = size > 0 && state.saved_size == Some(size);
+        state.saved_size = Some(size);
+        if (written && now - taken > 1.0) || now - taken > 30.0 {
             exit.write(AppExit::Success);
         }
         return;
@@ -203,6 +211,8 @@ fn capture(
     info!("weather: {}: {}; effects: {}", shown.describe(), shown.summary(), weather.effects.join(", "));
     let particles: Vec<String> = air.particles.iter().map(|p| format!("{} {:.0}%", p.name, p.density * 100.0)).collect();
     info!("air: haze {:.2} ×{:.2}, warmth {:.2}, saturation {:.2}; particles: {}", air.haze, air.haze_density, air.warmth, air.saturation, particles.join(", "));
+    // An older file at the path would look written already.
+    let _ = std::fs::remove_file(&state.path);
     commands.spawn(Screenshot::image(state.target.clone())).observe(save_to_disk(state.path.clone()));
     state.taken_at = Some(now);
 }
