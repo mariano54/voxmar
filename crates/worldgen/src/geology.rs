@@ -22,6 +22,9 @@ pub struct GeoSample {
     /// Height of the top water block over the column where it is above `height`;
     /// otherwise of the river or lake nearest the column, or sea level away from them.
     pub water: i32,
+    /// Eighths of its top water block the water fills, 1..=8, where water covers the
+    /// column: its surface between whole blocks.
+    pub top: u8,
     /// The kind of water `water` belongs to.
     pub body: Body,
     /// How river water over the column flows.
@@ -36,6 +39,15 @@ impl GeoSample {
     /// Whether water covers the ground.
     pub fn submerged(&self) -> bool {
         self.water > self.height
+    }
+
+    /// The water in the column, open or in a river's tunnel: the height of the ground or
+    /// tunnel floor under it, and of its top block.
+    pub fn wet(&self) -> Option<(i32, i32)> {
+        match self.cavity {
+            Some(cavity) => (self.water > cavity.floor).then_some((cavity.floor, self.water)),
+            None => self.submerged().then_some((self.height, self.water)),
+        }
     }
 }
 
