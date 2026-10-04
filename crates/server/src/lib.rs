@@ -487,6 +487,7 @@ impl Server {
             .collect();
         for pos in unload {
             self.world.remove(pos);
+            self.fluids.column_unloaded(pos);
         }
     }
 
