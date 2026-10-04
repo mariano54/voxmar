@@ -17,9 +17,6 @@ pub const COLUMN_AREA: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Column {
     pub chunks: [Chunk; COLUMN_CHUNKS as usize],
-    /// Temperature and humidity (0..=255) per (x, z), indexed `z * 32 + x`. Drives
-    /// biome tints on the client.
-    pub climate: Vec<[u8; 2]>,
     /// Grass, foliage and water colours (sRGB) per (x, z), indexed `z * 32 + x`: the
     /// biomes' and the climate's, blended across borders.
     pub colors: Vec<[[u8; 3]; 3]>,
@@ -49,7 +46,6 @@ impl Default for Column {
     fn default() -> Self {
         Self {
             chunks: Default::default(),
-            climate: vec![[128, 128]; COLUMN_AREA],
             colors: vec![DEFAULT_COLORS; COLUMN_AREA],
             wear: Vec::new(),
         }
@@ -65,10 +61,6 @@ impl Column {
 
     pub fn set_block(&mut self, pos: IVec3, block: BlockId) {
         self.chunks[(pos.y >> CHUNK_BITS) as usize].set(local_index(local(pos)), block);
-    }
-
-    pub fn climate_at(&self, x: i32, z: i32) -> [u8; 2] {
-        self.climate[(z * CHUNK_SIZE + x) as usize]
     }
 
     /// Grass, foliage and water colours at (x, z) relative to the column origin.

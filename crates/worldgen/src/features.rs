@@ -15,6 +15,7 @@ use crate::decor::{Area, DecorId, Probe, Stage};
 use crate::ecology::Ground;
 use crate::geology::{GeoGrid, GeoSample};
 use crate::rng::Rng;
+use crate::stage;
 use crate::terrain::Blocks;
 use crate::trees::{TreeId, TreeParts, Trees};
 use crate::{Overworld, Sampler, Site};
@@ -151,7 +152,10 @@ impl Features {
                         planned.push(Planned { holds: Holds::Decoration(id), base, site: c.site, rng });
                     }
                 }
-                let (tree, upper) = self.tree(&area, &c, &mut chances);
+                let (tree, upper) = {
+                    let _stage = stage::enter(stage::Stage::Trees);
+                    self.tree(&area, &c, &mut chances)
+                };
                 if let Some((tree, site)) = tree {
                     planned.push(Planned { holds: Holds::Tree(tree), base, site, rng: c.rng });
                     continue;
@@ -179,6 +183,7 @@ impl Features {
             for p in planned.iter_mut().filter(|p| stage(p) == now) {
                 match p.holds {
                     Holds::Tree(tree) => {
+                        let _stage = stage::enter(stage::Stage::Trees);
                         self.trees.grow(tree, p.base, p.site.stand, &mut p.rng, blocks, &mut parts);
                         if !parts.leaves.is_empty() || !parts.logs.is_empty() {
                             grown.push((tree, p.base, p.site, std::mem::take(&mut parts)));
