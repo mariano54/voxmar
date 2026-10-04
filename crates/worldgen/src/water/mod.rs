@@ -170,15 +170,15 @@ impl Rivers {
             trunk_channels: Cache::new(32 * MB),
             stream_channels: Cache::new(96 * MB),
             creek,
-            trunk: creek * 10.0,
+            trunk: creek * 6.0,
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
-    /// Width of a river carrying `flow`, in blocks: a trickle at the smallest creek, and
-    /// widening with the square root of the flow, roughly, downstream.
+    /// Width of a river carrying `flow`, in blocks: a trickle at the smallest creek, six
+    /// blocks with twenty times its water, ten with fifty.
     fn width(&self, flow: f32) -> f32 {
-        (1.3 * (flow / self.creek).powf(0.45)).clamp(1.0, 28.0)
+        (flow / self.creek).powf(0.6).clamp(1.0, 28.0)
     }
 
     /// The regional climate at a position, from samples every `RAIN_CELL` blocks.
