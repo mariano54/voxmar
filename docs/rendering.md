@@ -187,9 +187,10 @@ Breaking a block (`client/src/breaking.rs`) uses it as Minecraft does:
   `BlockChanged` to air) burst too, within 32 blocks.
 
 Particles are lit with a sky light estimated once per burst from the columns around the
-block (full where the sky is open straight above, one less per block sideways to the
-nearest open column, none further in) and the block's own glow as block light, since
-the client keeps no light field outside the mesher. A cave lit by torches therefore
+block, by the engine's rule (straight down from the sky, less through water and leaves,
+stopped by solid blocks, then one level less per block sideways, up to three), and the
+block's own glow as block light, since the client keeps no light field outside the
+mesher. A cave lit by torches therefore
 gets dark pieces; a light field kept from meshing would fix it.
 
 The particle setting (All, Fewer, Off) and the shader pack's `particles` scale how many
