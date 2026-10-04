@@ -1,27 +1,32 @@
-//! Ground decoration: patches of ground, rocks, bushes, tree ornaments, fallen logs and
-//! stumps, from a shared pool defined as data (`decorations.ron`) that biomes select from
-//! by tag or name, as they do trees and plants.
+//! Ground decoration: patches of ground, rocks, bushes, tree ornaments, fallen logs,
+//! stumps and landmarks, from a shared pool defined as data (`decorations.ron`) that biomes
+//! select from by tag or name, as they do trees and plants.
 //!
 //! Decorations are placed in a fixed order of stages (Geophilic's): patches of dirt, gravel
-//! and moss first, then rocks, then trees and bushes, then the ornaments each tree makes of
-//! its own blocks, then fallen logs and stumps; the plant stages and the snow blanket
-//! follow in `terrain`. A later stage only fills what earlier ones left.
+//! and moss first, then rocks and standing stones, then trees and bushes, then the
+//! ornaments each tree makes of its own blocks, then fallen logs, stumps and fairy rings;
+//! the plant stages and the snow blanket follow in `terrain`. A later stage only fills what
+//! earlier ones left.
 //!
 //! Placed decorations share the trees' jittered grid of candidates: one roll per candidate
-//! decides between a tree and the decorations, each taking a slice as wide as its density
-//! there, so nothing overlaps at a candidate and nothing is counted per chunk (no density
-//! steps along chunk borders). A decoration's density is its spacing, times the biome's
-//! weight for it, its rarity, how well the climate suits it, and smooth ramps of fields it
-//! follows: tree cover, the forest's stand, clearings, moisture, a named noise for clusters.
+//! decides between a tree and the decorations, each owning a slice of the roll as wide as
+//! its chance where it is densest and taking it where its density there fills it, so
+//! nothing overlaps at a candidate and nothing is counted per chunk (no density steps along
+//! chunk borders). A decoration's density is its spacing, times the biome's weight for it,
+//! its rarity, how well the climate suits it, and smooth ramps of the fields it follows:
+//! tree cover, the forest's stand, clearings, moisture, aether, a named noise for clusters.
 //! Patches take a second, independent roll, so they lie under trees too.
 //!
 //! Everything a feature decides comes from pure functions of position (the analytic
-//! ground height, water, caves, the trees' own candidates), never from blocks another
-//! column generated, so a log crossing a column border is laid identically by both. Each
-//! checks its support from the same functions: a log lies only where most of it rests on
-//! the ground and both its ends do, clear of trunks; rocks never sit over water or a cave.
-//! Ornaments work from the blocks each tree put down (`TreeParts`): litter under the crown,
-//! leaf heaps, fungi at the foot of the trunk.
+//! ground height, water, trails, caves, the trees' own candidates), never from blocks
+//! another column generated, so a log crossing a column border is laid identically by
+//! both. Each checks its support from the same functions: a log lies only where most of it
+//! and both its ends rest on the ground, clear of trunks; rocks never sit over water or a
+//! cave. Parts one block column wide (a stump, a stone, a cell of a thin log) also check the
+//! block beneath them in their own column, which catches the lip of a cave mouth the
+//! analytic ground misses, without depending on any other column. Ornaments work from the
+//! blocks each tree put down (`TreeParts`): litter under the crown, leaf heaps, fungi at the
+//! foot of the trunk.
 
 use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::glam::{IVec2, IVec3, Vec3};

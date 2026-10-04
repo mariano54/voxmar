@@ -387,7 +387,7 @@
                 plants: [Name("short_grass", 2.0), Name("tall_grass", 0.5), Tag("grass", 0.6), Tag("steppe", 0.6), Tag("meadow", 0.3), Name("dead_bush", 1.0)],
             ),
             surface: (
-                include: ["soil_slopes"],
+                include: ["soil_slopes", "washes"],
                 rules: [
                     (when: [Band((name: "game_trails", scale: 140.0), 0.012)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
                     (when: [Patch((name: "steppe_stones", scale: 22.0, octaves: 2), 0.55)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0), Name("coarse_dirt", 1.0)]))),
@@ -701,7 +701,7 @@
                 plants: [Name("short_grass", 2.0), Name("bunchgrass", 0.5), Name("sage", 1.0), Name("thyme", 1.0), Name("lavender", 0.6), Name("sagebrush", 0.6), Name("wild_rose_bush", 0.3)],
             ),
             surface: (
-                include: ["soil_slopes", "trails"],
+                include: ["soil_slopes", "trails", "washes"],
                 rules: [
                     (when: [Patch((name: "scrub_rock", scale: 16.0, octaves: 2), 0.4)], place: (top: Stones, filler: Stones)),
                     (when: [Patch((name: "scrub_soil", scale: 22.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("red_earth", 1.0)]), filler: Block("dirt"))),
@@ -782,6 +782,7 @@
                 plants: [Name("dead_bush", 3.0), Name("dune_grass", 0.5), Name("desert_bloom", 1.0)],
             ),
             surface: (
+                include: ["washes"],
                 rules: [
                     // Wind streaks of red sand, thick in some fields and thread-thin elsewhere.
                     (
@@ -893,7 +894,7 @@
                 plants: [Tag("grass", 1.0), Tag("savanna", 1.0), Name("tall_grass", 0.6), Name("dead_bush", 1.0)],
             ),
             surface: (
-                include: ["soil_slopes"],
+                include: ["soil_slopes", "washes"],
                 rules: [
                     (when: [Band((name: "game_trails", scale: 140.0), 0.012)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
                     (when: [Patch((name: "savanna_soil", scale: 30.0, octaves: 2), 0.4)], place: (top: Mix([Name("coarse_dirt", 3.0), Name("red_earth", 1.0)]), filler: Block("dirt"))),
@@ -930,7 +931,7 @@
                 plants: [Name("bunchgrass", 2.0), Name("dead_bush", 1.5), Name("sagebrush", 0.8), Name("desert_bloom", 1.0)],
             ),
             surface: (
-                include: ["soil_slopes"],
+                include: ["soil_slopes", "washes"],
                 rules: [
                     (when: [Patch((name: "outback_sand", scale: 24.0, octaves: 2), 0.3)], place: (top: Block("red_sand"), filler: Block("red_earth"))),
                     (when: [Patch((name: "outback_stones", scale: 12.0, octaves: 2), 0.55)], place: (top: Mix([Name("gravel", 1.0), Name("red_sandstone", 1.0)]))),

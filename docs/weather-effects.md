@@ -31,8 +31,25 @@ captures log the weather and air they show. Every kind: `/weather list`.
   fireflies that blink, spores, drifting snow, marsh mist, aether motes): all in the
   existing precipitation particles (`render/precipitation.rs` and `.wgsl`, contained
   additions; a group of drops per kind, the same box around the camera and height map).
-  When the graphics thread's reusable particle system lands, these move to it; the data
-  that drives them (`Weather` channels, `ClientAtmosphere::particles`) stays.
+  They stay there now that the spawned particle system (`render/particles.rs`) exists: a
+  steady field wrapping around the camera costs no CPU and has no spawn rate to manage,
+  which suits air full of particles better (see docs/rendering.md, "Particles and breaking
+  blocks"); particles tied to events or places use the spawned system.
+- Rain is tinted half towards the sky's haze, so it matches the sky it falls from, and
+  its streaks lie along its motion as seen from the moving camera, so running into rain
+  tilts it towards you (Particle Rain's trick). A sparser layer of faint streaks in a box
+  three times as wide carries rain (or, as specks, snow) into the distance. Raindrops
+  splash as crowns on the ground and ring out as ripples on water; under leaves they come
+  through as slow, heavy drips that carry on for a few minutes after the rain, as the
+  ground dries. Snowflakes are soft, slightly ragged blobs of a few pixels, varied in size
+  and opacity. Sparkle belongs to diamond dust alone: in bitter cold under a halo, ice
+  crystals hang in the air, each glinting for an instant as it turns (`glints` in
+  precipitation.rs, drawn as an ambient particle set).
+- Every kind of weather has an intensity (`/weather rain 0.3`, `--weather snow:heavy`):
+  what falls follows a steep curve (`density` in precipitation.rs, intensity^1.8), so
+  light stays a few streaks or flakes, heavy sits between, and max is a downpour, a
+  whiteout or a brown-out: at heavy and above, the far layer adds veils of rain, snow or
+  dust a few blocks off that grey, white or tan out the distance.
 - Rain, snow and particles slant and drift with the gusting wind; clouds drift with the
   mean wind; grass sways with `Wind` (graphics thread).
 - Lightning: the flash (existing) and the bolt, drawn for now as bright gizmo lines that
@@ -135,8 +152,9 @@ a 1D noise along azimuth, folded ribbons drifting slowly (a few degrees a second
 
 ### 7. Falling stars and meteor showers
 
-`w.falling_stars`: 0.15 an occasional shooting star (about one every 15 s), 1.0 a meteor
-shower (a couple a second, all from one radiant point per night). Night sky: short-lived
+`w.falling_stars`: about `2 × falling_stars` stars a second, so 0.01 (an ordinary clear
+night) is one every 50 s or so and 1.0 (a meteor shower) a couple a second, all from one
+radiant point per night. Night sky: short-lived
 (0.3–0.8 s) streaks 5°–15° long, brightening then fading, from hashes of the second (use
 the `pcg` already in sky.wgsl with the world seconds), only through clear sky.
 
@@ -166,7 +184,8 @@ other top faces (stone, sand, leaves) at `snow_cover > 0.3`, open to the sky.
 `w.wisps` (ball lightning in storms, marsh lights on calm wet nights): a few (up to about
 12) large glowing orbs, 0.3–0.6 blocks, drifting 0.5–3 blocks above the ground within 30
 blocks, pale blue-green, slowly pulsing. For now they add to the motes in the particles
-(`motes.max(wisps * 0.3)`), which are smaller. `w.motes` and `w.falling_stars` together
+(`motes.max(wisps * 0.3)`), which are smaller, and only while nothing falls: in rain the
+motes and wisps are grounded, so ball lightning shows nothing until it has its orbs. `w.motes` and `w.falling_stars` together
 with `aether_storm` in `ClientWeather::effects` mark the rare aether storm: a violet tint to
 the storm cloud and the lightning would sell it.
 
@@ -175,6 +194,41 @@ the storm cloud and the lightning would sell it.
 `ClientAtmosphere::{haze, haze_density, sky, warmth, saturation}`: apply within the shader
 pack: haze colour and density as in 1, `sky` multiplied into the sky colours, `warmth` and
 `saturation` as small nudges to the pack's grading (warmth ±1 ≈ a few hundred kelvin).
+
+### 13. Rain and snow: what the mods and the hiking video still have that we don't
+
+Compared side by side with Particle Rain (MIT; read for its techniques, nothing copied) and
+the hiking video's rain frames (`voxmar-reference/hiking-video-frames/0440`, `0449`), what
+the precipitation particles cannot do on their own:
+
+- **Haze in and after rain** (biggest): in the video, rain turns the distance grey-white
+  within a hundred blocks and the near land loses saturation; ours keeps hills sharp at
+  3 km in a downpour. Item 1 (fog from `visibility()`) plus `ClientAtmosphere::haze_density`
+  and `saturation` do it. Max-intensity rain should leave about 150 blocks of view, light
+  rain most of it.
+- **Wet surfaces**: rain darkens exposed blocks and leaves and makes them glossy (item 9);
+  in the video every top face reads wet.
+- **Near streaks as glassy sheets**: the video's closest streaks are wide, refracting
+  smears. A refraction pass sampling the scene behind each near streak (offset by its
+  normal) would give it; our streaks are only tinted.
+- **Fog sheets after rain** (Particle Rain's `fog_after_rain`): flat, camera-facing cards
+  lying a block above wet ground and fading edge-on, for a few minutes after rain.
+  Drive them with `w.wetness` and `w.fog`.
+- **Wall streaks and ledge drips**: water running down the faces of blocks open to the sky
+  and dripping off their lower edges. Needs per-face spawning from the mesher (faces open to
+  the sky, from `SkyMap`), so it belongs with the shader pack.
+- **Storm fronts and rain shafts**: `ClientWeather::nearby_rain()` gives the rain in each
+  128-block weather cell of the 640 blocks around the player. Draw a grey curtain from the
+  cloud base to the ground under every cell with rain above about 0.2 beyond 150 blocks
+  (darker and denser with more rain, soft-edged, swaying with the wind), so a storm is
+  seen coming over the hills before it arrives.
+- **Lightning inside clouds**: most flashes now stay within the cloud
+  (`ClientWeather::cloud_flashes()`: position about 160 blocks up and brightness). Light the
+  cloud layer around that point (a soft glow of 200–400 blocks) rather than the whole sky.
+- **Snow on leaves and other surfaces**: `w.snow_cover` whitens grass blocks already; tops of
+  leaves, stone and sand should whiten in the shader too (item 10).
+- **A rainbow over waterfall mist**: once waterfalls are known (the ambience track finds
+  them at meshing time), a small bow in the spray when the sun is behind the player.
 
 ## Channels
 
@@ -186,12 +240,12 @@ pack: haze colour and density as in 1, `sky` multiplied into the sky colours, `w
 | humidity, temperature (°C), wind (blocks/s), gusts, gust_offset | the air | simulation, wind model |
 | precipitation, snow | how much falls, and how much of it is snow | simulation |
 | drizzle, hail, sleet | shares of what falls | drizzle, hail, sleet |
-| fog | fog in the air | mist, sea fog, blizzard, downpour, drizzle, sandstorm, aether storm |
-| ground_fog, fog_top | a layer of fog and its top height | valley fog, sea fog, dawn mist |
+| fog | fog in the air | mist, sea fog, blizzard, downpour, drizzle, supercell, sandstorm, diamond dust, aether storm |
+| ground_fog, fog_top | a layer of fog and its top height | valley fog, sea fog, dawn mist, lake mist, steam after rain |
 | dust, dust_color | dust in the air and its colour (the ground's) | sandstorm, dust storm, dusty afternoon, drifting snow |
 | wetness, snow_cover | the ground | simulation |
-| frost | hoar frost | frost |
-| lightning | strikes nearby beyond thunderstorm cells | thundersnow, aether storm |
+| frost | hoar frost | frost, freezing rain |
+| lightning | strikes nearby beyond thunderstorm cells | supercell, heat lightning, thundersnow, aether storm |
 | rainbow, halo, aurora, heat_haze | light in the sky | rainbow, double rainbow, halo, sun dogs, aurora, low aurora, heat haze |
 | wisps, motes, falling_stars | lights in the air and sky | ball lightning, marsh lights, aether motes, aether storm, shooting stars, meteor shower, starfall |
 
@@ -199,3 +253,25 @@ Effects are data: a mod adds one to its `weather.ron` by naming conditions on th
 (weather, climate, land, time of day) and the channels it raises, with a rarity. The
 renderer only ever sees channels, so new effects need no renderer change unless they need
 a new kind of look.
+
+## Gameplay hooks (no gameplay yet)
+
+For whoever builds warmth, wetness and visibility buffs later, the weather is exposed as
+fields and values any system can read on the server:
+
+| Hook | Where | What |
+| --- | --- | --- |
+| `core:temperature` | `Server::temperature` (Field, 16-block cells) | the climate's mean air temperature, °C |
+| `core:humidity`, `core:clouds`, `core:precipitation` | `WeatherState` (Fields, 128-block cells) | the simulated air, cloud and rain or snow, 0..1 |
+| `core:wetness` | `WeatherState::wetness` | how wet the ground is, 0..1 (half-life about 300 s in mild, cloudy weather) |
+| `core:snow_cover` | `WeatherState::snow_cover` | snow lying, 0..1 (the climate's lasting snow is its baseline) |
+| `WeatherState::local(temperature, at, tick, day)` | per place | the full `Weather` there and the effects showing, with strengths |
+| `Weather::temperature`, `feels_like()` | engine | air temperature now (day and night), and how cold it feels with wind chill, rain and humid heat |
+| `Weather::visibility()` | engine | blocks one can see near the ground |
+| `Weather::wind`, `gusts`, `voxmar_engine::weather::gust` | engine | the wind, gusts included, the same on server and client |
+| effect tags | `weather.ron` | `cold`, `hot`, `wet`, `dry`, `visibility`, `hazard`, `lightning`, `wonder`, `night`, `aether`: find what is happening by kind, not by name |
+
+A buff system should read these through modifiers (a stew's +2 warmth against
+`feels_like()`), never by naming effects, so a mod's new effect with the `cold` tag
+counts too.
+

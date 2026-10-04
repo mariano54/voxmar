@@ -6,20 +6,24 @@
 //! stay put in the world as the camera moves. How far rain and snow have fallen is the only
 //! thing that changes per frame. A map of the highest block in each column around the
 //! camera hides drops under roofs and trees and in caves; it also tells the rain sound how
-//! open the sky is.
+//! open the sky is. The map knows which columns are water, where raindrops ring out as
+//! ripples rather than splash, and which are under leaves, where rain comes through as
+//! slow, heavy drips that carry on for a while after the rain stops. A sparser layer of
+//! fainter streaks in a box three times as wide carries the rain into the distance.
 
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues};
-use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::pbr::{DistanceFog, MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, VertexFormat,
 };
 use bevy::shader::ShaderRef;
-use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
+use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
 use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS, ColumnPos, local_index};
+use voxmar_engine::weather::Weather;
 
 use crate::weather::ClientWeather;
 use crate::weather::atmosphere::ClientAtmosphere;
@@ -29,7 +33,7 @@ use crate::world::ClientWorld;
 /// Drops in the box at the heaviest rain or snow, including the splashes the shader makes
 /// of some of them and the specks of dust and motes it carries on the wind, and the box of
 /// falling drops around the camera, in blocks. The shader has the same constants.
-const DROPS: u32 = 28_000;
+const DROPS: u32 = 74_000;
 const BOX: Vec3 = Vec3::new(40.0, 36.0, 40.0);
 /// Falling speeds, in blocks per second.
 const RAIN_SPEED: f32 = 14.0;
@@ -41,7 +45,13 @@ const HAIL_SPEED: f32 = 18.0;
 /// camera strays this many blocks from its centre (it still covers the drop box then), and
 /// every `REFRESH` seconds for blocks that changed.
 const MAP: i32 = 64;
-const MAP_WORDS: usize = (MAP * MAP / 8) as usize;
+const MAP_WORDS: usize = (MAP * MAP / 4) as usize;
+/// A column of the map: the top of the highest block rain lands on, plus one (bits 0..10),
+/// the same for the ground beneath any leaves (bits 10..20), and whether the top is water
+/// or leaves.
+const TOP_BITS: u32 = 0x3ff;
+const WATER: u32 = 1 << 20;
+const LEAVES: u32 = 1 << 21;
 const RECENTER: i32 = 8;
 const REFRESH: f32 = 1.0;
 
@@ -70,12 +80,18 @@ struct PrecipitationParams {
     map: Vec4,
     /// xyz: how far rain has fallen and drifted (wrapped into the box), w: amount 0..1.
     rain: Vec4,
-    /// xyz: the same for snow, w: the fraction falling as snow.
+    /// xyz: how far snow has fallen less where the camera is (wrapped into its box, 0.6 as
+    /// wide as the rain's), w: the fraction falling as snow.
     snow: Vec4,
     /// xyz: direction rain falls in, w: streak length in blocks.
     streak: Vec4,
-    /// rgb: light falling on the drops.
+    /// rgb: light falling on the drops; w: how heavy the rain, snow or dust is, 0..1.
     light: Vec4,
+    /// rgb: the colour of the sky's haze, which rain takes on in part.
+    haze: Vec4,
+    /// xyz: how far the distant layer of rain has fallen less where the camera is (wrapped
+    /// into a box three times as wide), w: how many drips fall from leaves.
+    far: Vec4,
     /// Of the rain that is not snow: xyz how far drizzle, sleet and hail have fallen, w
     /// the fraction of it that is each.
     drizzle: Vec4,
@@ -92,7 +108,7 @@ struct PrecipitationParams {
     /// they have drifted, w how many; rgb their colour (linear), w 1 if they glow; x their
     /// size in blocks, y how they move (see `motion_code`).
     ambient: [Vec4; 3 * AMBIENT_SETS],
-    /// Top of the highest block plus one in each column of the map, 16 bits per column.
+    /// Each column of the map, as `TOP_BITS`, `WATER` and `LEAVES` describe.
     heights: [UVec4; MAP_WORDS],
 }
 
@@ -146,8 +162,9 @@ impl Material for PrecipitationMaterial {
 pub struct SkyMap {
     /// Column at the map's first entry.
     origin: IVec2,
-    /// Top of the highest block plus one, 0 where the column is empty or not loaded.
-    heights: Vec<u16>,
+    /// Each column, as `TOP_BITS`, `WATER` and `LEAVES` describe; 0 where it is empty or
+    /// not loaded.
+    heights: Vec<u32>,
     age: f32,
 }
 
@@ -158,9 +175,10 @@ impl Default for SkyMap {
 }
 
 impl SkyMap {
-    fn height(&self, column: IVec2) -> Option<u16> {
+    /// Top of the highest block rain lands on in a column, plus one.
+    fn height(&self, column: IVec2) -> Option<u32> {
         let i = column - self.origin;
-        ((0..MAP).contains(&i.x) && (0..MAP).contains(&i.y)).then(|| self.heights[(i.y * MAP + i.x) as usize])
+        ((0..MAP).contains(&i.x) && (0..MAP).contains(&i.y)).then(|| self.heights[(i.y * MAP + i.x) as usize] & TOP_BITS)
     }
 
     /// How well rain can be heard at `eye`, from the columns around it: 1 out in the open,
@@ -204,29 +222,44 @@ impl SkyMap {
     }
 
     fn packed(&self) -> [UVec4; MAP_WORDS] {
-        let word = |i: usize| self.heights[i * 2] as u32 | (self.heights[i * 2 + 1] as u32) << 16;
-        std::array::from_fn(|i| UVec4::new(word(i * 4), word(i * 4 + 1), word(i * 4 + 2), word(i * 4 + 3)))
+        std::array::from_fn(|i| UVec4::from_slice(&self.heights[i * 4..i * 4 + 4]))
     }
 }
 
-/// Top of the highest block in a column that rain lands on, plus one; 0 if there is none.
-/// Rain falls through plants onto the ground they grow from.
-fn top(column: &voxmar_engine::world::Column, registry: &BlockRegistry, local: IVec2) -> u16 {
+/// A column of the map (see `TOP_BITS`): where rain lands in it, where it lands beneath
+/// any leaves, and whether it lands on water or leaves. Rain falls through plants onto the
+/// ground they grow from.
+fn top(column: &voxmar_engine::world::Column, registry: &BlockRegistry, local: IVec2) -> u32 {
     let catches_rain = |block: BlockId| !matches!(registry.info(block).render, RenderKind::Invisible | RenderKind::Plant);
-    for cy in (0..COLUMN_CHUNKS).rev() {
-        let chunk = &column.chunks[cy as usize];
-        match chunk.as_uniform() {
-            Some(block) if !catches_rain(block) => continue,
-            Some(_) => return ((cy + 1) * CHUNK_SIZE) as u16,
-            None => {}
-        }
-        for y in (0..CHUNK_SIZE).rev() {
-            if catches_rain(chunk.get(local_index(IVec3::new(local.x, y, local.y)))) {
-                return (cy * CHUNK_SIZE + y + 1) as u16;
+    let leaves = |block: BlockId| registry.info(block).render == RenderKind::Leaves;
+    // The highest block below `from` rain lands on (passing through leaves if asked), and
+    // the top of it plus one. Uniform chunks it would pass through are skipped whole.
+    let below = |from: i32, through_leaves: bool| -> Option<(u32, BlockId)> {
+        let lands = |block: BlockId| catches_rain(block) && !(through_leaves && leaves(block));
+        let mut y = from - 1;
+        while y >= 0 {
+            let (cy, ly) = (y / CHUNK_SIZE, y % CHUNK_SIZE);
+            let chunk = &column.chunks[cy as usize];
+            if !chunk.as_uniform().is_some_and(|b| !lands(b)) {
+                for ly in (0..=ly).rev() {
+                    let block = chunk.get(local_index(IVec3::new(local.x, ly, local.y)));
+                    if lands(block) {
+                        return Some(((cy * CHUNK_SIZE + ly + 1) as u32, block));
+                    }
+                }
             }
+            y = cy * CHUNK_SIZE - 1;
         }
+        None
+    };
+    let Some((top, block)) = below(COLUMN_CHUNKS * CHUNK_SIZE, false) else { return 0 };
+    if leaves(block) {
+        let ground = below(top as i32 - 1, true).map_or(0, |(y, _)| y);
+        top | ground << 10 | LEAVES
+    } else {
+        let water = if registry.info(block).sound == Sound::Water { WATER } else { 0 };
+        top | top << 10 | water
     }
-    0
 }
 
 #[derive(Component)]
@@ -247,6 +280,8 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         snow: Vec4::ZERO,
         streak: Vec4::NEG_Y,
         light: Vec4::ZERO,
+        haze: Vec4::ZERO,
+        far: Vec4::ZERO,
         drizzle: Vec4::ZERO,
         sleet: Vec4::ZERO,
         hail: Vec4::ZERO,
@@ -266,10 +301,21 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
     ));
 }
 
+/// How many of the drops show for an amount of rain, snow or dust (0..1): few in light
+/// weather, rising steeply so that only the heaviest fills the air.
+fn density(amount: f32) -> f32 {
+    amount.clamp(0.0, 1.0).powf(1.8)
+}
+
 /// How far each kind of drop has fallen and drifted, wrapped into the box.
 #[derive(Default)]
 struct Fallen {
     rain: Vec3,
+    /// The distant layer of rain, wrapped into a box three times as wide.
+    far: Vec3,
+    /// How the camera moved last frame, smoothed, in blocks per second.
+    camera_velocity: Vec3,
+    last_eye: Option<Vec3>,
     snow: Vec3,
     drizzle: Vec3,
     sleet: Vec3,
@@ -278,6 +324,19 @@ struct Fallen {
     motes: Vec3,
     /// Per ambient particle set, by name.
     ambient: Vec<(String, Vec3)>,
+    /// The glinting ice crystals of diamond dust.
+    glints: Vec3,
+}
+
+/// The shader's motion code for diamond dust: crystals hanging in the air that glint for
+/// an instant as they turn (the only sparkle; snowflakes are soft).
+const GLINT: f32 = 5.0;
+
+/// How many glinting ice crystals hang in the air: diamond dust forms where a halo shows
+/// in bitter cold, under a clear sky.
+fn glints(shown: &Weather) -> f32 {
+    let cold = 1.0 - ((shown.temperature + 18.0) / 6.0).clamp(0.0, 1.0);
+    (shown.halo * cold * (1.0 - shown.precipitation * 4.0)).clamp(0.0, 1.0)
 }
 
 /// How the shader moves an ambient particle set.
@@ -310,24 +369,29 @@ fn update(
     air: Res<ClientAtmosphere>,
     world: Res<ClientWorld>,
     mut map: ResMut<SkyMap>,
-    camera: Query<(&GlobalTransform, &AmbientLight), With<Camera3d>>,
+    camera: Query<(&GlobalTransform, &AmbientLight, &DistanceFog), With<Camera3d>>,
     drops: Query<&MeshMaterial3d<PrecipitationMaterial>, With<Drops>>,
     mut materials: ResMut<Assets<PrecipitationMaterial>>,
     mut fallen: Local<Fallen>,
 ) {
-    let (Ok((camera, ambient)), Ok(handle)) = (camera.single(), drops.single()) else { return };
+    let (Ok((camera, ambient, fog)), Ok(handle)) = (camera.single(), drops.single()) else { return };
     let shown = &weather.current;
-    if shown.precipitation <= 0.01 && shown.dust <= 0.01 && shown.motes <= 0.01 && air.particles.is_empty() {
+    // Leaves keep dripping for a few minutes after the rain, as the ground dries.
+    let rain = shown.precipitation * (1.0 - shown.snow);
+    let drips = (rain * 1.5 + shown.wetness * 0.6 - 0.05).clamp(0.0, 1.0);
+    let glints = glints(shown);
+    if shown.precipitation <= 0.01 && drips <= 0.0 && shown.dust <= 0.01 && shown.motes <= 0.01 && glints <= 0.01 && air.particles.is_empty() {
         // The drops stay drawn while nothing falls, every one culled in the vertex shader, so
         // their pipeline is built with the world rather than when the first rain starts:
         // where pipelines are built synchronously (macOS) that would stall a frame.
         let showing = |p: &PrecipitationParams| {
-            p.rain.w > 0.0 || p.dust.w > 0.0 || p.motes.w > 0.0 || p.ambient.iter().step_by(3).any(|a| a.w > 0.0)
+            p.rain.w > 0.0 || p.far.w > 0.0 || p.dust.w > 0.0 || p.motes.w > 0.0 || p.ambient.iter().step_by(3).any(|a| a.w > 0.0)
         };
         if materials.get(&handle.0).is_some_and(|m| showing(&m.params))
             && let Some(mut material) = materials.get_mut(&handle.0)
         {
             material.params.rain.w = 0.0;
+            material.params.far.w = 0.0;
             material.params.dust.w = 0.0;
             material.params.motes.w = 0.0;
             material.params.ambient.iter_mut().step_by(3).for_each(|a| a.w = 0.0);
@@ -346,9 +410,29 @@ fn update(
     let rain_velocity = wind - Vec3::Y * RAIN_SPEED;
     let snow_velocity = wind * 0.6 - Vec3::Y * SNOW_SPEED;
     let fallen = &mut *fallen;
+    // Streaks lie along the rain's motion as seen from the moving camera, so running into
+    // the rain tilts it towards you.
+    if let Some(last) = fallen.last_eye
+        && dt > 0.0
+    {
+        let moved = ((eye - last) / dt).clamp_length_max(30.0);
+        fallen.camera_velocity = fallen.camera_velocity.lerp(moved, (dt * 8.0).min(1.0));
+    }
+    fallen.last_eye = Some(eye);
+    let seen = rain_velocity - fallen.camera_velocity;
     let fall = |at: &mut Vec3, velocity: Vec3| *at = (*at + velocity * dt).rem_euclid(BOX);
     fall(&mut fallen.rain, rain_velocity);
-    fall(&mut fallen.snow, snow_velocity);
+    // The distant layer falls like the rain, or like the snow when most is snow.
+    // Blowing dust rides the wind; otherwise it falls like the snow or the rain.
+    let far_velocity = if shown.dust > shown.precipitation {
+        wind - Vec3::Y * 0.3
+    } else if shown.snow > 0.5 {
+        snow_velocity
+    } else {
+        rain_velocity
+    };
+    fallen.far = (fallen.far + far_velocity * dt).rem_euclid(BOX * 3.0);
+    fallen.snow = (fallen.snow + snow_velocity * dt).rem_euclid(BOX * 0.6);
     // Fine drizzle drifts with the wind, sleet less so, and hail falls hard.
     fall(&mut fallen.drizzle, wind * 0.9 - Vec3::Y * DRIZZLE_SPEED);
     fall(&mut fallen.sleet, wind * 0.7 - Vec3::Y * SLEET_SPEED);
@@ -373,21 +457,36 @@ fn update(
         sets[i * 3 + 1] = set.color.extend(if set.glow { 1.0 } else { 0.0 });
         sets[i * 3 + 2] = Vec4::new(set.size, motion_code(set.motion), 0.0, 0.0);
     }
+    // Diamond dust takes the last set, settling slowly.
+    fallen.glints = (fallen.glints + (wind * 0.1 - Vec3::Y * 0.05) * dt).rem_euclid(BOX);
+    if glints > 0.01 {
+        let i = air.particles.len().min(AMBIENT_SETS - 1);
+        sets[i * 3] = fallen.glints.extend((glints * 1.4).min(1.0));
+        sets[i * 3 + 1] = Vec3::new(0.85, 0.93, 1.0).extend(1.0);
+        sets[i * 3 + 2] = Vec4::new(0.06, GLINT, 0.0, 0.0);
+    }
+
+    // Rain and snow ground the glowing motes and wisps (ball lightning in a storm would be
+    // a few orbs, which these are not): nothing glows in the rain.
+    let dry = 1.0 - ((shown.precipitation - 0.02) / 0.18).clamp(0.0, 1.0);
 
     let Some(mut material) = materials.get_mut(&handle.0) else { return };
     let light = ambient.color.to_linear();
+    let haze = fog.color.to_linear();
     material.params = PrecipitationParams {
         camera: eye.rem_euclid(BOX).extend(time.elapsed_secs_wrapped()),
         map: Vec4::new(eye.x - map.origin.x as f32, 0.0, eye.z - map.origin.y as f32, eye.y),
-        rain: fallen.rain.extend(shown.precipitation),
-        snow: fallen.snow.extend(shown.snow),
-        streak: rain_velocity.normalize().extend(rain_velocity.length() * 0.045),
-        light: Vec4::new(light.red, light.green, light.blue, 0.0),
+        rain: fallen.rain.extend(density(shown.precipitation)),
+        snow: (fallen.snow - eye).rem_euclid(BOX * 0.6).extend(shown.snow),
+        streak: seen.normalize().extend(seen.length() * 0.045),
+        light: Vec4::new(light.red, light.green, light.blue, shown.precipitation.max(shown.dust)),
+        haze: Vec4::new(haze.red, haze.green, haze.blue, 0.0),
+        far: (fallen.far - eye).rem_euclid(BOX * 3.0).extend(drips),
         drizzle: fallen.drizzle.extend(shown.drizzle),
         sleet: fallen.sleet.extend(shown.sleet),
         hail: fallen.hail.extend(shown.hail),
-        dust: fallen.dust.extend(shown.dust),
-        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3)),
+        dust: fallen.dust.extend(density(shown.dust)),
+        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3) * dry),
         dust_color: Color::srgb_u8(shown.dust_color[0], shown.dust_color[1], shown.dust_color[2]).to_linear().to_vec4(),
         wind: wind.extend(0.0),
         ambient: sets,

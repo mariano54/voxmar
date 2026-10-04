@@ -33,7 +33,7 @@ use voxmar_worldgen::Overworld;
 const META_FILE: &str = "world.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
-const COLUMN_MAGIC: &[u8; 4] = b"vxc2";
+const COLUMN_MAGIC: &[u8; 4] = b"vxc4";
 
 /// How a world is played.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,7 +190,7 @@ impl WorldSave {
         ZlibDecoder::new(compressed).read_to_end(&mut encoded)?;
         let file: ColumnFile<Column> = postcard::from_bytes(&encoded).map_err(|e| invalid(&path, e))?;
         let mut column = file.column;
-        if column.climate.len() != COLUMN_AREA || column.colors.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
+        if column.colors.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
             return Err(invalid(&path, "inconsistent column data"));
         }
 

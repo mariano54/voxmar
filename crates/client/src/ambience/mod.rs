@@ -336,6 +336,12 @@ fn listen(
     env.set(Fixed::Snow, shown.precipitation * shown.snow);
     env.set(Fixed::Storm, shown.precipitation * shown.convection);
     env.set(Fixed::Wind, shown.wind.length());
+    env.set(Fixed::Gusts, shown.gusts);
+    // Hail and sleet are heard where they land: out in the open, or on the roof overhead.
+    let heard = smooth.sky.max(0.3 * smooth.air);
+    env.set(Fixed::Hail, shown.precipitation * shown.hail * heard);
+    env.set(Fixed::Sleet, shown.precipitation * shown.sleet * heard);
+    env.set(Fixed::Dust, shown.dust * smooth.sky.max(0.15 * smooth.air));
     env.set(Fixed::Cover, shown.cover);
     let angle = (cycle.ticks / TICKS_PER_DAY as f64).fract() as f32 * std::f32::consts::TAU;
     env.set(Fixed::Sun, angle.sin() / 1.0308);

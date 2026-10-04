@@ -9,8 +9,8 @@
 //! lightning bolt. docs/weather-effects.md says how each is meant to look.
 
 use bevy::prelude::*;
-use voxmar_engine::weather::{GUST_WRAP, WeatherTable, advance_gusts, gust, pcg};
-use voxmar_protocol::{TICKS_PER_SECOND, Weather};
+use voxmar_engine::weather::{GUST_WRAP, WeatherTable, advance_gusts, gust, parse_intensity, pcg};
+use voxmar_protocol::{Nearby, TICKS_PER_SECOND, WEATHER_CELL, Weather};
 
 use crate::menu::Screen;
 
@@ -49,6 +49,8 @@ pub struct ClientWeather {
     gust_error: Vec2,
     /// Effects showing, by name, strongest first, as the server last said.
     pub effects: Vec<String>,
+    /// How hard it rains or snows in the weather cells around, as the server last said.
+    nearby: Nearby,
     /// How far the wind has carried the clouds, in blocks, wrapped every `DRIFT_WRAP`.
     pub drift: Vec2,
     /// What the gusts are seeded with, and the server's simulation tick when last told,
@@ -166,9 +168,10 @@ struct Strike {
     /// Blocks away.
     distance: f32,
     heard: bool,
-    /// Where it struck the ground, and the seed of its shape.
+    /// Where it struck the ground (or flashed, in the cloud), and the seed of its shape.
     at: Vec3,
     seed: u32,
+    cloud: bool,
 }
 
 /// Thunder reaching the player from lightning `distance` blocks away.
@@ -203,6 +206,7 @@ impl Default for ClientWeather {
             gust_offset: Vec2::ZERO,
             gust_error: Vec2::ZERO,
             effects: Vec::new(),
+            nearby: Nearby::default(),
             drift: Vec2::ZERO,
             seed: 0,
             tick: 0,
@@ -216,7 +220,7 @@ impl ClientWeather {
     /// The server's report for where the player is, and the effects showing there.
     /// `quick` (after a command changed the weather) changes over within a second or two
     /// rather than easing in; `now` is seconds since startup.
-    pub fn receive(&mut self, weather: Weather, effects: Vec<String>, quick: bool, now: f32) {
+    pub fn receive(&mut self, weather: Weather, effects: Vec<String>, nearby: Nearby, quick: bool, now: f32) {
         if self.forced {
             return;
         }
@@ -234,6 +238,7 @@ impl ClientWeather {
         self.gust_error = (weather.gust_offset - self.gust_offset + half).rem_euclid(Vec2::splat(GUST_WRAP)) - half;
         self.target = Some(weather);
         self.effects = effects;
+        self.nearby = nearby;
     }
 
     /// What the gusts are seeded with, from the server's welcome.
@@ -252,21 +257,44 @@ impl ClientWeather {
         self.tick as f64 / TICKS_PER_SECOND as f64 + (now - self.told_at)
     }
 
-    /// Lightning struck the ground at `at`, `distance` blocks away; `seed` shapes the bolt.
-    pub fn lightning(&mut self, at: Vec3, seed: u32, distance: f32) {
-        self.strikes.push(Strike { age: 0.0, distance, heard: false, at, seed });
+    /// Lightning struck the ground at `at`, or with `cloud` flashed inside the cloud there,
+    /// `distance` blocks away; `seed` shapes the bolt.
+    pub fn lightning(&mut self, at: Vec3, seed: u32, distance: f32, cloud: bool) {
+        self.strikes.push(Strike { age: 0.0, distance, heard: false, at, seed, cloud });
     }
 
     /// How brightly lightning lights the sky and land now, 0..1: a few quick pulses per
-    /// flash, fainter the farther it is.
+    /// flash, fainter the farther it is and when it stays within the cloud.
     pub fn flash(&self) -> f32 {
-        let flashes = self.strikes.iter().map(|s| pulses(s.age) / (1.0 + (s.distance / 400.0).powi(2)));
+        let flashes = self.strikes.iter().map(|s| {
+            let veiled = if s.cloud { 0.5 } else { 1.0 };
+            veiled * pulses(s.age) / (1.0 + (s.distance / 400.0).powi(2))
+        });
         flashes.sum::<f32>().min(1.0)
+    }
+
+    /// Flashes within clouds now, for lighting the clouds from inside: where (in the cloud,
+    /// about 160 blocks over the ground) and how bright, 0..1. For the renderer; see
+    /// docs/weather-effects.md.
+    #[allow(dead_code)]
+    pub fn cloud_flashes(&self) -> impl Iterator<Item = (Vec3, f32)> + '_ {
+        self.strikes.iter().filter(|s| s.cloud && s.age < BOLT_LIFE * 2.0).map(|s| (s.at, pulses(s.age).min(1.0)))
+    }
+
+    /// How hard it rains or snows in each weather cell around (`WEATHER_CELL` blocks
+    /// across), as the cell's corner (x, z) and 0..1: for drawing distant rain shafts and
+    /// a storm front coming in.
+    pub fn nearby_rain(&self) -> impl Iterator<Item = (Vec2, f32)> + '_ {
+        let first = self.nearby.first;
+        self.nearby.rain.iter().enumerate().map(move |(i, &rain)| {
+            let cell = first + IVec2::new(i as i32 % 5, i as i32 / 5) * WEATHER_CELL;
+            (cell.as_vec2(), rain as f32 / 255.0)
+        })
     }
 
     /// The lightning bolts to draw now.
     pub fn bolts(&self) -> impl Iterator<Item = Bolt> + '_ {
-        self.strikes.iter().filter(|s| s.age < BOLT_LIFE).map(|s| {
+        self.strikes.iter().filter(|s| !s.cloud && s.age < BOLT_LIFE).map(|s| {
             let (channel, branches) = bolt_shape(s.at, s.seed);
             Bolt { channel, branches, brightness: pulses(s.age).min(1.0) }
         })
@@ -404,17 +432,28 @@ fn draw_bolts(weather: Res<ClientWeather>, mut gizmos: Gizmos) {
     }
 }
 
-/// A kind of weather by name (`clear`, `storm`, `aurora`, …), as the content packages
-/// define it, for `--weather`: its values and effects over a fair day, with any fog lying
-/// on the sea.
-pub fn preset(name: &str) -> Option<Weather> {
-    let content = voxmar_server::load_content(&voxmar_server::assets_dir()).ok()?;
-    forced(&content.weather, name)
+/// A kind of weather by name (`clear`, `storm`, `aurora`, …), as the content packages in
+/// `table` define it, optionally at an intensity (`rain:0.3`, `snow:heavy`, or
+/// `rain 0.3`), for `--weather`: its values and effects over a fair day, with any fog lying
+/// on the sea. Names ignore case, and `-` stands for `_` (`sea-fog`). An error names the
+/// kinds there are.
+pub fn preset(table: &WeatherTable, asked: &str) -> Result<Weather, String> {
+    forced(table, asked).ok_or_else(|| {
+        let kinds: Vec<&str> = table.presets().iter().map(|p| p.short_name()).collect();
+        format!("--weather: no weather `{asked}`; kinds are {}, optionally with :INTENSITY (0..1, light, moderate, heavy or max)", kinds.join(", "))
+    })
 }
 
 /// `name`'s values and effects from `table` over a fair day; see `preset`.
 fn forced(table: &WeatherTable, name: &str) -> Option<Weather> {
-    Some(table.force(table.preset(name)?, &FAIR, voxmar_worldgen::SEA_LEVEL as f32))
+    let name = name.trim().to_ascii_lowercase().replace('-', "_");
+    let (name, intensity) = match name.split_once([':', ' ']) {
+        Some((name, intensity)) => (name, Some(parse_intensity(intensity.trim())?)),
+        None => (name.as_str(), None),
+    };
+    let preset = table.preset(name)?;
+    let preset = preset.at(intensity.unwrap_or(preset.intensity));
+    Some(table.force(&preset, &FAIR, voxmar_worldgen::SEA_LEVEL as f32))
 }
 
 #[cfg(test)]
@@ -439,9 +478,18 @@ mod tests {
     fn presets_come_from_content() {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let table = voxmar_server::load_content(&assets).unwrap().weather;
-        let fog = forced(&table, "fog").unwrap();
+        let fog = forced(&table, "fog:max").unwrap();
         assert!(fog.fog > 0.3 && fog.ground_fog > 0.9 && fog.fog_top > voxmar_worldgen::SEA_LEVEL as f32);
         assert!(forced(&table, "aurora").unwrap().aurora == 1.0);
         assert!(forced(&table, "nonsense").is_none());
+        assert_eq!(forced(&table, "rain:0.3").unwrap().precipitation, 0.3);
+        assert_eq!(forced(&table, "rain:max").unwrap().precipitation, 1.0);
+        assert!(forced(&table, "rain:loud").is_none());
+        // Every name captures and the README have used still works, in any case.
+        for name in ["clear", "cirrus", "cumulus", "cloudy", "overcast", "rain", "storm", "snow", "Cumulus", "sea-fog", "rain 0.3"] {
+            assert!(forced(&table, name).is_some(), "{name}");
+        }
+        let error = preset(&table, "hurricane").unwrap_err();
+        assert!(error.contains("cumulus") && error.contains("INTENSITY"), "{error}");
     }
 }
