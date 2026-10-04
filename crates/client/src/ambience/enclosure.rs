@@ -1,0 +1,278 @@
+//! How enclosed the player is and what is around them, measured the way AmbientSounds
+//! does: a capped flood fill from the eye through everything sound passes (air, plants,
+//! leaves, water), which counts the air it reaches, how much of it is open to the sky, and
+//! the blocks it meets, weighted by how near they are.
+//!
+//! A single column test (Resonance's) is fooled by any overhang and switches abruptly; the
+//! fill instead gives continuous answers: a cave mouth is half open, a forest is open to the
+//! sky under its leaves, a small room has little air. It runs on a worker thread over a
+//! snapshot of the columns around the player, a few times a second at most, and costs a
+//! millisecond or two.
+//!
+//! The fill also keeps a few random blocks of each group it met, nearer ones likelier, so
+//! one-shots can sound from real places: birds from leaves that are actually there.
+
+use std::collections::VecDeque;
+
+use bevy::math::IVec3;
+use voxmar_engine::block::BlockId;
+use voxmar_engine::coords::WORLD_HEIGHT;
+
+use crate::sfx::mix;
+
+/// Steps the fill goes from the eye.
+const REACH: i32 = 24;
+/// Air cells the fill visits at most.
+const MAX_CELLS: usize = 16_000;
+/// Air cells that count as entirely open (a flat field fills about this many).
+const OPEN_AIR: f32 = 5_000.0;
+/// Steps within which the sky and canopy are measured.
+const NEAR: i32 = 8;
+/// Above the highest blocking block or leaves of its column, the fill only climbs this
+/// far: open sky needs no exploring.
+const SKY_HEADROOM: i32 = 3;
+/// Blocks above the eye the sky test looks; anything higher counts as open.
+const SKY_LOOK: i32 = 64;
+/// Sample blocks kept per group.
+pub const SAMPLES: usize = 8;
+
+const SIDE: i32 = 2 * REACH + 3;
+
+/// What the scan found.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Enclosure {
+    /// Air reached, 0 (enclosed) to 1 (open land).
+    pub air: f32,
+    /// Share of the nearby air open to the sky.
+    pub sky: f32,
+    /// Share of the nearby sky-open air that has leaves above it.
+    pub canopy: f32,
+    /// Weighted count of each group's blocks met.
+    pub groups: Vec<f32>,
+    /// A few blocks of each group, nearer ones likelier.
+    pub samples: Vec<Vec<IVec3>>,
+}
+
+/// What the scan needs to know of each block id.
+pub struct Kinds {
+    /// Whether sound passes through it.
+    pub open: Vec<bool>,
+    /// Leaves: sound passes, and they make a canopy but do not hide the sky.
+    pub leaves: Vec<bool>,
+    pub group: Vec<Option<u8>>,
+    pub groups: usize,
+}
+
+/// How much a block `d` steps away counts.
+fn weight(d: i32) -> f32 {
+    match d {
+        ..5 => 10.0,
+        5..10 => 5.0,
+        10..15 => 2.0,
+        _ => 1.0,
+    }
+}
+
+/// The highest block of a column that hides the sky, and the highest leaves above it.
+#[derive(Clone, Copy)]
+struct Roof {
+    solid: i32,
+    leaves: i32,
+}
+
+/// Floods from `eye` through blocks `kinds` marks open. `block` gives the block at a
+/// position, `None` where the world is not loaded (treated as a wall). `seed` makes the
+/// sample choice.
+pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, kinds: &Kinds, seed: u64) -> Enclosure {
+    let origin = eye - IVec3::splat(SIDE / 2);
+    let index = |p: IVec3| {
+        let l = p - origin;
+        ((l.y * SIDE + l.z) * SIDE + l.x) as usize
+    };
+    let inside = |p: IVec3| {
+        let l = p - origin;
+        l.min_element() >= 0 && l.max_element() < SIDE
+    };
+    let is_open = |b: Option<BlockId>| b.is_some_and(|b| kinds.open[b.0 as usize]);
+    let mut seen = vec![false; (SIDE * SIDE * SIDE) as usize];
+    let mut roofs: Vec<Option<Roof>> = vec![None; (SIDE * SIDE) as usize];
+    let mut roof = |x: i32, z: i32| -> Roof {
+        let slot = ((z - origin.z) * SIDE + (x - origin.x)) as usize;
+        *roofs[slot].get_or_insert_with(|| {
+            let mut leaves = i32::MIN;
+            let top = (eye.y + SKY_LOOK).min(WORLD_HEIGHT - 1);
+            for y in (eye.y - REACH - 1..=top).rev() {
+                match block(IVec3::new(x, y, z)) {
+                    Some(b) if kinds.leaves[b.0 as usize] => leaves = leaves.max(y),
+                    Some(b) if kinds.open[b.0 as usize] => {}
+                    // Unloaded columns are walls to the fill but say nothing of the sky.
+                    None if y > eye.y => {}
+                    _ => return Roof { solid: y, leaves },
+                }
+            }
+            Roof { solid: i32::MIN, leaves }
+        })
+    };
+
+    let mut found = Enclosure { groups: vec![0.0; kinds.groups], samples: vec![Vec::new(); kinds.groups], ..Default::default() };
+    // Weighted reservoir per group: the samples with the largest keys u^(1 / weight).
+    let mut keys: Vec<Vec<f32>> = vec![Vec::new(); kinds.groups];
+    let mut random = seed;
+    let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32| {
+        let Some(group) = kinds.group[b.0 as usize] else { return };
+        let (group, w) = (group as usize, weight(d));
+        found.groups[group] += w;
+        random = mix(random);
+        let key = ((random >> 40) as f32 / (1u64 << 24) as f32).max(1e-9).powf(1.0 / w);
+        let (samples, keys) = (&mut found.samples[group], &mut keys[group]);
+        if samples.len() < SAMPLES {
+            samples.push(p);
+            keys.push(key);
+        } else if let Some((i, &lowest)) = keys.iter().enumerate().min_by(|a, b| a.1.total_cmp(b.1))
+            && key > lowest
+        {
+            samples[i] = p;
+            keys[i] = key;
+        }
+    };
+
+    let (mut cells, mut near, mut near_sky, mut near_canopy) = (0usize, 0u32, 0u32, 0u32);
+    let mut queue = VecDeque::new();
+    if is_open(block(eye)) {
+        seen[index(eye)] = true;
+        queue.push_back((eye, 0));
+    }
+    while let Some((p, d)) = queue.pop_front() {
+        cells += 1;
+        let r = roof(p.x, p.z);
+        if d <= NEAR {
+            near += 1;
+            if p.y > r.solid {
+                near_sky += 1;
+                near_canopy += (r.leaves > p.y) as u32;
+            }
+        }
+        if let Some(b) = block(p).filter(|b| !b.is_air()) {
+            meet(&mut found, p, b, d);
+        }
+        for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
+            let n = p + step;
+            if !inside(n) || seen[index(n)] {
+                continue;
+            }
+            seen[index(n)] = true;
+            let b = block(n);
+            if !is_open(b) {
+                if let Some(b) = b {
+                    meet(&mut found, n, b, d + 1);
+                }
+                continue;
+            }
+            if d >= REACH || cells + queue.len() >= MAX_CELLS {
+                continue;
+            }
+            let r = roof(n.x, n.z);
+            if n.y <= r.solid.max(r.leaves).max(eye.y) + SKY_HEADROOM {
+                queue.push_back((n, d + 1));
+            }
+        }
+    }
+    found.air = (cells as f32 / OPEN_AIR).min(1.0);
+    if near > 0 {
+        found.sky = near_sky as f32 / near as f32;
+    }
+    if near_sky > 0 {
+        found.canopy = near_canopy as f32 / near_sky as f32;
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AIR: BlockId = BlockId(0);
+    const STONE: BlockId = BlockId(1);
+    const LEAVES: BlockId = BlockId(2);
+    const WATER: BlockId = BlockId(3);
+    const GRASS: BlockId = BlockId(4);
+
+    fn kinds() -> Kinds {
+        Kinds {
+            open: vec![true, false, true, true, false],
+            leaves: vec![false, false, true, false, false],
+            // Groups: 0 rock, 1 leaves, 2 water, 3 grass.
+            group: vec![None, Some(0), Some(1), Some(2), Some(3)],
+            groups: 4,
+        }
+    }
+
+    fn field(p: IVec3) -> Option<BlockId> {
+        Some(match p.y {
+            ..63 => STONE,
+            63 => GRASS,
+            _ => AIR,
+        })
+    }
+
+    #[test]
+    fn open_field_is_open_to_the_sky() {
+        let found = scan(IVec3::new(0, 65, 0), field, &kinds(), 1);
+        assert!(found.air > 0.9, "{}", found.air);
+        assert_eq!(found.sky, 1.0);
+        assert_eq!(found.canopy, 0.0);
+        assert!(found.groups[3] > 100.0, "grass all around");
+        assert_eq!(found.groups[0], 0.0, "the stone is under the grass");
+        assert!(found.samples[3].len() == SAMPLES && found.samples[3].iter().all(|p| p.y == 63));
+    }
+
+    #[test]
+    fn a_closed_room_is_small_and_dark() {
+        // A 5×3×5 room cut into stone.
+        let room = |p: IVec3| Some(if p.x.abs() <= 2 && p.z.abs() <= 2 && (64..67).contains(&p.y) { AIR } else { STONE });
+        let found = scan(IVec3::new(0, 65, 0), room, &kinds(), 1);
+        assert!(found.air < 0.02, "{}", found.air);
+        assert_eq!(found.sky, 0.0);
+        assert!(found.groups[0] > 300.0, "close rock all around: {}", found.groups[0]);
+    }
+
+    #[test]
+    fn a_cave_mouth_is_partly_open() {
+        // A tunnel running into a hillside along +x from open ground at x < 0.
+        let hill = |p: IVec3| {
+            Some(if p.x < 0 {
+                field(p).unwrap()
+            } else if p.y >= 64 && p.y < 67 && p.z.abs() <= 1 {
+                AIR
+            } else {
+                STONE
+            })
+        };
+        let found = scan(IVec3::new(2, 65, 0), hill, &kinds(), 1);
+        assert!(found.sky > 0.2 && found.sky < 0.9, "{}", found.sky);
+    }
+
+    #[test]
+    fn under_a_canopy_is_still_outdoors() {
+        let forest = |p: IVec3| Some(if (70..74).contains(&p.y) { LEAVES } else { field(p).unwrap() });
+        let found = scan(IVec3::new(0, 65, 0), forest, &kinds(), 1);
+        assert_eq!(found.sky, 1.0);
+        assert!(found.canopy > 0.9, "{}", found.canopy);
+        assert!(found.groups[1] > 100.0);
+        assert!(found.samples[1].iter().all(|p| (70..74).contains(&p.y)));
+    }
+
+    #[test]
+    fn water_is_heard_through_and_counted() {
+        let shore = |p: IVec3| Some(if p.x > 3 && p.y == 64 { WATER } else { field(p).unwrap() });
+        let found = scan(IVec3::new(0, 65, 0), shore, &kinds(), 1);
+        assert!(found.groups[2] > 50.0);
+        assert!(found.samples[2].iter().all(|p| p.x > 3));
+    }
+
+    #[test]
+    fn unloaded_space_is_a_wall() {
+        let found = scan(IVec3::new(0, 65, 0), |p| (p.x < 4).then(|| field(p).unwrap()), &kinds(), 1);
+        assert!(found.air > 0.2 && found.air < 0.9);
+    }
+}
