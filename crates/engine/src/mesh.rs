@@ -21,6 +21,7 @@
 //! the one that sways in the wind. Plants carry no ambient occlusion: their `ao` bits hold the
 //! vertex's corner (0..=3, in the order the quad is built), and bits 25..27 how many plant
 //! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`).
+//! Bit 27 marks the same crossed quads used as a leaf fringe (`ChunkMesh::fringe`).
 
 use glam::IVec3;
 
@@ -42,6 +43,8 @@ pub const PLANT_DIAGONAL: u32 = 6;
 pub const PLANT_ANTIDIAGONAL: u32 = 7;
 /// Vertex flag 1 (see the module docs).
 const FLAG_INNER: u32 = 1 << 23;
+/// Marks the crossed quads of a leaf fringe, which the shader grows out of the leaf block.
+const FLAG_FRINGE: u32 = 1 << 27;
 /// On plant vertices, bits 25..27 hold how many plant cells lie below in the same stack.
 const PLANT_STACK_SHIFT: u32 = 25;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
@@ -70,6 +73,8 @@ pub struct ChunkMesh {
     /// crown's shell already does.
     pub inner: MeshBuffers,
     pub translucent: MeshBuffers,
+    /// Leafy sprigs sticking out of crowns (bushy leaves), only worth drawing nearby.
+    pub fringe: MeshBuffers,
     pub connectivity: Connectivity,
 }
 
@@ -161,6 +166,16 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     for i in plants {
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
         emit_plant(&mut mesh.cutout, registry, column, &cells[i], local, cy * CHUNK_SIZE);
+    }
+    for (y, plane) in leaves.iter().enumerate().take(S + 1).skip(1) {
+        for (z, &bits) in plane.iter().enumerate().take(S + 1).skip(1) {
+            let mut row = bits & !1 & !(1 << (S + 1));
+            while row != 0 {
+                let x = row.trailing_zeros() as usize;
+                row &= row - 1;
+                emit_fringe(&mut mesh.fringe, registry, column, &cells, IVec3::new(x as i32, y as i32, z as i32));
+            }
+        }
     }
     mesh
 }
@@ -553,6 +568,42 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
             out.vertices.push([w0, w1]);
         }
         // Both windings, so back-face culling keeps one of them from either side.
+        out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
+    }
+}
+
+/// A sprig of leaves out of a leaf block on the outside of a crown: two crossed quads
+/// through the block, which the shader turns and grows beyond it (`voxel.wgsl`), lit by the
+/// open side. `padded` is the block's position in the padded cells.
+fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, cells: &[Cell], padded: IVec3) {
+    let cell = |p: IVec3| &cells[pidx(p.x as usize, p.y as usize, p.z as usize)];
+    let open: Vec<&Cell> = Face::ALL
+        .iter()
+        .map(|face| cell(padded + face.normal()))
+        .filter(|c| !c.occludes && registry.info(c.block).render != RenderKind::Leaves)
+        .collect();
+    if open.is_empty() {
+        return;
+    }
+    let sky = open.iter().map(|c| c.light >> 4).max().unwrap_or(0);
+    let block = open.iter().map(|c| c.light & 15).max().unwrap_or(0);
+    let pos = padded - 1;
+    let leaf = cell(padded).block;
+    let info = registry.info(leaf);
+    let tint = info.tints[Face::PosY as usize];
+    let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { column.climate_at(pos.x, pos.z) };
+    let w1 = info.layers[Face::PosY as usize] as u32
+        | (tint as u32) << 12
+        | ((temperature >> 3) as u32) << 14
+        | ((humidity >> 3) as u32) << 19
+        | ((sky << 4 | block) as u32) << 24;
+    for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
+        let base = out.vertices.len() as u32;
+        for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
+            let p = pos + IVec3::new(dx, top, dz);
+            let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | face << 18 | (corner as u32) << 21 | (top as u32) << 23;
+            out.vertices.push([w0 | FLAG_FRINGE, w1]);
+        }
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
     }
 }

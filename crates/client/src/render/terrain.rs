@@ -40,6 +40,7 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
 use bevy::render::texture::GpuImage;
+use bevy::render::camera::ExtractedCamera;
 use bevy::render::view::ExtractedView;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderDefVal;
@@ -53,10 +54,14 @@ use super::{ATTRIBUTE_LOD, ATTRIBUTE_VOXEL, DISTANT_SHADER, TerrainPass, VOXEL_S
 
 /// Vertices per chunk page (32 MB, with 24 MB of indices): room for about a million quads.
 const PAGE_VERTICES: u32 = 4 << 20;
-const PASSES: [TerrainPass; 4] = [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent];
+const PASSES: [TerrainPass; 5] =
+    [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent, TerrainPass::Fringe];
 /// Only these passes cast shadows: leaf crowns' shells already shade, and water would
 /// shadow itself.
-const SHADOW_PASSES: [TerrainPass; 2] = [TerrainPass::Opaque, TerrainPass::Cutout];
+const SHADOW_PASSES: [TerrainPass; 3] = [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Fringe];
+/// Leaf fringes are drawn for chunks this close to the camera, in blocks; further out they
+/// would be sub-pixel.
+const FRINGE_DISTANCE: f32 = 96.0;
 
 pub struct TerrainPlugin;
 
@@ -153,7 +158,7 @@ struct TerrainInbox(Receiver<Message>);
 
 #[derive(Resource)]
 struct TerrainKeys {
-    passes: [MainEntity; 4],
+    passes: [MainEntity; 5],
     distant: MainEntity,
 }
 
@@ -277,7 +282,7 @@ struct Allocation {
 struct ChunkRecord {
     /// Index into the origin table, which the shader reads as the instance index.
     slot: u32,
-    passes: [Option<Allocation>; 4],
+    passes: [Option<Allocation>; 5],
 }
 
 /// A distant terrain tile (see `lod`).
@@ -311,6 +316,8 @@ struct TerrainGpu {
     columns: FxHashMap<IVec2, u32>,
     visible: FxHashSet<ChunkPos>,
     real_columns: i32,
+    /// Where the camera is this frame.
+    camera: Vec3,
     free_slots: Vec<u32>,
     /// Origin of each slot's mesh; for tiles, w is the cell size.
     origins: Vec<IVec4>,
@@ -334,6 +341,7 @@ impl Default for TerrainGpu {
             columns: FxHashMap::default(),
             visible: FxHashSet::default(),
             real_columns: 0,
+            camera: Vec3::ZERO,
             free_slots: Vec::new(),
             origins: Vec::new(),
             origins_buffer: None,
@@ -494,7 +502,7 @@ fn receive(
     inbox: Res<TerrainInbox>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
-    cameras: Query<&ExtractedView, Without<LightEntity>>,
+    cameras: Query<&ExtractedView, With<ExtractedCamera>>,
 ) {
     for message in inbox.0.try_iter() {
         match message {
@@ -509,7 +517,9 @@ fn receive(
     }
     gpu.write_origins(&device, &queue);
     if let Some(camera) = cameras.iter().next() {
-        gpu.write_coverage(&device, &queue, camera.world_from_view.translation());
+        let position = camera.world_from_view.translation();
+        gpu.camera = position;
+        gpu.write_coverage(&device, &queue, position);
     }
 }
 
@@ -559,7 +569,7 @@ struct Draw {
 /// The draws of each pass that survive a view's frustum, in drawing order.
 #[derive(Component, Default)]
 struct TerrainDraws {
-    passes: [Vec<Draw>; 4],
+    passes: [Vec<Draw>; 5],
     /// Distant terrain tiles, cameras only.
     distant: Vec<Draw>,
 }
@@ -570,7 +580,7 @@ struct TerrainDraws {
 fn cull(
     mut commands: Commands,
     gpu: Res<TerrainGpu>,
-    mut views: Query<(Entity, &ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>)>,
+    mut views: Query<(Entity, &ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>), Or<(With<LightEntity>, With<ExtractedCamera>)>>,
 ) {
     // Chunks cave culling leaves visible, with their bounds' minimum corner.
     let candidates: Vec<(Vec3, &ChunkRecord)> = gpu
@@ -600,7 +610,12 @@ fn cull(
             if !frustum.intersects(min, min + CHUNK_SIZE as f32) {
                 continue;
             }
+            // Distance from the camera (not a shadow view's light) to the chunk's bounds.
+            let near = (gpu.camera.clamp(min, min + CHUNK_SIZE as f32) - gpu.camera).length() < FRINGE_DISTANCE;
             for &pass in passes {
+                if pass == TerrainPass::Fringe && !near {
+                    continue;
+                }
                 let Some(allocation) = &record.passes[pass as usize] else { continue };
                 let draw = Draw {
                     page: allocation.page,
@@ -676,7 +691,7 @@ struct TerrainPipelines {
     shader: Handle<Shader>,
     vertex_layout: MeshVertexBufferLayout,
     /// One render entity per pass.
-    items: [Entity; 4],
+    items: [Entity; 5],
     main: FxHashMap<(MeshPipelineKey, TerrainPass), CachedRenderPipelineId>,
     shadow: FxHashMap<TerrainPass, CachedRenderPipelineId>,
     distant_layout: BindGroupLayoutDescriptor,
@@ -762,6 +777,8 @@ fn pass_setup(pass: TerrainPass) -> (&'static [&'static str], Option<Face>) {
         TerrainPass::Inner => (&["CUTOUT", "INNER"], None),
         // Water is visible from below too.
         TerrainPass::Translucent => (&["TRANSLUCENT"], None),
+        // Both windings are meshed.
+        TerrainPass::Fringe => (&["CUTOUT"], Some(Face::Back)),
     }
 }
 
@@ -781,7 +798,7 @@ impl TerrainPipelines {
         }
         let alpha = match pass {
             TerrainPass::Opaque => MeshPipelineKey::BLEND_OPAQUE,
-            TerrainPass::Cutout | TerrainPass::Inner => MeshPipelineKey::MAY_DISCARD,
+            TerrainPass::Cutout | TerrainPass::Inner | TerrainPass::Fringe => MeshPipelineKey::MAY_DISCARD,
             TerrainPass::Translucent => MeshPipelineKey::BLEND_ALPHA,
         };
         let key = view_key | alpha | MeshPipelineKey::from_primitive_topology_and_strip_index(PrimitiveTopology::TriangleList, None);
@@ -802,7 +819,8 @@ impl TerrainPipelines {
         descriptor.primitive.cull_mode = cull_mode;
         // With several samples per pixel, cut-outs cover samples by their alpha instead of
         // passing or failing whole: leaves and plants stay smooth in the distance.
-        let alpha_to_coverage = key.msaa_samples() > 1 && matches!(pass, TerrainPass::Cutout | TerrainPass::Inner);
+        let alpha_to_coverage =
+            key.msaa_samples() > 1 && matches!(pass, TerrainPass::Cutout | TerrainPass::Inner | TerrainPass::Fringe);
         descriptor.multisample.alpha_to_coverage_enabled = alpha_to_coverage;
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = self.shader.clone();
@@ -969,7 +987,7 @@ fn queue(
             phase.add(key, bin(), distant_item, InputUniformIndex::default(), BinnedRenderPhaseType::NonMesh);
         }
         if let Some(phase) = phases.mask.get_mut(retained) {
-            for pass in [TerrainPass::Cutout, TerrainPass::Inner] {
+            for pass in [TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Fringe] {
                 let Some(id) = pipeline(pass) else { continue };
                 let item = items[pass as usize];
                 phase.remove(item.1);

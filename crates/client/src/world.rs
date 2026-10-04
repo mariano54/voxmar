@@ -28,9 +28,9 @@ impl Plugin for WorldPlugin {
 #[derive(Default)]
 struct ChunkRender {
     /// Which `TerrainPass`es have a mesh.
-    passes: [bool; 4],
-    hashes: [u64; 4],
-    quads: [usize; 4],
+    passes: [bool; 5],
+    hashes: [u64; 5],
+    quads: [usize; 5],
     connectivity: Connectivity,
 }
 
@@ -42,7 +42,7 @@ struct MeshResult {
 
 struct ChunkResult {
     connectivity: Connectivity,
-    passes: [PassResult; 4],
+    passes: [PassResult; 5],
 }
 
 struct PassResult {
@@ -62,7 +62,7 @@ impl PassResult {
 
 impl ChunkResult {
     fn new(mesh: ChunkMesh) -> Self {
-        let passes = [mesh.opaque, mesh.cutout, mesh.inner, mesh.translucent].map(PassResult::new);
+        let passes = [mesh.opaque, mesh.cutout, mesh.inner, mesh.translucent, mesh.fringe].map(PassResult::new);
         Self { connectivity: mesh.connectivity, passes }
     }
 }
@@ -71,7 +71,8 @@ impl ChunkResult {
 /// streaming and edits never cause a long frame.
 const UPLOAD_BUDGET: usize = 32_000;
 
-const PASSES: [TerrainPass; 4] = [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent];
+const PASSES: [TerrainPass; 5] =
+    [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent, TerrainPass::Fringe];
 
 #[derive(Resource)]
 pub struct ClientWorld {
