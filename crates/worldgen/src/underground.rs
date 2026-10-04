@@ -350,6 +350,11 @@ impl UndergroundColumn<'_> {
         self.picks[(lz * SIDE + lx) * self.layers + ly]
     }
 
+    /// Whether any cave biome in the column has rock of its own.
+    pub(crate) fn any_rocky(&self) -> bool {
+        self.rocky.iter().any(|&r| r)
+    }
+
     /// Whether any cave biome near the block column at (x, z) has rock of its own.
     pub(crate) fn rocky(&self, x: i32, z: i32) -> bool {
         let (lx, lz) = ((x / STEP) as usize, (z / STEP) as usize);
