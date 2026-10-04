@@ -37,7 +37,7 @@ pub const LAPSE_RATE: f32 = 0.11;
 const UPWIND: [f32; 9] = [2600.0, 1800.0, 1250.0, 850.0, 560.0, 360.0, 220.0, 120.0, 50.0];
 /// Distance over land in which the air loses all but a third of its moisture.
 const RAIN_OUT: f32 = 3000.0;
-/// How far around a position its elevation is averaged for the climate biomes see, in
+/// How far around a position its elevation and landform are averaged for the climate biomes see, in
 /// blocks.
 const UPLAND: f32 = 160.0;
 /// Rise in blocks over which lifted air loses all but a third of its moisture.
@@ -184,7 +184,7 @@ impl Climate {
             anomaly: noise(seed, 11, 1.0 / 1600.0, FractalType::FBm, 2),
             wetness: noise(seed, 12, 1.0 / 1200.0, FractalType::FBm, 2),
             // Slow, so that biomes sharing a climate split it into regions kilometres across.
-            weirdness: noise(seed, 13, 1.0 / 7000.0, FractalType::FBm, 2),
+            weirdness: noise(seed, 13, 1.0 / 11000.0, FractalType::FBm, 2),
             aether: noise(seed, 14, 1.0 / 2200.0, FractalType::FBm, 2),
             aether_exponent: dials.fantasy.clamp(0.01, 0.99).ln() / 0.5f32.ln(),
             fertility: noise(seed, 15, 1.0 / 700.0, FractalType::FBm, 2),
@@ -253,22 +253,19 @@ impl Climate {
             + self.dials.latitude_gradient * (0.5 - latitude)
             + 3.5 * self.anomaly.get_noise_2d(x, z);
         let even = |n: &FastNoiseLite| uniform(n.get_noise_2d(x, z));
+        // The land a few hundred blocks around, for the fields averaged over it.
+        let around = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)].map(|(dx, dz)| geology.relief(x + dx * UPLAND, z + dz * UPLAND));
         Regional {
             sea_temperature,
             precipitation,
             rainfall: precipitation / orographic,
             continentalness: continentalness(relief.continental),
             latitude,
-            elevation: {
-                // Averaged over a few hundred blocks, so a range's flanks share one
-                // climate rather than banding with every few dozen blocks of height.
-                let around: f32 = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
-                    .iter()
-                    .map(|(dx, dz)| geology.relief(x + dx * UPLAND, z + dz * UPLAND).elevation.max(sea))
-                    .sum();
-                0.4 * relief.elevation.max(sea) + 0.15 * around
-            },
-            erosion: landform(&relief),
+            // Averaged over a few hundred blocks, so a range's flanks share one climate
+            // rather than banding with every few dozen blocks of height, and the landform
+            // follows ranges, hill country and plains rather than every hill and summit.
+            elevation: 0.4 * relief.elevation.max(sea) + 0.15 * around.iter().map(|r| r.elevation.max(sea)).sum::<f32>(),
+            erosion: 0.4 * landform(&relief) + 0.15 * around.iter().map(landform).sum::<f32>(),
             weirdness: even(&self.weirdness),
             aether: even(&self.aether).powf(self.aether_exponent),
             fertility: even(&self.fertility),

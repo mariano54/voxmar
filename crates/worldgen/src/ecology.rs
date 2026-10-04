@@ -55,10 +55,19 @@ const STAND_MARGIN: f32 = 0.08;
 const HABITAT_CHANCE: f32 = 0.15;
 /// Chance per block of a weight-1 plant that grows alone.
 const ALONE_CHANCE: f32 = 0.01;
-/// Chances of a weight-1 wonder where aether is at its highest: per candidate cell for
-/// trees, per block for plants.
-const WONDER_TREE_CHANCE: f32 = 0.02;
+/// Chance per block of a weight-1 wonder plant where aether is at its highest.
 const WONDER_PLANT_CHANCE: f32 = 0.003;
+/// Wonder trees outside the biomes that name them are a find: a lone tree or a tiny grove
+/// of one kind, in at most one place per cell of this many blocks, ...
+const WONDER_GROVE_CELL: i32 = 1024;
+/// ... there with this chance where aether is high (fading out below), ...
+const WONDER_GROVE_CHANCE: f32 = 0.6;
+const WONDER_GROVE_AETHER: (f32, f32) = (0.55, 0.95);
+/// ... over this radius in blocks (a lone tree to a handful), with this chance per
+/// candidate cell inside.
+const WONDER_GROVE_RADIUS: (f32, f32) = (2.5, 9.0);
+const WONDER_IN_GROVE: f32 = 0.6;
+const WONDER_GROVES: u64 = 0x6a07;
 /// Below this share of its selected species suiting the climate, a biome's forest and
 /// meadows thin out.
 const SUITED: f32 = 0.3;
@@ -327,6 +336,22 @@ impl Ecology {
             fit(&spec.comfort, t, m) * habitat(spec.habitat, site) * band
         };
 
+        // A wonder grove's tree comes first, so it takes the cells it grows in.
+        if above >= 1
+            && !flora.wonder_trees.is_empty()
+            && let Some(u) = self.wonder_grove(site, x, z)
+        {
+            let total: f32 = flora.wonder_trees.iter().map(|&(tree, weight)| weight * suits(tree)).sum();
+            let mut left = u * total;
+            for &(tree, weight) in &flora.wonder_trees {
+                let share = weight * suits(tree);
+                if share > 0.0 && left < share {
+                    out.push((tree, WONDER_IN_GROVE * suits(tree)));
+                    break;
+                }
+                left -= share;
+            }
+        }
         if above >= 1 && site.forest > 0.0 && !flora.canopy.is_empty() {
             // Forest trees share the forest by how well each suits the climate, some in
             // stands of their own kind.
@@ -348,13 +373,28 @@ impl Ecology {
         for &(tree, weight) in &flora.habitat {
             out.push((tree, HABITAT_CHANCE * weight * suits(tree)));
         }
-        if above >= 1 {
-            let aether = site.aether * site.aether;
-            for &(tree, weight) in &flora.wonder_trees {
-                out.push((tree, WONDER_TREE_CHANCE * weight * suits(tree) * aether));
-            }
-        }
         out.retain(|&(tree, chance)| chance > 0.0 && ground.is_none_or(|g| self.trees[tree.0 as usize].ground & ground_bit(g) != 0));
+    }
+
+    /// If (x, z) lies in a wonder grove, the roll that picks the grove's one kind of tree.
+    /// Each cell of `WONDER_GROVE_CELL` blocks has at most one, at a place and of a size
+    /// its hash decides, there more often the higher the aether.
+    fn wonder_grove(&self, site: &Site, x: i32, z: i32) -> Option<f32> {
+        let cell = WONDER_GROVE_CELL;
+        let (gx, gz) = (x.div_euclid(cell), z.div_euclid(cell));
+        let hash = hash3(self.seed ^ WONDER_GROVES, gx, 0, gz);
+        let unit = |bits: u64| (bits & 0xffff) as f32 / 65536.0;
+        let margin = 16.0;
+        let span = cell as f32 - 2.0 * margin;
+        let centre = (gx as f32 * cell as f32 + margin + span * unit(hash), gz as f32 * cell as f32 + margin + span * unit(hash >> 16));
+        let radius = WONDER_GROVE_RADIUS.0 + (WONDER_GROVE_RADIUS.1 - WONDER_GROVE_RADIUS.0) * unit(hash >> 32).powi(2);
+        let (dx, dz) = (x as f32 + 0.5 - centre.0, z as f32 + 0.5 - centre.1);
+        if dx * dx + dz * dz > radius * radius {
+            return None;
+        }
+        // Aether varies over thousands of blocks, so it barely changes across a grove.
+        let gate = smoothstep(WONDER_GROVE_AETHER.0, WONDER_GROVE_AETHER.1, site.aether);
+        (unit(hash >> 48) < WONDER_GROVE_CHANCE * gate).then(|| unit(hash3(self.seed ^ WONDER_GROVES, gx, 1, gz)))
     }
 
     /// The tree that dominates the canopy at a site, and the fraction of ground under
@@ -538,7 +578,9 @@ impl Flora {
         for (i, tree) in content.trees.iter().enumerate() {
             let tags = tree.tags.iter().map(String::as_str);
             let id = TreeId(i as u16);
-            let wonder = selected(&wonders, &def.exclude, &tree.name, tags.clone()) * tree_rarity[i];
+            // A tree the biome names is part of its forest, wonder or not.
+            let named = def.trees.iter().any(|s| matches!(s, Select::Name(n, _) if *n == tree.name));
+            let wonder = if named { 0.0 } else { selected(&wonders, &def.exclude, &tree.name, tags.clone()) * tree_rarity[i] };
             if wonder > 0.0 {
                 flora.wonder_trees.push((id, wonder));
                 continue;

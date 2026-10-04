@@ -351,14 +351,17 @@ impl Biomes {
         if let Some(filler) = filler {
             return Some((filler, bottom, top));
         }
-        let mut lo = bottom;
+        // The commons share the whole range, the rarer claims laid over its ends, so a
+        // common's slice is the same in every cell with the same commons whatever rarer
+        // claims (and aether) let in: their borders carry on across the cells.
+        let mut lo = 0.0;
         let mut last = None;
         for claim in claims.iter().filter(|c| common(c)) {
-            let hi = lo + (top - bottom) * claim.share / weight;
+            let hi = lo + claim.share / weight;
             if weirdness < hi {
-                return Some((claim.biome, lo, hi));
+                return Some((claim.biome, lo.max(bottom), hi.min(top)));
             }
-            last = Some((claim.biome, lo, top));
+            last = Some((claim.biome, lo.max(bottom), top));
             lo = hi;
         }
         last

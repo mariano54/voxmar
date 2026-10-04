@@ -123,8 +123,15 @@ pub struct Decor {
     /// Per biome, in biome order.
     biomes: Vec<BiomeDecor>,
     moss: BlockId,
+    /// Standing stones are of the lightest local stone this light or lighter, else this.
+    weathered: BlockId,
+    /// How light each block is, 0 ..= 255, by block id.
+    luma: Vec<u8>,
     seed: u64,
 }
+
+/// Standing stones are of a local stone at least this light (0 ..= 255).
+const LIGHT_STONE: u8 = 140;
 
 fn ground_bit(ground: Ground) -> u8 {
     1 << ground as u8
@@ -278,7 +285,13 @@ impl Decor {
                 out
             })
             .collect();
-        Self { list, biomes, moss: registry.expect("base:moss_block"), seed: seed ^ 0xdec0 }
+        let luma = (0..registry.len())
+            .map(|i| {
+                let [r, g, b] = registry.def(BlockId(i as u16)).color;
+                (0.3 * r as f32 + 0.59 * g as f32 + 0.11 * b as f32) as u8
+            })
+            .collect();
+        Self { list, biomes, moss: registry.expect("base:moss_block"), weathered: registry.expect("base:andesite"), luma, seed: seed ^ 0xdec0 }
     }
 
     pub fn stage(&self, id: DecorId) -> Stage {
@@ -418,22 +431,55 @@ impl Decor {
                 self.stump(area, site, base, species, height, *growth, plants, seed, blocks);
             }
             Form::StandingStones { radius, count, height, stones } => {
-                let stones = self.stones(area, site, stones);
+                // One stone for the ring: the lightest of the local stones, if light enough.
+                let lightest = self.stones(area, site, stones).blocks().max_by_key(|b| self.luma[b.0 as usize]);
+                let block = lightest.filter(|b| self.luma[b.0 as usize] >= LIGHT_STONE).unwrap_or(self.weathered);
                 let r = lerp(*radius, rng.unit());
                 let n = rng.range(count.0, count.1 + 1);
                 let phase = rng.unit() * std::f32::consts::TAU;
+                let damp = dampness(site);
                 for i in 0..n {
                     let a = phase + i as f32 * std::f32::consts::TAU / n as f32;
-                    let (x, z) = ((base.x as f32 + 0.5 + a.cos() * r).floor() as i32, (base.z as f32 + 0.5 + a.sin() * r).floor() as i32);
+                    let at = IVec2::new((base.x as f32 + 0.5 + a.cos() * r).floor() as i32, (base.z as f32 + 0.5 + a.sin() * r).floor() as i32);
                     let tall = rng.range(height.0, height.1 + 1);
-                    let block = stones.pick(rng.unit().min(0.9999));
-                    let g = area.height(x, z);
-                    // Each stone stands on firm, dry ground near the ring's own level.
-                    if area.unfit(x, z) || (g + 1 - base.y).abs() > 2 || (blocks.contains(IVec3::new(x, g, z)) && !area.world.terrain.is_firm(blocks.get(IVec3::new(x, g - 1, z)))) {
+                    let (shape, moss) = (rng.unit(), rng.unit());
+                    let g = area.height(at.x, at.y);
+                    if area.unfit(at.x, at.y) || (g + 1 - base.y).abs() > 2 {
                         continue;
                     }
-                    for y in g..=g + tall {
-                        blocks.set(IVec3::new(x, y, z), block);
+                    // Upright: a pillar, a slab two blocks wide along the ring with one half
+                    // worn lower, or a stone leaning in or out: a stub with its full height
+                    // stepped one block over. Every column stands on its own ground.
+                    let grid = |x: f32, z: f32| if x.abs() > z.abs() { IVec2::new(x.signum() as i32, 0) } else { IVec2::new(0, z.signum() as i32) };
+                    let (side, low, leaning) = match shape {
+                        u if tall >= 3 && u < 0.35 => (Some(grid(-a.sin(), a.cos())), tall - 1, false),
+                        u if tall >= 3 && u < 0.6 => (Some(grid(a.cos(), a.sin()) * if u < 0.475 { 1 } else { -1 }), tall / 2, true),
+                        _ => (None, tall, false),
+                    };
+                    let mossy = tall >= 3 && moss < 0.15 + 0.5 * damp;
+                    let mut column = |p: IVec2, top: i32, cap: bool| {
+                        let ground = area.height(p.x, p.y);
+                        if area.unfit(p.x, p.y) || (ground - g).abs() > 1 || ground >= top {
+                            return;
+                        }
+                        if blocks.contains(IVec3::new(p.x, ground, p.y)) && !area.world.terrain.is_firm(blocks.get(IVec3::new(p.x, ground - 1, p.y))) {
+                            return;
+                        }
+                        for y in ground..=top {
+                            blocks.set(IVec3::new(p.x, y, p.y), if cap && y == top { self.moss } else { block });
+                        }
+                    };
+                    // A leaning stone's main column is the stub; its full height stands beside.
+                    match side {
+                        Some(d) if leaning => {
+                            column(at, g + low, false);
+                            column(at + d, g + tall, mossy);
+                        }
+                        Some(d) => {
+                            column(at, g + tall, mossy);
+                            column(at + d, g + low, false);
+                        }
+                        None => column(at, g + tall, mossy),
                     }
                 }
             }

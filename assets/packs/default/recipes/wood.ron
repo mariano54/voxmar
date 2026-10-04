@@ -33,7 +33,7 @@
         "mangrove_wood": ["#6a2823", "#7b302a", "#8c3931", "#9c4339", "#ab4e42", "#b85a4c"],
         "maple_bark": ["#37291f", "#443328", "#513d31", "#5e483a", "#6b5344"],
         "maple_wood": ["#9c6540", "#ad7249", "#bc8053", "#c98e5e", "#d49c6a", "#ddaa78"],
-        "maple_leaves": ["#7f1c10", "#a02a15", "#c13e1b", "#d95823", "#ea7a2f", "#f5a040"],
+        "maple_leaves": ["#7a2416", "#97341d", "#b04826", "#c45f30", "#d47c3f", "#e09a55"],
         "maple_sapling": ["#8a2412", "#ad3618", "#cc4e1f", "#e2702b", "#f0963a"],
         "redwood_bark": ["#461c12", "#572418", "#692d1e", "#7a3725", "#8a422d"],
         "redwood_wood": ["#742f21", "#863928", "#984330", "#a94e39", "#b85a43", "#c5674e"],
@@ -189,7 +189,7 @@
         // Autumn leaves, untinted.
         "block/golden_birch_leaves": (base: "block/birch_leaves", palettes: {"leaves": ["#6e4c12", "#90681a", "#b28a24", "#ccaa34", "#e0c44c", "#eed878"]}),
         "block/russet_oak_leaves": (base: "block/oak_leaves", palettes: {"leaves": ["#5a240e", "#7c3414", "#9c4a1a", "#b86224", "#cc7e34", "#dc9a4a"]}),
-        "block/amber_maple_leaves": (base: "block/maple_leaves", palettes: {"leaves": ["#8a3a0c", "#b45410", "#d67418", "#ee9824", "#f8b83a", "#ffd468"]}),
+        "block/amber_maple_leaves": (base: "block/maple_leaves", palettes: {"leaves": ["#82420f", "#a65c17", "#c27822", "#d6952f", "#e3b04a", "#eeca70"]}),
         // Glowcaps: giant mushrooms with pale fibrous stems and glowing teal caps.
         "block/glowcap_stem": (palettes: {"main": ["#8e8676", "#a89f8e", "#c0b8a6", "#d6cfbd", "#e8e2d2"]}, layers: [
             Paint(palette: "main", base: 0.55, shade: [Noise(cells: (16, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.2, warp: 0.6)], clean: true),

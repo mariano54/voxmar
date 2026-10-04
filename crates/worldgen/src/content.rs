@@ -672,8 +672,10 @@ pub struct FloraDef {
     /// Plants, by selector: shares among the carpeting plants and among the flowers; for
     /// plants that grow alone, the weight is their chance in a hundred per block.
     pub plants: Vec<Select>,
-    /// Rare fantastical trees and plants, by selector, more common where aether is high.
-    /// Everything tagged `wonder` that suits the climate when left out.
+    /// Rare fantastical trees and plants, by selector, more common where aether is high:
+    /// plants scattered, trees in rare lone trees and tiny groves. Everything tagged
+    /// `wonder` that suits the climate when left out; trees named in `trees` are part of
+    /// the forest instead.
     pub wonders: Option<Vec<Select>>,
     /// Decorations from `decorations.ron`, by selector; the weight scales each one's
     /// density. When left out, every decoration carrying one of the biome's tags.
@@ -817,7 +819,8 @@ impl GroundDecorationDef {
         match &self.shape {
             Shape::Patch { radius, .. } | Shape::Boulder { radius, .. } | Shape::Bush { radius, .. } => radius.1 * 1.35,
             Shape::Rocks { spread, size, .. } => spread + size.1,
-            Shape::StandingStones { radius, .. } | Shape::FairyRing { radius, .. } => radius.1 + 1.0,
+            Shape::StandingStones { radius, .. } => radius.1 + 2.0,
+            Shape::FairyRing { radius, .. } => radius.1 + 1.0,
             // Centred on its position; a thick trunk is three wide, branches stick out two
             // more, and the stump stands up to four blocks behind its foot.
             Shape::FallenLog { length, .. } => length.1 as f32 / 2.0 + 4.0,

@@ -163,7 +163,8 @@ impl Terrain {
             patches: noise(seed, 24, 0.04, FractalType::FBm, 2),
             mixes: noise(seed, 25, 1.0 / 9.0, FractalType::FBm, 2),
             soft,
-            stone: by_id(&|block| stones.contains(&block)),
+            // Ores replace plain stone, never gems: a crystal cave's walls, a geode's lining.
+            stone: by_id(&|block| stones.contains(&block) && !registry.def(block).has_tag("gem")),
             grounds,
             plants,
             firm,
