@@ -40,6 +40,17 @@ pub(crate) fn thread_time() -> Duration {
     Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
 }
 
+/// Asks the scheduler to keep this thread on the performance cores: on a busy machine it
+/// may otherwise move a benchmark to the efficiency cores, which run it twice as slowly
+/// in CPU time.
+pub(crate) fn prefer_fast_cores() {
+    #[cfg(target_os = "macos")]
+    // SAFETY: no preconditions; it only changes this thread's scheduling class.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
+    }
+}
+
 /// The areas `generation_speed` generates: 8×8 columns at each of these, far enough
 /// apart that each needs rivers and trails of its own.
 const AREAS: [(i32, i32); 5] = [(0, 0), (60, -90), (-120, 40), (150, 150), (-40, -200)];
@@ -56,6 +67,7 @@ const SEEDS: [u64; 3] = [1, 3, 0x5eed];
 fn generation_stages() {
     // CPU time on this thread measures all the work only if it all stays here.
     crate::parallel::set_enabled(false);
+    prefer_fast_cores();
     let registry = registry();
     // Cold and warm: stage times, CPU time, columns.
     let mut passes = [(Times::default(), Duration::ZERO); 2];
@@ -120,6 +132,7 @@ fn generation_stages() {
 #[test]
 #[ignore]
 fn first_column() {
+    prefer_fast_cores();
     let registry = registry();
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
     for seed in SEEDS {
