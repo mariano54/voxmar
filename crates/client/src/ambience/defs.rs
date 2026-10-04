@@ -61,8 +61,15 @@ pub enum Fixed {
     Snow,
     /// Thunderstorm: rain from heaped cloud, 0..1.
     Storm,
-    /// Wind speed, blocks per second.
+    /// Wind speed, blocks per second, gusts included.
     Wind,
+    /// How much the wind gusts, 0..1.
+    Gusts,
+    /// Hail and sleet falling where the player can hear them, 0..1.
+    Hail,
+    Sleet,
+    /// Sand or dust blowing, 0..1.
+    Dust,
     /// Cloud cover, 0..1.
     Cover,
     /// 1 with the head under water.
@@ -70,7 +77,7 @@ pub enum Fixed {
 }
 
 impl Fixed {
-    pub const ALL: [Fixed; 19] = [
+    pub const ALL: [Fixed; 23] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -88,6 +95,10 @@ impl Fixed {
         Fixed::Snow,
         Fixed::Storm,
         Fixed::Wind,
+        Fixed::Gusts,
+        Fixed::Hail,
+        Fixed::Sleet,
+        Fixed::Dust,
         Fixed::Cover,
         Fixed::Underwater,
     ];
@@ -111,6 +122,10 @@ impl Fixed {
             Fixed::Snow => "snow",
             Fixed::Storm => "storm",
             Fixed::Wind => "wind",
+            Fixed::Gusts => "gusts",
+            Fixed::Hail => "hail",
+            Fixed::Sleet => "sleet",
+            Fixed::Dust => "dust",
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
         }

@@ -422,6 +422,7 @@ impl Rivers {
                 current: if submerged { carved.current } else { None },
                 cavity: carved.cavity,
                 form: ground.form,
+                trail: None,
             },
             near: carved.near.is_some() || carved.wet > 0.0,
         }

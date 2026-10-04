@@ -47,6 +47,13 @@ pub enum Synth {
     Surf,
     /// The low, still air of a cave, with a faint draught.
     Cave,
+    /// Hail on the ground and on everything around: hard, bright ticks and rattles, coming
+    /// in waves.
+    Hail,
+    /// Sleet: a fine, icy patter over a soft, slushy hiss.
+    Sleet,
+    /// Sand and dust blown hard: a dry, grainy hiss over a roar, rising with the gusts.
+    Sandstorm,
     /// A quick songbird: trills and twitters.
     Warbler,
     /// A fluting songbird that repeats its phrases.
@@ -77,7 +84,7 @@ pub enum Synth {
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 21] = [
+    pub const ALL: [Synth; 24] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -86,6 +93,9 @@ impl Synth {
         Synth::Stream,
         Synth::Surf,
         Synth::Cave,
+        Synth::Hail,
+        Synth::Sleet,
+        Synth::Sandstorm,
         Synth::Warbler,
         Synth::Thrush,
         Synth::Whistler,
@@ -105,7 +115,17 @@ impl Synth {
     pub fn is_bed(self) -> bool {
         matches!(
             self,
-            Synth::Wind | Synth::Gale | Synth::Rustle | Synth::Meadow | Synth::Crickets | Synth::Stream | Synth::Surf | Synth::Cave
+            Synth::Wind
+                | Synth::Gale
+                | Synth::Rustle
+                | Synth::Meadow
+                | Synth::Crickets
+                | Synth::Stream
+                | Synth::Surf
+                | Synth::Cave
+                | Synth::Hail
+                | Synth::Sleet
+                | Synth::Sandstorm
         )
     }
 
@@ -173,6 +193,9 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Stream => stream(noise, len),
         Synth::Surf => surf(noise, len),
         Synth::Cave => cave(noise, len),
+        Synth::Hail => hail(noise, len),
+        Synth::Sleet => sleet(noise, len),
+        Synth::Sandstorm => sandstorm(noise, len),
         one_shot => panic!("{one_shot:?} makes one-shots, not a bed"),
     }
 }
@@ -385,6 +408,98 @@ fn wind(noise: &mut Noise, len: usize, gale: bool) -> Vec<f32> {
                 sample += whistle.band(white) * 0.15 * g * g;
             }
             sample * (0.3 + 0.7 * g.powf(1.5))
+        })
+        .collect()
+}
+
+/// Ice striking things: `rate` impacts a second at most (in waves), each a burst of noise
+/// `length` seconds long ringing at a random pitch in `band`, some with a duller knock.
+fn impacts(noise: &mut Noise, len: usize, rate: f32, length: (f32, f32), band: (f32, f32), knock: f32) -> Vec<f32> {
+    let waves = Drift::new(noise, 0.11);
+    let mut out = vec![0.0f32; len];
+    let mut t = 0.0;
+    while t < len as f32 / SR {
+        let w = 0.35 + 0.65 * waves.unit(t);
+        t += -(1.0 - noise.unit()).max(1e-4).ln() / (rate * w);
+        let count = seconds(between(noise, length.0, length.1)).max(2);
+        let gain = (0.2 + 0.8 * noise.unit().powi(3)) * w;
+        let pitch = between(noise, band.0, band.1);
+        let mut ring = Svf::new(pitch, between(noise, 3.0, 8.0));
+        let dull = noise.unit() < knock;
+        let mut thud = Svf::new(between(noise, 180.0, 420.0), 2.0);
+        add_at(&mut out, t, count, |j| {
+            let x = j as f32 / count as f32;
+            let envelope = (1.0 - x).powi(3);
+            let white = noise.next();
+            let mut sample = ring.band(white) * envelope;
+            if dull {
+                sample += thud.band(white) * 1.5 * envelope;
+            }
+            sample * gain
+        });
+    }
+    // Round off the loudest strikes, so the bed is dense rather than a few sharp cracks.
+    let rms = (out.iter().map(|s| s * s).sum::<f32>() / len.max(1) as f32).sqrt().max(1e-6);
+    out.iter_mut().for_each(|s| *s = (*s / (3.0 * rms)).tanh() * 3.0 * rms);
+    out
+}
+
+/// Hail: hard ticks from stones bouncing on ground, rock and leaves, a duller knock now
+/// and then, and a rattling hiss of the rest.
+fn hail(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut out = impacts(noise, len, 220.0, (0.004, 0.012), (1800.0, 5200.0), 0.25);
+    let mut hiss = Svf::new(4200.0, 0.7);
+    let swell = Drift::new(noise, 0.11);
+    for (i, sample) in out.iter_mut().enumerate() {
+        *sample += hiss.band(noise.next()) * 0.12 * (0.4 + 0.6 * swell.unit(i as f32 / SR));
+    }
+    out
+}
+
+/// Sleet: many fine, quiet ticks of ice pellets over the slushy hiss of the wet ones.
+fn sleet(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut out = impacts(noise, len, 650.0, (0.0015, 0.004), (3500.0, 6500.0), 0.0);
+    let mut slush = Svf::new(1600.0, 0.5);
+    let mut fizz = Svf::new(5500.0, 0.6);
+    let swell = Drift::new(noise, 0.09);
+    for (i, sample) in out.iter_mut().enumerate() {
+        let g = 0.5 + 0.5 * swell.unit(i as f32 / SR);
+        let white = noise.next();
+        *sample = *sample * 0.5 + (slush.band(white) * 0.35 + fizz.band(white) * 0.2) * g;
+    }
+    out
+}
+
+/// A sandstorm: the roar of strong wind, a dry hiss of sand and a dense crackle of grains
+/// striking, all surging together with the gusts.
+fn sandstorm(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let gust = Drift::new(noise, 0.16);
+    let flutter = Drift::new(noise, 1.7);
+    let mut roar = Svf::new(260.0, 0.7);
+    let mut hiss = Svf::new(3500.0, 0.6);
+    let mut top = Svf::new(6500.0, 0.8);
+    let mut grains = vec![0.0f32; len];
+    let mut i = 0;
+    while i < len {
+        let g = gust.unit(i as f32 / SR);
+        if noise.unit() < 0.12 + 0.5 * g {
+            let grain = seconds(between(noise, 0.0004, 0.0012)).max(2);
+            let strength = 0.3 + 0.7 * noise.unit().powi(2);
+            for j in 0..grain.min(len - i) {
+                grains[i + j] += strength * (PI * j as f32 / grain as f32).sin();
+            }
+        }
+        i += seconds(0.0007).max(1);
+    }
+    (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let g = gust.unit(t);
+            let white = noise.next();
+            roar.tune(220.0 + 260.0 * g);
+            hiss.tune(3000.0 + 1500.0 * g * (1.0 + 0.1 * flutter.at(t)));
+            let body = roar.band(white) * (0.3 + 0.7 * g) + hiss.band(white) * 0.45 * (0.4 + 0.6 * g);
+            body + top.band(white * grains[i]) * 0.8 * (0.3 + 0.7 * g)
         })
         .collect()
 }

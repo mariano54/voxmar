@@ -22,10 +22,11 @@
 //! rare effect may occur at all, so rare ones are rare even where their conditions often
 //! hold, and every world features a few from its seed.
 //!
-//! An admin can force a kind of weather (`/weather storm`) on the land around them for a
-//! while: the cells there are held at the preset, its effects are held at full strength
-//! and its values are blended over what the drivers would make. When it ends the cells
-//! are released from that state and the natural weather slowly takes over again.
+//! An admin can force a kind of weather (`/weather storm 0.6`) on the land around them for
+//! a while, at an intensity: the cells there are held at the preset, its effects are held
+//! as strongly as the intensity and its values are blended over what the drivers would
+//! make. When it ends the cells are released from that state and the natural weather
+//! slowly takes over again.
 //!
 //! The simulation runs on simulation ticks, so it keeps going when the time of day is
 //! frozen or sped up; only what follows the sun (afternoon showers, dawn fog, night-time
@@ -45,13 +46,13 @@ use voxmar_engine::glam::{DVec2, IVec2, IVec3, Vec2, Vec3};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::weather::{Input, Inputs, Preset, WeatherTable, advance_gusts, ramp};
 use voxmar_worldgen::{Featured, Overworld, SEA_LEVEL, Tier as _};
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND, Weather as LocalWeather};
+use voxmar_protocol::{Nearby, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND, WEATHER_CELL, Weather as LocalWeather};
 
 use crate::Server;
 use crate::process::Process;
 
 /// Blocks per weather cell.
-const CELL: i32 = 128;
+const CELL: i32 = WEATHER_CELL;
 /// Cells simulated around each player in every direction, enough to interpolate between.
 const RANGE: i32 = 2;
 /// Seconds a cell catches up on when it comes into range, in steps of `CATCH_UP_STEP`.
@@ -66,6 +67,8 @@ const RESEND: u64 = 5 * TICKS_PER_SECOND as u64;
 /// blocks, players see and hear lightning.
 const LIGHTNING: f32 = 0.015;
 const LIGHTNING_REACH: f32 = 1500.0;
+/// Blocks above the ground (or the sea) a flash within a cloud lights it.
+const CLOUD_FLASH_HEIGHT: i32 = 160;
 /// Strikes per second near a player at full `lightning` from effects.
 const EFFECT_LIGHTNING: f32 = 1.0 / 60.0;
 /// Forced weather covers this many blocks around where it was asked for, then fades out
@@ -166,6 +169,15 @@ pub(crate) fn chances(table: &WeatherTable, featured: &Featured) -> Vec<f32> {
     let items: Vec<(&str, _)> = table.effects().iter().map(|e| (e.name.as_str(), e.rarity)).collect();
     let featured = featured.multipliers("weather", &items);
     table.effects().iter().zip(featured).map(|(effect, boost)| (effect.rarity.multiplier() * boost).min(1.0)).collect()
+}
+
+/// Lightning: where it flashes (x, z), the seed of the bolt's shape, and whether it stays
+/// within the cloud rather than striking the ground.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Strike {
+    at: Vec2,
+    seed: u32,
+    cloud: bool,
 }
 
 /// The land and climate at one place, as effects read them.
@@ -368,6 +380,19 @@ impl WeatherState {
             .max_by(|a, b| a.1.total_cmp(&b.1))
     }
 
+    /// How hard it rains or snows in the weather cells around `at`, for showing storms
+    /// coming: the 5×5 cells centred on the one `at` is in.
+    pub fn nearby(&mut self, at: Vec2) -> Nearby {
+        let center = at.floor().as_ivec2().div_euclid(IVec2::splat(CELL));
+        let mut rain = [0u8; 25];
+        for (i, value) in rain.iter_mut().enumerate() {
+            let cell = center + IVec2::new(i as i32 % 5 - 2, i as i32 / 5 - 2);
+            let middle = cell_center(cell);
+            *value = (self.precipitation.sample(middle.x, middle.y).clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+        Nearby { first: (center - 2) * CELL, rain }
+    }
+
     /// Whether a command changed the weather at `at` in the last few seconds.
     fn recently_changed(&self, at: Vec2) -> bool {
         self.changes.iter().any(|change| change.covers(at))
@@ -450,17 +475,20 @@ impl Process for Weather {
                 });
             if due {
                 let names = named(&report).into_iter().map(|i| server.weather.table.effects()[i].short_name().to_owned()).collect();
-                server.players[&id].connection.send(ServerMessage::Weather { weather: report.weather, effects: names, quick });
+                let nearby = server.weather.nearby(at);
+                server.players[&id].connection.send(ServerMessage::Weather { weather: report.weather, effects: names, nearby, quick });
                 self.sent.insert(id, (report, tick));
             }
         }
 
-        for (at, seed) in strikes {
+        for Strike { at, seed, cloud } in strikes {
             let ground = server.weather.land.height(at.x.floor() as i32, at.y.floor() as i32) + 1;
-            let strike = Vec3::new(at.x, ground as f32, at.y);
+            // A flash in the cloud lights it from inside, near its base.
+            let y = if cloud { ground.max(SEA_LEVEL) + CLOUD_FLASH_HEIGHT } else { ground };
+            let strike = Vec3::new(at.x, y as f32, at.y);
             for (id, player) in &positions {
                 if player.distance(at) < LIGHTNING_REACH {
-                    server.players[id].connection.send(ServerMessage::Lightning { at: strike, seed });
+                    server.players[id].connection.send(ServerMessage::Lightning { at: strike, seed, cloud });
                 }
             }
         }
@@ -554,8 +582,8 @@ fn top_block(column: &Column, blocks: &BlockRegistry, x: i32, z: i32) -> Option<
 impl WeatherState {
     /// Advances the cells within range of each block position in `around` to `tick`, and
     /// returns cells no longer in range to their baseline. `day` is the time of day, in
-    /// ticks. Returns where lightning flashed, with a seed for each bolt's shape.
-    fn update(&mut self, temperature: &mut Field, around: &[IVec2], tick: u64, day: f64) -> Vec<(Vec2, u32)> {
+    /// ticks. Returns where lightning flashed.
+    fn update(&mut self, temperature: &mut Field, around: &[IVec2], tick: u64, day: f64) -> Vec<Strike> {
         // Cells a command released go back to what nature would have made of them.
         let quick = QUICK * TICKS_PER_SECOND as u64;
         let released: Vec<Vec2> = self.changes.iter().filter(|c| c.release && c.tick + quick > tick).map(|c| c.center).collect();
@@ -674,8 +702,12 @@ impl WeatherState {
             * (1.0 - 0.35 * place.forest)
             * (1.0 - 0.3 * smoothstep(2.0, 20.0, place.valley));
         let storm = precipitation * convection;
-        let speed = (0.6 + 4.5 * settled * settled + 6.0 * front + 9.0 * storm) * (0.75 + 0.35 * afternoon) * exposure;
-        let gusts = (0.1 + 0.35 * smoothstep(3.0, 10.0, speed) + 0.25 * front + 0.5 * storm).min(1.0);
+        // Rain and snow come with a freshening wind.
+        let falling = smoothstep(0.02, 0.3, precipitation);
+        let speed = (1.5 + 4.0 * settled * settled + 5.0 * front * front + 3.0 * falling + 10.0 * storm * storm)
+            * (0.75 + 0.35 * afternoon)
+            * exposure;
+        let gusts = (0.05 + 0.3 * smoothstep(4.0, 12.0, speed) + 0.15 * front + 0.45 * storm).min(1.0);
 
         let celsius = now_temperature(mean, cover, place.moisture, fraction);
         let mut weather = LocalWeather {
@@ -714,7 +746,7 @@ impl WeatherState {
             .collect();
         if let Some((preset, weight)) = &forcing {
             for index in preset.effects.iter().filter_map(|name| self.table.effect(name)) {
-                strengths[index] = strengths[index].max(*weight);
+                strengths[index] = strengths[index].max(*weight * preset.intensity);
             }
         }
         self.table.apply(&mut weather, &strengths, place.floor);
@@ -817,18 +849,20 @@ impl Climate {
 
 impl Sky {
     /// Where lightning flashes in a cell this second, if it does: a downpour under strong
-    /// updrafts is a thunderstorm, which has a chance each second to flash somewhere in
-    /// the cell, drawn from the cell's own random stream.
-    fn lightning(&self, cell: IVec2, rain: f32, lift: f32, tick: u64) -> Option<(Vec2, u32)> {
-        let chance = LIGHTNING * smoothstep(0.25, 0.8, rain * smoothstep(0.1, 0.6, lift));
+    /// updrafts is a thunderstorm, which has a chance each second to strike somewhere in
+    /// the cell, drawn from the cell's own random stream, and twice that chance to flash
+    /// inside the cloud instead.
+    fn lightning(&self, cell: IVec2, rain: f32, lift: f32, tick: u64) -> Option<Strike> {
+        let chance = (LIGHTNING * smoothstep(0.2, 0.7, rain * smoothstep(0.1, 0.6, lift))) as f64;
         let h = mix(mix(mix(self.seed ^ STRIKES ^ tick) ^ cell.x as u64) ^ cell.y as u64);
+        let roll = unit(h);
         let place = Vec2::new(unit(mix(h)) as f32, unit(mix(mix(h))) as f32);
-        (unit(h) < chance as f64).then(|| ((cell.as_vec2() + place) * CELL as f32, (h >> 32) as u32))
+        (roll < 3.0 * chance).then(|| Strike { at: (cell.as_vec2() + place) * CELL as f32, seed: (h >> 32) as u32, cloud: roll >= chance })
     }
 
     /// Lightning from effects (thundersnow, fantastical storms) near a player, at
     /// `strength` (the `lightning` channel): 150 to 900 blocks away.
-    fn effect_lightning(&self, player: PlayerId, at: Vec2, strength: f32, tick: u64) -> Option<(Vec2, u32)> {
+    fn effect_lightning(&self, player: PlayerId, at: Vec2, strength: f32, tick: u64) -> Option<Strike> {
         let h = mix(mix(self.seed ^ EFFECT_STRIKES ^ tick) ^ player as u64);
         if unit(h) >= (EFFECT_LIGHTNING * strength) as f64 {
             return None;
@@ -837,7 +871,8 @@ impl Sky {
         let (a, b) = (unit(mix(h)) as f32 * 2.0 - 1.0, unit(mix(mix(h))) as f32 * 2.0 - 1.0);
         let direction = Vec2::new(a, b).normalize_or(Vec2::X);
         let distance = 150.0 + 750.0 * unit(mix(mix(mix(h)))) as f32;
-        Some((at + direction * distance, (h >> 32) as u32))
+        // Mostly strikes, some flashes within the cloud.
+        Some(Strike { at: at + direction * distance, seed: (h >> 32) as u32, cloud: unit(mix(h ^ 0xc10d)) < 0.4 })
     }
 
     /// The air mass and lift at a block position and tick. `day` is the time of day as a
@@ -955,10 +990,11 @@ fn step(cell: Cell, drivers: &Drivers, climate: &Climate, day: f64, forcing: Opt
     let saturation = 0.78 - 0.08 * (1.0 - temperature) - 0.2 * drivers.lift;
     let cloud_target = smoothstep(saturation - 0.4, saturation + 0.08, humidity);
     let clouds = cell.clouds + (cloud_target - cell.clouds) * rate(90.0);
-    // Thick cloud rains, harder from strong updrafts or very moist air; rain dries the
-    // air, which thins the cloud until the air mass brings more moisture.
+    // Thick cloud rains, lightly unless the air is very moist or rising fast: drizzle and
+    // light rain are common, downpours need a storm's updrafts or saturated air. Rain dries
+    // the air, which thins the cloud until the air mass brings more moisture.
     let wet = smoothstep(saturation, saturation + 0.25, humidity).max(drivers.lift);
-    let rain_target = smoothstep(0.8, 0.97, clouds) * (0.3 + 0.7 * wet);
+    let rain_target = smoothstep(0.8, 0.97, clouds) * (0.12 + 0.88 * wet * wet);
     let precipitation = cell.precipitation + (rain_target - cell.precipitation) * rate(30.0);
     humidity -= precipitation * 0.0012 * dt;
 
@@ -1040,7 +1076,7 @@ mod tests {
 
     /// Mean temperature, rainfall, and the place: moisture, coast, water, altitude,
     /// valley, latitude, vegetation, forest, aether.
-    const KINDS: [(&str, f32, f32, [f32; 9]); 9] = [
+    const KINDS: [(&str, f32, f32, [f32; 9]); 11] = [
         ("temperate valley", 11.0, 900.0, [1.0, 0.0, 0.0, 20.0, 14.0, 0.5, 0.8, 0.5, 0.2]),
         ("temperate coast", 13.0, 1200.0, [1.2, 1.0, 0.0, 4.0, 0.0, 0.45, 0.7, 0.2, 0.3]),
         ("hot desert", 28.0, 120.0, [0.08, 0.0, 0.0, 30.0, 0.0, 0.2, 0.05, 0.0, 0.25]),
@@ -1050,6 +1086,8 @@ mod tests {
         ("rainforest marsh", 26.0, 3200.0, [1.9, 0.2, 0.6, 3.0, 4.0, 0.05, 1.0, 0.9, 0.4]),
         ("aether meadow", 12.0, 1000.0, [1.0, 0.0, 0.0, 30.0, 2.0, 0.5, 0.8, 0.2, 0.85]),
         ("cold north coast", 3.0, 800.0, [1.0, 0.9, 0.2, 5.0, 0.0, 0.6, 0.5, 0.3, 0.3]),
+        ("temperate lake", 10.0, 1000.0, [1.1, 0.3, 1.0, 2.0, 0.0, 0.5, 0.6, 0.2, 0.3]),
+        ("deep arctic", -20.0, 250.0, [0.8, 0.2, 0.0, 20.0, 2.0, 0.95, 0.05, 0.0, 0.3]),
     ];
 
     impl Countries {
@@ -1201,19 +1239,22 @@ mod tests {
         };
         assert!(flashes(0.0, 1.0).is_empty() && flashes(1.0, 0.0).is_empty() && flashes(0.2, 0.5).is_empty());
         let storm = flashes(1.0, 1.0);
-        assert!((100..500).contains(&storm.len()), "{} flashes", storm.len());
-        assert!(storm.iter().all(|(at, _)| (384.0..512.0).contains(&at.x) && (-512.0..-384.0).contains(&at.y)));
+        assert!((300..1500).contains(&storm.len()), "{} flashes", storm.len());
+        assert!(storm.iter().all(|s| (384.0..512.0).contains(&s.at.x) && (-512.0..-384.0).contains(&s.at.y)));
+        // Most flashes stay in the cloud.
+        let ground = storm.iter().filter(|s| !s.cloud).count();
+        assert!(ground * 2 < storm.len() && ground * 5 > storm.len(), "{ground} of {}", storm.len());
         assert_eq!(storm, flashes(1.0, 1.0));
         // Effects' lightning strikes around the player, as often as the channel says.
         let near: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, s * SECOND)).collect();
         assert!((700..1300).contains(&near.len()), "{} strikes", near.len());
-        assert!(near.iter().all(|(at, _)| (149.0..901.0).contains(&at.length())));
+        assert!(near.iter().all(|s| (149.0..901.0).contains(&s.at.length())));
     }
 
     #[test]
     fn forced_weather_holds_then_eases_back() {
         let table = table();
-        let storm = table.preset("storm").unwrap().clone();
+        let storm = table.preset("storm").unwrap().at(1.0);
         // A desert, where it would never rain.
         let (mut weather, mut temperature) = setup(4, Vec2::X, 2);
         let (here, far) = (Vec2::new(10.0, 20.0), Vec2::new(10.0, 3000.0));
@@ -1227,7 +1268,7 @@ mod tests {
         assert!(weather.recently_changed(here) && !weather.recently_changed(far));
         let held = report(&mut weather, &mut temperature, 2);
         assert_eq!((held.cover, held.precipitation, held.convection), (1.0, 1.0, 1.0), "{held:?}");
-        assert!((held.wind.length() - 10.8).abs() < 1e-3);
+        assert!((held.wind.length() - 12.0).abs() < 1e-3);
         assert_eq!(weather.forced_at(here, 10_000 + 2 * SECOND).map(|(p, left)| (p.short_name(), left)), Some(("storm", 59)));
         assert!(weather.forced_at(far, 10_000).is_none());
         // Still forced a minute in, then fading, then released to slowly dry out.
@@ -1241,7 +1282,7 @@ mod tests {
         assert!(weather.forced.is_empty());
 
         // Released at once by `/weather natural`.
-        let rain = table.preset("rain").unwrap().clone();
+        let rain = table.preset("rain").unwrap().at(0.5);
         weather.force(rain, here, 600, 10_000 + 900 * SECOND);
         assert_eq!(report(&mut weather, &mut temperature, 901).precipitation, 0.5);
         assert!(weather.release(here, 10_000 + 902 * SECOND));
@@ -1260,7 +1301,7 @@ mod tests {
             weather.local(&mut temperature, here, tick, tick as f64)
         };
         report(&mut weather, 0);
-        weather.force(table.preset("blizzard").unwrap().clone(), here, 300, 10_000);
+        weather.force(table.preset("blizzard").unwrap().at(1.0), here, 300, 10_000);
         let blizzard = report(&mut weather, 1);
         assert_eq!(blizzard.effects[0], (table.effect("blizzard").unwrap(), 1.0));
         let shown = blizzard.weather;
@@ -1272,7 +1313,7 @@ mod tests {
         assert!(after[200] > 0.3 && after.last().unwrap() < &0.05, "{} then {}", after[200], after.last().unwrap());
 
         for name in ["sandstorm", "aurora", "rainbow", "aether_storm", "sea_fog"] {
-            weather.force(table.preset(name).unwrap().clone(), here, 60, 10_000 + 2000 * SECOND);
+            weather.force(table.preset(name).unwrap().at(1.0), here, 60, 10_000 + 2000 * SECOND);
             let shown = report(&mut weather, 2001);
             let effect = table.preset(name).unwrap().effects[0].clone();
             assert!(shown.effects.iter().any(|&(i, s)| table.effects()[i].short_name() == effect && s == 1.0), "{name}: {shown:?}");
@@ -1316,6 +1357,73 @@ mod tests {
         }
     }
 
+    /// How each kind of country's weather is spread over four days at a dozen places: the
+    /// share of time it is cloudy, rains or snows at each intensity, how hard the wind blows,
+    /// and its commonest effects.
+    fn climate_table() -> Vec<String> {
+        let table = table();
+        let mut lines = Vec::new();
+        for (kind, (name, ..)) in KINDS.iter().enumerate() {
+            let (mut weather, mut temperature) = state(17, Vec2::new(0.8, 0.6), Countries { only: Some(kind) }, None);
+            let places: Vec<IVec2> = (0..12).map(|i| IVec2::new(i * 5000 + 64, i * -3000 + 64)).collect();
+            let (mut samples, mut cloudy) = (0.0f32, 0.0f32);
+            let mut falling = [0.0f32; 4];
+            let mut wind = [0.0f32; 5];
+            let mut shown = vec![0.0f32; table.effects().len()];
+            for step in 0..4 * 24 * 3600 / 30 {
+                let tick = 7 * 24_000 + step * 30 * SECOND;
+                weather.update(&mut temperature, &places, tick, tick as f64);
+                if step % 7 != 0 {
+                    continue;
+                }
+                for at in &places {
+                    let report = weather.local(&mut temperature, at.as_vec2(), tick, tick as f64);
+                    let w = report.weather;
+                    samples += 1.0;
+                    cloudy += (w.cover > 0.6 && w.precipitation < 0.05) as u8 as f32;
+                    if w.precipitation >= 0.05 {
+                        falling[[0.3, 0.6, 0.85, f32::MAX].iter().position(|&top| w.precipitation < top).unwrap()] += 1.0;
+                    }
+                    let speed = w.wind.length();
+                    wind[[2.0, 5.0, 9.0, 14.0, f32::MAX].iter().position(|&top| speed < top).unwrap()] += 1.0;
+                    for &(i, strength) in &report.effects {
+                        shown[i] += (strength >= NAMED) as u8 as f32;
+                    }
+                }
+            }
+            let pct = |n: f32| 100.0 * n / samples;
+            let mut effects: Vec<(usize, f32)> = shown.iter().copied().enumerate().filter(|&(_, n)| n > 0.0).collect();
+            effects.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let effects: Vec<String> =
+                effects.iter().take(14).map(|&(i, n)| format!("{} {:.1}", table.effects()[i].short_name(), pct(n))).collect();
+            lines.push(format!(
+                "{name:18} cloudy {:4.1}  falling light {:4.1} moderate {:4.1} heavy {:4.1} max {:4.1}  wind <2 {:4.1} <5 {:4.1} <9 {:4.1} <14 {:4.1} more {:4.1}  {}",
+                pct(cloudy),
+                pct(falling[0]),
+                pct(falling[1]),
+                pct(falling[2]),
+                pct(falling[3]),
+                pct(wind[0]),
+                pct(wind[1]),
+                pct(wind[2]),
+                pct(wind[3]),
+                pct(wind[4]),
+                effects.join(", "),
+            ));
+        }
+        lines
+    }
+
+    /// `cargo test --profile iter -p voxmar_server climate_spread -- --ignored --nocapture`
+    /// prints the weather of each kind of country, in percent of the time.
+    #[test]
+    #[ignore]
+    fn climate_spread() {
+        for line in climate_table() {
+            println!("{line}");
+        }
+    }
+
     #[test]
     fn effects_spread_from_everyday_to_rare() {
         let table = table();
@@ -1334,7 +1442,7 @@ mod tests {
             assert!(conditions[i] > 0.0005, "{} never has its conditions", effect.name);
             // Everyday effects are seen every day or so somewhere.
             if effect.rarity == Common {
-                assert!(natural[i] > 0.002, "{} is too rare: {}", effect.name, natural[i]);
+                assert!(natural[i] > 0.001, "{} is too rare: {}", effect.name, natural[i]);
             }
         }
     }

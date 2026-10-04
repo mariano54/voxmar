@@ -56,6 +56,8 @@ pub struct GeoSample {
     pub cavity: Option<Cavity>,
     /// What the terrain shapes made of the column.
     pub form: Form,
+    /// What a trail does here.
+    pub trail: Option<crate::trails::TrailMark>,
 }
 
 impl GeoSample {

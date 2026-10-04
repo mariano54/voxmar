@@ -54,6 +54,8 @@ bevy = { workspace = true, features = [
     "bevy_audio",
     "mp3",
     "wav",
+    # Block sounds read from the player's Minecraft install (see sfx/minecraft.rs).
+    "symphonia-vorbis",
 ] }
 crossbeam-channel.workspace = true
 rayon.workspace = true
@@ -61,5 +63,6 @@ rustc-hash.workspace = true
 bytemuck.workspace = true
 ron.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 zip.workspace = true
