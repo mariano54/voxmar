@@ -74,14 +74,20 @@ fewer quads than Full, and loads much faster, since fewer quads are uploaded.
 
 ## Where a frame goes now
 
-Moving terrain off Bevy's mesh entities and trimming Bevy to the plugins in use took a
-dense view from 3.25 to 2.8 ms (and flights from 2.6–2.9 to 2.4–2.5 ms median). What
-remains is mostly Bevy's fixed per-frame cost, not terrain:
+At view distance 32 with the default settings (MSAA 4×, Balanced far detail, the new
+lighting and water), looking at a still view, the GPU takes 6.0–6.6 ms a frame, measured
+from Metal traces one game at a time on an M5 Max (about 100–110 fps):
 
-- Render thread ~2.9 ms: ~1.5 ms of render-world systems and their scheduling before the
-  graph runs, ~1.3 ms encoding the graph (terrain draws, shadows, bloom, UI).
-- Main thread ~1.4 ms, which overlaps the render thread.
-- Uploading streamed meshes is budgeted at 32k quads a frame (~0.5 ms at most).
+- Main opaque pass: vertices 1.6–1.8 ms, fragments 1.5–1.6 ms (the soft shadow filter is
+  most of the fragment cost).
+- Sun shadows: about 0.9 ms, most of it the farthest cascade's vertices.
+- Light shafts about 0.3 ms, water about 0.3 ms, translucent terrain about 0.4 ms, bloom
+  and post effects about 0.4 ms.
+- The pass that builds each view's indices is skipped while the view holds still, and
+  costs about 0.5–0.8 ms while it moves.
+
+The CPU side is no longer the limit: about 130 terrain draws a frame, about 2 ms of render
+thread work. Before this work the same view took about 6,600 draw calls.
 
 ## Distant shimmer and anti-aliasing
 
@@ -129,15 +135,16 @@ shader pack's `bounce` scales it.
 
 ## Next steps, in order of payoff
 
-1. **Quad pulling.** Store each quad once (8 bytes) and expand it to vertices in the
-   vertex shader (5× less vertex memory than now), and let a compute pass cull chunks
-   against the frustum and last frame's depth pyramid into a compacted list, so a page is
-   one draw per pass. That removes the remaining per-chunk draw calls on Metal and makes
-   32+ chunk view distances practical.
-2. **Light out of the vertex.** Sample sky and block light (and derive AO) from a small
+1. **Cheaper vertices.** Most of the vertex time is far faces. Fewer and smaller vertex
+   outputs (texture coordinates rebuilt from the position for cube faces, the flat words
+   packed into one) and quad pulling (four vertices from one quad record, no index
+   buffer) both cut it.
+2. **Cheaper shadows.** Fewer filter taps at High, or Medium as the default; the farthest
+   cascade redrawn every other frame.
+3. **Light out of the vertex.** Sample sky and block light (and derive AO) from a small
    per-chunk 3D texture. Greedy merging then only has to match textures, which typically
    cuts quads by 2–3×.
-3. **Larger real view distance**, once 1 and 2 are in.
+4. **Larger real view distance**, once 1 and 3 are in.
 
 ## Distant terrain, and what Distant Horizons does
 
