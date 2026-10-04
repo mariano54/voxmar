@@ -303,7 +303,6 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let rocky = underground.rocky(x, z);
             // Strata wobble the same all the way down a block column.
             let mut wobble = None;
-            let mut band = |strata: &[BlockId], y: i32| strata[(y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))).rem_euclid(strata.len() as i32) as usize];
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -326,13 +325,13 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 } else if below_surface <= layers.depth && layers.filler != Fill::Stones {
                     match layers.filler {
                         Fill::Block(block) => block,
-                        _ => band(strata, y),
+                        _ => terrain.band(strata, y, wx, wz),
                     }
                 } else {
                     let rock = rock_profile.at(y);
                     match if rocky { underground.rock(x, y, z) } else { None } {
                         Some(Rock::Stones(stones)) => stones.pick((0.5 + rock * 0.53).clamp(0.0, 0.9999)),
-                        Some(Rock::Strata(strata)) => band(strata, y),
+                        Some(Rock::Strata(strata)) => stratum(strata, y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))),
                         None => stone_at(ids, stones, rock, world.seed, y, wx, wz),
                     }
                 };
@@ -540,8 +539,12 @@ impl Terrain {
         (0.8 * patch + 0.2 * speckle).clamp(0.0, 0.9999)
     }
 
-    /// How far strata (bands of rock, one block each) are shifted up or down at (x, z):
-    /// they wobble gently.
+    /// Strata: bands of rock, one block each, that wobble gently.
+    fn band(&self, strata: &[BlockId], y: i32, x: i32, z: i32) -> BlockId {
+        stratum(strata, y + self.wobble(x, z))
+    }
+
+    /// How far strata are shifted up or down at (x, z).
     fn wobble(&self, x: i32, z: i32) -> i32 {
         (self.patches.get_noise_2d(x as f32 * 0.25, z as f32 * 0.25) * 2.5).round() as i32
     }
@@ -680,6 +683,11 @@ fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) ->
     let damp = site.soil_moisture() > 0.85 && site.temperature > 0.0;
     let stone = |bits: u64| if damp && !bits.is_multiple_of(3) { ids.mossy_boulder } else { ids.boulder };
     Some([Some(stone(hash >> 8)), (hash >> 16 & 3 == 0).then(|| stone(hash >> 20))])
+}
+
+/// The band of `strata` at height `y`, shifted by its wobble.
+fn stratum(strata: &[BlockId], y: i32) -> BlockId {
+    strata[y.rem_euclid(strata.len() as i32) as usize]
 }
 
 /// The stone at a block: deepslate in the depths, otherwise one of `stones` in blobs and
