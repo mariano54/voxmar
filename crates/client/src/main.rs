@@ -78,6 +78,7 @@ struct Options {
     time: Option<f32>,
     menu: bool,
     flicker: Option<capture::FlickerKind>,
+    clip: Option<f32>,
     screen: Option<Screen>,
     music: bool,
 }
@@ -102,6 +103,7 @@ fn parse_options() -> Result<Options, String> {
         time: None,
         menu: false,
         flicker: None,
+        clip: None,
         screen: None,
         music: true,
     };
@@ -130,6 +132,7 @@ fn parse_options() -> Result<Options, String> {
             "--menu" => options.menu = true,
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
+            "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
             "--screen" => {
                 let name = value()?;
                 options.screen = Some(Screen::from_name(&name).ok_or_else(|| format!("--screen: no screen called {name}"))?);
@@ -255,6 +258,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             time: options.time,
             menu: options.menu,
             flicker: options.flicker,
+            clip: options.clip,
         });
     }
     app.run();

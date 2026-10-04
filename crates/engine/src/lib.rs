@@ -18,6 +18,7 @@ pub mod fluid;
 pub mod inventory;
 pub mod light;
 pub mod mesh;
+pub mod movement;
 pub mod physics;
 pub mod schedule;
 pub mod traits;

@@ -63,9 +63,11 @@ const MEAN_WIND: f64 = 3.0;
 /// A player's weather is sent when any value moves this much, or after `RESEND` ticks.
 const CHANGE: f32 = 0.02;
 const RESEND: u64 = 5 * TICKS_PER_SECOND as u64;
-/// Chance per second that a cell under the fiercest storm flashes, and how far away, in
-/// blocks, players see and hear lightning.
-const LIGHTNING: f32 = 0.015;
+/// Chance per second that a cell under the fiercest storm strikes the ground (it flashes
+/// within the cloud twice as often), and how far away, in blocks, players see and hear
+/// lightning. A player in the heart of a storm has the 25 cells around them flashing a few
+/// times a minute between them, a ground strike every half minute or so.
+const LIGHTNING: f32 = 0.0009;
 const LIGHTNING_REACH: f32 = 1500.0;
 /// Blocks above the ground (or the sea) a flash within a cloud lights it.
 const CLOUD_FLASH_HEIGHT: i32 = 160;
@@ -496,6 +498,15 @@ impl Process for Weather {
     }
 }
 
+/// The updrafts where weather is forced: its convection, so forced rain stays steady rain
+/// and a forced storm is a thunderstorm whatever the sky would do there.
+fn forced_lift(lift: f32, forcing: Option<(&Preset, f32)>) -> f32 {
+    match forcing {
+        Some((preset, weight)) => preset.convection.map_or(lift, |c| lift + (c - lift) * weight),
+        None => lift,
+    }
+}
+
 /// The effects to name to a player.
 fn named(report: &Report) -> Vec<usize> {
     report.effects.iter().filter(|&&(_, strength)| strength >= NAMED).map(|&(i, _)| i).collect()
@@ -626,7 +637,7 @@ impl WeatherState {
             let mut state = if self.active.contains(&cell) {
                 let drivers = self.sky.drivers(at.as_dvec2(), tick as i64, day_at(tick as i64), climate.warmth());
                 let state = step(self.get(at), &drivers, &climate, day_at(tick as i64), forcing, dt);
-                strikes.extend(self.sky.lightning(cell, state.precipitation, drivers.lift, tick));
+                strikes.extend(self.sky.lightning(cell, state.precipitation, forced_lift(drivers.lift, forcing), tick));
                 state
             } else {
                 // Catch up from the climate's average state.
@@ -733,7 +744,8 @@ impl WeatherState {
             }
         }
 
-        let inputs = self.inputs(&weather, &place, drivers.lift, fraction);
+        let lift = forced_lift(drivers.lift, forcing.as_ref().map(|(preset, weight)| (preset, *weight)));
+        let inputs = self.inputs(&weather, &place, lift, fraction);
         let mut strengths: Vec<f32> = self
             .table
             .effects()
@@ -848,12 +860,12 @@ impl Climate {
 }
 
 impl Sky {
-    /// Where lightning flashes in a cell this second, if it does: a downpour under strong
-    /// updrafts is a thunderstorm, which has a chance each second to strike somewhere in
-    /// the cell, drawn from the cell's own random stream, and twice that chance to flash
-    /// inside the cloud instead.
+    /// Where lightning flashes in a cell this second, if it does: only a heavy downpour
+    /// under strong updrafts is a thunderstorm, which has a chance each second to strike
+    /// somewhere in the cell, drawn from the cell's own random stream, and twice that
+    /// chance to flash inside the cloud instead. Steady rain never flashes.
     fn lightning(&self, cell: IVec2, rain: f32, lift: f32, tick: u64) -> Option<Strike> {
-        let chance = (LIGHTNING * smoothstep(0.2, 0.7, rain * smoothstep(0.1, 0.6, lift))) as f64;
+        let chance = (LIGHTNING * smoothstep(0.4, 0.8, rain * smoothstep(0.3, 0.7, lift))) as f64;
         let h = mix(mix(mix(self.seed ^ STRIKES ^ tick) ^ cell.x as u64) ^ cell.y as u64);
         let roll = unit(h);
         let place = Vec2::new(unit(mix(h)) as f32, unit(mix(mix(h))) as f32);
@@ -1238,8 +1250,12 @@ mod tests {
             (0..20_000u64).filter_map(|s| weather.sky.lightning(IVec2::new(3, -4), rain, lift, s * SECOND)).collect::<Vec<_>>()
         };
         assert!(flashes(0.0, 1.0).is_empty() && flashes(1.0, 0.0).is_empty() && flashes(0.2, 0.5).is_empty());
+        // Steady rain, even heavy, under ordinary skies never flashes.
+        assert!(flashes(0.5, 0.5).is_empty() && flashes(1.0, 0.3).is_empty());
+        // The fiercest storm: a flash every few minutes in each cell, so a few a minute
+        // among the 25 cells around a player.
         let storm = flashes(1.0, 1.0);
-        assert!((300..1500).contains(&storm.len()), "{} flashes", storm.len());
+        assert!((25..100).contains(&storm.len()), "{} flashes", storm.len());
         assert!(storm.iter().all(|s| (384.0..512.0).contains(&s.at.x) && (-512.0..-384.0).contains(&s.at.y)));
         // Most flashes stay in the cloud.
         let ground = storm.iter().filter(|s| !s.cloud).count();

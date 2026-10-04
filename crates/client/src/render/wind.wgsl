@@ -12,6 +12,9 @@ struct Wind {
     player: vec4<f32>,
     // How much the wind gusts, 0..1.
     gustiness: f32,
+    // The flutter's phase, radians: it runs quicker in a stronger wind, integrated frame by
+    // frame (see wind.rs), and wraps after 320 turns.
+    flutter: f32,
 }
 
 @group(2) @binding(4) var<uniform> wind: Wind;
@@ -37,32 +40,51 @@ fn periodic_noise(p: vec2<f32>, cells: i32) -> f32 {
 }
 
 // Gust strength at `xz`, 0..1: fronts tens of blocks across rolling over the land with
-// the wind, and quicker ripples running through them. Both scales repeat on the offset's
-// 1024-block wrap (the ripples, moving twice as fast, on two of it).
+// the wind, and quicker ripples running through them, the waves that sweep a meadow. Both
+// scales repeat on the offset's 1024-block wrap (the ripples, moving twice as fast, on two
+// of it).
 fn gust(xz: vec2<f32>) -> f32 {
     let fronts = periodic_noise((xz - wind.flow.zw) / 32.0, 32);
     let ripples = periodic_noise((xz - 2.0 * wind.flow.zw) / 8.0, 128);
-    return 0.7 * fronts + 0.3 * ripples;
-}
-
-// How far foliage at `xz` leans, in blocks per block of height. An ordinary breeze only
-// stirs it, as Minecraft's waving plants do; the lean grows with the square of the wind,
-// so it streams over only in strong winds and gales, from lulls a little below the mean to
-// gusts well above (as `voxmar_engine::weather::gust`). A flutter across the wind quickens
-// as it rises.
-fn sway(xz: vec2<f32>, time: f32) -> vec2<f32> {
-    let speed = length(wind.flow.xy);
-    let along = select(vec2(1.0, 0.0), wind.flow.xy / speed, speed > 0.01);
-    let strength = wind_strength();
-    let g = gust(xz);
-    let push = 0.35 * strength * strength * (1.0 + wind.gustiness * (1.8 * g * g - 0.45));
-    let flutter = sin(time * (1.8 + 4.0 * strength) + dot(xz, vec2(1.7, 2.3)) + g * 6.0) * (0.03 + 0.07 * strength);
-    return along * (push + 0.5 * flutter) + vec2(-along.y, along.x) * flutter;
+    return smoothstep(0.2, 0.8, 0.5 * fronts + 0.5 * ripples);
 }
 
 // The wind's strength for foliage: 0 still air to 1 a gale (18 blocks a second).
 fn wind_strength() -> f32 {
     return saturate(length(wind.flow.xy) / 18.0);
+}
+
+// Which way the wind blows, a unit vector along x and z.
+fn wind_direction() -> vec2<f32> {
+    let speed = length(wind.flow.xy);
+    return select(vec2(1.0, 0.0), wind.flow.xy / speed, speed > 0.01);
+}
+
+struct Sway {
+    // How far the plant leans, in blocks per block of height.
+    lean: vec2<f32>,
+    // How hard the gust there blows, 0..1.
+    gust: f32,
+}
+
+// How foliage at `xz` leans, as the tangent of its angle from upright. The lean comes from
+// the gusts rolling over the land, so neighbours bend together and waves of it sweep
+// across a meadow with the wind (as in the Grassier Grass mod): barely a stir in still
+// air, rolling waves in a breeze, streaming over in a gale. On top, a small
+// flutter mostly across the wind, at `pace` times the flutter phase (whole 64ths of it, to
+// stay in step as the phase wraps), offset by `phase` radians so neighbours are not in
+// lockstep. Its phase follows the gusts too, so it ripples with them rather than shivers
+// (and never with the position along the wind: thousands of blocks from the origin, the
+// slightest turn of the wind would leap it).
+fn sway(xz: vec2<f32>, pace: f32, phase: f32) -> Sway {
+    let strength = wind_strength();
+    let along = wind_direction();
+    let g = gust(xz);
+    // Gusty weather swings between lulls and gusts; steady wind barely does.
+    let depth = 0.5 + 0.4 * wind.gustiness;
+    let push = 1.6 * pow(strength, 0.8) * (1.0 - depth + depth * g);
+    let flutter = sin(wind.flutter * pace - g * 4.0 + phase) * (0.02 + 0.04 * strength);
+    return Sway(along * (push + 0.3 * flutter) + vec2(-along.y, along.x) * flutter, g);
 }
 
 // How far the player pushes foliage at `p` aside, in blocks per block of height.
@@ -73,13 +95,12 @@ fn parting(p: vec3<f32>) -> vec2<f32> {
     return away / max(distance, 0.001) * near * wind.player.w * 1.3;
 }
 
-// A leaf vertex's flutter, livelier in a strong wind.
-fn leaf_flutter(world: vec3<f32>, time: f32) -> vec3<f32> {
-    let speed = length(wind.flow.xy);
+// A leaf vertex's flutter, livelier in a strong wind, and its lean with the gusts.
+fn leaf_flutter(world: vec3<f32>) -> vec3<f32> {
     let strength = wind_strength();
     let phase = world.x * 0.7 + world.z * 0.5 + world.y * 0.3;
-    let quick = 1.0 + strength;
-    let flutter = vec3(sin(time * 1.6 * quick + phase), sin(time * 2.3 * quick + phase * 1.3) * 0.5, cos(time * 1.9 * quick + phase));
-    let lean = select(vec2(0.0), wind.flow.xy / speed, speed > 0.01) * strength * strength * gust(world.xz) * 0.06;
+    let t = wind.flutter;
+    let flutter = vec3(sin(t * 1.6 + phase), sin(t * 2.3 + phase * 1.3) * 0.5, cos(t * 1.9 + phase));
+    let lean = wind_direction() * strength * gust(world.xz) * 0.08;
     return flutter * (0.015 + 0.04 * strength) + vec3(lean.x, 0.0, lean.y);
 }

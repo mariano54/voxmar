@@ -36,7 +36,7 @@ use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
 use fastnoise_lite::FractalType;
 
-use crate::geology::{GeoSample, Geology, noise, smoothstep};
+use crate::geology::{GeoSample, Geology, Landform, noise, smoothstep};
 use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
 
@@ -220,12 +220,13 @@ impl Rivers {
         let per = REGION / RAIN_CELL;
         let region = IVec2::new(x, z).div_euclid(IVec2::splat(REGION));
         let samples = self.rain.get(region, || {
-            (0..(per + 1) * (per + 1))
+            let points: Vec<(f32, f32)> = (0..(per + 1) * (per + 1))
                 .map(|i| {
                     let p = region * REGION + IVec2::new(i % (per + 1), i / (per + 1)) * RAIN_CELL;
-                    land.climate.regional(land.geology, p.x as f32, p.y as f32)
+                    (p.x as f32, p.y as f32)
                 })
-                .collect()
+                .collect();
+            land.climate.regionals(land.geology, &points).into()
         });
         Rain { region, samples }
     }
@@ -249,12 +250,12 @@ impl Rivers {
         let (mut height, mut runoff) = (Vec::with_capacity(n), Vec::with_capacity(n));
         // A tile lies in one region, whose rain it reads.
         let rain = self.rain(land, key.x * tier.tile * tier.cell, key.y * tier.tile * tier.cell);
-        for i in 0..tier.tile * tier.tile {
-            let centre = tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile));
-            let h = [IVec2::ZERO, IVec2::new(-20, -20), IVec2::new(20, -20), IVec2::new(-20, 20), IVec2::new(20, 20)]
-                .into_iter()
-                .map(|o| land.geology.land(centre.x + o.x, centre.y + o.y).height)
-                .fold(f32::MAX, f32::min);
+        const AROUND: [IVec2; 5] = [IVec2::ZERO, IVec2::new(-20, -20), IVec2::new(20, -20), IVec2::new(-20, 20), IVec2::new(20, 20)];
+        let centres: Vec<IVec2> = (0..tier.tile * tier.tile).map(|i| tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile))).collect();
+        let points: Vec<(i32, i32)> = centres.iter().flat_map(|c| AROUND.map(|o| (c.x + o.x, c.y + o.y))).collect();
+        let samples = land.geology.lands(&points);
+        for (centre, samples) in centres.into_iter().zip(samples.chunks(AROUND.len())) {
+            let h = samples.iter().map(|s| s.height).fold(f32::MAX, f32::min);
             height.push(h);
             runoff.push(rain.runoff(centre.x, centre.y, h) * (TRUNK_CELL * TRUNK_CELL) as f32 / FLOW_AREA);
         }
@@ -270,9 +271,10 @@ impl Rivers {
         let first = tier.centre(key * tier.tile);
         let trunks = self.near(land, Level::Trunk, TRUNK_MARGIN, first, first + (tier.tile - 1) * tier.cell);
         let rain = self.rain(land, first.x, first.y);
-        for i in 0..tier.tile * tier.tile {
-            let centre = tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile));
-            let ground = Carved::land(land.geology.land(centre.x, centre.y).height);
+        let centres: Vec<IVec2> = (0..tier.tile * tier.tile).map(|i| tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile))).collect();
+        let grounds = land.geology.lands(&centres.iter().map(|c| (c.x, c.y)).collect::<Vec<_>>());
+        for (centre, ground) in centres.into_iter().zip(grounds) {
+            let ground = Carved::land(ground.height);
             let carved = carve(&self.trunk_style, trunks.list(), centre.x, centre.y, ground);
             height.push(carved.ground);
             absorbed.push(match carved.water {
@@ -379,28 +381,53 @@ impl Rivers {
         channels
     }
 
+    /// Whether a tier's channels of a region are made or being made.
+    fn known(&self, level: Level, region: IVec2) -> bool {
+        RECENT.with(|recent| recent.borrow().iter().any(|(id, l, r, _)| *id == self.id && *l == level && *r == region))
+            || match level {
+                Level::Trunk => self.trunk_channels.has(region),
+                Level::Stream => self.stream_channels.has(region),
+            }
+    }
+
+    /// The regions within `margin` of the columns from `min` to `max` (inclusive), row by
+    /// row.
+    fn regions(margin: i32, min: IVec2, max: IVec2) -> impl Iterator<Item = IVec2> {
+        let first = (min - margin).div_euclid(IVec2::splat(REGION));
+        let last = (max + margin).div_euclid(IVec2::splat(REGION));
+        (first.y..=last.y).flat_map(move |z| (first.x..=last.x).map(move |x| IVec2::new(x, z)))
+    }
+
     /// The channels of a tier that may reach any column from `min` to `max` (inclusive):
     /// those of every region within `margin` of them.
     fn near(&self, land: Stages, level: Level, margin: i32, min: IVec2, max: IVec2) -> Near {
-        let first = (min - margin).div_euclid(IVec2::splat(REGION));
-        let last = (max + margin).div_euclid(IVec2::splat(REGION));
         let mut near = Near::new();
-        for z in first.y..=last.y {
-            for x in first.x..=last.x {
-                near.push(self.channels(land, level, IVec2::new(x, z)));
-            }
+        for region in Self::regions(margin, min, max) {
+            near.push(self.channels(land, level, region));
         }
         near
     }
 
-    /// Both tiers' channels near the columns from `min` to `max`.
+    /// Both tiers' channels near the columns from `min` to `max`. Those not made yet are
+    /// made first, side by side on every core (see `crate::parallel`), rather than one
+    /// after another with only their tiles shared out: a new world's first columns need
+    /// several of each.
     fn tiers(&self, land: Stages, min: IVec2, max: IVec2) -> (Near, Near) {
+        let missing: Vec<(Level, IVec2)> = [(Level::Trunk, TRUNK_MARGIN), (Level::Stream, STREAM_MARGIN)]
+            .into_iter()
+            .flat_map(|(level, margin)| Self::regions(margin, min, max).map(move |region| (level, region)))
+            .filter(|&(level, region)| !self.known(level, region))
+            .collect();
+        if missing.len() > 1 {
+            crate::parallel::for_each(&missing, |&(level, region)| {
+                self.channels(land, level, region);
+            });
+        }
         (self.near(land, Level::Trunk, TRUNK_MARGIN, min, max), self.near(land, Level::Stream, STREAM_MARGIN, min, max))
     }
 
-    /// A column with both tiers carved in, before sealing.
-    fn unsealed(&self, land: Stages, (trunks, streams): &(Near, Near), x: i32, z: i32) -> Column {
-        let ground = land.geology.land(x, z);
+    /// A column with both tiers carved in, before sealing, on its `ground`.
+    fn unsealed(&self, (trunks, streams): &(Near, Near), x: i32, z: i32, ground: Landform) -> Column {
         let trunks = carve(&self.trunk_style, trunks.list(), x, z, Carved::land(ground.height));
         let carved = carve(&self.stream_style, streams.list(), x, z, trunks);
         let height = (carved.ground.floor() as i32).max(4);
@@ -441,19 +468,21 @@ impl Rivers {
     /// The geology of one column, with its rivers and lakes.
     pub fn sample(&self, land: Stages, x: i32, z: i32) -> GeoSample {
         let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-        self.sealed(land, &tiers, x, z)
+        self.sealed(land, &tiers, x, z, land.geology.land(x, z))
     }
 
     /// One column with both tiers carved in and sealed: the same whatever the columns
     /// `tiers` were found for, as long as they include it and its neighbours. (A region
     /// whose index does not reach a column adds nothing to it, and `near` keeps regions
     /// in the same order however many it finds.)
-    fn sealed(&self, land: Stages, tiers: &(Near, Near), x: i32, z: i32) -> GeoSample {
-        let column = self.unsealed(land, tiers, x, z);
+    fn sealed(&self, land: Stages, tiers: &(Near, Near), x: i32, z: i32, ground: Landform) -> GeoSample {
+        let column = self.unsealed(tiers, x, z, ground);
         if !column.near {
             return column.sample;
         }
-        let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, tiers, x + dx, z + dz).sample);
+        let around = [(x + 1, z), (x - 1, z), (x, z + 1), (x, z - 1)];
+        let grounds = land.geology.lands(&around);
+        let neighbours = std::array::from_fn(|k| self.unsealed(tiers, around[k].0, around[k].1, grounds[k]).sample);
         settle(column.sample, &neighbours)
     }
 
@@ -463,11 +492,17 @@ impl Rivers {
         let (min, max) = (origin - 1, origin + (size - 1) * step + 1);
         let regions = ((max + TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) - (min - TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) + 1).element_product();
         let at = |i: i32| origin + IVec2::new(i % size, i / size) * step;
+        let grounds = land.geology.lands(&(0..size * size).map(|i| (at(i).x, at(i).y)).collect::<Vec<_>>());
         if regions > 4 {
-            return (0..size * size).map(|i| self.sample(land, at(i).x, at(i).y)).collect();
+            return (0..size * size)
+                .map(|i| {
+                    let tiers = self.tiers(land, at(i) - 1, at(i) + 1);
+                    self.sealed(land, &tiers, at(i).x, at(i).y, grounds[i as usize])
+                })
+                .collect();
         }
         let tiers = self.tiers(land, min, max);
-        (0..size * size).map(|i| self.sealed(land, &tiers, at(i).x, at(i).y)).collect()
+        (0..size * size).map(|i| self.sealed(land, &tiers, at(i).x, at(i).y, grounds[i as usize])).collect()
     }
 
     /// The geology of every column of a `size`×`size` square from `min`, with rivers and
@@ -475,7 +510,9 @@ impl Rivers {
     pub fn area(&self, land: Stages, min: IVec2, size: i32) -> Vec<GeoSample> {
         let wide = size + 2;
         let tiers = self.tiers(land, min - 1, min + size);
-        let columns: Vec<Column> = (0..wide * wide).map(|i| self.unsealed(land, &tiers, min.x - 1 + i % wide, min.y - 1 + i / wide)).collect();
+        let at = |i: i32| (min.x - 1 + i % wide, min.y - 1 + i / wide);
+        let grounds = land.geology.lands(&(0..wide * wide).map(at).collect::<Vec<_>>());
+        let columns: Vec<Column> = (0..wide * wide).map(|i| self.unsealed(&tiers, at(i).0, at(i).1, grounds[i as usize])).collect();
         (0..size * size)
             .map(|i| {
                 let (x, z) = (i % size + 1, i / size + 1);

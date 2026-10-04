@@ -289,7 +289,8 @@ Breaking a block (`client/src/breaking.rs`) uses it as Minecraft does:
   a quarter of its side texture, each picked among the mostly opaque quarters
   (`TexturePieces`), so a flower breaks into petals and leaves rather than empty texels;
   0.1–0.2 blocks wide, living 0.5–1.5 s. Blocks broken by others (an unpredicted
-  `BlockChanged` to air) burst too, within 32 blocks.
+  `BlockChanged` to air) burst too, within 32 blocks, but not plants: those also vanish
+  under feet as the server wears paths, which is not breaking them.
 
 Particles are lit with a sky light estimated once per burst from the columns around the
 block, by the engine's rule (straight down from the sky, less through water and leaves,
@@ -370,13 +371,31 @@ with `ClientWeather::current.wind`, which is `Wind::now` at the camera; clouds d
 the mean wind.
 
 Grass blades, plants and leaves bend with `Wind`'s mean and gustiness (`render::wind`,
-`wind.wgsl`, bound with the terrain so shadows bend alike): a push along the wind from
-lulls to gusts, a flutter across it that quickens as the wind rises, and the player
-parting what they walk through. Their gust fronts are their own noise, carried along by
-an offset integrated from the mean wind each frame, rather than `gust` itself: `gust`
-puts its fronts at `mean * seconds`, so when the mean changes by δ they jump by
-`δ * seconds` (with `seconds` in the hundreds of thousands, a whole meadow would lurch
-as the wind veered).
+`wind.wgsl`, bound with the terrain so shadows bend alike). As in the Grassier Grass mod
+(whose code is all rights reserved, so only the idea is taken), the motion is mostly the
+lean, not the flutter: the lean follows gust fronts tens of blocks across and ripples a
+few blocks across, both rolling over the land with the wind, so neighbouring blades bend
+together and waves sweep across a meadow, with a lighter sheen on the blades a gust bends.
+The lean grows from barely a stir in still air through rolling waves in a breeze to
+streaming over in a gale, with deeper swings in gustier weather; a blade tips over to the
+angle the lean gives without growing longer. Each blade gives to the wind a little more or
+less than its neighbours and keeps a small rest lean of its own in calm air. A small
+flutter, mostly across the wind, plays on top, each blade at its own pace; plants flutter
+slower, and tall ones are stiffer above their first block. The player parts what they
+walk through.
+
+Nothing in it is a function of the clock times the wind. The gust fronts are carried by an
+offset integrated from the mean wind each frame, rather than by `gust` itself: `gust` puts
+its fronts at `mean * seconds`, so when the mean changes by δ they jump by `δ * seconds`
+(with `seconds` in the hundreds of thousands, a whole meadow would lurch as the wind
+veered). The flutter runs on a phase integrated the same way at a pace set by the wind's
+strength, wrapped every 320 turns; every flutter is a whole number of tenths or 64ths of
+it, so it stays in step across the wrap. It used to be `sin(time * pace)`, which leaps by
+`time * Δpace` whenever the pace changes: an hour into a game, any change of wind threw the
+grass into a fit, and a slowly changing wind kept it shaking far faster than its pace. The
+flutter's phase also follows the gusts rather than the position along the wind, which far
+from the origin the slightest veer would leap. `--clip SECONDS` records frames of game
+time at 30 fps to check motion like this.
 
 ## Water
 

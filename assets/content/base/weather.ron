@@ -30,7 +30,7 @@
         ),
         (
             name: "thunderstorm", tags: ["wet", "lightning"],
-            when: [(Precipitation, 0.25, 0.6), (Lift, 0.2, 0.5)],
+            when: [(Precipitation, 0.45, 0.8), (Lift, 0.35, 0.65)],
             shows: [Gusts(0.8), Fog(0.15)], minutes: 30.0,
         ),
         // The towering storms of hot, wet country: a near-black sky, a deluge, lightning all

@@ -1,0 +1,423 @@
+# Inspirations
+
+voxmar stands on a lot of other people's work: Minecraft mods, shader packs, libraries and
+games whose ideas we studied and made our own. This file credits every one of them whose
+ideas or techniques we used, including the ones we copied code from.
+
+It is not the legal record. Code and assets we actually copied or adapted are listed, with
+the notices their licences require, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Everything else here was used as an idea only: we read how it works and wrote our own
+version, with our own code, constants and art.
+
+Each entry gives the author, a link, the licence, what we took and where it lives in our
+code. Licences were checked on GitHub, GitLab or Modrinth on 4 October 2026; a licence that
+forbids reuse only matters for the entries marked as copied. Most of the research behind
+these entries is in the project's research notes (`research/hiking-simulator-mods.md` and
+`research/mod-source-deep-dive/`), and the plans that came out of it are in
+[docs/world-plan.md](docs/world-plan.md), [docs/rendering.md](docs/rendering.md) and
+[docs/weather-effects.md](docs/weather-effects.md).
+
+**Keeping it current.** When you take an idea from somewhere, add or extend its entry here
+in the same commit, and credit it where it lands in the code (the existing comments read
+"after X", "X's" or "in the spirit of X"). When you copy code or assets, also add the source
+to THIRD_PARTY_NOTICES.md with the notice its licence requires, and mark the entry here as
+copied.
+
+## Copied code (also in THIRD_PARTY_NOTICES.md)
+
+### RoadWeaver
+
+- Author: shiroha-233
+- Link: https://github.com/shiroha-233/RoadWeaver
+- Licence: MIT. **Copied**: its trail pathfinding cost model and path post-processing,
+  rewritten in Rust and retuned for footpaths (see the notices).
+- What we took: the potential-field pathfinder's costs (a discount for following
+  contours, soft and hard grade limits, a penalty for walking straight down the fall line),
+  which make switchbacks fall out of the search; snapping a trail onto a longer one nearby
+  and following it until they part, which makes junctions; relaxing the path, drawing it as
+  a Catmull-Rom curve, limiting its rise, bridges and ramps, and cut and fill where the
+  strongest trail wins.
+- Where: `crates/worldgen/src/trails/route.rs`, `network.rs` and `path.rs`.
+
+### FastNoiseLite
+
+- Author: Jordan Peck (Auburn) and contributors
+- Link: https://github.com/Auburn/FastNoiseLite (we use the Rust crate `fastnoise-lite`)
+- Licence: MIT. **Copied**: its OpenSimplex2 noise, fractal sums and domain warp, ported to
+  NEON so four points or octaves are worked out at once (see the notices).
+- What we took: all of our noise. Most of generation still calls the crate itself.
+- Where: everywhere in `crates/worldgen/src/`; the vectorised port is in `noise.rs`.
+
+### "Very fast procedural ocean"
+
+- Author: afl_ext
+- Link: https://www.shadertoy.com/view/MdXyzX
+- Licence: MIT. **Copied**: the wave function and its constants (see the notices).
+- What we took: water waves as octaves of `exp(sin x - 1)`, each turned by a fixed angle
+  and dragging the next along its slope.
+- Where: `crates/client/src/render/water_surface.wgsl` (`wave_normal`) and
+  `crates/client/src/render/water.rs` (`octaves`).
+
+### Glimmer
+
+- Author: Josh Britain (jbritain); its screen-space tracer credits a public gist by Belmu
+- Link: https://github.com/jbritain/glimmer-shaders
+- Licence: MIT. **Copied**: the screen-space reflection march, the refraction and the
+  light-through-water model (see the notices).
+- What we took: reflections traced through the depth buffer with a binary refinement,
+  refraction that keeps the straight view where the bent one lands in front of the water,
+  and water as absorption plus in-scattering. It is also where we found afl_ext's waves.
+- Where: `crates/client/src/render/water_surface.wgsl` and `water.wgsl`.
+
+## World generation
+
+### Tectonic
+
+- Author: Apollo (Apollounknowndev)
+- Link: https://github.com/Apollounknowndev/tectonic
+- Licence: MIT (stated in its build file and on Modrinth; the repository has no licence
+  file). Ideas only.
+- What we took: the shape of the land. Coasts, mountain ranges and broad valleys lie along
+  the zero lines of noises folded with `abs()`, so they form chains and networks instead of
+  blobs; heights are stretched by their square so lowlands stay low while ranges rise; a
+  terrain classification with short ramps that biome borders follow; terrain shapes switched
+  on by climate ramps, never by the chosen biome; and rivers that tunnel under a range
+  rather than dead-ending against it.
+- Where: `crates/worldgen/src/geology.rs`, `climate.rs` (`landform`), `shapes.rs`, and the
+  river tunnels in `water/`.
+- Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md) (read from its source,
+  3.0.25, on 4 October 2026): its whole terrain router. Large parameter fields with nine
+  octaves (continents about 7.9 km across, so coasts are fractal), its offset, factor and
+  jaggedness splines with the `offset²` elevation boost, terrain regions chosen by a
+  selector noise and climate (plateaus, valleys, rolling hills, two-tier terraces stepping
+  down to the river lines, jungle pillars, wind-aligned dunes), mountain detail shifted along
+  its own gradient, the trench-and-ridge sea floor, and biome parameters synthesised from the
+  terrain classes. Being MIT, its splines may be adapted directly; when they are, this entry
+  is marked copied and the source goes in THIRD_PARTY_NOTICES.md.
+
+### Terralith
+
+- Author: Stardust Labs (Starmute)
+- Link: https://github.com/Stardust-Labs-MC/Terralith
+- Licence: Stardust Labs' own licence, which forbids redistribution. Ideas only; no data
+  files or parameters copied.
+- What we took: a biome table with no holes, where every climate cell belongs to some biome
+  and rare biomes live in the noise tails rather than behind low weights; curves that bend an
+  axis for the biome picker only; surface rules as a small language of conditions, including
+  lines drawn along noise contours (`|n| < w`) for trails, creeks and rivulets; and forests
+  graded from old-growth cores to scrubby edges by bands of one noise.
+- Where: `crates/worldgen/src/biome.rs`, `content.rs` (remaps, the coverage check),
+  `surface.rs`, `ecology.rs` and `shapes.rs`.
+- Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md), from the earlier
+  research notes: terrain spline knots placed at the biome table's breakpoints, so a biome's
+  region of parameter space has its own landform; and extra terrain added and cut with `max`
+  and `min` behind cheap 2D gates (arches, leaning spires that lean by a height-dependent
+  shift, sea cliffs cut by re-evaluating the height a little seaward).
+- Its licence also forbids using its code or data to configure, test, debug or augment AI
+  or other generative systems, so since 4 October 2026 we no longer open its files and work
+  from the earlier notes and its public pages.
+
+### Wilder Wild
+
+- Author: FrozenBlock
+- Link: https://github.com/FrozenBlock/WilderWild
+- Licence: FrozenBlock Modding Oasis License, which restricts reuse. Ideas only.
+- What we took: ecotones (thin biomes along the border of two others, such as birch taiga
+  between taiga and forest); clearings opened by a global noise with a soft edge, where trees
+  fade out first and meadow plants fill in; and a snow blanket laid on every level open to
+  the sky, down through the canopy.
+- Where: `crates/worldgen/src/content.rs` (`EcotoneDef`), `biome.rs`, `ecology.rs` and
+  `terrain.rs`.
+
+### Geophilic
+
+- Author: everloste
+- Link: https://github.com/everloste/Geophilic
+- Licence: all rights reserved (only its Python tooling is MIT). Ideas only.
+- What we took: ground decoration placed in a fixed order of stages (patches of ground,
+  rocks, trees, tree ornaments, fallen logs, flowers, fungi, moss, grass), forests that come
+  in dense stands with gaps, and flowers whose species follows a noise so they grow in drifts.
+- Where: `crates/worldgen/src/decor.rs` and `ecology.rs`.
+
+### Terrestria and Biolith
+
+- Author: TerraformersMC (Biolith also gniftygnome)
+- Links: https://github.com/TerraformersMC/Terrestria and
+  https://github.com/TerraformersMC/Biolith
+- Licence: LGPL-3.0, both. Ideas only.
+- What we took: sub-biomes that take a share of a parent biome's land instead of a climate
+  box of their own (our variants); a distance to the nearest biome border, and which biome
+  lies across it, for every column, which we work out analytically rather than by marching;
+  and the idea of biome terrain shapes (dunes, canyons, volcanoes) that fade out towards a
+  biome's edges.
+- Where: `crates/worldgen/src/biome.rs` (variants, border distance) and `shapes.rs`.
+
+### Blooming Biosphere
+
+- Author: hhumanoid
+- Link: https://modrinth.com/mod/blooming-biosphere
+- Licence: CC-BY-NC-SA-4.0. No public source, so only what its pages describe. Ideas only.
+- What we took: fallen logs and boulders, a set of flowers per biome, colours tuned per
+  biome, and the rule that a feature is placed only where it is supported, after its
+  changelog kept fixing logs hanging in the air.
+- Where: `crates/worldgen/src/decor.rs` and the biome colours in `assets/content/base/`.
+
+### Streams, TerraFirmaCraft and Streams Reflowing
+
+- Authors: delvr (Streams); the TerraFirmaCraft team; nice.john (Streams Reflowing)
+- Links: https://github.com/delvr/Streams and https://github.com/delvr/Farseek-Mods
+  (Streams 1.0); https://github.com/TerraFirmaCraft/TerraFirmaCraft;
+  https://modrinth.com/mod/streams-reflowing
+- Licences: MIT (Streams); EUPL-1.2 (TerraFirmaCraft); all rights reserved and closed source
+  (Streams Reflowing, known to us from its changelogs only). Ideas only.
+- What we took: rivers that run downhill from the hills into lakes and the sea, the main
+  goal of the world plan's water work. Trunk rivers are laid out first at region scale and
+  the terrain is cut to them (TerraFirmaCraft's order), streams are routed afterwards on an
+  8-block grid, a river's size comes from its catchment times the rain, and lakes fill less
+  in dry climates.
+- Where: `crates/worldgen/src/water/`.
+
+### Flowing Fluids
+
+- Author: Traben
+- Link: https://github.com/Traben-0/flowing_fluids
+- Licence: LGPL-3.0. Ideas only.
+- What we took: sealing generated water so it is already at rest when it loads, which
+  Flowing Fluids found to be a large performance win.
+- Where: `crates/worldgen/src/water/mod.rs` and `water/channel.rs` (generated water is a
+  fixed point of the fluid rule).
+
+### YUNG's Better Caves and Cave Overhaul
+
+- Authors: YUNG; swankydenizen (Cave Overhaul, the mod by that name on Modrinth)
+- Links: https://github.com/YUNG-GANG/YUNGs-Better-Caves and
+  https://modrinth.com/mod/cave-overhaul
+- Licences: LGPL-3.0; GPL-2.0. Ideas only, from their descriptions.
+- What we took: tunnel systems that grow more tangled with depth (Better Caves), and
+  domain-warped labyrinths of level passages (Cave Overhaul).
+- Where: `crates/worldgen/src/caves.rs`.
+
+### TanTanDev's shrubbery
+
+- Author: TanTanDev
+- Link: https://github.com/TanTanDev/shrubbery
+- Licence: MIT or Apache-2.0. Ideas only; no code copied.
+- What we took: trees as a handful of species parameters in data (trunk height, thickness
+  and lean, roots, crown shape), laid out in continuous space and then voxelized.
+- Where: `crates/worldgen/src/trees.rs` and `assets/content/base/trees.ron`.
+
+## Rendering
+
+### Complementary Reimagined, Complementary Unbound and Euphoria Patches
+
+- Authors: EminGT (Complementary); SpacEagle17 (Euphoria Patches)
+- Links: https://github.com/ComplementaryDevelopment/ComplementaryReimagined (one codebase
+  builds both Reimagined and Unbound); https://modrinth.com/mod/euphoria-patches
+- Licence: Complementary License Agreement 1.7 for the packs, and the Complementary License
+  1.5 for Euphoria Patches' shader changes. Their installer, EuphoriaPatcher, is MPL-2.0 but
+  holds no rendering code. Techniques only: no code, constants or colour tables copied.
+- What we took: the look we aim for, and how to get it. Verdant, our default shader pack, is
+  a warm, contrasty look after Complementary Reimagined: warm sun against cool sky light, sky
+  light that falls off steeply under cover so forest floors are dark, sunlit leaves that glow
+  against the sun, cloud shadows, wet ground and puddles. Water is drawn in its own pass over
+  the finished scene, as Complementary's is, and can take one wave slope per texel of the
+  block so it reads as pixels up close. The world plan's shader-pack system and clouds were
+  also planned against these packs.
+- Where: `assets/shaderpacks/verdant.ron`, `crates/client/src/render/lighting.wgsl`,
+  `render/pack.rs`, `render/water.rs` and `water_surface.wgsl`.
+
+### Distant Horizons
+
+- Author: James Seibel (jeseibel) and the Distant Horizons team
+- Link: https://gitlab.com/distant-horizons-team/distant-horizons
+- Licence: LGPL-3.0 on Modrinth (GitLab lists GPL-3.0). Ideas only.
+- What we took: drawing the land far beyond the loaded chunks, in rings that double their
+  cell size with distance, generated straight from the world generator, with distant
+  terrain lit with the same inputs as near terrain so the two match.
+- Where: `crates/client/src/render/lod.rs` and `lod.wgsl` (docs/rendering.md, "Distant
+  terrain, and what Distant Horizons does").
+
+### Voxy
+
+- Author: MCRcortex (cortex)
+- Link: https://github.com/MCRcortex/voxy
+- Licence: all rights reserved. Ideas only.
+- What we took: distant tiles drawn by the terrain renderer rather than as entities, giving
+  way to real chunks column by column as they are meshed. We also tried its textured voxel
+  tiles for distant terrain and kept our smooth heightfield, because far mountains became
+  towers of huge cubes.
+- Where: `crates/client/src/render/terrain.rs` (`DistantView`) and docs/rendering.md ("What
+  we took from Voxy").
+
+### Rainbow's Foliage
+
+- Author: PoeticRainbow
+- Link: https://github.com/PoeticRainbow/rainbows-foliage
+- Licence: no licence file, so all rights reserved. Ideas only.
+- What we took: every plant placed from a hash of its cell, turned up to 40° either way,
+  shifted, sunk a little and scaled, in tufts across a meadow.
+- Where: `crates/client/src/render/voxel.wgsl` (`plant_position`).
+
+### xali's Bushy Leaves and Better Leaves Lite
+
+- Authors: xalixilax; TeamMidnightDust
+- Links: https://github.com/xalixilax/xali-s-Bushy-Leaves and
+  https://github.com/TeamMidnightDust/BetterLeavesLite
+- Licences: custom terms (CC-BY-NC 4.0 per our research) for Bushy Leaves; MIT for Better
+  Leaves Lite. Ideas only; none of their images copied.
+- What we took: leaves that reach past their block (Bushy Leaves), drawn as crossed cards
+  on the outside of every crown; and leaf sprites baked the way Better Leaves Lite bakes
+  them, the leaf tile repeated 3×3 on a doubled canvas and cut to a ragged round cluster.
+- Where: the fringe pass in `crates/engine/src/mesh.rs` and `crates/client/src/render/`,
+  and the `_bushy` recipes in `assets/packs/default/recipes/wood.ron`.
+
+### Grassier Grass
+
+- Author: leonardoinc22
+- Link: https://modrinth.com/mod/grassier-grass
+- Licence: all rights reserved. Ideas only.
+- What we took: real grass blades growing from grass blocks near the camera, rolling across
+  a meadow in waves with the wind and parting around the player.
+- Where: `crates/client/src/render/grass.wgsl` and `wind.wgsl`.
+
+### Particle Rain
+
+- Author: PigCart
+- Link: https://github.com/PigCart/particle-rain
+- Licence: MIT. Ideas only; nothing copied.
+- What we took: rain streaks laid along their motion as seen from the moving camera, so
+  running into rain tilts it towards you; and weather effects as data. Its fog after rain,
+  wall streaks and drips are listed as next steps in docs/weather-effects.md.
+- Where: `crates/client/src/render/precipitation.rs` and `precipitation.wgsl`.
+
+## Sound and ambience
+
+### AmbientSounds
+
+- Author: CreativeMD
+- Link: https://github.com/CreativeMD/AmbientSounds
+- Licence: LGPL-3.0. Ideas only.
+- What we took: measuring how enclosed the player is with a capped flood fill from the eye,
+  which gives openness, sky exposure and what blocks are near; and sound layers whose
+  conditions are soft ranges that fade, ducked rather than muted by rain.
+- Where: `crates/client/src/ambience/enclosure.rs` and `defs.rs`.
+
+### Resonance
+
+- Author: TalonFloof
+- Link: https://github.com/TalonFloof/Resonance
+- Licence: LGPL-3.0 for the code; its sounds are CC-BY and CC0. Ideas only.
+- What we took: long sound beds that crossfade with the surroundings, with one-shots
+  scattered over them, played from blocks actually there, so birds sing from real leaves.
+- Where: `crates/client/src/ambience/`.
+
+### Particular and Subtle Effects
+
+- Authors: Chailotl (Particular); MincraftEinstein (Subtle Effects)
+- Links: https://github.com/Chailotl/particular and
+  https://github.com/MincraftEinstein/SubtleEffects
+- Licences: LGPL-3.0; custom terms that allow use as a reference only. Ideas only.
+- What we took: ambient particles (fireflies, pollen, falling leaves) as a table in data,
+  keyed by climate, time and weather; and fireflies as an event that comes out only on some
+  nights (Particular's).
+- Where: `assets/content/base/ambient.ron` and `crates/client/src/weather/atmosphere.rs`.
+
+### Presence Footsteps
+
+- Author: Sollace (originally Hurricaaane)
+- Link: https://modrinth.com/mod/presence-footsteps
+- Licence: PolyForm Shield 1.0. Ideas only.
+- What we took: footsteps layered from what is underfoot: the ground's own step, the rustle
+  of plants the feet pass through, splashes in shallow water.
+- Where: `crates/client/src/sfx.rs` (`footsteps`).
+
+## The ground underfoot
+
+### The Roads More Travelled
+
+- Author: milkucha
+- Link: https://github.com/milkucha/trmt
+- Licence: CC-BY-NC-4.0. Ideas only.
+- What we took: ground that wears into paths where players walk. Wear spreads to the sides
+  and ahead, plants are trampled first, each stage's threshold varies by block, and unused
+  ground heals lazily, lone patches twice as fast. We keep wear in the column, so it saves
+  and streams with it.
+- Where: `crates/server/src/wear.rs` and `assets/content/base/wear.ron`.
+
+## Minecraft
+
+- Author: Mojang Studios
+- Link: https://www.minecraft.net
+- Licence: proprietary. Nothing from Minecraft is shipped. When a player has Minecraft
+  installed, the game can read their own textures and block sounds from it.
+- What we took: the voxel grammar the whole game builds on, and many rules matched to it:
+  how water and lava flow, how breaking a block cracks and scatters it, its light curve and
+  per-face shading, fancy leaves, how music plays now and then, the 1.18 noise caves
+  (cheese, spaghetti and noodle caves) and aquifers, and multi-noise biome placement.
+- Where: `crates/engine/src/fluid.rs`, `crates/client/src/breaking.rs`,
+  `render/cracks.rs`, `render/lighting.wgsl`, `music.rs`, `sfx/minecraft.rs`,
+  `textures.rs`, and `crates/worldgen/src/caves.rs`.
+- Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md): the 1.18 noise
+  router as the foundation of our terrain. Continentalness, erosion and peaks-and-valleys
+  noises define a point at every position; nested cubic Hermite splines turn it into the
+  surface offset, the factor (how 2D the land is) and jaggedness; a 3D density with a
+  quarter-negative slope above the surface, sampled at the corners of 4 × 8 × 4 cells and
+  interpolated; and biomes picked from the same point, in a table of climate rows and
+  landform roles. Read from Mojang's world-generation data through misode's mcmeta mirror
+  (https://github.com/misode/mcmeta) and the Minecraft Wiki's noise router and density
+  function pages (CC BY-NC-SA); techniques only.
+
+## The hiking video
+
+- "Turning Minecraft into a Hiking Simulator", by GOATED (27 August 2026):
+  https://www.youtube.com/watch?v=axb24q2YrdQ
+- Most of the mods above came from its mod list, and its frames are the visual target we
+  compare captures against (`voxmar-reference/hiking-video-frames/`, outside the repo; not
+  redistributed). The shader packs in those frames are mostly Complementary Reimagined, with
+  BSL, Photon and Solas in places. How thick rain makes the air also follows the video
+  (`crates/client/src/render/atmosphere.rs`).
+
+## Games that shaped the design
+
+[docs/design-philosophy.md](docs/design-philosophy.md) names what each of these got right
+and where it hits a wall:
+
+- **Minecraft**: a universal voxel grammar and a huge mod scene.
+- **No Man's Sky**: endless variety of places, and the lesson that generating nouns is not
+  enough; we aim to generate decisions.
+- **Factorio**: deep, interlocking production, and simulation that stays fast through
+  sleeping entities and merged belt lines.
+- **RuneScape**: interlocking skills.
+- **Roblox**: low-friction sharing of what players make.
+
+## Algorithms and papers
+
+General techniques we use under their usual names, credited where they appear in the code:
+
+- Binary greedy meshing (popularised by cgerikj's `binary-greedy-meshing`, MIT, and
+  TanTanDev's demo; our mesher is our own): `crates/engine/src/mesh.rs`.
+- Grid traversal for raycasts, after Amanatides and Woo (1987): `crates/engine/src/physics.rs`.
+- The PCG hash, after Jarzynski and Olano (2020): `crates/engine/src/weather.rs`,
+  `crates/client/src/render/clouds.wgsl` and `voxel.wgsl`.
+- SplitMix64 for seeds and hashing: `crates/worldgen/src/rng.rs` and elsewhere.
+- Schlick's approximation for the reflectance of water: `crates/client/src/render/water.wgsl`.
+- Percentage-closer soft shadows: `crates/client/src/render/shadows.wgsl`.
+- The Gabriel graph for which places trails join: `crates/worldgen/src/trails/network.rs`.
+- Catmull-Rom curves for trails and river channels: `trails/path.rs` and `water/channel.rs`.
+
+## Read, but not used yet
+
+These were researched and may shape later work; nothing of theirs is in the game yet.
+
+- **Terrain Slabs** (Coun7ered, https://github.com/Coun7ered/terrain_slabs_multiloader) and
+  **StepUp Camera Smoother** (chedidandrew, MIT, https://github.com/chedidandrew/StepUp-Camera-Smoother):
+  half-height terrain and smooth stepping, planned in the world plan.
+- **Fast Better Grass** (robotkoer, MIT, https://modrinth.com/resourcepack/fast-better-grass),
+  **Flowering Crops**, **Continuity** and the **Reimagined** texture pack: texture ideas
+  planned for our art.
+- **Respawning Animals** (Fuzss, MPL-2.0, https://github.com/Fuzss/respawning-animals): a
+  wildlife budget per player, for when creatures exist.
+- **Sound Physics Remastered** (henkelmax, GPL-3.0), **Vervada's Enhanced Plants**
+  (CC-BY-SA 4.0) and the 3D plant packs: read for ideas.
+- **Immersive Cavegen**, **YUNG's Cave Biomes**, **Profundis** and **Alex's Caves**: named in
+  the world plan's cave biomes.
