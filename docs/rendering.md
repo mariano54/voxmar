@@ -566,6 +566,21 @@ leaves highlights neutral, and clouds in full sun are as bright as a sunlit whit
 never above the bloom threshold. So bright cumulus and cloudy skies under Verdant stay
 white and shaded instead of washing out to cream.
 
+**Measured** (1920×1080, MSAA 4×, view distance 32, `--flicker-still` and `--flicker`,
+pixels changing by more than 60 levels between two frames; before is main just before
+this work, with Bevy's own shadow filter). With the camera still while the game runs on a
+frame, a forest view went from 0.013% to 0.012% and a low-sun view stayed at 0.010%: at
+that threshold the old shadows already changed few pixels per frame, and what remains is
+swaying leaves and grass; at 4 levels, where slow crawling shows, the forest went from
+0.66% to 0.47% and a valley view from 0.40% to 0.24%. For a 4 cm step (1.6% and 2.5% in
+those views) shadows make no measurable difference: turning them off leaves 2.4% and
+2.9%, so what flickers there is pixel-art texture aliasing on leaves and grass, not
+shade. Cost, measured on a machine busy with other builds and so only roughly: soft
+shadows about 1 ms more than Bevy's filter at view distance 32 (shadows Off saves about
+2 ms in all, most of it drawing the cascades), light shafts about 0.4 ms. High takes 16
+taps where a penumbra is wider than a texel and 4 where it is not; Medium and Low are
+cheaper.
+
 **Shader packs** gained `sun_tint`, `shadow_softness`, `sky_falloff`, `ambient_occlusion`,
 `subsurface`, `cloud_shadows`, `glow`, `rays`, `mist`, `fog`, `wet_ground`, `frost` and
 `local_air`; Classic keeps the plain look (no volumetric light).
