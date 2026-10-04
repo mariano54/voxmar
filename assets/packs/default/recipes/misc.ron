@@ -9,6 +9,14 @@
                 Stripes(period: 8.0, width: 0.125, amount: -0.2, slope: 0.5, warp: 1.5, phase: 4.0),
             ], clean: true),
         ]),
+        // Molten rock: bright flowing streaks between darker cooling crust.
+        "block/lava_still": (palettes: {"main": ["#8a1e06", "#b8340a", "#dc5410", "#f27c1c", "#fca63a", "#ffd66e"]}, layers: [
+            Paint(palette: "main", base: 0.36, shade: [
+                Cells(count: (4, 4), jitter: 1.0, value: 0.25, edge: 0.45, width: 1.0, bevel: 0.0, round: -0.2, warp: 1.5),
+                Noise(cells: (4, 4), octaves: 2, amount: 0.4),
+                Stripes(period: 8.0, width: 0.25, amount: 0.15, slope: 0.5, warp: 1.5),
+            ], clean: true),
+        ]),
         "block/glass": (palettes: {"frame": ["#8fb3bf", "#c3dce4", "#eef8fb"]}, layers: [
             Paint(palette: "frame", base: 0.4, shade: [Border(width: 1, amount: 0.4, sides: (1.0, 0.0, 0.0, 1.0)), Border(width: 1, amount: -0.4, sides: (0.0, 1.0, 1.0, 0.0))], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
             Grid(legend: {'w': "#ffffffd0", 'l': "#e2f3f8a0"}, rows: [
@@ -80,7 +88,7 @@
             Clusters(palette: "bloom", count: 6, size: (2, 4), spacing: 4.5, shade: 1, seed: 5),
         ]),
         // Climate colour maps: left hot, right cold; top wet, bottom dry.
-        "colormap/grass": (size: (256, 256), layers: [Corners("#3cbc24", "#4ea85e", "#bdb53e", "#78b062")]),
+        "colormap/grass": (size: (256, 256), layers: [Corners("#4ab434", "#57a266", "#b8b046", "#7cab6c")]),
         "colormap/foliage": (size: (256, 256), layers: [Corners("#2aa812", "#3e9450", "#aaa428", "#5aa25a")]),
         // HUD.
         "gui/sprites/hud/hotbar": (size: (182, 22), palettes: {"frame": ["#1b1d22", "#3d4048", "#6d717b", "#a3a7b0"]}, layers: [
