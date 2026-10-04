@@ -139,7 +139,7 @@ fn capture(
 ) {
     let now = time.elapsed_secs();
     if let Some(taken) = state.taken_at {
-        if now - taken > 1.0 {
+        if now - taken > 3.0 {
             exit.write(AppExit::Success);
         }
         return;

@@ -20,12 +20,14 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
 /// In-game day length.
 pub const TICKS_PER_DAY: u64 = 24_000;
+/// Blocks across a cell of the weather's simulation.
+pub const WEATHER_CELL: i32 = 128;
 /// Highest flight speed multiplier an admin may choose.
 pub const MAX_FLY_SPEED: f32 = 4.0;
 /// Longest console line, in characters, a server accepts.
@@ -95,14 +97,25 @@ pub enum ServerMessage {
     /// A line for the player's console: a reply to their command, or chat.
     Chat { kind: ChatKind, text: String },
     /// The weather where the player is, sent when it changes and every few seconds, with
-    /// the names of the effects showing (`valley_fog`, `hail`), strongest first. `quick`
-    /// asks the client to change to it within a second or two rather than ease in slowly,
-    /// after a command changed it.
-    Weather { weather: Weather, effects: Vec<String>, quick: bool },
-    /// Lightning striking the ground at `at`: a flash, and thunder once the sound has
-    /// travelled. `seed` shapes the bolt, so every client draws the same one.
-    Lightning { at: Vec3, seed: u32 },
+    /// the names of the effects showing (`valley_fog`, `hail`), strongest first, and the
+    /// rain around, to show storms coming. `quick` asks the client to change to it within
+    /// a second or two rather than ease in slowly, after a command changed it.
+    Weather { weather: Weather, effects: Vec<String>, nearby: Nearby, quick: bool },
+    /// Lightning at `at`: a flash, and thunder once the sound has travelled. It strikes
+    /// the ground there, or with `cloud` flashes inside the cloud. `seed` shapes the bolt,
+    /// so every client draws the same one.
+    Lightning { at: Vec3, seed: u32, cloud: bool },
     Died,
+}
+
+/// How hard it rains or snows around the player: in each of the 5×5 weather cells
+/// (`WEATHER_CELL` blocks across) centred on the player's, row by row along +x then +z,
+/// 0..255.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Nearby {
+    /// The (x, z) block corner of the first cell.
+    pub first: voxmar_engine::glam::IVec2,
+    pub rain: [u8; 25],
 }
 
 /// What a console line is.

@@ -320,7 +320,7 @@ fn commands_set_the_time_and_the_weather() {
     assert_eq!(client.command("/time speed -1")[0].0, ChatKind::Error);
 
     // Forced weather arrives quickly, and stays.
-    assert!(client.ok("/weather storm 60").contains("storm"));
+    assert_eq!(client.ok("/weather storm max 60"), "Bringing max storm (100%) to the land around you for 60 seconds.");
     client.pump_until(|c| c.quick && c.weather.is_some_and(|w| w.precipitation == 1.0));
     let report = client.ok("/weather");
     assert!(report.starts_with("thunderstorm, storm for 5"), "{report}");
@@ -331,7 +331,8 @@ fn commands_set_the_time_and_the_weather() {
     // Wind on its own, and on top of forced weather.
     assert!(client.ok("/wind gale sw 30").contains("gale from the south-west"));
     client.pump_until(|c| c.weather.is_some_and(|w| (w.wind.length() - 18.0).abs() < 0.01 && w.wind.x > 0.0 && w.wind.y < 0.0));
-    client.ok("/weather rain");
+    assert!(client.ok("/weather rain 0.5").starts_with("Bringing moderate rain (50%)"));
+    assert_eq!(client.command("/weather rain 2.5")[0].0, ChatKind::Error);
     client.ok("/wind calm");
     client.pump_until(|c| c.weather.is_some_and(|w| w.precipitation == 0.5 && w.wind.length() < 0.5));
     assert!(client.ok("/wind").starts_with("Wind 0.3 blocks/s"));

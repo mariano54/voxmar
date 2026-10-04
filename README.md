@@ -19,8 +19,8 @@ it rebuilds in seconds rather than minutes after an edit and runs nearly as fast
 
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
-frame rate), `--weather KIND` (show a kind of weather from `weather.ron`, such as `storm`,
-instead of the server's), `--command LINE` (run a console line once in game, such as
+frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
+`storm` or `rain:0.3`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
 `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
@@ -51,9 +51,11 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   moves it on, `/time speed 10` runs days ten times as fast, `/time freeze` stops the sun and
   `/time resume` lets it run normally. `/day` and `/night` are shortcuts. The time of day and its
   speed are saved with the world; the weather keeps its own pace.
-- `/weather` describes the weather where you are. `/weather KIND [SECONDS]` brings that kind
-  (`/weather list`) to the land within about a kilometre of you, for five minutes unless you
-  say; then the natural weather takes over again, slowly. `/weather natural` ends it at once.
+- `/weather` describes the weather where you are. `/weather KIND [INTENSITY] [SECONDS]` brings
+  that kind (`/weather list`) to the land within about a kilometre of you, as intense as you say
+  (`light`, `moderate`, `heavy`, `max` or 0 to 1; each kind has its usual intensity, and 1 is its
+  fiercest), for five minutes unless you say; then the natural weather takes over again, slowly.
+  `/weather natural` ends it at once.
 - `/wind` describes the wind; `/wind calm|breeze|strong|gale [FROM] [SECONDS]` brings that
   wind (from a compass point, `n` to `nw`, or degrees from north) on top of any forced
   weather.
@@ -309,16 +311,21 @@ later gameplay agree.
 Effects come on top, as data in `assets/content/base/weather.ron`: each is a product of
 smooth conditions on the weather, the local climate and land (coast, valley, altitude,
 latitude, moisture, vegetation, aether) and the time of day, raises channels of the weather
-clients draw, and has a rarity. There are drizzle and downpours, thunderstorms, sleet, hail,
-blizzards, thundersnow, squalls, drifting snow, dust and sandstorms, mist after rain, dawn
-mist, valley fog, sea fog, frost, heat haze, rainbows (and rarely double ones), halos and sun
-dogs, the aurora near the poles (and rarely far from them), shooting stars, meteor showers,
-ball lightning, marsh lights, and where the land's aether is high glowing motes, the very rare
-aether storm and the legendary starfall. Rarity is drawn per stretch of land (1.5 km) and time
+clients draw, and has a rarity. There are drizzle and downpours, thunderstorms (and the
+towering supercells of hot, wet country, common there and rare elsewhere), heat lightning on
+humid summer nights, sleet, freezing rain, hail, blizzards, thundersnow, squalls, drifting
+snow, dust and sandstorms, mist after rain, dawn mist, mist off lakes on cool mornings, steam
+off hot ground after rain, valley fog, sea fog, frost, diamond dust in bitter cold, heat haze,
+rainbows (and rarely double ones), halos and sun dogs, the aurora near the poles (and rarely
+far from them), shooting stars, meteor showers, ball lightning, marsh lights, and where the
+land's aether is high glowing motes, the very rare aether storm and the legendary starfall.
+Light rain and cloud are everyday; heavy rain is uncommon outside the tropics; wind is calm
+to a light breeze most of the time, strong now and then, and a gale only in storms. Rarity is drawn per stretch of land (1.5 km) and time
 (the effect's typical length) from the seed, and each world features a few rare effects and
 suppresses a common one, so drizzle and mist are everyday sights and a meteor shower is an
 event. `cargo test -p voxmar_server effect_spread -- --ignored --nocapture` prints how often
-each shows across kinds of country.
+each shows across kinds of country, and `climate_spread` how often each kind of country is
+cloudy, rains or snows at each intensity and how hard the wind blows.
 
 Each player is sent `ServerMessage::Weather` for where they stand when it changes or every five
 seconds, with the effects showing, and the client eases towards it: cloud builds and clears

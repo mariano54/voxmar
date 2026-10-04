@@ -6,6 +6,7 @@
 //! (`commands.ron` in each package); each runs one of the built-ins here, or other lines.
 
 use voxmar_engine::command::{self, CommandDef, Lookup, Permission, Run};
+use voxmar_engine::weather::{INTENSITIES, parse_intensity};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
 use voxmar_protocol::{ChatKind, MAX_LINE, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
@@ -345,13 +346,29 @@ impl Server {
                 Ok(if self.weather.release(at, tick) { "The natural weather is back." } else { "The weather here is already natural." }.into())
             }
             Some(name) => {
-                let preset = self.content.weather.preset(name).ok_or_else(|| format!("There is no weather called `{name}`; /weather list names them."))?.clone();
-                if args.len() > 2 {
+                let preset = self.content.weather.preset(name).ok_or_else(|| format!("There is no weather called `{name}`; /weather list names them."))?;
+                // An intensity (a name, or a fraction such as 0.3), then seconds.
+                let mut rest = &args[1..];
+                let intensity = match rest.first().filter(|w| w.contains('.') || *w == "0" || *w == "1" || w.parse::<f32>().is_err()) {
+                    Some(word) => {
+                        rest = &rest[1..];
+                        parse_intensity(word).ok_or_else(|| format!("`{word}` is not an intensity: light, moderate, heavy, max or 0 to 1."))?
+                    }
+                    None => preset.intensity,
+                };
+                if rest.len() > 1 {
                     return Err("Too many words.".into());
                 }
-                let seconds = weather_seconds(args.get(1))?;
-                let reply = format!("Bringing {} to the land around you for {}.", preset.short_name(), minutes(seconds as u64));
-                self.weather.force(preset, at, seconds, tick);
+                let seconds = weather_seconds(rest.first())?;
+                let how = INTENSITIES.iter().rev().find(|&&(_, v)| intensity >= v - 0.125).map_or("faint", |&(n, _)| n);
+                let how = if how == "full" { "max" } else { how };
+                let reply = format!(
+                    "Bringing {how} {} ({:.0}%) to the land around you for {}.",
+                    preset.short_name().replace('_', " "),
+                    intensity * 100.0,
+                    minutes(seconds as u64)
+                );
+                self.weather.force(preset.at(intensity), at, seconds, tick);
                 Ok(reply)
             }
         }
