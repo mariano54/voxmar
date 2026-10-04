@@ -81,6 +81,8 @@ enum Form {
     Bush { radius: (f32, f32), leaves: Option<BlockId>, log: Option<BlockId> },
     FallenLog { length: (i32, i32), thick: f32, hollow: f32, branches: f32, stump: f32, growth: f32, plants: Vec<(PlantId, f32)> },
     Stump { height: (i32, i32), growth: f32, plants: Vec<(PlantId, f32)> },
+    StandingStones { radius: (f32, f32), count: (i32, i32), height: (i32, i32), stones: Mat },
+    FairyRing { radius: (f32, f32), plants: Vec<(PlantId, f32)> },
     Litter { top: Mat, cover: f32 },
     LeafPiles { cover: f32 },
     Foot { plants: Vec<(PlantId, f32)>, cover: f32 },
@@ -200,6 +202,10 @@ impl Decor {
                         Stage::Logs,
                     ),
                     Shape::Stump { height, growth, plants: list } => (Form::Stump { height: *height, growth: *growth, plants: plants(list) }, Stage::Logs),
+                    Shape::StandingStones { radius, count, height, stones } => {
+                        (Form::StandingStones { radius: *radius, count: *count, height: *height, stones: mat(stones) }, Stage::Rocks)
+                    }
+                    Shape::FairyRing { radius, plants: list } => (Form::FairyRing { radius: *radius, plants: plants(list) }, Stage::Logs),
                     Shape::Litter { top, cover } => (Form::Litter { top: mat(top), cover: *cover }, Stage::Ornaments),
                     Shape::LeafPiles { cover } => (Form::LeafPiles { cover: *cover }, Stage::Ornaments),
                     Shape::Foot { plants: list, cover } => (Form::Foot { plants: plants(list), cover: *cover }, Stage::Ornaments),
@@ -406,6 +412,49 @@ impl Decor {
                 }
                 self.stump(area, site, base, species, height, *growth, plants, seed, blocks);
             }
+            Form::StandingStones { radius, count, height, stones } => {
+                let stones = self.stones(area, site, stones);
+                let r = lerp(*radius, rng.unit());
+                let n = rng.range(count.0, count.1 + 1);
+                let phase = rng.unit() * std::f32::consts::TAU;
+                for i in 0..n {
+                    let a = phase + i as f32 * std::f32::consts::TAU / n as f32;
+                    let (x, z) = ((base.x as f32 + 0.5 + a.cos() * r).floor() as i32, (base.z as f32 + 0.5 + a.sin() * r).floor() as i32);
+                    let tall = rng.range(height.0, height.1 + 1);
+                    let block = stones.pick(rng.unit().min(0.9999));
+                    let g = area.height(x, z);
+                    // Each stone stands on firm, dry ground near the ring's own level.
+                    if area.unfit(x, z) || (g + 1 - base.y).abs() > 2 || (blocks.contains(IVec3::new(x, g, z)) && !area.world.terrain.is_firm(blocks.get(IVec3::new(x, g - 1, z)))) {
+                        continue;
+                    }
+                    for y in g..=g + tall {
+                        blocks.set(IVec3::new(x, y, z), block);
+                    }
+                }
+            }
+            Form::FairyRing { radius, plants } => {
+                let r = lerp(*radius, rng.unit());
+                let seed = rng.next_u64();
+                let reach = r.ceil() as i32 + 1;
+                let Some((min, max)) = blocks.clip(base - IVec3::new(reach, 0, reach), base + IVec3::new(reach, 0, reach)) else { return };
+                let ecology = &area.world.ecology;
+                for z in min.z..=max.z {
+                    for x in min.x..=max.x {
+                        let d = (((x - base.x) * (x - base.x) + (z - base.z) * (z - base.z)) as f32).sqrt();
+                        let u = unit(hash3(seed, x, 0, z));
+                        if (d - r).abs() > 0.6 || u > 0.85 || area.unfit(x, z) {
+                            continue;
+                        }
+                        let g = area.height(x, z);
+                        if (g + 1 - base.y).abs() > 2 || !self.soil(area, blocks, IVec3::new(x, g, z)) {
+                            continue;
+                        }
+                        if let Some(plant) = ecology.pick(plants, site, Ground::Soil, unit(hash3(seed ^ 0x5a, x, 0, z)), u) {
+                            put_plant(blocks, IVec3::new(x, g + 1, z), plant);
+                        }
+                    }
+                }
+            }
             Form::Litter { .. } | Form::LeafPiles { .. } | Form::Foot { .. } => {}
         }
     }
@@ -517,6 +566,7 @@ impl Decor {
     /// its top and its north face.
     #[allow(clippy::too_many_arguments)]
     fn rock(&self, area: &Area, centre: Vec3, radii: Vec3, block: BlockId, moss: f32, seed: u64, blocks: &mut Blocks) {
+        // Blocks are laid from the bottom up, so each can check what lies beneath it.
         let min = (centre - radii).floor().as_ivec3();
         let max = (centre + radii).floor().as_ivec3();
         let Some((min, max)) = blocks.clip(min, max) else { return };
@@ -539,7 +589,10 @@ impl Decor {
                     let rock = if mossy { self.moss } else { block };
                     let ground = area.height(x, z);
                     if y > ground {
-                        blocks.put_if_air(cell, rock);
+                        // Only on something firm: the ground, or the rock's own lower blocks.
+                        if area.world.terrain.is_firm(blocks.get(cell - IVec3::Y)) {
+                            blocks.put_if_air(cell, rock);
+                        }
                     } else if y >= ground - 1
                         && matches!(area.world.terrain.ground(blocks.get(cell)), Ground::Soil | Ground::Sand | Ground::Snow)
                         && !area.geology.get(x, z).submerged()
@@ -628,11 +681,16 @@ impl Decor {
                         if (corner && unit(hash3(seed, cell.x, cell.y, cell.z)) < 0.6) || (hollow && dy == 1 && ds == 0) {
                             continue;
                         }
+                        if dy == 0 && blocks.contains(cell) && !area.world.terrain.is_firm(blocks.get(cell - IVec3::Y)) {
+                            continue;
+                        }
                         blocks.put_log(cell, wood);
                     }
                 }
                 tops.push(at + IVec3::Y * 2);
-            } else {
+            } else if !blocks.contains(at) || area.world.terrain.is_firm(blocks.get(at - IVec3::Y)) {
+                // A cell over a hole the analytic ground missed (the lip of a cave mouth)
+                // is left out rather than hung in the air.
                 blocks.put_log(at, wood);
                 tops.push(at);
             }
@@ -688,9 +746,15 @@ impl Decor {
     /// A stump `height` tall standing on the ground at `base`, maybe with a plant on top.
     #[allow(clippy::too_many_arguments)]
     fn stump(&self, area: &Area, site: &Site, base: IVec3, species: TreeId, height: i32, growth: f32, plants: &[(PlantId, f32)], seed: u64, blocks: &mut Blocks) {
+        // A stump is one block column: stand it only on firm ground in that column.
+        if blocks.contains(base) && !area.world.terrain.is_firm(blocks.get(base - IVec3::Y)) {
+            return;
+        }
         let log = area.trees.log(species);
         for y in 0..height {
-            blocks.put_log(base + IVec3::Y * y, log);
+            if !blocks.put_log(base + IVec3::Y * y, log) && blocks.contains(base) {
+                return;
+            }
         }
         let u = unit(seed);
         if u < growth

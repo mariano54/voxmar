@@ -1013,7 +1013,9 @@ impl CaveColumn<'_> {
     }
 
     /// Fills carved blocks with water and lava from the water tables, and seals them where
-    /// they would leave a fluid beside air, or sea water above air.
+    /// they would leave a fluid beside air, or sea water above air. Geodes stay dry: the
+    /// water tables' barriers would otherwise wall rock through their hollows, so instead
+    /// flooded cave beside a geode's hollow turns to rock (which the lining makes crystal).
     fn fill(&self, x: i32, z: i32, geo: &GeoSample, out: &mut [Cave]) {
         let (wx, wz) = (self.origin.x + x, self.origin.z + z);
         let height = geo.height;
@@ -1022,12 +1024,24 @@ impl CaveColumn<'_> {
         // every side is ground.
         let lowest = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.geology.get(wx + dx, wz + dz).height).into_iter().min().unwrap_or(height);
         let outside = |y: i32| if y <= SEA_LEVEL { Cave::Water } else { Cave::Air };
+        // Geodes reaching this block column or the ones beside it.
+        let geodes: Vec<&Geode> = self.geodes.iter().filter(|g| (-1..=1).any(|dz| (-1..=1).any(|dx| g.span(wx + dx, wz + dz).is_some()))).collect();
+        let hollow = |p: IVec3| geodes.iter().any(|g| g.distance(p) < g.radius);
         for y in FLOOR..=height {
             let cave = &mut out[y as usize];
             if *cave == Cave::Rock {
                 continue;
             }
+            let pos = IVec3::new(wx, y, wz);
+            if !geodes.is_empty() && hollow(pos) {
+                *cave = Cave::Air;
+                continue;
+            }
             *cave = self.tables.fluid(Vec3::new(wx as f32, y as f32, wz as f32) + offset, y);
+            if *cave != Cave::Air && !geodes.is_empty() && [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z].iter().any(|&d| hollow(pos + d)) {
+                *cave = Cave::Rock;
+                continue;
+            }
             let exposed = y > lowest && *cave != outside(y);
             let under_sea = y == height && *cave == Cave::Air && outside(y + 1) == Cave::Water;
             if exposed || under_sea {

@@ -757,6 +757,11 @@ pub enum Shape {
         #[serde(default)]
         plants: Vec<Select>,
     },
+    /// A ring of standing stones `radius` blocks across, `count` of them, each a pillar
+    /// `height` blocks tall sunk into the ground: an old landmark.
+    StandingStones { radius: (f32, f32), count: (i32, i32), height: (i32, i32), stones: Material },
+    /// A ring of plants (mushrooms) `radius` blocks across, one block wide.
+    FairyRing { radius: (f32, f32), plants: Vec<Select> },
     /// Ornament: the ground under the tree's crown, where `cover` of it is reached,
     /// becomes `top` (needles, leaf mould), densest near the trunk.
     Litter { top: Material, cover: f32 },
@@ -808,6 +813,7 @@ impl GroundDecorationDef {
         match &self.shape {
             Shape::Patch { radius, .. } | Shape::Boulder { radius, .. } | Shape::Bush { radius, .. } => radius.1 * 1.35,
             Shape::Rocks { spread, size, .. } => spread + size.1,
+            Shape::StandingStones { radius, .. } | Shape::FairyRing { radius, .. } => radius.1 + 1.0,
             // Centred on its position; a thick trunk is three wide, branches stick out two
             // more, and the stump stands up to four blocks behind its foot.
             Shape::FallenLog { length, .. } => length.1 as f32 / 2.0 + 4.0,
@@ -819,7 +825,8 @@ impl GroundDecorationDef {
     pub fn grounds(&self) -> Vec<Ground> {
         self.ground.clone().unwrap_or_else(|| match self.shape {
             Shape::Patch { .. } | Shape::Litter { .. } | Shape::LeafPiles { .. } | Shape::Foot { .. } => vec![Ground::Soil],
-            Shape::Boulder { .. } | Shape::Rocks { .. } => vec![Ground::Soil, Ground::Snow, Ground::Sand, Ground::Bare],
+            Shape::Boulder { .. } | Shape::Rocks { .. } | Shape::StandingStones { .. } => vec![Ground::Soil, Ground::Snow, Ground::Sand, Ground::Bare],
+            Shape::FairyRing { .. } => vec![Ground::Soil],
             Shape::Bush { .. } | Shape::FallenLog { .. } | Shape::Stump { .. } => vec![Ground::Soil, Ground::Snow],
         })
     }
@@ -1585,6 +1592,17 @@ impl WorldContent {
                     share("growth", *growth)?;
                     plants(list)?;
                 }
+                Shape::StandingStones { radius, count, height, stones } => {
+                    range("radius", *radius, 7.0)?;
+                    if count.0 < 3 || count.0 > count.1 || count.1 > 16 || height.0 < 1 || height.0 > height.1 || height.1 > 6 {
+                        return Err(ContentError(format!("{}: 3..=16 stones, 1..=6 tall", at())));
+                    }
+                    material(stones)?;
+                }
+                Shape::FairyRing { radius, plants: list } => {
+                    range("radius", *radius, 7.0)?;
+                    plants(list)?;
+                }
                 Shape::Litter { top, cover } => {
                     material(top)?;
                     share("cover", *cover)?;
@@ -1900,6 +1918,8 @@ fn qualify_decoration(package: &str, def: GroundDecorationDef) -> GroundDecorati
             Shape::FallenLog { length, thick, hollow, branches, stump, growth, plants: selects(plants) }
         }
         Shape::Stump { height, growth, plants } => Shape::Stump { height, growth, plants: selects(plants) },
+        Shape::StandingStones { radius, count, height, stones } => Shape::StandingStones { radius, count, height, stones: qualify_material(package, stones) },
+        Shape::FairyRing { radius, plants } => Shape::FairyRing { radius, plants: selects(plants) },
         Shape::Litter { top, cover } => Shape::Litter { top: qualify_material(package, top), cover },
         Shape::LeafPiles { cover } => Shape::LeafPiles { cover },
         Shape::Foot { plants, cover } => Shape::Foot { plants: selects(plants), cover },
@@ -2103,9 +2123,9 @@ mod tests {
             ("(name: \"a\", climate: [()], variants: [(\"nowhere\", 0.2)], SURFACE)", "unknown variant `base:nowhere`"),
             ("(name: \"a\", inherit: \"b\"), (name: \"b\", inherit: \"a\")", "inherits from itself"),
             ("(name: \"a\", climate: [()], weight: 0.0, SURFACE)", "weight must be positive"),
-            ("(name: \"a\", climate: [()], surface: (rules: [(when: [Province(\"chalk\")], place: (top: Stones))], ground: (top: Stones), underwater: (top: Stones)))", "rock province"),
+            ("(name: \"a\", climate: [()], surface: (rules: [(when: [Province(\"pumice\")], place: (top: Stones))], ground: (top: Stones), underwater: (top: Stones)))", "rock province"),
             ("(name: \"a\", climate: [()], surface: (ground: (top: Mix([Tag(\"no_such_tag\", 1.0)])), underwater: (top: Stones)))", "tag `no_such_tag`"),
-            ("(name: \"a\", climate: [()], flora: (trees: [Name(\"baobab\", 1.0)]), SURFACE)", "unknown tree `base:baobab`"),
+            ("(name: \"a\", climate: [()], flora: (trees: [Name(\"baobob\", 1.0)]), SURFACE)", "unknown tree `base:baobob`"),
             ("(name: \"a\", climate: [()], flora: (forest: 1.5), SURFACE)", "forest must be in 0..=1"),
         ];
         for (extra, expected) in cases {
@@ -2162,7 +2182,7 @@ mod tests {
             (cave("cave_decoration: [(on: Floor, chance: 0.1, on_tags: [\"nope\"], block: Block(\"ice\"))]"), "tag `nope`"),
             (cave("cave_decoration: [(on: Floor, chance: 0.1, block: Strata)]"), "strata"),
             ("(name: \"c\", layer: Underground, climate: [(depth: (80.0, 4.0))], SURFACE)".replace("SURFACE", GROUND), "depth range"),
-            ("(name: \"c\", layer: Underground, climate: [(provinces: [\"chalk\"])], SURFACE)".replace("SURFACE", GROUND), "rock province"),
+            ("(name: \"c\", layer: Underground, climate: [(provinces: [\"pumice\"])], SURFACE)".replace("SURFACE", GROUND), "rock province"),
             ("(name: \"c\", layer: Underground, SURFACE)".replace("SURFACE", GROUND), "climate box"),
             // Underground parts on a surface biome.
             ("(name: \"c\", climate: [(depth: (4.0, 80.0))], SURFACE)".replace("SURFACE", GROUND), "underground biomes"),

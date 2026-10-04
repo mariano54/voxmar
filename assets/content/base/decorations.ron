@@ -65,6 +65,19 @@
             follows: [(Noise((name: "boulder_fields", scale: 140.0, octaves: 2)), 0.1, 0.6)],
         ),
         (
+            // Erratics: great boulders a glacier carried from far away, of rock unlike the
+            // ground they lie on.
+            name: "erratic", tags: ["erratics"],
+            shape: Boulder(radius: (1.8, 3.4), stones: Mix([Name("granite", 3.0), Name("diorite", 1.0), Name("andesite", 1.0), Name("marble", 0.5)]), moss: 0.3),
+            spacing: 13.0,
+        ),
+        (
+            // Clusters of ice crystals and pale stone.
+            name: "ice_crystals", tags: ["crystals"],
+            shape: Rocks(count: (2, 5), spread: 2.5, size: (0.6, 1.4), stones: Mix([Name("blue_ice", 2.0), Name("packed_ice", 2.0), Name("calcite", 1.0)])),
+            spacing: 9.0,
+        ),
+        (
             // Loose stones scattered down slopes.
             name: "scree", tags: ["mountain", "highland", "tundra", "rocky", "steppe"],
             shape: Rocks(count: (2, 5), spread: 2.5, size: (0.5, 1.1), stones: Stones, moss: 0.2),
@@ -81,6 +94,23 @@
             name: "desert_rocks", tags: ["desert", "mesa"],
             shape: Rocks(count: (1, 4), spread: 2.2, size: (0.5, 1.2), stones: Stones),
             spacing: 26.0,
+        ),
+
+        // --- Landmarks and wonders ----------------------------------------------------
+        (
+            // A ring of old standing stones on open high ground, commoner where the aether
+            // runs strong.
+            name: "standing_stones", tags: ["grassland", "heath", "highland", "tundra"], rarity: VeryRare,
+            shape: StandingStones(radius: (3.5, 6.0), count: (5, 11), height: (2, 4), stones: Stones),
+            spacing: 6.0,
+            follows: [(Slope, 2.0, 0.5), (Aether, 0.1, 0.7)],
+        ),
+        (
+            // A fairy ring of glowing mushrooms in a damp wood, where aether runs high.
+            name: "fairy_ring", tags: ["forest", "wetland", "fantastical"], rarity: Rare,
+            shape: FairyRing(radius: (2.5, 5.0), plants: [Name("glowcap", 3.0), Name("dreamshade", 1.0), Name("brown_mushroom", 1.0)]),
+            spacing: 14.0,
+            follows: [(Aether, 0.4, 0.9), (Moisture, 0.8, 1.1), (Slope, 2.0, 1.0)],
         ),
 
         // --- Bushes -------------------------------------------------------------------

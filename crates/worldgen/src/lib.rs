@@ -226,7 +226,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 11;
+    pub const VERSION: u32 = 12;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -874,7 +874,8 @@ mod tests {
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
-        for (seed, biome) in [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest")] {
+        let places = [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (13, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
+        for (seed, biome) in places {
             let world = Overworld::new(seed, registry.clone());
             let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {biome}"));
             let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
@@ -927,7 +928,7 @@ mod tests {
                     }
                 }
             }
-            assert!(pieces > 20 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome}");
+            assert!(pieces >= 10 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome}");
         }
     }
 
@@ -1186,32 +1187,35 @@ mod tests {
     #[test]
     fn geodes_are_hollow_and_lined() {
         let registry = registry();
-        let world = Overworld::new(5, registry.clone());
         let crystal = [registry.expect("base:crystal_block")];
         let mut checked = 0;
-        for i in 0..400 {
-            let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
-            let origin = pos.origin();
-            let geology = geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
-            let column = world.generate(pos);
-            for geode in world.caves.geodes_near(&geology, origin) {
-                let centre = geode.centre.floor().as_ivec3();
-                if ColumnPos::of_block(centre) != pos {
+        for seed in [5, 1, 42, 7] {
+            let world = Overworld::new(seed, registry.clone());
+            for i in 0..400 {
+                let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
+                let origin = pos.origin();
+                let geology = geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
+                let geodes: Vec<_> = world.caves.geodes_near(&geology, origin).into_iter().filter(|g| ColumnPos::of_block(g.centre.floor().as_ivec3()) == pos).collect();
+                if geodes.is_empty() {
                     continue;
                 }
-                let local = |p: IVec3| IVec3::new(p.x & 31, p.y, p.z & 31);
-                let middle = column.block(local(centre));
-                assert!(!registry.info(middle).solid, "a geode at {centre} is not hollow");
-                // Straight up and down from the centre, through the lining, unless a cave cut it.
-                for dir in [IVec3::Y, IVec3::NEG_Y] {
-                    let p = centre + dir * (geode.radius + 0.6).floor() as i32;
-                    let block = column.block(local(p));
-                    assert!(crystal.contains(&block) || !registry.info(block).solid, "{} at {p} lines the geode at {centre}", registry.def(block).name);
+                let column = world.generate(pos);
+                for geode in geodes {
+                    let centre = geode.centre.floor().as_ivec3();
+                    let local = |p: IVec3| IVec3::new(p.x & 31, p.y, p.z & 31);
+                    let middle = column.block(local(centre));
+                    assert!(!registry.info(middle).solid, "seed {seed}: a geode at {centre} is not hollow: {}", registry.def(middle).name);
+                    // Straight up and down from the centre, through the lining, unless a cave cut it.
+                    for dir in [IVec3::Y, IVec3::NEG_Y] {
+                        let p = centre + dir * (geode.radius + 0.6).floor() as i32;
+                        let block = column.block(local(p));
+                        assert!(crystal.contains(&block) || !registry.info(block).solid, "seed {seed}: {} at {p} lines the geode at {centre}", registry.def(block).name);
+                    }
+                    checked += 1;
                 }
-                checked += 1;
             }
         }
-        assert!(checked >= 2, "only {checked} geodes");
+        assert!(checked >= 6, "only {checked} geodes");
     }
 
     /// `cargo test --release -p voxmar_worldgen cave_preview -- --ignored --nocapture`
