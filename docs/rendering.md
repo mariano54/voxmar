@@ -188,6 +188,43 @@ Rain, snow and the other falling and drifting particles (`precipitation.rs`) alr
 with `ClientWeather::current.wind`, which is `Wind::now` at the camera; clouds drift with
 the mean wind.
 
+## Fluid state
+
+Water and lava flow (`engine/src/fluid.rs`). Each state of a fluid is its own block, made
+by the registry right after the fluid's source: `water` (the source), `water_flow_1` (the
+deepest flow) to `water_flow_7`, `water_falling`, and for rivers `water_top_1..7` (a still
+source with a partial surface, in eighths) and `water_current_<direction>_<speed>_<eighths>`
+(pinned river water). Lava has the first nine. Every state shares its source's render kind,
+textures, tint and light filter, so until the mesher reads the state, flowing water draws as
+whole water blocks. A mesher reads it like this:
+
+- `registry.info(block).fluid` (or `registry.fluid(block)`) is `Option<FluidState>`:
+  `fluid` (which fluid: compare these, not block ids), `amount` (eighths of the cell filled,
+  1..=8: 8 for sources and falling cells, 7 down to 1 as a flow thins, a river's own surface
+  for a partial source), `source`, `falling`, and `current` (pinned river water's
+  `Current { direction: 16ths of a turn counter-clockwise from +x towards +z, speed: 1..=3 }`).
+- **Join faces by fluid.** The face between two cells holding the same fluid is never seen:
+  hide it whenever `a.fluid == b.fluid`, not only between identical blocks. (Until the mesher
+  does this, a stream draws a faint internal face wherever its level changes.)
+- **Surface.** `fluid::corner_heights(registry, block, pos) -> [f32; 4]` gives the surface's
+  height at the cell's top corners, 0..=1, in the order (−x, −z), (+x, −z), (+x, +z),
+  (−x, +z). A cell with the same fluid above it has no top face (it is joined), and corners
+  next to such cells are 1. Otherwise each corner is the mean of the four cells around it:
+  the fluid's cells by height (`amount / 8`; cells at least 0.8 high count ten times),
+  open cells (air, plants) as 0, solid cells and other fluids left out (Minecraft's rule), so
+  a lake's surface stays flat, shores dip, and flows slope down from their source.
+  `block` is any `Fn(IVec3) -> Option<BlockId>` (`None` counts as solid), such as one over
+  the mesher's padded cells.
+- **Flow.** `fluid::flow(registry, block, pos) -> Vec2` is the direction and speed (blocks
+  per second, along x and z) to scroll the texture: a pinned cell's current (0.7, 1.4 or
+  2.8), `FLOW_SPEED` (1.4) down the slope of a flow, and zero on still water. Player physics
+  calls the same function, so what scrolls is what pushes a swimmer.
+- **Falling.** `falling` cells are full columns of water pouring down; scroll their sides
+  downwards.
+
+Fluid changes reach the client as `ServerMessage::Blocks` (one message per tick with every
+change in columns the player has) and go through `ClientWorld::set_block` like any edit.
+
 ## What we took from Voxy
 
 Voxy (Fabric LOD mod, read from its source) stores the world as 32³ voxel sections mipped

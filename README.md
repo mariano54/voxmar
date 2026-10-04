@@ -60,6 +60,11 @@ server) may use them all, everyone else `/help`, `/seed` and `/list`.
 - `/tp X Y Z`, `/tp X Z` (onto the ground), `/tp PLAYER`, `/tp PLAYER X Y Z`, `/tp PLAYER PLAYER`;
   `~` means where the player is, so `/tp ~ ~10 ~` goes ten blocks up.
 - `/gamemode survival|creative [PLAYER]` switches a player's mode, which is kept with them.
+- `/setblock X Y Z BLOCK` puts a block somewhere (`~` again means where you are), and
+  `/fill X1 Y1 Z1 X2 Y2 Z2 BLOCK` fills a box (at most 32768 blocks and 128 across; `air`
+  empties it). Both load the columns they touch first. `/give BLOCK [COUNT]` hands you blocks
+  (64 unless you say), so `/give water` lets you pour water. Block names may leave out the
+  package (`water` for `base:water`).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
 Commands are data: each package's `commands.ron` names its commands, who may use them, their
@@ -279,6 +284,27 @@ ambient light and fog, and rain and snow close in the view. Rain streaks, splash
 snowflakes fall through a box around the camera, slanted by the wind and stopped by a map of
 the highest block around the camera, so nothing falls indoors, under trees or in caves.
 F3 shows the weather.
+
+## Water
+
+Water and lava flow as in Minecraft (`engine/src/fluid.rs`): a source spreads seven blocks over
+flat ground (lava three), heading for the nearest edge within four blocks (lava two), falls as
+far as it can, and dries up once nothing feeds it. Two sources make a third between them, so
+water taken out of a pool comes back. Lava turns to stone where water reaches a lava source
+(basalt once that stone exists), to cobblestone where it reaches flowing lava, and pouring lava
+into water turns the water to stone. Every state is its own block (`water_flow_1` to
+`water_flow_7`, `water_falling`; rivers also have pinned water that carries a current), so
+chunks, saves and the network treat them like any block. Flowing water and river currents
+carry swimmers along.
+
+The server's kernel is event-driven: a block change wakes only the fluid beside it, each cell
+moves on its fluid's tick (water every five ticks, lava every thirty, with a little hashed jitter
+so fronts do not move in lockstep), and water that has settled costs nothing. Generated water is
+already settled, so loading the world wakes nothing. A tick runs at most a budget of updates
+that adapts to what they cost and how busy the server is (aiming at 4 ms), and the rest wait;
+each player is sent one `Blocks` message per tick with the changes in columns they have. A lake
+48 blocks across pouring 60 blocks into a cave (150 thousand cells changing) runs in about
+0.3 µs per update.
 
 ## Sound
 

@@ -110,6 +110,11 @@ impl Client {
             ServerMessage::BlockChanged { pos, block } => {
                 self.world.set_block(pos, block);
             }
+            ServerMessage::Blocks { changes } => {
+                for (pos, block) in changes {
+                    self.world.set_block(pos, block);
+                }
+            }
             ServerMessage::PlayerState { health, inventory } => {
                 self.health = health.current;
                 self.inventory = inventory;
@@ -380,4 +385,34 @@ fn players_are_told_the_weather() {
     let fractions = [weather.cover, weather.convection, weather.cirrus, weather.humidity, weather.precipitation, weather.snow];
     assert!(fractions.iter().all(|f| (0.0..=1.0).contains(f)), "{weather:?}");
     assert!(weather.wind.is_finite());
+}
+
+/// Water placed by a command flows, and players see it flow through batched updates; the
+/// commands that build and give blocks work for admins.
+#[test]
+fn water_flows_for_everyone_to_see() {
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    let (x, y, z) = (feet.x, feet.y + 20, feet.z);
+    let home = ColumnPos::of_block(feet);
+    client.pump_until(|c| (-1..=1).all(|dz| (-1..=1).all(|dx| c.world.contains(home.offset(dx, dz)))));
+    // A stone floor in the sky, with a water source on it.
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", x - 9, y, z - 9, x + 9, y, z + 9));
+    client.pump_until(|c| c.world.block(IVec3::new(x + 9, y, z + 9)) == c.content.blocks.id("base:stone"));
+    client.ok(&format!("/setblock {x} {} {z} water", y + 1));
+    let water = client.content.blocks.expect("base:water");
+    let flowing = |c: &Client, dx: i32| c.world.block(IVec3::new(x + dx, y + 1, z)).and_then(|b| c.content.blocks.fluid(b)).map(|s| s.amount);
+    client.pump_until(|c| flowing(c, 7) == Some(1));
+    assert_eq!(flowing(&client, 0), Some(8));
+    assert_eq!(flowing(&client, 3), Some(5));
+    assert_eq!(client.world.block(IVec3::new(x, y + 1, z)), Some(water));
+    // Water runs off the edge of the floor and falls.
+    client.ok(&format!("/setblock {} {} {z} air", x + 5, y));
+    client.pump_until(|c| c.world.block(IVec3::new(x + 5, y - 1, z)).and_then(|b| c.content.blocks.fluid(b)).is_some_and(|s| s.falling));
+    // Give hands out blocks to place.
+    let answer = client.ok("/give water 3");
+    assert!(answer.contains("Gave 3 base:water"), "{answer}");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == water && s.count == 3));
+    let errors = client.command("/setblock ~ ~ ~ no_such_block");
+    assert_eq!(errors[0].0, ChatKind::Error);
 }

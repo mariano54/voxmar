@@ -34,7 +34,8 @@ impl Process for Falling {
     }
 
     fn run(&mut self, server: &mut Server) {
-        let water = server.content.blocks.id("base:water");
+        let blocks = &server.content.blocks;
+        let water = blocks.id("base:water").and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
@@ -46,7 +47,7 @@ impl Process for Falling {
             let mut below = aabb;
             below.translate(Vec3::new(0.0, -0.05, 0.0));
             let on_ground = below.intersects(|p| server.is_solid(p));
-            let in_water = aabb.intersects(|p| server.block(p).is_some() && server.block(p) == water);
+            let in_water = aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| Some(f.fluid) == water));
 
             let player = server.players.get_mut(&id).unwrap();
             let mut damage = 0.0;

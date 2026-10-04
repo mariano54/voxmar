@@ -20,7 +20,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -81,6 +81,9 @@ pub enum ServerMessage {
     Column { pos: ColumnPos, column: Arc<Column> },
     Unload { pos: ColumnPos },
     BlockChanged { pos: IVec3, block: BlockId },
+    /// Blocks changed together in one tick (water and lava flowing), in the order they
+    /// changed, in columns the player has.
+    Blocks { changes: Vec<(IVec3, BlockId)> },
     PlayerState { health: Health, inventory: Inventory },
     /// Authoritative position, after a rejected move or a respawn.
     Teleport { position: Vec3 },

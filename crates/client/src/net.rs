@@ -147,6 +147,13 @@ fn receive(
                     world.set_block(pos, block);
                 }
             }
+            ServerMessage::Blocks { changes } => {
+                for (pos, block) in changes {
+                    if world.block(pos) != Some(block) {
+                        world.set_block(pos, block);
+                    }
+                }
+            }
             ServerMessage::PlayerState { health, inventory } => {
                 player.health = health.current;
                 player.inventory = inventory;

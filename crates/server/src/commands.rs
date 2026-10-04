@@ -24,6 +24,10 @@ const MAX_WEATHER_SECONDS: u32 = 24 * 3600;
 /// precision.
 const MAX_COORDINATE: f32 = 1_000_000.0;
 const TICKS_PER_HOUR: u64 = TICKS_PER_DAY / 24;
+/// Most blocks one `/fill` may change, and the widest it may be (so it loads at most a
+/// few columns).
+const MAX_FILL: i64 = 32_768;
+const MAX_FILL_SIDE: i32 = 128;
 
 /// What a command says back: a line for the console, or why it could not run.
 type Reply = Result<String, String>;
@@ -87,6 +91,9 @@ impl Server {
             Run::Wind => self.wind_command(id, args),
             Run::Teleport => self.teleport(id, args),
             Run::GameMode => self.game_mode(id, args),
+            Run::SetBlock => self.set_block_command(id, args),
+            Run::Fill => self.fill(id, args),
+            Run::Give => self.give(id, args),
             Run::Biome | Run::Locate => Err("This world has no biomes yet.".into()),
         };
         match reply {
@@ -213,11 +220,8 @@ impl Server {
     /// the column first if need be.
     fn ground_height(&mut self, at: Vec2) -> i32 {
         let block = at.floor().as_ivec2();
-        let pos = ColumnPos::of_block(IVec3::new(block.x, 0, block.y));
-        if !self.world.contains(pos) {
-            let column = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, pos);
-            self.world.insert(pos, std::sync::Arc::new(column));
-        }
+        let column = IVec3::new(block.x, 0, block.y);
+        self.load_area(column, column);
         (0..WORLD_HEIGHT).rev().find(|&y| self.is_solid(IVec3::new(block.x, y, block.y))).map_or(WORLD_HEIGHT, |y| y + 1)
     }
 
@@ -325,6 +329,119 @@ impl Server {
     }
 
     /// The online player called `name`, ignoring case if no name matches exactly.
+    fn set_block_command(&mut self, id: PlayerId, args: &[String]) -> Reply {
+        let [x, y, z, name] = args else { return Err("Which block, and where?".into()) };
+        let at = self.block_position(id, [x, y, z])?;
+        let block = self.find_block(name)?;
+        if !(0..WORLD_HEIGHT).contains(&at.y) {
+            return Err(format!("{} is outside the world, which is 0 to {} high.", at.y, WORLD_HEIGHT - 1));
+        }
+        self.load_area(at, at);
+        self.set_blocks(&[(at, block)]);
+        Ok(format!("Put {} at {} {} {}.", self.content.blocks.def(block).name, at.x, at.y, at.z))
+    }
+
+    fn fill(&mut self, id: PlayerId, args: &[String]) -> Reply {
+        let [x1, y1, z1, x2, y2, z2, name] = args else { return Err("Which box, and what with?".into()) };
+        let (a, b) = (self.block_position(id, [x1, y1, z1])?, self.block_position(id, [x2, y2, z2])?);
+        let block = self.find_block(name)?;
+        let (min, max) = (a.min(b).with_y(a.y.min(b.y).max(0)), a.max(b).with_y(a.y.max(b.y).min(WORLD_HEIGHT - 1)));
+        let size = (max - min + 1).max(IVec3::ZERO);
+        if size.x as i64 * size.y as i64 * size.z as i64 > MAX_FILL || size.x.max(size.z) > MAX_FILL_SIDE {
+            return Err(format!("That box holds more than {MAX_FILL} blocks or is more than {MAX_FILL_SIDE} across."));
+        }
+        self.load_area(min, max);
+        let mut changes = Vec::new();
+        for y in min.y..=max.y {
+            for z in min.z..=max.z {
+                for x in min.x..=max.x {
+                    let at = IVec3::new(x, y, z);
+                    if self.block(at).is_some_and(|b| b != block) {
+                        changes.push((at, block));
+                    }
+                }
+            }
+        }
+        self.set_blocks(&changes);
+        Ok(format!("Filled {} blocks with {}.", changes.len(), self.content.blocks.def(block).name))
+    }
+
+    fn give(&mut self, id: PlayerId, args: &[String]) -> Reply {
+        let (name, count) = match args {
+            [name] => (name, 64),
+            [name, count] => (name, count.parse::<u16>().ok().filter(|c| (1..=2304).contains(c)).ok_or_else(|| format!("`{count}` is not a count from 1 to 2304."))?),
+            _ => return Err("Give what?".into()),
+        };
+        let block = self.find_block(name)?;
+        if block.is_air() {
+            return Err("Air cannot be held.".into());
+        }
+        let player = self.players.get_mut(&id).unwrap();
+        let mut left = count;
+        while left > 0 {
+            let batch = left.min(u8::MAX as u16) as u8;
+            let spilled = player.inventory.add(block, batch);
+            left -= (batch - spilled) as u16;
+            if spilled > 0 {
+                break;
+            }
+        }
+        player.changed(voxmar_engine::traits::INVENTORY);
+        let given = count - left;
+        let name = &self.content.blocks.def(block).name;
+        if left > 0 { Ok(format!("Gave {given} {name}; the rest did not fit.")) } else { Ok(format!("Gave {given} {name}.")) }
+    }
+
+    /// Loads the columns under a box, so commands can build anywhere, not only where
+    /// players have been.
+    fn load_area(&mut self, min: IVec3, max: IVec3) {
+        let (from, to) = (ColumnPos::of_block(min), ColumnPos::of_block(max));
+        for z in from.0.y..=to.0.y {
+            for x in from.0.x..=to.0.x {
+                let pos = ColumnPos::new(x, z);
+                if !self.world.contains(pos) {
+                    let loaded = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, pos);
+                    self.insert_column(pos, loaded);
+                }
+            }
+        }
+    }
+
+    /// A block position typed as three coordinates: numbers, or `~` (where the player's
+    /// feet are) plus an optional offset.
+    fn block_position(&self, id: PlayerId, words: [&String; 3]) -> Result<IVec3, String> {
+        let feet = self.players[&id].position.floor().as_ivec3();
+        let mut at = IVec3::ZERO;
+        for (axis, word) in words.into_iter().enumerate() {
+            let error = || format!("`{word}` is not a block coordinate.");
+            at[axis] = match word.strip_prefix('~') {
+                Some("") => feet[axis],
+                Some(offset) => feet[axis] + offset.parse::<i32>().map_err(|_| error())?,
+                None => word.parse::<i32>().map_err(|_| error())?,
+            };
+        }
+        if at.x.abs().max(at.z.abs()) as f32 > MAX_COORDINATE {
+            return Err(format!("{} {} {} is too far out.", at.x, at.y, at.z));
+        }
+        Ok(at)
+    }
+
+    /// A block by its full name (`base:water`) or, when only one package has it, its short
+    /// name (`water`); `air` is air.
+    fn find_block(&self, name: &str) -> Result<voxmar_engine::block::BlockId, String> {
+        let blocks = &self.content.blocks;
+        if let Some(block) = blocks.id(name) {
+            return Ok(block);
+        }
+        let suffix = format!(":{name}");
+        let mut found = (0..blocks.len()).map(|i| voxmar_engine::block::BlockId(i as u16)).filter(|&b| blocks.def(b).name.ends_with(&suffix));
+        match (found.next(), found.next()) {
+            (Some(block), None) => Ok(block),
+            (Some(_), Some(_)) => Err(format!("Several packages have `{name}`; say which, as in base:{name}.")),
+            _ => Err(format!("There is no block called `{name}`.")),
+        }
+    }
+
     fn find_player(&self, name: &str) -> Result<PlayerId, String> {
         let joined = || self.players.values().filter(|p| p.joined);
         if let Some(player) = joined().find(|p| p.name == name) {

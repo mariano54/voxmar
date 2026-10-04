@@ -17,6 +17,9 @@
 //! - **Tags.** Words other systems select blocks by, rather than naming them: what a block
 //!   is (`stone`, `flower`), where it fits (`wetland`), what it is good for (`edible`,
 //!   `dye:red`). The vocabulary is listed in `assets/content/base/blocks.ron`.
+//!
+//! A block with a `fluid` (water, lava) also makes the blocks of its other states, right
+//! after it: flowing, falling and, for rivers, pinned water (see [`crate::fluid`]).
 
 use std::collections::BTreeMap;
 
@@ -24,6 +27,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::coords::Face;
+use crate::fluid::{self, Fluid, FluidDef, FluidId, FluidState};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BlockId(pub u16);
@@ -170,6 +174,8 @@ pub struct BlockDef {
     pub variants: Vec<Variant>,
     /// For a block made from another's variant: that block's name.
     pub variant_of: Option<String>,
+    /// Makes the block the source of a fluid that flows (see [`crate::fluid`]).
+    pub fluid: Option<FluidDef>,
 }
 
 impl Default for BlockDef {
@@ -194,6 +200,7 @@ impl Default for BlockDef {
             rarity: Rarity::Common,
             variants: Vec::new(),
             variant_of: None,
+            fluid: None,
         }
     }
 }
@@ -228,6 +235,11 @@ impl BlockDef {
         self.drops.iter_mut().for_each(qualify);
         self.family.iter_mut().for_each(qualify);
         self.variant_of.iter_mut().for_each(qualify);
+        for meeting in self.fluid.iter_mut().flat_map(|f| &mut f.meets) {
+            for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
+                qualify(name);
+            }
+        }
     }
 }
 
@@ -371,6 +383,8 @@ pub struct BlockInfo {
     pub needs_support: bool,
     /// How many of `drops` breaking it gives.
     pub drop_count: u8,
+    /// The fluid state this block is, for water, lava and their flowing states.
+    pub fluid: Option<FluidState>,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -390,6 +404,7 @@ pub struct BlockRegistry {
     textures: Vec<TextureRef>,
     /// Every block's looks: itself and its variants (shared by the variants).
     looks: Vec<Vec<Look>>,
+    fluids: Vec<Fluid>,
 }
 
 #[derive(Debug)]
@@ -479,8 +494,18 @@ impl BlockRegistry {
             ..Default::default()
         };
         let mut defs = vec![air];
+        // The fluids, each with the index of its source block.
+        let mut fluid_sources = Vec::new();
         for def in content {
             let base = def.clone();
+            if def.fluid.is_some() {
+                if !def.variants.is_empty() {
+                    return Err(RegistryError(format!("fluid `{}` cannot have variants", def.name)));
+                }
+                fluid_sources.push(defs.len());
+                defs.extend(fluid::state_defs(&def));
+                continue;
+            }
             defs.push(def);
             for variant in &base.variants {
                 defs.push(BlockDef {
@@ -497,6 +522,9 @@ impl BlockRegistry {
         if defs.len() > u16::MAX as usize {
             return Err(RegistryError("too many blocks".into()));
         }
+        if fluid_sources.len() > u8::MAX as usize {
+            return Err(RegistryError("too many fluids".into()));
+        }
 
         let mut by_name = FxHashMap::default();
         for (i, def) in defs.iter().enumerate() {
@@ -505,10 +533,23 @@ impl BlockRegistry {
             }
         }
 
+        let sources: Vec<BlockId> = fluid_sources.iter().map(|&i| BlockId(i as u16)).collect();
+        let fluids = sources
+            .iter()
+            .enumerate()
+            .map(|(i, &source)| Fluid::compile(FluidId(i as u8), source, &defs[source.0 as usize], &by_name, &sources))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut states = vec![None; defs.len()];
+        for fluid in &fluids {
+            for (block, state) in fluid.states() {
+                states[block.0 as usize] = Some(state);
+            }
+        }
+
         let mut textures: Vec<TextureRef> = Vec::new();
         let mut texture_index = FxHashMap::<String, u16>::default();
         let mut info = Vec::with_capacity(defs.len());
-        for def in &defs {
+        for (def, &fluid) in defs.iter().zip(&states) {
             let mut layers = [0u16; 6];
             let mut tints = [Tint::None; 6];
             for face in Face::ALL {
@@ -540,9 +581,11 @@ impl BlockRegistry {
                 hardness: def.hardness,
                 sound: def.sound,
                 drops,
-                replaceable: !def.solid && matches!(def.render, RenderKind::Invisible | RenderKind::Translucent | RenderKind::Plant),
+                replaceable: !def.solid
+                    && (fluid.is_some() || matches!(def.render, RenderKind::Invisible | RenderKind::Translucent | RenderKind::Plant)),
                 needs_support: def.render == RenderKind::Plant,
                 drop_count: def.drop_count,
+                fluid,
             });
         }
         if textures.len() > 4096 {
@@ -565,7 +608,7 @@ impl BlockRegistry {
             }
         }
 
-        Ok(Self { defs, info, by_name, textures, looks })
+        Ok(Self { defs, info, by_name, textures, looks, fluids })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -576,9 +619,30 @@ impl BlockRegistry {
     }
 
     /// Blocks carrying `tag`, in id order, leaving out variants (reach those through
-    /// [`Self::looks`]).
+    /// [`Self::looks`]) and fluids' other states.
     pub fn tagged<'a>(&'a self, tag: &'a str) -> impl Iterator<Item = BlockId> + 'a {
-        (0..self.defs.len()).filter(move |&i| self.defs[i].variant_of.is_none() && self.defs[i].has_tag(tag)).map(|i| BlockId(i as u16))
+        (0..self.defs.len())
+            .map(|i| BlockId(i as u16))
+            .filter(move |&id| {
+                let def = &self.defs[id.0 as usize];
+                def.variant_of.is_none() && self.info(id).fluid.is_none_or(|f| self.fluids[f.fluid.0 as usize].source == id) && def.has_tag(tag)
+            })
+    }
+
+    /// The fluid state a block is, if it is one.
+    #[inline]
+    pub fn fluid(&self, id: BlockId) -> Option<FluidState> {
+        self.info[id.0 as usize].fluid
+    }
+
+    /// Every fluid, by id.
+    pub fn fluids(&self) -> &[Fluid] {
+        &self.fluids
+    }
+
+    #[inline]
+    pub fn fluid_def(&self, id: FluidId) -> &Fluid {
+        &self.fluids[id.0 as usize]
     }
 
     #[inline]
