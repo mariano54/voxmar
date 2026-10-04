@@ -102,7 +102,8 @@ fn water_normal(world: vec3<f32>) -> vec3<f32> {
 // fog.be.y) fades out completely. Real chunks, distant terrain and the sky's horizon all
 // meet in the same colour.
 const HAZE_DENSITY: f32 = 0.0002;
-const HAZE_BASE: f32 = 64.0;
+// Sea level (voxmar_worldgen::SEA_LEVEL).
+const HAZE_BASE: f32 = 128.0;
 const HAZE_HEIGHT: f32 = 90.0;
 
 // How much of what lies `offset` from the eye is hidden by haze.
@@ -113,7 +114,8 @@ fn fog_amount(offset: vec3<f32>) -> f32 {
     let end = max(view.world_position.y + offset.y - HAZE_BASE, 0.0) / HAZE_HEIGHT;
     let rise = end - start;
     let density = select((exp(-start) - exp(-end)) / rise, exp(-start), abs(rise) < 1e-3);
-    let haze = 1.0 - exp(-HAZE_DENSITY * distance * density);
+    // fog.directional_light_exponent carries the shader pack's haze multiplier.
+    let haze = 1.0 - exp(-HAZE_DENSITY * fog.directional_light_exponent * distance * density);
     let edge = smoothstep(fog.be.x, fog.be.y, distance);
     return 1.0 - (1.0 - haze) * (1.0 - edge);
 }

@@ -31,7 +31,7 @@ pub const MAP: i32 = 8;
 const INDEX: i32 = 16;
 
 /// What kind of water lies nearest a column.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 pub enum Body {
     /// A creek, up to a few blocks wide.
     Creek,

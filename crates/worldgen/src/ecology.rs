@@ -174,10 +174,10 @@ impl Ecology {
             let cold_dead = band(t, (-10.0, -2.0), (-8.0, -4.0)) * smoothstep(0.3, 0.6, m);
             set(Tree::Dead, 0.012 * (dry_dead + cold_dead));
             set(Tree::Cactus, smoothstep(18.0, 24.0, t) * (1.0 - smoothstep(0.12, 0.3, m)) * 0.06);
-            let beach = shore <= 3 && (site.continentality < 0.5 || site.river > 0.5);
+            let beach = shore <= 3 && (site.continentalness < 0.74 || site.river > 0.5);
             set(Tree::Palm, if beach { 0.12 * smoothstep(20.0, 24.0, t) * smoothstep(0.4, 0.7, m) } else { 0.0 });
         }
-        let shallows = (-2..=1).contains(&shore) && (site.continentality < 0.5 || site.river > 0.3);
+        let shallows = (-2..=1).contains(&shore) && (site.continentalness < 0.74 || site.river > 0.3);
         set(Tree::Mangrove, if shallows { 0.35 * smoothstep(21.0, 25.0, t) * smoothstep(0.95, 1.25, m) } else { 0.0 });
 
         if let Some(ground) = ground {

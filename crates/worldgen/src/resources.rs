@@ -5,6 +5,7 @@ use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::IVec3;
 
+use crate::SEA_LEVEL;
 use crate::rng::Rng;
 use crate::terrain::Blocks;
 
@@ -26,11 +27,11 @@ impl Resources {
         let ore = |name, attempts, heights, size| Ore { block: registry.expect(&format!("base:{name}")), attempts, heights, size };
         Self {
             ores: vec![
-                ore("coal_ore", 24, (5, 190), 12),
-                ore("copper_ore", 10, (5, 110), 9),
-                ore("iron_ore", 16, (5, 100), 8),
-                ore("gold_ore", 4, (5, 40), 7),
-                ore("diamond_ore", 3, (5, 18), 6),
+                ore("coal_ore", 24, (SEA_LEVEL - 59, SEA_LEVEL + 126), 12),
+                ore("copper_ore", 10, (SEA_LEVEL - 59, SEA_LEVEL + 46), 9),
+                ore("iron_ore", 27, (5, SEA_LEVEL + 36), 8),
+                ore("gold_ore", 9, (5, SEA_LEVEL - 40), 7),
+                ore("diamond_ore", 8, (5, SEA_LEVEL - 88), 6),
             ],
         }
     }

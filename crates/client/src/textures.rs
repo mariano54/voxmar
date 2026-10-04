@@ -1,12 +1,14 @@
-//! Texture sources. Block, colormap and HUD textures are read at runtime from the
-//! player's own Minecraft install or a resource pack (zip, jar or folder); nothing from
-//! Minecraft is shipped. Without one, simple placeholder textures are generated.
+//! Texture sources. Block, colormap and HUD textures are read at runtime from a stack of
+//! texture packs: our own default pack, the player's chosen pack, and their Minecraft
+//! install if they have one (nothing from Minecraft is shipped or needed). Whatever no pack
+//! provides gets a simple generated placeholder.
 
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use voxmar_engine::block::{RenderKind, TextureRef};
+use voxmar_texgen::{Image, Library};
 
 #[derive(Clone)]
 pub struct Rgba {
@@ -56,60 +58,159 @@ impl Rgba {
     }
 }
 
-pub enum Source {
+/// Where a pack's files live.
+enum Files {
     Zip(zip::ZipArchive<File>),
     Folder(PathBuf),
-    None,
 }
 
-impl Source {
-    /// `$VOXMAR_TEXTURES` (a jar, zip or folder), else the newest Minecraft client jar
-    /// found in a standard launcher location.
-    pub fn discover() -> Self {
-        let path = std::env::var_os("VOXMAR_TEXTURES").map(PathBuf::from).or_else(find_minecraft_jar);
-        match path {
-            Some(path) if path.is_dir() => {
-                bevy::log::info!("textures from {}", path.display());
-                Source::Folder(path)
+impl Files {
+    fn open(path: &Path) -> Result<Self, String> {
+        if path.is_dir() {
+            return Ok(Files::Folder(path.to_owned()));
+        }
+        let file = File::open(path).map_err(|e| e.to_string())?;
+        zip::ZipArchive::new(file).map(Files::Zip).map_err(|e| e.to_string())
+    }
+
+    fn read(&mut self, name: &str) -> Option<Vec<u8>> {
+        match self {
+            Files::Zip(archive) => {
+                let mut file = archive.by_name(name).ok()?;
+                let mut bytes = Vec::with_capacity(file.size() as usize);
+                file.read_to_end(&mut bytes).ok()?;
+                Some(bytes)
             }
-            Some(path) => match File::open(&path).map_err(|e| e.to_string()).and_then(|f| {
-                zip::ZipArchive::new(f).map_err(|e| e.to_string())
-            }) {
-                Ok(archive) => {
-                    bevy::log::info!("textures from {}", path.display());
-                    Source::Zip(archive)
-                }
-                Err(e) => {
-                    bevy::log::warn!("cannot open {}: {e}; using placeholder textures", path.display());
-                    Source::None
-                }
-            },
-            None => {
-                bevy::log::info!("no Minecraft install or VOXMAR_TEXTURES found; using placeholder textures");
-                Source::None
-            }
+            Files::Folder(root) => std::fs::read(root.join(name)).ok(),
         }
     }
 
-    /// Reads `assets/minecraft/textures/<path>.png`.
-    pub fn read(&mut self, path: &str) -> Option<Rgba> {
-        let path = format!("assets/minecraft/textures/{path}.png");
-        let bytes = match self {
-            Source::Zip(archive) => {
-                let mut file = archive.by_name(&path).ok()?;
-                let mut bytes = Vec::with_capacity(file.size() as usize);
-                file.read_to_end(&mut bytes).ok()?;
-                bytes
-            }
-            Source::Folder(root) => std::fs::read(root.join(&path)).ok()?,
-            Source::None => return None,
+    /// The pack's recipe books, `recipes/*.ron`, as (path, source) in name order.
+    fn recipe_books(&mut self) -> Vec<(String, String)> {
+        let mut names: Vec<String> = match self {
+            Files::Zip(archive) => archive.file_names().filter(|n| n.starts_with("recipes/")).map(str::to_owned).collect(),
+            Files::Folder(root) => std::fs::read_dir(root.join("recipes"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| format!("recipes/{}", entry.file_name().to_string_lossy()))
+                .collect(),
         };
-        decode_png(&bytes)
+        names.retain(|n| n.ends_with(".ron") && !n[8..].contains('/'));
+        names.sort();
+        names
+            .into_iter()
+            .filter_map(|name| {
+                let source = String::from_utf8(self.read(&name)?).ok()?;
+                Some((name, source))
+            })
+            .collect()
+    }
+}
+
+/// One texture pack: a folder, zip or jar with images at `textures/<path>.png` (our
+/// layout) or `assets/minecraft/textures/<path>.png` (Minecraft's, so its client jar and
+/// resource packs work unchanged), and texture recipes in `recipes/*.ron`, rendered here
+/// as the game loads (see the texgen crate). A PNG beats a recipe of the same name.
+struct Pack {
+    name: String,
+    files: Files,
+    recipes: Library,
+    /// Textures this pack provided since the last log.
+    served: usize,
+}
+
+impl Pack {
+    fn open(path: &Path) -> Result<Self, String> {
+        let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let mut files = Files::open(path)?;
+        let books = files.recipe_books();
+        let recipes = Library::from_books(books.iter().map(|(n, s)| (n.as_str(), s.as_str()))).unwrap_or_else(|e| {
+            bevy::log::warn!("texture pack {name}: {e}; using its images only");
+            Library::default()
+        });
+        Ok(Self { name, files, recipes, served: 0 })
     }
 
-    /// One square texture per block texture reference, all `size`×`size`.
+    fn read(&mut self, path: &str) -> Option<Rgba> {
+        let image = ["textures", "assets/minecraft/textures"]
+            .iter()
+            .find_map(|root| self.files.read(&format!("{root}/{path}.png")))
+            .and_then(|bytes| Image::decode_png(&bytes))
+            .or_else(|| match self.recipes.render(path)? {
+                Ok(image) => Some(image),
+                Err(e) => {
+                    bevy::log::warn!("texture pack {}: {e}", self.name);
+                    None
+                }
+            })?;
+        self.served += 1;
+        Some(Rgba { width: image.width, height: image.height, pixels: image.pixels })
+    }
+}
+
+/// The texture packs in priority order. Each texture comes from the first pack that has
+/// it, then from a placeholder:
+///
+/// 1. the pack the player chose with `$VOXMAR_TEXTURES` (a folder, zip or jar), which
+///    overrides ours;
+/// 2. our default pack, `assets/packs/default`;
+/// 3. any other pack in `assets/packs`, in name order (how mods ship art: they add
+///    textures, but cannot replace ours);
+/// 4. without a chosen pack, the newest Minecraft client jar found in a standard launcher
+///    location, to fill in names the packs above lack.
+pub struct Source {
+    packs: Vec<Pack>,
+}
+
+impl Source {
+    pub fn discover() -> Self {
+        let assets = voxmar_server::assets_dir();
+        let mut packs = Vec::new();
+        let chosen = std::env::var_os("VOXMAR_TEXTURES").map(PathBuf::from);
+        if let Some(path) = &chosen {
+            match Pack::open(path) {
+                Ok(pack) => packs.push(pack),
+                Err(e) => bevy::log::warn!("cannot open texture pack {}: {e}", path.display()),
+            }
+        }
+        let root = assets.join("packs");
+        let mut bundled: Vec<PathBuf> = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        bundled.sort_by_key(|path| (path.file_name() != Some("default".as_ref()), path.clone()));
+        packs.extend(bundled.iter().filter_map(|path| Pack::open(path).ok()));
+        if chosen.is_none()
+            && let Some(jar) = find_minecraft_jar()
+        {
+            match Pack::open(&jar) {
+                Ok(pack) => packs.push(pack),
+                Err(e) => bevy::log::warn!("cannot open {}: {e}", jar.display()),
+            }
+        }
+        Self { packs }
+    }
+
+    /// Reads `<path>.png` from the first pack that has it.
+    pub fn read(&mut self, path: &str) -> Option<Rgba> {
+        self.packs.iter_mut().find_map(|pack| pack.read(path))
+    }
+
+    /// One square texture per block texture reference, all `size`×`size`. Logs how many
+    /// each pack provided.
     pub fn block_textures(&mut self, refs: &[TextureRef]) -> (u32, Vec<Rgba>) {
         let loaded: Vec<Option<Rgba>> = refs.iter().map(|r| self.read(&format!("block/{}", r.name))).collect();
+        let served: Vec<String> = self
+            .packs
+            .iter_mut()
+            .map(|pack| format!("{} from {}", std::mem::take(&mut pack.served), pack.name))
+            .chain(Some(format!("{} placeholders", loaded.iter().filter(|t| t.is_none()).count())))
+            .collect();
+        bevy::log::info!("block textures: {}", served.join(", "));
         let size = loaded.iter().flatten().map(|t| t.width.min(t.height)).max().unwrap_or(16).next_power_of_two();
         let textures = loaded
             .into_iter()
@@ -178,23 +279,6 @@ fn find_minecraft_jar() -> Option<PathBuf> {
 /// "1.21.1" -> [1, 21, 1]; snapshots and modded versions are skipped.
 fn parse_release(version: &str) -> Option<Vec<u32>> {
     version.split('.').map(|p| p.parse().ok()).collect()
-}
-
-fn decode_png(bytes: &[u8]) -> Option<Rgba> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buffer = vec![0; reader.output_buffer_size()?];
-    let info = reader.next_frame(&mut buffer).ok()?;
-    let data = &buffer[..info.buffer_size()];
-    let pixels = match info.color_type {
-        png::ColorType::Rgba => data.to_vec(),
-        png::ColorType::Rgb => data.as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        png::ColorType::GrayscaleAlpha => data.as_chunks::<2>().0.iter().flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
-        png::ColorType::Grayscale => data.iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        png::ColorType::Indexed => return None,
-    };
-    Some(Rgba { width: info.width, height: info.height, pixels })
 }
 
 fn name_seed(name: &str) -> u32 {

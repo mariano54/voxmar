@@ -22,7 +22,7 @@ use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
-use voxmar_worldgen::{Generator, Overworld};
+use voxmar_worldgen::{Generator, Overworld, WorldContent};
 
 use crate::actions::Executor;
 use crate::player::Player;
@@ -89,9 +89,12 @@ pub fn assets_dir() -> PathBuf {
     PathBuf::from("assets")
 }
 
-/// Loads every content package under `assets/content`.
+/// Loads every content package under `assets/content`, and checks the world
+/// generator's definitions in them, so a broken package fails at startup.
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
-    Ok(Content::load(&assets.join("content"))?)
+    let content = Content::load(&assets.join("content"))?;
+    WorldContent::load(&content)?;
+    Ok(content)
 }
 
 /// A running server thread. Dropping it stops the server.
@@ -212,7 +215,8 @@ impl Server {
         content: Content,
         incoming: Receiver<ServerConnection>,
     ) -> Self {
-        let overworld = Arc::new(Overworld::new(meta.seed, content.blocks.clone()));
+        let world_content = WorldContent::load(&content).expect("checked by load_content");
+        let overworld = Arc::new(Overworld::with_content(meta.seed, content.blocks.clone(), &world_content));
         let climate = overworld.clone();
         let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let climate = overworld.clone();

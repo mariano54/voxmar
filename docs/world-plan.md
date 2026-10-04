@@ -341,6 +341,65 @@ From Geophilic, Wilder Wild and Blooming Biosphere:
 - **Backlog from the videos:** pick-up notifications, footprints, boat wakes once boats
   exist, menu blur, and a map with waypoints once worlds get big.
 
+### Revisions after reading the mods' source
+
+A source-level study of about 25 mods (project files, `research/mod-source-deep-dive/`)
+found places where the design above was weaker. These replace the earlier text where they
+disagree:
+
+- **Biome picker (W1).**
+  - Erosion and weirdness come from a smoothed terrain classification, not raw noise and
+    slope, so borders follow landforms.
+  - The axes are quantised into bands and the biome table has no holes by construction.
+  - Rare biomes live in the noise tails rather than getting tiny weights.
+  - Ecotone slices are generated across temperature boundaries, and biomes can `inherit` a
+    parent.
+  - `Site` carries the distance to the biome edge and the neighbouring biome.
+  - Variants get equal shares of area.
+- **Surface (W1, W7, W9).** An ordered list of surface rules replaces `(top, filler, cliff)`.
+  Rules can test depth, slope, dithered altitude, rock province and noise contour bands, which
+  gives creeks, game trails, mineral rivulets, sand ripples, treelines and snowlines.
+- **Colours.** By default they come from a continuous climate colour map plus palette noise.
+  Only identity biomes override them.
+- **Terrain (W8).**
+  - Terrain never reads the chosen biome: shapes switch on through climate ramps, with
+    breakpoints shared with the biome table.
+  - Mountains, rivers and coasts follow noises folded with `abs()`, so they form chains
+    (Tectonic).
+  - Shapes can add or carve in 3D, gated by 2D masks, for arches, sea cliffs and leaning
+    spires.
+  - Densities are given per 16³ section.
+- **Rivers (W4).**
+  - Two tiers on a coarse grid: trunks first, then tributaries. Regions record where rivers
+    cross their borders.
+  - Flow is catchment × rain. Water levels are kept in 1/8-block units and never rise
+    downstream.
+  - Waterfalls need a drop of at least 3 and get a plunge pool.
+  - Lakes fill by humidity, down to closed salt basins.
+  - Generated water is sealed.
+  - Underground rivers run where a river meets a mountain, and caves keep a band clear
+    around rivers.
+- **Water physics (W11).**
+  - River water is pinned, with a current direction, speed and fractional height.
+  - Fluid ticks are jittered and their budget adapts to load.
+- **Clouds (W6).** A thin slab with a sharp vertical profile and a high opacity gain, which is
+  why Complementary's clouds look thick.
+- **Renderer (graphics thread).**
+  - Coloured block light, as a compute flood fill.
+  - Performance profiles separate from look presets, with options compiled as pipeline
+    constants.
+  - Half-resolution clouds and volumetrics, with dithering and TAA.
+- **Smaller additions.**
+  - A snow blanket down through the canopy.
+  - Tree ornaments built from each tree's own blocks.
+  - Forest structure graded by one noise.
+  - Deterministic geysers.
+  - Fireflies on only some nights.
+  - An enclosure flood fill for ambient sound.
+  - Waterfall size classes.
+  - Engineered trails with switchbacks and cut and fill.
+  - Wear floors on generated trails.
+
 ## Work items
 
 Each item runs in its own git worktree and branch. It merges `main` in often, and lands on

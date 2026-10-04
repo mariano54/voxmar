@@ -35,6 +35,14 @@ const TINT_WATER: u32 = 3u;
 const FACE_PLANT: u32 = 6u;
 const FLAG_INNER: u32 = 1u << 23u;
 const FLAG_BACKED: u32 = 1u << 24u;
+const PLANT_STACK_SHIFT: u32 = 25u;
+const WATER_DEPTH_SHIFT: u32 = 25u;
+// How fast light fades through water, per block.
+const WATER_EXTINCTION: f32 = 0.32;
+const FLAG_FRINGE: u32 = 1u << 27u;
+// Leaf fringes shrink back into their block between these distances, in blocks (the
+// renderer stops drawing them a little beyond).
+const FRINGE_FADE = vec2(56.0, 88.0);
 const AO_CURVE = array<f32, 4>(0.45, 0.65, 0.84, 1.0);
 // Plants shrink away between these distances, in blocks.
 const PLANT_FADE = vec2(192.0, 320.0);
@@ -58,9 +66,91 @@ fn face_of(w0: u32) -> u32 {
 
 // World position, with leaves swaying gently and plants bending from their base. Shared
 // by every pass so depth matches.
+fn pcg3d(seed: vec3<u32>) -> vec3<f32> {
+    var v = seed * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> vec3(16u);
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return vec3<f32>(v >> vec3(8u)) / 16777216.0;
+}
+
+// Smooth noise over the ground, for patches of taller and shorter plants.
+fn tufts(p: vec2<f32>) -> f32 {
+    let cell = floor(p);
+    let f = fract(p);
+    let w = f * f * (3.0 - 2.0 * f);
+    let at = vec4(
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x), 7, i32(cell.y)))).x,
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x) + 1, 7, i32(cell.y)))).x,
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x), 7, i32(cell.y) + 1))).x,
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x) + 1, 7, i32(cell.y) + 1))).x,
+    );
+    return mix(mix(at.x, at.y, w.x), mix(at.z, at.w, w.x), w.y);
+}
+
+// A plant's vertex, with the plant placed as a whole from a hash of its cell, much as
+// Rainbow's Foliage varies its models: turned up to 40° either way, shifted and sunk a
+// little, and taller or shorter, in tufts across a meadow.
+fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
+    let corner = (w0 >> 21u) & 3u;
+    let far = corner == 1u || corner == 2u;
+    var across = select(vec2(0.0), vec2(1.0), far);
+    if face_of(w0) != FACE_PLANT {
+        across = select(vec2(1.0, 0.0), vec2(0.0, 1.0), far);
+    }
+    if (w0 & FLAG_FRINGE) != 0u {
+        return fringe_position(w0, origin, across);
+    }
+    let up = f32((w0 >> 23u) & 1u) + f32((w0 >> PLANT_STACK_SHIFT) & 3u);
+    // The corner of the cell the whole plant stands in.
+    let base = origin + local_position(w0) - vec3(across.x, up, across.y);
+    let cell = vec3<i32>(floor(base + 0.5));
+    let a = pcg3d(vec3<u32>(cell));
+    let b = pcg3d(vec3<u32>(cell + vec3(0, 991, 0)));
+    let angle = (a.x - 0.5) * 1.4;
+    let offset = across - 0.5;
+    let turned = vec2(offset.x * cos(angle) - offset.y * sin(angle), offset.x * sin(angle) + offset.y * cos(angle));
+    let shift = (a.yz - 0.5) * 0.3;
+    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x));
+    let sink = b.y * 0.25;
+    return vec3(base.x + 0.5 + turned.x + shift.x, base.y + up * height - sink, base.z + 0.5 + turned.y + shift.y);
+}
+
+// A leaf fringe's vertex: two crossed quads through the leaf block, turned at random, grown
+// past the block and leaning, so crowns look bushy rather than cubic.
+fn fringe_position(w0: u32, origin: vec3<f32>, across: vec2<f32>) -> vec3<f32> {
+    let top = f32((w0 >> 23u) & 1u);
+    let corner = origin + local_position(w0) - vec3(across.x, top, across.y);
+    let centre = corner + 0.5;
+    let a = pcg3d(vec3<u32>(vec3<i32>(floor(centre))));
+    let b = pcg3d(vec3<u32>(vec3<i32>(floor(centre)) + vec3(0, 577, 0)));
+    var size = 1.45 + 0.45 * a.y;
+#ifndef PREPASS_PIPELINE
+    size = mix(size, 0.8, smoothstep(FRINGE_FADE.x, FRINGE_FADE.y, distance(centre, view.world_position)));
+#endif
+    // The second quad crosses the first at right angles.
+    let angle = a.x * 6.2832 + select(0.0, 1.5708, face_of(w0) != FACE_PLANT);
+    let along = vec2(cos(angle), sin(angle));
+    let offset = (across.x - 0.5) * size;
+    let up = (top - 0.5) * size;
+    let lean = vec2(-along.y, along.x) * up * (a.z - 0.5) * 0.9;
+    let jitter = (b - 0.5) * 0.2;
+    return centre + vec3(along.x * offset + lean.x, up, along.y * offset + lean.y) + jitter;
+}
+
 fn world_position(in: Vertex) -> vec3<f32> {
-    var world = vec3<f32>(chunk_origins[in.instance_index].xyz) + local_position(in.packed.x);
+    let origin = chunk_origins[in.instance_index];
     let t = globals.time;
+    var world: vec3<f32>;
+    if face_of(in.packed.x) >= FACE_PLANT {
+        world = plant_position(in.packed.x, vec3<f32>(origin.xyz));
+    } else {
+        world = vec3<f32>(origin.xyz) + local_position(in.packed.x);
+    }
     if face_of(in.packed.x) >= FACE_PLANT {
         if (in.packed.x & FLAG_INNER) != 0u {
             // Gusts roll across the field: a slow wave plus a quicker flutter.
@@ -148,6 +238,8 @@ struct VertexOutput {
     @location(3) @interpolate(flat) surface: u32,
     @location(4) @interpolate(flat) face: u32,
     @location(5) @interpolate(flat) covered: u32,
+    // Depth of water below a water surface, in blocks.
+    @location(6) water_depth: f32,
 };
 
 @vertex
@@ -165,9 +257,12 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
     out.face = face_of(w0);
     out.uv = face_uv(local_position(w0), out.face);
-    out.light = vec3(AO_CURVE[(w0 >> 21u) & 3u], f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
+    // Plants have no ambient occlusion; their AO bits hold the corner.
+    let ao = select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, face_of(w0) >= FACE_PLANT);
+    out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
+    out.water_depth = f32((w0 >> WATER_DEPTH_SHIFT) & 7u);
     return out;
 }
 
@@ -237,8 +332,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
             let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, to_eye), 0.0), 5.0);
             let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 220.0) * open
                 * sun_shadow(in.world_position, n, in.clip_position.xy);
+            // Shallows show their bed: light through the water fades with depth, and what
+            // remains takes the water's colour.
+            let through = exp(-in.water_depth * WATER_EXTINCTION);
+            color = mix(color, color * 0.55, 1.0 - through);
             color = mix(color, sky * open + color * (1.0 - open), fresnel) + sun_color() * glint * 4.0;
-            alpha = mix(0.72, 1.0, fresnel);
+            alpha = mix(mix(0.92, 0.18, through), 1.0, fresnel);
         }
     } else {
         // Solid see-through blocks (ice) show only their outside, like any solid block, so

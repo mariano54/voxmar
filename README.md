@@ -60,9 +60,39 @@ type `stop` to save and quit.
 
 ### Textures
 
-No Minecraft assets are shipped. At startup the client reads textures from the newest Minecraft
-client jar it finds (official launcher or Prism Launcher), or from `VOXMAR_TEXTURES` pointing at
-a jar, resource pack zip or folder. Without one it generates placeholder textures.
+Textures come from a stack of packs, each a folder, zip or jar; every texture is taken from the
+first pack that has it:
+
+1. the pack chosen with `VOXMAR_TEXTURES` (a resource pack or a Minecraft jar also works), which
+   overrides ours;
+2. our default pack, `assets/packs/default`;
+3. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
+   never replacing ours;
+4. without a chosen pack, the newest Minecraft client jar found (official launcher or Prism
+   Launcher), only for names the packs above lack.
+
+Anything still missing gets a generated placeholder. The startup log says how many textures
+each pack provided. A pack keeps images at `textures/<path>.png` (`textures/block/stone.png`),
+or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No
+Minecraft assets are shipped.
+
+A pack can also describe textures as text, in recipe books (`recipes/*.ron`), which the game
+renders as it loads, so a pack or mod can ship its art with no image files and no build step.
+A recipe is a texture program (palettes, noise, patterns such as cells, bricks, boards and
+rings, edge shading, highlights and cut-outs) or a text sprite (a grid of characters, each a
+colour or palette shade); recipes derive from each other, and templates make a whole family
+(a wood's log, planks, leaves and sapling) from one entry. See the `voxmar_texgen` crate docs.
+A PNG beats a recipe of the same name. The `texgen` tool helps author them:
+
+```bash
+cargo run --release -p voxmar_texgen -- check                  # render every recipe, report errors
+cargo run --release -p voxmar_texgen -- sheet --only stone,ore --compare PACK_OR_JAR
+cargo run --release -p voxmar_texgen -- export --out DIR       # write every recipe as a PNG
+```
+
+`sheet` writes `target/texgen/sheet.png`: each texture large, tiled 3×3 and at one pixel per
+texel, optionally beside the same name from another pack (`--pack DIR` picks the pack,
+`--columns`, `--zoom` and `--out` the layout).
 
 ## Layout
 
@@ -73,9 +103,16 @@ a jar, resource pack zip or folder. Without one it generates placeholder texture
 | `protocol` | client/server messages and transports (in-process channels, TCP) |
 | `server` | authoritative simulation (fixed 20 Hz tick), validation, streaming, world saves; `voxmar-server` binary |
 | `client` | Bevy app: rendering, input, prediction, HUD, menus; the only crate that depends on Bevy |
+| `texgen` | texture recipes and text sprites rendered to pixel art, and the `texgen` review tool |
 
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
-same registry a mod will use. Client and server compare a content fingerprint on join.
+same registry a mod will use. Client and server compare a content fingerprint on join. Templates
+make whole families from one line (a wood's log, stripped log, wood, planks, leaves and sapling;
+a rock's raw, cobbled, polished and brick blocks), and templates are shared across packages, so
+a mod's new wood is one line too. A plant can list variants, other looks of itself that become
+their own blocks and drop the plant, as many as their size. Blocks carry tags (`flower`,
+`wetland`, `edible`, `alchemy:calming`, `dye:blue`; the vocabulary is at the top of
+`blocks.ron`) and a rarity, so biomes, food and alchemy select them without naming them.
 
 How the design primitives map to the code today:
 
@@ -101,24 +138,67 @@ How the design primitives map to the code today:
 
 ## World generation
 
-There are no biomes. Each world draws a few physically meaningful dials from its seed
-(`Overworld::dials`: mean temperature, equator-to-pole temperature difference and distance,
-ocean fraction, continent size, humidity, prevailing wind, tectonic activity, erosion age,
-river density, vegetation), with sensible correlations. Everything else is a continuous field:
+The world is 384 blocks tall (columns of 12 chunks) with the sea surface at 128: 128 blocks
+of ground and caves below it, 256 of land, mountains and sky above. Each world draws a few
+physically meaningful dials from its seed (`Overworld::dials`: mean temperature,
+equator-to-pole temperature difference and distance, ocean fraction, continent size,
+humidity, prevailing wind, tectonic activity, erosion age, river density, vegetation, fantasy,
+volcanism, cave density, mountain height, biodiversity), with sensible correlations, and a
+featured set: a few rare biomes and other things it boosts and common ones it suppresses, so
+no two worlds share a rarity table. Everything else is a continuous field:
 
 - **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
   hot, temperate and cold land always lie in that order) and with altitude.
 - **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
   drier interiors, rain shadows behind mountains, wet tropics and dry subtropics.
-- **Rivers and lakes** are carved into the height function, ending as dry valleys in high country.
-- **Surfaces, trees and plants** follow smoothly from temperature, moisture, slope and height:
-  transitions are bands where materials interleave (grass, snowy grass, snow; grass, coarse
-  dirt, sand), and each climate has its own procedurally shaped trees (giant spruce, pine,
-  birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti).
+- **Rivers and lakes** (`worldgen/src/water/`) run where water would. Trunk rivers are routed on
+  a 64-block grid over the land's broad shape and cut their valleys (and, rarely, tunnels
+  through a ridge) into it; creeks and streams are routed on an 8-block grid from the hills to a
+  trunk, a lake or the sea, joining as they go. Each river is as big as the rain on its whole
+  catchment. Shallow pits are breached; deeper ones fill as lakes at their own height, lower
+  and without outlet in dry climates, down to salt flats. Water steps down in whole blocks,
+  falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
+  summed region by region through records of where water crosses each 1 km region's border,
+  so rivers can be any length and nothing depends on generation order.
+- **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
+  everywhere, more tangled with depth, opening to the surface as entrances in some places;
+  cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
+  labyrinths, ravines (30–70 deep, some open to the sky, a few a kilometre long) and
+  sinkholes; and very rare giant cavern systems, most holding one great lake. Water tables
+  per 16×16×12 cell (as in Minecraft 1.18) flood some caves at their own levels, with sea
+  level near the surface so caves under the sea are flooded rather than draining it, and lava
+  below y 10, with rock left wherever a fluid would otherwise touch air. The cave density
+  dial, the world's featured rarities and the seed set how much of each kind a world has
+  (`Overworld::cave_style`).
+- **Selection fields**: continentalness, a landform class (erosion), and seeded weirdness,
+  aether (how fantastical the land is), fertility, variant and rock provinces 2-4 km across.
 
-`Overworld::site(x, z)` returns every parameter at a position for gameplay to use.
-`cargo test --release -p voxmar_worldgen map_preview -- --ignored` (optionally with `SEED=n`)
-writes a shaded 8 km map to `target/map_preview.ppm`.
+**Biomes** are data in content packages (`assets/content/base/biomes.ron`, with the climate
+bands in `climate.ron` and rock provinces in `rocks.ron`), loaded like blocks, so a mod adds
+one the same way. The temperature, moisture, continentalness and landform bands form a table
+in which every cell belongs to some biome (checked at load); rarer biomes take the extremes of
+the weirdness field, so they appear in whole regions of some worlds and not in others;
+variants take shares of their parent; ecotones sit on borders; fantastical biomes claim cells
+where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
+ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
+lines such as game trails) over the stones of its rock province, while snow, ice and bare rock
+follow the climate everywhere. Trees and plants still follow the climate directly: each
+climate has its own procedurally shaped trees (giant spruce, pine, birch, oak, dark oak,
+cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti).
+
+`Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
+its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
+`Overworld::locate_biome` serve commands.
+`cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
+`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on, `X`, `Z`
+and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
+rivers and creeks in their own blues, and prints each biome's share of it. `river_sights` prints
+`--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
+near spawn.
+`cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
+writes an x-ray map, sections and level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
+arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;
+`column_timing` reports generation time per column (all `-- --ignored --nocapture`).
 
 ## Weather
 

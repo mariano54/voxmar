@@ -35,7 +35,7 @@ const SNOW_SPEED: f32 = 1.6;
 /// camera strays this many blocks from its centre (it still covers the drop box then), and
 /// every `REFRESH` seconds for blocks that changed.
 const MAP: i32 = 64;
-const MAP_WORDS: usize = (MAP * MAP / 16) as usize;
+const MAP_WORDS: usize = (MAP * MAP / 8) as usize;
 const RECENTER: i32 = 8;
 const REFRESH: f32 = 1.0;
 
@@ -67,7 +67,7 @@ struct PrecipitationParams {
     streak: Vec4,
     /// rgb: light falling on the drops.
     light: Vec4,
-    /// Top of the highest block plus one in each column of the map, a byte per column.
+    /// Top of the highest block plus one in each column of the map, 16 bits per column.
     heights: [UVec4; MAP_WORDS],
 }
 
@@ -122,7 +122,7 @@ pub struct SkyMap {
     /// Column at the map's first entry.
     origin: IVec2,
     /// Top of the highest block plus one, 0 where the column is empty or not loaded.
-    heights: Vec<u8>,
+    heights: Vec<u16>,
     age: f32,
 }
 
@@ -133,7 +133,7 @@ impl Default for SkyMap {
 }
 
 impl SkyMap {
-    fn height(&self, column: IVec2) -> Option<u8> {
+    fn height(&self, column: IVec2) -> Option<u16> {
         let i = column - self.origin;
         ((0..MAP).contains(&i.x) && (0..MAP).contains(&i.y)).then(|| self.heights[(i.y * MAP + i.x) as usize])
     }
@@ -179,25 +179,25 @@ impl SkyMap {
     }
 
     fn packed(&self) -> [UVec4; MAP_WORDS] {
-        let word = |i: usize| u32::from_le_bytes(self.heights[i * 4..i * 4 + 4].try_into().unwrap());
+        let word = |i: usize| self.heights[i * 2] as u32 | (self.heights[i * 2 + 1] as u32) << 16;
         std::array::from_fn(|i| UVec4::new(word(i * 4), word(i * 4 + 1), word(i * 4 + 2), word(i * 4 + 3)))
     }
 }
 
 /// Top of the highest block in a column that rain lands on, plus one; 0 if there is none.
 /// Rain falls through plants onto the ground they grow from.
-fn top(column: &voxmar_engine::world::Column, registry: &BlockRegistry, local: IVec2) -> u8 {
+fn top(column: &voxmar_engine::world::Column, registry: &BlockRegistry, local: IVec2) -> u16 {
     let catches_rain = |block: BlockId| !matches!(registry.info(block).render, RenderKind::Invisible | RenderKind::Plant);
     for cy in (0..COLUMN_CHUNKS).rev() {
         let chunk = &column.chunks[cy as usize];
         match chunk.as_uniform() {
             Some(block) if !catches_rain(block) => continue,
-            Some(_) => return (((cy + 1) * CHUNK_SIZE).min(255)) as u8,
+            Some(_) => return ((cy + 1) * CHUNK_SIZE) as u16,
             None => {}
         }
         for y in (0..CHUNK_SIZE).rev() {
             if catches_rain(chunk.get(local_index(IVec3::new(local.x, y, local.y)))) {
-                return ((cy * CHUNK_SIZE + y + 1).min(255)) as u8;
+                return (cy * CHUNK_SIZE + y + 1) as u16;
             }
         }
     }

@@ -17,7 +17,7 @@ use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowF
 use bevy::math::DVec2;
 use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
-use bevy::post_process::bloom::{Bloom, bloom};
+use bevy::post_process::bloom::{Bloom, BloomPrefilter, bloom};
 use bevy::render::extract_component::ExtractComponent;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
@@ -31,12 +31,15 @@ use crate::textures::Rgba;
 use crate::weather::{ClientWeather, DRIFT_WRAP};
 
 pub mod lod;
+pub mod pack;
 pub mod precipitation;
 pub mod terrain;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
+pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6433, VertexFormat::Uint32x4);
 
 const VOXEL_SHADER: &str = "embedded://voxmar/render/voxel.wgsl";
+const DISTANT_SHADER: &str = "embedded://voxmar/render/lod.wgsl";
 
 pub struct RenderPlugin;
 
@@ -44,6 +47,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "lighting.wgsl");
         embedded_asset!(app, "voxel.wgsl");
+        embedded_asset!(app, "lod.wgsl");
         embedded_asset!(app, "sky.wgsl");
         embedded_asset!(app, "display.wgsl");
         app.add_plugins((
@@ -55,6 +59,8 @@ impl Plugin for RenderPlugin {
         ))
             .insert_resource(DirectionalLightShadowMap { size: 2048 })
             .init_resource::<DayCycle>()
+            .init_resource::<pack::ActivePack>()
+            .add_systems(Update, pack::apply_pack)
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
     }
 }
@@ -69,20 +75,39 @@ pub enum TerrainPass {
     /// Cut-out, double-sided faces between two leaves, which cast no shadow.
     Inner,
     Translucent,
+    /// Leafy sprigs sticking out of crowns, drawn only near the camera.
+    Fringe,
 }
 
 /// Maps the HDR image to the screen in place of a tonemapper (see `display.wgsl`): colours
 /// up to 0.8 pass through unchanged, so blocks keep their texture colours in daylight as in
-/// Minecraft, and brighter ones (the sun, glints, light sources) roll off to white.
+/// Minecraft, and brighter ones (the sun, glints, light sources) roll off to white. The
+/// shader pack's colour grading is applied first.
 #[derive(Component, ExtractComponent, ShaderType, Clone, Copy)]
 pub struct DisplayTransform {
     /// Scales the image before the curve.
     pub exposure: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub vibrance: f32,
+    pub warmth: f32,
 }
 
 impl Default for DisplayTransform {
     fn default() -> Self {
-        Self { exposure: 1.0 }
+        Self::from(&pack::ShaderPack::default())
+    }
+}
+
+impl From<&pack::ShaderPack> for DisplayTransform {
+    fn from(pack: &pack::ShaderPack) -> Self {
+        Self {
+            exposure: pack.exposure,
+            contrast: pack.contrast,
+            saturation: pack.saturation,
+            vibrance: pack.vibrance,
+            warmth: pack.warmth,
+        }
     }
 }
 
@@ -210,7 +235,13 @@ pub fn setup(
         // wash out and desaturate sunlit blocks.
         Tonemapping::None,
         DisplayTransform::default(),
-        Bloom { intensity: 0.1, ..Bloom::NATURAL },
+        // Only what is brighter than a sunlit white block blooms (the sun, glints, light
+        // sources), so tiny bright facets in the distance never swell into blobs.
+        Bloom {
+            intensity: 0.1,
+            prefilter: BloomPrefilter { threshold: 1.2, threshold_softness: 0.5 },
+            ..Bloom::NATURAL
+        },
         AmbientLight { brightness: 1.0, ..default() },
         DistanceFog::default(),
         Transform::from_xyz(0.0, 100.0, 0.0),
@@ -429,6 +460,7 @@ fn update_environment(
     mut sun: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>)>,
     mut clear: ResMut<ClearColor>,
+    pack: Res<pack::ActivePack>,
 ) {
     let Some(sky_handle) = sky_handle else { return };
     let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
@@ -436,7 +468,10 @@ fn update_environment(
     let days = cycle.ticks / TICKS_PER_DAY as f64;
     let shown = &weather.current;
     let flash = weather.flash();
-    let env = Environment::at(days.fract() as f32).under(shown, flash);
+    let mut env = Environment::at(days.fract() as f32).under(shown, flash);
+    env.light_color *= pack.sun;
+    env.ambient *= pack.ambient * pack.shade_tint;
+    env.horizon *= pack.haze_tint;
 
     if let Ok((mut transform, mut light)) = sun.single_mut() {
         *transform = Transform::default().looking_to(-env.light_direction, Vec3::Y);
@@ -474,6 +509,8 @@ fn update_environment(
     fog.color = horizon_color;
     fog.directional_light_color = Color::linear_rgb(glow.x, glow.y, glow.z);
     fog.falloff = FogFalloff::Linear { start: fog_start, end: fog_end };
+    // Unused by our shaders as Bevy means it; lighting.wgsl reads it as the haze density.
+    fog.directional_light_exponent = pack.haze;
 
     // The sky dome is the only entity using its material, so updating it is cheap.
     if let Some(mut sky) = sky_materials.get_mut(&sky_handle.0) {

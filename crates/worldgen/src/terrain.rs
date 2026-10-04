@@ -1,13 +1,13 @@
-//! Stage 4: turns sites and resources into blocks: surface materials, caves, water and
-//! ice at the level of the sea, lake or river over each column, then trees and the small
-//! plants on the ground.
+//! Stage 4: turns sites and resources into blocks: surface materials, caves (see
+//! [`crate::caves`]), water and ice at the level of the sea, lake or river over each
+//! column, then trees and the small plants on the ground.
 //!
-//! Surface materials follow the site's parameters through thresholds (cold enough for
-//! snow, steep enough for bare rock, dry and hot enough for sand). Every threshold is a
-//! band rather than a line: within it, the two materials interleave with a probability
-//! that ramps across the band, in patches and speckles, and intermediate materials sit
-//! between distant ones (grass, snowy grass, snow; grass, coarse dirt, sand). So the
-//! ground changes gradually, the way the climate does.
+//! Surface materials come from the biome's surface rules (see `surface`), around a few
+//! physical rules every biome shares: bare rock on cliffs and exposed heights, snow where
+//! it is cold enough, ice on cold water. Every threshold is a band rather than a line:
+//! within it, the two materials interleave with a probability that ramps across the band,
+//! in patches and speckles, so the ground changes gradually, the way the climate does.
+//! Below the surface lie the stones of the biome or of its rock province.
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 use voxmar_engine::block::{BlockId, BlockRegistry};
@@ -16,131 +16,101 @@ use voxmar_engine::coords::{CHUNK_SIZE, CHUNK_VOLUME, COLUMN_CHUNKS, ColumnPos, 
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
+use crate::biome::Biomes;
+use crate::caves::{Cave, CaveFace};
+use crate::content::WorldContent;
 use crate::ecology::{Ground, Plant};
 use crate::features::{self, Features};
 use crate::geology::{GeoGrid, noise};
+use crate::lattice::{self, Lattice, Profile};
 use crate::resources::Resources;
 use crate::rng::hash3;
+use crate::rocks::Rocks;
+use crate::surface::{Fill, Layers, Palette, Spot};
 use crate::trees::Tree;
 use crate::{Body, Overworld, SEA_LEVEL, Site};
 
-/// Spacing of the lattice on which 3D noise is evaluated and then interpolated.
-const LATTICE: i32 = 4;
-const LX: usize = (CHUNK_SIZE / LATTICE + 1) as usize;
+/// Stone turns to deepslate below this height, 48 blocks under sea level.
+const DEEPSLATE: i32 = SEA_LEVEL - 48;
 
 struct Ids {
     bedrock: BlockId,
-    stone: BlockId,
     deepslate: BlockId,
-    granite: BlockId,
-    diorite: BlockId,
-    andesite: BlockId,
-    tuff: BlockId,
-    calcite: BlockId,
-    cobblestone: BlockId,
-    dirt: BlockId,
-    coarse_dirt: BlockId,
-    rooted_dirt: BlockId,
-    mud: BlockId,
-    moss: BlockId,
-    podzol: BlockId,
     grass: BlockId,
-    snowy_grass: BlockId,
-    snow: BlockId,
-    powder_snow: BlockId,
-    ice: BlockId,
-    packed_ice: BlockId,
-    blue_ice: BlockId,
-    sand: BlockId,
-    sandstone: BlockId,
-    red_sand: BlockId,
-    red_sandstone: BlockId,
-    gravel: BlockId,
-    clay: BlockId,
     water: BlockId,
-    /// Badlands strata, bottom to top of one repeat.
-    bands: [BlockId; 16],
-}
-
-/// The surface of a column, from the top down.
-pub struct Layers {
-    pub top: BlockId,
-    under: BlockId,
-    /// Blocks of `under` beneath the top.
-    depth: i32,
-    /// Blocks of banded terracotta beneath those.
-    strata: i32,
+    lava: BlockId,
+    /// The crust of a dry salt flat.
+    salt: BlockId,
+    sand: BlockId,
+    snow: BlockId,
+    powder: BlockId,
+    snowy_ground: BlockId,
+    ice: BlockId,
+    thick_ice: BlockId,
+    rare_ice: BlockId,
 }
 
 pub struct Terrain {
     ids: Ids,
-    cheese: FastNoiseLite,
-    tunnel_a: FastNoiseLite,
-    tunnel_b: FastNoiseLite,
     rock: FastNoiseLite,
     /// Patches that dither the borders between surface materials.
     patches: FastNoiseLite,
+    /// Larger patches for choosing among mixed blocks.
+    mixes: FastNoiseLite,
     /// Whether wood may replace a block: air, water and leaves, by block id.
     soft: Vec<bool>,
+    /// Whether ore may replace a block: every stone, by block id.
+    stone: Vec<bool>,
+    /// What each block offers plants, by block id.
+    grounds: Vec<Ground>,
     seed: u64,
     resources: Resources,
     features: Features,
 }
 
 impl Terrain {
-    pub fn new(seed: u64, registry: &BlockRegistry) -> Self {
+    pub fn new(seed: u64, registry: &BlockRegistry, content: &WorldContent, rocks: &Rocks, biomes: &Biomes) -> Self {
         let id = |name: &str| registry.expect(&format!("base:{name}"));
-        let bands = [
-            "orange", "", "yellow", "orange", "white", "", "brown", "orange", "red", "light_gray", "", "orange", "yellow", "red", "white",
-            "brown",
-        ]
-        .map(|colour| if colour.is_empty() { id("terracotta") } else { id(&format!("{colour}_terracotta")) });
+        let frost = &content.climate.frost;
         let water = id("water");
-        let soft = (0..registry.len())
+        let by_id = |f: &dyn Fn(BlockId) -> bool| (0..registry.len()).map(|i| f(BlockId(i as u16))).collect::<Vec<bool>>();
+        let soft = by_id(&|block| block.is_air() || block == water || registry.def(block).name.ends_with("_leaves"));
+        let mut stones: Vec<BlockId> = rocks.stones().chain([id("stone"), id("deepslate")]).collect();
+        stones.extend(biomes.iter().filter_map(|(_, b)| b.stones.as_ref()).flat_map(|p| p.blocks()));
+        // What a block offers plants follows its tags: snow over soil, then soil, sand.
+        let grounds = (0..registry.len())
             .map(|i| {
-                let block = BlockId(i as u16);
-                block.is_air() || block == water || registry.def(block).name.ends_with("_leaves")
+                let def = registry.def(BlockId(i as u16));
+                match () {
+                    _ if def.has_tag("snow") => Ground::Snow,
+                    _ if def.has_tag("soil") => Ground::Soil,
+                    _ if def.has_tag("sand") => Ground::Sand,
+                    _ => Ground::Bare,
+                }
             })
             .collect();
         Self {
             ids: Ids {
                 bedrock: id("bedrock"),
-                stone: id("stone"),
                 deepslate: id("deepslate"),
-                granite: id("granite"),
-                diorite: id("diorite"),
-                andesite: id("andesite"),
-                tuff: id("tuff"),
-                calcite: id("calcite"),
-                cobblestone: id("cobblestone"),
-                dirt: id("dirt"),
-                coarse_dirt: id("coarse_dirt"),
-                rooted_dirt: id("rooted_dirt"),
-                mud: id("mud"),
-                moss: id("moss_block"),
-                podzol: id("podzol"),
                 grass: id("grass_block"),
-                snowy_grass: id("snowy_grass_block"),
-                snow: id("snow_block"),
-                powder_snow: id("powder_snow"),
-                ice: id("ice"),
-                packed_ice: id("packed_ice"),
-                blue_ice: id("blue_ice"),
-                sand: id("sand"),
-                sandstone: id("sandstone"),
-                red_sand: id("red_sand"),
-                red_sandstone: id("red_sandstone"),
-                gravel: id("gravel"),
-                clay: id("clay"),
                 water,
-                bands,
+                lava: id("lava"),
+                salt: id("calcite"),
+                sand: id("sand"),
+                snow: registry.expect(&frost.snow),
+                powder: registry.expect(&frost.powder),
+                snowy_ground: registry.expect(&frost.snowy_ground),
+                ice: registry.expect(&frost.ice),
+                thick_ice: registry.expect(&frost.thick_ice),
+                rare_ice: registry.expect(&frost.rare_ice),
             },
-            cheese: noise(seed, 20, 0.012, FractalType::FBm, 2),
-            tunnel_a: noise(seed, 21, 0.014, FractalType::FBm, 2),
-            tunnel_b: noise(seed, 22, 0.014, FractalType::FBm, 2),
             rock: noise(seed, 23, 0.02, FractalType::None, 1),
             patches: noise(seed, 24, 0.04, FractalType::FBm, 2),
+            mixes: noise(seed, 25, 1.0 / 9.0, FractalType::FBm, 2),
             soft,
+            stone: by_id(&|block| stones.contains(&block)),
+            grounds,
             seed,
             resources: Resources::new(registry),
             features: Features::new(registry),
@@ -152,7 +122,7 @@ impl Terrain {
 pub struct Blocks<'a> {
     origin: IVec3,
     data: Vec<BlockId>,
-    stone_like: [BlockId; 6],
+    stone: &'a [bool],
     soft: &'a [bool],
 }
 
@@ -201,48 +171,10 @@ impl Blocks<'_> {
 
     pub fn replace_stone(&mut self, pos: IVec3, block: BlockId) {
         if let Some(i) = self.index(pos)
-            && self.stone_like.contains(&self.data[i])
+            && self.stone[self.data[i].0 as usize]
         {
             self.data[i] = block;
         }
-    }
-}
-
-/// Trilinearly interpolated 3D noise over the column, sampled every `LATTICE` blocks.
-struct Lattice {
-    values: Vec<f32>,
-    layers: usize,
-}
-
-impl Lattice {
-    fn new(noise: &FastNoiseLite, origin: IVec3, top: i32, scale_y: f32) -> Self {
-        let layers = (top / LATTICE + 2) as usize;
-        let mut values = Vec::with_capacity(LX * LX * layers);
-        for ly in 0..layers {
-            for lz in 0..LX {
-                for lx in 0..LX {
-                    let p = origin + IVec3::new(lx as i32, ly as i32, lz as i32) * LATTICE;
-                    values.push(noise.get_noise_3d(p.x as f32, p.y as f32 * scale_y, p.z as f32));
-                }
-            }
-        }
-        Self { values, layers }
-    }
-
-    fn get(&self, x: i32, y: i32, z: i32) -> f32 {
-        let (gx, gy, gz) = ((x / LATTICE) as usize, (y / LATTICE) as usize, (z / LATTICE) as usize);
-        if gy + 1 >= self.layers {
-            return 0.0;
-        }
-        let f = |v: i32| (v % LATTICE) as f32 / LATTICE as f32;
-        let (fx, fy, fz) = (f(x), f(y), f(z));
-        let at = |dx: usize, dy: usize, dz: usize| self.values[((gy + dy) * LX + gz + dz) * LX + gx + dx];
-        let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
-        let x00 = lerp(at(0, 0, 0), at(1, 0, 0), fx);
-        let x10 = lerp(at(0, 1, 0), at(1, 1, 0), fx);
-        let x01 = lerp(at(0, 0, 1), at(1, 0, 1), fx);
-        let x11 = lerp(at(0, 1, 1), at(1, 1, 1), fx);
-        lerp(lerp(x00, x10, fy), lerp(x01, x11, fy), fz)
     }
 }
 
@@ -252,21 +184,21 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let origin = pos.origin();
     let corner = IVec2::new(origin.x, origin.z);
     // Trees reach in from candidates around the column, so sample the climate there too.
-    let area = world.sampler(corner - features::REACH, corner + CHUNK_SIZE - 1 + features::REACH);
+    let area = world.dense_sampler(corner - features::REACH, corner + CHUNK_SIZE - 1 + features::REACH);
 
     // Geology for the column plus a one-block border (for slopes).
     let geology = GeoGrid::new(world, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
     let top = geology.samples().iter().map(|g| g.height.max(g.water)).max().unwrap_or(0).max(SEA_LEVEL);
 
-    let cheese = Lattice::new(&terrain.cheese, origin, top, 1.6);
-    let tunnel_a = Lattice::new(&terrain.tunnel_a, origin, top, 1.0);
-    let tunnel_b = Lattice::new(&terrain.tunnel_b, origin, top, 1.0);
-    let rock = Lattice::new(&terrain.rock, origin, top, 1.0);
+    let rock = Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0);
+    let mut rock_profile = Profile::default();
+    let mut caves = world.caves.column(&geology, origin, top);
+    let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
     let mut blocks = Blocks {
         origin,
         data: vec![BlockId::AIR; CHUNK_VOLUME * COLUMN_CHUNKS as usize],
-        stone_like: [ids.stone, ids.deepslate, ids.granite, ids.diorite, ids.andesite, ids.tuff],
+        stone: &terrain.stone,
         soft: &terrain.soft,
     };
     let mut column = Column::default();
@@ -279,34 +211,48 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let height = geo.height;
             let site = area.site_on(&geo, wx, wz, geology.slope(wx, wz));
             column.climate[(z * CHUNK_SIZE + x) as usize] = site.tint();
-            let layers = terrain.surface_layers(&site, wx, wz);
-            // Caves stay out of a band under and beside the sea, lakes and rivers, so they
-            // never open into a bed or bank and let the water out.
-            let near_water = geo.submerged() || geo.river > 0.05 || geo.cavity.is_some();
-            let dry_below = match () {
-                _ if near_water => geo.water.min(height).min(geo.cavity.map_or(i32::MAX, |c| c.floor)) - 8,
-                _ if height <= SEA_LEVEL + 4 => SEA_LEVEL - 8,
-                _ => i32::MAX,
-            };
+            let layers = world.surface_layers(&site, wx, wz);
+            let stones = world.stones(&site);
+            let strata = &world.biomes.get(site.biome).strata;
+            caves.carve(x, z, &mut cave);
+            rock.profile(x, z, &mut rock_profile);
 
             for y in 0..=height {
                 let below_surface = height - y;
-                let block = if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
+                match cave[y as usize] {
+                    Cave::Rock => {}
+                    Cave::Air => continue,
+                    Cave::Water => {
+                        blocks.set_local(x, y, z, ids.water);
+                        continue;
+                    }
+                    Cave::Lava => {
+                        blocks.set_local(x, y, z, ids.lava);
+                        continue;
+                    }
+                }
+                let open = |y: i32| cave.get(y as usize).is_some_and(|&c| c != Cave::Rock);
+                let lining = if open(y + 1) {
+                    world.caves.decoration(IVec3::new(wx, y, wz), below_surface, CaveFace::Floor)
+                } else if open(y - 1) {
+                    world.caves.decoration(IVec3::new(wx, y, wz), below_surface, CaveFace::Ceiling)
+                } else {
+                    None
+                };
+                let block = if let Some(lining) = lining {
+                    lining
+                } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
                     ids.bedrock
                 } else if below_surface == 0 {
                     layers.top
-                } else if below_surface <= layers.depth {
-                    layers.under
-                } else if below_surface <= layers.depth + layers.strata {
-                    terrain.band(y, wx, wz)
+                } else if below_surface <= layers.depth && layers.filler != Fill::Stones {
+                    match layers.filler {
+                        Fill::Block(block) => block,
+                        _ => terrain.band(strata, y, wx, wz),
+                    }
                 } else {
-                    stone_at(ids, &rock, world.seed, x, y, z, wx, wz)
+                    stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz)
                 };
-
-                let carvable = y > 4 && y < dry_below && block != ids.bedrock;
-                if carvable && is_cave(&cheese, &tunnel_a, &tunnel_b, x, y, z, below_surface) {
-                    continue;
-                }
                 blocks.set_local(x, y, z, block);
             }
             // Fast water stays open in the cold.
@@ -325,7 +271,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     }
 
     terrain.resources.place(world.seed, pos, &mut blocks);
-    terrain.features.place(world, &area, &geology, world.seed, pos, &mut blocks);
+    terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
 
     // Ground plants last, wherever trees, caves and water left the surface open.
     for z in 0..CHUNK_SIZE {
@@ -368,212 +314,30 @@ impl Terrain {
         (0.55 * patch + 0.45 * speckle).clamp(0.0, 1.0)
     }
 
-    /// Badlands strata: bands of coloured terracotta that wobble gently.
-    fn band(&self, y: i32, x: i32, z: i32) -> BlockId {
+    /// Another clumpy value in 0..1, independent of `dither`, for choosing among mixed
+    /// blocks so that each forms patches with speckled edges.
+    fn mix(&self, x: i32, z: i32) -> f32 {
+        let speckle = (hash3(self.seed ^ 0x3a1f, x, 0, z) & 0xffff) as f32 / 65536.0;
+        let patch = crate::climate::uniform(self.mixes.get_noise_2d(x as f32, z as f32));
+        (0.8 * patch + 0.2 * speckle).clamp(0.0, 0.9999)
+    }
+
+    /// Strata: bands of rock, one block each, that wobble gently.
+    fn band(&self, strata: &[BlockId], y: i32, x: i32, z: i32) -> BlockId {
         let wobble = (self.patches.get_noise_2d(x as f32 * 0.25, z as f32 * 0.25) * 2.5).round() as i32;
-        self.ids.bands[(y + wobble).rem_euclid(self.ids.bands.len() as i32) as usize]
+        strata[(y + wobble).rem_euclid(strata.len() as i32) as usize]
     }
 
     /// The frozen surface of sea, lake or river water at this site, if it freezes: ice
-    /// that breaks up into floes at its edge, thick packed ice where it is very cold.
+    /// that breaks up into floes at its edge, thick ice where it is very cold.
     fn ice(&self, site: &Site, x: i32, z: i32) -> Option<BlockId> {
         let t = site.temperature + 1.5 * self.patches.get_noise_2d(x as f32, z as f32);
         let d = self.dither(x, z);
         match t {
             t if t >= -1.0 => None,
-            t if -t > 7.0 + 4.0 * d => Some(if d > 0.97 { self.ids.blue_ice } else { self.ids.packed_ice }),
+            t if -t > 7.0 + 4.0 * d => Some(if d > 0.97 { self.ids.rare_ice } else { self.ids.thick_ice }),
             _ => Some(self.ids.ice),
         }
-    }
-
-    /// The surface at a site, from the top down.
-    pub fn surface_layers(&self, site: &Site, x: i32, z: i32) -> Layers {
-        let ids = &self.ids;
-        let d = self.dither(x, z);
-        let patch = self.patches.get_noise_2d(x as f32, z as f32);
-        // Whether `v` lies past a threshold that is dithered across `lo..hi`.
-        let past = |v: f32, lo: f32, hi: f32| v > lo + (hi - lo) * d;
-        let layers = |top, under, depth| Layers { top, under, depth, strata: 0 };
-        let (t, w) = (site.temperature, site.soil_moisture());
-        let above = (site.height - SEA_LEVEL) as f32;
-
-        let shore = (site.height - site.water) as f32;
-        if shore < 0.0 {
-            return layers(self.bed(site, x, z, -shore), self.bed(site, x, z, -shore), 3);
-        }
-        if site.body == Body::Salt {
-            // A dry closed basin crusts over with salt.
-            return layers(if d < 0.75 { ids.calcite } else { ids.sand }, ids.sand, 3);
-        }
-
-        // Sand deserts are hot; cooler dry land is steppe with coarse, stony soil.
-        let hot = past(t, 14.0, 18.0);
-        let warm = past(t, 8.0, 12.0);
-        let arid = !past(w, 0.2, 0.34);
-        let dry = !past(w, 0.3, 0.44);
-        // Red rock weathers out of hot, dry uplands.
-        let red = hot && dry && past((above - 12.0) / 16.0 + (t - 21.0) / 5.0, 0.0, 1.0);
-
-        // Bare rock on cliffs, and on high ground exposed to the weather where no snow
-        // lies; banded terracotta in badlands.
-        let rock = |above: f32| {
-            if red {
-                return Layers { top: self.band(site.height, x, z), under: ids.stone, depth: 0, strata: 14 };
-            }
-            let top = match patch {
-                p if above > 90.0 && p > 0.45 => ids.calcite,
-                p if above > 70.0 && p < -0.45 => ids.tuff,
-                p if (-0.08..0.04).contains(&p) => ids.andesite,
-                _ => ids.stone,
-            };
-            layers(top, ids.stone, 0)
-        };
-        if past(site.slope as f32, 3.0, 5.5) {
-            return rock(above);
-        }
-        // Cold: grass, then grass under snow, then deep snow (powdery where it is coldest).
-        if past(-t, 1.5, 6.0) {
-            let top = if past(-t, 8.0, 12.0) && patch > 0.15 { ids.powder_snow } else { ids.snow };
-            return layers(top, ids.snow, 2);
-        }
-        if past(-t, -2.5, 1.5) {
-            return layers(ids.snowy_grass, ids.dirt, 3);
-        }
-        let exposure = site.slope as f32 + ((above - 95.0) / 12.0).max(0.0);
-        if past(exposure, 3.0, 5.5) {
-            return rock(above);
-        }
-        // Scree below cold peaks.
-        if above > 70.0 && t < 8.0 && past(exposure, 1.8, 3.2) {
-            return layers(ids.gravel, ids.stone, 2);
-        }
-        // Beaches along the sea; along lakes and rivers, banks of their own (see `bank`).
-        if site.body == Body::Sea && site.continentality < 0.45 && !past(above, 0.5, 2.5) {
-            let top = match () {
-                _ if t < 3.0 => ids.gravel,
-                _ if t > 18.0 && w > 1.2 && site.river > 0.3 && d > 0.5 => ids.mud,
-                _ => ids.sand,
-            };
-            return layers(top, top, 3);
-        }
-        if site.body != Body::Sea
-            && site.river > 0.35
-            && !past(shore, 0.5, 2.0)
-            && let Some(top) = self.bank(site, x, z)
-        {
-            return layers(top, if top == ids.mud || top == ids.sand { top } else { ids.gravel }, 2);
-        }
-        // Dry land: grass gives way to coarse dirt, then to sand or red sand.
-        if hot && arid {
-            return if red {
-                Layers { top: ids.red_sand, under: ids.red_sandstone, depth: 2, strata: 12 }
-            } else {
-                layers(ids.sand, ids.sandstone, 6)
-            };
-        }
-        if warm && (dry || arid) {
-            return layers(ids.coarse_dirt, ids.dirt, 3);
-        }
-        // Damp ground: moss on wet, warm forest floors, mud in hot swampy lowlands, needle
-        // litter under cool, dense forest.
-        if w > 1.25 && t > 15.0 && past(site.forest, 0.35, 0.7) && patch > 0.0 {
-            return layers(ids.moss, ids.rooted_dirt, 3);
-        }
-        if w > 1.35 && t > 14.0 && !past(above, 0.0, 3.0) {
-            return layers(ids.mud, ids.mud, 2);
-        }
-        if t < 10.0 && past(site.forest, 0.45, 0.8) {
-            return layers(ids.podzol, ids.dirt, 3);
-        }
-        // Roots run deep under hot, wet forests.
-        let under = if t > 18.0 && w > 1.2 { ids.rooted_dirt } else { ids.dirt };
-        layers(ids.grass, under, 3)
-    }
-
-    /// The bed under `depth` blocks of water: gravel and stone in creeks and mountain
-    /// rivers, mud in warm, wet lowland rivers, sand in slow lowland rivers, lakes' shallows
-    /// and the sea's, and clay in patches.
-    fn bed(&self, site: &Site, x: i32, z: i32, depth: f32) -> BlockId {
-        let ids = &self.ids;
-        let d = self.dither(x, z);
-        let patch = self.patches.get_noise_2d(x as f32, z as f32);
-        let (t, w) = (site.temperature, site.soil_moisture());
-        let warm_wet = t > 17.0 && w > 1.05;
-        let lowland = site.height < SEA_LEVEL + 24;
-        match site.body {
-            Body::Creek => match () {
-                _ if patch < -0.45 => ids.stone,
-                _ if warm_wet && lowland && d > 0.6 => ids.mud,
-                _ if d < 0.12 => ids.cobblestone,
-                _ => ids.gravel,
-            },
-            Body::River => match () {
-                _ if warm_wet && d > 0.4 => ids.mud,
-                _ if patch > 0.55 => ids.clay,
-                _ if lowland && site.mountain < 0.2 && d > 0.45 => ids.sand,
-                _ if patch < -0.5 => ids.stone,
-                _ => ids.gravel,
-            },
-            Body::Lake => match () {
-                _ if depth <= 2.0 && t > 3.0 && (site.mountain < 0.3 || d > 0.5) => ids.sand,
-                _ if warm_wet && d > 0.35 => ids.mud,
-                _ if patch > 0.35 && depth < 10.0 => ids.clay,
-                _ if t < 3.0 || site.mountain > 0.4 => ids.gravel,
-                _ if d > 0.5 => ids.sand,
-                _ => ids.gravel,
-            },
-            _ => match () {
-                _ if site.river > 0.3 && t > 18.0 && w > 1.0 && d > 0.45 => ids.mud,
-                _ if patch > 0.5 && depth < 10.0 => ids.clay,
-                _ if site.river > 0.5 || (depth <= 8.0 && t > 2.0 * d) => ids.sand,
-                _ => ids.gravel,
-            },
-        }
-    }
-
-    /// The ground just above a lake or river, if it is not grass: rocky and gravelly by
-    /// creeks, with moss and mud where it is warm and wet, sand on the shores of lakes and
-    /// lowland rivers.
-    fn bank(&self, site: &Site, x: i32, z: i32) -> Option<BlockId> {
-        let ids = &self.ids;
-        let d = self.dither(x, z);
-        let patch = self.patches.get_noise_2d(x as f32, z as f32);
-        let (t, w) = (site.temperature, site.soil_moisture());
-        let near = site.river > 0.6;
-        Some(match site.body {
-            Body::Creek | Body::River if t < 2.0 => if d < 0.5 { ids.gravel } else { ids.stone },
-            Body::Creek => match () {
-                _ if !near && d > 0.35 => return None,
-                _ if patch < -0.3 => if d < 0.5 { ids.stone } else { ids.andesite },
-                _ if w > 1.1 && t > 8.0 && d > 0.7 => ids.moss,
-                _ if w > 1.2 && t > 15.0 && d > 0.45 => ids.mud,
-                _ if d < 0.3 => ids.gravel,
-                _ if d < 0.42 => ids.cobblestone,
-                _ => return None,
-            },
-            Body::River => match () {
-                _ if w > 1.2 && t > 16.0 && d > 0.4 => ids.mud,
-                _ if site.height < SEA_LEVEL + 20 && site.mountain < 0.2 && patch > -0.1 => ids.sand,
-                _ if d < 0.45 => ids.gravel,
-                _ if !near => return None,
-                _ => ids.stone,
-            },
-            Body::Lake => match () {
-                _ if t < 3.0 => ids.gravel,
-                _ if w > 1.2 && t > 16.0 && d > 0.6 => ids.mud,
-                _ if site.mountain > 0.35 && patch < 0.0 => if d < 0.5 { ids.stone } else { ids.gravel },
-                _ => ids.sand,
-            },
-            _ => return None,
-        })
-    }
-
-    /// Top block of dry or submerged ground, and the block (water or ice) above it when
-    /// it lies under the sea, a lake or a river.
-    pub fn surface_blocks(&self, site: &Site, x: i32, z: i32) -> (BlockId, Option<BlockId>) {
-        let top = self.surface_layers(site, x, z).top;
-        let water = (site.height < site.water).then(|| self.ice(site, x, z).unwrap_or(self.ids.water));
-        (top, water)
     }
 
     pub fn leaves(&self, tree: Tree) -> BlockId {
@@ -586,41 +350,82 @@ impl Terrain {
 
     /// What a surface block offers plants.
     pub fn ground(&self, block: BlockId) -> Ground {
-        let ids = &self.ids;
-        if [ids.grass, ids.dirt, ids.coarse_dirt, ids.rooted_dirt, ids.podzol, ids.moss, ids.mud].contains(&block) {
-            Ground::Soil
-        } else if [ids.snowy_grass, ids.snow, ids.powder_snow].contains(&block) {
-            Ground::Snow
-        } else if block == ids.sand || block == ids.red_sand {
-            Ground::Sand
-        } else {
-            Ground::Bare
-        }
+        self.grounds[block.0 as usize]
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn stone_at(ids: &Ids, rock: &Lattice, seed: u64, x: i32, y: i32, z: i32, wx: i32, wz: i32) -> BlockId {
-    // Deepslate below y 16, dithered over 8 blocks.
-    if y < 16 + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
+impl Overworld {
+    /// The stones beneath a site: its biome's own, or its rock province's.
+    pub(crate) fn stones(&self, site: &Site) -> &Palette {
+        self.biomes.get(site.biome).stones.as_ref().unwrap_or(&self.rocks.get(site.province).stones)
+    }
+
+    /// The surface at a site, from the top down.
+    pub(crate) fn surface_layers(&self, site: &Site, x: i32, z: i32) -> Layers {
+        let terrain = &self.terrain;
+        let ids = &terrain.ids;
+        let biome = self.biomes.get(site.biome);
+        let d = terrain.dither(x, z);
+        let chance = (hash3(terrain.seed ^ 0xc4a, x, 0, z) & 0xffff) as f32 / 65536.0;
+        let spot = Spot { site, x, z, dither: d, mix: terrain.mix(x, z), chance };
+        let (stones, strata) = (self.stones(site), &biome.strata);
+        let rules = &self.rules;
+        // Whether `v` lies past a threshold that is dithered across `lo..hi`.
+        let past = |v: f32, lo: f32, hi: f32| v > lo + (hi - lo) * d;
+        let t = site.temperature;
+        let above = (site.height - SEA_LEVEL) as f32;
+        // Height over the sea, lake or river over or beside the site.
+        let shore = (site.height - site.water) as f32;
+
+        if shore < 0.0 {
+            return rules.underwater(&biome.surface, &spot, stones, strata);
+        }
+        if site.body == Body::Salt {
+            // A dry closed basin crusts over with salt.
+            return Layers { top: if d < 0.75 { ids.salt } else { ids.sand }, filler: Fill::Block(ids.sand), depth: 3 };
+        }
+        // Bare rock on cliffs, and on high ground exposed to the weather where no snow lies.
+        let cliff = || rules.cliff(&biome.surface, &spot, stones, strata);
+        if past(site.slope as f32, 3.0, 5.5) {
+            return cliff();
+        }
+        // Cold: ground under snow, then deep snow (powdery where it is coldest).
+        if past(-t, 1.5, 6.0) {
+            let powder = past(-t, 8.0, 12.0) && terrain.patches.get_noise_2d(x as f32, z as f32) > 0.15;
+            return Layers { top: if powder { ids.powder } else { ids.snow }, filler: Fill::Block(ids.snow), depth: 2 };
+        }
+        let exposure = site.slope as f32 + ((above - 95.0) / 12.0).max(0.0);
+        if past(exposure, 3.0, 5.5) {
+            return cliff();
+        }
+        // Beaches along the sea and banks along rivers and lakes.
+        let beach = match site.body {
+            Body::Sea => site.continentalness < 0.7 && !past(above, 0.5, 2.5),
+            _ => site.river > 0.3 && !past(shore, 0.5, 2.5),
+        };
+        let ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
+        if past(-t, -2.5, 1.5) && terrain.ground(ground.top) == Ground::Soil {
+            return Layers { top: ids.snowy_ground, ..ground };
+        }
+        ground
+    }
+
+    /// Top block of dry or submerged ground, and the block (water or ice) above it when
+    /// it lies under the sea, a lake or a river.
+    pub(crate) fn surface_blocks(&self, site: &Site, x: i32, z: i32) -> (BlockId, Option<BlockId>) {
+        let top = self.surface_layers(site, x, z).top;
+        let water = (site.height < site.water).then(|| self.terrain.ice(site, x, z).unwrap_or(self.terrain.ids.water));
+        (top, water)
+    }
+}
+
+/// The stone at a block: deepslate in the depths, otherwise one of `stones` in blobs and
+/// veins that follow a 3D noise (`rock`, its value here).
+fn stone_at(ids: &Ids, stones: &Palette, rock: f32, seed: u64, y: i32, wx: i32, wz: i32) -> BlockId {
+    // Deepslate below `DEEPSLATE`, dithered over 8 blocks.
+    if y < DEEPSLATE + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
         return ids.deepslate;
     }
-    match rock.get(x, y, z) {
-        n if n > 0.6 => ids.granite,
-        n if n < -0.6 => ids.diorite,
-        n if (0.28..0.34).contains(&n) => ids.andesite,
-        n if y < 40 && (-0.36..-0.28).contains(&n) => ids.tuff,
-        _ => ids.stone,
-    }
-}
-
-fn is_cave(cheese: &Lattice, a: &Lattice, b: &Lattice, x: i32, y: i32, z: i32, depth: i32) -> bool {
-    // Large caverns well below the surface.
-    if depth > 12 && cheese.get(x, y, z) > 0.62 {
-        return true;
-    }
-    // Winding tunnels where two noise fields are both near zero; they may break the
-    // surface, which forms cave entrances.
-    let (a, b) = (a.get(x, y, z), b.get(x, y, z));
-    a * a + b * b < 0.0045
+    // A single octave of simplex noise is spread nearly evenly over about ±0.94.
+    stones.pick((0.5 + rock * 0.53).clamp(0.0, 0.9999))
 }

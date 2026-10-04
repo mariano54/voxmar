@@ -11,17 +11,23 @@
 //! interiors drier and the lee of a range lies in a rain shadow. Earth-like circulation
 //! adds wet tropics, dry subtropics and wet mid-latitudes on top.
 //!
+//! The same lattice carries the fields biomes are chosen by: continentalness and a
+//! landform class read from the continents and ranges, and seeded fields for weirdness,
+//! aether, fertility and sub-biome variants. These follow landforms or vary over hundreds
+//! of blocks, never block by block, so biome borders are smooth curves rather than speckle.
+//!
 //! These regional fields vary over hundreds of blocks, so they are computed on a lattice
 //! every `CELL` blocks and interpolated; only altitude cooling is applied per block.
 
 use std::f32::consts::PI;
+use std::sync::LazyLock;
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 use voxmar_engine::glam::IVec2;
 
 use crate::SEA_LEVEL;
 use crate::dials::WorldDials;
-use crate::geology::{Geology, noise, smoothstep, spline};
+use crate::geology::{Geology, Relief, noise, smoothstep, spline};
 
 /// Lattice spacing of the regional climate, in blocks.
 pub const CELL: i32 = 64;
@@ -41,10 +47,28 @@ pub struct Regional {
     pub sea_temperature: f32,
     /// Annual precipitation, mm.
     pub precipitation: f32,
-    /// 0 at the coast ..= 1 deep inland.
-    pub continentality: f32,
+    /// Precipitation without the extra rain of windward slopes, which changes from one
+    /// slope to the next: the regional wetness biomes are chosen by.
+    pub rainfall: f32,
+    /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland.
+    pub continentalness: f32,
     /// 0 at the equator ..= 1 at a pole.
     pub latitude: f32,
+    /// Height of the continents and ranges the climate sees, without hills, valleys or
+    /// terrain features: the altitude that cools biomes.
+    pub elevation: f32,
+    /// The landform class, see [`landform`].
+    pub erosion: f32,
+    /// Evenly spread over 0 ..= 1, slowly varying: picks rare biomes in its extremes.
+    pub weirdness: f32,
+    /// How fantastical the land is, 0 ..= 1, with the world's fantasy dial as its median.
+    pub aether: f32,
+    /// Evenly spread over 0 ..= 1: how rich the soil is.
+    pub fertility: f32,
+    /// Evenly spread over 0 ..= 1, varying over a few hundred blocks: picks sub-biomes.
+    pub variant: f32,
+    /// Offset that warps rock province borders, in blocks.
+    pub warp: [f32; 2],
 }
 
 impl Regional {
@@ -53,10 +77,59 @@ impl Regional {
         Self {
             sea_temperature: mix(self.sea_temperature, other.sea_temperature),
             precipitation: mix(self.precipitation, other.precipitation),
-            continentality: mix(self.continentality, other.continentality),
+            rainfall: mix(self.rainfall, other.rainfall),
+            continentalness: mix(self.continentalness, other.continentalness),
             latitude: mix(self.latitude, other.latitude),
+            elevation: mix(self.elevation, other.elevation),
+            erosion: mix(self.erosion, other.erosion),
+            weirdness: mix(self.weirdness, other.weirdness),
+            aether: mix(self.aether, other.aether),
+            fertility: mix(self.fertility, other.fertility),
+            variant: mix(self.variant, other.variant),
+            warp: [mix(self.warp[0], other.warp[0]), mix(self.warp[1], other.warp[1])],
         }
     }
+}
+
+/// How rugged the landform is, in steps: 0 on flat land, 1/3 in hill country, 2/3 on the
+/// slopes of a range and 1 along its peaks. Each terrain class gets one value with short
+/// ramps between them (Tectonic's terrain classification), so biome borders follow the
+/// landforms instead of the noise that shapes them.
+pub fn landform(relief: &Relief) -> f32 {
+    let inland = smoothstep(-0.06, 0.1, relief.continental);
+    let hills = smoothstep(0.42, 0.58, relief.roughness * inland) / 3.0;
+    let slopes = smoothstep(0.3, 0.42, relief.mountain) * 2.0 / 3.0;
+    let peaks = smoothstep(0.22, 0.34, relief.peak);
+    hills.max(slopes).max(peaks)
+}
+
+/// −1 over the deep ocean, 0 at the coast ..= 1 deep inland, from the continental noise.
+/// It changes fastest at the coast, so coastal biome borders are sharp.
+fn continentalness(continental: f32) -> f32 {
+    const COAST: f32 = -0.04;
+    let ease = |t: f32| t * (2.0 - t);
+    if continental >= COAST {
+        ease(((continental - COAST) / 0.64).min(1.0))
+    } else {
+        -ease(((COAST - continental) / 0.46).min(1.0))
+    }
+}
+
+/// Spreads a two-octave noise value evenly over 0 ..= 1 through its measured distribution,
+/// so a share of the range is the same share of the land.
+pub fn uniform(n: f32) -> f32 {
+    /// Quantiles of the noise at every 1/QUANTILES, measured once from many samples.
+    const QUANTILES: usize = 256;
+    static TABLE: LazyLock<Vec<f32>> = LazyLock::new(|| {
+        let n = noise(0x0d15_7a1b, 0, 1.0, FractalType::FBm, 2);
+        // Samples far enough apart to be nearly independent.
+        let mut samples: Vec<f32> = (0..1 << 16).map(|i| n.get_noise_2d((i & 255) as f32 * 2.3, (i >> 8) as f32 * 2.3)).collect();
+        samples.sort_by(f32::total_cmp);
+        (0..=QUANTILES).map(|q| samples[(q * (samples.len() - 1)) / QUANTILES]).collect()
+    });
+    let i = TABLE.partition_point(|&q| q < n).clamp(1, QUANTILES);
+    let (lo, hi) = (TABLE[i - 1], TABLE[i]);
+    ((i - 1) as f32 + ((n - lo) / (hi - lo).max(1e-6)).clamp(0.0, 1.0)) / QUANTILES as f32
 }
 
 /// Water available to plants: precipitation over potential evaporation, which grows with
@@ -70,7 +143,17 @@ pub struct Climate {
     latitude_warp: FastNoiseLite,
     anomaly: FastNoiseLite,
     wetness: FastNoiseLite,
+    weirdness: FastNoiseLite,
+    aether: FastNoiseLite,
+    /// Turns the evenly spread aether noise into aether with the fantasy dial as median.
+    aether_exponent: f32,
+    fertility: FastNoiseLite,
+    variant: FastNoiseLite,
+    warp: [FastNoiseLite; 2],
 }
+
+/// How far rock province borders are pushed around, in blocks.
+const PROVINCE_WARP: f32 = 450.0;
 
 impl Climate {
     pub fn new(seed: u64, dials: &WorldDials) -> Self {
@@ -79,6 +162,12 @@ impl Climate {
             latitude_warp: noise(seed, 10, 0.8 / dials.pole_distance, FractalType::FBm, 2),
             anomaly: noise(seed, 11, 1.0 / 1600.0, FractalType::FBm, 2),
             wetness: noise(seed, 12, 1.0 / 1200.0, FractalType::FBm, 2),
+            weirdness: noise(seed, 13, 1.0 / 2600.0, FractalType::FBm, 2),
+            aether: noise(seed, 14, 1.0 / 2200.0, FractalType::FBm, 2),
+            aether_exponent: dials.fantasy.clamp(0.01, 0.99).ln() / 0.5f32.ln(),
+            fertility: noise(seed, 15, 1.0 / 700.0, FractalType::FBm, 2),
+            variant: noise(seed, 16, 1.0 / 450.0, FractalType::FBm, 2),
+            warp: [noise(seed, 17, 1.0 / 1100.0, FractalType::FBm, 2), noise(seed, 18, 1.0 / 1100.0, FractalType::FBm, 2)],
         }
     }
 
@@ -92,6 +181,11 @@ impl Climate {
         0.5 - 0.5 * (ROUNDING * (z / pole * PI).sin()).asin() / ROUNDING.asin()
     }
 
+    /// The regional climate at a lattice-free position, for sparse searches.
+    pub fn regional_at(&self, geology: &Geology, at: IVec2) -> Regional {
+        self.regional(geology, at.x as f32, at.y as f32)
+    }
+
     /// The regional climate at one position. Expensive: it follows the wind upwind.
     pub(crate) fn regional(&self, geology: &Geology, x: f32, z: f32) -> Regional {
         let sea = SEA_LEVEL as f32;
@@ -99,7 +193,8 @@ impl Climate {
         // Air arriving from beyond the walk carries an average amount of water.
         let mut moisture = 0.5f32;
         let mut last: Option<(f32, f32)> = None;
-        let (mut lift, mut continental) = (0.0, 0.0);
+        let mut lift = 0.0;
+        let mut here = None;
         for distance in UPWIND.into_iter().chain([0.0]) {
             let relief = geology.relief(x - wind_x * distance, z - wind_z * distance);
             let ground = relief.elevation.max(sea);
@@ -117,8 +212,9 @@ impl Climate {
                 moisture += (1.0 - moisture) * 0.45;
             }
             last = Some((distance, ground));
-            continental = relief.continental;
+            here = Some(relief);
         }
+        let relief = here.expect("the walk ends here");
         // Air forced up a windward slope rains on it.
         let orographic = 1.0 + (lift / 30.0).min(1.0);
 
@@ -134,11 +230,20 @@ impl Climate {
         let sea_temperature = self.dials.mean_temperature
             + self.dials.latitude_gradient * (0.5 - latitude)
             + 3.5 * self.anomaly.get_noise_2d(x, z);
+        let even = |n: &FastNoiseLite| uniform(n.get_noise_2d(x, z));
         Regional {
             sea_temperature,
             precipitation,
-            continentality: smoothstep(-0.05, 0.6, continental),
+            rainfall: precipitation / orographic,
+            continentalness: continentalness(relief.continental),
             latitude,
+            elevation: relief.elevation,
+            erosion: landform(&relief),
+            weirdness: even(&self.weirdness),
+            aether: even(&self.aether).powf(self.aether_exponent),
+            fertility: even(&self.fertility),
+            variant: even(&self.variant),
+            warp: self.warp.each_ref().map(|n| n.get_noise_2d(x, z) * PROVINCE_WARP),
         }
     }
 }

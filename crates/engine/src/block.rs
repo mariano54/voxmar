@@ -2,6 +2,23 @@
 //!
 //! Definitions are plain data (RON). First-party content goes through exactly the same
 //! loading path a mod's content will.
+//!
+//! Three things keep content files short as they grow:
+//!
+//! - **Families.** A template is a list of block definitions with `{name}` in their
+//!   names, textures and drops (a wood: log, stripped log, wood, planks, leaves, sapling).
+//!   A family is one line that makes the whole set for one name (`maple`), with its own
+//!   tags and changes to single members. Templates are shared across packages, so a mod's
+//!   new wood uses `base:wood`.
+//! - **Variants.** A plant (or any block) can list other looks of itself: more blooms, a
+//!   different leaf shape. Each becomes its own block, named `<block>_<variant>`, that
+//!   drops the plant itself, as many as the variant's size. Generators pick a look per
+//!   position with [`BlockRegistry::looks`].
+//! - **Tags.** Words other systems select blocks by, rather than naming them: what a block
+//!   is (`stone`, `flower`), where it fits (`wetland`), what it is good for (`edible`,
+//!   `dye:red`). The vocabulary is listed in `assets/content/base/blocks.ron`.
+
+use std::collections::BTreeMap;
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -91,6 +108,15 @@ pub enum Textures {
 }
 
 impl Textures {
+    fn names_mut(&mut self) -> Vec<&mut String> {
+        match self {
+            Textures::None => Vec::new(),
+            Textures::All(t) => vec![t],
+            Textures::Column { end, side } => vec![end, side],
+            Textures::Sides { top, bottom, side } => vec![top, bottom, side],
+        }
+    }
+
     fn face(&self, face: Face) -> Option<&str> {
         Some(match (self, face) {
             (Textures::None, _) => return None,
@@ -126,8 +152,24 @@ pub struct BlockDef {
     /// Name of the block dropped when broken, `core:air` for nothing. Defaults to the
     /// block itself.
     pub drops: Option<String>,
+    /// How many of `drops` breaking it gives.
+    pub drop_count: u8,
     /// Placeholder texture colour used when no texture pack is available.
     pub color: [u8; 3],
+    /// Words other systems select blocks by (see the module docs).
+    pub tags: Vec<String>,
+    /// The family the block belongs to (`base:maple`), set for blocks made from a template.
+    pub family: Option<String>,
+    /// Inventory icon: an item texture (`item/<icon>` in the texture packs). Without one,
+    /// the icon is drawn from the block's own textures: a plant's sprite or a cube.
+    pub icon: Option<String>,
+    /// How rare the block is meant to be where it occurs naturally. Generators scale how
+    /// often they place it by this unless their own data says otherwise.
+    pub rarity: Rarity,
+    /// Other looks of this block, each made into its own block when content loads.
+    pub variants: Vec<Variant>,
+    /// For a block made from another's variant: that block's name.
+    pub variant_of: Option<String>,
 }
 
 impl Default for BlockDef {
@@ -144,14 +186,167 @@ impl Default for BlockDef {
             hardness: 1.0,
             sound: Sound::Stone,
             drops: None,
+            drop_count: 1,
             color: [255, 0, 255],
+            tags: Vec::new(),
+            family: None,
+            icon: None,
+            rarity: Rarity::Common,
+            variants: Vec::new(),
+            variant_of: None,
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct BlockFile {
-    blocks: Vec<BlockDef>,
+impl BlockDef {
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.tags.iter().any(|t| t == tag)
+    }
+
+    /// Replaces `{name}` in every name the definition holds.
+    fn substitute(&mut self, name: &str) {
+        let fill = |s: &mut String| *s = s.replace("{name}", name);
+        fill(&mut self.name);
+        self.textures.names_mut().into_iter().for_each(fill);
+        self.drops.iter_mut().for_each(fill);
+        self.icon.iter_mut().for_each(fill);
+        self.tags.iter_mut().for_each(fill);
+        for variant in &mut self.variants {
+            fill(&mut variant.name);
+            variant.textures.names_mut().into_iter().for_each(fill);
+        }
+    }
+
+    /// Puts unqualified block names (`stone`) into `namespace` (`base:stone`).
+    fn qualify(&mut self, namespace: &str) {
+        let qualify = |name: &mut String| {
+            if !name.contains(':') {
+                *name = format!("{namespace}:{name}");
+            }
+        };
+        qualify(&mut self.name);
+        self.drops.iter_mut().for_each(qualify);
+        self.family.iter_mut().for_each(qualify);
+        self.variant_of.iter_mut().for_each(qualify);
+    }
+}
+
+/// How rare something is, in tiers each several times rarer than the last. Generators
+/// decide what each tier means in numbers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Rarity {
+    #[default]
+    Common,
+    Uncommon,
+    Rare,
+    VeryRare,
+    Legendary,
+}
+
+/// Another look of a block: the same plant with more blooms, a different shape or size.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Variant {
+    /// Added to the block's name: `poppy` and `pair` make `poppy_pair`.
+    pub name: String,
+    pub textures: Textures,
+    /// How big it is, which is how many of the block it drops: a single bloom 1, a
+    /// clump of them 2 or 3.
+    pub size: u8,
+    /// How often this look appears among the block's looks (the block's own look is
+    /// common).
+    pub rarity: Rarity,
+}
+
+impl Default for Variant {
+    fn default() -> Self {
+        Self { name: String::new(), textures: Textures::None, size: 1, rarity: Rarity::Common }
+    }
+}
+
+/// A change to some fields of a block definition, for a family's members. Tags are added
+/// to the member's own. (`tint: Some(None)` removes a tint: plain `None` means "no
+/// change".)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockPatch {
+    pub render: Option<RenderKind>,
+    pub solid: Option<bool>,
+    pub textures: Option<Textures>,
+    pub tint: Option<Tint>,
+    pub tint_top_only: Option<bool>,
+    pub light: Option<u8>,
+    pub light_filter: Option<u8>,
+    pub hardness: Option<f32>,
+    pub sound: Option<Sound>,
+    pub drops: Option<String>,
+    pub drop_count: Option<u8>,
+    pub color: Option<[u8; 3]>,
+    pub tags: Vec<String>,
+    pub icon: Option<String>,
+    pub rarity: Option<Rarity>,
+    pub variants: Option<Vec<Variant>>,
+}
+
+impl BlockPatch {
+    fn apply(&self, def: &mut BlockDef) {
+        let BlockPatch { render, solid, textures, tint, tint_top_only, light, light_filter, hardness, sound, drops, drop_count, color, tags, icon, rarity, variants } =
+            self.clone();
+        render.into_iter().for_each(|v| def.render = v);
+        solid.into_iter().for_each(|v| def.solid = v);
+        textures.into_iter().for_each(|v| def.textures = v);
+        tint.into_iter().for_each(|v| def.tint = v);
+        tint_top_only.into_iter().for_each(|v| def.tint_top_only = v);
+        light.into_iter().for_each(|v| def.light = v);
+        light_filter.into_iter().for_each(|v| def.light_filter = v);
+        hardness.into_iter().for_each(|v| def.hardness = v);
+        sound.into_iter().for_each(|v| def.sound = v);
+        drops.into_iter().for_each(|v| def.drops = Some(v));
+        drop_count.into_iter().for_each(|v| def.drop_count = v);
+        color.into_iter().for_each(|v| def.color = v);
+        def.tags.extend(tags);
+        icon.into_iter().for_each(|v| def.icon = Some(v));
+        rarity.into_iter().for_each(|v| def.rarity = v);
+        variants.into_iter().for_each(|v| def.variants = v);
+    }
+}
+
+/// One use of a template: the whole set of blocks for one name.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FamilyDef {
+    /// `wood`, or `base:wood` for another package's template.
+    pub template: String,
+    /// Replaces `{name}` in the template.
+    pub name: String,
+    /// Added to every member's tags.
+    pub tags: Vec<String>,
+    /// Applied to every member.
+    pub all: BlockPatch,
+    /// Applied to single members, by their name (`cherry_leaves`).
+    pub members: BTreeMap<String, BlockPatch>,
+    /// Members to leave out, by name.
+    pub without: Vec<String>,
+}
+
+/// A package's `blocks.ron`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockFile {
+    /// Families' templates by name: definitions with `{name}` in them.
+    pub templates: BTreeMap<String, Vec<BlockDef>>,
+    pub blocks: Vec<BlockDef>,
+    /// Made after `blocks`, in order.
+    pub families: Vec<FamilyDef>,
+}
+
+/// One look of a block, for generators choosing what to place.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub block: BlockId,
+    /// How many of the block breaking this look gives.
+    pub size: u8,
+    pub rarity: Rarity,
 }
 
 /// Runtime properties of a block, precomputed for hot loops.
@@ -174,6 +369,8 @@ pub struct BlockInfo {
     pub replaceable: bool,
     /// Removed together with the block beneath it (plants).
     pub needs_support: bool,
+    /// How many of `drops` breaking it gives.
+    pub drop_count: u8,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -191,6 +388,8 @@ pub struct BlockRegistry {
     info: Vec<BlockInfo>,
     by_name: FxHashMap<String, BlockId>,
     textures: Vec<TextureRef>,
+    /// Every block's looks: itself and its variants (shared by the variants).
+    looks: Vec<Vec<Look>>,
 }
 
 #[derive(Debug)]
@@ -213,18 +412,64 @@ impl BlockRegistry {
         Self::new(Self::parse(namespace, source)?)
     }
 
-    /// Parses a package's block definitions, qualifying names with its namespace.
+    /// Parses one package's block definitions and makes its families, qualifying names
+    /// with its namespace.
     pub fn parse(namespace: &str, source: &str) -> Result<Vec<BlockDef>, RegistryError> {
-        let file: BlockFile = ron::from_str(source).map_err(|e| RegistryError(format!("{namespace}/blocks.ron: {e}")))?;
-        let qualify = |name: &str| if name.contains(':') { name.to_owned() } else { format!("{namespace}:{name}") };
-        Ok(file
-            .blocks
-            .into_iter()
-            .map(|def| BlockDef { name: qualify(&def.name), drops: def.drops.as_deref().map(qualify), ..def })
-            .collect())
+        Self::expand(vec![(namespace.to_owned(), Self::read(namespace, source)?)])
     }
 
-    /// Builds the registry from fully qualified definitions. `core:air` is always id 0.
+    /// Reads a package's `blocks.ron` as written.
+    pub fn read(namespace: &str, source: &str) -> Result<BlockFile, RegistryError> {
+        // `drops: "dirt"` as well as `drops: Some("dirt")`.
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/blocks.ron: {e}")))
+    }
+
+    /// Every package's blocks, then its families, in package order, with names qualified
+    /// by namespace. Templates are found in any package, so the order packages load in
+    /// never matters to which templates exist.
+    pub fn expand(packages: Vec<(String, BlockFile)>) -> Result<Vec<BlockDef>, RegistryError> {
+        let templates: FxHashMap<String, Vec<BlockDef>> = packages
+            .iter()
+            .flat_map(|(namespace, file)| file.templates.iter().map(move |(name, members)| (format!("{namespace}:{name}"), members.clone())))
+            .collect();
+        let mut defs = Vec::new();
+        for (namespace, file) in packages {
+            for mut def in file.blocks {
+                def.qualify(&namespace);
+                defs.push(def);
+            }
+            for family in file.families {
+                let error = |message: String| RegistryError(format!("{namespace}/blocks.ron: family `{}`: {message}", family.name));
+                let key = if family.template.contains(':') { family.template.clone() } else { format!("{namespace}:{}", family.template) };
+                let template = templates.get(&key).ok_or_else(|| error(format!("no template `{key}`")))?;
+                let mut names = Vec::new();
+                for member in template {
+                    let mut def = member.clone();
+                    def.substitute(&family.name);
+                    names.push(def.name.clone());
+                    if family.without.contains(&def.name) {
+                        continue;
+                    }
+                    def.tags.extend(family.tags.iter().cloned());
+                    family.all.apply(&mut def);
+                    if let Some(patch) = family.members.get(&def.name) {
+                        patch.apply(&mut def);
+                    }
+                    def.family = Some(family.name.clone());
+                    def.qualify(&namespace);
+                    defs.push(def);
+                }
+                if let Some(unknown) = family.members.keys().chain(&family.without).find(|n| !names.contains(n)) {
+                    return Err(error(format!("`{unknown}` is not one of its members ({})", names.join(", "))));
+                }
+            }
+        }
+        Ok(defs)
+    }
+
+    /// Builds the registry from fully qualified definitions, making each variant its own
+    /// block right after the block it varies. `core:air` is always id 0.
     pub fn new(content: Vec<BlockDef>) -> Result<Self, RegistryError> {
         let air = BlockDef {
             name: Self::AIR.into(),
@@ -233,7 +478,22 @@ impl BlockRegistry {
             hardness: -1.0,
             ..Default::default()
         };
-        let defs: Vec<BlockDef> = std::iter::once(air).chain(content).collect();
+        let mut defs = vec![air];
+        for def in content {
+            let base = def.clone();
+            defs.push(def);
+            for variant in &base.variants {
+                defs.push(BlockDef {
+                    name: format!("{}_{}", base.name, variant.name),
+                    textures: variant.textures.clone(),
+                    drops: Some(base.drops.clone().unwrap_or_else(|| base.name.clone())),
+                    drop_count: variant.size,
+                    variants: Vec::new(),
+                    variant_of: Some(base.name.clone()),
+                    ..base.clone()
+                });
+            }
+        }
         if defs.len() > u16::MAX as usize {
             return Err(RegistryError("too many blocks".into()));
         }
@@ -282,13 +542,43 @@ impl BlockRegistry {
                 drops,
                 replaceable: !def.solid && matches!(def.render, RenderKind::Invisible | RenderKind::Translucent | RenderKind::Plant),
                 needs_support: def.render == RenderKind::Plant,
+                drop_count: def.drop_count,
             });
         }
         if textures.len() > 4096 {
             return Err(RegistryError("too many textures (max 4096)".into()));
         }
 
-        Ok(Self { defs, info, by_name, textures })
+        let mut looks: Vec<Vec<Look>> = (0..defs.len())
+            .map(|i| vec![Look { block: BlockId(i as u16), size: defs[i].drop_count, rarity: Rarity::Common }])
+            .collect();
+        for (i, def) in defs.iter().enumerate() {
+            for variant in &def.variants {
+                let id = by_name[&format!("{}_{}", def.name, variant.name)];
+                looks[i].push(Look { block: id, size: variant.size, rarity: variant.rarity });
+            }
+        }
+        for i in 0..defs.len() {
+            if let Some(base) = &defs[i].variant_of {
+                let base = *by_name.get(base).ok_or_else(|| RegistryError(format!("`{}` is a variant of unknown block `{base}`", defs[i].name)))?;
+                looks[i] = looks[base.0 as usize].clone();
+            }
+        }
+
+        Ok(Self { defs, info, by_name, textures, looks })
+    }
+
+    /// A block's looks for a generator to choose from: the block itself first, then its
+    /// variants, each with its size and rarity. A variant gives the same list as the block
+    /// it varies; a block without variants has one look.
+    pub fn looks(&self, id: BlockId) -> &[Look] {
+        &self.looks[id.0 as usize]
+    }
+
+    /// Blocks carrying `tag`, in id order, leaving out variants (reach those through
+    /// [`Self::looks`]).
+    pub fn tagged<'a>(&'a self, tag: &'a str) -> impl Iterator<Item = BlockId> + 'a {
+        (0..self.defs.len()).filter(move |&i| self.defs[i].variant_of.is_none() && self.defs[i].has_tag(tag)).map(|i| BlockId(i as u16))
     }
 
     #[inline]
@@ -330,5 +620,99 @@ impl BlockRegistry {
             }
         }
         h
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &str = r#"(
+        templates: {
+            "wood": [
+                (name: "{name}_log", textures: Column(end: "{name}_log_top", side: "{name}_log"), tags: ["log"]),
+                (name: "{name}_planks", textures: All("{name}_planks"), tags: ["planks"]),
+                (name: "{name}_leaves", render: Leaves, tint: Foliage, drops: "{name}_sapling", tags: ["leaves"]),
+                (name: "{name}_sapling", render: Plant, solid: false, textures: All("{name}_sapling")),
+            ],
+        },
+        blocks: [
+            (name: "stone", textures: All("stone"), tags: ["stone", "igneous"]),
+            (
+                name: "poppy", render: Plant, solid: false, textures: All("poppy"), tags: ["flower", "dye:red"],
+                rarity: Uncommon,
+                variants: [(name: "pair", textures: All("poppy_pair"), size: 2), (name: "bunch", textures: All("poppy_bunch"), size: 3, rarity: Rare)],
+            ),
+            (name: "dirt", drops: Some("stone")),
+        ],
+        families: [
+            (template: "wood", name: "oak", tags: ["broadleaf"]),
+            (
+                template: "wood", name: "cherry", tags: ["broadleaf"],
+                members: {"cherry_leaves": (tint: Some(None), light: 3, tags: ["blossom"])},
+                without: ["cherry_planks"],
+            ),
+        ],
+    )"#;
+
+    #[test]
+    fn families_expand_in_order() {
+        let defs = BlockRegistry::parse("base", BASE).unwrap();
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "base:stone", "base:poppy", "base:dirt", "base:oak_log", "base:oak_planks", "base:oak_leaves", "base:oak_sapling",
+                "base:cherry_log", "base:cherry_leaves", "base:cherry_sapling",
+            ]
+        );
+        let registry = BlockRegistry::new(defs).unwrap();
+        let oak_leaves = registry.def(registry.expect("base:oak_leaves"));
+        assert_eq!(oak_leaves.tint, Tint::Foliage);
+        assert_eq!(oak_leaves.family.as_deref(), Some("base:oak"));
+        assert_eq!(oak_leaves.tags, ["leaves", "broadleaf"]);
+        assert_eq!(registry.info(registry.expect("base:oak_leaves")).drops, registry.expect("base:oak_sapling"));
+        let cherry_leaves = registry.def(registry.expect("base:cherry_leaves"));
+        assert_eq!((cherry_leaves.tint, cherry_leaves.light), (Tint::None, 3));
+        assert_eq!(cherry_leaves.tags, ["leaves", "broadleaf", "blossom"]);
+        assert!(matches!(&registry.def(registry.expect("base:cherry_log")).textures, Textures::Column { end, .. } if end == "cherry_log_top"));
+    }
+
+    #[test]
+    fn variants_are_blocks_that_drop_their_plant() {
+        let registry = BlockRegistry::from_ron("base", BASE).unwrap();
+        let poppy = registry.expect("base:poppy");
+        let bunch = registry.expect("base:poppy_bunch");
+        assert_eq!(registry.id("base:poppy_pair"), Some(BlockId(poppy.0 + 1)));
+        assert_eq!((registry.info(bunch).drops, registry.info(bunch).drop_count), (poppy, 3));
+        assert_eq!(registry.def(bunch).variant_of.as_deref(), Some("base:poppy"));
+        assert_eq!(registry.def(bunch).rarity, Rarity::Uncommon);
+        let looks = registry.looks(poppy);
+        assert_eq!(looks.len(), 3);
+        assert_eq!((looks[0].block, looks[0].size, looks[0].rarity), (poppy, 1, Rarity::Common));
+        assert_eq!((looks[2].block, looks[2].size, looks[2].rarity), (bunch, 3, Rarity::Rare));
+        assert_eq!(registry.looks(bunch), looks);
+        assert_eq!(registry.looks(registry.expect("base:stone")).len(), 1);
+        // Variants share tags but are reached through their plant.
+        assert_eq!(registry.tagged("dye:red").collect::<Vec<_>>(), [poppy]);
+    }
+
+    #[test]
+    fn templates_are_shared_across_packages() {
+        let base = BlockRegistry::read("base", BASE).unwrap();
+        let addon = BlockRegistry::read("addon", r#"(families: [(template: "base:wood", name: "maple")])"#).unwrap();
+        // The add-on loads first, yet finds base's template.
+        let defs = BlockRegistry::expand(vec![("addon".into(), addon), ("base".into(), base)]).unwrap();
+        assert_eq!(defs[0].name, "addon:maple_log");
+        assert_eq!(defs[2].drops.as_deref(), Some("addon:maple_sapling"));
+        assert!(BlockRegistry::new(defs).is_ok());
+    }
+
+    #[test]
+    fn reports_mistakes_in_families() {
+        let typo = r#"(templates: {"t": [(name: "{name}_a")]}, families: [(template: "t", name: "x", members: {"x_b": (light: 1)})])"#;
+        assert!(BlockRegistry::parse("base", typo).unwrap_err().0.contains("x_b"));
+        let missing = r#"(families: [(template: "nope", name: "x")])"#;
+        assert!(BlockRegistry::parse("base", missing).is_err());
     }
 }
