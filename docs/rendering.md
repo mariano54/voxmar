@@ -110,7 +110,11 @@ What voxmar takes from it, and where it differs (`render/lod.rs`, `render/lod.wg
 
 - Distant terrain uses the real terrain's lighting inputs: the shared `shade_normal`, the
   same face shade table, sky light that fades under water two levels per block. Colours
-  are texture averages times climate tint, as before.
+  are texture averages times the biome's grass, foliage and water colours, which the
+  generator's surface samples carry (`SurfaceSample::colors`), so they match real terrain
+  once its chunks take the same colours. The generator is the one the world was made with,
+  content packages included (`render::lod::WorldGenerator`, shared with anything else on
+  the client that samples the world far away).
 - Tiles stay smooth heightfields rather than boxes: a quarter of the triangles of
   4-block columns, no cracks, and 4-block columns would be a coarser staircase than the
   real one beside them anyway. Instead the shader renders what the one-block staircase
@@ -119,7 +123,8 @@ What voxmar takes from it, and where it differs (`render/lod.rs`, `render/lod.wg
   sides, hiding the ground at low angles). Near the real chunks the risers resolve into
   the same contour lines real terrain shows; further out they average out. This is
   analytic, so it does not shimmer, and it costs no geometry.
-- Water and ice are a sheet over the true sea floor, shaded like real water: same
+- Water and ice are a sheet over the true floor at the level of their own water (the sea,
+  or a lake's or river's), shaded like real water: same
   ripples near the real chunks fading into their average (a broader glint, fresnel facing
   the eye by the ripples' slope variance), sky reflection, the floor dimmed by depth.
 - No fade pass is needed: tiles come from the same generator functions as the chunks,

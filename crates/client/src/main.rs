@@ -309,7 +309,7 @@ fn setup(
     }
     let colormaps = source.colormaps();
     render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &colormaps);
-    let palette = LodPalette::new(registry, &block_textures, &colormaps);
+    let palette = LodPalette::new(registry, &block_textures);
     commands.insert_resource(Lod::new(palette, terrain.clone(), world.view_distance));
     commands.insert_resource(WorldGenerator::new(world_content));
 
