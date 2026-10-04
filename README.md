@@ -63,14 +63,17 @@ type `stop` to save and quit.
 Textures come from a stack of packs, each a folder, zip or jar; every texture is taken from the
 first pack that has it:
 
-1. the pack chosen with `VOXMAR_TEXTURES` (a resource pack or a Minecraft jar also works), which
-   overrides ours;
-2. our default pack, `assets/packs/default`;
-3. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
-   never replacing ours;
-4. without a chosen pack, the newest Minecraft client jar found (official launcher or Prism
-   Launcher), only for names the packs above lack.
+1. the pack chosen with `VOXMAR_TEXTURES` (a resource pack, a Minecraft jar, or
+   `assets/packs/default` to see only ours), which overrides everything below;
+2. otherwise, the newest Minecraft client jar found (official launcher or Prism Launcher), for
+   the familiar look while our pack matures;
+3. our default pack, `assets/packs/default`, which draws every texture the game uses: whatever
+   Minecraft lacks (our stones, woods, plants and wonders) and, without Minecraft, everything;
+4. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
+   never replacing ours.
 
+Settings → Textures switches to "Voxmar", which puts our pack first (the Minecraft jar then only
+fills names ours lacks); it takes effect the next time the game starts.
 Anything still missing gets a generated placeholder. The startup log says how many textures
 each pack provided. A pack keeps images at `textures/<path>.png` (`textures/block/stone.png`),
 or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No

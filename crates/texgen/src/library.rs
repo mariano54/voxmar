@@ -86,6 +86,11 @@ impl Library {
                 // leaf sprite matches its leaves.
                 let own_base = recipe.base.as_ref().is_some_and(|b| b.contains("{name}"));
                 recipe.base = recipe.base.map(|b| b.replace("{name}", &family.name));
+                for layer in &mut recipe.layers {
+                    if let Layer::Stamp(stamp) = layer {
+                        stamp.texture = stamp.texture.replace("{name}", &family.name);
+                    }
+                }
                 for palette in recipe.palettes.values_mut() {
                     if let Palette::Named(n) = palette {
                         *n = n.replace("{name}", &family.name);
@@ -231,6 +236,7 @@ mod tests {
             "wood": {
                 "block/{name}_planks": (base: "block/oak_planks"),
                 "block/{name}_planks_dark": (base: "block/{name}_planks", layers: [Shift(by: [Flat(-1.0)])]),
+                "block/{name}_planks_pair": (layers: [Stamp(texture: "block/{name}_planks", at: [(-8, 0), (8, 0)])]),
             },
         },
         families: [
@@ -288,6 +294,11 @@ mod tests {
         // `maple_planks` is explicit, so it keeps its red palette rather than the family's grey.
         let maple = library.render("block/maple_planks").unwrap().unwrap();
         assert!(maple.pixels.chunks(4).any(|p| p[0] > p[2] + 40));
+        // A stamp draws the family's own texture.
+        let pair = library.render("block/pine_planks_pair").unwrap().unwrap();
+        let planks = library.render("block/pine_planks").unwrap().unwrap();
+        assert_eq!(pair.get(0, 3), planks.get(8, 3));
+        assert_eq!(pair.get(15, 3), planks.get(7, 3));
         let dark = library.render("block/pine_planks_dark").unwrap().unwrap();
         let pine = library.render("block/pine_planks").unwrap().unwrap();
         assert_ne!(dark, pine);

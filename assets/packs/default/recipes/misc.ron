@@ -9,6 +9,14 @@
                 Stripes(period: 8.0, width: 0.125, amount: -0.2, slope: 0.5, warp: 1.5, phase: 4.0),
             ], clean: true),
         ]),
+        // Molten rock: bright flowing streaks between darker cooling crust.
+        "block/lava_still": (palettes: {"main": ["#8a1e06", "#b8340a", "#dc5410", "#f27c1c", "#fca63a", "#ffd66e"]}, layers: [
+            Paint(palette: "main", base: 0.36, shade: [
+                Cells(count: (4, 4), jitter: 1.0, value: 0.25, edge: 0.45, width: 1.0, bevel: 0.0, round: -0.2, warp: 1.5),
+                Noise(cells: (4, 4), octaves: 2, amount: 0.4),
+                Stripes(period: 8.0, width: 0.25, amount: 0.15, slope: 0.5, warp: 1.5),
+            ], clean: true),
+        ]),
         "block/glass": (palettes: {"frame": ["#8fb3bf", "#c3dce4", "#eef8fb"]}, layers: [
             Paint(palette: "frame", base: 0.4, shade: [Border(width: 1, amount: 0.4, sides: (1.0, 0.0, 0.0, 1.0)), Border(width: 1, amount: -0.4, sides: (0.0, 1.0, 1.0, 0.0))], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
             Grid(legend: {'w': "#ffffffd0", 'l': "#e2f3f8a0"}, rows: [
