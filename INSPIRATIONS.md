@@ -85,6 +85,15 @@ copied.
   rather than dead-ending against it.
 - Where: `crates/worldgen/src/geology.rs`, `climate.rs` (`landform`), `shapes.rs`, and the
   river tunnels in `water/`.
+- Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md) (read from its source,
+  3.0.25, on 4 October 2026): its whole terrain router. Large parameter fields with nine
+  octaves (continents about 7.9 km across, so coasts are fractal), its offset, factor and
+  jaggedness splines with the `offset²` elevation boost, terrain regions chosen by a
+  selector noise and climate (plateaus, valleys, rolling hills, two-tier terraces stepping
+  down to the river lines, jungle pillars, wind-aligned dunes), mountain detail shifted along
+  its own gradient, the trench-and-ridge sea floor, and biome parameters synthesised from the
+  terrain classes. Being MIT, its splines may be adapted directly; when they are, this entry
+  is marked copied and the source goes in THIRD_PARTY_NOTICES.md.
 
 ### Terralith
 
@@ -99,6 +108,14 @@ copied.
   graded from old-growth cores to scrubby edges by bands of one noise.
 - Where: `crates/worldgen/src/biome.rs`, `content.rs` (remaps, the coverage check),
   `surface.rs`, `ecology.rs` and `shapes.rs`.
+- Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md), from the earlier
+  research notes: terrain spline knots placed at the biome table's breakpoints, so a biome's
+  region of parameter space has its own landform; and extra terrain added and cut with `max`
+  and `min` behind cheap 2D gates (arches, leaning spires that lean by a height-dependent
+  shift, sea cliffs cut by re-evaluating the height a little seaward).
+- Its licence also forbids using its code or data to configure, test, debug or augment AI
+  or other generative systems, so since 4 October 2026 we no longer open its files and work
+  from the earlier notes and its public pages.
 
 ### Wilder Wild
 
@@ -340,6 +357,15 @@ copied.
 - Where: `crates/engine/src/fluid.rs`, `crates/client/src/breaking.rs`,
   `render/cracks.rs`, `render/lighting.wgsl`, `music.rs`, `sfx/minecraft.rs`,
   `textures.rs`, and `crates/worldgen/src/caves.rs`.
+- Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md): the 1.18 noise
+  router as the foundation of our terrain. Continentalness, erosion and peaks-and-valleys
+  noises define a point at every position; nested cubic Hermite splines turn it into the
+  surface offset, the factor (how 2D the land is) and jaggedness; a 3D density with a
+  quarter-negative slope above the surface, sampled at the corners of 4 × 8 × 4 cells and
+  interpolated; and biomes picked from the same point, in a table of climate rows and
+  landform roles. Read from Mojang's world-generation data through misode's mcmeta mirror
+  (https://github.com/misode/mcmeta) and the Minecraft Wiki's noise router and density
+  function pages (CC BY-NC-SA); techniques only.
 
 ## The hiking video
 
