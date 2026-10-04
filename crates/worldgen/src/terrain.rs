@@ -69,7 +69,7 @@ pub struct Terrain {
     patches: FastNoiseLite,
     /// Larger patches for choosing among mixed blocks.
     mixes: FastNoiseLite,
-    /// Whether wood may replace a block: air, water and leaves, by block id.
+    /// Whether wood may replace a block: air, water, leaves and small plants, by block id.
     soft: Vec<bool>,
     /// Whether ore may replace a block: every stone, by block id.
     stone: Vec<bool>,
@@ -77,6 +77,8 @@ pub struct Terrain {
     grounds: Vec<Ground>,
     /// Whether a block is a small plant, by block id.
     plants: Vec<bool>,
+    /// Whether a block holds up what stands on it: solid, and no plant, by block id.
+    firm: Vec<bool>,
     /// What the snow blanket makes of a block open to the sky, by block id.
     blanket: Vec<Option<BlockId>>,
     /// What lying snow makes of a ground block, by block id (`snow_cover` in weather.ron).
@@ -103,7 +105,11 @@ impl Terrain {
         let by_id = |f: &dyn Fn(BlockId) -> bool| (0..registry.len()).map(|i| f(BlockId(i as u16))).collect::<Vec<bool>>();
         let water_fluid = registry.fluid_def(registry.fluid(water).expect("water is a fluid").fluid).clone();
         let soft = by_id(&|block| {
-            block.is_air() || registry.fluid(block).is_some_and(|s| s.fluid == water_fluid.id) || registry.def(block).name.ends_with("_leaves")
+            let def = registry.def(block);
+            block.is_air()
+                || registry.fluid(block).is_some_and(|s| s.fluid == water_fluid.id)
+                || def.name.ends_with("_leaves")
+                || def.render == voxmar_engine::block::RenderKind::Plant
         });
         let mut stones: Vec<BlockId> = rocks.stones().chain([id("stone"), id("deepslate")]).collect();
         stones.extend(biomes.iter().filter_map(|(_, b)| b.stones.as_ref()).flat_map(|p| p.blocks()));
@@ -120,6 +126,7 @@ impl Terrain {
             })
             .collect();
         let plants = by_id(&|block| registry.def(block).render == voxmar_engine::block::RenderKind::Plant);
+        let firm = by_id(&|block| registry.def(block).solid && registry.def(block).render != voxmar_engine::block::RenderKind::Plant);
         let blanket = (0..registry.len())
             .map(|i| {
                 let def = registry.def(BlockId(i as u16));
@@ -159,6 +166,7 @@ impl Terrain {
             stone: by_id(&|block| stones.contains(&block)),
             grounds,
             plants,
+            firm,
             blanket,
             snow_cover,
             seed,
@@ -216,6 +224,11 @@ impl Blocks<'_> {
         }
     }
 
+    /// Whether `pos` lies in the column.
+    pub fn contains(&self, pos: IVec3) -> bool {
+        self.index(pos).is_some()
+    }
+
     /// The block at `pos`; air outside the column.
     pub fn get(&self, pos: IVec3) -> BlockId {
         self.index(pos).map_or(BlockId::AIR, |i| self.data[i])
@@ -232,7 +245,7 @@ impl Blocks<'_> {
         false
     }
 
-    /// Wood grows through air, water and leaves; whether it did.
+    /// Wood grows through air, water, leaves and small plants; whether it did.
     pub fn put_log(&mut self, pos: IVec3, block: BlockId) -> bool {
         if let Some(i) = self.index(pos)
             && self.soft[self.data[i].0 as usize]
@@ -669,6 +682,11 @@ impl Terrain {
     /// Whether a block is a small plant.
     pub fn is_plant(&self, block: BlockId) -> bool {
         self.plants[block.0 as usize]
+    }
+
+    /// Whether a block holds up what stands on it.
+    pub fn is_firm(&self, block: BlockId) -> bool {
+        self.firm[block.0 as usize]
     }
 
     /// Whether snow lies on a surface block: the snow blanket covers what stands on it.

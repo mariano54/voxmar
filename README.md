@@ -319,7 +319,8 @@ its biome, the biome next door and the distance to their border; `Overworld::bio
 and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
 rivers and creeks in their own blues, trails over them (brown, with fords cyan, bridges red,
 and the places they join marked; `TRAILS=0` leaves them out), and prints each biome's share of
-it. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
+it, how large biome regions are (variants counted with their parent) and which picker axis
+draws the borders. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
 generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
