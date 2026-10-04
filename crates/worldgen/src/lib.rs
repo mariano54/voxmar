@@ -873,7 +873,9 @@ mod tests {
     fn caves_are_decorated() {
         let registry = registry();
         let decorations: Vec<BlockId> =
-            ["glowstone", "sea_lantern", "mangrove_roots", "azalea_leaves", "brown_mushroom", "moss_block", "blue_ice"].map(|n| registry.expect(&format!("base:{n}"))).to_vec();
+            ["glow_berries", "hanging_roots", "hanging_dripstone", "pointed_dripstone", "crystal_cluster", "moss_carpet", "brown_mushroom", "moss_block", "dripstone_block"]
+                .map(|n| registry.expect(&format!("base:{n}")))
+                .to_vec();
         // The last two also line caves or make up their rock.
         let decoration_only = decorations.len() - 2;
         let mut found = vec![0; decorations.len()];
@@ -911,7 +913,7 @@ mod tests {
     fn geodes_are_hollow_and_lined() {
         let registry = registry();
         let world = Overworld::new(5, registry.clone());
-        let crystal = [registry.expect("base:blue_ice"), registry.expect("base:sea_lantern")];
+        let crystal = [registry.expect("base:crystal_block"), registry.expect("base:glowstone")];
         let mut checked = 0;
         for i in 0..400 {
             let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
