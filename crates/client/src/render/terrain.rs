@@ -19,7 +19,7 @@ use bevy::ecs::system::{SystemParam, SystemParamItem};
 use bevy::ecs::system::lifetimeless::{Read, SRes};
 use bevy::mesh::{MeshVertexBufferLayout, MeshVertexBufferLayouts, PrimitiveTopology, VertexBufferLayout};
 use bevy::pbr::{
-    LightEntity, MeshPipeline, MeshPipelineKey, PrepassPipeline, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
+    ExtractedDirectionalLight, LightEntity, MeshPipeline, MeshPipelineKey, PrepassPipeline, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
     SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup, Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache,
 };
 use bevy::prelude::*;
@@ -1044,7 +1044,7 @@ impl TerrainDraws {
 }
 
 /// A view whose draws `cull` fills: a camera or a shadow cascade.
-type CulledView = (Entity, &'static ExtractedView, Has<LightEntity>, Option<&'static mut TerrainDraws>);
+type CulledView = (Entity, &'static ExtractedView, Option<&'static LightEntity>, Option<&'static mut TerrainDraws>);
 // The world's camera, not the one that shows it scaled on the window (`render::scale`).
 type CulledViewFilter = Or<(With<LightEntity>, (With<ExtractedCamera>, With<Camera3d>))>;
 
@@ -1055,6 +1055,7 @@ type CulledViewFilter = Or<(With<LightEntity>, (With<ExtractedCamera>, With<Came
 fn cull(
     mut commands: Commands,
     gpu: Res<TerrainGpu>,
+    lights: Query<&ExtractedDirectionalLight>,
     mut views: Query<CulledView, CulledViewFilter>,
 ) {
     // Chunks cave culling leaves visible, with their bounds' minimum corner.
@@ -1069,14 +1070,21 @@ fn cull(
             commands.entity(entity).insert(TerrainDraws::default());
         }
     }
-    views.par_iter_mut().for_each(|(_, view, is_light, draws)| {
+    // The camera the sun's cascades serve: where it is and which way it looks.
+    let viewer = views
+        .iter()
+        .find(|(_, _, light, _)| light.is_none())
+        .map(|(_, view, _, _)| (view.world_from_view.translation(), view.world_from_view.forward().as_vec3()));
+    views.par_iter_mut().for_each(|(_, view, light_entity, draws)| {
         let Some(mut draws) = draws else { return };
         let clip_from_world = view
             .clip_from_world
             .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
+        let is_light = light_entity.is_some();
         let frustum = Frustum::new(clip_from_world, is_light);
         let eye = view.world_from_view.translation();
         let light = is_light.then(|| view.world_from_view.forward().as_vec3());
+        let casters = light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer));
         let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
         // Each stream's surviving ranges, and the translucent ones with their distance.
         let mut ranges: [Vec<(u32, Range<u32>)>; STREAMS] = Default::default();
@@ -1084,7 +1092,7 @@ fn cull(
         let mut blades = Vec::new();
         for &(min, record) in &candidates {
             let max = min + CHUNK_SIZE as f32;
-            if !frustum.intersects(min, max) {
+            if !frustum.intersects(min, max) || casters.as_ref().is_some_and(|c| !c.matter(min, max)) {
                 continue;
             }
             // Distance from the camera (not a shadow view's light) to the chunk's bounds.
@@ -1162,6 +1170,51 @@ fn cull(
         draws.blades.clear();
         draws.blades.extend(blades.into_iter().map(|(_, draw)| draw));
     });
+}
+
+/// How much higher than what it shades terrain may stand and still cast a shadow, in
+/// blocks (see `Casters`).
+const CASTER_RISE: f32 = 160.0;
+
+/// Which chunks can shade what a sun cascade covers. A cascade's box is much larger than
+/// the stretch of view it serves (it bounds the slice of the view frustum at any angle,
+/// so it is as wide as the slice's diagonal), and reaches up the sun's rays without end.
+/// A chunk only matters if a shadow it casts can land within the cascade's range of view
+/// depth: its shadow falls along the sun's direction, and no further than ground
+/// `CASTER_RISE` blocks above what it shades would throw it at the sun's height.
+struct Casters {
+    towards: Vec3,
+    reach: f32,
+    eye: Vec3,
+    forward: Vec3,
+    /// The cascade's range of view depth, in blocks.
+    depths: (f32, f32),
+}
+
+impl Casters {
+    fn new(towards: Vec3, depths: (f32, f32), (eye, forward): (Vec3, Vec3)) -> Self {
+        Self { towards, reach: (CASTER_RISE / (-towards.y).max(0.05)).min(4096.0), eye, forward, depths }
+    }
+
+    fn matter(&self, min: Vec3, max: Vec3) -> bool {
+        let centre = (min + max) * 0.5;
+        let radius = (max - min).length() * 0.5;
+        let start = (centre - self.eye).dot(self.forward);
+        let end = (centre + self.towards * self.reach - self.eye).dot(self.forward);
+        start.max(end) + radius >= self.depths.0 && start.min(end) - radius <= self.depths.1
+    }
+}
+
+/// The range of view depth a sun cascade serves, if the view is one.
+fn slice(light: &LightEntity, lights: &Query<&ExtractedDirectionalLight>) -> Option<(f32, f32)> {
+    let LightEntity::Directional { light_entity, cascade_index } = *light else { return None };
+    let config = &lights.get(light_entity).ok()?.cascade_shadow_config;
+    let far = *config.bounds.get(cascade_index)?;
+    let near = match cascade_index {
+        0 => config.minimum_distance,
+        i => config.bounds[i - 1] * (1.0 - config.overlap_proportion),
+    };
+    Some((near, far))
 }
 
 /// The planes of a view frustum, as `normal · p + d >= 0` inside.
