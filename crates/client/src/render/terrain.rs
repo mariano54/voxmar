@@ -1148,7 +1148,7 @@ fn cull(
         let eye = view.world_from_view.translation();
         let light = is_light.then(|| view.world_from_view.forward().as_vec3());
         let casters = light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer));
-        let solid_leaves = light_entity.is_some_and(|light| last_of_many(light, &lights));
+        let farthest = light_entity.is_some_and(|light| last_of_many(light, &lights));
         let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
         // Each stream's surviving ranges, and the translucent ones with their distance.
         let mut ranges = std::mem::take(&mut draws.ranges);
@@ -1174,7 +1174,7 @@ fn cull(
                 }
                 for stream in streams(pass) {
                     let Some(allocation) = &record.streams[stream] else { continue };
-                    if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && distance >= PLANT_DISTANCE) {
+                    if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && (distance >= PLANT_DISTANCE || farthest)) {
                         continue;
                     }
                     let range = (allocation.page, allocation.vertices.clone());
@@ -1202,7 +1202,7 @@ fn cull(
                     let page = run[0].0;
                     let quads = run.iter().map(|(_, vertices)| vertices.clone());
                     let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
-                    let pass = if solid_leaves && stream == CUTOUT { TerrainPass::Opaque } else { pass };
+                    let pass = if farthest && stream == CUTOUT { TerrainPass::Opaque } else { pass };
                     draws.passes[pass as usize].push(ChunkDraw { stream: stream as u8, page, indices });
                 }
                 ranges.clear();
@@ -1302,7 +1302,9 @@ impl Casters {
 /// Whether a view is the farthest of three or more sun cascades. Its texels are larger
 /// than a leaf's holes, so it draws leaves and other cut-out blocks as solid casters
 /// without the alpha test, which on Apple GPUs is what makes them expensive (no hidden
-/// surface removal); the nearer cascades keep the dappled shade under trees.
+/// surface removal); the nearer cascades keep the dappled shade under trees. It leaves
+/// plants out: their shadows there are specks no one can tell from none, and drawing them
+/// took a third of the cascade's time in a savanna (0.27 ms at 2268×1473).
 fn last_of_many(light: &LightEntity, lights: &Query<&ExtractedDirectionalLight>) -> bool {
     let LightEntity::Directional { light_entity, cascade_index } = *light else { return false };
     let Ok(light) = lights.get(light_entity) else { return false };
