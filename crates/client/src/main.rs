@@ -14,6 +14,7 @@
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings.
 
+mod ambience;
 mod capture;
 mod hud;
 mod interact;
@@ -150,6 +151,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
+    // Captures run the ambience without playing it, so its log shows what would play.
+    if options.capture.is_some() {
+        settings.ambience_volume = 0;
+    }
     let settings = settings.clamped();
 
     let mut app = App::new();
@@ -219,6 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if options.music && options.capture.is_none() {
         app.add_plugins(music::MusicPlugin);
     }
+    app.add_plugins(ambience::AmbiencePlugin);
     if let Some(path) = options.capture {
         app.add_plugins(capture::CapturePlugin {
             path,

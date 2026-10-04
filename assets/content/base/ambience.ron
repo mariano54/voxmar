@@ -1,0 +1,194 @@
+// Ambient sound: what the world sounds like where the player is (see client/src/ambience).
+//
+// groups: kinds of block counted around the player by a flood fill from the eye, nearer
+//   ones counting more (10 within 5 blocks, 5 within 10, 2 within 15, 1 up to 24). Each
+//   group is selected by block tags or materials and is an axis of its own, 0 below the
+//   first number of its range and 1 above the second.
+// beds: continuous layers. `volume` at full strength; `when` holds soft ranges on axes,
+//   each full between `min` and `max` and fading out over `fade` beyond them; `biome` and
+//   `not_biome` want or avoid biome tags; `duck` turns the bed down by an axis or another
+//   bed (0.8: to a fifth at its fullest); `fade` is the seconds to fade fully in or out.
+// sounds: one-shots, played `per_minute` times a minute while their conditions fully hold,
+//   then not again for `cooldown` seconds. `at` is Block(group) (a block the scan found),
+//   Around(distance, height) or Listener. `reach` is the distance (blocks) at which they
+//   are half as loud; `pitch` the range of playback speed.
+//
+// Axes: air (0 enclosed .. 1 open land), sky (share of nearby air open to the sky),
+// canopy (share of that under leaves), reverb (0 outdoors .. 1 large cave), sun (-1
+// midnight .. 1 noon), temperature (°C), moisture, continentalness (-1 ocean, 0 coast, 1
+// inland), river, forest, height (above sea), relief (above the land around), depth
+// (below the ground surface here), rain, snow, storm (0..1), wind (blocks/s), cover,
+// underwater, and the groups below.
+(
+    groups: [
+        (name: "leaves", tags: ["leaves"], range: (20, 300)),
+        (name: "wood", tags: ["log"], range: (5, 60)),
+        (name: "water", materials: [Water], range: (20, 300)),
+        (name: "grass", materials: [Grass], range: (150, 1200)),
+        (name: "rock", materials: [Stone, Gravel], range: (60, 700)),
+        (name: "sand", materials: [Sand], range: (60, 600)),
+        (name: "snowpack", materials: [Snow], range: (60, 600)),
+    ],
+    beds: [
+        // A soft breeze anywhere outdoors, stronger with the wind.
+        (
+            name: "breeze", sound: Wind, volume: 0.2,
+            when: {"sky": (min: 0.4, fade: 0.4), "air": (min: 0.3, fade: 0.3), "wind": (min: 8, fade: 12)},
+            duck: {"rain": 0.5, "high_wind": 0.7},
+        ),
+        // Wind on peaks and ridges, and in storms.
+        (
+            name: "high_wind", sound: Gale, volume: 0.4, fade: 6,
+            when: {"relief": (min: 30, fade: 25), "sky": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 14)},
+        ),
+        (
+            name: "storm_wind", sound: Gale, volume: 0.32,
+            when: {"storm": (min: 0.6, fade: 0.5), "sky": (min: 0.3, fade: 0.4)},
+        ),
+        // Leaves in the breeze, under and among trees.
+        (
+            name: "leaves", sound: Rustle, volume: 0.24,
+            when: {"leaves": (min: 0.4, fade: 0.4), "sky": (min: 0.4, fade: 0.4), "wind": (min: 6, fade: 10)},
+            duck: {"rain": 0.6, "high_wind": 0.5},
+        ),
+        // Grasshoppers on a mild or warm day in open grassland. Temperatures are yearly
+        // means, so insects sing from fairly cool climates up.
+        (
+            name: "meadow", sound: Meadow, volume: 0.16,
+            when: {"grass": (min: 0.4, fade: 0.4), "sun": (min: 0.15, fade: 0.15), "temperature": (min: 10, fade: 6), "sky": (min: 0.7, fade: 0.3), "leaves": (max: 0.15, fade: 0.25)},
+            not_biome: ["desert", "frozen"],
+            duck: {"rain": 0.9, "high_wind": 0.6},
+        ),
+        // Crickets on warm nights wherever there is grass or trees.
+        (
+            name: "crickets", sound: Crickets, volume: 0.12, fade: 8,
+            when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3), "sky": (min: 0.4, fade: 0.4)},
+            not_biome: ["desert", "frozen"],
+            duck: {"rain": 0.9, "high_wind": 0.6},
+        ),
+        // Running water: rivers and streams, not lakes or the sea.
+        (
+            name: "stream", sound: Stream, volume: 0.32,
+            when: {"water": (min: 0.35, fade: 0.3), "river": (min: 0.5, fade: 0.3), "continentalness": (min: 0.1, fade: 0.1), "air": (min: 0.05, fade: 0.1)},
+            duck: {"rain": 0.4},
+        ),
+        // Surf on the coast.
+        (
+            name: "surf", sound: Surf, volume: 0.36, fade: 6,
+            when: {"water": (min: 0.4, fade: 0.4), "continentalness": (max: 0.05, fade: 0.15), "height": (max: 12, fade: 25), "sky": (min: 0.4, fade: 0.4)},
+            duck: {"rain": 0.3},
+        ),
+        // The still air of caves.
+        (
+            name: "cave", sound: Cave, volume: 0.2, fade: 5,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 8, fade: 8), "air": (min: 0.02, fade: 0.05)},
+        ),
+    ],
+    sounds: [
+        // Songbirds in trees by day, above all in the morning.
+        (
+            name: "warbler", sound: Warbler, volume: 0.45, at: Block("leaves"), per_minute: 12, cooldown: 2,
+            pitch: (0.9, 1.1), reach: 14,
+            when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: 3, max: 32, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
+            not_biome: ["frozen"],
+            duck: {"rain": 0.85, "high_wind": 0.6, "storm_wind": 0.8},
+        ),
+        (
+            name: "thrush", sound: Thrush, volume: 0.45, at: Block("leaves"), per_minute: 4, cooldown: 8,
+            pitch: (0.95, 1.05), reach: 18,
+            when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: 3, max: 28, fade: 6), "leaves": (min: 0.3, fade: 0.3)},
+            biome: ["forest"],
+            duck: {"rain": 0.85, "high_wind": 0.6},
+        ),
+        (
+            name: "whistler", sound: Whistler, volume: 0.38, at: Block("leaves"), per_minute: 2, cooldown: 10,
+            reach: 16,
+            when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: -10, max: 15, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
+            duck: {"rain": 0.85, "high_wind": 0.6},
+        ),
+        // The dawn chorus: many birds while the sun comes up.
+        (
+            name: "dawn_chorus", sound: Warbler, volume: 0.38, at: Block("leaves"), per_minute: 30, cooldown: 0.5,
+            pitch: (0.85, 1.2), reach: 14,
+            when: {"sun": (min: -0.08, max: 0.12, fade: 0.06), "temperature": (min: 3, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
+            not_biome: ["frozen"],
+            duck: {"rain": 0.85, "high_wind": 0.6},
+        ),
+        // Doves in warm country, in trees.
+        (
+            name: "dove", sound: Dove, volume: 0.38, at: Block("leaves"), per_minute: 2, cooldown: 12,
+            reach: 16,
+            when: {"sun": (min: 0.0, fade: 0.15), "temperature": (min: 16, fade: 5), "leaves": (min: 0.25, fade: 0.2)},
+            duck: {"rain": 0.85},
+        ),
+        // Brighter, faster birds in the tropics.
+        (
+            name: "tropical_bird", sound: Thrush, volume: 0.45, at: Block("leaves"), per_minute: 5, cooldown: 4,
+            pitch: (1.2, 1.4), reach: 18,
+            when: {"sun": (min: 0.0, fade: 0.15), "temperature": (min: 22, fade: 4), "moisture": (min: 1.2, fade: 0.3), "leaves": (min: 0.3, fade: 0.3)},
+            duck: {"rain": 0.7},
+        ),
+        // A woodpecker now and then, on a trunk.
+        (
+            name: "woodpecker", sound: Woodpecker, volume: 0.38, at: Block("wood"), per_minute: 0.8, cooldown: 25,
+            pitch: (0.9, 1.1), reach: 20,
+            when: {"sun": (min: 0.1, fade: 0.15), "temperature": (min: 0, fade: 5), "wood": (min: 0.35, fade: 0.3)},
+            biome: ["forest"],
+            duck: {"rain": 0.9},
+        ),
+        // Owls in the woods at night.
+        (
+            name: "owl", sound: Owl, volume: 0.38, at: Block("leaves"), per_minute: 1.2, cooldown: 20,
+            reach: 24,
+            when: {"sun": (max: -0.1, fade: 0.1), "leaves": (min: 0.3, fade: 0.3)},
+            biome: ["forest"],
+            duck: {"rain": 0.8},
+        ),
+        // A cricket close by in the grass at night.
+        (
+            name: "cricket", sound: Cricket, volume: 0.3, at: Block("grass"), per_minute: 5, cooldown: 3,
+            pitch: (0.95, 1.05), reach: 6,
+            when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3)},
+            not_biome: ["desert", "frozen"],
+            duck: {"rain": 0.9},
+        ),
+        // Frogs by water on warm evenings and nights, most in wetlands.
+        (
+            name: "frog", sound: Frog, volume: 0.38, at: Block("water"), per_minute: 6, cooldown: 2,
+            pitch: (0.85, 1.15), reach: 12,
+            when: {"sun": (max: 0.1, fade: 0.15), "temperature": (min: 12, fade: 5), "water": (min: 0.25, fade: 0.2), "continentalness": (min: 0.05, fade: 0.1)},
+            biome: ["wetland", "river"],
+            duck: {"rain": 0.3},
+        ),
+        // Water plopping and gurgling near streams.
+        (
+            name: "water", sound: Plop, volume: 0.3, at: Block("water"), per_minute: 10, cooldown: 1,
+            pitch: (0.8, 1.2), reach: 8,
+            when: {"water": (min: 0.25, fade: 0.2), "river": (min: 0.4, fade: 0.3), "continentalness": (min: 0.1, fade: 0.1)},
+            duck: {"rain": 0.6},
+        ),
+        // Gusts on heights.
+        (
+            name: "gust", sound: Gust, volume: 0.38, at: Around(distance: (6, 16), height: (2, 8)), per_minute: 4, cooldown: 6,
+            pitch: (0.85, 1.15), reach: 16,
+            when: {"relief": (min: 20, fade: 20), "sky": (min: 0.6, fade: 0.3), "wind": (min: 6, fade: 10)},
+        ),
+        // Trees creaking in strong wind.
+        (
+            name: "creak", sound: Creak, volume: 0.3, at: Block("wood"), per_minute: 3, cooldown: 6,
+            pitch: (0.8, 1.2), reach: 10,
+            when: {"wind": (min: 9, fade: 6), "wood": (min: 0.35, fade: 0.3)},
+        ),
+        // Drips and distant rumbles underground; the reverb comes from the cave itself.
+        (
+            name: "drip", sound: Drip, volume: 0.45, at: Block("rock"), per_minute: 12, cooldown: 0.8,
+            pitch: (0.8, 1.25), reach: 10,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6)},
+        ),
+        (
+            name: "rumble", sound: Rumble, volume: 0.45, at: Listener, per_minute: 0.5, cooldown: 60,
+            pitch: (0.8, 1.1),
+            when: {"sky": (max: 0.02, fade: 0.1), "depth": (min: 25, fade: 20)},
+        ),
+    ],
+)

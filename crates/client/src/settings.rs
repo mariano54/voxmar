@@ -71,6 +71,8 @@ pub struct Settings {
     pub music_volume: i32,
     /// Sound effects volume, in percent.
     pub sound_volume: i32,
+    /// Ambient sound volume (wind, birds, water), in percent of the sound effects'.
+    pub ambience_volume: i32,
     pub debug_overlay: bool,
     /// Flight speed, in percent. Only admins may fly faster than normal.
     pub fly_speed: i32,
@@ -130,6 +132,7 @@ impl Default for Settings {
             sensitivity: 100,
             music_volume: 100,
             sound_volume: 100,
+            ambience_volume: 100,
             debug_overlay: false,
             fly_speed: 100,
             anti_aliasing: AntiAliasing::default(),
@@ -211,19 +214,21 @@ enum Slider {
     Sensitivity,
     Music,
     Sounds,
+    Ambience,
     FlySpeed,
     Zoom,
     HudRaise,
 }
 
 impl Slider {
-    const ALL: [Slider; 8] = [
+    const ALL: [Slider; 9] = [
         Slider::ViewDistance,
         Slider::Fov,
         Slider::HudRaise,
         Slider::Sensitivity,
         Slider::Music,
         Slider::Sounds,
+        Slider::Ambience,
         Slider::FlySpeed,
         Slider::Zoom,
     ];
@@ -235,6 +240,7 @@ impl Slider {
             Slider::Sensitivity => "Mouse sensitivity",
             Slider::Music => "Music",
             Slider::Sounds => "Sound effects",
+            Slider::Ambience => "Ambience",
             Slider::FlySpeed => "Fly speed",
             Slider::Zoom => "Zoom",
             Slider::HudRaise => "Raise HUD",
@@ -247,7 +253,7 @@ impl Slider {
             Slider::ViewDistance => (4, 32, 2),
             Slider::Fov => (60, 110, 5),
             Slider::Sensitivity => (25, 300, 5),
-            Slider::Music | Slider::Sounds => (0, 100, 10),
+            Slider::Music | Slider::Sounds | Slider::Ambience => (0, 100, 10),
             Slider::FlySpeed => (100, (MAX_FLY_SPEED * 100.0) as i32, 25),
             Slider::Zoom => ((Zoom::MIN * 100.0) as i32, 1000, 50),
             Slider::HudRaise => (0, 40, 1),
@@ -261,6 +267,7 @@ impl Slider {
             Slider::Sensitivity => settings.sensitivity,
             Slider::Music => settings.music_volume,
             Slider::Sounds => settings.sound_volume,
+            Slider::Ambience => settings.ambience_volume,
             Slider::FlySpeed => settings.fly_speed,
             Slider::Zoom => settings.zoom,
             Slider::HudRaise => settings.hud_raise,
@@ -274,6 +281,7 @@ impl Slider {
             Slider::Sensitivity => &mut settings.sensitivity,
             Slider::Music => &mut settings.music_volume,
             Slider::Sounds => &mut settings.sound_volume,
+            Slider::Ambience => &mut settings.ambience_volume,
             Slider::FlySpeed => &mut settings.fly_speed,
             Slider::Zoom => &mut settings.zoom,
             Slider::HudRaise => &mut settings.hud_raise,
@@ -284,8 +292,8 @@ impl Slider {
         match self {
             Slider::ViewDistance => format!("{value} chunks"),
             Slider::Fov => format!("{value}°"),
-            Slider::Music | Slider::Sounds if value == 0 => "Off".into(),
-            Slider::Sensitivity | Slider::Music | Slider::Sounds => format!("{value}%"),
+            Slider::Music | Slider::Sounds | Slider::Ambience if value == 0 => "Off".into(),
+            Slider::Sensitivity | Slider::Music | Slider::Sounds | Slider::Ambience => format!("{value}%"),
             Slider::FlySpeed | Slider::Zoom => format!("{}×", value as f32 / 100.0),
             Slider::HudRaise if value == 0 => "Off".into(),
             Slider::HudRaise => format!("{value} px"),
@@ -415,7 +423,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Switch(Toggle::DebugOverlay),
         ],
     ),
-    ("Audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds)]),
+    ("Audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds), Control::Slider(Slider::Ambience)]),
     (
         "Controls",
         &[
@@ -686,6 +694,7 @@ fn click_buttons(
 }
 
 /// Mirrors the settings in the menu's controls.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_controls(
     settings: Res<Settings>,
     mut fills: Query<(&SliderFill, &mut Node), Without<Switch>>,
