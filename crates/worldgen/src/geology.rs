@@ -507,12 +507,13 @@ impl Geology {
                 None => {
                     let tile = self.lattice.get(key, || {
                         let side = TILE + 1;
-                        (0..side * side)
+                        let points: Vec<(f32, f32)> = (0..side * side)
                             .map(|i| {
                                 let p = (key * TILE + IVec2::new(i % side, i / side)) * climate::CELL;
-                                self.climate.regional(self, p.x as f32, p.y as f32)
+                                (p.x as f32, p.y as f32)
                             })
-                            .collect()
+                            .collect();
+                        self.climate.regionals(self, &points).into()
                     });
                     recent.insert(0, (self.id, key, tile));
                     recent.truncate(6);
@@ -593,6 +594,22 @@ mod tests {
                     assert_eq!(format!("{:?}", lands[k]), format!("{:?}", geology.land(x, z)), "land at ({x}, {z})");
                     assert_eq!(format!("{:?}", reliefs[k]), format!("{:?}", geology.relief(floats[k].0, floats[k].1)), "relief at {:?}", floats[k]);
                 }
+            }
+        }
+    }
+
+    /// The regional climate worked out four positions at a time is exactly the climate at
+    /// each alone.
+    #[test]
+    fn regionals_match_regional_alone() {
+        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let world = crate::Overworld::new(3, registry);
+        let mut rng = crate::rng::Rng::new(3, 4, 5, 6);
+        let points: Vec<(f32, f32)> = (0..2000).map(|i| if i % 2 == 0 { ((i % 40 * 64) as f32, (i / 40 * 64) as f32) } else { (rng.range(-30_000, 30_000) as f32, rng.range(-30_000, 30_000) as f32) }).collect();
+        for group in points.chunks(7) {
+            let batch = world.geology.climate.regionals(&world.geology, group);
+            for (k, &(x, z)) in group.iter().enumerate() {
+                assert_eq!(format!("{:?}", batch[k]), format!("{:?}", world.geology.climate.regional(&world.geology, x, z)), "at ({x}, {z})");
             }
         }
     }

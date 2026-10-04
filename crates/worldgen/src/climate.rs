@@ -207,11 +207,12 @@ impl Climate {
 
     /// 0 at the equator, 1 at a pole; 0.5 at z = 0. Latitude changes evenly between them
     /// (a triangle wave with rounded tips), so every climate zone gets its share of land,
-    /// and zones wander north and south so their borders are not straight lines.
-    fn latitude(&self, x: f32, z: f32) -> f32 {
+    /// and zones wander north and south (by `wander`, the latitude warp noise at the
+    /// position) so their borders are not straight lines.
+    fn latitude(&self, z: f32, wander: f32) -> f32 {
         const ROUNDING: f32 = 0.98;
         let pole = self.dials.pole_distance;
-        let z = z + self.latitude_warp.get_noise_2d(x, z) * 0.3 * pole;
+        let z = z + wander * 0.3 * pole;
         0.5 - 0.5 * (ROUNDING * (z / pole * PI).sin()).asin() / ROUNDING.asin()
     }
 
@@ -222,72 +223,98 @@ impl Climate {
 
     /// The regional climate at one position. Expensive: it follows the wind upwind.
     pub(crate) fn regional(&self, geology: &Geology, x: f32, z: f32) -> Regional {
+        let mut out = [Regional::default()];
+        self.regional_lanes(geology, &[(x, z)], &mut out);
+        out[0]
+    }
+
+    /// The regional climate at each position: the same as `regional` at each, sooner.
+    pub(crate) fn regionals(&self, geology: &Geology, points: &[(f32, f32)]) -> Vec<Regional> {
+        let mut out = vec![Regional::default(); points.len()];
+        for (four, out) in points.chunks(4).zip(out.chunks_mut(4)) {
+            self.regional_lanes(geology, four, out);
+        }
+        out
+    }
+
+    /// The regional climate at one to four positions, their noises side by side (see
+    /// `Geology::relief_lanes`).
+    fn regional_lanes(&self, geology: &Geology, points: &[(f32, f32)], out: &mut [Regional]) {
+        let n = points.len();
+        let x: [f32; 4] = std::array::from_fn(|k| points[k.min(n - 1)].0);
+        let z: [f32; 4] = std::array::from_fn(|k| points[k.min(n - 1)].1);
+        let sample = |noise: &FastNoiseLite| crate::noise::get_2d_lanes(noise, x, z, n);
         let sea = SEA_LEVEL as f32;
         let [wind_x, wind_z] = self.dials.wind;
-        // Air arriving from beyond the walk carries an average amount of water.
-        let mut moisture = 0.5f32;
-        let mut last: Option<(f32, f32)> = None;
-        let mut lift = 0.0;
-        let mut here = None;
-        // The relief along the walk and around the position, all at once (`Geology::reliefs`).
+        // The relief along each position's walk upwind, far to near and ending at the
+        // position, and around it, all at once.
+        let walk: [f32; UPWIND.len() + 1] = std::array::from_fn(|i| UPWIND.get(i).copied().unwrap_or(0.0));
         let around = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
-        let walk = UPWIND.into_iter().chain([0.0]);
-        let points: Vec<(f32, f32)> =
-            walk.clone().map(|distance| (x - wind_x * distance, z - wind_z * distance)).chain(around.map(|(dx, dz)| (x + dx * UPLAND, z + dz * UPLAND))).collect();
-        let reliefs = geology.reliefs(&points);
-        for (distance, &relief) in walk.zip(&reliefs) {
-            let ground = relief.elevation.max(sea);
-            if let Some((last_distance, last_ground)) = last {
-                if relief.elevation >= sea {
-                    moisture *= (-(last_distance - distance) / RAIN_OUT).exp();
+        let each = walk.len() + around.len();
+        let samples: Vec<(f32, f32)> = points
+            .iter()
+            .flat_map(|&(x, z)| walk.map(|distance| (x - wind_x * distance, z - wind_z * distance)).into_iter().chain(around.map(|(dx, dz)| (x + dx * UPLAND, z + dz * UPLAND))))
+            .collect();
+        let reliefs = geology.reliefs(&samples);
+        let (wander, wetness, anomaly) = (sample(&self.latitude_warp), sample(&self.wetness), sample(&self.anomaly));
+        let (weirdness, aether, fertility, variant) = (sample(&self.weirdness), sample(&self.aether), sample(&self.fertility), sample(&self.variant));
+        let warp = self.warp.each_ref().map(sample);
+        for (k, out) in out.iter_mut().enumerate() {
+            let reliefs = &reliefs[k * each..(k + 1) * each];
+            // Air arriving from beyond the walk carries an average amount of water.
+            let mut moisture = 0.5f32;
+            let mut last: Option<(f32, f32)> = None;
+            let mut lift = 0.0;
+            for (&distance, relief) in walk.iter().zip(reliefs) {
+                let ground = relief.elevation.max(sea);
+                if let Some((last_distance, last_ground)) = last {
+                    if relief.elevation >= sea {
+                        moisture *= (-(last_distance - distance) / RAIN_OUT).exp();
+                    }
+                    lift = (ground - last_ground).max(0.0);
+                    // Lifted air rains out on the way up; the last rise is the slope here.
+                    if distance > 0.0 {
+                        moisture *= (-lift / LIFT_OUT).exp();
+                    }
                 }
-                lift = (ground - last_ground).max(0.0);
-                // Lifted air rains out on the way up; the last rise is the slope here.
-                if distance > 0.0 {
-                    moisture *= (-lift / LIFT_OUT).exp();
+                if relief.elevation < sea {
+                    moisture += (1.0 - moisture) * 0.45;
                 }
+                last = Some((distance, ground));
             }
-            if relief.elevation < sea {
-                moisture += (1.0 - moisture) * 0.45;
-            }
-            last = Some((distance, ground));
-            here = Some(relief);
-        }
-        let relief = here.expect("the walk ends here");
-        // Air forced up a windward slope rains on it.
-        let orographic = 1.0 + (lift / 30.0).min(1.0);
+            let relief = reliefs[walk.len() - 1];
+            // Air forced up a windward slope rains on it.
+            let orographic = 1.0 + (lift / 30.0).min(1.0);
 
-        let latitude = self.latitude(x, z);
-        // Rising air near the equator, sinking air in the subtropics, storms along the
-        // polar front, and little water in the cold polar air.
-        let circulation =
-            spline(&[(0.0, 1.0), (0.12, 0.9), (0.3, 0.26), (0.48, 0.62), (0.66, 0.8), (0.85, 0.5), (1.0, 0.3)], latitude);
-        let wetness = (1.0 + 0.35 * self.wetness.get_noise_2d(x, z)).max(0.1);
-        let precipitation =
-            2600.0 * (0.55 + 0.9 * self.dials.humidity) * circulation * (0.2 + 0.8 * moisture) * orographic * wetness;
+            let latitude = self.latitude(z[k], wander[k]);
+            // Rising air near the equator, sinking air in the subtropics, storms along the
+            // polar front, and little water in the cold polar air.
+            let circulation =
+                spline(&[(0.0, 1.0), (0.12, 0.9), (0.3, 0.26), (0.48, 0.62), (0.66, 0.8), (0.85, 0.5), (1.0, 0.3)], latitude);
+            let wetness = (1.0 + 0.35 * wetness[k]).max(0.1);
+            let precipitation =
+                2600.0 * (0.55 + 0.9 * self.dials.humidity) * circulation * (0.2 + 0.8 * moisture) * orographic * wetness;
 
-        let sea_temperature = self.dials.mean_temperature
-            + self.dials.latitude_gradient * (0.5 - latitude)
-            + 3.5 * self.anomaly.get_noise_2d(x, z);
-        let even = |n: &FastNoiseLite| uniform(n.get_noise_2d(x, z));
-        Regional {
-            sea_temperature,
-            precipitation,
-            rainfall: precipitation / orographic,
-            continentalness: continentalness(relief.continental),
-            latitude,
-            elevation: {
-                // Averaged over a few hundred blocks, so a range's flanks share one
-                // climate rather than banding with every few dozen blocks of height.
-                let around: f32 = reliefs[UPWIND.len() + 1..].iter().map(|r| r.elevation.max(sea)).sum();
-                0.4 * relief.elevation.max(sea) + 0.15 * around
-            },
-            erosion: landform(&relief),
-            weirdness: even(&self.weirdness),
-            aether: even(&self.aether).powf(self.aether_exponent),
-            fertility: even(&self.fertility),
-            variant: even(&self.variant),
-            warp: self.warp.each_ref().map(|n| n.get_noise_2d(x, z) * PROVINCE_WARP),
+            let sea_temperature = self.dials.mean_temperature + self.dials.latitude_gradient * (0.5 - latitude) + 3.5 * anomaly[k];
+            *out = Regional {
+                sea_temperature,
+                precipitation,
+                rainfall: precipitation / orographic,
+                continentalness: continentalness(relief.continental),
+                latitude,
+                elevation: {
+                    // Averaged over a few hundred blocks, so a range's flanks share one
+                    // climate rather than banding with every few dozen blocks of height.
+                    let around: f32 = reliefs[walk.len()..].iter().map(|r| r.elevation.max(sea)).sum();
+                    0.4 * relief.elevation.max(sea) + 0.15 * around
+                },
+                erosion: landform(&relief),
+                weirdness: uniform(weirdness[k]),
+                aether: uniform(aether[k]).powf(self.aether_exponent),
+                fertility: uniform(fertility[k]),
+                variant: uniform(variant[k]),
+                warp: [warp[0][k] * PROVINCE_WARP, warp[1][k] * PROVINCE_WARP],
+            };
         }
     }
 }

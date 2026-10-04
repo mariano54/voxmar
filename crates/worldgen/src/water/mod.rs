@@ -220,12 +220,13 @@ impl Rivers {
         let per = REGION / RAIN_CELL;
         let region = IVec2::new(x, z).div_euclid(IVec2::splat(REGION));
         let samples = self.rain.get(region, || {
-            (0..(per + 1) * (per + 1))
+            let points: Vec<(f32, f32)> = (0..(per + 1) * (per + 1))
                 .map(|i| {
                     let p = region * REGION + IVec2::new(i % (per + 1), i / (per + 1)) * RAIN_CELL;
-                    land.climate.regional(land.geology, p.x as f32, p.y as f32)
+                    (p.x as f32, p.y as f32)
                 })
-                .collect()
+                .collect();
+            land.climate.regionals(land.geology, &points).into()
         });
         Rain { region, samples }
     }
