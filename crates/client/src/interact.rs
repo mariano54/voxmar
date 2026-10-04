@@ -43,6 +43,9 @@ pub struct Target {
     pub breaking: Option<(IVec3, f32)>,
     mining_seconds: f32,
     place_cooldown: f32,
+    /// Seconds until the next block may be mined after one that broke at once, as
+    /// Minecraft's five ticks, so sweeping across a meadow does not mow it flat.
+    mine_cooldown: f32,
 }
 
 /// The number keys pick a hotbar slot, and so does the wheel unless it is zooming.
@@ -133,6 +136,7 @@ fn break_and_place(
     mut broken: MessageWriter<BlockBroken>,
 ) {
     target.place_cooldown -= time.delta_secs();
+    target.mine_cooldown -= time.delta_secs();
     let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
     let mining = hit.filter(|_| mouse.pressed(MouseButton::Left));
 
@@ -160,25 +164,24 @@ fn break_and_place(
                 }
                 let progress = progress + step;
                 if progress >= 1.0 {
-                    // The server commits at the same moment; predict it, including a plant
-                    // that loses its ground.
-                    cues.write(SoundCue::for_block(&world, block, Cue::Break));
-                    let plants = supported_by(&ClientContext { world: &world, player: &player }, hit.block);
-                    for pos in std::iter::once(hit.block).chain(plants) {
-                        if let Some(block) = world.block(pos) {
-                            broken.write(BlockBroken { pos, block });
-                        }
-                        world.set_block(pos, BlockId::AIR);
-                    }
+                    // The server commits at the same moment; predict it.
+                    predict_break(&mut world, &player, hit.block, &mut broken);
                     target.breaking = None;
                 } else {
                     target.breaking = Some((pos, progress));
                 }
             }
-            _ if def.validate(&context, action_target).is_ok() => {
+            _ if target.mine_cooldown <= 0.0 && def.validate(&context, action_target).is_ok() => {
                 target.mining_seconds = def.seconds(&context, action_target);
-                target.breaking = Some((hit.block, 0.0));
                 net.propose(mine, action_target);
+                // Plants and other blocks that break at once go now, as on the server,
+                // whose word would otherwise arrive before a predicted break.
+                if target.mining_seconds <= 0.0 {
+                    predict_break(&mut world, &player, hit.block, &mut broken);
+                    target.mine_cooldown = 0.25;
+                } else {
+                    target.breaking = Some((hit.block, 0.0));
+                }
             }
             _ => {}
         }
@@ -199,6 +202,18 @@ fn break_and_place(
             let selected = player.selected;
             player.inventory.take_one(selected);
         }
+    }
+}
+
+/// Breaks a block as the server will, with any plant that loses its ground; each sounds
+/// and bursts (see `breaking`).
+fn predict_break(world: &mut ClientWorld, player: &LocalPlayer, pos: IVec3, broken: &mut MessageWriter<BlockBroken>) {
+    let plants = supported_by(&ClientContext { world, player }, pos);
+    for pos in std::iter::once(pos).chain(plants) {
+        if let Some(block) = world.block(pos).filter(|b| !b.is_air()) {
+            broken.write(BlockBroken { pos, block });
+        }
+        world.set_block(pos, BlockId::AIR);
     }
 }
 

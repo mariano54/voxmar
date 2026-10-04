@@ -1,10 +1,14 @@
-//! What mining and breaking a block looks like, as in Minecraft: cracks spreading over the
-//! block being mined, chips falling from the face being hit, and when it breaks, a burst of
-//! small pieces of its texture that fly out, fall, hop on the ground and fade.
+//! What mining and breaking a block looks and sounds like, as in Minecraft: cracks
+//! spreading over the block being mined, chips falling from the face being hit, and when it
+//! breaks, its material's break sound and a burst of small pieces of its texture that fly
+//! out, fall, hop on the ground and fade.
 //!
 //! All of it shows what the client already knows and the server decides: the local mining
 //! progress (which runs over the same time the server takes), the break the client predicts
-//! at the moment the server commits it, and blocks the server reports broken by others.
+//! at the moment the server commits it, and blocks the server reports broken that the
+//! client did not predict (by others, or by the player when the server's word came first).
+//! Every broken block is one [`BlockBroken`], whichever came first, so each sounds and
+//! bursts exactly once.
 //! The motion is Minecraft's terrain particles' (gravity 0.04 blocks per tick², 2% drag per
 //! tick), worked out on the GPU (see `render::particles`).
 
@@ -19,6 +23,7 @@ use crate::render::cracks::{Crack, STAGES};
 use crate::render::pack::ActivePack;
 use crate::render::particles::{Look, Motion, Particle, Particles, TexturePieces};
 use crate::settings::Settings;
+use crate::sfx::{Cue, SoundCue};
 use crate::world::ClientWorld;
 
 /// Blocks per second squared, and the share of speed lost per second.
@@ -28,8 +33,9 @@ const DRAG: f32 = 0.4;
 const PIECES: u32 = 4;
 /// Chips per second from the face being mined.
 const CHIPS: f32 = 12.0;
-/// Bursts at most per frame, and how far away others' breaks still show.
+/// Bursts and break sounds at most per frame, and how far away others' breaks still show.
 const MAX_BURSTS: usize = 16;
+const MAX_SOUNDS: usize = 4;
 pub const SHOWN_WITHIN: f32 = 32.0;
 /// How far up an open sky is looked for, and how far down a floor.
 const SKY_SCAN: i32 = 48;
@@ -42,7 +48,7 @@ impl Plugin for BreakingPlugin {
         app.add_message::<BlockBroken>()
             .add_systems(
                 Update,
-                (cracks, chips, bursts).in_set(EffectSystems).after(InteractSystems).run_if(in_state(Screen::InGame)),
+                (cracks, chips, bursts, sounds).in_set(EffectSystems).after(InteractSystems).run_if(in_state(Screen::InGame)),
             )
             .add_systems(Update, amount.run_if(resource_changed::<Settings>.or_eager(resource_changed::<ActivePack>)))
             .add_systems(OnExit(Screen::InGame), |mut crack: ResMut<Crack>| crack.at = None);
@@ -145,6 +151,14 @@ fn chips(
         let mut particle = piece(&world, &pieces, dice, pos, info, hit.face, light, position, velocity, size);
         particle.life = 0.3 + 0.5 * dice.roll();
         particles.spawn(&particle);
+    }
+}
+
+/// Break sounds, from where each block was: a few a frame at most, so a command that
+/// clears a room does not roar.
+fn sounds(mut broken: MessageReader<BlockBroken>, world: Res<ClientWorld>, mut cues: MessageWriter<SoundCue>) {
+    for &BlockBroken { pos, block } in broken.read().take(MAX_SOUNDS) {
+        cues.write(SoundCue::for_block(&world, block, Cue::Break).at(pos.as_vec3() + 0.5));
     }
 }
 

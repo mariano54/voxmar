@@ -28,7 +28,7 @@ use std::sync::Arc;
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
-use voxmar_engine::block::{BlockId, Sound};
+use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
 use voxmar_engine::physics::player as dims;
 
 use self::minecraft::SoundStore;
@@ -52,9 +52,11 @@ const RAIN_GAIN: f32 = 0.45;
 const THUNDER_GAIN: f32 = 0.9;
 /// Lightning closer than this many blocks cracks before it rumbles.
 const NEAR_LIGHTNING: f32 = 300.0;
-/// Minecraft's clips are mastered quieter than ours; this brings its break sounds to the
-/// loudness of our own.
-const MINECRAFT_GAIN: f32 = 1.4;
+/// Cues placed in the world fade out over this many blocks from the listener, as
+/// Minecraft's block sounds do.
+const HEARD_WITHIN: f32 = 16.0;
+/// Seconds of the loudest stretch of a clip, by which clips are levelled.
+const LOUDNESS_WINDOW: f32 = 0.05;
 
 pub struct SfxPlugin;
 
@@ -82,7 +84,7 @@ impl Cue {
 
     fn gain(self) -> f32 {
         match self {
-            Cue::Step => 0.2,
+            Cue::Step => 0.3,
             Cue::Land => 0.4,
             Cue::Place => 0.55,
             Cue::Break => 0.6,
@@ -96,11 +98,33 @@ impl Cue {
 pub struct SoundCue {
     pub sound: Sound,
     pub cue: Cue,
+    /// Where it sounds from, if not at the listener; it fades out with distance.
+    pub at: Option<Vec3>,
+    /// Multiplies the cue's usual volume.
+    pub gain: f32,
 }
 
 impl SoundCue {
+    pub fn new(sound: Sound, cue: Cue) -> Self {
+        Self { sound, cue, at: None, gain: 1.0 }
+    }
+
     pub fn for_block(world: &ClientWorld, block: BlockId, cue: Cue) -> Self {
-        Self { sound: world.registry.info(block).sound, cue }
+        Self::of(&world.registry, block, cue)
+    }
+
+    pub fn of(registry: &BlockRegistry, block: BlockId, cue: Cue) -> Self {
+        Self::new(registry.info(block).sound, cue)
+    }
+
+    /// Sounding from `at` in the world.
+    pub fn at(self, at: Vec3) -> Self {
+        Self { at: Some(at), ..self }
+    }
+
+    /// At `gain` times the usual volume.
+    pub fn scaled(self, gain: f32) -> Self {
+        Self { gain: self.gain * gain, ..self }
     }
 }
 
@@ -155,32 +179,59 @@ fn minecraft_event(sound: Sound, cue: Cue) -> Option<(String, f32, f32)> {
 
 /// Loads each cue's clips from the player's Minecraft install where it has them, and
 /// synthesizes the rest.
+///
+/// Minecraft's clips are levelled to the loudness of our synthesized ones for the same
+/// cue: Minecraft plays a step at 0.15 of a clip already quieter than its break, which
+/// under music and ambience was lost altogether. Within a cue's clips their own volumes
+/// and Minecraft's variation stay; across materials each cue sounds about as loud.
 fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
+    let started = std::time::Instant::now();
     let store = SoundStore::discover();
-    // Hits, steps and falls share files; each is read once.
-    let mut loaded: FxHashMap<String, Option<Handle<AudioSource>>> = FxHashMap::default();
+    // Hits, steps and falls share files; each is read and measured once.
+    let mut loaded: FxHashMap<String, Option<(Handle<AudioSource>, f32)>> = FxHashMap::default();
     let mut clips = FxHashMap::default();
     let mut borrowed = 0;
+    // How loud each cue's synthesized clips are, to level borrowed ones to.
+    let mut target: FxHashMap<Cue, (f32, f32)> = FxHashMap::default();
+    let mut synthesized: FxHashMap<(Sound, Cue), Vec<Vec<f32>>> = FxHashMap::default();
+    for sound in Sound::ALL {
+        for cue in Cue::ALL {
+            let variants: Vec<Vec<f32>> = (0..VARIANTS).map(|v| render(sound, cue, mix(sound as u64 * 131 + cue as u64 * 17 + v))).collect();
+            let entry = target.entry(cue).or_default();
+            for samples in &variants {
+                *entry = (entry.0 + loudness(samples, 1), entry.1 + 1.0);
+            }
+            synthesized.insert((sound, cue), variants);
+        }
+    }
     for sound in Sound::ALL {
         for cue in Cue::ALL {
             let mut variants = Vec::new();
             if let (Some(store), Some((event, volume, pitch))) = (&store, minecraft_event(sound, cue)) {
-                for clip in store.event(&event) {
-                    let source = loaded
-                        .entry(clip.name.clone())
-                        .or_insert_with(|| store.read(&clip).map(|bytes| sources.add(AudioSource { bytes: Arc::from(bytes) })));
-                    if let Some(source) = source {
-                        let gain = volume * clip.volume * MINECRAFT_GAIN;
-                        variants.push(Clip { source: source.clone(), gain, speed: pitch * clip.pitch });
-                    }
+                let event = store.event(&event);
+                let measured: Vec<_> = event
+                    .iter()
+                    .filter_map(|clip| {
+                        let entry = loaded.entry(clip.name.clone()).or_insert_with(|| {
+                            let source = AudioSource { bytes: Arc::from(store.read(clip)?) };
+                            let level = measure(&source)?;
+                            Some((sources.add(source), level))
+                        });
+                        entry.clone().map(|(source, level)| (clip, source, level))
+                    })
+                    .collect();
+                // The event's clips as Minecraft plays them, levelled together.
+                let level = measured.iter().map(|(clip, _, level)| level * clip.volume * volume).sum::<f32>() / measured.len().max(1) as f32;
+                let (sum, count) = target[&cue];
+                let gain = cue.gain() * (sum / count) / level.max(1e-4);
+                for (clip, source, _) in measured {
+                    variants.push(Clip { source, gain: gain * clip.volume * volume, speed: pitch * clip.pitch });
                 }
             }
             if variants.is_empty() {
-                variants = (0..VARIANTS)
-                    .map(|v| {
-                        let samples = render(sound, cue, mix(sound as u64 * 131 + cue as u64 * 17 + v));
-                        Clip { source: sources.add(AudioSource { bytes: Arc::from(wav(&samples)) }), gain: cue.gain(), speed: 1.0 }
-                    })
+                variants = synthesized[&(sound, cue)]
+                    .iter()
+                    .map(|samples| Clip { source: sources.add(AudioSource { bytes: Arc::from(wav(samples)) }), gain: cue.gain(), speed: 1.0 })
                     .collect();
             } else {
                 borrowed += 1;
@@ -188,7 +239,11 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
             clips.insert((sound, cue), variants);
         }
     }
-    info!("block sounds: {borrowed} of {} cues from Minecraft's assets, the rest synthesized", clips.len());
+    info!(
+        "block sounds: {borrowed} of {} cues from Minecraft's assets, the rest synthesized ({} ms)",
+        clips.len(),
+        started.elapsed().as_millis()
+    );
     let thunder = [true, false].map(|near| {
         let clip = |v: u64| AudioSource { bytes: Arc::from(wav(&thunder_clip(mix(v * 7 + near as u64), near))) };
         (0..VARIANTS).map(|v| sources.add(clip(v))).collect()
@@ -197,6 +252,35 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
     let rain = sources.add(AudioSource { bytes: Arc::from(wav(&rain_loop(0x7261_696e))) });
     let playback = PlaybackSettings { paused: true, ..PlaybackSettings::LOOP.with_volume(Volume::SILENT) };
     commands.spawn((RainSound, AudioPlayer(rain), playback));
+}
+
+/// How loud a clip is: the RMS of its loudest stretch of [`LOUDNESS_WINDOW`], so short
+/// clicks and long tails compare fairly. `samples` interleave `channels`.
+fn loudness(samples: &[f32], channels: usize) -> f32 {
+    let window = ((LOUDNESS_WINDOW * RATE as f32) as usize * channels).max(1);
+    let hop = (window / 4).max(1);
+    let mut loudest = 0.0f32;
+    let mut start = 0;
+    loop {
+        let stretch = &samples[start.min(samples.len())..(start + window).min(samples.len())];
+        if !stretch.is_empty() {
+            loudest = loudest.max(stretch.iter().map(|s| s * s).sum::<f32>() / stretch.len() as f32);
+        }
+        if start + window >= samples.len() {
+            break;
+        }
+        start += hop;
+    }
+    loudest.sqrt()
+}
+
+/// The loudness of an encoded clip, decoding it once.
+fn measure(source: &AudioSource) -> Option<f32> {
+    use bevy::audio::{Decodable, Source};
+    let decoder = source.decoder();
+    let channels = decoder.channels().get() as usize;
+    let samples: Vec<f32> = decoder.collect();
+    (!samples.is_empty()).then(|| loudness(&samples, channels))
 }
 
 #[derive(Component)]
@@ -243,61 +327,108 @@ fn rain(
     }
 }
 
-fn play_cues(mut commands: Commands, mut cues: MessageReader<SoundCue>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
+fn play_cues(
+    mut commands: Commands,
+    mut cues: MessageReader<SoundCue>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<Settings>,
+    listener: Query<&GlobalTransform, With<Camera3d>>,
+) {
     let Some(mut sfx) = sfx else { return };
     let master = MASTER * settings.sound_volume as f32 / 100.0;
+    let listener = listener.single().map(|t| t.translation()).ok();
     for cue in cues.read() {
+        let distance = cue.at.zip(listener).map_or(0.0, |(at, ear)| at.distance(ear));
+        let gain = cue.gain * (1.0 - distance / HEARD_WITHIN).max(0.0);
+        if gain <= 0.0 {
+            continue;
+        }
         let (pick, jitter) = (sfx.random(), sfx.random());
         let Some(clip) = sfx.clips.get(&(cue.sound, cue.cue)).and_then(|clips| clips.get((pick * clips.len() as f32) as usize))
         else {
             continue;
         };
         let speed = clip.speed * (0.94 + 0.12 * jitter);
-        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * master)) };
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * gain * master)) };
         commands.spawn((AudioPlayer(clip.source.clone()), playback));
     }
 }
 
-/// Footsteps every stride on the ground, and a thud when landing from a fall.
-fn footsteps(
-    player: Res<LocalPlayer>,
-    world: Res<ClientWorld>,
-    mut cues: MessageWriter<SoundCue>,
-    mut state: Local<(Option<Vec3>, f32, bool, f32)>,
-) {
-    let (last, travelled, was_grounded, peak) = &mut *state;
+/// What `footsteps` keeps between frames.
+#[derive(Default)]
+struct Strides {
+    last: Option<Vec3>,
+    travelled: f32,
+    was_grounded: bool,
+    /// Highest point since last on the ground.
+    peak: f32,
+}
+
+/// Footsteps every stride, from whatever is underfoot, in the manner of Minecraft and of
+/// footstep mods such as Presence Footsteps: the ground's own step; the rustle of plants,
+/// moss or petals the feet pass through, with the ground under them softer; a splash in
+/// shallow water; strokes while swimming; and a thud when landing from a fall.
+fn footsteps(player: Res<LocalPlayer>, world: Res<ClientWorld>, mut cues: MessageWriter<SoundCue>, mut state: Local<Strides>) {
+    let state = &mut *state;
     let position = player.position;
-    let previous = last.replace(position).unwrap_or(position);
+    let previous = state.last.replace(position).unwrap_or(position);
     if !player.joined || player.flying {
-        *travelled = 0.0;
-        *peak = position.y;
+        state.travelled = 0.0;
+        state.peak = position.y;
         return;
     }
-    let below = world.block((position - Vec3::Y * 0.1).floor().as_ivec3());
+    let feet = position.floor().as_ivec3();
+    let ground = world.block((position - Vec3::Y * 0.1).floor().as_ivec3()).filter(|b| !b.is_air());
+    // A plant, carpet or flower the feet stand in.
+    let cover = world.block(feet).filter(|&b| world.registry.info(b).render == RenderKind::Plant);
+    let wading = player.in_water;
     if player.on_ground {
-        if !*was_grounded && *peak - position.y > 1.2 && let Some(block) = below {
-            cues.write(SoundCue::for_block(&world, block, Cue::Land));
-        }
-        *travelled += (position - previous).with_y(0.0).length();
-        let stride = if player.velocity.with_y(0.0).length() > dims::WALK_SPEED + 0.5 { 2.1 } else { 1.7 };
-        if *travelled >= stride {
-            *travelled = 0.0;
-            if let Some(block) = below.filter(|b| !b.is_air()) {
-                cues.write(SoundCue::for_block(&world, block, Cue::Step));
+        if !state.was_grounded && state.peak - position.y > 1.2 {
+            if let Some(block) = ground {
+                cues.write(SoundCue::for_block(&world, block, Cue::Land));
+            }
+            if wading {
+                cues.write(SoundCue::new(Sound::Water, Cue::Step));
             }
         }
-        *peak = position.y;
+        state.travelled += (position - previous).with_y(0.0).length();
+        let stride = if player.velocity.with_y(0.0).length() > dims::WALK_SPEED + 0.5 { 2.1 } else { 1.7 };
+        if state.travelled >= stride {
+            state.travelled = 0.0;
+            for cue in step_cues(&world.registry, ground, cover, wading) {
+                cues.write(cue);
+            }
+        }
+        state.peak = position.y;
     } else {
-        *peak = peak.max(position.y);
+        state.peak = state.peak.max(position.y);
         if player.in_water {
-            *travelled += (position - previous).length();
-            if *travelled >= 2.4 {
-                *travelled = 0.0;
-                cues.write(SoundCue { sound: Sound::Water, cue: Cue::Step });
+            state.travelled += (position - previous).length();
+            if state.travelled >= 2.4 {
+                state.travelled = 0.0;
+                cues.write(SoundCue::new(Sound::Water, Cue::Step));
             }
         }
     }
-    *was_grounded = player.on_ground;
+    state.was_grounded = player.on_ground;
+}
+
+/// The sounds of one step: the ground's, unless something covers it (a plant, moss
+/// carpet, petals), whose rustle then leads with the ground under it softer; and a splash
+/// when wading.
+fn step_cues(registry: &BlockRegistry, ground: Option<BlockId>, cover: Option<BlockId>, wading: bool) -> Vec<SoundCue> {
+    let mut cues = Vec::new();
+    if let Some(cover) = cover {
+        cues.push(SoundCue::of(registry, cover, Cue::Step));
+    }
+    if let Some(ground) = ground {
+        let softer = if cover.is_some() || wading { 0.5 } else { 1.0 };
+        cues.push(SoundCue::of(registry, ground, Cue::Step).scaled(softer));
+    }
+    if wading {
+        cues.push(SoundCue::new(Sound::Water, Cue::Step).scaled(0.7));
+    }
+    cues
 }
 
 /// SplitMix64 finaliser.
@@ -617,6 +748,35 @@ mod tests {
                 assert!(samples.last().unwrap().abs() < 0.05, "{sound:?} {cue:?} ends abruptly");
             }
         }
+    }
+
+    #[test]
+    fn every_surface_has_a_step() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        let id = |name: &str| blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("{name}"));
+        let heard = |cues: Vec<SoundCue>| cues.iter().map(|c| (c.sound, c.gain)).collect::<Vec<_>>();
+        // Bare ground: its own step.
+        assert_eq!(heard(step_cues(blocks, Some(id("stone")), None, false)), [(Sound::Stone, 1.0)]);
+        // Through grass and flowers, or over moss carpet: their rustle, the ground softer.
+        assert_eq!(heard(step_cues(blocks, Some(id("grass_block")), Some(id("poppy")), false)), [(Sound::Grass, 1.0), (Sound::Grass, 0.5)]);
+        assert_eq!(heard(step_cues(blocks, Some(id("stone")), Some(id("moss_carpet")), false))[0], (Sound::Moss, 1.0));
+        // Wading: a splash over the ground.
+        assert_eq!(heard(step_cues(blocks, Some(id("sand")), None, true)), [(Sound::Sand, 0.5), (Sound::Water, 0.7)]);
+    }
+
+    #[test]
+    fn loudness_compares_the_loudest_stretch() {
+        let tone = |seconds: f32| (0..(seconds * RATE as f32) as usize).map(|i| (i as f32 * 0.1).sin() * 0.5).collect::<Vec<f32>>();
+        let short = loudness(&tone(0.1), 1);
+        // Silence after a sound, or a longer sound, does not change how loud it is.
+        let mut padded = tone(0.1);
+        padded.extend(std::iter::repeat_n(0.0, RATE as usize));
+        assert!((loudness(&padded, 1) - short).abs() < short * 0.05);
+        assert!((loudness(&tone(1.0), 1) - short).abs() < short * 0.05);
+        // A sine of amplitude 0.5 has an RMS of about 0.35.
+        assert!((short - 0.354).abs() < 0.02, "{short}");
+        assert_eq!(loudness(&[], 1), 0.0);
     }
 
     #[test]
