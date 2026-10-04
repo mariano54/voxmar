@@ -17,8 +17,9 @@
 //! | Giant caverns | very rare | cavern systems hundreds of blocks across, most holding one great lake whose pillars stand in it as islands |
 //! | Long ravines | very rare | ravines a kilometre long |
 //!
-//! The world's cave dial scales all of them, and the seed boosts one kind and cuts another,
-//! so worlds differ underground as much as above.
+//! The world's cave density dial scales all of them, the world's featured rarity table
+//! (`crate::rarity`) boosts some kinds, and the seed varies each and makes one scarce, so
+//! worlds differ underground as much as above.
 //!
 //! Like the rest of generation, every carver is a pure function of the seed and the block
 //! position: noise fields are sampled on coarse lattices and interpolated (see
@@ -47,6 +48,7 @@ use crate::dials::WorldDials;
 use crate::features;
 use crate::geology::{GeoGrid, GeoSample, noise, smoothstep, spline};
 use crate::lattice::{Grid, Lattice, Profile};
+use crate::rarity::Rarity;
 use crate::rng::{Rng, hash3};
 
 /// What the caves leave at a block.
@@ -115,15 +117,30 @@ pub struct CaveStyle {
 }
 
 impl CaveStyle {
-    fn sample(seed: u64, dial: f32) -> Self {
+    /// The kinds, in field order, with their rarity (which the base rates in this module
+    /// already follow; the world's featured table boosts some of them from it).
+    const KINDS: [(&str, Rarity); 8] = [
+        ("tunnels", Rarity::Common),
+        ("caverns", Rarity::Uncommon),
+        ("giant_caverns", Rarity::VeryRare),
+        ("noodles", Rarity::Uncommon),
+        ("labyrinths", Rarity::Rare),
+        ("ravines", Rarity::Rare),
+        ("sinkholes", Rarity::Rare),
+        ("flooded_caves", Rarity::Uncommon),
+    ];
+    /// The most a featured boost multiplies a kind by: a tier's jump is too much for things
+    /// as large as caves.
+    const MOST_FEATURED: f32 = 4.0;
+
+    fn sample(seed: u64, dials: &WorldDials) -> Self {
         let mut rng = Rng::new(seed, STYLE, 0, 0);
-        let amount = 0.45 + 1.1 * dial;
-        // Each kind varies by up to 1.7× either way; then one is boosted and another cut.
-        let mut kinds: [f32; 8] = std::array::from_fn(|_| 2f32.powf(1.5 * (rng.unit() - 0.5)));
-        let boosted = rng.below(8) as usize;
-        let cut = (boosted + 1 + rng.below(7) as usize) % 8;
-        kinds[boosted] *= 2.5;
-        kinds[cut] *= 0.4;
+        let amount = 0.45 + 1.1 * dials.cave_density;
+        // Each kind varies by up to 1.7× either way, the world features some (see
+        // `crate::rarity`), and one kind is scarce.
+        let featured = dials.featured.multipliers("cave", &Self::KINDS);
+        let mut kinds: [f32; 8] = std::array::from_fn(|i| 2f32.powf(1.5 * (rng.unit() - 0.5)) * featured[i].min(Self::MOST_FEATURED));
+        kinds[rng.below(8) as usize] *= 0.4;
         let [tunnels, caverns, giants, noodles, labyrinths, ravines, sinkholes, flooding] = kinds;
         Self {
             // Tunnels are what most caving happens in, so they vary least.
@@ -198,7 +215,7 @@ const LABYRINTH_PASSAGE: f32 = 0.42;
 
 impl Caves {
     pub fn new(seed: u64, dials: &WorldDials) -> Self {
-        let style = CaveStyle::sample(seed, dials.caves);
+        let style = CaveStyle::sample(seed, dials);
         let mut warp = noise(seed, 47, 1.0 / 64.0, FractalType::DomainWarpIndependent, 1);
         warp.set_domain_warp_type(Some(DomainWarpType::OpenSimplex2));
         warp.set_domain_warp_amp(Some(22.0));
@@ -986,11 +1003,11 @@ mod tests {
 
     #[test]
     fn styles_vary_but_stay_in_range() {
-        let styles: Vec<CaveStyle> = (0..100).map(|seed| CaveStyle::sample(seed, (seed % 11) as f32 / 10.0)).collect();
-        assert_eq!(CaveStyle::sample(5, 0.5), CaveStyle::sample(5, 0.5));
+        let styles: Vec<CaveStyle> = (0..100).map(|seed| CaveStyle::sample(seed, &WorldDials::sample(seed))).collect();
+        assert_eq!(styles[5], CaveStyle::sample(5, &WorldDials::sample(5)));
         for s in &styles {
             for v in [s.tunnels, s.caverns, s.giants, s.noodles, s.labyrinths, s.ravines, s.sinkholes, s.flooding] {
-                assert!((0.05..=7.0).contains(&v), "{s:?}");
+                assert!((0.05..=10.0).contains(&v), "{s:?}");
             }
         }
         let most = styles.iter().map(|s| s.ravines).fold(0.0, f32::max);

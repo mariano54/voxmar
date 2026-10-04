@@ -7,19 +7,23 @@
 //   word 3: r:8 | g:8 | b:8 | a:8   (sRGB albedo of side faces, or for sheets of the floor
 //                                    beneath; a: cover of small plants)
 
-#import bevy_pbr::mesh_functions::get_world_from_local
 #import bevy_pbr::mesh_view_bindings::{view, fog}
 #import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, water_normal}
 
-struct LodParams {
-    // x: cell size of this level in blocks, y: cell size of the next finer level (0 for
-    // the finest), z: tiles from a level's centre tile to its edge, w: real-chunk radius
-    // in columns.
-    rings: vec4<f32>,
+struct DistantView {
+    // xy: column of the coverage mask's first bit, z: the mask's width in columns, w: the
+    // real chunks' radius in columns.
+    coverage: vec4<i32>,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: LodParams;
+// Tile origins (x, z) and cell size (w), by instance index; shared with the real chunks.
+@group(2) @binding(0) var<storage, read> origins: array<vec4<i32>>;
+@group(2) @binding(1) var<uniform> distant: DistantView;
+// One bit per column around the camera that has real chunks.
+@group(2) @binding(2) var<storage, read> coverage: array<u32>;
 
+const FIRST_CELL: f32 = 4.0;
+const RING: f32 = 6.0;
 const CELLS_PER_TILE: f32 = 32.0;
 const COLUMN: f32 = 32.0;
 // Points this close to the edge of finer detail count as outside it, so walls standing on
@@ -54,6 +58,8 @@ const RIPPLE_FADE: f32 = 256.0;
 const GLINT_SHARPNESS = vec2(50.0, 220.0);
 const GLINT = vec2(0.9, 1.0);
 const RIPPLE_SLOPE_VARIANCE: f32 = 0.0013;
+// How fast light fades through water, per block (as in voxel.wgsl).
+const WATER_EXTINCTION: f32 = 0.32;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -70,6 +76,8 @@ struct VertexOutput {
     @location(4) params: vec3<f32>,
     @location(5) @interpolate(flat) kind: u32,
     @location(6) leaves: vec3<f32>,
+    // Cell size of the tile's ring, in blocks.
+    @location(7) @interpolate(flat) cell: f32,
 };
 
 fn decode_normal(bits: u32) -> vec3<f32> {
@@ -97,11 +105,14 @@ fn decode_rgb565(bits: u32) -> vec3<f32> {
 @vertex
 fn vertex(in: Vertex) -> VertexOutput {
     let w0 = in.packed.x;
-    let local = vec3<f32>(f32(w0 & 63u), f32((w0 >> 12u) & 16383u) / 32.0, f32((w0 >> 6u) & 63u));
+    let origin = origins[in.instance_index];
     var out: VertexOutput;
-    out.world_position = (get_world_from_local(in.instance_index) * vec4(local, 1.0)).xyz;
+    out.cell = f32(origin.w);
+    let cells = vec2(f32(w0 & 63u), f32((w0 >> 6u) & 63u));
+    let xz = vec2<f32>(origin.xz) + cells * out.cell;
+    out.world_position = vec3(xz.x, f32((w0 >> 12u) & 16383u) / 32.0, xz.y);
     out.kind = w0 >> 30u;
-    if out.kind == TERRAIN && covered_by_finer(out.world_position.xz, EDGE) {
+    if out.kind == TERRAIN && covered_by_finer(out.world_position.xz, EDGE, out.cell) {
         out.world_position.y -= SINK;
     }
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
@@ -113,24 +124,32 @@ fn vertex(in: Vertex) -> VertexOutput {
     return out;
 }
 
-// Whether a position lies more than `margin` inside finer detail (real chunks, which at long
-// view distances reach past the finest rings, or the next finer level), derived from the
-// camera position exactly as the client chooses its tiles.
-fn covered_by_finer(xz: vec2<f32>, margin: f32) -> bool {
-    let camera = view.world_position.xz;
-    let column = floor(camera / COLUMN);
-    let real_low = (column - (params.rings.w - 1.0)) * COLUMN;
-    let real_high = (column + params.rings.w) * COLUMN;
-    if all(xz > real_low + margin) && all(xz < real_high - margin) {
-        return true;
-    }
-    if params.rings.y == 0.0 {
+// Whether the column holding a position has real chunks.
+fn real_column(xz: vec2<f32>) -> bool {
+    let at = vec2<i32>(floor(xz / COLUMN)) - distant.coverage.xy;
+    let width = distant.coverage.z;
+    if any(at < vec2(0)) || any(at >= vec2(width)) {
         return false;
     }
-    let tile = params.rings.y * CELLS_PER_TILE;
-    let center = floor(camera / tile);
-    let low = (center - params.rings.z) * tile;
-    let high = (center + params.rings.z + 1.0) * tile;
+    let i = u32(at.y * width + at.x);
+    return (coverage[i >> 5u] & (1u << (i & 31u))) != 0u;
+}
+
+// Whether a position lies more than `margin` inside finer detail: real chunks, wherever they
+// have been meshed (at long view distances past the finest rings too), or the next finer
+// ring, derived from the camera position exactly as the client chooses its tiles.
+fn covered_by_finer(xz: vec2<f32>, margin: f32, cell: f32) -> bool {
+    if real_column(xz + vec2(-margin, -margin)) && real_column(xz + vec2(margin, -margin))
+        && real_column(xz + vec2(-margin, margin)) && real_column(xz + vec2(margin, margin)) {
+        return true;
+    }
+    if cell <= FIRST_CELL {
+        return false;
+    }
+    let tile = cell * 0.5 * CELLS_PER_TILE;
+    let center = floor(view.world_position.xz / tile);
+    let low = (center - RING) * tile;
+    let high = (center + RING + 1.0) * tile;
     return all(xz > low + margin) && all(xz < high - margin);
 }
 
@@ -222,7 +241,7 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
         return mix(floor, surface, in.params.y);
     }
     let past_real = max(abs(in.world_position.x - view.world_position.x), abs(in.world_position.z - view.world_position.z))
-        - params.rings.w * COLUMN;
+        - f32(distant.coverage.w) * COLUMN;
     let ripples = 1.0 - smoothstep(0.0, RIPPLE_FADE, past_real);
     let n = normalize(mix(UP, water_normal(in.world_position), ripples));
     // Ripples facing the eye fill more of the view than those facing away, the more so the
@@ -232,7 +251,11 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples))
         * mix(GLINT.x, GLINT.y, ripples);
     let reflected = mix(surface, fog.base_color.rgb * 1.15, fresnel) + sun_color() * glint * 4.0;
-    return mix(floor, reflected, mix(0.72, 1.0, fresnel));
+    // As over real shallows, the floor shows through as far as light reaches it; sky light
+    // at the floor fell by two levels per block of water.
+    let depth = (1.0 - in.params.x) * 7.5;
+    let through = exp(-depth * WATER_EXTINCTION);
+    return mix(floor, reflected, mix(mix(0.92, 0.18, through), 1.0, fresnel));
 }
 
 @fragment
@@ -245,8 +268,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let surface = normalize(cross(dpdx(in.world_position), dpdy(in.world_position)));
     let surface_slope = length(surface.xz) / max(abs(surface.y), 0.05);
     // Sunken terrain shows only in the first cell inside finer detail; sheets not at all.
-    let margin = select(EDGE, params.rings.x, in.kind == TERRAIN);
-    if covered_by_finer(in.world_position.xz, margin) {
+    let margin = select(EDGE, in.cell, in.kind == TERRAIN);
+    if covered_by_finer(in.world_position.xz, margin, in.cell) {
         discard;
     }
     let to_eye = normalize(view.world_position - in.world_position);

@@ -76,6 +76,24 @@ each pack provided. A pack keeps images at `textures/<path>.png` (`textures/bloc
 or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No
 Minecraft assets are shipped.
 
+A pack can also describe textures as text, in recipe books (`recipes/*.ron`), which the game
+renders as it loads, so a pack or mod can ship its art with no image files and no build step.
+A recipe is a texture program (palettes, noise, patterns such as cells, bricks, boards and
+rings, edge shading, highlights and cut-outs) or a text sprite (a grid of characters, each a
+colour or palette shade); recipes derive from each other, and templates make a whole family
+(a wood's log, planks, leaves and sapling) from one entry. See the `voxmar_texgen` crate docs.
+A PNG beats a recipe of the same name. The `texgen` tool helps author them:
+
+```bash
+cargo run --release -p voxmar_texgen -- check                  # render every recipe, report errors
+cargo run --release -p voxmar_texgen -- sheet --only stone,ore --compare PACK_OR_JAR
+cargo run --release -p voxmar_texgen -- export --out DIR       # write every recipe as a PNG
+```
+
+`sheet` writes `target/texgen/sheet.png`: each texture large, tiled 3×3 and at one pixel per
+texel, optionally beside the same name from another pack (`--pack DIR` picks the pack,
+`--columns`, `--zoom` and `--out` the layout).
+
 ## Layout
 
 | crate | role |
@@ -85,9 +103,16 @@ Minecraft assets are shipped.
 | `protocol` | client/server messages and transports (in-process channels, TCP) |
 | `server` | authoritative simulation (fixed 20 Hz tick), validation, streaming, world saves; `voxmar-server` binary |
 | `client` | Bevy app: rendering, input, prediction, HUD, menus; the only crate that depends on Bevy |
+| `texgen` | texture recipes and text sprites rendered to pixel art, and the `texgen` review tool |
 
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
-same registry a mod will use. Client and server compare a content fingerprint on join.
+same registry a mod will use. Client and server compare a content fingerprint on join. Templates
+make whole families from one line (a wood's log, stripped log, wood, planks, leaves and sapling;
+a rock's raw, cobbled, polished and brick blocks), and templates are shared across packages, so
+a mod's new wood is one line too. A plant can list variants, other looks of itself that become
+their own blocks and drop the plant, as many as their size. Blocks carry tags (`flower`,
+`wetland`, `edible`, `alchemy:calming`, `dye:blue`; the vocabulary is at the top of
+`blocks.ron`) and a rarity, so biomes, food and alchemy select them without naming them.
 
 How the design primitives map to the code today:
 
@@ -118,7 +143,7 @@ of ground and caves below it, 256 of land, mountains and sky above. There are no
 world draws a few physically meaningful dials from its seed
 (`Overworld::dials`: mean temperature, equator-to-pole temperature difference and distance,
 ocean fraction, continent size, humidity, prevailing wind, tectonic activity, erosion age,
-river density, vegetation, caves), with sensible correlations. Everything else is a continuous field:
+river density, vegetation, cave density and others), with sensible correlations. Everything else is a continuous field:
 
 - **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
   hot, temperate and cold land always lie in that order) and with altitude.
@@ -136,8 +161,9 @@ river density, vegetation, caves), with sensible correlations. Everything else i
   sinkholes; and very rare giant cavern systems, most holding one great lake. Water tables
   per 16×16×12 cell (as in Minecraft 1.18) flood some caves at their own levels, with sea
   level near the surface so caves under the sea are flooded rather than draining it, and lava
-  below y 10, with rock left wherever a fluid would otherwise touch air. The cave dial and
-  the seed set how much of each kind a world has (`Overworld::cave_style`).
+  below y 10, with rock left wherever a fluid would otherwise touch air. The cave density dial, the
+  world's featured rarities and the seed set how much of each kind a world has
+  (`Overworld::cave_style`).
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use.
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored` (optionally with `SEED=n`)

@@ -112,12 +112,13 @@ impl Server {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
                     let Some(current) = self.block(block) else { continue };
-                    let drop = self.content.blocks.info(current).drops;
-                    if drop.is_air() {
+                    let info = self.content.blocks.info(current);
+                    let (drop, count) = (info.drops, info.drop_count);
+                    if drop.is_air() || count == 0 {
                         continue;
                     }
                     let player = self.players.get_mut(&agent).unwrap();
-                    player.inventory.add(drop, 1);
+                    player.inventory.add(drop, count);
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {

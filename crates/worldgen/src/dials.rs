@@ -5,7 +5,11 @@
 //! gameplay can ask why a world is the way it is. They are drawn together with sensible
 //! correlations: more ocean and warmer air mean a more humid world, humid worlds have
 //! more rivers and richer plant life, and old land is both worn smooth and quieter.
+//!
+//! Some dials are read by stages still to come (caves, volcanoes); they are drawn now so
+//! that every world already has them and gameplay can show them.
 
+use crate::rarity::Featured;
 use crate::rng::Rng;
 
 const PURPOSE: u64 = 0xd1a1;
@@ -37,9 +41,21 @@ pub struct WorldDials {
     pub river_density: f32,
     /// How richly plants grow wherever the climate allows, 0 ..= 1.
     pub vegetation: f32,
-    /// How cavernous the underground is, 0 (solid rock with few tunnels) ..= 1 (riddled
-    /// with caves). Each kind of cave varies around it from the seed too.
-    pub caves: f32,
+    /// How fantastical the world is: the median of the aether field, 0 ..= 1.
+    pub fantasy: f32,
+    /// Volcanic activity, 0 (none) ..= 1 (many volcanoes and lava fields); follows
+    /// tectonic activity.
+    pub volcanism: f32,
+    /// How riddled with caves the ground is, 0 ..= 1.
+    pub cave_density: f32,
+    /// Height of the highest mountain peaks above the land around them, in blocks: active
+    /// worlds raise high ranges, old ones have worn theirs down.
+    pub mountain_height: f32,
+    /// How many kinds of things the world grows and how many rare ones it features,
+    /// 0 ..= 1.
+    pub biodiversity: f32,
+    /// The rare things this world boosts and the common ones it suppresses.
+    pub featured: Featured,
 }
 
 impl WorldDials {
@@ -58,23 +74,28 @@ impl WorldDials {
         let river_density = (0.25 + 0.5 * humidity + 0.4 * (unit() - 0.5)).clamp(0.0, 1.0);
         let vegetation = (0.4 + 0.35 * humidity + 0.15 * warmth + 0.2 * (unit() - 0.5)).clamp(0.0, 1.0);
         let angle = unit() * std::f32::consts::TAU;
-        let latitude_gradient = 26.0 + 12.0 * unit();
-        let pole_distance = 3500.0 + 2000.0 * unit();
-        let continent_size = 1400.0 + 1800.0 * unit();
-        let caves = (unit() + unit()) / 2.0;
+        let fantasy = 0.2 + 0.3 * unit();
+        let volcanism = (0.7 * tectonic_activity + 0.3 * unit()).clamp(0.0, 1.0);
+        let cave_density = 0.3 + 0.5 * unit();
+        let biodiversity = (0.25 + 0.5 * vegetation + 0.25 * unit()).clamp(0.0, 1.0);
         Self {
             mean_temperature: 8.0 + 7.0 * warmth,
-            latitude_gradient,
-            pole_distance,
+            latitude_gradient: 26.0 + 12.0 * unit(),
+            pole_distance: 3500.0 + 2000.0 * unit(),
             ocean_fraction,
-            continent_size,
+            continent_size: 1400.0 + 1800.0 * unit(),
             humidity,
             wind: [angle.cos(), angle.sin()],
             tectonic_activity,
             erosion_age,
             river_density,
             vegetation,
-            caves,
+            fantasy,
+            volcanism,
+            cave_density,
+            mountain_height: (100.0 + 80.0 * tectonic_activity) * (1.0 - 0.25 * erosion_age),
+            biodiversity,
+            featured: Featured::new(seed, biodiversity),
         }
     }
 }
@@ -89,7 +110,8 @@ mod tests {
         assert_ne!(WorldDials::sample(7), WorldDials::sample(8));
         for seed in 0..200 {
             let d = WorldDials::sample(seed);
-            for unit in [d.ocean_fraction, d.humidity, d.tectonic_activity, d.erosion_age, d.river_density, d.vegetation, d.caves] {
+            let units = [d.ocean_fraction, d.humidity, d.tectonic_activity, d.erosion_age, d.river_density, d.vegetation];
+            for unit in units.into_iter().chain([d.fantasy, d.volcanism, d.cave_density, d.biodiversity]) {
                 assert!((0.0..=1.0).contains(&unit), "{d:?}");
             }
             // Every world has temperate land somewhere between its equator and poles.

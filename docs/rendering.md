@@ -117,6 +117,40 @@ Measured with the same poses at view distance 8 and 16, so the band 256–512 bl
 real terrain in one capture and distant terrain in the other: the mean colour difference
 over eight regions fell from 10–17 to 4–6 levels per channel (of 255).
 
+## Plants
+
+Every grass, fern and flower is placed as a whole in the vertex shader from a hash of its
+cell, in the manner of Rainbow's Foliage: turned up to 40° either way, shifted up to 0.15
+blocks, sunk up to 0.25, and scaled 0.6–1.25 in height, with a smooth noise making
+tufts of taller and shorter plants across a meadow. Stacks (tall grass, sugar cane) are
+shaped as one plant. The mesher marks each plant vertex with its corner (in the AO bits,
+which plants do not use) and how many plant cells it stands on (bits 25..27), so no extra
+vertex data is needed. Model variants with their own textures can come from block data
+later; the placement already varies every plant.
+
+Leaf blocks on the outside of a crown also get a fringe (bushy leaves): two crossed quads
+through the block, turned at random, grown 1.45–1.9× and leaning, in their own pass
+(`TerrainPass::Fringe`, mesh bit 27). Chunks farther than 96 blocks skip that pass, and
+within that the sprigs shrink back into their block from 56 blocks, so they cost nothing
+in the distance.
+
+## What we took from Voxy
+
+Voxy (Fabric LOD mod, read from its source) stores the world as 32³ voxel sections mipped
+2× per level, picking the most opaque voxel, draws them as greedy quads with real block
+textures through a GPU-driven pipeline (hierarchical traversal by screen size, Hi-Z
+occlusion, multi-draw), and fills only the pixels vanilla terrain left empty.
+
+- We tried the same: textured voxel tiles (4–32 block voxels) through the terrain
+  renderer. Near the real chunks it matches them well, but beyond a kilometre mountains
+  become towers of 16–32 block cubes. We kept the smooth heightfield (stashed as
+  "experiment: Voxy-style voxel distant terrain").
+- Taken: distant tiles are drawn by the terrain renderer (no entity per tile), and they
+  give way to real chunks per column, from a bit mask of the columns that have actually
+  been meshed (`DistantView` in `terrain.rs`), not from the render distance. The finest
+  ring also keeps tiles under the real chunks, so terrain that has not loaded yet (fast
+  flight, edits far away) shows distant terrain instead of a hole.
+
 ## Keeping room for what comes next
 
 - **Non-cube blocks** (slabs, stairs, fences, plants, torches): a second block-model path in

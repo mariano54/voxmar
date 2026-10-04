@@ -1,0 +1,15 @@
+[package]
+name = "voxmar_texgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "texgen"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+ron.workspace = true
+png.workspace = true
+zip.workspace = true
