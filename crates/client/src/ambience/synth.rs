@@ -1,0 +1,864 @@
+//! The sounds of the world, synthesized at startup like the sound effects (`crate::sfx`):
+//! nothing is downloaded or shipped, and every machine hears the same thing.
+//!
+//! Beds (wind, leaves, insects, water, caves) are made of [`SEGMENT`]-second stereo
+//! segments that fade in and out over [`OVERLAP`] seconds with equal power, so playing
+//! different variants back to back, overlapping by that much, gives an endless sound with
+//! no seam and nothing that audibly loops. The two channels are made from different seeds,
+//! so a bed is wide and diffuse rather than coming from the middle of the head.
+//!
+//! One-shots (birdsong, an owl, a frog, a drip) are short and mono. The mixer places them
+//! in the stereo field when they play, and blends in a reverb tail rendered with each, as
+//! wet as the place is cave-like.
+
+use std::f32::consts::{PI, TAU};
+
+use serde::Deserialize;
+
+use crate::sfx::{Noise, RATE, mix};
+
+const SR: f32 = RATE as f32;
+/// Seconds in one segment of a bed.
+pub const SEGMENT: f32 = 8.0;
+/// Seconds over which consecutive segments of a bed overlap.
+pub const OVERLAP: f32 = 1.5;
+/// Variants made of every bed and every one-shot.
+pub const BED_VARIANTS: usize = 3;
+pub const ONE_SHOT_VARIANTS: usize = 5;
+/// Seconds of reverb after a one-shot ends.
+const REVERB_TAIL: f32 = 2.2;
+
+/// A synthesizer. The first group make beds, the rest one-shots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+pub enum Synth {
+    /// A soft breeze in the open: low, slowly gusting air.
+    Wind,
+    /// Strong wind on heights and in storms: rougher, brighter, with a faint whistle.
+    Gale,
+    /// Leaves shimmering in the breeze, busier in the gusts.
+    Rustle,
+    /// A warm day in grassland: a soft hiss of grass and distant grasshoppers.
+    Meadow,
+    /// A night chorus of crickets.
+    Crickets,
+    /// A babbling stream.
+    Stream,
+    /// Waves breaking on a shore.
+    Surf,
+    /// The low, still air of a cave, with a faint draught.
+    Cave,
+    /// A quick songbird: trills and twitters.
+    Warbler,
+    /// A fluting songbird that repeats its phrases.
+    Thrush,
+    /// Two or three clear whistled notes falling in pitch ("fee-bee").
+    Whistler,
+    /// A dove's soft, low cooing.
+    Dove,
+    /// A woodpecker drumming on a trunk.
+    Woodpecker,
+    /// An owl's hoots.
+    Owl,
+    /// One cricket chirping nearby.
+    Cricket,
+    /// A frog's croaks.
+    Frog,
+    /// Water: a plop and a gurgle of bubbles.
+    Plop,
+    /// A gust of wind rising and passing.
+    Gust,
+    /// A drop of water falling in a cave.
+    Drip,
+    /// A deep, distant rumble from the rock.
+    Rumble,
+    /// A trunk or branch creaking in the wind.
+    Creak,
+}
+
+impl Synth {
+    #[cfg(test)]
+    pub const ALL: [Synth; 21] = [
+        Synth::Wind,
+        Synth::Gale,
+        Synth::Rustle,
+        Synth::Meadow,
+        Synth::Crickets,
+        Synth::Stream,
+        Synth::Surf,
+        Synth::Cave,
+        Synth::Warbler,
+        Synth::Thrush,
+        Synth::Whistler,
+        Synth::Dove,
+        Synth::Woodpecker,
+        Synth::Owl,
+        Synth::Cricket,
+        Synth::Frog,
+        Synth::Plop,
+        Synth::Gust,
+        Synth::Drip,
+        Synth::Rumble,
+        Synth::Creak,
+    ];
+
+    /// Whether it makes a continuous bed rather than one-shots.
+    pub fn is_bed(self) -> bool {
+        matches!(
+            self,
+            Synth::Wind | Synth::Gale | Synth::Rustle | Synth::Meadow | Synth::Crickets | Synth::Stream | Synth::Surf | Synth::Cave
+        )
+    }
+
+    fn seed(self, variant: usize) -> u64 {
+        mix(0xa3b1_e5c7 ^ (self as u64) << 20 ^ variant as u64)
+    }
+}
+
+/// One bed segment, `[left, right]`, with its equal-power fades.
+pub fn bed(synth: Synth, variant: usize) -> [Vec<f32>; 2] {
+    let len = (SEGMENT * SR) as usize;
+    let seed = synth.seed(variant);
+    let a = render_bed(synth, &mut Noise(seed), len);
+    let b = render_bed(synth, &mut Noise(mix(seed ^ 0x5bd1_e995)), len);
+    // Mostly independent channels, with a little shared, keep the bed's power.
+    let (c, s) = (0.35f32.cos(), 0.35f32.sin());
+    let mut left: Vec<f32> = a.iter().zip(&b).map(|(a, b)| a * c + b * s).collect();
+    let mut right: Vec<f32> = a.iter().zip(&b).map(|(a, b)| b * c + a * s).collect();
+    let scale = loudness(&left, 0.15, 0.9).min(loudness(&right, 0.15, 0.9));
+    let fade = (OVERLAP * SR) as usize;
+    for channel in [&mut left, &mut right] {
+        for (i, sample) in channel.iter_mut().enumerate() {
+            let edge = i.min(len - 1 - i);
+            let w = if edge < fade { (PI / 2.0 * edge as f32 / fade as f32).sin() } else { 1.0 };
+            *sample *= scale * w;
+        }
+    }
+    [left, right]
+}
+
+/// One variant of a one-shot: the dry sound, and its reverb, `[left, right]`, which starts
+/// with the sound and rings on after it.
+pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
+    let mut noise = Noise(synth.seed(variant));
+    let mut dry = match synth {
+        Synth::Warbler => warbler(&mut noise),
+        Synth::Thrush => thrush(&mut noise),
+        Synth::Whistler => whistler(&mut noise),
+        Synth::Dove => dove(&mut noise),
+        Synth::Woodpecker => woodpecker(&mut noise),
+        Synth::Owl => owl(&mut noise),
+        Synth::Cricket => cricket(&mut noise),
+        Synth::Frog => frog(&mut noise),
+        Synth::Plop => plop(&mut noise),
+        Synth::Gust => gust(&mut noise),
+        Synth::Drip => drip(&mut noise),
+        Synth::Rumble => rumble(&mut noise),
+        Synth::Creak => creak(&mut noise),
+        bed => panic!("{bed:?} makes a bed, not one-shots"),
+    };
+    let scale = loudness(&dry, 0.14, 0.8);
+    dry.iter_mut().for_each(|s| *s *= scale);
+    fade_ends(&mut dry, 0.002, 0.01);
+    let wet = reverb(&dry);
+    (dry, wet)
+}
+
+fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
+    match synth {
+        Synth::Wind => wind(noise, len, false),
+        Synth::Gale => wind(noise, len, true),
+        Synth::Rustle => rustle(noise, len),
+        Synth::Meadow => meadow(noise, len),
+        Synth::Crickets => crickets(noise, len),
+        Synth::Stream => stream(noise, len),
+        Synth::Surf => surf(noise, len),
+        Synth::Cave => cave(noise, len),
+        one_shot => panic!("{one_shot:?} makes one-shots, not a bed"),
+    }
+}
+
+// --- Building blocks ---
+
+/// Chamberlin state-variable filter: low-, band- and high-pass at once.
+struct Svf {
+    f: f32,
+    damping: f32,
+    low: f32,
+    band: f32,
+}
+
+impl Svf {
+    fn new(center: f32, q: f32) -> Self {
+        let mut svf = Self { f: 0.0, damping: 1.0 / q, low: 0.0, band: 0.0 };
+        svf.tune(center);
+        svf
+    }
+
+    /// Kept well below the frequencies where this filter turns unstable.
+    fn tune(&mut self, center: f32) {
+        self.f = 2.0 * (PI * center.clamp(10.0, 7000.0) / SR).sin();
+    }
+
+    fn low(&mut self, x: f32) -> f32 {
+        self.run(x).0
+    }
+
+    fn band(&mut self, x: f32) -> f32 {
+        self.run(x).1
+    }
+
+    fn high(&mut self, x: f32) -> f32 {
+        self.run(x).2
+    }
+
+    fn run(&mut self, x: f32) -> (f32, f32, f32) {
+        self.low += self.f * self.band;
+        let high = x - self.low - self.damping * self.band;
+        self.band += self.f * high;
+        (self.low, self.band, high)
+    }
+}
+
+/// A slow, smooth wander in -1..1: a few sines of unrelated frequencies around `rate` Hz.
+struct Drift([(f32, f32); 3]);
+
+impl Drift {
+    fn new(noise: &mut Noise, rate: f32) -> Self {
+        Self([1.0, 2.13, 3.71].map(|k| (rate * k * (0.8 + 0.4 * noise.unit()), TAU * noise.unit())))
+    }
+
+    fn at(&self, t: f32) -> f32 {
+        self.0.iter().zip([0.55, 0.3, 0.15]).map(|(&(f, phase), w)| w * (TAU * f * t + phase).sin()).sum()
+    }
+
+    /// 0..1, eased.
+    fn unit(&self, t: f32) -> f32 {
+        let x = 0.5 + 0.5 * self.at(t);
+        x * x * (3.0 - 2.0 * x)
+    }
+}
+
+/// A sine whose frequency may change every sample.
+#[derive(Default)]
+struct Osc(f32);
+
+impl Osc {
+    fn next(&mut self, frequency: f32) -> f32 {
+        self.0 = (self.0 + frequency / SR).fract();
+        (TAU * self.0).sin()
+    }
+}
+
+/// Adds `count` samples from `f(j)` into `out` starting at time `t`, which may be before
+/// the start (those samples are dropped).
+fn add_at(out: &mut [f32], t: f32, count: usize, mut f: impl FnMut(usize) -> f32) {
+    let first = (t * SR).round() as i64;
+    for j in 0..count {
+        let at = first + j as i64;
+        let value = f(j);
+        if let Some(sample) = usize::try_from(at).ok().and_then(|at| out.get_mut(at)) {
+            *sample += value;
+        }
+    }
+}
+
+fn seconds(t: f32) -> usize {
+    (t.max(0.0) * SR) as usize
+}
+
+fn between(noise: &mut Noise, low: f32, high: f32) -> f32 {
+    low + (high - low) * noise.unit()
+}
+
+/// A smooth bump over 0..1 with a quicker rise than fall.
+fn note_envelope(x: f32, attack: f32) -> f32 {
+    if !(0.0..1.0).contains(&x) {
+        return 0.0;
+    }
+    let rise = (x / attack).min(1.0);
+    let fall = ((1.0 - x) / (1.0 - attack)).min(1.0);
+    (rise * PI / 2.0).sin().powi(2) * fall.sqrt()
+}
+
+/// Adds a tone of `length` seconds at `start` into `out`, gliding from `from` to `to` Hz,
+/// with relative `harmonics` above the fundamental.
+#[allow(clippy::too_many_arguments)]
+fn tone(out: &mut Vec<f32>, start: f32, length: f32, from: f32, to: f32, gain: f32, attack: f32, harmonics: &[f32]) {
+    let first = seconds(start);
+    let count = seconds(length);
+    if out.len() < first + count {
+        out.resize(first + count, 0.0);
+    }
+    let mut phase = 0.0f32;
+    for i in 0..count {
+        let x = i as f32 / count as f32;
+        // Glide along a gentle curve rather than a straight line.
+        let frequency = from + (to - from) * (x * (2.0 - x));
+        phase = (phase + frequency / SR).fract();
+        let mut sample = (TAU * phase).sin();
+        for (k, h) in harmonics.iter().enumerate() {
+            sample += h * (TAU * phase * (k + 2) as f32).sin();
+        }
+        out[first + i] += gain * note_envelope(x, attack) * sample;
+    }
+}
+
+/// Scale bringing `samples` to `rms`, unless that would push a peak past `peak`.
+fn loudness(samples: &[f32], rms: f32, peak: f32) -> f32 {
+    let power = samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32;
+    let top = samples.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
+    (rms / power.sqrt().max(1e-6)).min(peak / top)
+}
+
+fn fade_ends(samples: &mut [f32], fade_in: f32, fade_out: f32) {
+    let (a, b) = (seconds(fade_in).max(1), seconds(fade_out).max(1));
+    let len = samples.len();
+    for (i, sample) in samples.iter_mut().enumerate() {
+        *sample *= (i as f32 / a as f32).min(1.0) * ((len - i) as f32 / b as f32).min(1.0);
+    }
+}
+
+/// A cave's reverb of `dry`, from the moment it starts: four damped feedback combs per
+/// channel, at slightly different lengths left and right, into two all-passes. The tail
+/// holds about half the dry sound's energy and dies away over about two seconds.
+fn reverb(dry: &[f32]) -> [Vec<f32>; 2] {
+    let len = dry.len() + seconds(REVERB_TAIL);
+    let predelay = seconds(0.018);
+    let channel = |spread: f32| {
+        let mut out = vec![0.0f32; len];
+        for delay_ms in [53.1, 61.7, 71.3, 79.9] {
+            let delay = seconds((delay_ms + spread) / 1000.0);
+            let mut line = vec![0.0f32; delay];
+            let mut damped = 0.0f32;
+            for (i, sample) in out.iter_mut().enumerate() {
+                let input = if i >= predelay { dry.get(i - predelay).copied().unwrap_or(0.0) } else { 0.0 };
+                let delayed = line[i % delay];
+                damped += 0.35 * (delayed - damped);
+                line[i % delay] = input + 0.83 * damped;
+                *sample += delayed;
+            }
+        }
+        for (delay_ms, gain) in [(5.0, 0.7), (1.7, 0.7)] {
+            let delay = seconds((delay_ms + spread * 0.1) / 1000.0);
+            let mut line = vec![0.0f32; delay];
+            for (i, sample) in out.iter_mut().enumerate() {
+                let delayed = line[i % delay];
+                let input = *sample + gain * delayed;
+                line[i % delay] = input;
+                *sample = delayed - gain * input;
+            }
+        }
+        out
+    };
+    let mut wet = [channel(0.0), channel(2.3)];
+    let energy = |s: &[f32]| s.iter().map(|x| x * x).sum::<f32>();
+    let scale = (0.5 * energy(dry) / energy(&wet[0]).max(1e-9)).sqrt();
+    for channel in &mut wet {
+        channel.iter_mut().for_each(|s| *s *= scale);
+        fade_ends(channel, 0.0, 0.3);
+    }
+    wet
+}
+
+// --- Beds ---
+
+/// Air moving over open ground: noise through a band-pass that slides up as gusts swell,
+/// over a low body. A gale is brighter and rougher, with a faint whistle.
+fn wind(noise: &mut Noise, len: usize, gale: bool) -> Vec<f32> {
+    let gust = Drift::new(noise, if gale { 0.12 } else { 0.07 });
+    let flutter = Drift::new(noise, 1.3);
+    let pitch = Drift::new(noise, 0.07);
+    let mut body = Svf::new(300.0, 0.6);
+    let mut low = Svf::new(110.0, 0.7);
+    let mut whistle = Svf::new(900.0, 5.0);
+    (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let g = gust.unit(t);
+            let white = noise.next();
+            let (center, roughness) = if gale { (380.0 + 900.0 * g, 0.25) } else { (170.0 + 380.0 * g, 0.1) };
+            body.tune(center * (1.0 + 0.08 * flutter.at(t)));
+            let mut sample = body.band(white) * (0.2 + g) * (1.0 + roughness * flutter.at(t * 3.0));
+            sample += low.low(white) * 0.5 * (0.4 + g);
+            if gale {
+                whistle.tune(700.0 + 350.0 * pitch.at(t));
+                sample += whistle.band(white) * 0.15 * g * g;
+            }
+            sample * (0.3 + 0.7 * g.powf(1.5))
+        })
+        .collect()
+}
+
+/// Leaves: tiny bright grains of noise, many in the gusts and few in the lulls, over a
+/// faint hiss.
+fn rustle(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let gust = Drift::new(noise, 0.09);
+    let mut mask = vec![0.0f32; len];
+    let step = seconds(0.001);
+    let mut i = 0;
+    while i < len {
+        let g = gust.unit(i as f32 / SR);
+        if noise.unit() < (30.0 + 420.0 * g * g) * 0.001 {
+            let grain = seconds(between(noise, 0.0015, 0.004)).max(2);
+            let strength = 0.2 + 0.8 * noise.unit().powi(2);
+            for j in 0..grain.min(len - i) {
+                mask[i + j] += strength * (PI * j as f32 / grain as f32).sin().powi(2);
+            }
+        }
+        i += step;
+    }
+    let mut high = Svf::new(2600.0, 0.7);
+    let mut top = Svf::new(6500.0, 0.7);
+    let mut hiss = Svf::new(3800.0, 0.6);
+    (0..len)
+        .map(|i| {
+            let g = gust.unit(i as f32 / SR);
+            let white = noise.next();
+            let grains = top.low(high.high(white * mask[i]));
+            grains + hiss.band(noise.next()) * 0.06 * g
+        })
+        .collect()
+}
+
+/// Grasshoppers at a distance: each sings in bursts, a buzz of pulses in a high band, over
+/// the soft hiss of grass.
+fn meadow(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let sway = Drift::new(noise, 0.08);
+    let mut hiss = Svf::new(2400.0, 0.5);
+    let mut out: Vec<f32> = (0..len).map(|i| hiss.band(noise.next()) * 0.06 * (0.6 + 0.4 * sway.unit(i as f32 / SR))).collect();
+    for _ in 0..5 {
+        let center = between(noise, 5500.0, 7000.0);
+        let pulse_rate = between(noise, 22.0, 40.0);
+        let gain = 0.5 + 0.8 * noise.unit().powi(2);
+        let mut band = Svf::new(center, 3.0);
+        let mut t = -between(noise, 0.0, 3.0);
+        while t < len as f32 / SR {
+            let burst = between(noise, 0.8, 2.6);
+            let count = seconds(burst);
+            add_at(&mut out, t, count, |j| {
+                let pulse = (PI * pulse_rate * j as f32 / SR).sin().abs().powi(6);
+                band.band(noise.next()) * pulse * note_envelope(j as f32 / count as f32, 0.15) * gain
+            });
+            t += burst + between(noise, 1.0, 4.0);
+        }
+    }
+    out
+}
+
+/// A night chorus: crickets at different distances, each chirping three or four quick
+/// pulses of a pure high tone at its own steady pace.
+fn crickets(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; len];
+    let mut distant = Svf::new(4500.0, 5.0);
+    let swell = Drift::new(noise, 0.15);
+    for (i, sample) in out.iter_mut().enumerate() {
+        let t = i as f32 / SR;
+        *sample = distant.band(noise.next()) * 0.08 * (0.5 + 0.5 * swell.unit(t)) * (PI * 2.5 * t).sin().abs();
+    }
+    for _ in 0..16 {
+        let frequency = between(noise, 4000.0, 5000.0);
+        let period = between(noise, 0.35, 0.7);
+        let pulses = 3 + (noise.unit() * 2.0) as usize;
+        let gain = 0.3 + 0.7 * noise.unit().powi(2);
+        let mut t = -between(noise, 0.0, period);
+        while t < len as f32 / SR {
+            for p in 0..pulses {
+                let count = seconds(0.016);
+                add_at(&mut out, t + p as f32 * 0.03, count, |j| {
+                    gain * (PI * j as f32 / count as f32).sin().powi(2) * (TAU * frequency * j as f32 / SR).sin()
+                });
+            }
+            t += period * (0.96 + 0.08 * noise.unit());
+        }
+    }
+    out
+}
+
+/// A brook: a stream of small bubbles, each a rising, quickly fading tone, over the
+/// flickering rush of the water and a low body.
+fn stream(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let flicker = Drift::new(noise, 6.0);
+    let mut rush = Svf::new(1200.0, 0.8);
+    let mut body = Svf::new(250.0, 0.7);
+    let mut out: Vec<f32> = (0..len)
+        .map(|i| {
+            let white = noise.next();
+            rush.band(white) * (0.12 + 0.08 * flicker.at(i as f32 / SR)) + body.low(white) * 0.15
+        })
+        .collect();
+    let mut t = 0.0;
+    while t < len as f32 / SR {
+        let start = seconds(t);
+        let base = 300.0 + 900.0 * noise.unit().powi(2);
+        let rise = between(noise, 3.0, 9.0);
+        let decay = between(noise, 25.0, 60.0);
+        let gain = 0.1 + 0.5 * noise.unit().powi(3);
+        let mut phase = 0.0f32;
+        for j in 0..seconds(5.0 / decay) {
+            let Some(sample) = out.get_mut(start + j) else { break };
+            let local = j as f32 / SR;
+            phase = (phase + base * (1.0 + rise * local) / SR).fract();
+            *sample += gain * (TAU * phase).sin() * (-local * decay).exp();
+        }
+        t += -(1.0 - noise.unit()).max(1e-6).ln() / 35.0;
+    }
+    out
+}
+
+/// Surf: waves every several seconds swelling to a crash, the filter opening with each,
+/// then a hissing wash, over the low murmur of the sea.
+fn surf(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut waves = Vec::new();
+    let mut t = -between(noise, 0.0, 9.0);
+    while t < len as f32 / SR {
+        waves.push((t, between(noise, 1.5, 2.6), 0.6 + 0.4 * noise.unit()));
+        t += between(noise, 6.0, 11.0);
+    }
+    let mut surge = Svf::new(400.0, 0.7);
+    let mut wash = Svf::new(3000.0, 0.6);
+    let mut murmur = Svf::new(120.0, 0.7);
+    (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let (mut crash, mut tail) = (0.0f32, 0.0f32);
+            for &(start, rise, strength) in &waves {
+                let x = t - start;
+                if x < 0.0 {
+                    continue;
+                }
+                let swell = if x < rise { (x / rise).powi(2) } else { (-(x - rise) / 1.6).exp() };
+                crash = crash.max(strength * swell);
+                if x > rise {
+                    tail = tail.max(strength * (-(x - rise) / 3.5).exp() * (1.0 - (-(x - rise) * 3.0).exp()));
+                }
+            }
+            let white = noise.next();
+            surge.tune(250.0 + 2200.0 * crash);
+            surge.low(white) * (0.1 + crash) + wash.band(white) * 0.25 * tail + murmur.low(white) * 0.3
+        })
+        .collect()
+}
+
+/// The air of a cave: a very low, slowly moving rumble, one faint resonance of the
+/// chamber, and a whisper of draught.
+fn cave(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let breathe = Drift::new(noise, 0.05);
+    let mut deep = Svf::new(80.0, 0.7);
+    let mut room = Svf::new(between(noise, 150.0, 220.0), 6.0);
+    let mut draught = Svf::new(650.0, 1.5);
+    (0..len)
+        .map(|i| {
+            let b = breathe.unit(i as f32 / SR);
+            let white = noise.next();
+            deep.low(white) * (0.6 + 0.4 * b) * 1.5 + room.band(white) * 0.15 + draught.band(white) * 0.04 * b
+        })
+        .collect()
+}
+
+// --- One-shots ---
+
+/// Trills and twitters: a few quick notes, then a short motif repeated as a trill.
+fn warbler(noise: &mut Noise) -> Vec<f32> {
+    let mut out = Vec::new();
+    let base = between(noise, 2600.0, 4200.0);
+    let mut t = 0.03;
+    let note = |noise: &mut Noise| {
+        let from = base * between(noise, 0.75, 1.4);
+        (from, from * between(noise, 0.7, 1.3), between(noise, 0.035, 0.08))
+    };
+    for _ in 0..2 + (noise.unit() * 4.0) as usize {
+        let (from, to, length) = note(noise);
+        tone(&mut out, t, length, from, to, between(noise, 0.5, 1.0), 0.2, &[0.12]);
+        t += length + between(noise, 0.02, 0.06);
+    }
+    let motif: Vec<_> = (0..2 + (noise.unit() * 2.0) as usize).map(|_| note(noise)).collect();
+    for _ in 0..2 + (noise.unit() * 4.0) as usize {
+        for &(from, to, length) in &motif {
+            tone(&mut out, t, length * 0.8, from, to, 0.8, 0.2, &[0.12]);
+            t += length * 0.8 + 0.012;
+        }
+    }
+    let (from, to, length) = note(noise);
+    tone(&mut out, t + 0.04, length * 1.6, from, to * 0.85, 0.6, 0.15, &[0.12]);
+    out
+}
+
+/// A thrush's song: a fluted phrase of a few notes, sung two or three times, then a
+/// quieter twitter.
+fn thrush(noise: &mut Noise) -> Vec<f32> {
+    let mut out = Vec::new();
+    let phrase: Vec<_> = (0..3 + (noise.unit() * 3.0) as usize)
+        .map(|_| {
+            let from = between(noise, 1600.0, 3800.0);
+            (from, from * between(noise, 0.8, 1.2), between(noise, 0.09, 0.22))
+        })
+        .collect();
+    let mut t = 0.03;
+    for _ in 0..2 + (noise.unit() * 2.0) as usize {
+        for &(from, to, length) in &phrase {
+            tone(&mut out, t, length, from, to, 0.9, 0.25, &[0.15, 0.04]);
+            t += length + 0.03;
+        }
+        t += between(noise, 0.12, 0.25);
+    }
+    for _ in 0..4 {
+        let from = between(noise, 3000.0, 5000.0);
+        tone(&mut out, t, 0.04, from, from * 1.2, 0.35, 0.2, &[0.1]);
+        t += 0.06;
+    }
+    out
+}
+
+/// Two or three clear whistles, each lower than the last, the second with a slight hitch.
+fn whistler(noise: &mut Noise) -> Vec<f32> {
+    let mut out = Vec::new();
+    let high = between(noise, 3700.0, 4200.0);
+    tone(&mut out, 0.03, 0.32, high, high * 0.98, 1.0, 0.15, &[0.05]);
+    let low = high * between(noise, 0.8, 0.86);
+    tone(&mut out, 0.43, 0.13, low, low * 1.01, 0.9, 0.3, &[0.05]);
+    tone(&mut out, 0.57, 0.15, low * 1.01, low * 0.99, 0.9, 0.2, &[0.05]);
+    if noise.unit() < 0.4 {
+        tone(&mut out, 0.82, 0.25, low * 0.98, low * 0.96, 0.7, 0.2, &[0.05]);
+    }
+    out
+}
+
+/// A dove's coo, "hoo-HOO-hoo-hoo": soft, low and rounded, each note rising then
+/// falling.
+fn dove(noise: &mut Noise) -> Vec<f32> {
+    let mut out = Vec::new();
+    let pitch = between(noise, 420.0, 520.0);
+    let mut t = 0.05;
+    for (length, gain) in [(0.35, 0.6), (0.55, 1.0), (0.3, 0.7), (0.3, 0.6)] {
+        let half = length / 2.0;
+        tone(&mut out, t, half, pitch, pitch * 1.1, gain, 0.4, &[0.3, 0.1]);
+        tone(&mut out, t + half, half, pitch * 1.1, pitch * 0.9, gain, 0.05, &[0.3, 0.1]);
+        t += length + between(noise, 0.12, 0.2);
+    }
+    let mut soft = Svf::new(1200.0, 0.7);
+    out.iter_mut().for_each(|s| *s = soft.low(*s));
+    out
+}
+
+/// A woodpecker's drum roll: a quick, even run of woody knocks, fading a little.
+fn woodpecker(noise: &mut Noise) -> Vec<f32> {
+    let knocks = 14 + (noise.unit() * 10.0) as usize;
+    let interval = 1.0 / between(noise, 16.0, 22.0);
+    let body = between(noise, 650.0, 900.0);
+    let mut out = vec![0.0f32; seconds(knocks as f32 * interval + 0.2)];
+    let mut band = Svf::new(1500.0, 2.0);
+    for k in 0..knocks {
+        let start = seconds(0.02 + k as f32 * interval);
+        let gain = 0.95f32.powi(k as i32);
+        for j in 0..seconds(0.04) {
+            let local = j as f32 / SR;
+            let crack = band.band(noise.next()) * (-local * 400.0).exp();
+            out[start + j] += gain * (crack + 0.6 * (TAU * body * local).sin() * (-local * 90.0).exp());
+        }
+    }
+    out
+}
+
+/// An owl's hoots, low and breathy: one, then a pair or a run.
+fn owl(noise: &mut Noise) -> Vec<f32> {
+    let mut out = Vec::new();
+    let pitch = between(noise, 330.0, 390.0);
+    let mut t = 0.05;
+    for _ in 0..2 + (noise.unit() * 3.0) as usize {
+        let length = between(noise, 0.25, 0.5);
+        tone(&mut out, t, length, pitch * 1.02, pitch * 0.95, 1.0, 0.25, &[0.2, 0.05]);
+        t += length + between(noise, 0.15, 0.6);
+    }
+    let mut breath = Svf::new(600.0, 0.8);
+    let len = out.len();
+    for (i, sample) in out.iter_mut().enumerate() {
+        *sample += breath.band(noise.next()) * 0.08 * sample.abs().min(1.0) * (1.0 - i as f32 / len as f32);
+    }
+    out
+}
+
+/// One cricket chirping for a few seconds.
+fn cricket(noise: &mut Noise) -> Vec<f32> {
+    let frequency = between(noise, 4200.0, 5000.0);
+    let period = between(noise, 0.4, 0.6);
+    let mut out = vec![0.0f32; seconds(between(noise, 2.0, 3.5))];
+    let mut t = 0.02;
+    while seconds(t + 0.12) < out.len() {
+        for p in 0..3 {
+            let start = seconds(t + p as f32 * 0.03);
+            let count = seconds(0.016);
+            for j in 0..count {
+                out[start + j] += (PI * j as f32 / count as f32).sin().powi(2) * (TAU * frequency * j as f32 / SR).sin();
+            }
+        }
+        t += period;
+    }
+    out
+}
+
+/// A frog's croaks: buzzy pulse trains through the throat's resonances.
+fn frog(noise: &mut Noise) -> Vec<f32> {
+    let mut out = Vec::new();
+    let pitch = between(noise, 90.0, 140.0);
+    let formants = (between(noise, 600.0, 900.0), between(noise, 1300.0, 1700.0));
+    let mut t = 0.03;
+    for _ in 0..1 + (noise.unit() * 3.0) as usize {
+        let length = between(noise, 0.2, 0.4);
+        let flutter = between(noise, 14.0, 24.0);
+        let (mut low, mut high) = (Svf::new(formants.0, 3.0), Svf::new(formants.1, 4.0));
+        let first = seconds(t);
+        let count = seconds(length);
+        out.resize(first + count, 0.0);
+        let mut phase = 0.0f32;
+        for j in 0..count {
+            let local = j as f32 / SR;
+            phase = (phase + pitch * (1.0 - 0.1 * local / length) / SR).fract();
+            let pulse = (-((phase - 0.5) / 0.06).powi(2)).exp() - 0.15;
+            let throb = 0.6 + 0.4 * (TAU * flutter * local).sin();
+            out[first + j] += (low.band(pulse) + 0.5 * high.band(pulse)) * throb * note_envelope(j as f32 / count as f32, 0.1);
+        }
+        t += length + between(noise, 0.25, 0.5);
+    }
+    out
+}
+
+/// A plop: a small splash and a few rising bubbles.
+fn plop(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(0.5)];
+    let mut splash = Svf::new(2500.0, 0.8);
+    for (j, sample) in out.iter_mut().enumerate().take(seconds(0.03)) {
+        *sample += splash.band(noise.next()) * 0.4 * (-(j as f32 / SR) * 120.0).exp();
+    }
+    let mut start = seconds(0.005);
+    for _ in 0..1 + (noise.unit() * 3.0) as usize {
+        let base = between(noise, 350.0, 900.0);
+        let decay = between(noise, 35.0, 55.0);
+        let mut phase = 0.0f32;
+        for j in 0..seconds(5.0 / decay) {
+            let Some(sample) = out.get_mut(start + j) else { break };
+            let local = j as f32 / SR;
+            phase = (phase + base * (1.0 + 6.0 * local) / SR).fract();
+            *sample += 0.8 * (TAU * phase).sin() * (-local * decay).exp();
+        }
+        start += seconds(between(noise, 0.04, 0.12));
+    }
+    out
+}
+
+/// A gust: air rising in pitch and strength over a second or two, then passing.
+fn gust(noise: &mut Noise) -> Vec<f32> {
+    let length = seconds(between(noise, 2.5, 4.0));
+    let peak = between(noise, 0.35, 0.55);
+    let mut body = Svf::new(300.0, 0.8);
+    let mut air = Svf::new(2500.0, 0.6);
+    (0..length)
+        .map(|i| {
+            let x = i as f32 / length as f32;
+            let swell = if x < peak { (PI / 2.0 * x / peak).sin().powi(2) } else { (PI / 2.0 * (1.0 - x) / (1.0 - peak)).sin().powi(2) };
+            let white = noise.next();
+            body.tune(250.0 + 900.0 * swell);
+            body.band(white) * swell + air.band(white) * 0.2 * swell * swell
+        })
+        .collect()
+}
+
+/// A drop landing in a pool: a click, then a bright tone that bends upwards as it rings.
+fn drip(noise: &mut Noise) -> Vec<f32> {
+    let pitch = between(noise, 1400.0, 3200.0);
+    let decay = between(noise, 30.0, 45.0);
+    let mut osc = Osc::default();
+    (0..seconds(0.25))
+        .map(|i| {
+            let t = i as f32 / SR;
+            let click = if t < 0.001 { noise.next() * 0.3 } else { 0.0 };
+            click + osc.next(pitch * (1.0 + 0.25 * (1.0 - (-t * 60.0).exp()))) * (-t * decay).exp()
+        })
+        .collect()
+}
+
+/// Rock settling far off: a long, very low swell with a little grit.
+fn rumble(noise: &mut Noise) -> Vec<f32> {
+    let length = seconds(between(noise, 4.0, 6.0));
+    let rise = between(noise, 0.15, 0.35);
+    let (mut a, mut b, mut grit) = (Svf::new(60.0, 0.7), Svf::new(60.0, 0.7), Svf::new(130.0, 2.0));
+    (0..length)
+        .map(|i| {
+            let x = i as f32 / length as f32;
+            let white = noise.next();
+            let swell = if x < rise { (x / rise).powi(2) } else { ((1.0 - x) / (1.0 - rise)).powf(1.5) };
+            (b.low(a.low(white)) * 4.0 + grit.band(white) * 0.3) * swell
+        })
+        .collect()
+}
+
+/// Wood straining: stick-slip pulses whose rate glides, through the wood's resonances.
+fn creak(noise: &mut Noise) -> Vec<f32> {
+    let length = seconds(between(noise, 0.5, 1.1));
+    let (from, to) = if noise.unit() < 0.5 { (70.0, 140.0) } else { (140.0, 80.0) };
+    let mut out = vec![0.0f32; length];
+    let mut t = 0.0f32;
+    while seconds(t) < length {
+        let x = seconds(t) as f32 / length as f32;
+        let start = seconds(t);
+        for (j, sample) in out[start..].iter_mut().enumerate().take(seconds(0.002)) {
+            *sample += (-(j as f32) / SR * 3000.0).exp() * (0.6 + 0.4 * noise.unit());
+        }
+        t += (1.0 / (from + (to - from) * x)) * (0.9 + 0.2 * noise.unit());
+    }
+    let (mut low, mut high) = (Svf::new(between(noise, 700.0, 1000.0), 4.0), Svf::new(2200.0, 5.0));
+    for (i, sample) in out.iter_mut().enumerate() {
+        let x = *sample;
+        *sample = (low.band(x) + 0.4 * high.band(x)) * note_envelope(i as f32 / length as f32, 0.3);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clean(samples: &[f32], what: &str) {
+        assert!(!samples.is_empty(), "{what} is empty");
+        assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "{what} has bad samples");
+        assert!(loudness(samples, 1.0, 1e9).is_finite(), "{what}");
+        let power = samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32;
+        assert!(power > 1e-5, "{what} is silent");
+    }
+
+    #[test]
+    fn beds_are_clean_and_join_without_a_seam() {
+        for synth in Synth::ALL.into_iter().filter(|s| s.is_bed()) {
+            let [left, right] = bed(synth, 0);
+            clean(&left, &format!("{synth:?} left"));
+            clean(&right, &format!("{synth:?} right"));
+            // Segments start and end silent and are full in the middle, so overlapped
+            // segments crossfade evenly.
+            assert!(left[0] == 0.0 && left.last().unwrap().abs() < 1e-3, "{synth:?}");
+            let rms = |s: &[f32]| (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt();
+            let middle = rms(&left[left.len() / 3..2 * left.len() / 3]);
+            assert!((0.05..0.4).contains(&middle), "{synth:?} middle loudness {middle}");
+            // The channels differ, so the bed is wide.
+            assert!(left.iter().zip(&right).any(|(l, r)| (l - r).abs() > 0.01), "{synth:?}");
+        }
+    }
+
+    #[test]
+    fn one_shots_are_clean_and_ring_on_in_a_cave() {
+        for synth in Synth::ALL.into_iter().filter(|s| !s.is_bed()) {
+            for variant in 0..2 {
+                let (dry, [left, right]) = one_shot(synth, variant);
+                clean(&dry, &format!("{synth:?}"));
+                assert!(dry.len() < seconds(8.0), "{synth:?} is too long");
+                assert!(dry.last().unwrap().abs() < 0.01, "{synth:?} ends abruptly");
+                clean(&left, &format!("{synth:?} reverb"));
+                assert!(left.len() > dry.len() && right.len() == left.len());
+            }
+        }
+    }
+
+    #[test]
+    fn variants_differ() {
+        assert_ne!(one_shot(Synth::Warbler, 0).0, one_shot(Synth::Warbler, 1).0);
+        assert_ne!(bed(Synth::Wind, 0)[0], bed(Synth::Wind, 1)[0]);
+    }
+}

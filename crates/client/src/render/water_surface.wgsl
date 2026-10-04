@@ -360,7 +360,7 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
         let shore = 1.0 - saturate((world.y - straight.y) / FOAM_DEPTH);
         let t = globals.time * 0.25;
         let bubbles = foam_noise(world.xz * 2.5 + vec2(t, -t * 0.7)) * 0.65 + foam_noise(world.xz * 9.0 - vec2(t * 1.6, t)) * 0.35;
-        foam = smoothstep(0.55, 0.8, bubbles + shore * shore * 0.5) * shore * 0.6;
+        foam = smoothstep(0.45, 0.75, bubbles) * shore * shore * 0.5;
     }
     foam = saturate(foam * water.strengths.y);
     if foam > 0.0 {

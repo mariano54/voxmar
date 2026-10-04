@@ -72,6 +72,8 @@ pub struct Settings {
     pub music_volume: i32,
     /// Sound effects volume, in percent.
     pub sound_volume: i32,
+    /// Ambient sound volume (wind, birds, water), in percent of the sound effects'.
+    pub ambience_volume: i32,
     pub debug_overlay: bool,
     /// Flight speed, in percent. Only admins may fly faster than normal.
     pub fly_speed: i32,
@@ -92,6 +94,27 @@ pub struct Settings {
     pub shader_pack: String,
     /// How much work water does: waves, and reflections of the terrain (`render::water`).
     pub water_quality: WaterQuality,
+    /// Which texture pack comes first; takes effect the next time the game starts.
+    pub textures: TextureOrder,
+}
+
+/// Which texture pack the game prefers (see `textures`). `$VOXMAR_TEXTURES` overrides both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextureOrder {
+    /// The player's Minecraft textures where they have them, ours for everything else.
+    #[default]
+    Minecraft,
+    /// Our own pack for everything.
+    Voxmar,
+}
+
+impl TextureOrder {
+    fn label(self) -> &'static str {
+        match self {
+            TextureOrder::Minecraft => "Minecraft first",
+            TextureOrder::Voxmar => "Voxmar",
+        }
+    }
 }
 
 /// The look new players start with.
@@ -133,6 +156,7 @@ impl Default for Settings {
             sensitivity: 100,
             music_volume: 100,
             sound_volume: 100,
+            ambience_volume: 100,
             debug_overlay: false,
             fly_speed: 100,
             anti_aliasing: AntiAliasing::default(),
@@ -144,6 +168,7 @@ impl Default for Settings {
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
             water_quality: WaterQuality::default(),
+            textures: TextureOrder::default(),
         }
     }
 }
@@ -215,19 +240,21 @@ enum Slider {
     Sensitivity,
     Music,
     Sounds,
+    Ambience,
     FlySpeed,
     Zoom,
     HudRaise,
 }
 
 impl Slider {
-    const ALL: [Slider; 8] = [
+    const ALL: [Slider; 9] = [
         Slider::ViewDistance,
         Slider::Fov,
         Slider::HudRaise,
         Slider::Sensitivity,
         Slider::Music,
         Slider::Sounds,
+        Slider::Ambience,
         Slider::FlySpeed,
         Slider::Zoom,
     ];
@@ -239,6 +266,7 @@ impl Slider {
             Slider::Sensitivity => "Mouse sensitivity",
             Slider::Music => "Music",
             Slider::Sounds => "Sound effects",
+            Slider::Ambience => "Ambience",
             Slider::FlySpeed => "Fly speed",
             Slider::Zoom => "Zoom",
             Slider::HudRaise => "Raise HUD",
@@ -251,7 +279,7 @@ impl Slider {
             Slider::ViewDistance => (4, 32, 2),
             Slider::Fov => (60, 110, 5),
             Slider::Sensitivity => (25, 300, 5),
-            Slider::Music | Slider::Sounds => (0, 100, 10),
+            Slider::Music | Slider::Sounds | Slider::Ambience => (0, 100, 10),
             Slider::FlySpeed => (100, (MAX_FLY_SPEED * 100.0) as i32, 25),
             Slider::Zoom => ((Zoom::MIN * 100.0) as i32, 1000, 50),
             Slider::HudRaise => (0, 40, 1),
@@ -265,6 +293,7 @@ impl Slider {
             Slider::Sensitivity => settings.sensitivity,
             Slider::Music => settings.music_volume,
             Slider::Sounds => settings.sound_volume,
+            Slider::Ambience => settings.ambience_volume,
             Slider::FlySpeed => settings.fly_speed,
             Slider::Zoom => settings.zoom,
             Slider::HudRaise => settings.hud_raise,
@@ -278,6 +307,7 @@ impl Slider {
             Slider::Sensitivity => &mut settings.sensitivity,
             Slider::Music => &mut settings.music_volume,
             Slider::Sounds => &mut settings.sound_volume,
+            Slider::Ambience => &mut settings.ambience_volume,
             Slider::FlySpeed => &mut settings.fly_speed,
             Slider::Zoom => &mut settings.zoom,
             Slider::HudRaise => &mut settings.hud_raise,
@@ -288,8 +318,8 @@ impl Slider {
         match self {
             Slider::ViewDistance => format!("{value} chunks"),
             Slider::Fov => format!("{value}°"),
-            Slider::Music | Slider::Sounds if value == 0 => "Off".into(),
-            Slider::Sensitivity | Slider::Music | Slider::Sounds => format!("{value}%"),
+            Slider::Music | Slider::Sounds | Slider::Ambience if value == 0 => "Off".into(),
+            Slider::Sensitivity | Slider::Music | Slider::Sounds | Slider::Ambience => format!("{value}%"),
             Slider::FlySpeed | Slider::Zoom => format!("{}×", value as f32 / 100.0),
             Slider::HudRaise if value == 0 => "Off".into(),
             Slider::HudRaise => format!("{value} px"),
@@ -341,6 +371,7 @@ enum Choice {
     AntiAliasing,
     ShaderPack,
     Water,
+    Textures,
 }
 
 impl Choice {
@@ -349,6 +380,7 @@ impl Choice {
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
             Choice::Water => "Water",
+            Choice::Textures => "Textures (on restart)",
         }
     }
 
@@ -357,6 +389,7 @@ impl Choice {
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
             Choice::Water => settings.water_quality.label().into(),
+            Choice::Textures => settings.textures.label().into(),
         }
     }
 
@@ -370,6 +403,12 @@ impl Choice {
             Choice::Water => {
                 let i = WaterQuality::ALL.iter().position(|&q| q == settings.water_quality).unwrap_or(0);
                 settings.water_quality = WaterQuality::ALL[(i + 1) % WaterQuality::ALL.len()];
+            }
+            Choice::Textures => {
+                settings.textures = match settings.textures {
+                    TextureOrder::Minecraft => TextureOrder::Voxmar,
+                    TextureOrder::Voxmar => TextureOrder::Minecraft,
+                }
             }
         }
     }
@@ -420,6 +459,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Slider(Slider::ViewDistance),
             Control::Slider(Slider::Fov),
             Control::Choice(Choice::ShaderPack),
+            Control::Choice(Choice::Textures),
             Control::Choice(Choice::AntiAliasing),
             Control::Choice(Choice::Water),
             Control::Slider(Slider::HudRaise),
@@ -427,7 +467,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Switch(Toggle::DebugOverlay),
         ],
     ),
-    ("Audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds)]),
+    ("Audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds), Control::Slider(Slider::Ambience)]),
     (
         "Controls",
         &[
@@ -698,6 +738,7 @@ fn click_buttons(
 }
 
 /// Mirrors the settings in the menu's controls.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_controls(
     settings: Res<Settings>,
     mut fills: Query<(&SliderFill, &mut Node), Without<Switch>>,

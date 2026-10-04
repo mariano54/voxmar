@@ -223,15 +223,26 @@ fn steepest(at: &mut impl FnMut(IVec2) -> (f32, i32), cell: IVec2, skip: Option<
     best.map(|(_, k)| k)
 }
 
-/// Whether water at `from` runs straight to its neighbour `to`, before the crossing rule.
-fn runs_to(at: &mut impl FnMut(IVec2) -> (f32, i32), from: IVec2, to: IVec2) -> bool {
-    let (height, absorbed) = at(from);
-    height >= SEA_LEVEL as f32 && absorbed == DRY && steepest(at, from, None) == Some(direction(to - from))
-}
-
 /// Where water at a cell goes before pits are resolved: a direction, `SEA`, `ABSORBED`
 /// or `SINK`.
 fn route(at: &mut impl FnMut(IVec2) -> (f32, i32), cell: IVec2) -> u8 {
+    let mut best = |c: IVec2, at: &mut dyn FnMut(IVec2) -> (f32, i32)| {
+        let mut at = |c: IVec2| at(c);
+        steepest(&mut at, c, None)
+    };
+    route_by(at, &mut best, cell)
+}
+
+/// `route`, with each cell's steepest descent given by `best`.
+fn route_with(at: &mut impl FnMut(IVec2) -> (f32, i32), best: &impl Fn(IVec2) -> Option<u8>, cell: IVec2) -> u8 {
+    route_by(at, &mut |c: IVec2, _: &mut dyn FnMut(IVec2) -> (f32, i32)| best(c), cell)
+}
+
+fn route_by(
+    at: &mut impl FnMut(IVec2) -> (f32, i32),
+    best: &mut impl FnMut(IVec2, &mut dyn FnMut(IVec2) -> (f32, i32)) -> Option<u8>,
+    cell: IVec2,
+) -> u8 {
     let (height, absorbed) = at(cell);
     if height < SEA_LEVEL as f32 {
         return SEA;
@@ -239,15 +250,19 @@ fn route(at: &mut impl FnMut(IVec2) -> (f32, i32), cell: IVec2) -> u8 {
     if absorbed != DRY {
         return ABSORBED;
     }
-    let Some(k) = steepest(at, cell, None) else { return SINK };
+    let Some(k) = best(cell, at) else { return SINK };
     if k % 2 == 1 {
         // The other diagonal of the same square runs between the two side cells. Of two
         // crossing diagonals, the one from the higher cell stays.
         let d = DIRS[k as usize];
         let (a, b) = (cell + IVec2::new(d.x, 0), cell + IVec2::new(0, d.y));
-        let rival = if runs_to(at, a, b) {
+        let mut runs_to = |from: IVec2, to: IVec2| {
+            let (height, absorbed) = at(from);
+            height >= SEA_LEVEL as f32 && absorbed == DRY && best(from, at) == Some(direction(to - from))
+        };
+        let rival = if runs_to(a, b) {
             Some(a)
-        } else if runs_to(at, b, a) {
+        } else if runs_to(b, a) {
             Some(b)
         } else {
             None
@@ -793,8 +808,17 @@ impl Drainage {
 
         // Raw routing wherever it can be worked out from the window (two cells short of
         // its edge), and every pit there with its lake.
+        // Each cell's steepest descent is found once, one cell short of the edge, then
+        // shared by the crossing rule of its neighbours.
+        let inner = width - 2;
+        let best: Vec<Option<u8>> = (0..inner * inner).map(|i| steepest(&mut at, low + 1 + IVec2::new(i % inner, i / inner), None)).collect();
         let span = width - 4;
-        let raw: Vec<u8> = (0..span * span).map(|i| route(&mut at, low + 2 + IVec2::new(i % span, i / span))).collect();
+        let raw: Vec<u8> = (0..span * span)
+            .map(|i| {
+                let cell = low + 2 + IVec2::new(i % span, i / span);
+                route_with(&mut at, &|c: IVec2| best[((c.y - low.y - 1) * inner + c.x - low.x - 1) as usize], cell)
+            })
+            .collect();
         let raw_at = |c: IVec2| raw[((c.y - low.y - 2) * span + c.x - low.x - 2) as usize];
         let mut lakes: Vec<Arc<Lake>> = Vec::new();
         let reach = tier.reach() + CORE + 1;

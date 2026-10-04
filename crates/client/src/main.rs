@@ -4,7 +4,8 @@
 //! `--world NAME` play (or create) the saved world NAME, `--connect HOST[:PORT]` join a
 //! server, `--capture PATH` (screenshot and exit once loaded; plays an unsaved world unless
 //! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
-//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--time
+//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--wait
+//! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--menu` (show the settings menu) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
@@ -14,6 +15,7 @@
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings.
 
+mod ambience;
 mod capture;
 mod hud;
 mod interact;
@@ -65,6 +67,7 @@ struct Options {
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    wait: f32,
     time: Option<f32>,
     menu: bool,
     screen: Option<Screen>,
@@ -86,6 +89,7 @@ fn parse_options() -> Result<Options, String> {
         capture: None,
         pose: None,
         flight: None,
+        wait: 0.0,
         time: None,
         menu: false,
         screen: None,
@@ -111,6 +115,7 @@ fn parse_options() -> Result<Options, String> {
             "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
+            "--wait" => options.wait = value()?.parse().map_err(|e| format!("--wait: {e}"))?,
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
             "--screen" => {
@@ -150,6 +155,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
+    // Captures run the ambience without playing it, so its log shows what would play.
+    if options.capture.is_some() {
+        settings.ambience_volume = 0;
+    }
     let settings = settings.clamped();
 
     let mut app = App::new();
@@ -219,11 +228,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if options.music && options.capture.is_none() {
         app.add_plugins(music::MusicPlugin);
     }
+    app.add_plugins(ambience::AmbiencePlugin);
     if let Some(path) = options.capture {
         app.add_plugins(capture::CapturePlugin {
             path,
             pose: options.pose,
             flight: options.flight,
+            wait: options.wait,
             time: options.time,
             menu: options.menu,
         });
@@ -264,6 +275,7 @@ pub struct Actions(pub Arc<ActionRegistry>);
 fn setup(
     mut commands: Commands,
     registry: Res<Registry>,
+    settings: Res<Settings>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
@@ -271,7 +283,7 @@ fn setup(
     terrain: Res<render::terrain::Terrain>,
 ) {
     let registry = &registry.0;
-    let mut source = Source::discover();
+    let mut source = Source::discover(settings.textures);
     let (_, mut block_textures) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
@@ -293,14 +305,45 @@ fn setup(
     let palette = LodPalette::new(registry, &block_textures, &colormaps);
     commands.insert_resource(Lod::new(palette, terrain.clone(), world.view_distance));
 
+    // Inventory icons: a block's own `icon` when it names one, a plant's sprite, or a cube
+    // seen from above, with tinted faces in a temperate climate's colours.
+    let temperate = |map: &Rgba| {
+        let (x, y) = ((0.3 * 255.0) as u32, ((1.0 - 0.6 * 0.7) * 255.0) as u32);
+        let i = ((y * map.width + x) * 4) as usize;
+        [0, 1, 2].map(|c| map.pixels[i + c] as f32 / 255.0)
+    };
+    let tints = [temperate(&colormaps[0]), temperate(&colormaps[1])];
+    let face_texture = |info: &voxmar_engine::block::BlockInfo, face: Face| {
+        let mut texture = block_textures[info.layers[face as usize] as usize].clone();
+        match info.tints[face as usize] {
+            Tint::None => {}
+            Tint::Grass => tint(&mut texture, tints[0]),
+            Tint::Foliage => tint(&mut texture, tints[1]),
+            Tint::Water => tint(&mut texture, [0.25, 0.45, 0.85]),
+        }
+        texture
+    };
+    let as_image = |t: Rgba| voxmar_texgen::Image { width: t.width, height: t.height, pixels: t.pixels };
     let icons = (0..registry.len())
         .map(|id| {
-            let info = registry.info(voxmar_engine::block::BlockId(id as u16));
-            let face = if info.tints[Face::PosZ as usize] != Tint::None { Face::PosY } else { Face::PosZ };
-            let mut icon = block_textures[info.layers[face as usize] as usize].clone();
-            if info.tints[face as usize] != Tint::None {
-                tint(&mut icon, [0.45, 0.72, 0.3]);
-            }
+            let block = voxmar_engine::block::BlockId(id as u16);
+            let (info, def) = (registry.info(block), registry.def(block));
+            let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
+            let icon = own.unwrap_or_else(|| match info.render {
+                RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
+                _ => {
+                    // Leaves would show only their holes' rims: draw them as a solid bush.
+                    let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {
+                        let mut texture = face_texture(info, face);
+                        if info.render == RenderKind::Leaves {
+                            texture.fill_transparent();
+                        }
+                        as_image(texture)
+                    });
+                    let cube = voxmar_texgen::icon::isometric(&top, &left, &right, 32);
+                    Rgba { width: cube.width, height: cube.height, pixels: cube.pixels }
+                }
+            });
             images.add(ui_image(&icon))
         })
         .collect();

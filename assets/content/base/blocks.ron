@@ -3,7 +3,8 @@
 // Texture names refer to `textures/block/<name>` in the texture packs (our default pack in
 // assets/packs/default draws them all); `color` is the placeholder used when no pack has
 // the texture. `sound` is the material it sounds like (Stone when omitted). Plants are not
-// solid, break instantly and need ground beneath; `drops: "core:air"` drops nothing.
+// solid, break instantly and need ground beneath; `support: Above` makes a plant hang from
+// the block above instead, and go with it. `drops: "core:air"` drops nothing.
 //
 // `templates` make whole families of blocks: each family below is one line that fills in
 // `{name}` (see engine/src/block.rs). `variants` are other looks of a plant: each becomes
@@ -19,6 +20,8 @@
 //   log, stripped, wood, planks, leaves, sapling, fuel
 //   plant, flower, herb, grass, fern, reed, bush, fungus, groundcover
 //   natural, cobbled, polished, bricks, building, light (gives light), glass
+//   mossy, ruined (weathered building blocks), volcanic, dripstone, stalagmite,
+//   stalactite, hanging (grows down from a ceiling)
 // Rock: igneous, sedimentary, metamorphic; where it shows: cliff (bare rock faces), cave
 //   (cave walls), deep (well below the surface), surface (topsoil or ground cover)
 // Soil: fertile, wet, dry, acidic, sandy
@@ -67,6 +70,21 @@
             (name: "cobbled_{name}", textures: All("cobbled_{name}"), hardness: 2.0, color: (110, 110, 110), tags: ["stone", "cobbled", "building"]),
             (name: "polished_{name}", textures: All("polished_{name}"), hardness: 1.5, color: (135, 135, 135), tags: ["stone", "polished", "building"]),
             (name: "{name}_bricks", textures: All("{name}_bricks"), hardness: 1.5, color: (120, 120, 120), tags: ["stone", "bricks", "building"]),
+            (name: "mossy_cobbled_{name}", textures: All("mossy_cobbled_{name}"), hardness: 2.0, drops: "cobbled_{name}", color: (100, 118, 90), tags: ["stone", "cobbled", "building", "mossy", "wet"]),
+            (name: "cracked_{name}_bricks", textures: All("cracked_{name}_bricks"), hardness: 1.5, color: (115, 115, 115), tags: ["stone", "bricks", "building", "ruined"]),
+        ],
+        // A flower or herb, with two more looks: a pair of blooms and a clump of three,
+        // which give that many when picked.
+        "flower": [
+            (
+                name: "{name}", render: Plant, solid: false, sound: Grass, textures: All("{name}"), hardness: 0.0,
+                color: (200, 120, 160), tags: ["plant"],
+                variants: [(name: "pair", textures: All("{name}_pair"), size: 2, rarity: Uncommon), (name: "clump", textures: All("{name}_clump"), size: 3, rarity: Rare)],
+            ),
+        ],
+        // A single plant with one look: bushes, grasses, reeds, ferns, wonders.
+        "plant": [
+            (name: "{name}", render: Plant, solid: false, sound: Grass, textures: All("{name}"), hardness: 0.0, color: (90, 140, 60), tags: ["plant"]),
         ],
         // Fired clay in one colour.
         "terracotta": [
@@ -78,7 +96,13 @@
         (name: "bedrock", textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
         (name: "stone", textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
-        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural"]),
+        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet"]),
+        (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building"]),
+        (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building"]),
+        (name: "mossy_stone_bricks", textures: All("mossy_stone_bricks"), hardness: 1.5, color: (105, 118, 95), family: "stone", tags: ["stone", "bricks", "building", "mossy", "wet"]),
+        (name: "cracked_stone_bricks", textures: All("cracked_stone_bricks"), hardness: 1.5, color: (115, 115, 115), family: "stone", tags: ["stone", "bricks", "building", "ruined"]),
+        // Volcanic glass, where lava meets water.
+        (name: "obsidian", sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep"]),
         // Soil
         (name: "dirt", sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"]),
         (name: "coarse_dirt", sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"]),
@@ -105,6 +129,10 @@
         ),
         (name: "clay", sound: Soil, textures: All("clay"), hardness: 0.6, color: (160, 166, 179), tags: ["clay", "wet", "natural"]),
         (name: "gravel", sound: Gravel, textures: All("gravel"), hardness: 0.6, color: (136, 126, 126), tags: ["gravel", "natural", "surface"]),
+        (name: "loam", sound: Soil, textures: All("loam"), hardness: 0.5, color: (94, 71, 54), tags: ["soil", "fertile", "natural", "surface"]),
+        (name: "peat", sound: Soil, textures: All("peat"), hardness: 0.5, color: (55, 42, 33), tags: ["soil", "wet", "acidic", "fuel", "natural", "surface", "wetland"]),
+        (name: "red_earth", sound: Soil, textures: All("red_earth"), hardness: 0.5, color: (157, 74, 47), tags: ["soil", "dry", "natural", "surface", "tropical", "savanna"]),
+        (name: "silt", sound: Sand, textures: All("silt"), hardness: 0.5, color: (176, 168, 153), tags: ["soil", "wet", "fertile", "natural", "surface", "riverbank"]),
         // Snow and ice
         (
             name: "snowy_grass_block", sound: Snow,
@@ -155,8 +183,32 @@
             color: (74, 59, 38),
             tags: ["wood", "natural", "wetland"],
         ),
+        // Caves: dripstone, glowing growth, crystals, magma, the deep dark's gloomvein,
+        // giant mushroom blocks and roots hanging from the roof.
+        (name: "dripstone_block", textures: All("dripstone_block"), hardness: 1.5, color: (130, 104, 88), tags: ["stone", "sedimentary", "natural", "cave", "dripstone"]),
+        (name: "pointed_dripstone", render: Plant, solid: false, textures: All("pointed_dripstone_up_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalagmite"]),
+        (name: "hanging_dripstone", render: Plant, solid: false, support: Above, textures: All("pointed_dripstone_down_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalactite", "hanging"]),
+        (name: "glow_berries", render: Plant, solid: false, support: Above, sound: Leaves, textures: All("cave_vines_lit"), light: 10, hardness: 0.0, color: (90, 120, 40), rarity: Uncommon, tags: ["plant", "cave", "hanging", "berry", "edible", "flavour:sweet", "glowing", "alchemy:night_sight"]),
+        (name: "glow_lichen", render: Plant, solid: false, sound: Grass, textures: All("glow_lichen"), light: 7, hardness: 0.0, drops: "core:air", color: (110, 160, 140), tags: ["plant", "cave", "groundcover", "glowing", "alchemy:luminous"]),
+        (name: "moss_carpet", render: Plant, solid: false, sound: Grass, textures: All("moss_carpet"), hardness: 0.0, color: (89, 110, 45), tags: ["plant", "groundcover", "cave", "forest_floor", "shade", "wet"]),
+        (name: "hanging_roots", render: Plant, solid: false, support: Above, sound: Grass, textures: All("hanging_roots"), hardness: 0.0, color: (160, 120, 90), tags: ["plant", "cave", "hanging", "root", "fibre"]),
+        (name: "crystal_block", sound: Glass, textures: All("crystal_block"), light: 2, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity"]),
+        (name: "crystal_cluster", render: Plant, solid: false, sound: Glass, textures: All("crystal_cluster"), light: 5, hardness: 1.0, color: (170, 150, 220), rarity: Uncommon, tags: ["gem", "cave", "glowing", "alchemy:clarity", "alchemy:aether"]),
+        (name: "magma_block", textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
+        (name: "gloomvein", sound: Soil, textures: All("gloomvein"), light: 1, hardness: 0.6, color: (20, 40, 46), rarity: Rare, tags: ["natural", "cave", "deep", "wonder", "glowing", "alchemy:night_sight", "alchemy:aether"]),
+        (name: "brown_mushroom_block", sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "brown_mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "red_mushroom_block", sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "mushroom_stem", sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        // Leaves turned for autumn, for groves that biomes want in colour.
+        (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow"]),
+        (name: "russet_oak_leaves", sound: Leaves, textures: All("russet_oak_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (170, 90, 40), family: "oak", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
+        (name: "amber_maple_leaves", sound: Leaves, textures: All("amber_maple_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (230, 150, 40), family: "maple", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
         (name: "azalea_leaves", sound: Leaves, textures: All("azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (90, 115, 45), tags: ["leaves", "natural", "broadleaf"]),
         (name: "flowering_azalea_leaves", sound: Leaves, textures: All("flowering_azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (110, 110, 70), tags: ["leaves", "natural", "broadleaf", "flower"]),
+        // Glowcaps: giant glowing mushrooms of fungal caves and forests.
+        (name: "glowcap_stem", sound: Wood, textures: Column(end: "glowcap_stem_top", side: "glowcap_stem"), hardness: 1.5, color: (210, 205, 190), rarity: Rare, family: "glowcap", tags: ["fungus", "wood", "natural", "wonder", "cave"]),
+        (name: "glowcap_cap", sound: Wood, textures: All("glowcap_cap"), light: 12, hardness: 0.8, color: (60, 220, 210), rarity: Rare, family: "glowcap", tags: ["fungus", "natural", "wonder", "glowing", "light", "alchemy:luminous"]),
+        (name: "glowcap_planks", sound: Wood, textures: All("glowcap_planks"), hardness: 1.5, color: (200, 195, 175), family: "glowcap", tags: ["planks", "building", "wonder"]),
         (name: "cactus", sound: Wood, textures: Sides(top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side"), hardness: 0.4, color: (80, 130, 40), tags: ["plant", "desert", "hot", "dry", "natural", "thorny"]),
         // Plants
         (name: "short_grass", render: Plant, solid: false, sound: Grass, textures: All("short_grass"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow"]),
@@ -170,24 +222,16 @@
         (name: "sugar_cane", render: Plant, solid: false, sound: Grass, textures: All("sugar_cane"), tint: Grass, hardness: 0.0, color: (150, 190, 120), tags: ["plant", "reed", "riverbank", "warm", "flavour:sweet", "fibre"]),
         (name: "brown_mushroom", render: Plant, solid: false, sound: Grass, textures: All("brown_mushroom"), hardness: 0.0, color: (150, 110, 80), tags: ["plant", "fungus", "edible", "forest_floor", "shade", "cave", "flavour:savoury"]),
         (name: "red_mushroom", render: Plant, solid: false, sound: Grass, textures: All("red_mushroom"), hardness: 0.0, color: (200, 40, 40), tags: ["plant", "fungus", "forest_floor", "shade", "alchemy:poison", "dye:red"]),
-        (name: "dandelion", render: Plant, solid: false, sound: Grass, textures: All("dandelion"), hardness: 0.0, color: (240, 210, 40), tags: ["plant", "flower", "meadow", "temperate", "edible", "flavour:bitter", "dye:yellow", "alchemy:healing"]),
-        (name: "poppy", render: Plant, solid: false, sound: Grass, textures: All("poppy"), hardness: 0.0, color: (200, 30, 30), tags: ["plant", "flower", "meadow", "temperate", "dye:red", "alchemy:sleep"]),
-        (name: "cornflower", render: Plant, solid: false, sound: Grass, textures: All("cornflower"), hardness: 0.0, color: (70, 100, 220), tags: ["plant", "flower", "meadow", "temperate", "dye:blue", "alchemy:clarity"]),
-        (name: "oxeye_daisy", render: Plant, solid: false, sound: Grass, textures: All("oxeye_daisy"), hardness: 0.0, color: (235, 235, 225), tags: ["plant", "flower", "meadow", "temperate", "dye:white", "alchemy:healing"]),
-        (name: "azure_bluet", render: Plant, solid: false, sound: Grass, textures: All("azure_bluet"), hardness: 0.0, color: (215, 225, 240), tags: ["plant", "flower", "meadow", "temperate", "dye:light_gray", "alchemy:calming"]),
-        (name: "allium", render: Plant, solid: false, sound: Grass, textures: All("allium"), hardness: 0.0, color: (180, 110, 230), tags: ["plant", "flower", "meadow", "cold", "edible", "flavour:savoury", "dye:magenta"]),
-        (name: "blue_orchid", render: Plant, solid: false, sound: Grass, textures: All("blue_orchid"), hardness: 0.0, color: (40, 170, 230), rarity: Uncommon, tags: ["plant", "flower", "wetland", "tropical", "warm", "dye:light_blue", "alchemy:water_breathing"]),
-        (name: "lily_of_the_valley", render: Plant, solid: false, sound: Grass, textures: All("lily_of_the_valley"), hardness: 0.0, color: (240, 240, 240), tags: ["plant", "flower", "forest_floor", "shade", "cold", "dye:white", "alchemy:poison"]),
-        (name: "red_tulip", render: Plant, solid: false, sound: Grass, textures: All("red_tulip"), hardness: 0.0, color: (210, 40, 30), rarity: Uncommon, tags: ["plant", "flower", "meadow", "temperate", "dye:red"]),
-        (name: "orange_tulip", render: Plant, solid: false, sound: Grass, textures: All("orange_tulip"), hardness: 0.0, color: (235, 120, 30), rarity: Uncommon, tags: ["plant", "flower", "meadow", "temperate", "dye:orange"]),
-        (name: "white_tulip", render: Plant, solid: false, sound: Grass, textures: All("white_tulip"), hardness: 0.0, color: (230, 230, 230), rarity: Uncommon, tags: ["plant", "flower", "meadow", "temperate", "dye:light_gray"]),
-        (name: "pink_tulip", render: Plant, solid: false, sound: Grass, textures: All("pink_tulip"), hardness: 0.0, color: (235, 160, 200), rarity: Uncommon, tags: ["plant", "flower", "meadow", "temperate", "dye:pink"]),
         // Ores
         (name: "coal_ore", textures: All("coal_ore"), hardness: 3.0, color: (90, 90, 90), tags: ["ore", "fuel", "natural"]),
         (name: "iron_ore", textures: All("iron_ore"), hardness: 3.0, color: (160, 140, 120), tags: ["ore", "metal:iron", "natural"]),
         (name: "copper_ore", textures: All("copper_ore"), hardness: 3.0, color: (150, 110, 80), tags: ["ore", "metal:copper", "natural"]),
         (name: "gold_ore", textures: All("gold_ore"), hardness: 3.0, color: (200, 180, 80), rarity: Uncommon, tags: ["ore", "metal:gold", "natural"]),
         (name: "diamond_ore", textures: All("diamond_ore"), hardness: 3.0, color: (100, 200, 200), rarity: Rare, tags: ["ore", "gem", "natural", "deep"]),
+        (name: "cobalt_ore", textures: All("cobalt_ore"), hardness: 3.0, color: (60, 90, 200), rarity: Uncommon, tags: ["ore", "metal:cobalt", "natural", "deep"]),
+        (name: "tin_ore", textures: All("tin_ore"), hardness: 3.0, color: (170, 180, 185), tags: ["ore", "metal:tin", "natural"]),
+        (name: "silver_ore", textures: All("silver_ore"), hardness: 3.0, color: (200, 205, 215), rarity: Uncommon, tags: ["ore", "metal:silver", "natural"]),
+        (name: "aetherite_ore", textures: All("aetherite_ore"), light: 4, hardness: 4.0, color: (150, 90, 240), rarity: VeryRare, tags: ["ore", "gem", "natural", "deep", "wonder", "glowing", "alchemy:aether"]),
         // Building
         (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "building"]),
         (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),
@@ -231,5 +275,144 @@
             members: {"cherry_leaves": (tint: Some(None), color: (229, 172, 205), tags: ["dye:pink"])},
         ),
         (template: "wood", name: "mangrove", tags: ["broadleaf", "tropical", "wetland"], all: (color: (102, 48, 42)), members: {"mangrove_leaves": (color: (60, 130, 40))}),
+        // The classic wild flowers.
+        (template: "flower", name: "dandelion", tags: ["flower", "meadow", "temperate", "edible", "flavour:bitter", "dye:yellow", "alchemy:healing"], all: (color: (240, 210, 40))),
+        (template: "flower", name: "poppy", tags: ["flower", "meadow", "temperate", "dye:red", "alchemy:sleep"], all: (color: (200, 30, 30))),
+        (template: "flower", name: "cornflower", tags: ["flower", "meadow", "temperate", "dye:blue", "alchemy:clarity"], all: (color: (70, 100, 220))),
+        (template: "flower", name: "oxeye_daisy", tags: ["flower", "meadow", "temperate", "dye:white", "alchemy:healing"], all: (color: (235, 235, 225))),
+        (template: "flower", name: "azure_bluet", tags: ["flower", "meadow", "temperate", "dye:light_gray", "alchemy:calming"], all: (color: (215, 225, 240))),
+        (template: "flower", name: "allium", tags: ["flower", "meadow", "cold", "edible", "flavour:savoury", "dye:magenta"], all: (color: (180, 110, 230))),
+        (template: "flower", name: "blue_orchid", tags: ["flower", "wetland", "tropical", "warm", "dye:light_blue", "alchemy:water_breathing"], all: (color: (40, 170, 230), rarity: Uncommon)),
+        (template: "flower", name: "lily_of_the_valley", tags: ["flower", "forest_floor", "shade", "cold", "dye:white", "alchemy:poison"], all: (color: (240, 240, 240))),
+        (template: "flower", name: "red_tulip", tags: ["flower", "meadow", "temperate", "dye:red"], all: (color: (210, 40, 30), rarity: Uncommon)),
+        (template: "flower", name: "orange_tulip", tags: ["flower", "meadow", "temperate", "dye:orange"], all: (color: (235, 120, 30), rarity: Uncommon)),
+        (template: "flower", name: "white_tulip", tags: ["flower", "meadow", "temperate", "dye:light_gray"], all: (color: (230, 230, 230), rarity: Uncommon)),
+        (template: "flower", name: "pink_tulip", tags: ["flower", "meadow", "temperate", "dye:pink"], all: (color: (235, 160, 200), rarity: Uncommon)),
+        // New rocks.
+        (template: "stone", name: "marble", tags: ["metamorphic", "cliff", "cave"], all: (color: (226, 224, 218))),
+        (template: "stone", name: "limestone", tags: ["sedimentary", "cliff", "cave"], all: (color: (200, 190, 160))),
+        (template: "stone", name: "slate", tags: ["metamorphic", "cliff", "cave"], all: (color: (70, 78, 88))),
+        (template: "stone", name: "basalt", tags: ["igneous", "cliff", "cave", "deep"], all: (color: (60, 60, 66), hardness: 2.0)),
+        (template: "stone", name: "chalk", tags: ["sedimentary", "cliff"], all: (color: (236, 234, 226), hardness: 0.8)),
+        (template: "stone", name: "travertine", tags: ["sedimentary", "cliff", "cave"], all: (color: (206, 192, 160))),
+        // More fired clay colours, for mesa bands and painted caves.
+        (template: "terracotta", name: "gray", tags: ["natural"], all: (color: (58, 42, 36))),
+        (template: "terracotta", name: "black", tags: ["natural"], all: (color: (37, 23, 16))),
+        (template: "terracotta", name: "lime", tags: ["natural"], all: (color: (103, 117, 52))),
+        (template: "terracotta", name: "green", tags: ["natural"], all: (color: (76, 83, 42))),
+        (template: "terracotta", name: "cyan", tags: ["natural"], all: (color: (87, 91, 91))),
+        (template: "terracotta", name: "light_blue", tags: ["natural"], all: (color: (113, 109, 138))),
+        (template: "terracotta", name: "blue", tags: ["natural"], all: (color: (74, 59, 91))),
+        (template: "terracotta", name: "purple", tags: ["natural"], all: (color: (118, 70, 86))),
+        (template: "terracotta", name: "magenta", tags: ["natural"], all: (color: (149, 87, 108))),
+        (template: "terracotta", name: "pink", tags: ["natural"], all: (color: (161, 78, 78))),
+        // New woods. Maple, silverwood and emberwood keep their own leaf colours.
+        (
+            template: "wood", name: "maple", tags: ["broadleaf", "temperate", "cold", "autumn"],
+            all: (color: (110, 80, 60)),
+            members: {"maple_leaves": (tint: Some(None), color: (210, 80, 30), tags: ["dye:orange"]), "maple_log": (tags: ["flavour:sweet"])},
+        ),
+        (template: "wood", name: "redwood", tags: ["conifer", "evergreen", "temperate", "wet"], all: (color: (130, 60, 40))),
+        (template: "wood", name: "cypress", tags: ["conifer", "evergreen", "wetland", "warm"], all: (color: (110, 95, 80))),
+        (template: "wood", name: "willow", tags: ["broadleaf", "wetland", "riverbank", "temperate"], all: (color: (150, 130, 90)), members: {"willow_log": (tags: ["alchemy:healing"])}),
+        (template: "wood", name: "baobab", tags: ["broadleaf", "savanna", "hot", "dry"], all: (color: (140, 120, 110)), members: {"baobab_leaves": (tags: ["edible"])}),
+        (template: "wood", name: "palm", tags: ["palm", "tropical", "shore", "hot"], all: (color: (150, 120, 80))),
+        (
+            template: "wood", name: "silverwood", tags: ["broadleaf", "cold", "wonder"], all: (color: (190, 196, 210), rarity: Rare),
+            members: {
+                "silverwood_leaves": (tint: Some(None), light: 4, color: (150, 200, 220), tags: ["glowing", "alchemy:clarity"]),
+                "silverwood_log": (tags: ["alchemy:aether"]),
+                "silverwood_sapling": (light: 3, tags: ["glowing"]),
+            },
+        ),
+        (
+            template: "wood", name: "emberwood", tags: ["broadleaf", "hot", "dry", "wonder"], all: (color: (110, 40, 20), rarity: Rare),
+            members: {
+                "emberwood_log": (light: 5, tags: ["glowing", "alchemy:warming"]),
+                "emberwood_wood": (light: 5, tags: ["glowing"]),
+                "emberwood_leaves": (tint: Some(None), light: 7, color: (230, 100, 30), tags: ["glowing", "alchemy:fire_resistance"]),
+                "emberwood_sapling": (light: 4, tags: ["glowing"]),
+            },
+        ),
+        // Wild flowers.
+        (template: "flower", name: "buttercup", tags: ["flower", "meadow", "wetland", "temperate", "dye:yellow", "alchemy:poison"], all: (color: (245, 210, 40))),
+        (template: "flower", name: "bluebell", tags: ["flower", "forest_floor", "shade", "temperate", "dye:blue", "alchemy:sleep"], all: (color: (80, 90, 200))),
+        (template: "flower", name: "foxglove", tags: ["flower", "forest_edge", "temperate", "tall", "dye:purple", "alchemy:poison"], all: (color: (190, 90, 180), rarity: Uncommon)),
+        (template: "flower", name: "lavender", tags: ["flower", "herb", "meadow", "steppe", "warm", "dry", "tea", "flavour:aromatic", "alchemy:calming", "dye:purple"], all: (color: (150, 120, 220))),
+        (template: "flower", name: "marigold", tags: ["flower", "meadow", "warm", "edible", "flavour:bitter", "dye:orange", "alchemy:healing"], all: (color: (240, 140, 20))),
+        (template: "flower", name: "sunflower", tags: ["flower", "meadow", "steppe", "warm", "tall", "edible", "flavour:savoury", "dye:yellow"], all: (color: (240, 200, 30), rarity: Uncommon)),
+        (template: "flower", name: "heather", tags: ["flower", "heath", "tundra", "cold", "tea", "dye:magenta", "alchemy:calming"], all: (color: (180, 90, 160))),
+        (template: "flower", name: "edelweiss", tags: ["flower", "alpine", "cold", "dye:white", "alchemy:frost_resistance"], all: (color: (235, 235, 225), rarity: Rare)),
+        (template: "flower", name: "gentian", tags: ["flower", "alpine", "cold", "flavour:bitter", "dye:blue", "alchemy:clarity"], all: (color: (40, 70, 200), rarity: Uncommon)),
+        (template: "flower", name: "lupine", tags: ["flower", "meadow", "forest_edge", "temperate", "cold", "dye:light_blue"], all: (color: (110, 120, 230))),
+        (template: "flower", name: "clover", tags: ["flower", "meadow", "groundcover", "temperate", "edible", "dye:white", "alchemy:regeneration"], all: (color: (220, 220, 210))),
+        (template: "flower", name: "chamomile", tags: ["flower", "herb", "meadow", "temperate", "tea", "alchemy:sleep", "alchemy:calming", "dye:white"], all: (color: (240, 240, 220))),
+        (template: "flower", name: "yarrow", tags: ["flower", "herb", "meadow", "steppe", "alchemy:healing", "dye:white"], all: (color: (230, 225, 210))),
+        (template: "flower", name: "thistle", tags: ["flower", "steppe", "meadow", "thorny", "dye:purple", "alchemy:antidote"], all: (color: (160, 80, 170))),
+        (template: "flower", name: "iris", tags: ["flower", "wetland", "riverbank", "temperate", "dye:purple", "alchemy:clarity"], all: (color: (100, 70, 200), rarity: Uncommon)),
+        (template: "flower", name: "marsh_marigold", tags: ["flower", "wetland", "riverbank", "cold", "temperate", "dye:yellow", "alchemy:poison"], all: (color: (250, 220, 40))),
+        (template: "flower", name: "desert_bloom", tags: ["flower", "desert", "hot", "dry", "dye:orange", "alchemy:fire_resistance"], all: (color: (240, 120, 40), rarity: Uncommon)),
+        (template: "flower", name: "hibiscus", tags: ["flower", "tropical", "hot", "tea", "flavour:sour", "dye:red", "alchemy:cooling"], all: (color: (220, 40, 60), rarity: Uncommon)),
+        (template: "flower", name: "bird_of_paradise", tags: ["flower", "tropical", "hot", "dye:orange"], all: (color: (250, 130, 30), rarity: Rare)),
+        (template: "flower", name: "moth_orchid", tags: ["flower", "tropical", "shade", "warm", "dye:pink", "alchemy:calming"], all: (color: (230, 150, 200), rarity: Rare)),
+        (template: "flower", name: "snowdrop", tags: ["flower", "forest_floor", "tundra", "cold", "dye:white", "alchemy:frost_resistance"], all: (color: (240, 245, 240))),
+        (template: "flower", name: "crocus", tags: ["flower", "alpine", "meadow", "cold", "spice", "flavour:aromatic", "dye:purple"], all: (color: (150, 90, 210), rarity: Uncommon)),
+        (template: "flower", name: "primrose", tags: ["flower", "forest_edge", "temperate", "edible", "flavour:sweet", "dye:yellow"], all: (color: (240, 230, 130))),
+        (template: "flower", name: "aster", tags: ["flower", "meadow", "temperate", "autumn", "dye:purple", "alchemy:calming"], all: (color: (140, 110, 220))),
+        (template: "flower", name: "goldenrod", tags: ["flower", "meadow", "steppe", "autumn", "dye:yellow", "alchemy:healing"], all: (color: (230, 190, 30))),
+        (template: "flower", name: "fireweed", tags: ["flower", "forest_edge", "cold", "edible", "dye:magenta", "alchemy:regeneration"], all: (color: (210, 70, 160))),
+        // Herbs.
+        (template: "flower", name: "mint", tags: ["herb", "riverbank", "wetland", "temperate", "edible", "tea", "flavour:aromatic", "alchemy:cooling"], all: (color: (90, 170, 90))),
+        (template: "flower", name: "sage", tags: ["herb", "steppe", "heath", "dry", "warm", "flavour:aromatic", "alchemy:clarity"], all: (color: (130, 150, 120))),
+        (template: "flower", name: "thyme", tags: ["herb", "heath", "steppe", "dry", "spice", "flavour:aromatic", "alchemy:warming"], all: (color: (120, 140, 90))),
+        (template: "flower", name: "basil", tags: ["herb", "meadow", "warm", "edible", "flavour:aromatic"], all: (color: (60, 150, 50), rarity: Uncommon)),
+        (template: "flower", name: "wild_garlic", tags: ["herb", "forest_floor", "shade", "temperate", "edible", "flavour:savoury", "alchemy:antidote"], all: (color: (70, 150, 60))),
+        (template: "flower", name: "nettle", tags: ["herb", "forest_edge", "temperate", "edible", "fibre", "thorny", "dye:green", "alchemy:strength"], all: (color: (60, 120, 50))),
+        (template: "flower", name: "sorrel", tags: ["herb", "meadow", "temperate", "edible", "flavour:sour"], all: (color: (90, 140, 50))),
+        (template: "flower", name: "ginseng", tags: ["herb", "root", "forest_floor", "shade", "cold", "alchemy:energising", "alchemy:regeneration"], all: (color: (80, 130, 60), rarity: Rare)),
+        (template: "plant", name: "mandrake", tags: ["herb", "root", "forest_floor", "shade", "alchemy:sleep", "alchemy:poison"], all: (color: (70, 110, 50), rarity: VeryRare)),
+        (template: "flower", name: "wild_carrot", tags: ["herb", "root", "meadow", "temperate", "edible", "flavour:sweet"], all: (color: (230, 230, 220))),
+        (template: "flower", name: "wild_wheat", tags: ["grass", "grain", "steppe", "meadow", "edible", "fibre"], all: (color: (210, 180, 90))),
+        (template: "flower", name: "chili", tags: ["herb", "spice", "savanna", "tropical", "hot", "flavour:spicy", "dye:red", "alchemy:warming"], all: (color: (200, 40, 30), rarity: Uncommon)),
+        // Bushes.
+        (template: "plant", name: "blueberry_bush", tags: ["bush", "berry", "heath", "forest_floor", "cold", "edible", "flavour:sweet", "dye:blue"], all: (sound: Leaves, color: (60, 90, 140))),
+        (template: "plant", name: "raspberry_bush", tags: ["bush", "berry", "forest_edge", "temperate", "edible", "flavour:sweet", "thorny", "dye:red"], all: (sound: Leaves, color: (180, 50, 70))),
+        (template: "plant", name: "elderberry_bush", tags: ["bush", "berry", "forest_edge", "temperate", "dye:purple", "alchemy:healing"], all: (sound: Leaves, color: (70, 40, 80), rarity: Uncommon)),
+        (template: "plant", name: "juniper_bush", tags: ["bush", "berry", "alpine", "heath", "cold", "evergreen", "spice", "flavour:aromatic", "alchemy:antidote"], all: (sound: Leaves, color: (50, 90, 80))),
+        (template: "plant", name: "wild_rose_bush", tags: ["bush", "fruit", "forest_edge", "meadow", "temperate", "thorny", "dye:pink", "alchemy:healing"], all: (sound: Leaves, color: (220, 120, 160), rarity: Uncommon)),
+        (template: "plant", name: "holly_bush", tags: ["bush", "forest_floor", "shade", "cold", "evergreen", "dye:red", "alchemy:poison"], all: (sound: Leaves, color: (30, 80, 40), rarity: Uncommon)),
+        (template: "plant", name: "tea_bush", tags: ["bush", "tea", "forest_edge", "warm", "tropical", "alchemy:energising"], all: (sound: Leaves, color: (60, 120, 50), rarity: Uncommon)),
+        (template: "plant", name: "sagebrush", tags: ["bush", "steppe", "desert", "dry", "fuel", "flavour:aromatic", "alchemy:clarity"], all: (sound: Leaves, color: (140, 150, 120))),
+        // Grasses and reeds.
+        (template: "plant", name: "dune_grass", tags: ["grass", "shore", "sandy", "fibre"], all: (color: (170, 180, 110))),
+        (template: "plant", name: "bunchgrass", tags: ["grass", "steppe", "savanna", "dry", "fibre"], all: (color: (200, 170, 90))),
+        (template: "plant", name: "pampas_grass", tags: ["grass", "savanna", "steppe", "tall", "fibre"], all: (color: (220, 210, 180), rarity: Uncommon)),
+        (template: "plant", name: "cotton_grass", tags: ["grass", "wetland", "tundra", "cold", "fibre", "dye:white"], all: (color: (230, 230, 220))),
+        (template: "plant", name: "cattail", tags: ["reed", "wetland", "riverbank", "fibre", "edible", "root"], all: (color: (110, 80, 40))),
+        (template: "plant", name: "papyrus", tags: ["reed", "riverbank", "tropical", "hot", "fibre"], all: (color: (100, 160, 60), rarity: Uncommon)),
+        (template: "plant", name: "rush", tags: ["reed", "wetland", "riverbank", "fibre"], all: (tint: Grass, color: (150, 150, 150))),
+        // Ferns.
+        (template: "plant", name: "maidenhair_fern", tags: ["fern", "forest_floor", "shade", "wetland"], all: (tint: Grass, color: (150, 150, 150))),
+        (template: "plant", name: "bracken", tags: ["fern", "forest_floor", "heath", "fuel", "autumn"], all: (color: (150, 140, 60))),
+        (template: "plant", name: "horsetail", tags: ["fern", "herb", "wetland", "riverbank", "alchemy:strength"], all: (color: (90, 140, 60))),
+        // Fungi.
+        (template: "flower", name: "chanterelle", tags: ["fungus", "forest_floor", "shade", "edible", "flavour:savoury", "dye:orange"], all: (color: (240, 160, 40), rarity: Uncommon)),
+        (template: "flower", name: "porcini", tags: ["fungus", "forest_floor", "shade", "edible", "flavour:savoury"], all: (color: (140, 90, 50), rarity: Uncommon)),
+        (template: "flower", name: "puffball", tags: ["fungus", "meadow", "edible"], all: (color: (235, 230, 215))),
+        (template: "flower", name: "inkcap", tags: ["fungus", "meadow", "forest_edge", "edible", "dye:black"], all: (color: (200, 195, 190))),
+        (template: "plant", name: "morel", tags: ["fungus", "forest_edge", "edible", "flavour:savoury"], all: (color: (160, 130, 90), rarity: Rare)),
+        (template: "flower", name: "deathcap", tags: ["fungus", "forest_floor", "shade", "alchemy:poison"], all: (color: (190, 200, 150), rarity: Uncommon)),
+        // Wonders: fantastical plants, rare everywhere and more common where the aether is high.
+        (template: "flower", name: "moonbloom", tags: ["flower", "meadow", "forest_floor", "night", "wonder", "glowing", "dye:light_blue", "alchemy:luminous", "alchemy:calming"], all: (light: 7, color: (160, 210, 250), rarity: VeryRare)),
+        (template: "flower", name: "glowcap", tags: ["fungus", "cave", "forest_floor", "shade", "wonder", "glowing", "edible", "alchemy:night_sight", "alchemy:luminous"], all: (light: 8, color: (80, 230, 220), rarity: Rare)),
+        (template: "flower", name: "emberbloom", tags: ["flower", "desert", "savanna", "hot", "wonder", "glowing", "dye:orange", "alchemy:fire_resistance", "alchemy:warming"], all: (light: 6, color: (250, 120, 30), rarity: Rare)),
+        (template: "flower", name: "frostpetal", tags: ["flower", "alpine", "tundra", "cold", "wonder", "glowing", "dye:light_blue", "alchemy:frost_resistance", "alchemy:cooling"], all: (light: 4, color: (180, 230, 250), rarity: Rare)),
+        (template: "plant", name: "starlily", tags: ["flower", "meadow", "alpine", "night", "wonder", "glowing", "dye:white", "alchemy:aether", "alchemy:luminous"], all: (light: 10, color: (255, 250, 220), rarity: Legendary)),
+        (template: "plant", name: "aether_orchid", tags: ["flower", "tropical", "shade", "wonder", "glowing", "dye:purple", "alchemy:aether", "alchemy:featherfall"], all: (light: 5, color: (190, 140, 250), rarity: VeryRare)),
+        (template: "plant", name: "whisperfern", tags: ["fern", "forest_floor", "shade", "wonder", "glowing", "alchemy:clarity", "alchemy:night_sight"], all: (light: 2, color: (200, 220, 230), rarity: Rare)),
+        (template: "plant", name: "sunspire", tags: ["flower", "meadow", "steppe", "warm", "tall", "wonder", "glowing", "dye:yellow", "alchemy:strength", "alchemy:energising"], all: (light: 9, color: (255, 210, 60), rarity: Legendary)),
+        (template: "plant", name: "crystal_bloom", tags: ["flower", "cave", "wonder", "glowing", "gem", "alchemy:aether", "alchemy:clarity"], all: (sound: Glass, light: 6, color: (170, 230, 255), rarity: VeryRare)),
+        (template: "flower", name: "dreamshade", tags: ["fungus", "cave", "forest_floor", "shade", "wonder", "glowing", "dye:purple", "alchemy:sleep", "alchemy:night_sight"], all: (light: 3, color: (120, 60, 160), rarity: Rare)),
+        (template: "plant", name: "heartbloom", tags: ["flower", "meadow", "forest_edge", "wonder", "glowing", "dye:red", "alchemy:regeneration", "alchemy:healing"], all: (light: 4, color: (230, 40, 70), rarity: Legendary)),
     ],
 )

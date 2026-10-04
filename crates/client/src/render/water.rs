@@ -201,6 +201,7 @@ struct WaterUniform {
 /// small without moving every frame.
 const ORIGIN_SNAP: f64 = 256.0;
 
+#[allow(clippy::too_many_arguments)]
 fn update_params(
     time: Res<Time>,
     quality: Res<WaterQuality>,
@@ -380,21 +381,23 @@ impl CachedRenderPipelinePhaseItem for WaterItem {
 /// The translucent terrain's draw commands; `water_pass` binds group 3 itself.
 type DrawWater = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>, DrawTerrain);
 
+/// What the water pass needs of a camera.
+type WaterView = (
+    &'static ExtractedCamera,
+    &'static ExtractedView,
+    &'static ViewTarget,
+    &'static ViewDepthTexture,
+    &'static Msaa,
+    &'static TerrainDraws,
+    Option<&'static SceneCopy>,
+);
+
 /// Draws the translucent terrain of a camera with the scene so far bound for reading. With
 /// MSAA it draws into the multisampled image and reads the resolved one, then resolves
 /// again unless Bevy's transparent pass, which follows, will.
-#[allow(clippy::too_many_arguments)]
 fn water_pass(
     world: &World,
-    view: ViewQuery<(
-        &ExtractedCamera,
-        &ExtractedView,
-        &ViewTarget,
-        &ViewDepthTexture,
-        &Msaa,
-        &TerrainDraws,
-        Option<&SceneCopy>,
-    )>,
+    view: ViewQuery<WaterView>,
     gpu: Option<Res<WaterGpu>>,
     pipeline_cache: Res<PipelineCache>,
     transparent_phases: Res<ViewSortedRenderPhases<Transparent3d>>,

@@ -5,7 +5,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits::{self, Replication};
-use voxmar_protocol::{PlayerId, ServerMessage};
+use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::player::MAX_HEALTH;
@@ -13,6 +13,9 @@ use crate::weather::Weather;
 
 /// Falls shorter than this many blocks do no damage.
 const SAFE_FALL: f32 = 3.0;
+/// Lava burns this much health every `BURN_TICKS`.
+const BURN: f32 = 4.0;
+const BURN_TICKS: u64 = TICKS_PER_SECOND as u64 / 2;
 /// Below this temperature (°C), healing slows down.
 const COLD: f32 = 0.0;
 
@@ -25,7 +28,8 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
     vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::default())]
 }
 
-/// Fall damage and the void, from the server's own view of where players stand.
+/// Fall damage, burning in lava and the void, from the server's own view of where
+/// players stand.
 struct Falling;
 
 impl Process for Falling {
@@ -35,6 +39,8 @@ impl Process for Falling {
 
     fn run(&mut self, server: &mut Server) {
         let water = server.content.blocks.id("base:water");
+        let lava = server.content.blocks.id("base:lava");
+        let burns = server.tick.is_multiple_of(BURN_TICKS);
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
@@ -47,10 +53,14 @@ impl Process for Falling {
             below.translate(Vec3::new(0.0, -0.05, 0.0));
             let on_ground = below.intersects(|p| server.is_solid(p));
             let in_water = aabb.intersects(|p| server.block(p).is_some() && server.block(p) == water);
+            let in_lava = lava.is_some() && aabb.intersects(|p| server.block(p) == lava);
 
             let player = server.players.get_mut(&id).unwrap();
             let mut damage = 0.0;
-            if player.flying || in_water || !column_loaded {
+            if in_lava && burns {
+                damage += BURN;
+            }
+            if player.flying || in_water || in_lava || !column_loaded {
                 player.fall_start = None;
             } else if on_ground {
                 if let Some(start) = player.fall_start.take() {

@@ -20,11 +20,17 @@ pub struct Column {
     /// Temperature and humidity (0..=255) per (x, z), indexed `z * 32 + x`. Drives
     /// biome tints on the client.
     pub climate: Vec<[u8; 2]>,
+    /// Grass, foliage and water colours (sRGB) per (x, z), indexed `z * 32 + x`: the
+    /// biomes' and the climate's, blended across borders.
+    pub colors: Vec<[[u8; 3]; 3]>,
 }
+
+/// Colours for a column nothing has coloured: a mild green and blue.
+pub const DEFAULT_COLORS: [[u8; 3]; 3] = [[124, 189, 107], [96, 161, 63], [63, 118, 228]];
 
 impl Default for Column {
     fn default() -> Self {
-        Self { chunks: Default::default(), climate: vec![[128, 128]; COLUMN_AREA] }
+        Self { chunks: Default::default(), climate: vec![[128, 128]; COLUMN_AREA], colors: vec![DEFAULT_COLORS; COLUMN_AREA] }
     }
 }
 
@@ -41,6 +47,11 @@ impl Column {
 
     pub fn climate_at(&self, x: i32, z: i32) -> [u8; 2] {
         self.climate[(z * CHUNK_SIZE + x) as usize]
+    }
+
+    /// Grass, foliage and water colours at (x, z) relative to the column origin.
+    pub fn colors_at(&self, x: i32, z: i32) -> [[u8; 3]; 3] {
+        self.colors[(z * CHUNK_SIZE + x) as usize]
     }
 }
 

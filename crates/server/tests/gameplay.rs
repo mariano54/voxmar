@@ -353,8 +353,14 @@ fn teleporting() {
     let feet = client.position.floor().as_ivec3();
     assert_eq!((feet.x, feet.z), (x, z));
     assert!(client.world.block(feet - IVec3::Y).is_some_and(|b| !b.is_air()), "lands on the ground");
-    assert_eq!(client.world.block(feet), Some(BlockId::AIR));
+    // Standing in the open, or among grass and flowers.
+    let open = |b: BlockId| !client.content.blocks.info(b).solid;
+    assert!(client.world.block(feet).is_some_and(open) && client.world.block(feet + IVec3::Y).is_some_and(open), "room to stand");
     assert_eq!(client.command("/tp nobody")[0].0, ChatKind::Error);
+    // Biomes: where we stand, and the nearest ocean.
+    assert!(client.ok("/biome").starts_with("base:"));
+    assert!(client.ok("/locate biome ocean 8000").contains("/tp "));
+    assert_eq!(client.command("/locate biome nowhere")[0].0, ChatKind::Error);
     assert_eq!(client.command("/tp 1 2 3 4 5")[0].0, ChatKind::Error);
 }
 
