@@ -386,7 +386,10 @@ labyrinths, ravines, sinkholes, entrances, geodes, bare fossils and the best vie
 biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the
 `--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
 there; `decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest
-edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
+edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn
+(or, with `BIOMES=a,b`, the nearest place well inside each named biome); `tree_preview`
+(optionally `TREES=oak,birch`, `SAMPLES=n`, `VIGOUR=0..1`) draws every tree species a few times
+over, at the ages they happen to draw, in isometric views to `target/trees_N.ppm`;
 `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
 `generation_stages` breaks generation time per column down by stage (climate, biomes, rivers

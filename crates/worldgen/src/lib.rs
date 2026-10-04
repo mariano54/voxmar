@@ -1045,6 +1045,227 @@ mod tests {
         }
     }
 
+    /// What rests on nothing in the inner columns of `count`×`count` columns from `first`:
+    /// pieces of wood (trunks, roots, branches, stumps, fallen logs, cacti, mushroom stems)
+    /// none of whose blocks, joined face to face through other wood, has firm ground beneath
+    /// it (any solid block but wood and leaves), and clumps of leaves that join no wood and
+    /// neither rest on firm ground nor touch it from the side. Pieces reaching the edge of the generated area, and the log
+    /// decks of trail bridges, are left out. Each comes as its lowest block and its size.
+    fn floating_wood(world: &Overworld, registry: &BlockRegistry, first: ColumnPos, count: i32) -> Vec<(IVec3, String, usize)> {
+        use voxmar_engine::coords::{CHUNK_SIZE, WORLD_HEIGHT};
+        let columns = generate_area(world, first, count);
+        let origin = first.origin();
+        let size = count * CHUNK_SIZE;
+        let block = |p: IVec3| {
+            let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+            columns[(cz * count + cx) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31))
+        };
+        let names: Vec<&str> = (0..registry.len()).map(|i| registry.def(BlockId(i as u16)).name.as_str()).collect();
+        let wood = |b: BlockId| {
+            let name = names[b.0 as usize];
+            // (Hanging roots hang from the rock of cave ceilings.)
+            (["_log", "_wood", "_roots", "_stem"].iter().any(|s| name.ends_with(s)) && !name.contains("hanging")) || name.ends_with("cactus") || name.contains("glowcap_cap")
+        };
+        let leafy = |b: BlockId| names[b.0 as usize].ends_with("leaves");
+        let firm = |b: BlockId| registry.info(b).solid && !wood(b) && !leafy(b);
+        let edge = |p: IVec3| p.x - origin.x < 1 || p.z - origin.z < 1 || p.x - origin.x >= size - 1 || p.z - origin.z >= size - 1;
+        let deck = |p: IVec3| world.geo(p.x, p.z).trail.is_some_and(|t| t.deck.is_some());
+        let mut floating = Vec::new();
+        // Wood first, then leaves through wood: a clump of leaves is fine wherever it holds
+        // wood, which was checked on its own.
+        for leaves in [false, true] {
+            let joins = |b: BlockId| wood(b) || (leaves && leafy(b));
+            let mut seen = rustc_hash::FxHashSet::default();
+            // Inner columns only start pieces; the fill may wander anywhere in the area.
+            for z in origin.z + CHUNK_SIZE..origin.z + size - CHUNK_SIZE {
+                for x in origin.x + CHUNK_SIZE..origin.x + size - CHUNK_SIZE {
+                    for y in 1..WORLD_HEIGHT {
+                        let p = IVec3::new(x, y, z);
+                        let b = block(p);
+                        if seen.contains(&p) || !(if leaves { leafy(b) } else { wood(b) }) {
+                            continue;
+                        }
+                        // (Leaves on cave floors are the cave biomes', underground.)
+                        let (mut stack, mut piece, mut rests, mut skip) = (vec![p], Vec::new(), false, leaves && p.y <= world.height(p.x, p.z));
+                        seen.insert(p);
+                        while let Some(q) = stack.pop() {
+                            piece.push(q);
+                            skip |= edge(q) || (wood(block(q)) && (leaves || deck(q)));
+                            // Wood rests on what lies beneath it; leaves may also grow
+                            // against a rock face beside them.
+                            rests |= firm(block(q - IVec3::Y)) || (leaves && !edge(q) && [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].iter().any(|&d| firm(block(q + d))));
+                            for d in [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z] {
+                                let n = q + d;
+                                if !edge(q) && (1..WORLD_HEIGHT).contains(&n.y) && joins(block(n)) && seen.insert(n) {
+                                    stack.push(n);
+                                }
+                            }
+                        }
+                        if !rests && !skip {
+                            let low = *piece.iter().min_by_key(|q| (q.y, q.x, q.z)).unwrap();
+                            floating.push((low, names[block(low).0 as usize].to_string(), piece.len()));
+                        }
+                    }
+                }
+            }
+        }
+        floating
+    }
+
+    /// `cargo test --profile iter -p voxmar_worldgen forest_preview -- --ignored --nocapture`
+    /// (with `SEED`, and `BIOMES=forest,taiga` or `X`, `Z`; `SIZE` columns square, 2 by
+    /// default; `SCALE` pixels a block, 5) generates the columns around the nearest place well inside each biome (or
+    /// around X, Z) and draws them in an isometric view from the south-east, coloured by
+    /// block, with grass and leaves in the colours their columns carry, to
+    /// `target/forest_NAME.ppm`: for judging stands of trees, their heights and colours,
+    /// without the game.
+    #[test]
+    #[ignore]
+    fn forest_preview() {
+        use voxmar_engine::block::{RenderKind, Tint};
+        use voxmar_engine::coords::{CHUNK_SIZE, WORLD_HEIGHT};
+        use voxmar_engine::glam::{Vec2, Vec3};
+        let env = |name: &str| std::env::var(name).ok();
+        let seed: u64 = env("SEED").and_then(|s| s.parse().ok()).unwrap_or(42);
+        let size: i32 = env("SIZE").and_then(|s| s.parse().ok()).unwrap_or(2);
+        let registry = registry();
+        let world = Overworld::new(seed, registry.clone());
+        let spawn = world.spawn_point();
+        let mut places: Vec<(String, IVec2)> = Vec::new();
+        if let Some(names) = env("BIOMES") {
+            for name in names.split(',') {
+                let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
+                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 6000).and_then(|at| {
+                    (0..400).map(|i| spiral(i / 16, i % 16)).map(|(dx, dz)| at + IVec2::new(dx * 16, dz * 16)).find(|p| {
+                        let site = world.site(p.x, p.y);
+                        site.home == id && site.edge > 24.0 && site.height > site.water && site.slope <= 2
+                    })
+                });
+                match found {
+                    Some(at) => places.push((name.to_string(), at)),
+                    None => println!("{name}: not found"),
+                }
+            }
+        } else {
+            let x = env("X").and_then(|s| s.parse().ok()).unwrap_or(spawn.x);
+            let z = env("Z").and_then(|s| s.parse().ok()).unwrap_or(spawn.z);
+            places.push((format!("{x}_{z}"), IVec2::new(x, z)));
+        }
+        // Faces seen from +x, +y, +z, as in `trees::tests::tree_preview`, `SCALE` pixels
+        // to a block.
+        let a: f32 = env("SCALE").and_then(|s| s.parse().ok()).unwrap_or(5.0);
+        let project = |p: Vec3| Vec2::new((p.x - p.z) * a, (p.x + p.z) * a * 0.5 - p.y * a);
+        let quads = [
+            [Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 1.0, 1.0)],
+            [Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(1.0, 0.0, 1.0)],
+            [Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 1.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 1.0, 1.0)],
+        ];
+        let inside = |q: &[Vec2; 4], p: Vec2| {
+            let sides: Vec<f32> = (0..4).map(|i| (q[(i + 1) % 4] - q[i]).perp_dot(p - q[i])).collect();
+            sides.iter().all(|&s| s >= 0.0) || sides.iter().all(|&s| s <= 0.0)
+        };
+        let mut sprite: Vec<(i32, i32, usize)> = Vec::new();
+        for py in -16..16 {
+            for px in -16..16 {
+                let p = Vec2::new(px as f32 + 0.5, py as f32 + 0.5);
+                if let Some(face) = (0..3).find(|&f| inside(&quads[f].map(project), p)) {
+                    sprite.push((px, py, face));
+                }
+            }
+        }
+        for (name, at) in places {
+            let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-size / 2, -size / 2);
+            let columns = generate_area(&world, first, size);
+            let origin = first.origin();
+            let span = size * CHUNK_SIZE;
+            let column = |p: IVec3| &columns[(((p.z - origin.z) >> 5) * size + ((p.x - origin.x) >> 5)) as usize];
+            let block = |p: IVec3| {
+                let inside = (0..span).contains(&(p.x - origin.x)) && (0..span).contains(&(p.z - origin.z)) && (0..WORLD_HEIGHT).contains(&p.y);
+                if inside { column(p).block(p.with_x(p.x & 31).with_z(p.z & 31)) } else { BlockId::AIR }
+            };
+            let low = (0..span * span).map(|i| world.height(origin.x + i % span, origin.z + i / span)).min().unwrap() - 2;
+            let high = (low + 90).min(WORLD_HEIGHT - 1);
+            let corner = |p: Vec3| project(p - Vec3::new(origin.x as f32, low as f32, origin.z as f32));
+            let (w, h) = ((2.0 * span as f32 * a) as i32 + 16, (span as f32 * a + (high - low) as f32 * a) as i32 + 16);
+            let shift = Vec2::new(span as f32 * a + 8.0, (high - low) as f32 * a + 8.0);
+            let mut image = vec![[200u8, 214, 230]; (w * h) as usize];
+            let open = |b: BlockId| b.is_air() || registry.def(b).render == RenderKind::Plant || registry.def(b).render == RenderKind::Leaves;
+            for sum in 0..(2 * span + (high - low)) {
+                for y in low..=high {
+                    for dz in 0..span {
+                        let dx = sum - (y - low) - dz;
+                        if !(0..span).contains(&dx) {
+                            continue;
+                        }
+                        let p = IVec3::new(origin.x + dx, y, origin.z + dz);
+                        let b = block(p);
+                        if b.is_air() || ![IVec3::X, IVec3::Y, IVec3::Z].iter().any(|&d| open(block(p + d))) {
+                            continue;
+                        }
+                        let def = registry.def(b);
+                        let colors = column(p).colors_at(p.x & 31, p.z & 31);
+                        let tint = |c: [u8; 3]| Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32);
+                        let base = match def.tint {
+                            Tint::Foliage => tint(colors[1]) * 0.75,
+                            Tint::Grass => tint(colors[0]) * 0.8,
+                            Tint::Water => tint(colors[2]),
+                            Tint::None => tint(def.color),
+                        };
+                        let speckle = 0.9 + 0.2 * ((crate::rng::hash3(3, p.x, p.y, p.z) & 0xff) as f32 / 255.0);
+                        let at = corner(p.as_vec3()) + shift;
+                        for &(px, py, face) in &sprite {
+                            let (x, y) = (at.x as i32 + px, at.y as i32 + py);
+                            if x < 0 || y < 0 || x >= w || y >= h {
+                                continue;
+                            }
+                            let c = (base * [1.0, 0.8, 0.62][face] * speckle).min(Vec3::splat(255.0));
+                            image[(y * w + x) as usize] = [c.x as u8, c.y as u8, c.z as u8];
+                        }
+                    }
+                }
+            }
+            let mut out = format!("P6 {w} {h} 255\n").into_bytes();
+            out.extend(image.iter().flatten());
+            let path = format!("{}/../../target/forest_{name}.ppm", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(&path, out).unwrap();
+            println!("{name} at {}, {}: {path}", at.x, at.y);
+        }
+    }
+
+    /// Every trunk, root, stump, fallen log, cactus and mushroom stem rests on the ground,
+    /// branches through their trunks: on several seeds, in forests, at cave mouths, ravines
+    /// and sinkholes, by rivers and in the biomes of snags and cacti, where carving and
+    /// uneven ground could leave wood over a hole.
+    #[test]
+    fn wood_never_floats() {
+        let registry = registry();
+        let mut failures = Vec::new();
+        let mut places = 0;
+        for seed in [1u64, 7, 42, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            let spawn = world.spawn_point();
+            let mut at: Vec<(String, IVec2)> = vec![("spawn".into(), IVec2::new(spawn.x, spawn.z))];
+            for (name, x, z) in world.caves.sights((spawn.x, spawn.z), 1500) {
+                if matches!(name, "entrances" | "ravine" | "sinkhole") {
+                    at.push((name.into(), IVec2::new(x, z)));
+                }
+            }
+            for biome in ["forest", "old_growth_taiga", "wooded_badlands", "bayou", "mangrove_swamp", "jungle", "baobab_savanna", "snowy_taiga", "ghost_forest", "steppe", "meadow", "redwood_forest", "dark_forest", "glowcap_forest", "desert"] {
+                if let Some(p) = world.locate_biome(biome, IVec2::new(spawn.x, spawn.z), 4000) {
+                    at.push((biome.into(), p));
+                }
+            }
+            for (name, p) in at {
+                places += 1;
+                let first = ColumnPos::of_block(IVec3::new(p.x, 0, p.y)).offset(-2, -2);
+                for (low, block, size) in floating_wood(&world, &registry, first, 5) {
+                    failures.push(format!("seed {seed} {name}: {size} {block} from {low}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "wood floats in {} of {places} places:\n{}", failures.len(), failures.join("\n"));
+    }
+
     /// Features reaching across column borders (trees, logs, rocks) come out the same
     /// whichever column is generated first, on whichever thread.
     /// Water crossing region borders never runs round in a circle that generation has to

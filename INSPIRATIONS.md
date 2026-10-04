@@ -136,9 +136,13 @@ copied.
 - What we took: ecotones (thin biomes along the border of two others, such as birch taiga
   between taiga and forest); clearings opened by a global noise with a soft edge, where trees
   fade out first and meadow plants fill in; a snow blanket laid on every level open to the
-  sky, down through the canopy; and hollowed fallen logs.
+  sky, down through the canopy; hollowed fallen logs; and three of its tree shapes: snags'
+  and junipers' limbs that climb in irregular stairs (each step goes up with a chance that
+  grows with how much of the way left is up), the willow trunk that jogs a block sideways
+  where it forks, and leaves that hang from the underside of willow crowns.
 - Where: `crates/worldgen/src/content.rs` (`EcotoneDef`), `biome.rs`, `ecology.rs`,
-  `terrain.rs` and `decor.rs` (the logs).
+  `terrain.rs`, `decor.rs` (the logs) and `trees.rs` (`Grower::walk`, `Grower::curtains`,
+  the willow's jog).
 
 ### Geophilic
 
@@ -147,8 +151,9 @@ copied.
 - Licence: all rights reserved (only its Python tooling is MIT). Ideas only.
 - What we took: ground decoration placed in a fixed order of stages (patches of ground,
   rocks, trees, tree ornaments, fallen logs, flowers, fungi, moss, grass), forests that come
-  in dense stands with gaps, and flowers whose species follows a noise so they grow in drifts.
-- Where: `crates/worldgen/src/decor.rs` and `ecology.rs`.
+  in dense stands with gaps, flowers whose species follows a noise so they grow in drifts,
+  and lumpy bushes: a main mound with smaller ones beside it, on a buried stem.
+- Where: `crates/worldgen/src/decor.rs`, `ecology.rs` and `trees.rs` (`Grower::mound`).
 
 ### Terrestria and Biolith
 
@@ -159,9 +164,11 @@ copied.
 - What we took: sub-biomes that take a share of a parent biome's land instead of a climate
   box of their own (our variants); a distance to the nearest biome border, and which biome
   lies across it, for every column, which we work out analytically rather than by marching;
-  and the idea of biome terrain shapes (dunes, canyons, volcanoes) that fade out towards a
-  biome's edges.
-- Where: `crates/worldgen/src/biome.rs` (variants, border distance) and `shapes.rs`.
+  the idea of biome terrain shapes (dunes, canyons, volcanoes) that fade out towards a
+  biome's edges; and from its tree placers, the cypress's crown profile (a radius of
+  6.25·x(1−x)² along the crown) and roots flaring on the sides of big trunks.
+- Where: `crates/worldgen/src/biome.rs` (variants, border distance), `shapes.rs` and
+  `trees.rs` (the `Spire` crown, `Grower::flare`).
 
 ### Blooming Biosphere
 
@@ -214,7 +221,8 @@ copied.
 - Link: https://github.com/TanTanDev/shrubbery
 - Licence: MIT or Apache-2.0. Ideas only; no code copied.
 - What we took: trees as a handful of species parameters in data (trunk height, thickness
-  and lean, roots, crown shape), laid out in continuous space and then voxelized.
+  and lean, roots, crown shape), laid out in continuous space and then voxelized. The rest
+  of our trees (ages, clumped crowns, tiered conifers, tapering trunks) is our own.
 - Where: `crates/worldgen/src/trees.rs` and `assets/content/base/trees.ron`.
 
 ## Rendering

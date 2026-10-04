@@ -2,9 +2,9 @@
 //! stumps and landmarks, from a shared pool defined as data (`decorations.ron`) that biomes
 //! select from by tag or name, as they do trees and plants.
 //!
-//! Decorations are placed in a fixed order of stages (Geophilic's): patches of dirt, gravel
-//! and moss first, then rocks and standing stones, then trees and bushes, then the
-//! ornaments each tree makes of its own blocks, then fallen logs, stumps and fairy rings;
+//! Decorations are placed in a fixed order of stages (after Geophilic's): patches of dirt,
+//! gravel and moss first, then trees and bushes, then the ornaments each tree makes of its
+//! own blocks, then rocks and standing stones, then fallen logs, stumps and fairy rings;
 //! the plant stages and the snow blanket follow in `terrain`. A later stage only fills what
 //! earlier ones left.
 //!
@@ -49,9 +49,9 @@ pub struct DecorId(pub u16);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
     Patches,
-    Rocks,
     Trees,
     Ornaments,
+    Rocks,
     Logs,
 }
 
@@ -143,6 +143,8 @@ pub struct Area<'a> {
     pub sampler: &'a crate::Sampler<'a>,
     pub geology: &'a GeoGrid<'a>,
     pub caves: &'a crate::caves::CaveColumn<'a>,
+    /// The arches and leaning spires within `features::ROCK_REACH` of the column.
+    pub pieces: &'a [crate::shapes::Piece],
     pub trees: &'a Trees,
 }
 
@@ -404,7 +406,7 @@ impl Decor {
                 let leaves = leaves.or_else(|| species.map(|t| area.trees.leaves(t))).filter(|b| !b.is_air());
                 let Some(leaves) = leaves else { return };
                 let log = log.or_else(|| species.map(|t| area.trees.log(t))).unwrap_or(BlockId::AIR);
-                crate::trees::bush(base, lerp(*radius, rng.unit()), leaves, log, rng, blocks, parts);
+                crate::trees::bush(base, lerp(*radius, rng.unit()), leaves, log, &|x, z| area.height(x, z), rng, blocks, parts);
             }
             Form::FallenLog { length, thick, hollow, branches, stump, growth, plants } => {
                 let Some(species) = Self::species(area, site, base, rng) else { return };
@@ -465,8 +467,12 @@ impl Decor {
                         if blocks.contains(IVec3::new(p.x, ground, p.y)) && !area.world.terrain.is_firm(blocks.get(IVec3::new(p.x, ground - 1, p.y))) {
                             return;
                         }
+                        // Sunk a block into the ground, and round any wood in the way.
                         for y in ground..=top {
-                            blocks.set(IVec3::new(p.x, y, p.y), if cap && y == top { self.moss } else { block });
+                            let cell = IVec3::new(p.x, y, p.y);
+                            if y == ground || blocks.soft(cell) {
+                                blocks.set(cell, if cap && y == top { self.moss } else { block });
+                            }
                         }
                     };
                     // A leaning stone's main column is the stub; its full height stands beside.
@@ -761,7 +767,11 @@ impl Decor {
                         if area.height(cell.x, cell.z) >= cell.y {
                             break;
                         }
-                        blocks.put_log(cell, wood);
+                        // Each block of it lies on the ground in its own column, so none
+                        // hangs where the log beside it was left out over a hole.
+                        if !blocks.contains(cell) || area.world.terrain.is_firm(blocks.get(cell - IVec3::Y)) {
+                            blocks.put_log(cell, wood);
+                        }
                     }
                 } else {
                     let top = at + IVec3::Y * if log.thick { 3 } else { 1 };

@@ -167,6 +167,8 @@ pub struct Ecology {
     /// Which few kinds of flower grow in a region.
     varieties: FastNoiseLite,
     richness: f32,
+    /// The content's tree density, on forest trees.
+    tree_density: f32,
     seed: u64,
 }
 
@@ -294,6 +296,7 @@ impl Ecology {
             kinds: noise(seed, 34, 1.0 / 22.0, FractalType::FBm, 2),
             varieties: noise(seed, 36, 1.0 / 600.0, FractalType::FBm, 2),
             richness: dials.vegetation,
+            tree_density: content.tree_density,
             seed,
         }
     }
@@ -379,7 +382,7 @@ impl Ecology {
                 out.push((tree, share));
             }
             let all: f32 = flora.canopy.iter().map(|c| c.1).sum();
-            let forest = site.forest * TREE_CHANCE * (total / (SUITED * all)).min(1.0);
+            let forest = site.forest * TREE_CHANCE * self.tree_density * (total / (SUITED * all)).min(1.0);
             let jitter = (hash3(self.seed ^ STANDS, x, 0, z) & 0xffff) as f32 / 65536.0 - 0.5;
             let u = (crate::climate::uniform(self.groves.get_noise_2d(x as f32, z as f32)) + 0.04 * jitter).clamp(0.0, 0.9999);
             let canopy = &mut out[start..];
