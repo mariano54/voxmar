@@ -156,6 +156,16 @@ no two worlds share a rarity table. Everything else is a continuous field:
 - **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
   drier interiors, rain shadows behind mountains, wet tropics and dry subtropics.
 - **Rivers and lakes** are carved into the height function, ending as dry valleys in high country.
+- **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
+  everywhere, more tangled with depth, opening to the surface as entrances in some places;
+  cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
+  labyrinths, ravines (30–70 deep, some open to the sky, a few a kilometre long) and
+  sinkholes; and very rare giant cavern systems, most holding one great lake. Water tables
+  per 16×16×12 cell (as in Minecraft 1.18) flood some caves at their own levels, with sea
+  level near the surface so caves under the sea are flooded rather than draining it, and lava
+  below y 10, with rock left wherever a fluid would otherwise touch air. The cave density
+  dial, the world's featured rarities and the seed set how much of each kind a world has
+  (`Overworld::cave_style`).
 - **Selection fields**: continentalness, a landform class (erosion), and seeded weirdness,
   aether (how fantastical the land is), fertility, variant and rock provinces 2-4 km across.
 
@@ -178,6 +188,10 @@ its biome, the biome next door and the distance to their border; `Overworld::bio
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
 `SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on) writes a
 shaded 8 km map to `target/map_preview.ppm` and prints each biome's share of it.
+`cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
+writes an x-ray map, sections and level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
+arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;
+`column_timing` reports generation time per column (all `-- --ignored --nocapture`).
 
 ## Weather
 

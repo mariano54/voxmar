@@ -305,7 +305,7 @@ fn stripes(s: &Stripes, size: Size, seed: u32, field: &mut [f32]) {
             } else {
                 0.0
             };
-            let c = along as f32 + 0.5 + wave - s.phase;
+            let c = along as f32 + 0.5 + wave - s.phase + s.slope * across as f32;
             if (c / s.period.max(1.0)).rem_euclid(1.0) < s.width {
                 field[(y * size.w + x) as usize] += s.amount;
             }

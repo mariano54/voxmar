@@ -1,0 +1,189 @@
+// Rocks and ores. Each rock has its own recipe for the raw stone; the `stone` template
+// makes its cobbled, polished and brick forms from the rock's `main` palette.
+(
+    palettes: {
+        "stone": ["#56575c", "#65666a", "#747477", "#828283", "#8f8f8f", "#9d9c9a"],
+        "granite": ["#6a4840", "#7d574d", "#90665a", "#a27667", "#b38877", "#c39b8a"],
+        "diorite": ["#8f8f8e", "#a6a6a4", "#bbbbb8", "#cbcbc8", "#dadad6", "#e9e8e3"],
+        "andesite": ["#5d5f61", "#6c6e70", "#7b7c7e", "#898a8b", "#97989a", "#a7a8a8"],
+        "tuff": ["#4c4e46", "#5a5c53", "#686a61", "#76786e", "#84867b", "#94958a"],
+        "calcite": ["#b9bcb8", "#c8cbc6", "#d6d8d3", "#e1e3de", "#ebede8", "#f6f6f2"],
+        "deepslate": ["#2e2e34", "#38383f", "#43434a", "#4e4e56", "#5a5a62", "#67676f"],
+        "marble": ["#b4b3b0", "#c6c5c1", "#d5d4d0", "#e2e1dc", "#edece7", "#f8f7f3"],
+        "marble_vein": ["#8a919b", "#9fa6af", "#b4bac2"],
+        "limestone": ["#a1977e", "#b1a78d", "#c0b79c", "#cdc5aa", "#d9d2b8", "#e5dfc6"],
+        "slate": ["#2a3038", "#333a43", "#3d454f", "#48505a", "#535c66", "#5f6872"],
+        "basalt": ["#232328", "#2c2c32", "#36363c", "#404046", "#4b4b51", "#57575d"],
+        "chalk": ["#c6c5bd", "#d3d2cb", "#dedcd6", "#e8e7e1", "#f0efea", "#f9f8f4"],
+        "sandstone": ["#b39f6e", "#c3af7e", "#d1be8d", "#dcca9b", "#e5d5a8", "#eee0b7"],
+        "red_sandstone": ["#7f4520", "#8f5027", "#9f5c2f", "#ad6939", "#ba7745", "#c68653"],
+        "travertine": ["#a39274", "#b3a283", "#c2b292", "#cfc0a0", "#dacdae", "#e5d9bc"],
+        "bedrock": ["#141416", "#2a2a2e", "#46464b", "#66666b", "#8a8a8e", "#adadb0"],
+    },
+    templates: {
+        "stone": {
+            "block/{name}": (palettes: {"main": "{name}"}, layers: [
+                Paint(palette: "main", base: 0.55, shade: [Noise(cells: (3, 6), octaves: 3, gain: 0.6, amount: 0.7)], clean: true),
+            ]),
+            "block/cobbled_{name}": (palettes: {"main": "{name}"}, layers: [
+                Paint(palette: "main", base: 0.62, shade: [
+                    Cells(count: (3, 3), jitter: 0.9, value: 0.3, edge: -0.8, bevel: 0.3, round: 0.25, warp: 1.5),
+                    Noise(cells: (8, 8), amount: 0.25),
+                ], clean: true),
+            ]),
+            "block/polished_{name}": (palettes: {"main": "{name}"}, layers: [
+                Paint(palette: "main", base: 0.6, shade: [
+                    Noise(cells: (4, 4), octaves: 2, amount: 0.22),
+                    Border(width: 1, amount: -0.35, sides: (0.0, 1.0, 1.0, 0.0)),
+                    Border(width: 1, amount: 0.25, sides: (1.0, 0.0, 0.0, 1.0)),
+                    Border(width: 2, amount: -0.12),
+                ], clean: true),
+            ]),
+            "block/{name}_bricks": (palettes: {"main": "{name}"}, layers: [
+                Paint(palette: "main", base: 0.6, shade: [
+                    Bricks(size: (8, 4), mortar: -0.55, value: 0.2, bevel: 0.15),
+                    Noise(cells: (8, 8), amount: 0.2),
+                ], clean: true),
+            ]),
+        },
+    },
+    families: [
+        (template: "stone", name: "granite"),
+        (template: "stone", name: "diorite"),
+        (template: "stone", name: "andesite"),
+        (template: "stone", name: "tuff"),
+        (template: "stone", name: "calcite"),
+        (template: "stone", name: "deepslate"),
+        (template: "stone", name: "marble"),
+        (template: "stone", name: "limestone"),
+        (template: "stone", name: "slate"),
+        (template: "stone", name: "basalt"),
+        (template: "stone", name: "chalk"),
+        (template: "stone", name: "sandstone"),
+        (template: "stone", name: "red_sandstone"),
+        (template: "stone", name: "travertine"),
+    ],
+    textures: {
+        "block/stone": (palettes: {"main": "stone"}, layers: [
+            Paint(palette: "main", base: 0.56, shade: [Noise(cells: (3, 6), octaves: 3, gain: 0.6, amount: 0.7)], clean: true),
+            Paint(palette: "main", base: 0.25, mask: [Ridge(cells: (2, 3), width: 0.12, amount: 1.0), Noise(cells: (4, 4), amount: 0.8)], above: 0.85, light: 1),
+        ]),
+        "block/cobblestone": (base: "block/cobbled_andesite", palettes: {"main": "stone"}, seed: 11),
+        "block/mossy_cobblestone": (base: "block/cobblestone", palettes: {"moss": ["#3d5a24", "#4f7029", "#628532", "#779a3c"]}, layers: [
+            Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.8)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.25, amount: 0.25)], above: 0.62, clean: true),
+        ]),
+        "block/bedrock": (palettes: {"main": "bedrock"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Cells(count: (5, 5), jitter: 1.0, value: 0.9, edge: -0.3, bevel: 0.3, warp: 1.5), Speckle(chance: 0.2, amount: 0.3)], clean: true),
+        ]),
+        "block/granite": (palettes: {"main": "granite", "fleck": ["#4e3530", "#cdaa9a", "#dcc0b2"]}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 3, gain: 0.7, amount: 0.8)], clean: true),
+            Paint(palette: "fleck", base: 0.0, shade: [Speckle(chance: 1.0, amount: 0.0)], mask: [Speckle(chance: 0.06, amount: 1.0)]),
+            Paint(palette: "fleck", base: 0.4, mask: [Speckle(chance: 0.05, amount: 1.0, seed: 3)]),
+        ]),
+        "block/diorite": (palettes: {"main": "diorite", "fleck": ["#55565a", "#717276", "#8e8f92"]}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.6)], clean: true),
+            Clusters(palette: "fleck", count: 10, size: (1, 4), spacing: 3.0, shade: 1, seed: 1),
+        ]),
+        "block/andesite": (palettes: {"main": "andesite"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.5), Speckle(chance: 0.18, amount: 0.3), Speckle(chance: 0.15, amount: -0.3, seed: 2)], clean: false),
+        ]),
+        "block/tuff": (palettes: {"main": "tuff"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 8), octaves: 2, amount: 0.6), Speckle(chance: 0.1, amount: 0.45), Speckle(chance: 0.08, amount: -0.4, seed: 4)], clean: true),
+        ]),
+        "block/calcite": (palettes: {"main": "calcite"}, layers: [
+            Paint(palette: "main", base: 0.62, shade: [Cells(count: (3, 3), jitter: 1.0, value: 0.35, edge: -0.18, bevel: 0.2, warp: 0.5), Noise(cells: (8, 8), amount: 0.15)], clean: true),
+        ]),
+        "block/deepslate": (palettes: {"main": "deepslate"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Noise(cells: (2, 8), octaves: 2, amount: 0.5),
+                Stripes(period: 4.0, width: 0.25, amount: -0.3, warp: 1.0),
+                Speckle(chance: 0.08, amount: 0.25),
+            ], clean: true),
+        ]),
+        "block/deepslate_top": (palettes: {"main": "deepslate"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Cells(count: (3, 3), jitter: 0.8, value: 0.3, edge: -0.4, bevel: 0.15), Noise(cells: (8, 8), amount: 0.3)], clean: true),
+        ]),
+        "block/marble": (palettes: {"main": "marble", "vein": "marble_vein"}, layers: [
+            Paint(palette: "main", base: 0.65, shade: [Noise(cells: (3, 3), octaves: 3, amount: 0.45)], clean: true),
+            Paint(palette: "vein", base: 0.3, shade: [Noise(cells: (4, 4), amount: 0.8)], mask: [Ridge(cells: (2, 2), octaves: 1, width: 0.3, amount: 1.0)], above: 0.6),
+        ]),
+        "block/limestone": (palettes: {"main": "limestone"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Noise(cells: (2, 8), octaves: 2, amount: 0.45),
+                Stripes(period: 8.0, width: 0.125, amount: -0.25, warp: 1.0, phase: 2.0),
+                Speckle(chance: 0.05, amount: -0.35),
+            ], clean: true),
+        ]),
+        "block/slate": (palettes: {"main": "slate"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Noise(cells: (1, 8), octaves: 2, amount: 0.7),
+                Stripes(period: 3.0, width: 0.34, amount: -0.2, warp: 0.6),
+                Noise(cells: (16, 16), amount: 0.12),
+            ], clean: true),
+        ]),
+        "block/basalt": (palettes: {"main": "basalt"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Stripes(period: 5.0, width: 0.2, amount: -0.35, vertical: true, warp: 0.6),
+                Stripes(period: 5.0, width: 0.2, amount: 0.25, vertical: true, warp: 0.6, phase: 1.0),
+                Noise(cells: (8, 2), octaves: 2, amount: 0.4),
+            ], clean: true),
+        ]),
+        "block/chalk": (palettes: {"main": "chalk"}, layers: [
+            Paint(palette: "main", base: 0.62, shade: [Noise(cells: (4, 4), octaves: 3, amount: 0.5), Speckle(chance: 0.04, amount: -0.3)], clean: true),
+        ]),
+        "block/sandstone": (palettes: {"main": "sandstone"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Noise(cells: (8, 16), amount: 0.3),
+                Stripes(period: 16.0, width: 0.1875, amount: 0.2, phase: 0.0),
+                Stripes(period: 16.0, width: 0.0625, amount: -0.3, phase: 3.0),
+                Noise(cells: (1, 4), octaves: 2, amount: 0.25),
+                Border(width: 1, amount: -0.25, sides: (0.0, 0.0, 1.0, 0.0)),
+            ], clean: true),
+        ]),
+        "block/sandstone_top": (palettes: {"main": "sandstone"}, layers: [
+            Paint(palette: "main", base: 0.62, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.35), Speckle(chance: 0.12, amount: -0.25), Speckle(chance: 0.08, amount: 0.25, seed: 5)]),
+        ]),
+        "block/sandstone_bottom": (base: "block/sandstone_top", layers: [
+            Shift(by: [Flat(-1.0)], mask: [Noise(cells: (4, 4), amount: 1.0)], above: 0.25),
+        ]),
+        "block/red_sandstone": (base: "block/sandstone", palettes: {"main": "red_sandstone"}),
+        "block/red_sandstone_top": (base: "block/sandstone_top", palettes: {"main": "red_sandstone"}),
+        "block/red_sandstone_bottom": (base: "block/sandstone_bottom", palettes: {"main": "red_sandstone"}),
+        "block/travertine": (palettes: {"main": "travertine"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Noise(cells: (1, 8), octaves: 2, amount: 0.5),
+                Stripes(period: 4.0, width: 0.25, amount: 0.15, warp: 0.8),
+            ], clean: true),
+            Paint(palette: "main", base: 0.05, mask: [Speckle(chance: 0.35, amount: 1.0), Stripes(period: 4.0, width: 0.25, amount: 1.0, warp: 0.8, phase: 2.0), Noise(cells: (16, 4), amount: 0.6)], above: 1.6, light: 1),
+        ]),
+        // Ores: the host rock with clumps of mineral, lit from the top left.
+        "block/coal_ore": (base: "block/stone", palettes: {"ore": ["#121214", "#1e1e21", "#2e2e32", "#45454a"]}, layers: [
+            Clusters(palette: "ore", count: 4, size: (9, 14), spacing: 5.5, shade: 1, margin: 1),
+        ]),
+        "block/iron_ore": (base: "block/stone", palettes: {"ore": ["#6d4c37", "#a77a5c", "#d2a888", "#ead0b8"]}, layers: [
+            Clusters(palette: "ore", count: 4, size: (9, 14), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/copper_ore": (base: "block/stone", palettes: {"ore": ["#6c331b", "#b05a32", "#de8a54", "#5fae8c"]}, layers: [
+            Clusters(palette: "ore", count: 5, size: (7, 11), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/gold_ore": (base: "block/stone", palettes: {"ore": ["#8a5f0f", "#d39c1e", "#f6d24a", "#fff3a8"]}, layers: [
+            Clusters(palette: "ore", count: 4, size: (8, 12), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/diamond_ore": (base: "block/stone", palettes: {"ore": ["#156d6b", "#2fb7b0", "#6ff0e6", "#d8fffb"]}, layers: [
+            Clusters(palette: "ore", count: 4, size: (6, 10), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/cobalt_ore": (base: "block/stone", palettes: {"ore": ["#16246e", "#2d47b8", "#5a80f0", "#b6cbff"]}, layers: [
+            Clusters(palette: "ore", count: 4, size: (8, 12), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/tin_ore": (base: "block/stone", palettes: {"ore": ["#5f6b70", "#97a5aa", "#c8d4d7", "#eef5f6"]}, layers: [
+            Clusters(palette: "ore", count: 5, size: (6, 10), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/silver_ore": (base: "block/stone", palettes: {"ore": ["#70737c", "#b0b5c0", "#dfe3ec", "#ffffff"]}, layers: [
+            Clusters(palette: "ore", count: 5, size: (5, 9), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/aetherite_ore": (base: "block/deepslate", palettes: {"ore": ["#4a1f8c", "#8a4cf0", "#c39bff", "#f2e6ff"], "glint": ["#7af5ff"]}, layers: [
+            Clusters(palette: "ore", count: 4, size: (7, 11), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
+            Paint(palette: "glint", mask: [Speckle(chance: 0.03, amount: 1.0, seed: 9)]),
+        ]),
+    },
+)

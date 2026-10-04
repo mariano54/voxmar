@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::colour::{self, Rgba};
 use crate::field::{self, Size, hash, unit};
-use crate::recipe::{Clusters, Cut, Grid, Layer, Paint, Shift};
+use crate::recipe::{Clusters, Cut, Grid, Layer, Paint, Shift, Stamp};
 use crate::{Error, Image};
 
 /// A recipe with its bases folded in: everything needed to paint it.
@@ -12,8 +12,10 @@ pub struct Resolved {
     pub size: (u32, u32),
     pub seed: u32,
     pub palettes: BTreeMap<String, Vec<Rgba>>,
-    /// Layers with their seed index, which stays the same when a recipe is extended.
-    pub layers: Vec<(usize, Layer)>,
+    /// Layers with their seeds; `None` takes the seed from `seed` and the layer's index.
+    pub layers: Vec<(Option<u32>, Layer)>,
+    /// Textures that `Stamp` layers draw, already rendered.
+    pub stamps: BTreeMap<String, Image>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,14 +79,15 @@ pub fn render(recipe: &Resolved) -> Result<Image, Error> {
         names: recipe.palettes.keys().map(String::as_str).collect(),
         palettes: recipe.palettes.values().map(Vec::as_slice).collect(),
     };
-    for (index, layer) in &recipe.layers {
-        let seed = hash(recipe.seed, *index as i32, 0x1a7e);
+    for (index, (layer_seed, layer)) in recipe.layers.iter().enumerate() {
+        let seed = layer_seed.unwrap_or_else(|| hash(recipe.seed, index as i32, 0x1a7e));
         match layer {
             Layer::Paint(paint) => draw_paint(&mut canvas, paint, seed)?,
             Layer::Grid(grid) => draw_grid(&mut canvas, grid)?,
             Layer::Clusters(clusters) => draw_clusters(&mut canvas, clusters, seed)?,
             Layer::Shift(shift) => draw_shift(&mut canvas, shift, seed),
             Layer::Cut(cut) => draw_cut(&mut canvas, cut, seed),
+            Layer::Stamp(stamp) => draw_stamp(&mut canvas, stamp, &recipe.stamps[&stamp.texture]),
             Layer::Corners(corners) => draw_corners(&mut canvas, corners)?,
         }
     }
@@ -127,7 +130,8 @@ fn draw_paint(canvas: &mut Canvas, paint: &Paint, seed: u32) -> Result<(), Error
     }
     for i in 0..size.len() {
         if painted[i] {
-            canvas.texels[i] = Texel::Shade(palette, shades[i]);
+            let gap = paint.cut.is_some_and(|cut| paint.base + shade[i] < cut);
+            canvas.texels[i] = if gap { Texel::Clear } else { Texel::Shade(palette, shades[i]) };
         }
     }
     if paint.shadow != 0 {
@@ -236,32 +240,45 @@ fn draw_clusters(canvas: &mut Canvas, clusters: &Clusters, seed: u32) -> Result<
         centres.push(centre);
         let (low, high) = (clusters.size.0.max(1), clusters.size.1.max(clusters.size.0.max(1)));
         let target = low + (unit(seed, k, 100) * (high - low + 1) as f32) as u32;
+        // Grow compact blobs: each step adds the neighbouring texel touching the most of
+        // the blob, with some randomness and `spread` favouring one direction.
         let mut blob = vec![centre];
-        let mut step = 0;
-        while blob.len() < target as usize && step < 200 {
-            step += 1;
-            let from = blob[(unit(seed, k, 200 + step) * blob.len() as f32) as usize];
-            let (sx, sy) = clusters.spread;
-            let r = unit(seed, k, 600 + step) * 2.0 * (sx + sy);
-            let (dx, dy) = if r < sx {
-                (1, 0)
-            } else if r < 2.0 * sx {
-                (-1, 0)
-            } else if r < 2.0 * sx + sy {
-                (0, 1)
-            } else {
-                (0, -1)
-            };
-            let next = (from.0 + dx, from.1 + dy);
-            let next = (next.0.rem_euclid(w), next.1.rem_euclid(h));
-            if inside(next.0, next.1) && !blob.contains(&next) {
-                blob.push(next);
+        let wrap = |(x, y): (i32, i32)| (x.rem_euclid(w), y.rem_euclid(h));
+        for step in 0..target as i32 {
+            if blob.len() >= target as usize {
+                break;
+            }
+            let mut best: Option<((i32, i32), f32)> = None;
+            for &(bx, by) in &blob {
+                for (dx, dy, weight) in [(1, 0, clusters.spread.0), (-1, 0, clusters.spread.0), (0, 1, clusters.spread.1), (0, -1, clusters.spread.1)] {
+                    let next = wrap((bx + dx, by + dy));
+                    if blob.contains(&next) || !inside(next.0, next.1) {
+                        continue;
+                    }
+                    let touching = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().filter(|(ax, ay)| blob.contains(&wrap((next.0 + ax, next.1 + ay)))).count();
+                    let score = touching as f32 + weight * 1.3 * unit(seed, k * 64 + step, next.0 * 31 + next.1);
+                    if best.is_none_or(|(_, b)| score > b) {
+                        best = Some((next, score));
+                    }
+                }
+            }
+            match best {
+                Some((next, _)) => blob.push(next),
+                None => break,
             }
         }
         let has = |x: i32, y: i32| blob.contains(&(x.rem_euclid(w), y.rem_euclid(h)));
         for &(x, y) in &blob {
             let light = !has(x, y - 1) as i32 + !has(x - 1, y) as i32 - !has(x, y + 1) as i32 - !has(x + 1, y) as i32;
-            let shade = (middle + light).clamp(0, count - 1);
+            // Lit edges brighten (the corner most of all), shadowed corners darken, and
+            // lone texels keep the middle shade so small blobs still read.
+            let step = match light {
+                2.. => 2,
+                1 => 1,
+                ..=-2 => -1,
+                _ => 0,
+            };
+            let shade = (middle + step).clamp(0, count - 1);
             let i = size.index(x, y);
             canvas.texels[i] = Texel::Shade(palette, shade as u8);
             members[i] = true;
@@ -281,6 +298,26 @@ fn draw_shift(canvas: &mut Canvas, shift: &Shift, seed: u32) {
         let steps = by[i].round() as i32;
         if allowed[i] && steps != 0 {
             canvas.shift(i, steps);
+        }
+    }
+}
+
+fn draw_stamp(canvas: &mut Canvas, stamp: &Stamp, image: &Image) {
+    let size = canvas.size;
+    let origins = if stamp.at.is_empty() { vec![(0, 0)] } else { stamp.at.clone() };
+    for (ox, oy) in origins {
+        for sy in 0..image.height as i32 {
+            for sx in 0..image.width as i32 {
+                let (x, y) = (ox + sx, oy + sy);
+                if x < 0 || y < 0 || x >= size.w as i32 || y >= size.h as i32 {
+                    continue;
+                }
+                let source = if stamp.mirror { image.width as i32 - 1 - sx } else { sx };
+                let colour = image.get(source as u32, sy as u32);
+                if colour[3] > 0 {
+                    canvas.texels[size.index(x, y)] = Texel::Colour(colour);
+                }
+            }
         }
     }
 }
