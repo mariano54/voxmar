@@ -1,7 +1,7 @@
 //! Texture sources. Block, colormap and HUD textures are read at runtime from a stack of
-//! texture packs: our own default pack, the player's chosen pack, and their Minecraft
-//! install if they have one (nothing from Minecraft is shipped or needed). Whatever no pack
-//! provides gets a simple generated placeholder.
+//! texture packs: the player's chosen pack, their Minecraft install if they have one
+//! (nothing from Minecraft is shipped or needed), and our own default pack, which draws
+//! everything the game uses. Whatever no pack provides gets a simple generated placeholder.
 
 use std::fs::File;
 use std::io::Read;
@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use voxmar_engine::block::{RenderKind, TextureRef};
 use voxmar_texgen::{Image, Library};
+
+use crate::settings::TextureOrder;
 
 #[derive(Clone)]
 pub struct Rgba {
@@ -153,18 +155,21 @@ impl Pack {
 /// it, then from a placeholder:
 ///
 /// 1. the pack the player chose with `$VOXMAR_TEXTURES` (a folder, zip or jar), which
-///    overrides ours;
-/// 2. our default pack, `assets/packs/default`;
-/// 3. any other pack in `assets/packs`, in name order (how mods ship art: they add
-///    textures, but cannot replace ours);
-/// 4. without a chosen pack, the newest Minecraft client jar found in a standard launcher
-///    location, to fill in names the packs above lack.
+///    overrides everything below;
+/// 2. by default, the newest Minecraft client jar found in a standard launcher location,
+///    for the familiar look while our pack matures (the `textures` setting puts it last);
+/// 3. our default pack, `assets/packs/default`, which draws everything: what Minecraft
+///    has not got (our stones, woods, plants, wonders) and, with the setting, the rest;
+/// 4. any other pack in `assets/packs`, in name order (how mods ship art: they add
+///    textures, but cannot replace ours).
+///
+/// A chosen pack replaces the Minecraft jar.
 pub struct Source {
     packs: Vec<Pack>,
 }
 
 impl Source {
-    pub fn discover() -> Self {
+    pub fn discover(order: TextureOrder) -> Self {
         let assets = voxmar_server::assets_dir();
         let mut packs = Vec::new();
         let chosen = std::env::var_os("VOXMAR_TEXTURES").map(PathBuf::from);
@@ -173,6 +178,14 @@ impl Source {
                 Ok(pack) => packs.push(pack),
                 Err(e) => bevy::log::warn!("cannot open texture pack {}: {e}", path.display()),
             }
+        }
+        let minecraft = match (&chosen, find_minecraft_jar()) {
+            (None, Some(jar)) => Pack::open(&jar).map_err(|e| bevy::log::warn!("cannot open {}: {e}", jar.display())).ok(),
+            _ => None,
+        };
+        let mut minecraft = minecraft.into_iter();
+        if order == TextureOrder::Minecraft {
+            packs.extend(minecraft.by_ref());
         }
         let root = assets.join("packs");
         let mut bundled: Vec<PathBuf> = std::fs::read_dir(&root)
@@ -184,14 +197,7 @@ impl Source {
             .collect();
         bundled.sort_by_key(|path| (path.file_name() != Some("default".as_ref()), path.clone()));
         packs.extend(bundled.iter().filter_map(|path| Pack::open(path).ok()));
-        if chosen.is_none()
-            && let Some(jar) = find_minecraft_jar()
-        {
-            match Pack::open(&jar) {
-                Ok(pack) => packs.push(pack),
-                Err(e) => bevy::log::warn!("cannot open {}: {e}", jar.display()),
-            }
-        }
+        packs.extend(minecraft);
         Self { packs }
     }
 

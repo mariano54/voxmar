@@ -44,7 +44,7 @@ T opens the console to chat with everyone on the server; / opens it with a comma
 recall earlier lines, Tab completes a command's name, Enter sends and Esc closes. Replies and
 chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
 like actions: admins (the singleplayer host, and players named with `--admin` on a dedicated
-server) may use them all, everyone else `/help`, `/seed` and `/list`.
+server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
 
 - `/time` tells the time; `/time set sunrise|day|morning|noon|afternoon|sunset|dusk|night|midnight|dawn|TICKS`
   moves forward to that time of day (a day is 24000 ticks, 0 is sunrise), `/time add 100|30s|2h|1d`
@@ -60,6 +60,8 @@ server) may use them all, everyone else `/help`, `/seed` and `/list`.
 - `/tp X Y Z`, `/tp X Z` (onto the ground), `/tp PLAYER`, `/tp PLAYER X Y Z`, `/tp PLAYER PLAYER`;
   `~` means where the player is, so `/tp ~ ~10 ~` goes ten blocks up.
 - `/gamemode survival|creative [PLAYER]` switches a player's mode, which is kept with them.
+- `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
+  (within 4000 blocks unless you say).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
 Commands are data: each package's `commands.ron` names its commands, who may use them, their
@@ -101,14 +103,17 @@ type `stop` to save and quit.
 Textures come from a stack of packs, each a folder, zip or jar; every texture is taken from the
 first pack that has it:
 
-1. the pack chosen with `VOXMAR_TEXTURES` (a resource pack or a Minecraft jar also works), which
-   overrides ours;
-2. our default pack, `assets/packs/default`;
-3. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
-   never replacing ours;
-4. without a chosen pack, the newest Minecraft client jar found (official launcher or Prism
-   Launcher), only for names the packs above lack.
+1. the pack chosen with `VOXMAR_TEXTURES` (a resource pack, a Minecraft jar, or
+   `assets/packs/default` to see only ours), which overrides everything below;
+2. otherwise, the newest Minecraft client jar found (official launcher or Prism Launcher), for
+   the familiar look while our pack matures;
+3. our default pack, `assets/packs/default`, which draws every texture the game uses: whatever
+   Minecraft lacks (our stones, woods, plants and wonders) and, without Minecraft, everything;
+4. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
+   never replacing ours.
 
+Settings → Textures switches to "Voxmar", which puts our pack first (the Minecraft jar then only
+fills names ours lacks); it takes effect the next time the game starts.
 Anything still missing gets a generated placeholder. The startup log says how many textures
 each pack provided. A pack keeps images at `textures/<path>.png` (`textures/block/stone.png`),
 or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No
@@ -228,7 +233,10 @@ each says what climate, ground and habitat it likes, biomes select from the pool
 name, and the climate at each spot weighs the candidates, so a new plant with the right
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
-runs high.
+runs high. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
+colour-grading nudges, and ambient particle sets from `ambient.ron` such as pollen,
+fireflies, spores, dust, drifting snow and aether motes), taken from the climate unless a
+biome sets parts of it, and blended across borders.
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and

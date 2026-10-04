@@ -181,6 +181,18 @@
         "block/emberwood_log_top": (base: "block/stripped_emberwood_log_top", palettes: {"bark": "emberwood_bark"}, layers: [
             Paint(palette: "bark", base: 0.45, shade: [Noise(cells: (16, 16), amount: 0.6)], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
         ]),
+        // Glowcaps: giant mushrooms with pale fibrous stems and glowing teal caps.
+        "block/glowcap_stem": (palettes: {"main": ["#8e8676", "#a89f8e", "#c0b8a6", "#d6cfbd", "#e8e2d2"]}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (16, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.2, warp: 0.6)], clean: true),
+        ]),
+        "block/glowcap_stem_top": (palettes: {"main": ["#8e8676", "#a89f8e", "#c0b8a6", "#d6cfbd", "#e8e2d2"]}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Rings(spacing: 2.0, width: 0.3, amount: -0.25, wobble: 0.8, square: 0.2), Border(width: 1, amount: -0.3)]),
+        ]),
+        "block/glowcap_cap": (palettes: {"main": ["#0a4a54", "#0e6e74", "#16969a", "#28c2be", "#5ae6da", "#b4fff2"], "spot": ["#bffff4", "#f0fffc"]}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.6), Cells(count: (3, 3), value: 0.2, edge: -0.25, bevel: 0.2, warp: 1.0)], clean: true),
+            Clusters(palette: "spot", count: 4, size: (2, 4), spacing: 6.0, shade: 0, shadow: -1, margin: 1),
+        ]),
+        "block/glowcap_planks": (base: "block/oak_planks", palettes: {"wood": ["#7c8a86", "#929f9a", "#a8b4ae", "#bcc6c0", "#ced6d0", "#dee4de"]}, seed: 31),
         // Conifer saplings are narrow spires.
         "block/spruce_sapling": (base: "block/oak_sapling", palettes: {"bark": "spruce_bark", "sapling": "spruce_sapling"}, layers: [
             Grid(legend: {'x': "clear"}, rows: ["xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx"]),

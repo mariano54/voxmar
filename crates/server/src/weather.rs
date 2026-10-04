@@ -43,7 +43,7 @@ use voxmar_engine::world::Column;
 use voxmar_engine::field::Field;
 use voxmar_engine::glam::{DVec2, IVec2, IVec3, Vec2, Vec3};
 use voxmar_engine::schedule::Tier;
-use voxmar_engine::weather::{Input, Inputs, Preset, WeatherTable, ramp};
+use voxmar_engine::weather::{Input, Inputs, Preset, WeatherTable, advance_gusts, ramp};
 use voxmar_worldgen::{Featured, Overworld, SEA_LEVEL, Tier as _};
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND, Weather as LocalWeather};
 
@@ -408,6 +408,8 @@ struct Sky {
 pub(crate) struct Weather {
     /// The weather each player was last sent, and when.
     sent: FxHashMap<PlayerId, (Report, u64)>,
+    /// How far the gust fronts have travelled with the wind where each player is.
+    gusts: FxHashMap<PlayerId, Vec2>,
     /// Snowy blocks by the ground blocks they cover, once resolved from the table.
     snowy: Option<Vec<(BlockId, BlockId)>>,
     runs: u64,
@@ -427,8 +429,13 @@ impl Process for Weather {
         let mut strikes = server.weather.update(&mut server.temperature, &around, tick, day);
 
         self.sent.retain(|id, _| server.players.contains_key(id));
+        self.gusts.retain(|id, _| server.players.contains_key(id));
+        let dt = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
         for &(id, at) in &positions {
-            let report = server.weather.local(&mut server.temperature, at, tick, day);
+            let mut report = server.weather.local(&mut server.temperature, at, tick, day);
+            let offset = self.gusts.entry(id).or_default();
+            *offset = advance_gusts(*offset, report.weather.wind, dt);
+            report.weather.gust_offset = *offset;
             strikes.extend(server.weather.sky.effect_lightning(id, at, report.weather.lightning, tick));
             let quick = server.weather.recently_changed(at);
             let due = quick
