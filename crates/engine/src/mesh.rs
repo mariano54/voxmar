@@ -67,6 +67,9 @@ pub const PLANT_ANTIDIAGONAL: u32 = 7;
 const FLAG_INNER: u32 = 1 << 23;
 /// Marks the crossed quads of a leaf fringe, which the shader grows out of the leaf block.
 const FLAG_FRINGE: u32 = 1 << 27;
+/// On a fringe: the leaves are a conifer's needles, whose sprigs the shader keeps small and
+/// drooping, so a spruce's tiers stay neat rather than bristling.
+const FLAG_NEEDLES: u32 = 1 << 28;
 /// On fluid faces: how far the surface lies below the block's top, in eighths (bits 25..27),
 /// and the flow's direction in 16ths of a turn (bits 28..31); see the module docs.
 const SURFACE_DROP_SHIFT: u32 = 25;
@@ -1091,6 +1094,7 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], 
     let pos = padded - 1;
     let leaf = cell(padded).block;
     let info = registry.info(leaf);
+    let needles = if registry.def(leaf).has_tag("conifer") { FLAG_NEEDLES } else { 0 };
     let tint = info.tints[Face::PosY as usize];
     let w1 = info.layers[Face::PosY as usize] as u32 | (tint as u32) << 12 | ((sky << 4 | block) as u32) << 24;
     for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
@@ -1098,7 +1102,7 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], 
         for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
             let p = pos + IVec3::new(dx, top, dz);
             let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | face << 18 | (corner as u32) << 21 | (top as u32) << 23;
-            out.vertices.push([w0 | FLAG_FRINGE, w1]);
+            out.vertices.push([w0 | FLAG_FRINGE | needles, w1]);
         }
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
     }

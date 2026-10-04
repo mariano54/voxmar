@@ -60,6 +60,7 @@ const FLOW_SPEEDS = array<f32, 4>(0.0, 0.7, 1.4, 2.8);
 const OPEN_WATER_SHIFT: u32 = 14u;
 const FLAG_FALLING: u32 = 1u << 24u;
 const FLAG_FRINGE: u32 = 1u << 27u;
+const FLAG_NEEDLES: u32 = 1u << 28u;
 // Leaf fringes shrink back into their block between these distances, in blocks (the
 // renderer stops drawing them a little beyond).
 const FRINGE_FADE = vec2(56.0, 88.0);
@@ -155,14 +156,16 @@ fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
 }
 
 // A leaf fringe's vertex: two crossed quads through the leaf block, turned at random, grown
-// past the block and leaning, so crowns look bushy rather than cubic.
+// past the block and leaning, so crowns look bushy rather than cubic. A conifer's needles
+// grow small sprigs that droop a little instead, so its tiers keep their shape.
 fn fringe_position(w0: u32, origin: vec3<f32>, across: vec2<f32>) -> vec3<f32> {
+    let needles = (w0 & FLAG_NEEDLES) != 0u;
     let top = f32((w0 >> 23u) & 1u);
     let corner = origin + local_position(w0) - vec3(across.x, top, across.y);
     let centre = corner + 0.5;
     let a = pcg3d(vec3<u32>(vec3<i32>(floor(centre))));
     let b = pcg3d(vec3<u32>(vec3<i32>(floor(centre)) + vec3(0, 577, 0)));
-    var size = 1.45 + 0.45 * a.y;
+    var size = select(1.45 + 0.45 * a.y, 1.25 + 0.2 * a.y, needles);
 #ifndef PREPASS_PIPELINE
     size = mix(size, 0.8, smoothstep(FRINGE_FADE.x, FRINGE_FADE.y, distance(centre, view.world_position)));
 #endif
@@ -170,9 +173,14 @@ fn fringe_position(w0: u32, origin: vec3<f32>, across: vec2<f32>) -> vec3<f32> {
     let angle = a.x * 6.2832 + select(0.0, 1.5708, face_of(w0) != FACE_PLANT);
     let along = vec2(cos(angle), sin(angle));
     let offset = (across.x - 0.5) * size;
-    let up = (top - 0.5) * size;
-    let lean = vec2(-along.y, along.x) * up * (a.z - 0.5) * 0.9;
-    let jitter = (b - 0.5) * 0.2;
+    var up = (top - 0.5) * size;
+    let tilt = select(0.9, 0.4, needles);
+    let lean = vec2(-along.y, along.x) * up * (a.z - 0.5) * tilt;
+    let jitter = (b - 0.5) * select(0.2, 0.1, needles);
+    if needles {
+        // Sprigs hang a little: the top edge lower, so the card slopes down.
+        up -= top * 0.2 * size;
+    }
     return centre + vec3(along.x * offset + lean.x, up, along.y * offset + lean.y) + jitter;
 }
 
