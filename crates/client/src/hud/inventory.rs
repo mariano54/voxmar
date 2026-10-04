@@ -95,7 +95,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let columns = HOTBAR_SLOTS as f32;
     let grid_width = columns * SLOT + (columns - 1.0) * PX;
     commands.spawn((InventoryScreen, screen(SCRIM), Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
-        let mut card = panel(grid_width + 28.0 * PX);
+        let mut card = panel(grid_width + 76.0 * PX);
         card.0.align_items = AlignItems::Center;
         root.spawn(card).with_children(|card| {
             card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() })
@@ -115,8 +115,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
-            let help = "Shift-click: hotbar ↔ pack · Right-click: half · Drag: spread · 1-9: swap";
-            card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, text(font, help, BODY, MUTED)));
+            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack · 1-9: swap";
+            let help = (text(font, help, BODY, MUTED), TextLayout::justify(Justify::Center));
+            card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
         });
         // The held stack and the tooltip float above everything, at the pointer.
         let pointer = Node { position_type: PositionType::Absolute, width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
@@ -241,18 +242,18 @@ fn click(
         {
             dragged.push(slot);
         }
-        if mouse.just_released(button) || (button == MouseButton::Right && mouse.just_released(MouseButton::Left)) {
+        if mouse.just_released(button) {
             let dragged = std::mem::take(dragged);
             gesture.drag = None;
-            let moves = match dragged.as_slice() {
-                [] => Vec::new(),
+            let moves = match (dragged.as_slice(), inventory.cursor) {
+                // The server may have taken the stack meanwhile.
+                ([], _) | (_, None) => Vec::new(),
                 // A drag that stayed on one slot is a plain click on it.
-                &[slot] => {
-                    let held = inventory.cursor.expect("a drag holds a stack");
+                (&[slot], Some(held)) => {
                     let count = if button == MouseButton::Right && accepts(inventory, slot, held) { 1 } else { held.count };
                     vec![Move::Items { from: CURSOR, to: slot, count }]
                 }
-                slots => spread(inventory, button, slots),
+                (slots, Some(_)) => spread(inventory, button, slots),
             };
             for action in moves {
                 send(&net, &actions, inventory, action);

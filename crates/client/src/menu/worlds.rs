@@ -68,7 +68,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, mut notice: ResMut<Notice>) 
     let worlds = worlds_dir().map(|dir| list_worlds(&dir)).unwrap_or_default();
     let selected = (!worlds.is_empty()).then_some(0);
     commands.spawn((DespawnOnExit(Screen::Worlds), screen(SCRIM))).with_children(|root| {
-        root.spawn(panel(300.0 * PX)).with_children(|panel| {
+        root.spawn(panel(340.0 * PX)).with_children(|panel| {
             spawn_heading(panel, font, "Singleplayer");
             let list = Node {
                 flex_direction: FlexDirection::Column,

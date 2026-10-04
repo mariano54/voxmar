@@ -811,9 +811,9 @@ fn spawn_slider(row: &mut ChildSpawnerCommands, font: &Handle<Font>, slider: Sli
 fn spawn_switch(row: &mut ChildSpawnerCommands, toggle: Toggle) {
     let size = Piece::KnobSmall.size();
     let track = Node {
-        width: Val::Px(2.0 * size.x + 2.0 * PX),
-        height: Val::Px(size.y + 2.0 * PX),
-        padding: UiRect::all(Val::Px(PX)),
+        width: Val::Px(2.5 * size.x + 4.0 * PX),
+        height: Val::Px(size.y + 4.0 * PX),
+        padding: UiRect::all(Val::Px(2.0 * PX)),
         ..default()
     };
     let knob = Node { width: Val::Px(size.x), height: Val::Px(size.y), ..default() };
