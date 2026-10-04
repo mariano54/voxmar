@@ -91,7 +91,7 @@ impl Files {
 struct Pack {
     name: String,
     files: Files,
-    /// Textures this pack provided, for the startup log.
+    /// Textures this pack provided since the last log.
     served: usize,
 }
 
@@ -123,11 +123,11 @@ impl Pack {
 ///    location, to fill in names the packs above lack.
 pub struct Source {
     packs: Vec<Pack>,
-    placeholders: usize,
 }
 
 impl Source {
-    pub fn discover(assets: &Path) -> Self {
+    pub fn discover() -> Self {
+        let assets = voxmar_server::assets_dir();
         let mut packs = Vec::new();
         let chosen = std::env::var_os("VOXMAR_TEXTURES").map(PathBuf::from);
         if let Some(path) = &chosen {
@@ -154,7 +154,7 @@ impl Source {
                 Err(e) => bevy::log::warn!("cannot open {}: {e}", jar.display()),
             }
         }
-        Self { packs, placeholders: 0 }
+        Self { packs }
     }
 
     /// Reads `<path>.png` from the first pack that has it.
@@ -162,21 +162,17 @@ impl Source {
         self.packs.iter_mut().find_map(|pack| pack.read(path))
     }
 
-    /// Logs how many textures each pack provided.
-    pub fn report(&self) {
-        let served: Vec<String> = self
-            .packs
-            .iter()
-            .map(|pack| format!("{} from {}", pack.served, pack.name))
-            .chain((self.placeholders > 0).then(|| format!("{} placeholders", self.placeholders)))
-            .collect();
-        bevy::log::info!("textures: {}", served.join(", "));
-    }
-
-    /// One square texture per block texture reference, all `size`×`size`.
+    /// One square texture per block texture reference, all `size`×`size`. Logs how many
+    /// each pack provided.
     pub fn block_textures(&mut self, refs: &[TextureRef]) -> (u32, Vec<Rgba>) {
         let loaded: Vec<Option<Rgba>> = refs.iter().map(|r| self.read(&format!("block/{}", r.name))).collect();
-        self.placeholders += loaded.iter().filter(|t| t.is_none()).count();
+        let served: Vec<String> = self
+            .packs
+            .iter_mut()
+            .map(|pack| format!("{} from {}", std::mem::take(&mut pack.served), pack.name))
+            .chain(Some(format!("{} placeholders", loaded.iter().filter(|t| t.is_none()).count())))
+            .collect();
+        bevy::log::info!("block textures: {}", served.join(", "));
         let size = loaded.iter().flatten().map(|t| t.width.min(t.height)).max().unwrap_or(16).next_power_of_two();
         let textures = loaded
             .into_iter()
@@ -193,20 +189,16 @@ impl Source {
     /// Grass and foliage colormaps (256×256), indexed by temperature and humidity.
     pub fn colormaps(&mut self) -> [Rgba; 2] {
         let mut load = |name: &str, fallback: [u8; 3]| {
-            self.read(&format!("colormap/{name}")).filter(|t| t.width == 256 && t.height == 256).unwrap_or_else(|| {
-                self.placeholders += 1;
-                gradient_colormap(fallback)
-            })
+            self.read(&format!("colormap/{name}"))
+                .filter(|t| t.width == 256 && t.height == 256)
+                .unwrap_or_else(|| gradient_colormap(fallback))
         };
         [load("grass", [110, 180, 70]), load("foliage", [80, 160, 50])]
     }
 
     /// A HUD sprite, or a flat fallback.
     pub fn sprite(&mut self, name: &str, fallback: (u32, u32, [u8; 4])) -> Rgba {
-        self.read(&format!("gui/sprites/hud/{name}")).unwrap_or_else(|| {
-            self.placeholders += 1;
-            Rgba::solid(fallback.0, fallback.1, fallback.2)
-        })
+        self.read(&format!("gui/sprites/hud/{name}")).unwrap_or_else(|| Rgba::solid(fallback.0, fallback.1, fallback.2))
     }
 }
 
