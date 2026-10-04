@@ -38,12 +38,14 @@
 //! marks the faces of falling cells. Faces between two cells of the same fluid are hidden,
 //! whatever their states.
 
+use std::cell::RefCell;
+
 use glam::{IVec2, IVec3, UVec3, Vec2};
 
 use crate::block::{BlockId, BlockRegistry, RenderKind, Tint};
-use crate::coords::{CHUNK_SIZE, Face};
+use crate::coords::{CHUNK_SIZE, Face, WORLD_HEIGHT};
 use crate::fluid::{self, FluidState};
-use crate::light::LitRegion;
+use crate::light::{LitRegion, MAX_LIGHT};
 use crate::visibility::Connectivity;
 use crate::world::Column;
 
@@ -134,55 +136,140 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     if chunk.as_uniform() == Some(BlockId::AIR) {
         return ChunkMesh { connectivity: Connectivity::ALL, ..Default::default() };
     }
+    thread_local! {
+        static SCRATCH: RefCell<Option<Box<Scratch>>> = const { RefCell::new(None) };
+    }
+    SCRATCH.with_borrow_mut(|scratch| {
+        let scratch = scratch.get_or_insert_with(Default::default);
+        scratch.reset(registry);
+        mesh_with(scratch, registry, region, column, cy, detail)
+    })
+}
 
+/// What the mesher reads of a block, packed small so that looking it up for each of a
+/// chunk's 39,304 padded cells stays in cache (a `BlockInfo` spans several cache lines).
+#[derive(Clone, Copy)]
+struct Look {
+    occludes: bool,
+    render: RenderKind,
+    /// The fluid the block holds, plus one; 0 for none.
+    fluid: u8,
+    /// An opaque block whose top is tinted like grass, which grows grass blades.
+    grass_top: bool,
+    /// Texture layer and tint of each face, by `Face`.
+    layers: [u16; 6],
+    tints: [Tint; 6],
+}
+
+impl Look {
+    fn of(registry: &BlockRegistry, block: BlockId) -> Self {
+        let info = registry.info(block);
+        Self {
+            occludes: info.occludes,
+            render: info.render,
+            fluid: info.fluid.map_or(0, |f| f.fluid.0 + 1),
+            grass_top: info.render == RenderKind::Opaque && info.tints[Face::PosY as usize] == Tint::Grass,
+            layers: info.layers,
+            tints: info.tints,
+        }
+    }
+}
+
+/// A chunk's working tables, kept per thread between chunks: allocating and clearing
+/// fresh ones cost as much as filling them.
+struct Scratch {
+    cells: Vec<Cell>,
+    occ: Axes,
+    opaque: Axes,
+    cutout: Axes,
+    translucent: Axes,
+    joins: Joins,
+    /// Leaf cells, as bit columns along x.
+    leaves: Box<[[u64; P]; P]>,
+    /// Every block's look, and the registry they were read from (its address and size).
+    looks: Vec<Look>,
+    registry: (usize, usize),
+}
+
+impl Default for Scratch {
+    fn default() -> Self {
+        Self {
+            cells: Vec::new(),
+            occ: Axes::default(),
+            opaque: Axes::default(),
+            cutout: Axes::default(),
+            translucent: Axes::default(),
+            joins: Joins::default(),
+            leaves: Box::new([[0; P]; P]),
+            looks: Vec::new(),
+            registry: (0, 0),
+        }
+    }
+}
+
+impl Scratch {
+    /// Clears the bit tables; every cell is written before it is read.
+    fn reset(&mut self, registry: &BlockRegistry) {
+        self.cells.resize(P * P * P, Cell::default());
+        for axes in [&mut self.occ, &mut self.opaque, &mut self.cutout, &mut self.translucent, &mut self.joins.hidden, &mut self.joins.single] {
+            axes.clear();
+        }
+        *self.leaves = [[0; P]; P];
+        let key = (registry as *const BlockRegistry as usize, registry.len());
+        if self.registry != key {
+            self.registry = key;
+            self.looks = (0..registry.len()).map(|i| Look::of(registry, BlockId(i as u16))).collect();
+        }
+    }
+}
+
+fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion, column: &Column, cy: i32, detail: i32) -> ChunkMesh {
+    let Scratch { cells, occ, opaque, cutout, translucent, joins, leaves, looks, .. } = scratch;
     let origin = IVec3::new(-1, cy * CHUNK_SIZE - 1, -1);
-    let mut cells = vec![Cell::default(); P * P * P];
-    // Bit columns along each axis (bit i = padded coordinate i).
-    let mut occ = Axes::default();
-    let mut opaque = Axes::default();
-    let mut cutout = Axes::default();
-    let mut translucent = Axes::default();
     let mut plants = Vec::new();
-    let mut joins = Joins::default();
-    // Leaf cells, as bit columns along x.
-    let mut leaves = [[0u64; P]; P];
-    let mut grids: Vec<LodGrid> = LEVELS.into_iter().filter(|&level| level > 1).map(|level| LodGrid::new(registry, region, origin, level)).collect();
+    let mut grids: Vec<LodGrid> =
+        LEVELS.into_iter().filter(|&level| level > 1).map(|level| LodGrid::new(looks, region, origin, level)).collect();
+    let (mut occluding, mut grass) = (0, false);
     for y in 0..P {
+        let world_y = origin.y + y as i32;
         for z in 0..P {
+            // A row of the region; below the world is an invisible wall that hides bottom
+            // faces, and above it, open sky.
+            let row = (0..WORLD_HEIGHT).contains(&world_y).then(|| region.row(origin.x, world_y, origin.z + z as i32, P));
             for x in 0..P {
                 let pos = origin + IVec3::new(x as i32, y as i32, z as i32);
-                let (block, mut info_occludes, render, light, fluid) = match region.block(pos) {
-                    Some(block) => {
-                        let (block, light) = match grids.iter_mut().find(|grid| grid.detail == detail) {
-                            Some(grid) => grid.get(pos),
-                            None => (block, region.light(pos)),
-                        };
-                        let info = registry.info(block);
-                        (block, info.occludes, info.render, light, info.fluid.map_or(0, |f| f.fluid.0 + 1))
+                let (block, light) = match row {
+                    Some(_) if detail > 1 => {
+                        grids.iter_mut().find(|grid| grid.detail == detail).expect("a grid for every coarser level").get(pos)
                     }
-                    // Below the world: an invisible wall that hides bottom faces.
-                    None => (BlockId::AIR, true, RenderKind::Invisible, 0, 0),
+                    Some((blocks, lights)) => (blocks[x], lights[x]),
+                    None if world_y < 0 => (BlockId::AIR, 0),
+                    None => (BlockId::AIR, MAX_LIGHT << 4),
                 };
-                let mut shades = info_occludes || render == RenderKind::Leaves;
+                let look = looks[block.0 as usize];
+                let (mut occludes, render) = if world_y < 0 { (true, RenderKind::Invisible) } else { (look.occludes, look.render) };
+                let mut shades = occludes || render == RenderKind::Leaves;
                 // A chunk beside this one may be drawn at another level of detail, so a
                 // border face is only hidden by a block every level shows there.
                 let side = x == 0 || x == P - 1 || z == 0 || z == P - 1;
-                if side && region.block(pos).is_some() {
+                if side && occludes && let Some((blocks, _)) = row {
                     for level in LEVELS.into_iter().filter(|&level| level != detail) {
                         let other = match grids.iter_mut().find(|grid| grid.detail == level) {
-                            Some(grid) => grid.get(pos).0,
-                            None => region.block(pos).unwrap_or(BlockId::AIR),
+                            Some(grid) => grid.block(pos),
+                            None => blocks[x],
                         };
-                        let info = registry.info(other);
-                        info_occludes &= info.occludes;
-                        shades &= info.occludes || info.render == RenderKind::Leaves;
+                        let other = looks[other.0 as usize];
+                        occludes &= other.occludes;
+                        shades &= other.occludes || other.render == RenderKind::Leaves;
                     }
                 }
-                let cell = Cell { block, occludes: info_occludes, shades, light, fluid };
+                let cell = Cell { block, occludes, shades, light, fluid: look.fluid };
                 cells[pidx(x, y, z)] = cell;
-                if info_occludes {
+                if occludes {
                     occ.set(x, y, z);
+                    occluding += 1;
                 }
+                grass |= look.grass_top;
                 match render {
                     RenderKind::Opaque => opaque.set(x, y, z),
                     RenderKind::Cutout => cutout.set(x, y, z),
@@ -210,16 +297,21 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
             }
         }
     }
+    // Buried in solid blocks on every side: nothing to draw.
+    if occluding == P * P * P {
+        return ChunkMesh { connectivity: Connectivity::NONE, ..Default::default() };
+    }
+    let (cells, occ, opaque, cutout, translucent, joins, leaves) = (&*cells, &*occ, &*opaque, &*cutout, &*translucent, joins, &**leaves);
 
-    join_leaves(&leaves, &occ, &mut joins);
+    join_leaves(leaves, occ, joins);
 
     let mut mesher =
-        Mesher { registry, region, cells: &cells, chunk_y: cy * CHUNK_SIZE, detail, planes: [[0; S]; S], keys: [[0; S]; S] };
+        Mesher { registry, looks, region, cells, chunk_y: cy * CHUNK_SIZE, detail, planes: [[0; S]; S], keys: [[0; S]; S] };
     let mut mesh = ChunkMesh { connectivity: Connectivity::compute(|x, y, z| cells[pidx(x + 1, y + 1, z + 1)].occludes), ..Default::default() };
     for face in Face::ALL {
-        mesher.mesh_faces(face, &occ, &opaque, &joins, &mut mesh.opaque);
-        mesher.mesh_faces(face, &occ, &cutout, &joins, &mut mesh.cutout);
-        mesher.mesh_faces(face, &occ, &translucent, &joins, &mut mesh.translucent);
+        mesher.mesh_faces(face, occ, opaque, joins, &mut mesh.opaque);
+        mesher.mesh_faces(face, occ, cutout, joins, &mut mesh.cutout);
+        mesher.mesh_faces(face, occ, translucent, joins, &mut mesh.translucent);
     }
     mesh.inner = split_inner(&mut mesh.cutout);
     for i in plants {
@@ -229,14 +321,16 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     if detail > 1 {
         return mesh;
     }
-    mesh.blades = grass_tops(registry, &cells);
+    if grass {
+        mesh.blades = grass_tops(looks, cells);
+    }
     for (y, plane) in leaves.iter().enumerate().take(S + 1).skip(1) {
         for (z, &bits) in plane.iter().enumerate().take(S + 1).skip(1) {
             let mut row = bits & !1 & !(1 << (S + 1));
             while row != 0 {
                 let x = row.trailing_zeros() as usize;
                 row &= row - 1;
-                emit_fringe(&mut mesh.fringe, registry, &cells, IVec3::new(x as i32, y as i32, z as i32));
+                emit_fringe(&mut mesh.fringe, registry, cells, IVec3::new(x as i32, y as i32, z as i32));
             }
         }
     }
@@ -257,60 +351,88 @@ pub const LEVELS: [i32; 3] = [1, 2, 4];
 /// Heights stay exact, so far chunks meet near ones without steps in the ground or the
 /// water.
 struct LodGrid<'a> {
-    registry: &'a BlockRegistry,
+    looks: &'a [Look],
     region: &'a LitRegion,
     detail: i32,
     /// The grid's first group and first layer, and its width in groups.
     first: IVec2,
     bottom: i32,
     width: i32,
-    cells: Vec<Option<(BlockId, u8)>>,
+    blocks: Vec<Option<BlockId>>,
+    lights: Vec<Option<u8>>,
 }
 
 impl<'a> LodGrid<'a> {
     /// A grid over the padded chunk whose first cell is `origin`.
-    fn new(registry: &'a BlockRegistry, region: &'a LitRegion, origin: IVec3, detail: i32) -> Self {
+    fn new(looks: &'a [Look], region: &'a LitRegion, origin: IVec3, detail: i32) -> Self {
         let group = |x: i32, z: i32| IVec2::new(x.div_euclid(detail), z.div_euclid(detail));
         let first = group(origin.x, origin.z);
         let width = (group(origin.x + P as i32 - 1, origin.z + P as i32 - 1) - first).max_element() + 1;
-        let cells = vec![None; (width * width) as usize * P];
-        Self { registry, region, detail, first, bottom: origin.y, width, cells }
+        let size = (width * width) as usize * P;
+        Self { looks, region, detail, first, bottom: origin.y, width, blocks: vec![None; size], lights: vec![None; size] }
     }
 
     fn get(&mut self, pos: IVec3) -> (BlockId, u8) {
-        let group = IVec2::new(pos.x.div_euclid(self.detail), pos.z.div_euclid(self.detail)) - self.first;
-        let i = ((pos.y - self.bottom) * self.width * self.width + group.y * self.width + group.x) as usize;
-        if let Some(cell) = self.cells[i] {
-            return cell;
+        (self.block(pos), self.light(pos))
+    }
+
+    /// The cell's group (its index) and the group's first block in the layer.
+    fn group(&self, pos: IVec3) -> (usize, IVec3) {
+        let group = IVec2::new(pos.x.div_euclid(self.detail), pos.z.div_euclid(self.detail));
+        let local = group - self.first;
+        let i = ((pos.y - self.bottom) * self.width * self.width + local.y * self.width + local.x) as usize;
+        (i, IVec3::new(group.x * self.detail, pos.y, group.y * self.detail))
+    }
+
+    fn block(&mut self, pos: IVec3) -> BlockId {
+        let (i, corner) = self.group(pos);
+        if let Some(block) = self.blocks[i] {
+            return block;
         }
-        let corner = IVec3::new(pos.x.div_euclid(self.detail) * self.detail, pos.y, pos.z.div_euclid(self.detail) * self.detail);
-        let mut counts: Vec<(BlockId, i32)> = Vec::with_capacity(4);
-        let (mut solid, mut sky, mut torch) = (0, 0, 0);
+        // At most 16 distinct blocks in a group of 4×4.
+        let mut counts = [(BlockId::AIR, 0); 16];
+        let (mut distinct, mut solid) = (0, 0);
         for dz in 0..self.detail {
             for dx in 0..self.detail {
-                let at = corner + IVec3::new(dx, 0, dz);
-                let light = self.region.light(at);
-                sky = sky.max(light >> 4);
-                torch = torch.max(light & 0xF);
-                let Some(block) = self.region.block(at) else { continue };
-                if block.is_air() || matches!(self.registry.info(block).render, RenderKind::Plant | RenderKind::Invisible) {
+                let Some(block) = self.region.block(corner + IVec3::new(dx, 0, dz)) else { continue };
+                if block.is_air() || matches!(self.looks[block.0 as usize].render, RenderKind::Plant | RenderKind::Invisible) {
                     continue;
                 }
                 solid += 1;
-                match counts.iter_mut().find(|(b, _)| *b == block) {
+                match counts[..distinct].iter_mut().find(|(b, _)| *b == block) {
                     Some((_, n)) => *n += 1,
-                    None => counts.push((block, 1)),
+                    None => {
+                        counts[distinct] = (block, 1);
+                        distinct += 1;
+                    }
                 }
             }
         }
         let block = if solid * 2 < self.detail * self.detail {
             self.pillar(corner).unwrap_or(BlockId::AIR)
         } else {
-            counts.into_iter().max_by_key(|&(_, n)| n).map_or(BlockId::AIR, |(block, _)| block)
+            counts[..distinct].iter().max_by_key(|&&(_, n)| n).map_or(BlockId::AIR, |&(block, _)| block)
         };
-        let cell = (block, sky << 4 | torch);
-        self.cells[i] = Some(cell);
-        cell
+        self.blocks[i] = Some(block);
+        block
+    }
+
+    fn light(&mut self, pos: IVec3) -> u8 {
+        let (i, corner) = self.group(pos);
+        if let Some(light) = self.lights[i] {
+            return light;
+        }
+        let (mut sky, mut torch) = (0, 0);
+        for dz in 0..self.detail {
+            for dx in 0..self.detail {
+                let light = self.region.light(corner + IVec3::new(dx, 0, dz));
+                sky = sky.max(light >> 4);
+                torch = torch.max(light & 0xF);
+            }
+        }
+        let light = sky << 4 | torch;
+        self.lights[i] = Some(light);
+        light
     }
 
     /// An opaque block of the group's layer at `corner` with the same block above and below.
@@ -318,7 +440,7 @@ impl<'a> LodGrid<'a> {
         (0..self.detail * self.detail).find_map(|i| {
             let at = corner + IVec3::new(i % self.detail, 0, i / self.detail);
             let block = self.region.block(at)?;
-            let opaque = self.registry.info(block).render == RenderKind::Opaque;
+            let opaque = self.looks[block.0 as usize].render == RenderKind::Opaque;
             let runs = |dy: i32| self.region.block(at + IVec3::Y * dy) == Some(block);
             (opaque && runs(1) && runs(-1)).then_some(block)
         })
@@ -420,6 +542,12 @@ impl Default for Axes {
 }
 
 impl Axes {
+    fn clear(&mut self) {
+        for bits in [&mut self.x, &mut self.y, &mut self.z] {
+            **bits = [[0; P]; P];
+        }
+    }
+
     fn set(&mut self, x: usize, y: usize, z: usize) {
         self.x[y][z] |= 1 << x;
         self.y[z][x] |= 1 << y;
@@ -466,6 +594,7 @@ fn unit(axis: usize) -> IVec3 {
 
 struct Mesher<'a> {
     registry: &'a BlockRegistry,
+    looks: &'a [Look],
     /// Blocks around the column too, for fluids, whose surface and flow depend on cells
     /// a few blocks away.
     region: &'a LitRegion,
@@ -554,13 +683,13 @@ impl Mesher<'_> {
     /// block by the renderer, so they never split a face.
     fn face_key(&self, face: Face, fa: &FaceAxes, slice: usize, row: usize, col: usize) -> u128 {
         let pos = Self::cell(fa, slice, row, col);
-        let info = self.registry.info(self.padded(pos).block);
+        let info = self.looks[self.padded(pos).block.0 as usize];
         let (inner, backed) = match info.render {
             // Shadows from a crown only need its shell: faces between two leaves cast none,
             // and shell faces with more leaves behind them cast a solid one. Crowns shade as
             // densely as if every face cast, for the cost of the shell.
             RenderKind::Leaves => {
-                let leaf = |p: IVec3| self.registry.info(self.padded(p).block).render == RenderKind::Leaves;
+                let leaf = |p: IVec3| self.looks[self.padded(p).block.0 as usize].render == RenderKind::Leaves;
                 (leaf(pos + face.normal()), leaf(pos - face.normal()))
             }
             // Water under ice is covered: still, and reflecting nothing.
@@ -604,7 +733,8 @@ impl Mesher<'_> {
         // occlusion, which water's shading has no use for (see the module docs).
         let mut fluid = 0u128;
         let mut falling = false;
-        if let Some(state) = info.fluid.filter(|_| info.render == RenderKind::Translucent) {
+        let state = (info.render == RenderKind::Translucent && info.fluid != 0).then(|| self.registry.fluid(self.padded(pos).block)).flatten();
+        if let Some(state) = state {
             ao = 0;
             // Chunks merged for distance keep whole, still blocks: the flow's detail would
             // not show.
@@ -799,17 +929,16 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
 }
 
 /// A blade seed for every grass block whose top is open to the air (or a plant).
-fn grass_tops(registry: &BlockRegistry, cells: &[Cell]) -> Vec<u32> {
+fn grass_tops(looks: &[Look], cells: &[Cell]) -> Vec<u32> {
     let mut seeds = Vec::new();
     for y in 1..=S {
         for z in 1..=S {
             for x in 1..=S {
-                let info = registry.info(cells[pidx(x, y, z)].block);
-                if info.render != RenderKind::Opaque || info.tints[Face::PosY as usize] != Tint::Grass {
+                if !looks[cells[pidx(x, y, z)].block.0 as usize].grass_top {
                     continue;
                 }
                 let above = &cells[pidx(x, y + 1, z)];
-                if above.occludes || registry.info(above.block).render == RenderKind::Translucent {
+                if above.occludes || looks[above.block.0 as usize].render == RenderKind::Translucent {
                     continue;
                 }
                 let local = UVec3::new(x as u32 - 1, y as u32 - 1, z as u32 - 1);
