@@ -188,7 +188,7 @@ fn prepare(
     mut textures: ResMut<TextureCache>,
     atmosphere: Res<Atmosphere>,
     buffer: Res<AtmosphereBuffer>,
-    views: Query<(Entity, &ExtractedView, &ViewDepthTexture), With<ExtractedCamera>>,
+    views: Query<(Entity, &ExtractedView, &ViewDepthTexture), (With<ExtractedCamera>, With<Camera3d>)>,
 ) {
     for (entity, view, depth) in &views {
         let key = view_keys.get(&view.retained_view_entity).copied().filter(|_| atmosphere.rays.x > 0.0);

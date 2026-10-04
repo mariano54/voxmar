@@ -8,17 +8,12 @@
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::{CameraMainTextureUsages, Hdr};
 use bevy::camera::visibility::NoFrustumCulling;
-use bevy::core_pipeline::Core3dSystems;
-use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin};
-use bevy::core_pipeline::tonemapping::{Tonemapping, tonemapping};
-use bevy::ecs::schedule::ScheduleConfigs;
-use bevy::ecs::system::BoxedSystem;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
 use bevy::math::DVec2;
 use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
-use bevy::post_process::bloom::{Bloom, BloomPrefilter, bloom};
 use bevy::render::extract_component::ExtractComponent;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
@@ -38,6 +33,8 @@ pub mod cracks;
 pub mod lod;
 pub mod pack;
 pub mod particles;
+pub mod post;
+pub mod scale;
 pub mod precipitation;
 pub mod terrain;
 pub mod volumetric;
@@ -69,7 +66,8 @@ impl Plugin for RenderPlugin {
             water::WaterPlugin,
             wind::WindPlugin,
             MaterialPlugin::<SkyMaterial>::default(),
-            FullscreenMaterialPlugin::<DisplayTransform>::default(),
+            post::PostPlugin,
+            scale::ScalePlugin,
             lod::LodPlugin,
             precipitation::PrecipitationPlugin,
             particles::ParticlePlugin,
@@ -80,9 +78,17 @@ impl Plugin for RenderPlugin {
             .init_resource::<DayCycle>()
             .init_resource::<Quality>()
             .init_resource::<pack::ActivePack>()
+            .add_systems(Startup, cluster_lights_on_the_cpu)
             .add_systems(Update, (pack::apply_pack, apply_quality.run_if(resource_changed::<Quality>)))
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
     }
+}
+
+/// Bevy sorts point and spot lights into clusters of the view on the GPU, in five render
+/// passes a frame, and every pass costs about 0.2 ms of frame time on Metal however little
+/// it does (see docs/rendering.md). We have no such lights, so the CPU does it for free.
+fn cluster_lights_on_the_cpu(mut settings: ResMut<bevy::light::cluster::GlobalClusterSettings>) {
+    settings.gpu_clustering = None;
 }
 
 /// Terrain is drawn in four passes (see `terrain`).
@@ -173,7 +179,8 @@ fn apply_quality(quality: Res<Quality>, mut map: ResMut<DirectionalLightShadowMa
     }
 }
 
-/// Maps the HDR image to the screen in place of a tonemapper (see `display.wgsl`): colours
+/// Maps the HDR image to the screen in place of a tonemapper (see `post.rs` and
+/// `display.wgsl`): colours
 /// up to 0.8 pass through unchanged, so blocks keep their texture colours in daylight as in
 /// Minecraft, and brighter ones (the sun, glints, light sources) roll off to white. The
 /// shader pack's colour grading is applied first.
@@ -205,15 +212,6 @@ impl From<&pack::ShaderPack> for DisplayTransform {
     }
 }
 
-impl FullscreenMaterial for DisplayTransform {
-    fn fragment_shader() -> ShaderRef {
-        "embedded://voxmar/render/display.wgsl".into()
-    }
-
-    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
-        system.in_set(Core3dSystems::PostProcess).after(bloom).before(tonemapping)
-    }
-}
 
 #[derive(ShaderType, Clone, Copy, Default, Debug)]
 pub struct SkyParams {
@@ -331,13 +329,7 @@ pub fn setup(
         // wash out and desaturate sunlit blocks.
         Tonemapping::None,
         DisplayTransform::default(),
-        // Only what is brighter than a sunlit white block blooms (the sun, glints, light
-        // sources), so tiny bright facets in the distance never swell into blobs.
-        Bloom {
-            intensity: 0.1,
-            prefilter: BloomPrefilter { threshold: 1.2, threshold_softness: 0.5 },
-            ..Bloom::NATURAL
-        },
+        post::Glow { intensity: 0.1 },
         AmbientLight { brightness: 1.0, ..default() },
         DistanceFog::default(),
         Transform::from_xyz(0.0, 100.0, 0.0),

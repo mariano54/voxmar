@@ -5,12 +5,11 @@
 //! Four full-screen Gaussian passes on the main camera, across and down twice, after the
 //! display transform. They run only while something is blurred: closing the menu takes
 //! the blur off the camera, so playing costs nothing. (Bevy's `FullscreenMaterial` would
-//! be shorter, but it keeps one pipeline per camera, so two materials on one camera, the
-//! display transform and this, would draw with each other's pipeline.) The blur eases in and out over a moment,
+//! be shorter, but it keeps one pipeline per camera, so two materials on one camera would
+//! draw with each other's pipeline.) The blur eases in and out over a moment,
 //! and its width follows the screen's height, so it looks the same at any resolution.
 
 use bevy::asset::{AssetServer, embedded_asset};
-use bevy::core_pipeline::fullscreen_material::fullscreen_material_system;
 use bevy::core_pipeline::schedule::Core3d;
 use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::{Core3dSystems, FullscreenShader};
@@ -30,7 +29,6 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use crate::menu::Screen;
 use crate::player::UiState;
-use crate::render::DisplayTransform;
 
 /// Each pass's standard deviation at full strength, as a share of the screen's height.
 /// Two passes along each axis add up to √2 times that.
@@ -55,7 +53,7 @@ impl Plugin for BlurPlugin {
             .add_systems(Render, prepare.in_set(RenderSystems::Prepare))
             .add_systems(
                 Core3d,
-                draw.in_set(Core3dSystems::PostProcess).after(fullscreen_material_system::<DisplayTransform>).before(tonemapping),
+                draw.in_set(Core3dSystems::PostProcess).after(crate::render::post::bloom_and_display).before(tonemapping),
             );
     }
 }
