@@ -8,6 +8,10 @@
 
 struct DisplayTransform {
     exposure: f32,
+    contrast: f32,
+    saturation: f32,
+    vibrance: f32,
+    warmth: f32,
 };
 
 @group(0) @binding(0) var screen: texture_2d<f32>;
@@ -17,10 +21,25 @@ struct DisplayTransform {
 const KNEE: f32 = 0.8;
 const DESATURATION: f32 = 0.15;
 
+const LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
+// Contrast pivots around this linear grey (about 46% in display terms).
+const MID_GREY: f32 = 0.18;
+
+// The shader pack's colour grading: warmth, contrast around mid grey, then saturation and
+// vibrance, which lifts dull colours more than vivid ones.
+fn grade(linear: vec3<f32>) -> vec3<f32> {
+    var color = linear * vec3(1.0 + settings.warmth, 1.0, 1.0 - settings.warmth);
+    color = MID_GREY * pow(color / MID_GREY + 1e-6, vec3(settings.contrast));
+    let luma = dot(color, LUMINANCE);
+    let chroma = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
+    let boost = settings.saturation + settings.vibrance * (1.0 - saturate(chroma / max(luma, 1e-4)));
+    return max(mix(vec3(luma), color, boost), vec3(0.0));
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let source = textureSample(screen, screen_sampler, in.uv);
-    var color = max(source.rgb * settings.exposure, vec3(0.0));
+    var color = grade(max(source.rgb * settings.exposure, vec3(0.0)));
     let peak = max(color.r, max(color.g, color.b));
     if peak > KNEE {
         let d = 1.0 - KNEE;
