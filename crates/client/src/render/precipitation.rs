@@ -23,6 +23,7 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
 use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS, ColumnPos, local_index};
+use voxmar_engine::weather::Weather;
 
 use crate::weather::ClientWeather;
 use crate::weather::atmosphere::ClientAtmosphere;
@@ -32,7 +33,7 @@ use crate::world::ClientWorld;
 /// Drops in the box at the heaviest rain or snow, including the splashes the shader makes
 /// of some of them and the specks of dust and motes it carries on the wind, and the box of
 /// falling drops around the camera, in blocks. The shader has the same constants.
-const DROPS: u32 = 52_000;
+const DROPS: u32 = 74_000;
 const BOX: Vec3 = Vec3::new(40.0, 36.0, 40.0);
 /// Falling speeds, in blocks per second.
 const RAIN_SPEED: f32 = 14.0;
@@ -84,7 +85,7 @@ struct PrecipitationParams {
     snow: Vec4,
     /// xyz: direction rain falls in, w: streak length in blocks.
     streak: Vec4,
-    /// rgb: light falling on the drops; w: unused.
+    /// rgb: light falling on the drops; w: how heavy the rain, snow or dust is, 0..1.
     light: Vec4,
     /// rgb: the colour of the sky's haze, which rain takes on in part.
     haze: Vec4,
@@ -300,6 +301,12 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
     ));
 }
 
+/// How many of the drops show for an amount of rain, snow or dust (0..1): few in light
+/// weather, rising steeply so that only the heaviest fills the air.
+fn density(amount: f32) -> f32 {
+    amount.clamp(0.0, 1.0).powf(1.8)
+}
+
 /// How far each kind of drop has fallen and drifted, wrapped into the box.
 #[derive(Default)]
 struct Fallen {
@@ -317,6 +324,19 @@ struct Fallen {
     motes: Vec3,
     /// Per ambient particle set, by name.
     ambient: Vec<(String, Vec3)>,
+    /// The glinting ice crystals of diamond dust.
+    glints: Vec3,
+}
+
+/// The shader's motion code for diamond dust: crystals hanging in the air that glint for
+/// an instant as they turn (the only sparkle; snowflakes are soft).
+const GLINT: f32 = 5.0;
+
+/// How many glinting ice crystals hang in the air: diamond dust forms where a halo shows
+/// in bitter cold, under a clear sky.
+fn glints(shown: &Weather) -> f32 {
+    let cold = 1.0 - ((shown.temperature + 18.0) / 6.0).clamp(0.0, 1.0);
+    (shown.halo * cold * (1.0 - shown.precipitation * 4.0)).clamp(0.0, 1.0)
 }
 
 /// How the shader moves an ambient particle set.
@@ -359,7 +379,8 @@ fn update(
     // Leaves keep dripping for a few minutes after the rain, as the ground dries.
     let rain = shown.precipitation * (1.0 - shown.snow);
     let drips = (rain * 1.5 + shown.wetness * 0.6 - 0.05).clamp(0.0, 1.0);
-    if shown.precipitation <= 0.01 && drips <= 0.0 && shown.dust <= 0.01 && shown.motes <= 0.01 && air.particles.is_empty() {
+    let glints = glints(shown);
+    if shown.precipitation <= 0.01 && drips <= 0.0 && shown.dust <= 0.01 && shown.motes <= 0.01 && glints <= 0.01 && air.particles.is_empty() {
         // The drops stay drawn while nothing falls, every one culled in the vertex shader, so
         // their pipeline is built with the world rather than when the first rain starts:
         // where pipelines are built synchronously (macOS) that would stall a frame.
@@ -402,7 +423,14 @@ fn update(
     let fall = |at: &mut Vec3, velocity: Vec3| *at = (*at + velocity * dt).rem_euclid(BOX);
     fall(&mut fallen.rain, rain_velocity);
     // The distant layer falls like the rain, or like the snow when most is snow.
-    let far_velocity = if shown.snow > 0.5 { snow_velocity } else { rain_velocity };
+    // Blowing dust rides the wind; otherwise it falls like the snow or the rain.
+    let far_velocity = if shown.dust > shown.precipitation {
+        wind - Vec3::Y * 0.3
+    } else if shown.snow > 0.5 {
+        snow_velocity
+    } else {
+        rain_velocity
+    };
     fallen.far = (fallen.far + far_velocity * dt).rem_euclid(BOX * 3.0);
     fallen.snow = (fallen.snow + snow_velocity * dt).rem_euclid(BOX * 0.6);
     // Fine drizzle drifts with the wind, sleet less so, and hail falls hard.
@@ -429,6 +457,18 @@ fn update(
         sets[i * 3 + 1] = set.color.extend(if set.glow { 1.0 } else { 0.0 });
         sets[i * 3 + 2] = Vec4::new(set.size, motion_code(set.motion), 0.0, 0.0);
     }
+    // Diamond dust takes the last set, settling slowly.
+    fallen.glints = (fallen.glints + (wind * 0.1 - Vec3::Y * 0.05) * dt).rem_euclid(BOX);
+    if glints > 0.01 {
+        let i = air.particles.len().min(AMBIENT_SETS - 1);
+        sets[i * 3] = fallen.glints.extend((glints * 1.4).min(1.0));
+        sets[i * 3 + 1] = Vec3::new(0.85, 0.93, 1.0).extend(1.0);
+        sets[i * 3 + 2] = Vec4::new(0.06, GLINT, 0.0, 0.0);
+    }
+
+    // Rain and snow ground the glowing motes and wisps (ball lightning in a storm would be
+    // a few orbs, which these are not): nothing glows in the rain.
+    let dry = 1.0 - ((shown.precipitation - 0.02) / 0.18).clamp(0.0, 1.0);
 
     let Some(mut material) = materials.get_mut(&handle.0) else { return };
     let light = ambient.color.to_linear();
@@ -436,17 +476,17 @@ fn update(
     material.params = PrecipitationParams {
         camera: eye.rem_euclid(BOX).extend(time.elapsed_secs_wrapped()),
         map: Vec4::new(eye.x - map.origin.x as f32, 0.0, eye.z - map.origin.y as f32, eye.y),
-        rain: fallen.rain.extend(shown.precipitation),
+        rain: fallen.rain.extend(density(shown.precipitation)),
         snow: (fallen.snow - eye).rem_euclid(BOX * 0.6).extend(shown.snow),
         streak: seen.normalize().extend(seen.length() * 0.045),
-        light: Vec4::new(light.red, light.green, light.blue, 0.0),
+        light: Vec4::new(light.red, light.green, light.blue, shown.precipitation.max(shown.dust)),
         haze: Vec4::new(haze.red, haze.green, haze.blue, 0.0),
         far: (fallen.far - eye).rem_euclid(BOX * 3.0).extend(drips),
         drizzle: fallen.drizzle.extend(shown.drizzle),
         sleet: fallen.sleet.extend(shown.sleet),
         hail: fallen.hail.extend(shown.hail),
-        dust: fallen.dust.extend(shown.dust),
-        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3)),
+        dust: fallen.dust.extend(density(shown.dust)),
+        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3) * dry),
         dust_color: Color::srgb_u8(shown.dust_color[0], shown.dust_color[1], shown.dust_color[2]).to_linear().to_vec4(),
         wind: wind.extend(0.0),
         ambient: sets,

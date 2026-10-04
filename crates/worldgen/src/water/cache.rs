@@ -61,6 +61,11 @@ impl<K: Copy + Eq + Hash, V: Clone + Weigh> Cache<K, V> {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Whether the value for `key` is cached or being made.
+    pub fn has(&self, key: K) -> bool {
+        self.lock().slots.contains_key(&key)
+    }
+
     /// The value for `key`, made by `make` unless it is cached or being made.
     ///
     /// `make` must not ask this cache for the same key, which would wait on itself.
