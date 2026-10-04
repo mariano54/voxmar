@@ -54,6 +54,22 @@ nearest-texel when minified, and sub-pixel grass. Now:
 Measured as pixels that change by more than 60 levels when the camera moves 4 cm: 0.33%
 before, 0.12% now.
 
+A far waterline under MSAA showed a row of black dashes with bright blue glints that
+crawled as the camera moved. With MSAA the fragment shader runs once per pixel, at the
+pixel's centre even where a triangle covers only a corner of it, so its inputs are
+extrapolated past the triangle. Far water and terrain are slivers seen edge on, and
+values extrapolated that far run wild: sky light past full (which `light_curve` turns
+into infinity), negative colours and water depths, a position off the surface that lights
+a glint. The resolve turned them into black pixels and bloom into blue blobs, all along
+the edge of the real water where it meets the distant sheet. The lighting inputs of
+terrain, water and distant terrain are now interpolated at the centroid of the covered
+samples (`@interpolate(perspective, centroid)`), which always lies inside the triangle.
+Texture coordinates stay at the pixel centre, where the derivatives that pick the mip
+level are exact. With the clock stopped and a 4 cm step at
+render distance 32, looking over the sea at a far shore (seed 3), 0.17% of pixels
+flickered before and 0.025% after, and none of those left are on the waterline; a high
+view over land stayed at 0.045%.
+
 ## Next steps, in order of payoff
 
 1. **Quad pulling.** Store each quad once (8 bytes) and expand it to vertices in the

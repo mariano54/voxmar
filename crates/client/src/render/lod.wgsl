@@ -66,16 +66,22 @@ struct Vertex {
     @location(0) packed: vec4<u32>,
 };
 
+// Interpolated at the centroid of the samples a triangle covers. With MSAA the fragment
+// shader runs once per pixel, by default at the pixel's centre even when only a corner of
+// the pixel is covered; far away, where triangles are slivers seen edge on, values
+// extrapolated that far outside the triangle are wild (negative colours, a position off
+// the surface, a bent normal), which showed as black dashes and sparkling glints along
+// distant shores.
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) world_position: vec3<f32>,
-    @location(1) top: vec3<f32>,
-    @location(2) side: vec3<f32>,
-    @location(3) normal: vec3<f32>,
+    @location(0) @interpolate(perspective, centroid) world_position: vec3<f32>,
+    @location(1) @interpolate(perspective, centroid) top: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) side: vec3<f32>,
+    @location(3) @interpolate(perspective, centroid) normal: vec3<f32>,
     // x: sky light 0..1, y: canopy cover, or the opacity of ice, z: plant cover
-    @location(4) params: vec3<f32>,
+    @location(4) @interpolate(perspective, centroid) params: vec3<f32>,
     @location(5) @interpolate(flat) kind: u32,
-    @location(6) leaves: vec3<f32>,
+    @location(6) @interpolate(perspective, centroid) leaves: vec3<f32>,
     // Cell size of the tile's ring, in blocks.
     @location(7) @interpolate(flat) cell: f32,
 };
