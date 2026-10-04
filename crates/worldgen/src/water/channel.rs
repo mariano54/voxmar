@@ -5,9 +5,10 @@
 //! cells and falls along each edge: gently, which with whole water blocks gives a
 //! staircase of small steps that reads as flowing water and rapids, or, where it drops
 //! three blocks or more, as a waterfall onto a plunge pool. Every column then takes the
-//! nearest river: inside the channel the bed lies under the surface, deeper in the middle;
-//! outside, the valley rises from the bank to the land, and a low berm keeps the water in
-//! where the land between cells dips below it.
+//! nearest river: inside the channel the bed lies under the surface, deeper in the middle
+//! (where wide, calm rivers sometimes part around an island); outside, the valley rises
+//! from the bank to the land, and a low berm keeps the water in where the land between
+//! cells dips below it.
 //!
 //! Lakes are drawn on a grid of 8-block cells: every column in the lake's cells whose
 //! ground lies under the lake's surface holds water, so the shore follows the real land.
@@ -16,6 +17,7 @@
 
 use std::sync::Arc;
 
+use fastnoise_lite::FastNoiseLite;
 use voxmar_engine::glam::{IVec2, Vec2};
 
 use super::cache::Weigh;
@@ -58,6 +60,8 @@ pub struct Style {
     pub shore: i32,
     /// Ground this far over a tunnel's water stays as a roof.
     pub roof: f32,
+    /// Where islands rise in the middle of wide, calm rivers: above 0.35 or so.
+    pub islands: FastNoiseLite,
 }
 
 /// One edge of a river, from a cell to the one it drains into.
@@ -432,9 +436,12 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
         }
         // The bank holds the water a few blocks upstream too, which around a waterfall
         // leaves a ridge either side of the drop.
+        // At sea level the sea itself fills any dip, so no bank is needed there.
         if d < edge.half + 2.0 {
-            let upstream = edge.surface(t - 3.0 / edge.length().max(1.0));
-            berm = berm.max(top_block(upstream) as f32);
+            let upstream = top_block(edge.surface(t - 3.0 / edge.length().max(1.0)));
+            if upstream > crate::SEA_LEVEL {
+                berm = berm.max(upstream as f32);
+            }
         }
         let shore = edge.half + 3.0 + edge.half.min(6.0);
         wet = wet.max(1.0 - smoothstep(edge.half, shore.max(edge.half + 4.0), d));
@@ -451,11 +458,21 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
         if edge.fall >= 0.0 && t >= edge.fall && t < edge.fall + 0.35 {
             depth = depth.max((edge.depth / 2.0).clamp(3.0, edge.depth.max(3.0)));
         }
-        out.ground = out.ground.min(top - depth.round());
-        out.water = Some(out.water.map_or(surface, |w| w.max(surface)));
         out.channel = true;
         out.body = Some(edge.body);
-        out.current = Some(current(edge, along, n, t));
+        // Islands of gravel and grass split wide, calm rivers, never near the banks.
+        let island = edge.half >= 4.0 && edge.fall < 0.0 && edge.slope < 0.05 && {
+            let v = style.islands.get_noise_2d(x as f32, z as f32);
+            v > 0.35 + 0.8 * n * n
+        };
+        if island {
+            out.ground = top + 1.0;
+            out.water = before.water;
+        } else {
+            out.ground = out.ground.min(top - depth.round());
+            out.water = Some(out.water.map_or(surface, |w| w.max(surface)));
+            out.current = Some(current(edge, along, n, t));
+        }
     } else if !before.channel && before.water.is_none() {
         out.ground = out.ground.max(berm);
     }

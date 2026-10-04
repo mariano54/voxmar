@@ -722,8 +722,8 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen river_sights -- --ignored --nocapture`
-    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth and a river
-    /// tunnel near spawn and prints `--pose` arguments that look at each, for in-game
+    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth, a river
+    /// tunnel and an island in a river near spawn and prints `--pose` arguments that look at each, for in-game
     /// captures.
     #[test]
     #[ignore]
@@ -738,7 +738,7 @@ mod tests {
         let geos: Vec<GeoSample> = (0..n * n).map(|i| world.geo(spawn.x - range + i % n * step, spawn.z - range + i / n * step)).collect();
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         // (score, x, z, y)
-        let mut best: [(f32, i32, i32, i32); 5] = [(0.0, 0, 0, 0); 5];
+        let mut best: [(f32, i32, i32, i32); 6] = [(0.0, 0, 0, 0); 6];
         for j in 1..n - 1 {
             for i in 1..n - 1 {
                 let g = at(i, j);
@@ -751,6 +751,10 @@ mod tests {
                 };
                 if g.cavity.is_some() {
                     consider(4, 1.0);
+                }
+                let river = |o: GeoSample| o.submerged() && o.body == Body::River;
+                if !g.submerged() && g.body == Body::River && (river(at(i - 2, j)) && river(at(i + 2, j)) || river(at(i, j - 2)) && river(at(i, j + 2))) {
+                    consider(5, 1.0);
                 }
                 if !g.submerged() {
                     continue;
@@ -784,7 +788,7 @@ mod tests {
             }
         }
         println!("seed {seed}, spawn {spawn}");
-        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel"].into_iter().zip(best) {
+        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel", "river island"].into_iter().zip(best) {
             if score == 0.0 {
                 println!("{name}: none within {range}");
                 continue;

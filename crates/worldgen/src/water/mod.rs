@@ -34,7 +34,9 @@ use self::channel::{Carved, Channels, Span, Style, carve, top_block};
 use self::drainage::{Budget, DIRS, Drainage, Ground, Tier, Tile, TunnelRule};
 use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
-use crate::geology::{GeoSample, Geology, smoothstep};
+use fastnoise_lite::FractalType;
+
+use crate::geology::{GeoSample, Geology, noise, smoothstep};
 use crate::{SEA_LEVEL, rng};
 
 pub use self::channel::{Body, Cavity, Current};
@@ -162,8 +164,26 @@ impl Rivers {
         Self {
             trunks: Drainage::new(trunks, Budget { lakes: 16 * MB, basins: 32 * MB, flows: 8 * MB }),
             streams: Drainage::new(streams, Budget { lakes: 32 * MB, basins: 96 * MB, flows: 16 * MB }),
-            trunk_style: Style { river_width: 5.0, floodplain: 1.0, wall: 1.6, valley: 48.0, jitter: 18.0, shore: 5, roof: 14.0 },
-            stream_style: Style { river_width: 5.0, floodplain: 0.3, wall: 1.1, valley: 20.0, jitter: 2.5, shore: 0, roof: f32::MAX },
+            trunk_style: Style {
+                river_width: 5.0,
+                floodplain: 1.0,
+                wall: 1.6,
+                valley: 48.0,
+                jitter: 18.0,
+                shore: 5,
+                roof: 14.0,
+                islands: noise(seed, 0x15, 1.0 / 36.0, FractalType::FBm, 2),
+            },
+            stream_style: Style {
+                river_width: 5.0,
+                floodplain: 0.3,
+                wall: 1.1,
+                valley: 20.0,
+                jitter: 2.5,
+                shore: 0,
+                roof: f32::MAX,
+                islands: noise(seed, 0x16, 1.0 / 36.0, FractalType::FBm, 2),
+            },
             coarse: Cache::new(16 * MB),
             fine: Cache::new(64 * MB),
             rain: Cache::new(4 * MB),
