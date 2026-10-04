@@ -168,11 +168,6 @@ impl Blocks<'_> {
         (y / CHUNK_SIZE) as usize * CHUNK_VOLUME + local_index(IVec3::new(x, y % CHUNK_SIZE, z))
     }
 
-    /// Puts `block` at `pos` whatever is there; whether `pos` lies in the column.
-    pub fn set(&mut self, pos: IVec3, block: BlockId) -> bool {
-        self.index(pos).map(|i| self.data[i] = block).is_some()
-    }
-
     fn get_local(&self, x: i32, y: i32, z: i32) -> BlockId {
         self.data[Self::local(x, y, z)]
     }
@@ -186,6 +181,13 @@ impl Blocks<'_> {
         let low = min.max(self.origin);
         let high = max.min(self.origin + IVec3::new(CHUNK_SIZE - 1, WORLD_HEIGHT - 1, CHUNK_SIZE - 1));
         low.cmple(high).all().then_some((low, high))
+    }
+
+    /// Sets the block at `pos`, if it is in the column.
+    pub fn set(&mut self, pos: IVec3, block: BlockId) {
+        if let Some(i) = self.index(pos) {
+            self.data[i] = block;
+        }
     }
 
     /// The block at `pos`; air outside the column.
@@ -301,6 +303,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 blocks.set_local(x, y, z, block);
             }
             underground.decorate(x, z, &site, &cave, &mut blocks);
+            underground.bury(x, z, &cave, &mut blocks);
             // Fast water stays open in the cold.
             let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring);
             for y in height + 1..=geo.water {

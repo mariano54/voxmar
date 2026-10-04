@@ -271,8 +271,13 @@ crystal caves are rare, and two fantasy caves, glowroot hollows and the starlit 
 only where aether runs high. Each lines its floors and ceilings through its surface rules,
 replaces the rock around it with its own stones or strata, and grows decorations from floors
 and ceilings (`cave_decoration`): plants and mushrooms, stalagmites and stalactites, icicles,
-hanging roots and vines, crystals, some with glowing tips. Lava burns (4 health every half
-second). `Overworld::cave_biome_at` gives the cave biome at a block.
+hanging roots and glowing berries, crystals and lichen, which light the caves; hanging growth
+always hangs under rock. Frozen caves freeze their pools, and lush caves and glowroot hollows
+have pools that glow from below. Wherever daylight falls straight down a shaft to a cave
+floor, a small garden of turf, grass, ferns and flowers grows in the light. Buried in the rock
+are geodes (hollows lined with crystal, calcite and basalt, glowing clusters on their floors)
+and fossil skeletons, found by digging or where a cave cuts through them. Lava burns (4 health
+every half second). `Overworld::cave_biome_at` gives the cave biome at a block.
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
@@ -286,12 +291,20 @@ near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
+<<<<<<< HEAD
 labyrinths, ravines, sinkholes, entrances and the best view of each cave biome near spawn,
 with each cave biome's share of the caves there;
 `decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest edge,
 a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
 `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+=======
+labyrinths, ravines, sinkholes, entrances, geodes, bare fossils and the best view of each cave
+biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the
+`--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
+there; `column_timing` reports generation time per column, and `river_speed` the cost of
+building a region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+>>>>>>> main
 
 ## Weather
 
