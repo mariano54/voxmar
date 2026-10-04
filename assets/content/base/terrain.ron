@@ -30,6 +30,22 @@
             name: "mesas",
             kind: Mesas(height: 46.0, spacing: 300.0),
             climate: [(temperature: ("warm", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), erosion: ("hills", "peaks"))],
+            // Risers banded in clay, tops of red sand and scrub.
+            strata: [
+                "orange_terracotta", "terracotta", "yellow_terracotta", "white_terracotta",
+                "orange_terracotta", "red_terracotta", "terracotta", "brown_terracotta",
+                "light_gray_terracotta", "orange_terracotta", "yellow_terracotta", "red_terracotta",
+            ],
+            surface: (
+                rules: [
+                    (when: [Slope(1.5, 3.0)], place: (top: Strata, filler: Strata, depth: 10)),
+                    (when: [Patch((name: "mesa_scrub", scale: 14.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("terracotta", 1.0)]), filler: Strata, depth: 10)),
+                ],
+                ground: (top: Block("red_sand"), filler: Strata, depth: 10),
+                underwater: (top: Block("red_sand")),
+                shore: (top: Block("red_sand")),
+                cliff: Strata,
+            ),
         ),
         (
             name: "canyons",

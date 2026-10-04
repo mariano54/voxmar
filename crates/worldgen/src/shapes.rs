@@ -58,6 +58,9 @@ pub struct Shaped {
 
 /// The land a shape stands on.
 pub struct Ground<'a> {
+    /// The regional climate anywhere, for shapes that stand alone, which rise where the
+    /// climate at their centre allows.
+    pub regional: &'a dyn Fn(i32, i32) -> Regional,
     /// Height of the ground, hills included.
     pub height: f32,
     /// What the hills add to it, which some shapes smooth away.
@@ -96,7 +99,9 @@ struct Shape {
     province: Option<ProvinceMask>,
     /// For regional rarity: the region noise, and the share of its range the shape takes.
     region: Option<(FastNoiseLite, f32)>,
-    /// For shapes that stand alone: the chance that a cell of the grid holds one.
+    /// Whether it stands alone (volcanoes, lone mountains, arches) rather than covering
+    /// its climate, and then the chance that a cell of its grid holds one.
+    alone: bool,
     chance: f32,
     noises: [FastNoiseLite; 3],
     seed: u64,
@@ -107,6 +112,8 @@ pub struct Shapes {
     names: Vec<String>,
     /// Direction the prevailing wind blows towards, which dunes face.
     wind: [f32; 2],
+    /// The world's volcanism, which raises its volcanoes higher.
+    volcanism: f32,
     /// Roughens the faces of 3D pieces.
     rough: FastNoiseLite,
 }
@@ -154,6 +161,7 @@ impl Shapes {
                     gates,
                     province: def.province.as_deref().map(|p| rocks.mask(p)),
                     region: (!alone && share < 1.0).then(|| (noise(seed, 0x2e61, 1.0 / REGION_SCALE, FractalType::FBm, 2), share)),
+                    alone,
                     chance: if alone { standalone_chance(def.kind, share, dials) } else { 1.0 },
                     noises: kind_noises(def.kind, seed),
                     seed,
@@ -164,6 +172,7 @@ impl Shapes {
             list,
             names: content.shapes.iter().map(|s| s.name.clone()).collect(),
             wind: dials.wind,
+            volcanism: dials.volcanism,
             rough: noise(seed, 0x2a6e, 1.0 / 6.0, FractalType::FBm, 2),
         }
     }
@@ -302,7 +311,8 @@ impl Shapes {
         let mut out = Shaped::default();
         let mut most = 0.5;
         for (i, shape) in self.list.iter().enumerate() {
-            let weight = shape.weight(fx, fz, &fields, regional);
+            // Shapes that stand alone weigh their climate at their centre instead.
+            let weight = if shape.alone { 1.0 } else { shape.weight(fx, fz, &fields, regional) };
             if weight <= 0.0 {
                 continue;
             }
@@ -354,7 +364,8 @@ impl Shapes {
                 }
                 let rise = weight * level * height * vary;
                 // The tops are flat: hills are smoothed away under them.
-                (rise - ground.hills * weight * smoothstep(0.0, 0.3, level), 0.0, weight * level)
+                // Every tier shows the shape's banded ground, from its first riser up.
+                (rise - ground.hills * weight * smoothstep(0.0, 0.3, level), 0.0, weight * (level * 4.0).min(1.0))
             }
             ShapeKind::Canyons { depth, width } => {
                 // Distance from the canyon's line, in half widths: the noise's typical slope
@@ -404,19 +415,19 @@ impl Shapes {
                     if u[3] < lean || u[0] > 0.3 + 0.5 * cluster {
                         return 0.0;
                     }
-                    let t = t / (0.08 + 0.1 * u[1]);
-                    let point = (1.0 - t).max(0.0).powf(0.9);
+                    let t = t / (0.1 + 0.12 * u[1]);
+                    let point = (1.0 - t).max(0.0).powf(0.8);
                     let skirt = 0.12 * (1.0 - smoothstep(1.0, 2.2, t));
                     (0.35 + 0.65 * u[2]) * point.max(skirt)
                 });
                 (0.0, weight * height * spike, weight * spike)
             }
             ShapeKind::Volcanoes { height, radius } => {
-                let (rise, summit) = self.volcano(shape, x, z, height, radius);
+                let (rise, summit) = self.volcano(shape, x, z, height, radius, ground);
                 (rise, 0.0, summit)
             }
             ShapeKind::Mountain { height, radius } => {
-                let (rise, summit) = self.mountain(shape, x, z, height, radius);
+                let (rise, summit) = self.mountain(shape, x, z, height, radius, ground);
                 (rise, 0.0, summit)
             }
             ShapeKind::SeaCliffs { height } => {
@@ -473,9 +484,9 @@ impl Shapes {
     }
 
     /// The standalone shape of the grid cell holding (x, z), if the cell holds one: each
-    /// sits well inside its cell, so no other cell can reach the position. Gives its centre
-    /// and eight uniform values of its own.
-    fn standalone(&self, shape: &Shape, x: f32, z: f32, cell: f32) -> Option<Standalone> {
+    /// sits well inside its cell, so no other cell can reach the position. Gives its centre,
+    /// eight uniform values of its own, and its weight in the climate at its centre.
+    fn standalone(&self, shape: &Shape, x: f32, z: f32, cell: f32, ground: &Ground) -> Option<Standalone> {
         let (cx, cz) = ((x / cell).floor() as i32, (z / cell).floor() as i32);
         let (a, b) = (hash3(shape.seed, cx, 0, cz), hash3(shape.seed ^ 0xa1, cx, 0, cz));
         let unit = |k: usize| (([a, b][k / 4] >> (k % 4 * 16)) & 0xffff) as f32 / 65536.0;
@@ -484,13 +495,17 @@ impl Shapes {
         }
         let units = std::array::from_fn(|k| unit(k));
         let centre = [(cx as f32 + 0.3 + 0.4 * unit(1)) * cell, (cz as f32 + 0.3 + 0.4 * unit(2)) * cell];
-        Some(Standalone { centre, cell: [cx, cz], units })
+        let regional = (ground.regional)(centre[0] as i32, centre[1] as i32);
+        let fields = [regional.temperature(), regional.moisture(), regional.continentalness, regional.erosion];
+        let weight = shape.weight(centre[0], centre[1], &fields, &regional);
+        (weight > 0.2).then_some(Standalone { centre, cell: [cx, cz], units, weight })
     }
 
     /// A volcano's cone at (x, z), if one stands there: the height it adds and how near its
     /// summit the position is, 0 ..= 1.
-    fn volcano(&self, shape: &Shape, x: f32, z: f32, height: f32, radius: f32) -> (f32, f32) {
-        let Some(cone) = self.standalone(shape, x, z, radius * 6.0) else { return (0.0, 0.0) };
+    fn volcano(&self, shape: &Shape, x: f32, z: f32, height: f32, radius: f32, ground: &Ground) -> (f32, f32) {
+        let Some(cone) = self.standalone(shape, x, z, radius * 6.0, ground) else { return (0.0, 0.0) };
+        let height = height * cone.weight * (0.75 + 0.4 * self.volcanism);
         let u = cone.units;
         let r = radius * (0.75 + 0.5 * u[3]);
         let Some((t, cos, sin, d)) = cone.reach(shape, x, z, r, 0.22) else { return (0.0, 0.0) };
@@ -509,8 +524,9 @@ impl Shapes {
 
     /// A lone mountain at (x, z), if one stands there: a massif rising alone from the land
     /// around it, with spurs radiating from its summit.
-    fn mountain(&self, shape: &Shape, x: f32, z: f32, height: f32, radius: f32) -> (f32, f32) {
-        let Some(peak) = self.standalone(shape, x, z, radius * 6.0) else { return (0.0, 0.0) };
+    fn mountain(&self, shape: &Shape, x: f32, z: f32, height: f32, radius: f32, ground: &Ground) -> (f32, f32) {
+        let Some(peak) = self.standalone(shape, x, z, radius * 6.0, ground) else { return (0.0, 0.0) };
+        let height = height * peak.weight;
         let u = peak.units;
         let r = radius * (0.8 + 0.4 * u[3]);
         let Some((t, cos, sin, d)) = peak.reach(shape, x, z, r, 0.3) else { return (0.0, 0.0) };
@@ -529,6 +545,8 @@ struct Standalone {
     centre: [f32; 2],
     cell: [i32; 2],
     units: [f32; 8],
+    /// How strongly the climate at its centre lets it rise, 0 ..= 1.
+    weight: f32,
 }
 
 impl Standalone {

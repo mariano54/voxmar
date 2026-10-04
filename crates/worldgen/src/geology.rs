@@ -368,7 +368,8 @@ impl Geology {
         let hills = hills * (3.0 + 14.0 * relief.roughness) * self.hill_scale * inland;
         let ground = relief.elevation + hills;
         let regional = self.regional(x, z);
-        let shaped = self.shapes.shape(x, z, &Ground { height: ground, hills, relief: &relief }, &regional);
+        let anywhere = |x: i32, z: i32| self.regional(x, z);
+        let shaped = self.shapes.shape(x, z, &Ground { regional: &anywhere, height: ground, hills, relief: &relief }, &regional);
         let sea = SEA_LEVEL as f32;
         let base = sea + ease(ground + shaped.terrain - sea);
         let height = sea + ease(ground + shaped.terrain + shaped.features - sea);

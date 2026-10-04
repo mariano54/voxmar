@@ -27,7 +27,7 @@ use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
 use crate::shapes::{Anchors, Piece};
-use crate::surface::{Fill, Layers, Palette, Spot};
+use crate::surface::{Fill, Layers, Palette, Spot, Surface};
 use crate::trees::TreeId;
 use crate::underground::Rock;
 use crate::{Body, Overworld, SEA_LEVEL, Site};
@@ -228,7 +228,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             column.colors[(z * CHUNK_SIZE + x) as usize] = [colors.grass, colors.foliage, colors.water];
             let layers = world.surface_layers(&site, wx, wz);
             let stones = world.stones(&site);
-            let strata = &world.biomes.get(site.biome).strata;
+            let strata = world.surface_of(&site, wx, wz).1;
             caves.carve(x, z, &mut cave);
             rock.profile(x, z, &mut rock_profile);
             let rocky = underground.rocky(x, z);
@@ -459,6 +459,18 @@ impl Overworld {
         self.geology.shapes().pieces(corner, corner + CHUNK_SIZE - 1, &anchors)
     }
 
+    /// The surface rules a site's ground follows and the strata they band with: its biome's,
+    /// or those of a terrain shape with ground of its own where the shape stands tallest.
+    pub(crate) fn surface_of(&self, site: &Site, x: i32, z: i32) -> (&Surface, &[BlockId]) {
+        let biome = self.biomes.get(site.biome);
+        match site.form.shape.and_then(|shape| self.shape_surfaces[shape.0 as usize].as_ref()) {
+            Some(own) if site.form.strength > 0.3 + 0.3 * self.terrain.dither(x, z) => {
+                (&own.surface, if own.strata.is_empty() { &biome.strata } else { &own.strata })
+            }
+            _ => (&biome.surface, &biome.strata),
+        }
+    }
+
     /// The stones beneath a site: its biome's own, or its rock province's.
     pub(crate) fn stones(&self, site: &Site) -> &Palette {
         self.biomes.get(site.biome).stones.as_ref().unwrap_or(&self.rocks.get(site.province).stones)
@@ -468,15 +480,10 @@ impl Overworld {
     pub(crate) fn surface_layers(&self, site: &Site, x: i32, z: i32) -> Layers {
         let terrain = &self.terrain;
         let ids = &terrain.ids;
-        let biome = self.biomes.get(site.biome);
         let d = terrain.dither(x, z);
         let mix = || terrain.mix(x, z);
         let spot = Spot { site, x, z, dither: d, mix: &mix, chance: terrain.chance(x, z) };
-        // A terrain shape with ground of its own makes it where it stands tallest.
-        let (surface, strata) = match site.form.shape.and_then(|shape| self.shape_surfaces[shape.0 as usize].as_ref()) {
-            Some(own) if site.form.strength > 0.3 + 0.3 * d => (&own.surface, if own.strata.is_empty() { &biome.strata } else { &own.strata }),
-            _ => (&biome.surface, &biome.strata),
-        };
+        let (surface, strata) = self.surface_of(site, x, z);
         let stones = self.stones(site);
         let rules = &self.rules;
         // Whether `v` lies past a threshold that is dithered across `lo..hi`.
