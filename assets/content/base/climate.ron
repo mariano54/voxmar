@@ -1,0 +1,25 @@
+// The bands biomes are placed by, shared with everything else that switches on climate
+// (terrain shapes, later): moving an edge here moves every biome and shape along it.
+// Each axis has one more band name than edges; `names[i]` lies below `edges[i]`.
+//
+// - temperature: °C at the land's regional elevation (hills and terrain features left out);
+// - moisture: precipitation over potential evaporation, 0.1 in deserts, 2 in rainforests;
+// - continentalness: −1 deep ocean, 0 at the coast, 1 deep inland;
+// - erosion: the landform class: 0 flat, 1/3 hills, 2/3 the slopes of a range, 1 its peaks.
+//
+// `remaps` can bend an axis for the biome picker only, to give a rare slot more land
+// without changing the terrain: `(axis: Continentalness, points: [(-1.0, -1.0), ...])`.
+(
+    temperature: (names: ["frozen", "cold", "cool", "temperate", "warm", "hot"], edges: [-3.0, 4.0, 10.0, 17.0, 22.0]),
+    moisture: (names: ["arid", "dry", "moderate", "humid", "wet"], edges: [0.34, 0.6, 0.95, 1.35]),
+    continentalness: (names: ["deep_ocean", "ocean", "coast", "inland", "far_inland"], edges: [-0.55, 0.0, 0.15, 0.55]),
+    erosion: (names: ["flat", "hills", "slopes", "peaks"], edges: [0.17, 0.5, 0.83]),
+    frost: (
+        snow: "snow_block",
+        powder: "powder_snow",
+        snowy_ground: "snowy_grass_block",
+        ice: "ice",
+        thick_ice: "packed_ice",
+        rare_ice: "blue_ice",
+    ),
+)

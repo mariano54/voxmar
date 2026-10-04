@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::colour::{self, Rgba};
-use crate::field::seed_of;
-use crate::recipe::{Book, Palette, Recipe};
+use crate::field::{hash, seed_of};
+use crate::recipe::{Book, Layer, Palette, Recipe};
 use crate::render::{self, Resolved};
 use crate::{Error, Image};
 
@@ -32,12 +32,35 @@ impl Library {
                     return Err(Error(format!("{origin}: palette `{name}` is defined twice")));
                 }
             }
+            let with_legend = |mut recipe: Recipe| {
+                for layer in &mut recipe.layers {
+                    if let Layer::Grid(grid) = layer {
+                        for (&ch, ink) in &book.legend {
+                            grid.legend.entry(ch).or_insert_with(|| ink.clone());
+                        }
+                    }
+                }
+                recipe
+            };
+            let templates_with_legend: Vec<(String, BTreeMap<String, Recipe>)> = book
+                .templates
+                .into_iter()
+                .map(|(name, members)| (name, members.into_iter().map(|(n, r)| (n, with_legend(r))).collect()))
+                .collect();
             for (name, recipe) in book.textures {
+                let recipe = with_legend(recipe);
+                for layer in &recipe.layers {
+                    if let Layer::Grid(grid) = layer
+                        && let Some(row) = grid.rows.iter().find(|r| r.chars().count() != grid.rows[0].chars().count())
+                    {
+                        return Err(Error(format!("{origin}: texture `{name}`: grid row `{row}` is not as long as the first")));
+                    }
+                }
                 if library.recipes.insert(name.clone(), recipe).is_some() {
                     return Err(Error(format!("{origin}: texture `{name}` is defined twice")));
                 }
             }
-            for (name, template) in book.templates {
+            for (name, template) in templates_with_legend {
                 if templates.insert(name.clone(), template).is_some() {
                     return Err(Error(format!("{origin}: template `{name}` is defined twice")));
                 }
@@ -120,20 +143,33 @@ impl Library {
         let recipe = self.recipes.get(name).ok_or_else(|| Error(format!("no texture `{name}`")))?;
         let mut resolved = match &recipe.base {
             Some(base) => self.resolve(base, depth + 1).map_err(|Error(e)| Error(format!("{name}: {e}")))?,
-            None => Resolved { size: (16, 16), seed: seed_of(name), palettes: BTreeMap::new(), layers: Vec::new() },
+            None => Resolved { size: (16, 16), seed: seed_of(name), palettes: BTreeMap::new(), layers: Vec::new(), stamps: BTreeMap::new() },
         };
         if let Some(size) = recipe.size {
             resolved.size = size;
         }
+        // An explicit seed reseeds every layer, inherited ones too (a family's maple
+        // planks differ from oak's); otherwise inherited layers keep their pattern and
+        // this recipe's own layers are seeded by its name (each ore's flecks differ).
         if let Some(seed) = recipe.seed {
             resolved.seed = seed;
+            resolved.layers.iter_mut().for_each(|(layer_seed, _)| *layer_seed = None);
         }
+        let own = recipe.seed.unwrap_or_else(|| seed_of(name));
         for (slot, palette) in &recipe.palettes {
             let shades = self.shades(palette, 0).map_err(|Error(e)| Error(format!("{name}: palette `{slot}`: {e}")))?;
             resolved.palettes.insert(slot.clone(), shades);
         }
+        for layer in &recipe.layers {
+            if let Layer::Stamp(stamp) = layer
+                && !resolved.stamps.contains_key(&stamp.texture)
+            {
+                let image = self.resolve(&stamp.texture, depth + 1).and_then(|r| render::render(&r)).map_err(|Error(e)| Error(format!("{name}: {e}")))?;
+                resolved.stamps.insert(stamp.texture.clone(), image);
+            }
+        }
         let first = resolved.layers.len();
-        resolved.layers.extend(recipe.layers.iter().cloned().enumerate().map(|(i, layer)| (first + i, layer)));
+        resolved.layers.extend(recipe.layers.iter().cloned().enumerate().map(|(i, layer)| (Some(hash(own, (first + i) as i32, 0x1a7e)), layer)));
         Ok(resolved)
     }
 

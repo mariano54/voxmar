@@ -43,8 +43,8 @@ use voxmar_engine::world::Column;
 use voxmar_engine::field::Field;
 use voxmar_engine::glam::{DVec2, IVec2, IVec3, Vec2, Vec3};
 use voxmar_engine::schedule::Tier;
-use voxmar_engine::weather::{Input, Inputs, Preset, Rarity as EffectRarity, WeatherTable, ramp};
-use voxmar_worldgen::{Featured, Overworld, Rarity, SEA_LEVEL};
+use voxmar_engine::weather::{Input, Inputs, Preset, WeatherTable, ramp};
+use voxmar_worldgen::{Featured, Overworld, SEA_LEVEL, Tier as _};
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND, Weather as LocalWeather};
 
 use crate::Server;
@@ -157,16 +157,9 @@ impl Land for OverworldLand {
 /// Each effect's chance to occur in a stretch of land and time: its rarity, times how much
 /// this world features it.
 pub(crate) fn chances(table: &WeatherTable, featured: &Featured) -> Vec<f32> {
-    let tier = |rarity: EffectRarity| match rarity {
-        EffectRarity::Common => Rarity::Common,
-        EffectRarity::Uncommon => Rarity::Uncommon,
-        EffectRarity::Rare => Rarity::Rare,
-        EffectRarity::VeryRare => Rarity::VeryRare,
-        EffectRarity::Legendary => Rarity::Legendary,
-    };
-    let items: Vec<(&str, Rarity)> = table.effects().iter().map(|e| (e.name.as_str(), tier(e.rarity))).collect();
+    let items: Vec<(&str, _)> = table.effects().iter().map(|e| (e.name.as_str(), e.rarity)).collect();
     let featured = featured.multipliers("weather", &items);
-    table.effects().iter().zip(featured).map(|(effect, boost)| (effect.rarity.chance() * boost).min(1.0)).collect()
+    table.effects().iter().zip(featured).map(|(effect, boost)| (effect.rarity.multiplier() * boost).min(1.0)).collect()
 }
 
 /// The land and climate at one place, as effects read them.
@@ -1052,7 +1045,7 @@ mod tests {
         let land = Arc::new(land);
         let climate = land.clone();
         let table = table();
-        let chances = chances.unwrap_or_else(|| table.effects().iter().map(|e| e.rarity.chance()).collect());
+        let chances = chances.unwrap_or_else(|| table.effects().iter().map(|e| e.rarity.multiplier()).collect());
         let temperature = Field::new("core:temperature", move |x, z| climate.climate(x, z).0);
         (WeatherState::new(seed, wind, land, table, chances), temperature)
     }
@@ -1286,7 +1279,7 @@ mod tests {
             let of: Vec<usize> = (0..natural.len()).filter(|&i| table.effects()[i].rarity == rarity).collect();
             of.iter().map(|&i| natural[i]).sum::<f32>() / of.len().max(1) as f32
         };
-        use voxmar_engine::weather::Rarity::*;
+        use voxmar_engine::block::Rarity::*;
         let (common, uncommon, rare) = (tier(Common), tier(Uncommon), tier(Rare));
         let wonders = tier(VeryRare).max(tier(Legendary));
         assert!(common > 2.0 * uncommon && uncommon > 2.0 * rare && rare > wonders, "{common} {uncommon} {rare} {wonders}");

@@ -1,0 +1,158 @@
+// Water, glass, light blocks, cactus, roots, the climate colour maps and HUD sprites.
+(
+    textures: {
+        // Grey and see-through: the game tints water by climate.
+        "block/water_still": (palettes: {"main": ["#9fa4adb0", "#adb2bbb0", "#bcc1c9b4", "#cbd0d6b8", "#dadee3bc"]}, layers: [
+            Paint(palette: "main", base: 0.45, shade: [
+                Noise(cells: (4, 4), octaves: 2, amount: 0.35),
+                Stripes(period: 8.0, width: 0.25, amount: 0.2, slope: 0.5, warp: 1.5),
+                Stripes(period: 8.0, width: 0.125, amount: -0.2, slope: 0.5, warp: 1.5, phase: 4.0),
+            ], clean: true),
+        ]),
+        "block/glass": (palettes: {"frame": ["#8fb3bf", "#c3dce4", "#eef8fb"]}, layers: [
+            Paint(palette: "frame", base: 0.4, shade: [Border(width: 1, amount: 0.4, sides: (1.0, 0.0, 0.0, 1.0)), Border(width: 1, amount: -0.4, sides: (0.0, 1.0, 1.0, 0.0))], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
+            Grid(legend: {'w': "#ffffffd0", 'l': "#e2f3f8a0"}, rows: [
+                "................",
+                "................",
+                "...........w....",
+                "..........w.....",
+                ".........w......",
+                "....l...w.......",
+                "...l...w........",
+                "..l.............",
+                "................",
+                "................",
+                "............l...",
+                "...........l....",
+                "..........l.....",
+                "................",
+                "................",
+                "................",
+            ]),
+        ]),
+        "block/glowstone": (palettes: {"main": ["#6b4a1c", "#a8742c", "#d9a341", "#f2c766", "#ffe196", "#fff4cc"]}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Cells(count: (4, 4), jitter: 1.0, value: 0.5, edge: -0.55, bevel: 0.35, warp: 1.0), Speckle(chance: 0.1, amount: 0.3)], clean: true),
+        ]),
+        "block/sea_lantern": (palettes: {"main": ["#5d8d8a", "#86b3ad", "#aed2cb", "#cfe7e1", "#e9f6f2", "#fbfffd"]}, layers: [
+            Paint(palette: "main", base: 0.7, shade: [
+                Bricks(size: (8, 8), offset: 0, mortar: -0.35, value: 0.15, bevel: 0.15),
+                Noise(cells: (8, 8), amount: 0.15),
+                Border(width: 1, amount: -0.3),
+            ], clean: true),
+        ]),
+        "block/cactus_side": (palettes: {"main": ["#1f4a1a", "#2a5d20", "#357127", "#41842f", "#4e9638", "#5da943"], "spine": ["#d8d3a8", "#f2eecc"]}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Stripes(vertical: true, period: 4.0, width: 0.25, amount: -0.4, phase: 1.0),
+                Stripes(vertical: true, period: 4.0, width: 0.25, amount: 0.2, phase: 2.0),
+                Noise(cells: (16, 4), amount: 0.25),
+                Border(width: 1, amount: -0.3, sides: (0.0, 1.0, 0.0, 1.0)),
+            ]),
+            Grid(legend: {'s': "spine:0", 'S': "spine:1"}, rows: [
+                "................",
+                "...S.......S....",
+                "................",
+                ".......S......S.",
+                "................",
+                "S..S............",
+                "...........S....",
+                "........S.......",
+                "................",
+                "...S..........S.",
+                "................",
+                ".......S...S....",
+                "................",
+                "S...............",
+                "...S.......S....",
+                "................",
+            ]),
+        ]),
+        "block/cactus_top": (palettes: {"main": ["#1f4a1a", "#2a5d20", "#357127", "#41842f", "#4e9638", "#5da943"], "spine": ["#d8d3a8", "#f2eecc"]}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Rings(spacing: 3.0, width: 0.33, amount: -0.3, wobble: 0.3, square: 0.9), Border(width: 1, amount: -0.35), Noise(cells: (16, 16), amount: 0.15)]),
+            Grid(legend: {'S': "spine:1"}, rows: ["................", "................", "..S...S...S..S..", "................", "................", "..S..........S..", "................", "................", "..S..........S..", "................", "................", "..S..........S..", "................", "..S...S..S...S..", "................", "................"]),
+        ]),
+        "block/cactus_bottom": (base: "block/cactus_top", layers: [Shift(by: [Flat(-1.0)])]),
+        "block/mangrove_roots_side": (palettes: {"root": ["#2f2118", "#40301f", "#523e28", "#644d33", "#765c3e"]}, layers: [
+            Paint(palette: "root", base: 0.5, shade: [Noise(cells: (4, 16), amount: 0.6)], mask: [Ridge(cells: (3, 2), octaves: 1, width: 0.35, amount: 1.0), Ridge(cells: (2, 3), octaves: 1, width: 0.3, amount: 1.0, seed: 4)], above: 0.55, shadow: 0),
+        ]),
+        "block/mangrove_roots_top": (base: "block/mangrove_roots_side", seed: 77),
+        "block/azalea_leaves": (base: "block/oak_leaves", palettes: {"leaves": ["#33501c", "#406223", "#4f752b", "#5f8834", "#709b3e", "#82ae4a"]}),
+        "block/flowering_azalea_leaves": (base: "block/azalea_leaves", palettes: {"bloom": ["#7a2f7c", "#a8459f", "#cf64be", "#ec8ad6"]}, layers: [
+            Clusters(palette: "bloom", count: 6, size: (2, 4), spacing: 4.5, shade: 1, seed: 5),
+        ]),
+        // Climate colour maps: left hot, right cold; top wet, bottom dry.
+        "colormap/grass": (size: (256, 256), layers: [Corners("#3cbc24", "#4ea85e", "#bdb53e", "#78b062")]),
+        "colormap/foliage": (size: (256, 256), layers: [Corners("#2aa812", "#3e9450", "#aaa428", "#5aa25a")]),
+        // HUD.
+        "gui/sprites/hud/hotbar": (size: (182, 22), palettes: {"frame": ["#1b1d22", "#3d4048", "#6d717b", "#a3a7b0"]}, layers: [
+            Corners("#14161ab0", "#14161ab0", "#14161ab0", "#14161ab0"),
+            Paint(palette: "frame", base: 0.3, shade: [Border(width: 1, amount: 0.3, sides: (1.0, 0.0, 0.0, 1.0))], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
+            Grid(
+                legend: {'d': "frame:0", 'l': "frame:2"},
+                rows: ["dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl", "dl"],
+                at: [(20, 0), (40, 0), (60, 0), (80, 0), (100, 0), (120, 0), (140, 0), (160, 0)],
+            ),
+        ]),
+        "gui/sprites/hud/hotbar_selection": (size: (24, 23), palettes: {"frame": ["#202228", "#d6d9de", "#ffffff"]}, layers: [
+            Paint(palette: "frame", base: 0.4, shade: [Border(width: 1, amount: 0.4, sides: (1.0, 0.0, 0.0, 1.0))], mask: [Border(width: 2, amount: 1.0)], above: 0.5),
+            Paint(palette: "frame", base: 0.0, mask: [Border(width: 1, amount: 1.0)], above: 0.5),
+        ]),
+        "gui/sprites/hud/crosshair": (size: (15, 15), layers: [
+            Grid(legend: {'w': "#ffffffe0"}, rows: [
+                "...............",
+                "...............",
+                "...............",
+                ".......w.......",
+                ".......w.......",
+                ".......w.......",
+                "...............",
+                "...www...www...",
+                "...............",
+                ".......w.......",
+                ".......w.......",
+                ".......w.......",
+                "...............",
+                "...............",
+                "...............",
+            ]),
+        ]),
+        "gui/sprites/hud/heart/container": (size: (9, 9), layers: [
+            Grid(legend: {'k': "#1a0b0e", 'd': "#3b1a20"}, rows: [
+                ".kk...kk.",
+                "kddk.kddk",
+                "kdddkdddk",
+                "kdddddddk",
+                "kdddddddk",
+                ".kdddddk.",
+                "..kdddk..",
+                "...kdk...",
+                "....k....",
+            ]),
+        ]),
+        "gui/sprites/hud/heart/full": (size: (9, 9), layers: [
+            Grid(legend: {'r': "#d8263b", 'h': "#ff8a8f", 'w': "#ffd6d6", 'd': "#9c1426"}, rows: [
+                ".........",
+                ".wh...rr.",
+                ".hrr.rrr.",
+                ".rrrrrrd.",
+                ".rrrrrrd.",
+                "..rrrrd..",
+                "...rrd...",
+                "....d....",
+                ".........",
+            ]),
+        ]),
+        "gui/sprites/hud/heart/half": (size: (9, 9), layers: [
+            Grid(legend: {'r': "#d8263b", 'h': "#ff8a8f", 'w': "#ffd6d6", 'd': "#9c1426"}, rows: [
+                ".........",
+                ".wh......",
+                ".hrr.....",
+                ".rrrr....",
+                ".rrrr....",
+                "..rrr....",
+                "...rr....",
+                "....d....",
+                ".........",
+            ]),
+        ]),
+    },
+)

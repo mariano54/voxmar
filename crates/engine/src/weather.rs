@@ -14,7 +14,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::RegistryError;
+use crate::block::{Rarity, RegistryError};
 use crate::glam::{DVec2, Vec2};
 
 /// The weather at one place. Clients ease towards each update, so it may change in steps.
@@ -316,33 +316,6 @@ impl Default for Inputs {
     }
 }
 
-/// How often an effect occurs, beyond its conditions: an uncommon one shows in about a
-/// third of the stretches of time and land where its conditions hold, a legendary one in
-/// about one in five hundred. Each world also features a few rare effects and suppresses a
-/// common one, from its seed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum Rarity {
-    #[default]
-    Common,
-    Uncommon,
-    Rare,
-    VeryRare,
-    Legendary,
-}
-
-impl Rarity {
-    /// The fraction of stretches in which an effect of this rarity can occur.
-    pub fn chance(self) -> f32 {
-        match self {
-            Rarity::Common => 1.0,
-            Rarity::Uncommon => 0.3,
-            Rarity::Rare => 0.08,
-            Rarity::VeryRare => 0.015,
-            Rarity::Legendary => 0.002,
-        }
-    }
-}
-
 /// What an effect raises: a channel of `Weather`, by an amount at full strength.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Show {
@@ -403,6 +376,10 @@ impl Show {
 pub struct Effect {
     /// Namespaced once loaded (`base:valley_fog`).
     pub name: String,
+    /// How often it may occur where its conditions hold: an uncommon effect in about a
+    /// third of the stretches of land and time, a legendary one in about one in five
+    /// hundred (the world generator's tiers). Each world also features a few rare effects
+    /// and suppresses a common one, from its seed.
     #[serde(default)]
     pub rarity: Rarity,
     /// For gameplay and other systems to find effects by kind (`wet`, `cold`, `visibility`).

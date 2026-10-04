@@ -165,7 +165,7 @@ fn band(y: f32, a: f32, b: f32, width: f32) -> f32 {
     let hi = y + width * 0.5;
     let at_hi = floor(hi) * (b - a) + clamp(fract(hi) - a, 0.0, b - a);
     let at_lo = floor(lo) * (b - a) + clamp(fract(lo) - a, 0.0, b - a);
-    return (at_hi - at_lo) / width;
+    return saturate((at_hi - at_lo) / width);
 }
 
 // Real terrain is a staircase of one-block steps, which the smooth tile stands in for. Each
@@ -265,7 +265,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let y = in.world_position.y - CANOPY_HEIGHT * in.params.y;
     let filter_width = max(length(vec2(dpdx(y), dpdy(y))), 1e-3);
     // Steepness of the drawn surface, crowns included.
-    let surface = normalize(cross(dpdx(in.world_position), dpdy(in.world_position)));
+    // Degenerate where a triangle is thinner than a pixel; such pixels count as flat.
+    let across = cross(dpdx(in.world_position), dpdy(in.world_position));
+    let surface = select(UP, across * inverseSqrt(dot(across, across)), dot(across, across) > 1e-12);
     let surface_slope = length(surface.xz) / max(abs(surface.y), 0.05);
     // Sunken terrain shows only in the first cell inside finer detail; sheets not at all.
     let margin = select(EDGE, in.cell, in.kind == TERRAIN);
@@ -275,9 +277,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let to_eye = normalize(view.world_position - in.world_position);
     var color: vec3<f32>;
     if in.kind == TERRAIN {
-        color = terrain(in, to_eye, y, filter_width, surface_slope);
+        // The staircase estimate can overshoot on slivers along shores; real terrain never
+        // gets brighter than a sunlit white block.
+        color = clamp(terrain(in, to_eye, y, filter_width, surface_slope), vec3(0.0), vec3(2.0));
     } else {
         color = sheet(in, to_eye);
     }
+    // A NaN from a degenerate sliver would bloom into a blob; drop it.
+    color = select(color, vec3(0.0), color != color);
     return vec4(apply_fog(color, in.world_position), 1.0);
 }
