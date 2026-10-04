@@ -122,6 +122,8 @@ struct LakeCell {
 
 /// The rivers one tier draws from one region's cells, and the lakes over the region.
 pub struct Channels {
+    /// The region whose rivers these are, and whose lakes.
+    region: IVec2,
     /// First block of the edge index, which covers the region plus a margin.
     index_origin: IVec2,
     index_size: i32,
@@ -297,7 +299,7 @@ impl Channels {
                 }
             }
         }
-        Self { index_origin, index_size, edges, starts, items, lake_origin, lake_size, lakes: map }
+        Self { region, index_origin, index_size, edges, starts, items, lake_origin, lake_size, lakes: map }
     }
 
     /// The edges whose reach may cover a column, if the column lies in this index.
@@ -371,8 +373,10 @@ pub fn top_block(surface: i32) -> i32 {
 
 /// Carves one tier's rivers and lakes into a column whose ground is `before.ground`:
 /// the edges of every region in `regions` whose index covers the column, and the lakes
-/// of `own`, the region the column lies in.
-pub fn carve(style: &Style, regions: &[&Channels], own: &Channels, x: i32, z: i32, before: Carved) -> Carved {
+/// of the region the column lies in, which must be one of them.
+pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, before: Carved) -> Carved {
+    let regions = regions.iter().map(|c| c.as_deref().expect("filled"));
+    let home = IVec2::new(x, z).div_euclid(IVec2::splat(super::REGION));
     let land = before.ground;
     let p = Vec2::new(x as f32 + 0.5, z as f32 + 0.5);
     let mut ground = land;
@@ -382,7 +386,13 @@ pub fn carve(style: &Style, regions: &[&Channels], own: &Channels, x: i32, z: i3
     let mut near: Option<(f32, i32, Body)> = None;
     let mut wet = 0.0f32;
     let mut cavity = None;
-    for edge in regions.iter().flat_map(|c| c.near(x, z)) {
+    let mut own = None;
+    for edge in regions.flat_map(|c| {
+        if c.region == home {
+            own = Some(c);
+        }
+        c.near(x, z)
+    }) {
         let (d, t, along) = edge.nearest(p);
         if d >= edge.reach {
             continue;
@@ -462,7 +472,7 @@ pub fn carve(style: &Style, regions: &[&Channels], own: &Channels, x: i32, z: i3
     }
 
     // Lakes.
-    let lake = own.lake(x, z);
+    let lake = own.expect("the column's own region").lake(x, z);
     if lake.water > 0 && out.cavity.is_none() {
         let top = top_block(lake.water);
         if (out.ground.floor() as i32) < top {

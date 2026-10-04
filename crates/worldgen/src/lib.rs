@@ -1194,6 +1194,30 @@ mod tests {
         std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
     }
 
+    /// `cargo test --release -p voxmar_worldgen river_speed -- --ignored --nocapture`
+    /// separates the two costs rivers add, in CPU time on one thread: building a region's
+    /// rivers (once, for its 32×32 columns) and generating columns once it is built.
+    #[test]
+    #[ignore]
+    fn river_speed() {
+        let registry = registry();
+        let (mut first, mut warm, mut columns) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
+        for seed in [1, 3, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            let start = ColumnPos::of_block(world.spawn_point());
+            let t = thread_time();
+            std::hint::black_box(world.generate(start));
+            first += thread_time() - t;
+            let t = thread_time();
+            for i in 0..100 {
+                std::hint::black_box(world.generate(start.offset(i % 10, i / 10)));
+            }
+            warm += thread_time() - t;
+            columns += 100;
+        }
+        println!("first column (cold caches) {:.0} ms, then {:.3} ms per column", first.as_secs_f64() * 1e3 / 3.0, warm.as_secs_f64() * 1e3 / columns as f64);
+    }
+
     /// `cargo test --release -p voxmar_worldgen generation_speed -- --ignored --nocapture`
     /// measures, in CPU time on one thread, full column generation over areas in several
     /// climates and seeds, and the distant-terrain surface samples of the same areas.

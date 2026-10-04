@@ -242,7 +242,8 @@ near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections and level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
 arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;
-`column_timing` reports generation time per column (all `-- --ignored --nocapture`).
+`column_timing` reports generation time per column, and `river_speed` the cost of building a
+region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
 
 ## Weather
 
