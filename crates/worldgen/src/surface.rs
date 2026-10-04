@@ -65,6 +65,11 @@ impl Palette {
         self.blocks[i]
     }
 
+    /// The block for a value only computed if there is more than one to choose from.
+    fn pick_with(&self, u: impl Fn() -> f32) -> BlockId {
+        if self.blocks.len() == 1 { self.blocks[0] } else { self.pick(u()) }
+    }
+
     pub fn blocks(&self) -> impl Iterator<Item = BlockId> + '_ {
         self.blocks.iter().copied()
     }
@@ -150,8 +155,9 @@ pub struct Spot<'a> {
     pub z: i32,
     /// Clumpy dither for thresholds, 0..1.
     pub dither: f32,
-    /// A second, independent one for choosing among mixed blocks.
-    pub mix: f32,
+    /// A second, independent one for choosing among mixed blocks, computed only when a
+    /// mix needs it.
+    pub mix: &'a dyn Fn() -> f32,
     /// Uniform per-column randomness.
     pub chance: f32,
 }
@@ -297,12 +303,12 @@ impl SurfaceRules {
 fn resolve(rule: &LayersRule, spot: &Spot, stones: &Palette, strata: &[BlockId]) -> Layers {
     let band = |y: i32| strata[y.rem_euclid(strata.len() as i32) as usize];
     let top = match &rule.top {
-        Mat::Mix(p) => p.pick(spot.mix),
-        Mat::Stones => stones.pick(spot.mix),
+        Mat::Mix(p) => p.pick_with(spot.mix),
+        Mat::Stones => stones.pick_with(spot.mix),
         Mat::Strata => band(spot.site.height),
     };
     let filler = match &rule.filler {
-        Mat::Mix(p) => Fill::Block(p.pick(spot.mix)),
+        Mat::Mix(p) => Fill::Block(p.pick_with(spot.mix)),
         Mat::Stones => Fill::Stones,
         Mat::Strata => Fill::Strata,
     };

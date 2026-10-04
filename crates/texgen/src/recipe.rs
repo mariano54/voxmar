@@ -24,6 +24,9 @@ pub struct Book {
     pub templates: BTreeMap<String, BTreeMap<String, Recipe>>,
     /// Template instances, such as one wood made with the `wood` template.
     pub families: Vec<Family>,
+    /// Characters every [`Grid`] in this book understands, unless its own legend says
+    /// otherwise: a book of plant sprites can agree that `a`–`e` are leaf shades once.
+    pub legend: BTreeMap<char, String>,
 }
 
 /// A palette: a list of `#rrggbb` shades (darkest first), a ramp built from one colour, or
@@ -96,8 +99,9 @@ pub enum Layer {
     Clusters(Clusters),
     Shift(Shift),
     Cut(Cut),
+    Stamp(Stamp),
     /// Four corner colours (top-left, top-right, bottom-left, bottom-right), blended
-    /// smoothly: colour maps and gradients.
+    /// smoothly: colour maps and gradients. Written `Corners("#…", "#…", "#…", "#…")`.
     Corners([String; 4]),
 }
 
@@ -121,11 +125,14 @@ pub struct Paint {
     /// Shift the texels just above and left of the painted area: a crack painted dark
     /// with `light: 1` gets the bright lip a pixel artist would give it.
     pub light: i32,
+    /// Make texels whose shade comes out below this transparent instead: the gaps
+    /// between leaf clumps.
+    pub cut: Option<f32>,
 }
 
 impl Default for Paint {
     fn default() -> Self {
-        Self { palette: String::new(), base: 0.5, shade: Vec::new(), mask: Vec::new(), above: 0.5, clean: false, shadow: 0, light: 0 }
+        Self { palette: String::new(), base: 0.5, shade: Vec::new(), mask: Vec::new(), above: 0.5, clean: false, shadow: 0, light: 0, cut: None }
     }
 }
 
@@ -141,6 +148,18 @@ pub struct Grid {
     /// Top-left corners to draw the grid at; once at (0, 0) when empty.
     pub at: Vec<(i32, i32)>,
     /// Draw the grid mirrored left to right.
+    pub mirror: bool,
+}
+
+/// Another texture drawn over this one at each offset (its clear texels leave what is
+/// beneath): a clump of three blooms is one bloom stamped three times.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Stamp {
+    pub texture: String,
+    /// Where its top-left corner goes; (0, 0) when empty.
+    pub at: Vec<(i32, i32)>,
+    /// Mirror it left to right.
     pub mirror: bool,
 }
 
@@ -400,12 +419,15 @@ pub struct Stripes {
     pub vertical: bool,
     /// Where the first band starts, in texels.
     pub phase: f32,
+    /// Texels the bands climb per texel across, for diagonal streaks. Keep `slope` ×
+    /// the texture's width a multiple of `period` so the bands still tile.
+    pub slope: f32,
     pub seed: u32,
 }
 
 impl Default for Stripes {
     fn default() -> Self {
-        Self { period: 4.0, width: 0.25, amount: -0.3, warp: 0.0, vertical: false, phase: 0.0, seed: 0 }
+        Self { period: 4.0, width: 0.25, amount: -0.3, warp: 0.0, vertical: false, phase: 0.0, slope: 0.0, seed: 0 }
     }
 }
 

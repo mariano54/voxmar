@@ -1,0 +1,128 @@
+// Soils, sand, gravel, snow, ice and fired clay. Grass tops are grey: the game tints them
+// with the climate's grass colour. Grass sides are drawn in a typical grass green, since
+// only the top is tinted.
+(
+    palettes: {
+        "dirt": ["#573b27", "#664631", "#76533a", "#845f44", "#926c4f", "#a07a5c"],
+        "grass_grey": ["#707070", "#808080", "#8f8f8f", "#9c9c9c", "#a9a9a9", "#b8b8b8"],
+        "grass_side": ["#3d6626", "#4a772c", "#578834", "#64963c", "#71a445"],
+        "snow": ["#cfd9e2", "#dce5ec", "#e7eef3", "#f0f5f8", "#f8fbfc", "#ffffff"],
+        "sand": ["#c4b080", "#cfbb8b", "#d8c596", "#e0cea0", "#e7d6aa", "#eedeb4"],
+        "red_sand": ["#9c4e1c", "#a95922", "#b5632a", "#c06e33", "#ca7a3e", "#d3864a"],
+        "gravel": ["#5a5452", "#6b6461", "#7c7572", "#8b8481", "#9b9491", "#aca6a3"],
+        "clay": ["#8a909e", "#979dab", "#a3a9b6", "#afb4c0", "#babfca", "#c6cad4"],
+        "mud": ["#2f2a2c", "#383234", "#413b3c", "#4a4445", "#544d4e", "#5e5758"],
+        "moss": ["#3c5420", "#476226", "#53702c", "#5f7e33", "#6b8b3b", "#789945"],
+        "podzol": ["#4e3214", "#5e3d18", "#6e491d", "#7c5524", "#8a612c", "#996e35"],
+        "loam": ["#3a2a1f", "#463326", "#523d2e", "#5e4736", "#6a513f", "#775c49"],
+        "peat": ["#231a14", "#2c211a", "#352820", "#3f3026", "#49382d", "#544135"],
+        "red_earth": ["#6e2c1a", "#7f3520", "#8f3f27", "#9d4a2f", "#ab5638", "#b86343"],
+        "silt": ["#8b8273", "#988f80", "#a49c8d", "#b0a899", "#bbb4a5", "#c6c0b2"],
+        "root": ["#9a7a52", "#b8956a", "#cfae84"],
+        "pebble": ["#7d746d", "#9a928a", "#b6aea6"],
+    },
+    templates: {
+        "terracotta": {
+            "block/{name}_terracotta": (palettes: {"main": "{name}_clay"}, layers: [
+                Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.35), Speckle(chance: 0.08, amount: -0.25), Speckle(chance: 0.06, amount: 0.25, seed: 1)], clean: true),
+            ]),
+        },
+    },
+    families: [
+        (template: "terracotta", name: "white", palettes: {"main": (ramp: "#d1b2a1", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "light_gray", palettes: {"main": (ramp: "#876b62", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "gray", palettes: {"main": (ramp: "#3a2a24", shades: 4, light: 0.08, hue: 8.0)}),
+        (template: "terracotta", name: "black", palettes: {"main": (ramp: "#251710", shades: 4, light: 0.07, hue: 8.0)}),
+        (template: "terracotta", name: "brown", palettes: {"main": (ramp: "#4d3324", shades: 4, light: 0.08, hue: 8.0)}),
+        (template: "terracotta", name: "red", palettes: {"main": (ramp: "#8f3d2e", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "orange", palettes: {"main": (ramp: "#a15325", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "yellow", palettes: {"main": (ramp: "#ba8523", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "lime", palettes: {"main": (ramp: "#677534", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "green", palettes: {"main": (ramp: "#4c532a", shades: 4, light: 0.08, hue: 8.0)}),
+        (template: "terracotta", name: "cyan", palettes: {"main": (ramp: "#575b5b", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "light_blue", palettes: {"main": (ramp: "#716d8a", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "blue", palettes: {"main": (ramp: "#4a3b5b", shades: 4, light: 0.08, hue: 8.0)}),
+        (template: "terracotta", name: "purple", palettes: {"main": (ramp: "#764656", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "magenta", palettes: {"main": (ramp: "#95576c", shades: 4, light: 0.1, hue: 8.0)}),
+        (template: "terracotta", name: "pink", palettes: {"main": (ramp: "#a14e4e", shades: 4, light: 0.1, hue: 8.0)}),
+    ],
+    textures: {
+        "block/terracotta": (base: "block/brown_terracotta", palettes: {"main": (ramp: "#985e43", shades: 4, light: 0.1, hue: 8.0)}),
+        "block/dirt": (palettes: {"main": "dirt", "pebble": "pebble"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.5), Noise(cells: (16, 16), amount: 0.55), Speckle(chance: 0.1, amount: -0.3)], clean: true),
+            Clusters(palette: "pebble", count: 3, size: (1, 2), spacing: 5.0, shade: 1, seed: 2),
+        ]),
+        "block/coarse_dirt": (base: "block/dirt", palettes: {"grit": "gravel"}, layers: [
+            Paint(palette: "grit", base: 0.4, shade: [Cells(count: (5, 5), value: 0.6, edge: -0.3, bevel: 0.3)], mask: [Noise(cells: (8, 8), amount: 1.0), Speckle(chance: 0.3, amount: 0.3)], above: 0.25),
+        ]),
+        "block/rooted_dirt": (base: "block/dirt", palettes: {"root": "root"}, layers: [
+            Paint(palette: "root", base: 0.4, shade: [Noise(cells: (8, 8), amount: 0.8)], mask: [Ridge(cells: (3, 2), octaves: 2, width: 0.2, amount: 1.0)], above: 0.7, shadow: -1),
+        ]),
+        "block/mud": (palettes: {"main": "mud"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (3, 3), octaves: 2, amount: 0.5), Noise(cells: (16, 16), amount: 0.15)], clean: true),
+        ]),
+        "block/moss_block": (palettes: {"main": "moss"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 3, gain: 0.7, amount: 0.8), Speckle(chance: 0.1, amount: 0.3)], clean: true),
+        ]),
+        "block/podzol_top": (palettes: {"main": "podzol", "needle": ["#3a240e", "#a3702e", "#b9853a"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.6)], clean: true),
+            Paint(palette: "needle", base: 0.0, mask: [Speckle(chance: 0.12, amount: 1.0)]),
+            Paint(palette: "needle", base: 0.5, mask: [Speckle(chance: 0.12, amount: 1.0, seed: 4)]),
+        ]),
+        "block/podzol_side": (base: "block/dirt", palettes: {"top": "podzol"}, layers: [
+            Paint(palette: "top", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.7)], mask: [Fringe(depth: (2, 4), smooth: 0.4)], above: 0.5, shadow: -1),
+        ]),
+        "block/grass_block_top": (palettes: {"main": "grass_grey"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.45), Noise(cells: (16, 16), amount: 0.55)], clean: true),
+        ]),
+        "block/grass_block_side": (base: "block/dirt", palettes: {"grass": "grass_side"}, layers: [
+            Paint(palette: "grass", base: 0.5, shade: [Noise(cells: (16, 16), amount: 0.6), Gradient(from: 0.15, to: -0.3)], mask: [Fringe(depth: (2, 5), smooth: 0.2)], above: 0.5, shadow: -1),
+        ]),
+        "block/grass_block_snow": (base: "block/dirt", palettes: {"snow": "snow"}, layers: [
+            Paint(palette: "snow", base: 0.6, shade: [Noise(cells: (8, 8), amount: 0.4), Gradient(from: 0.2, to: -0.3)], mask: [Fringe(depth: (3, 6), smooth: 0.5)], above: 0.5, shadow: -1),
+        ]),
+        "block/clay": (palettes: {"main": "clay"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.5), Speckle(chance: 0.06, amount: -0.3)], clean: true),
+        ]),
+        "block/gravel": (palettes: {"main": "gravel"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Cells(count: (5, 5), jitter: 1.0, value: 0.7, edge: -0.5, bevel: 0.35, warp: 0.6)], clean: true),
+        ]),
+        "block/sand": (palettes: {"main": "sand"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.3), Speckle(chance: 0.16, amount: -0.25), Speckle(chance: 0.1, amount: 0.25, seed: 1)]),
+        ]),
+        "block/red_sand": (base: "block/sand", palettes: {"main": "red_sand"}),
+        "block/snow": (palettes: {"main": "snow"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.35), Speckle(chance: 0.08, amount: -0.2)], clean: true),
+        ]),
+        "block/powder_snow": (palettes: {"main": "snow"}, layers: [
+            Paint(palette: "main", base: 0.7, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.3), Speckle(chance: 0.08, amount: 0.4), Speckle(chance: 0.06, amount: -0.3, seed: 1)]),
+        ]),
+        "block/ice": (palettes: {"main": ["#7fa9eac0", "#90b6f0c0", "#a3c4f4c4", "#b8d4f8c8", "#d4e6fcd0"]}, layers: [
+            Paint(palette: "main", base: 0.35, shade: [Noise(cells: (2, 4), amount: 0.3), Stripes(period: 8.0, width: 0.125, amount: 0.35, slope: 1.0, warp: 0.5), Stripes(period: 16.0, width: 0.0625, amount: 0.3, slope: 1.0, phase: 5.0)]),
+        ]),
+        "block/packed_ice": (palettes: {"main": ["#7b9fdc", "#88abe4", "#96b7ea", "#a5c3f0", "#b6d0f4", "#c9ddf8"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (3, 3), octaves: 2, amount: 0.45)], clean: true),
+            Shift(by: [Flat(1.0)], mask: [Stripes(period: 8.0, width: 0.125, amount: 1.0, slope: 1.0, warp: 1.0), Noise(cells: (4, 4), amount: 0.6)], above: 0.9),
+        ]),
+        "block/blue_ice": (palettes: {"main": ["#3f6fcf", "#4c7cdb", "#5a8ae4", "#6a98ec", "#7ca7f2", "#93b9f7"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (3, 3), octaves: 2, amount: 0.45)], clean: true),
+            Shift(by: [Flat(1.0)], mask: [Stripes(period: 8.0, width: 0.125, amount: 1.0, slope: 1.0, warp: 1.0), Noise(cells: (4, 4), amount: 0.6)], above: 0.9),
+        ]),
+        // New soils.
+        "block/loam": (palettes: {"main": "loam", "pebble": "pebble"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 3, gain: 0.7, amount: 0.7), Speckle(chance: 0.15, amount: 0.3)], clean: true),
+            Clusters(palette: "pebble", count: 2, size: (1, 2), spacing: 6.0, shade: 0, seed: 3),
+        ]),
+        "block/peat": (palettes: {"main": "peat", "fibre": ["#5a4026", "#6f5030"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (2, 8), octaves: 2, amount: 0.6), Stripes(period: 4.0, width: 0.25, amount: -0.2, warp: 1.0)], clean: true),
+            Paint(palette: "fibre", base: 0.3, mask: [Ridge(cells: (2, 6), width: 0.15, amount: 1.0), Speckle(chance: 0.5, amount: 0.3)], above: 1.0),
+        ]),
+        "block/red_earth": (palettes: {"main": "red_earth", "pebble": ["#4f1d10", "#c97a4d", "#dc9466"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 3, gain: 0.7, amount: 0.7), Speckle(chance: 0.1, amount: -0.3)], clean: true),
+            Clusters(palette: "pebble", count: 3, size: (1, 3), spacing: 5.0, shade: 1, seed: 1),
+        ]),
+        "block/silt": (palettes: {"main": "silt"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (2, 8), octaves: 2, amount: 0.4), Stripes(period: 8.0, width: 0.125, amount: -0.2, warp: 0.8, phase: 3.0), Speckle(chance: 0.1, amount: 0.2)], clean: true),
+        ]),
+    },
+)

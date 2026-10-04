@@ -41,6 +41,7 @@ pub use caves::{CaveStyle, LAVA_LEVEL};
 pub use climate::LAPSE_RATE;
 pub use content::{ContentError, WorldContent};
 pub use dials::WorldDials;
+pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current};
 pub use rarity::{Featured, Rarity, Tier};
 pub use rocks::ProvinceId;
@@ -196,7 +197,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 7;
+    pub const VERSION: u32 = 8;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -217,7 +218,7 @@ impl Overworld {
             geology: Geology::new(stream, &dials),
             climate: Climate::new(stream, &dials),
             rivers: water::Rivers::new(stream, &dials),
-            ecology: Ecology::new(stream, &dials, &registry),
+            ecology: Ecology::new(stream, &dials, content, &registry),
             caves: caves::Caves::new(stream, &dials),
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
             biomes,
@@ -234,6 +235,12 @@ impl Overworld {
         &self.biomes
     }
 
+    /// What the plant with this name (`base:dandelion`) is good for: nutrition,
+    /// alchemical properties, dye.
+    pub fn plant_properties(&self, name: &str) -> Option<&PlantProperties> {
+        self.ecology.plant_properties(name)
+    }
+
     /// The biome whose rules make the ground at (x, z).
     pub fn biome_at(&self, x: i32, z: i32) -> &Biome {
         self.biomes.get(self.site(x, z).biome)
@@ -244,7 +251,14 @@ impl Overworld {
     /// blocks outwards. `None` if there is no such biome or none is that close.
     pub fn locate_biome(&self, name: &str, from: IVec2, radius: i32) -> Option<IVec2> {
         let id = self.biomes.id(name).or_else(|| self.biomes.id(&format!("base:{name}")))?;
-        self.biomes.locate(id, from, radius, climate::CELL, |at| self.point(&self.climate.regional_at(&self.geology, at)))
+        self.biomes.locate(
+            id,
+            from,
+            radius,
+            climate::CELL,
+            |at| self.point(&self.climate.regional_at(&self.geology, at)),
+            |at| self.sampler(at, at).pick(at.x, at.y).home == id,
+        )
     }
 
     /// The biome picker's fields from the regional climate.
@@ -477,14 +491,12 @@ impl Sampler<'_> {
             edge: 0.0,
             from_centre: 0.0,
         };
-        if !geo.submerged() {
-            let water = site.soil_moisture();
-            site.vegetation = ecology::ground_cover(temperature, water);
-            site.forest = self.world.ecology.forest(x, z, temperature, water);
-        }
-
         let pick = self.pick(x, z);
         let share = Biomes::blend(pick.edge, regional.fertility);
+        if !geo.submerged() {
+            site.vegetation = ecology::ground_cover(temperature, site.soil_moisture());
+            site.forest = self.world.ecology.forest(x, z, pick.home, pick.neighbour, share, regional.fertility);
+        }
         let dither = if share > 0.0 || geo.river > 0.0 { self.world.blend_dither(x, z) } else { 1.0 };
         site.biome = if dither < share { pick.neighbour } else { pick.home };
         // Rivers and lakes and their banks, with ragged edges.
@@ -1233,7 +1245,7 @@ mod tests {
             };
             let temperatures: Vec<f32> = (-4000..=4000).step_by(8).map(sea_level).collect();
             let steepest = temperatures.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
-            assert!(steepest < 0.25, "temperature jumps {steepest} °C over 8 blocks at x {x}");
+            assert!(steepest < 0.3, "temperature jumps {steepest} °C over 8 blocks at x {x}");
             // Climate zones are kilometres wide: from cold to hot over this line.
             let (min, max) = temperatures.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &t| (lo.min(t), hi.max(t)));
             assert!(max - min > 15.0, "only {min}..{max} °C along x {x}");

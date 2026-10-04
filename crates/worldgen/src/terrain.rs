@@ -27,7 +27,7 @@ use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
 use crate::surface::{Fill, Layers, Palette, Spot};
-use crate::trees::Tree;
+use crate::trees::TreeId;
 use crate::{Body, Overworld, SEA_LEVEL, Site};
 
 /// Stone turns to deepslate below this height, 48 blocks under sea level.
@@ -113,7 +113,7 @@ impl Terrain {
             grounds,
             seed,
             resources: Resources::new(registry),
-            features: Features::new(registry),
+            features: Features::new(content, registry),
         }
     }
 }
@@ -152,21 +152,26 @@ impl Blocks<'_> {
         low.cmple(high).all().then_some((low, high))
     }
 
-    pub fn put_if_air(&mut self, pos: IVec3, block: BlockId) {
+    /// Puts `block` at `pos` if it is air there; whether it did.
+    pub fn put_if_air(&mut self, pos: IVec3, block: BlockId) -> bool {
         if let Some(i) = self.index(pos)
             && self.data[i].is_air()
         {
             self.data[i] = block;
+            return true;
         }
+        false
     }
 
-    /// Wood grows through air, water and leaves.
-    pub fn put_log(&mut self, pos: IVec3, block: BlockId) {
+    /// Wood grows through air, water and leaves; whether it did.
+    pub fn put_log(&mut self, pos: IVec3, block: BlockId) -> bool {
         if let Some(i) = self.index(pos)
             && self.soft[self.data[i].0 as usize]
         {
             self.data[i] = block;
+            return true;
         }
+        false
     }
 
     pub fn replace_stone(&mut self, pos: IVec3, block: BlockId) {
@@ -340,7 +345,7 @@ impl Terrain {
         }
     }
 
-    pub fn leaves(&self, tree: Tree) -> BlockId {
+    pub fn leaves(&self, tree: TreeId) -> BlockId {
         self.features.trees().leaves(tree)
     }
 
@@ -367,7 +372,8 @@ impl Overworld {
         let biome = self.biomes.get(site.biome);
         let d = terrain.dither(x, z);
         let chance = (hash3(terrain.seed ^ 0xc4a, x, 0, z) & 0xffff) as f32 / 65536.0;
-        let spot = Spot { site, x, z, dither: d, mix: terrain.mix(x, z), chance };
+        let mix = || terrain.mix(x, z);
+        let spot = Spot { site, x, z, dither: d, mix: &mix, chance };
         let (stones, strata) = (self.stones(site), &biome.strata);
         let rules = &self.rules;
         // Whether `v` lies past a threshold that is dithered across `lo..hi`.

@@ -12,7 +12,7 @@ use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
 
 use crate::Actions;
 use crate::net::Net;
-use crate::player::{LocalPlayer, UiState};
+use crate::player::{self, LocalPlayer, UiState, Zoom};
 use crate::sfx::{Cue, SoundCue};
 use crate::world::ClientWorld;
 
@@ -23,7 +23,9 @@ impl Plugin for InteractPlugin {
         app.init_resource::<Target>()
             .add_systems(
                 Update,
-                (select_slot, find_target, break_and_place, draw_target).chain().run_if(in_state(crate::menu::Screen::InGame)),
+                (select_slot.after(player::zoom), find_target, break_and_place, draw_target)
+                    .chain()
+                    .run_if(in_state(crate::menu::Screen::InGame)),
             );
     }
 }
@@ -37,7 +39,14 @@ pub struct Target {
     place_cooldown: f32,
 }
 
-fn select_slot(keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScroll>, ui: Res<UiState>, mut player: ResMut<LocalPlayer>) {
+/// The number keys pick a hotbar slot, and so does the wheel unless it is zooming.
+fn select_slot(
+    keys: Res<ButtonInput<KeyCode>>,
+    scroll: Res<AccumulatedMouseScroll>,
+    ui: Res<UiState>,
+    zoom: Res<Zoom>,
+    mut player: ResMut<LocalPlayer>,
+) {
     if !ui.cursor_locked {
         return;
     }
@@ -55,7 +64,7 @@ fn select_slot(keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScro
     if let Some(slot) = DIGITS.iter().position(|k| keys.just_pressed(*k)) {
         player.selected = slot;
     }
-    if scroll.delta.y.abs() > 0.0 {
+    if scroll.delta.y.abs() > 0.0 && !zoom.held {
         let step = if scroll.delta.y > 0.0 { HOTBAR_SLOTS - 1 } else { 1 };
         player.selected = (player.selected + step) % HOTBAR_SLOTS;
     }

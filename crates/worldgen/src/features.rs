@@ -11,7 +11,8 @@ use crate::ecology::Ground;
 use crate::geology::{GeoGrid, smoothstep};
 use crate::rng::{Rng, hash3};
 use crate::terrain::Blocks;
-use crate::trees::{Tree, Trees};
+use crate::content::WorldContent;
+use crate::trees::{TreeParts, Trees};
 use crate::{Overworld, Sampler, Site};
 
 const PURPOSE: u64 = 0x7233;
@@ -26,9 +27,9 @@ pub struct Features {
 }
 
 impl Features {
-    pub fn new(registry: &BlockRegistry) -> Self {
+    pub fn new(content: &WorldContent, registry: &BlockRegistry) -> Self {
         Self {
-            trees: Trees::new(registry),
+            trees: Trees::new(content, registry),
             mossy_cobblestone: registry.expect("base:mossy_cobblestone"),
             cobblestone: registry.expect("base:cobblestone"),
         }
@@ -41,6 +42,8 @@ impl Features {
     pub fn place(&self, world: &Overworld, area: &Sampler, geology: &GeoGrid, caves: &CaveColumn, pos: ColumnPos, blocks: &mut Blocks) {
         let seed = world.seed;
         let origin = pos.origin();
+        let mut chances = Vec::new();
+        let mut parts = TreeParts::default();
         let first = (origin.x - REACH).div_euclid(CELL)..=(origin.x + CHUNK_SIZE + REACH).div_euclid(CELL);
         for cz in (origin.z - REACH).div_euclid(CELL)..=(origin.z + CHUNK_SIZE + REACH).div_euclid(CELL) {
             for cx in first.clone() {
@@ -66,7 +69,8 @@ impl Features {
                     continue;
                 }
                 let ecology = &world.ecology;
-                if roll >= ecology.tree_chances(&site, None, x, z).iter().sum::<f32>() {
+                ecology.tree_chances(&site, None, x, z, &mut chances);
+                if roll >= chances.iter().map(|c| c.1).sum::<f32>() {
                     if roll > 1.0 - boulder_chance(&site) && site.height > site.water {
                         self.boulder(base, &mut rng, blocks);
                     }
@@ -80,9 +84,10 @@ impl Features {
                     world.terrain.ground(world.surface_layers(&site, x, z).top)
                 };
                 let mut left = roll;
-                for (tree, chance) in Tree::ALL.into_iter().zip(ecology.tree_chances(&site, Some(ground), x, z)) {
+                ecology.tree_chances(&site, Some(ground), x, z, &mut chances);
+                for &(tree, chance) in &chances {
                     if left < chance {
-                        self.trees.grow(tree, base, &mut rng, blocks);
+                        self.trees.grow(tree, base, &mut rng, blocks, &mut parts);
                         break;
                     }
                     left -= chance;
