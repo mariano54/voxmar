@@ -385,7 +385,7 @@ fn shade_water(
         if froth > 0.0 {
             let t = globals.time;
             let along = world.xz - flow * t;
-            aerated = froth * 0.5 * smoothstep(0.5, 0.8, foam_noise(along * 4.0) * 0.55 + foam_noise(along * 11.0 + 9.0) * 0.45);
+            aerated = froth * 0.35 * smoothstep(0.5, 0.8, foam_noise(along * 7.0) * 0.55 + foam_noise(along * 17.0 + 9.0) * 0.45);
         }
     } else if abs(normal.y) < 0.5 && falling {
         let across = vec2(-normal.z, normal.x);
@@ -410,8 +410,14 @@ fn shade_water(
         let deep = inscattered(absorbed, scattered, 1e4, light);
         var seen_above = deep;
         if dot(out, out) > 0.0 {
+            // The sky through the window, or what stands above the water where the bent
+            // view finds it on screen behind the surface.
+            var above = sky_gradient(out, water.zenith.rgb, water.horizon.rgb) * open;
             let bent = project(world + out * 4.0);
-            seen_above = mix(color_at(bent.xy), deep, 1.0 - saturate(dot(out, -normal) * 3.0));
+            if all(bent.xy == saturate(bent.xy)) && depth_at(bent.xy) < frag.z {
+                above = color_at(bent.xy);
+            }
+            seen_above = mix(above, deep, 1.0 - saturate(dot(out, -normal) * 3.0));
         }
         // The water between the eye and the surface, as the air under water paints it.
         return seen_above * air.through + air.light;
