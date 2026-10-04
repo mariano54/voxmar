@@ -271,10 +271,15 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             for y in height + 1..=geo.water {
                 blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
             }
-            // Rocks break the surface of rapids and the foot of falls.
+            // Rocks break the surface of rapids, though not right under a fall, whose water
+            // must land in water.
             if geo.current.is_some_and(|c| c.speed >= 3)
                 && matches!(geo.body, Body::Creek | Body::River)
                 && hash3(world.seed ^ 0xb01d, wx, 0, wz) % 100 < 9
+                && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().all(|&(dx, dz)| {
+                    let n = geology.get(wx + dx, wz + dz);
+                    !n.submerged() || n.water <= geo.water
+                })
             {
                 let rock = stones.pick((hash3(world.seed ^ 0xb01e, wx, 0, wz) & 0xffff) as f32 / 65536.0);
                 for y in height + 1..=geo.water {
