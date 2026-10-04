@@ -323,8 +323,9 @@ it. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) d
 generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints
-`--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
-near spawn.
+`--pose` arguments for captures of the places water makes near spawn (highland lakes,
+waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
+`Overworld::water_sights` finds.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
