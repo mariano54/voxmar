@@ -13,6 +13,7 @@
 // chunk's origin from a table.
 
 #import bevy_render::globals::Globals
+#import voxmar::wind::{sway, parting, leaf_flutter}
 
 #ifdef PREPASS_PIPELINE
 #import bevy_render::view::View
@@ -28,6 +29,7 @@
 @group(2) @binding(2) var colormaps: texture_2d_array<f32>;
 @group(2) @binding(3) var colormap_sampler: sampler;
 @group(2) @binding(4) var<storage, read> chunk_origins: array<vec4<i32>>;
+// Bindings 5 and 6 are grass blade seeds (grass.wgsl) and the wind (wind.wgsl).
 
 const TINT_NONE: u32 = 0u;
 const TINT_FOLIAGE: u32 = 2u;
@@ -64,8 +66,6 @@ fn face_of(w0: u32) -> u32 {
     return (w0 >> 18u) & 7u;
 }
 
-// World position, with leaves swaying gently and plants bending from their base. Shared
-// by every pass so depth matches.
 fn pcg3d(seed: vec3<u32>) -> vec3<f32> {
     var v = seed * 1664525u + 1013904223u;
     v.x += v.y * v.z;
@@ -94,7 +94,8 @@ fn tufts(p: vec2<f32>) -> f32 {
 
 // A plant's vertex, with the plant placed as a whole from a hash of its cell, much as
 // Rainbow's Foliage varies its models: turned up to 40° either way, shifted and sunk a
-// little, and taller or shorter, in tufts across a meadow.
+// little, and taller or shorter, in tufts across a meadow. It bends from its base with the
+// wind and away from the player.
 fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
     let corner = (w0 >> 21u) & 3u;
     let far = corner == 1u || corner == 2u;
@@ -103,7 +104,8 @@ fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
         across = select(vec2(1.0, 0.0), vec2(0.0, 1.0), far);
     }
     if (w0 & FLAG_FRINGE) != 0u {
-        return fringe_position(w0, origin, across);
+        let world = fringe_position(w0, origin, across);
+        return world + leaf_flutter(world, globals.time);
     }
     let up = f32((w0 >> 23u) & 1u) + f32((w0 >> PLANT_STACK_SHIFT) & 3u);
     // The corner of the cell the whole plant stands in.
@@ -117,7 +119,14 @@ fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
     let shift = (a.yz - 0.5) * 0.3;
     let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x));
     let sink = b.y * 0.25;
-    return vec3(base.x + 0.5 + turned.x + shift.x, base.y + up * height - sink, base.z + 0.5 + turned.y + shift.y);
+    // Bent along a curve from the base, and lower for it; the whole plant leans alike, so
+    // a tall plant's two blocks stay joined.
+    let centre = base + vec3(0.5, 0.0, 0.5);
+    let lean = (sway(centre.xz, globals.time) + parting(centre)) * 0.4;
+    let rise = up * height;
+    let bend = lean * rise * min(rise, 1.0);
+    let lowered = rise / sqrt(1.0 + dot(lean, lean) * up * up);
+    return vec3(centre.x + turned.x + shift.x + bend.x, base.y + lowered - sink, centre.z + turned.y + shift.y + bend.y);
 }
 
 // A leaf fringe's vertex: two crossed quads through the leaf block, turned at random, grown
@@ -142,25 +151,16 @@ fn fringe_position(w0: u32, origin: vec3<f32>, across: vec2<f32>) -> vec3<f32> {
     return centre + vec3(along.x * offset + lean.x, up, along.y * offset + lean.y) + jitter;
 }
 
+// World position, with leaves fluttering and plants bending in the wind. Shared by every
+// pass so depth matches.
 fn world_position(in: Vertex) -> vec3<f32> {
-    let origin = chunk_origins[in.instance_index];
-    let t = globals.time;
-    var world: vec3<f32>;
+    let origin = vec3<f32>(chunk_origins[in.instance_index].xyz);
     if face_of(in.packed.x) >= FACE_PLANT {
-        world = plant_position(in.packed.x, vec3<f32>(origin.xyz));
-    } else {
-        world = vec3<f32>(origin.xyz) + local_position(in.packed.x);
+        return plant_position(in.packed.x, origin);
     }
-    if face_of(in.packed.x) >= FACE_PLANT {
-        if (in.packed.x & FLAG_INNER) != 0u {
-            // Gusts roll across the field: a slow wave plus a quicker flutter.
-            let phase = world.x * 0.35 + world.z * 0.25;
-            let gust = sin(t * 1.3 + phase) * 0.6 + sin(t * 2.9 + phase * 2.1) * 0.25;
-            world += vec3(gust, 0.0, gust * 0.6 + cos(t * 2.2 + world.x * 0.9) * 0.15) * 0.09;
-        }
-    } else if tint_kind(in.packed.y) == TINT_FOLIAGE {
-        let phase = world.x * 0.7 + world.z * 0.5 + world.y * 0.3;
-        world += vec3(sin(t * 1.6 + phase), sin(t * 2.3 + phase * 1.3) * 0.5, cos(t * 1.9 + phase)) * 0.035;
+    let world = origin + local_position(in.packed.x);
+    if tint_kind(in.packed.y) == TINT_FOLIAGE {
+        return world + leaf_flutter(world, globals.time);
     }
     return world;
 }
