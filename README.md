@@ -77,7 +77,9 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, anti-aliasing, particles (All,
+Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
+distant chunks merge two or four columns into one, which draws far terrain much faster),
+field of view, anti-aliasing, particles (All,
 Fewer or Off: the pieces that fly from broken blocks and the chips while mining), how far the hotbar
 sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
 mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom

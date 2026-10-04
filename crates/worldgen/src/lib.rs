@@ -727,7 +727,7 @@ mod tests {
         let region = LitRegion::compute(&registry, &columns);
         let lit = start.elapsed();
         let start = std::time::Instant::now();
-        let quads: usize = (0..COLUMN_CHUNKS).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy).opaque.vertices.len() / 4).sum();
+        let quads: usize = (0..COLUMN_CHUNKS).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy, 1).opaque.vertices.len() / 4).sum();
         println!("9 columns {generated:?}, light {lit:?}, mesh {:?}, {quads} quads, spawn {spawn}", start.elapsed());
         println!("{:#?}", world.dials());
         assert!(quads > 0);
