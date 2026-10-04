@@ -255,7 +255,13 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
                     None => (BlockId::AIR, MAX_LIGHT << 4),
                 };
                 let look = looks[block.0 as usize];
-                let (mut occludes, render) = if world_y < 0 { (true, RenderKind::Invisible) } else { (look.occludes, look.render) };
+                let (mut occludes, mut render) = if world_y < 0 { (true, RenderKind::Invisible) } else { (look.occludes, look.render) };
+                // Far away a crown is a solid mass: its leaves are drawn as opaque blocks,
+                // so the faces between them, a third of a distant forest's, go, and the
+                // rest skip the alpha test and hide what is behind them.
+                if detail > 1 && render == RenderKind::Leaves {
+                    (occludes, render) = (true, RenderKind::Opaque);
+                }
                 let mut shades = occludes || render == RenderKind::Leaves;
                 // A chunk beside this one may be drawn at another level of detail, so a
                 // border face is only hidden by a block every level shows there.
@@ -652,6 +658,9 @@ impl Mesher<'_> {
                 while bits != 0 {
                     let slice = bits.trailing_zeros() as usize;
                     bits &= bits - 1;
+                    if self.detail > 1 && self.unseen_from_afar(face, &fa, slice, row, col) {
+                        continue;
+                    }
                     self.planes[slice][row] |= 1 << col;
                 }
             }
@@ -677,6 +686,15 @@ impl Mesher<'_> {
     }
 
     /// Interior cell coordinates of a (slice, row, col) face position.
+    /// Whether a face of a chunk merged for distance looks into air no daylight reaches:
+    /// cave walls, floors and ceilings at least fifteen blocks from any opening, which no
+    /// one far away can see into. They are most of a far chunk's faces that point down
+    /// or sideways. Faces under water stay, as the water above shows them.
+    fn unseen_from_afar(&self, face: Face, fa: &FaceAxes, slice: usize, row: usize, col: usize) -> bool {
+        let front = self.padded(Self::cell(fa, slice, row, col) + face.normal());
+        front.light >> 4 == 0 && front.fluid == 0
+    }
+
     fn cell(fa: &FaceAxes, slice: usize, row: usize, col: usize) -> IVec3 {
         let mut p = IVec3::ZERO;
         p[fa.normal] = slice as i32;
@@ -778,6 +796,13 @@ impl Mesher<'_> {
                 };
                 falling = state.falling || pours();
             }
+        }
+        if self.detail > 1 && state.is_none() {
+            // Far away a face is a few pixels: lit evenly, without occlusion at its
+            // corners, so neighbours merge into far fewer quads.
+            let even = center.light.max((surface_sky as u8) << 4) as u64;
+            light = even * 0x0101_0101;
+            ao = 0b1111_1111;
         }
         if inner && info.render == RenderKind::Leaves {
             // One double-sided face serves both leaves: lit evenly by both, and shaded as
@@ -1168,6 +1193,52 @@ mod tests {
         let top = |v: &Vertex| (v[0] >> 6) & 63;
         let highest = mesh.opaque.vertices.iter().map(top).max().unwrap();
         assert_eq!(highest, 10, "the top faces of 10-high ground sit at y = 10");
+    }
+
+    #[test]
+    fn far_crowns_are_solid() {
+        // A crown merged for distance draws only its outside, as opaque faces.
+        let mut column = Column::default();
+        for y in 40..44 {
+            for z in 4..12 {
+                for x in 4..12 {
+                    column.set_block(IVec3::new(x, y, z), BlockId(3));
+                }
+            }
+        }
+        let mesh = mesh_at(column, 1, 2);
+        assert!(mesh.cutout.vertices.is_empty() && mesh.inner.vertices.is_empty(), "no see-through leaf faces far away");
+        assert!(!mesh.opaque.vertices.is_empty(), "the crown is still drawn");
+    }
+
+    #[test]
+    fn far_chunks_leave_out_dark_caves() {
+        // Solid rock with a sealed cave in it: up close its walls are meshed, far away
+        // nothing inside is, as no daylight reaches it.
+        let rock = |cave: bool| {
+            let mut column = Column::default();
+            for y in 0..64 {
+                for z in 0..32 {
+                    for x in 0..32 {
+                        if !(cave && (8..24).contains(&x) && (8..24).contains(&z) && (40..50).contains(&y)) {
+                            column.set_block(IVec3::new(x, y, z), BlockId(1));
+                        }
+                    }
+                }
+            }
+            column
+        };
+        let quads = |cave, detail| mesh_at(rock(cave), 1, detail).opaque.vertices.len() / 4;
+        assert!(quads(true, 1) > quads(false, 1), "the cave's walls up close");
+        assert_eq!(quads(true, 2), quads(false, 2), "only the ground's top far away");
+    }
+
+    #[test]
+    fn far_faces_merge_across_corners() {
+        // Lit evenly and without corner occlusion, rough ground far away merges into far
+        // fewer quads than its blocks would.
+        let quads = |detail| mesh_at(rough_ground(), 0, detail).opaque.vertices.len() / 4;
+        assert!(quads(4) * 4 < quads(1), "{} quads at 4, {} in full detail", quads(4), quads(1));
     }
 
     #[test]

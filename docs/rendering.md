@@ -66,6 +66,25 @@ the ground or the water; a face at a chunk border is only hidden by a block that
 level of detail shows there, so chunks at different levels never leave holes between
 them. Far chunks grow no plants, fringes or grass blades.
 
+Three more things make far chunks cheap, which counting the quads each view draws by
+distance showed mattered most (a forest by the sea at view distance 32, Balanced): past
+320 blocks the camera drew 1.24 million quads, three quarters of its 1.64 million.
+
+- **Crowns are solid.** Leaves in a merged chunk are drawn as opaque blocks: the faces
+  between leaves (a third of a distant forest's) go, and the rest skip the alpha test, so
+  the GPU's hidden surface removal works on them.
+- **Dark caves are left out.** A face looking into air no daylight reaches (sky light 0,
+  at least fifteen blocks from any opening) is not meshed: cave walls, floors and
+  ceilings no one far away can see. Faces under water stay.
+- **Faces are lit evenly.** A merged chunk's faces take the light of the cell in front
+  and no corner occlusion, which nobody can make out at that distance, so neighbouring
+  faces merge: this alone halves what is left.
+
+Together the far quads went from 1.24 million to 0.30 million, the camera's from 1.64 to
+0.71 million, with no difference a side-by-side capture shows. Foliage also stops moving
+from 160 blocks from the player (`motion_near` in wind.wgsl), so far leaves and plants
+skip the gust noise in their vertex shader.
+
 The Far detail setting picks where the levels change: Balanced (the default) keeps full
 detail out to 10 columns and half detail out to 20, Fast switches at 6 and 12, and Full
 keeps every block. A column keeps its level until it is a column past a boundary, so
@@ -116,6 +135,17 @@ final copy. Turning Bevy's bloom off alone took the full-resolution frame from 9
 fps; all of the above together, measured in Low Power Mode on battery, from 48 to 76 fps
 at full resolution. Measurements on this machine swing widely while other work runs, so
 these compare runs interleaved with each other, not with the numbers above.
+
+### Shadow casters
+
+The sun's cascades drew even more than the camera: 2.84 million quads a frame in the same
+view. A cascade's box is as wide as the diagonal of the stretch of view it serves, and
+reaches up the sun's rays without end, so it takes in chunks hundreds of blocks off to
+the side and towards the sun. `Casters` keeps only chunks whose shadow can land within
+the cascade's range of view depth: the shadow falls along the sun's direction, no further
+than ground 160 blocks above what it shades would throw it at the sun's height. That
+halves the shadow quads with the sun high (2.84 to 1.41 million) and cuts a fifth with it
+low, where long shadows really do reach far.
 
 ### Render scale
 

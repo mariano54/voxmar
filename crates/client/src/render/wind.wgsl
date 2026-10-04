@@ -87,6 +87,16 @@ fn sway(xz: vec2<f32>, pace: f32, phase: f32) -> Sway {
     return Sway(along * (push + 0.3 * flutter) + vec2(-along.y, along.x) * flutter, g);
 }
 
+// How much foliage at `p` moves: fully near the player, not at all from 160 blocks away,
+// where no one could see it and the gust noise behind it would cost every vertex of a
+// distant forest. Measured from the player rather than the view, so shadows move alike.
+fn motion_near(p: vec3<f32>) -> f32 {
+    if wind.player.w < 0.5 {
+        return 1.0;
+    }
+    return 1.0 - smoothstep(96.0, 160.0, distance(p, wind.player.xyz));
+}
+
 // How far the player pushes foliage at `p` aside, in blocks per block of height.
 fn parting(p: vec3<f32>) -> vec2<f32> {
     let away = p.xz - wind.player.xz;

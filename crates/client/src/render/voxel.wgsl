@@ -14,7 +14,7 @@
 // into the origin table) owns each block.
 
 #import bevy_render::globals::Globals
-#import voxmar::wind::{sway, parting, leaf_flutter}
+#import voxmar::wind::{sway, parting, leaf_flutter, motion_near}
 
 #ifdef PREPASS_PIPELINE
 #import bevy_render::view::View
@@ -143,7 +143,11 @@ fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
     let centre = base + vec3(0.5, 0.0, 0.5);
     // Plants sway slower than grass blades, each a little out of step, and tall ones are
     // stiffer: above its first block a plant bends only with the root of its height.
-    let lean = (sway(centre.xz, 1.25, b.z * 2.0).lean + parting(centre)) * 0.4;
+    let near = motion_near(centre);
+    var lean = vec2(0.0);
+    if near > 0.0 {
+        lean = (sway(centre.xz, 1.25, b.z * 2.0).lean + parting(centre)) * 0.4 * near;
+    }
     let rise = up * height;
     let bend = lean * select(sqrt(rise), rise * rise, rise < 1.0);
     let lowered = rise / sqrt(1.0 + dot(lean, lean) * up * up);
@@ -186,7 +190,11 @@ fn world_position(in: Vertex) -> vec3<f32> {
     var world = origin + local_position(in.packed.x);
     let tint = tint_kind(in.packed.y);
     if tint == TINT_FOLIAGE {
-        return world + leaf_flutter(world);
+        let near = motion_near(world);
+        if near > 0.0 {
+            world += leaf_flutter(world) * near;
+        }
+        return world;
     }
     if tint == TINT_WATER {
         // Flowing water slopes down from its source.
