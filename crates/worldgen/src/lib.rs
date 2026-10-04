@@ -1010,6 +1010,28 @@ mod tests {
             ("snowy", |s, _| s.temperature < -3.0 && s.forest > 0.2),
         ];
         println!("seed {seed}, spawn {spawn}");
+        // Named biomes (`BIOMES=maple_forest,bog`): the nearest place well inside each.
+        if let Ok(names) = std::env::var("BIOMES") {
+            for name in names.split(',') {
+                let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
+                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 6000).and_then(|at| {
+                    (0..400).map(|i| spiral(i / 16, i % 16)).map(|(dx, dz)| at + IVec2::new(dx * 16, dz * 16)).find(|p| {
+                        let site = world.site(p.x, p.y);
+                        site.home == id && site.edge > 24.0 && dry(&site) && site.slope <= 2
+                    })
+                });
+                let Some(at) = found else {
+                    println!("{name}: not found");
+                    continue;
+                };
+                let site = world.site(at.x, at.y);
+                let ground = voxmar_engine::glam::Vec3::new(at.x as f32 + 0.5, site.height as f32 + 1.0, at.y as f32 + 0.5);
+                let stand = ground + voxmar_engine::glam::Vec3::Y * 1.7 - eye;
+                let above = ground + voxmar_engine::glam::Vec3::new(14.0, 12.0, 14.0) - eye;
+                println!("{name} at {},{}: --pose {:.1},{:.1},{:.1},45,-10  above: --pose {:.1},{:.1},{:.1},45,-32", at.x, at.y, stand.x, stand.y, stand.z, above.x, above.y, above.z);
+            }
+            return;
+        }
         for (name, test) in sights {
             let mut best: Option<(i32, Site, i32, i32)> = None;
             for dz in (-range..=range).step_by(6) {
