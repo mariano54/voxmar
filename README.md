@@ -22,11 +22,14 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
 time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
 the view that far (0..1, cracks and chips showing; 1 breaks it just before the screenshot).
+`--flicker` measures shimmer: with the clock stopped it also takes `OUT-moved.png` after
+stepping the camera 4 cm sideways, logs the share of pixels that changed by more than 60
+levels, and marks them in red in `OUT-flicker.png`.
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
@@ -78,18 +81,17 @@ lines with the arguments filled in (`$1`, `$*`), which is how a package adds its
 is `time set day`).
 
 Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
-distant chunks merge two or four columns into one, which draws far terrain much faster),
-field of view, anti-aliasing, particles (All,
-Fewer or Off: the pieces that fly from broken blocks and the chips while mining), how far the hotbar
-sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
-mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
-(the view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins,
-with Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved
-to `voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
-`$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces
-`…/voxmar`); `--view-distance` and `--no-vsync` override them. On a dedicated server, name
-admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
-(default 32).
+distant chunks merge two or four columns into one, which draws far terrain much faster), field
+of view, anti-aliasing, water quality, particles (All, Fewer or Off: the pieces that fly from
+broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
+HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key
+(click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
+smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
+to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
+the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
+`~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
+`--view-distance` and `--no-vsync` override them. On a dedicated server, name admins with
+`--admin NAME` (repeatable), and cap render distance with `--view-distance N` (default 32).
 
 ### Saved worlds
 
@@ -219,6 +221,22 @@ volcanism, cave density, mountain height, biodiversity), with sensible correlati
 featured set: a few rare biomes and other things it boosts and common ones it suppresses, so
 no two worlds share a rarity table. Everything else is a continuous field:
 
+- **Land** (`worldgen/src/geology.rs`) follows Tectonic: coasts, mountain ranges and broad
+  valleys each lie along the zero line of a noise folded with `abs()`, so the sea runs in a web
+  of channels and straits between landmasses, ranges run in long chains that rise and fall
+  along their length (ridged peaks, crags and gullies on their spines where the land is young)
+  and a network of valleys cuts passes through them. Plateaus stand behind escarpments. Heights
+  over the sea are stretched by their square and eased under a ceiling, so lowlands stay low
+  while the highest peaks of active worlds reach about 230 blocks over the sea; seas deepen to
+  basins along their middles, with ridges on the deep floor.
+- **Terrain shapes** (`terrain.ron`, `worldgen/src/shapes.rs`) rise where the climate calls
+  for them, on the same bands as the biome table and never by asking which biome won: rolling
+  hills, wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
+  stepped canyons, karst towers on limestone, clusters of spires (some leaning, built in 3D),
+  volcanoes with craters where the world is volcanic, rare lone mountains seen from far away,
+  very rare natural arches, sea cliffs notched at the waterline with stacks offshore, and fjords
+  where valleys meet cold coasts. Rarer shapes take only some regions of their climate. Towers and
+  spires do not cool the climate on their tops.
 - **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
   hot, temperate and cold land always lie in that order) and with altitude.
 - **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
@@ -315,7 +333,8 @@ every half second). `Overworld::cave_biome_at` gives the cave biome at a block.
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
 `Overworld::locate_biome` serve commands.
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
-`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on, `X`, `Z`
+`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `RELIEF=1` by height, `SHAPES=1`
+tinted by terrain shape, `FIELD=erosion` and so on, `X`, `Z`
 and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
 rivers and creeks in their own blues, trails over them (brown, with fords cyan, bridges red,
 and the places they join marked; `TRAILS=0` leaves them out), and prints each biome's share of
@@ -326,7 +345,8 @@ arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts pl
 and routes that failed. `river_sights` prints
 `--pose` arguments for captures of the places water makes near spawn (highland lakes,
 waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
-`Overworld::water_sights` finds.
+`Overworld::water_sights` finds; `shape_sights` does the same for the best example of each
+terrain shape and the highest peak, with a `/tp` command and `--pose` for each.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
@@ -414,10 +434,12 @@ fall or drift through a box around the camera, slanted by the gusting wind and s
 of the highest block around the camera, so nothing falls indoors, under trees or in caves.
 Ambient particles from the land's air (pollen by day, fireflies on some warm nights, spores in
 damp forests, drifting snow in the cold) come from `ClientAtmosphere`, which samples
-`Overworld::atmosphere_at` around the player and applies the weather and time of day. Fog,
-ground fog, rainbows, halos, aurora, shooting stars, heat haze, frost and wet ground are in the
-weather the client receives and wait on the renderer (docs/weather-effects.md). F3 shows the
-weather and the effects showing.
+`Overworld::atmosphere_at` around the player and applies the weather and time of day, and
+also tints the haze, sky and grading. Fog, mist, whiteout, rain and dust close in the view;
+valley fog, dawn mist and sea fog lie in a layer under the weather's fog top. Rainbows,
+halos, aurora, shooting stars, heat haze, frost and wet ground are in the weather the client
+receives and wait on the renderer (docs/weather-effects.md). F3 shows the weather and the
+effects showing.
 
 An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
 (kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`
@@ -438,7 +460,8 @@ lava source turns to obsidian, flowing lava to basalt, and lava pouring into wat
 water to broken basalt (`cobbled_basalt`). Every state is its own block (`water_flow_1` to
 `water_flow_7`, `water_falling`; rivers also have pinned water that carries a current), so
 chunks, saves and the network treat them like any block. Flowing water and river currents
-carry swimmers along.
+carry swimmers along, and they look it: flows slope down from their source, waves run with
+the flow and rapids froth, and falling water is streaked white (see docs/rendering.md).
 
 The server's kernel is event-driven: a block change wakes only the fluid beside it, each cell
 moves on its fluid's tick (water every five ticks, lava every thirty, with a little hashed jitter
@@ -502,8 +525,14 @@ writes about twenty seconds of each of nine typical places to `target/ambience_p
   meet, none between leaves buried on every side, and only a crown's shell casts shadows.
   Faces between two of the same glass, ice or water are hidden; ice is clear blue with a sky
   reflection over still water.
+- Water is drawn in its own pass over the finished scene: clear in the shallows and taking
+  the biome's colour with depth, from how far light really travels through it; the bed bent
+  by wind-driven waves; reflections of the terrain marched through the depth buffer, and of
+  the sky elsewhere; sun glints and foam along shores. The Water setting (Low, Medium, High)
+  trades waves and reflections for speed, and shader packs scale each part.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
-  aerial perspective (haze that thins with height and glows around the sun), HDR with bloom.
+  aerial perspective (haze that thins with height and glows around the sun), ground fog and
+  weather fog, HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
   of view. Nights are dark, lit by a faint blue moon.
 - A sunlit top face gets about as much light as Minecraft's full brightness, and the display
@@ -521,7 +550,8 @@ Profile with Tracy: `cargo run --release --features tracy` (engine work is instr
 `tracing` spans).
 
 See [docs/rendering.md](docs/rendering.md) for measurements, a comparison with GPU-driven
-pipeline techniques, and the rendering plan.
+pipeline techniques, and the rendering plan. Code adapted from other projects, and its
+licences, is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Next steps
 

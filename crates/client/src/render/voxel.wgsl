@@ -22,7 +22,10 @@
 @group(0) @binding(1) var<uniform> globals: Globals;
 #else
 #import bevy_pbr::mesh_view_bindings::{view, globals, fog}
-#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, water_normal}
+#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow}
+#ifdef TRANSLUCENT
+#import voxmar::water_surface::shade_water
+#endif
 #endif
 
 @group(2) @binding(0) var block_textures: texture_2d_array<f32>;
@@ -41,9 +44,13 @@ const FACE_PLANT: u32 = 6u;
 const FLAG_INNER: u32 = 1u << 23u;
 const FLAG_BACKED: u32 = 1u << 24u;
 const PLANT_STACK_SHIFT: u32 = 25u;
-const WATER_DEPTH_SHIFT: u32 = 25u;
-// How fast light fades through water, per block.
-const WATER_EXTINCTION: f32 = 0.32;
+// Water faces carry the fluid's state (see voxmar_engine::mesh): how far the surface lies
+// below the block's top in eighths, the flow's direction in 16ths of a turn and its speed
+// (in the AO bits), and whether the cell is falling (flag 2).
+const SURFACE_DROP_SHIFT: u32 = 25u;
+const FLOW_DIRECTION_SHIFT: u32 = 28u;
+const FLOW_SPEEDS = array<f32, 4>(0.0, 0.7, 1.4, 2.8);
+const FLAG_FALLING: u32 = 1u << 24u;
 const FLAG_FRINGE: u32 = 1u << 27u;
 // Leaf fringes shrink back into their block between these distances, in blocks (the
 // renderer stops drawing them a little beyond).
@@ -166,9 +173,14 @@ fn world_position(in: Vertex) -> vec3<f32> {
     if face_of(in.packed.x) >= FACE_PLANT {
         return plant_position(in.packed.x, origin);
     }
-    let world = origin + local_position(in.packed.x);
-    if tint_kind(in.packed.y) == TINT_FOLIAGE {
+    var world = origin + local_position(in.packed.x);
+    let tint = tint_kind(in.packed.y);
+    if tint == TINT_FOLIAGE {
         return world + leaf_flutter(world, globals.time);
+    }
+    if tint == TINT_WATER {
+        // Flowing water slopes down from its source.
+        world.y -= f32((in.packed.x >> SURFACE_DROP_SHIFT) & 7u) / 8.0;
     }
     return world;
 }
@@ -237,19 +249,28 @@ fn fragment(in: VertexOutput) {
 
 #else // main pass
 
+// Lighting inputs are interpolated at the centroid of the samples a triangle covers (see
+// lod.wgsl): with MSAA, values taken at the centre of a pixel the triangle only clips are
+// extrapolated, which on far faces seen edge on runs wild (light past full, a negative
+// water depth, a point off the surface) and showed as black dashes and glints along the
+// edge of distant water. Texture coordinates stay at the pixel centre, where their
+// derivatives, which pick the mip level, are exact.
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) world_position: vec3<f32>,
+    @location(0) @interpolate(perspective, centroid) world_position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     // x: ao, y: sky light, z: block light (all 0..1, interpolated for smooth lighting)
-    @location(2) light: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) light: vec3<f32>,
     @location(3) @interpolate(flat) surface: u32,
     @location(4) @interpolate(flat) face: u32,
     @location(5) @interpolate(flat) covered: u32,
-    // Depth of water below a water surface, in blocks.
-    @location(6) water_depth: f32,
     // Where the chunk's column colours start in `column_colours`.
-    @location(7) @interpolate(flat) colours: u32,
+    @location(6) @interpolate(flat) colours: u32,
+#ifdef TRANSLUCENT
+    // Water's flow, blocks per second along x and z, and whether it is falling.
+    @location(7) flow: vec2<f32>,
+    @location(8) @interpolate(flat) falling: u32,
+#endif
 };
 
 @vertex
@@ -267,13 +288,20 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
     out.face = face_of(w0);
     out.uv = face_uv(local_position(w0), out.face);
-    // Plants have no ambient occlusion; their AO bits hold the corner.
-    let ao = select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, face_of(w0) >= FACE_PLANT);
+    // Plants have no ambient occlusion; their AO bits hold the corner, and water's its flow.
+    let water = tint_kind(w1) == TINT_WATER;
+    let ao = select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, face_of(w0) >= FACE_PLANT || water);
     out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
-    out.water_depth = f32((w0 >> WATER_DEPTH_SHIFT) & 7u);
     out.colours = u32(chunk_of(in).w);
+#ifdef TRANSLUCENT
+    if water {
+        let turn = f32(w0 >> FLOW_DIRECTION_SHIFT) / 16.0 * 6.2831853;
+        out.flow = vec2(cos(turn), sin(turn)) * FLOW_SPEEDS[(w0 >> 21u) & 3u];
+        out.falling = select(0u, 1u, (w0 & FLAG_FALLING) != 0u);
+    }
+#endif
     return out;
 }
 
@@ -299,6 +327,13 @@ fn biome_tint(surface: u32, colours: u32, world: vec3<f32>, face: u32) -> vec3<f
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+#ifdef TRANSLUCENT
+    // Blocks a pixel spans on the surface, for the water's waves, and the surface's own
+    // normal, which tilts where flowing water slopes; derivatives are only defined here,
+    // before any branch.
+    let footprint = length(fwidth(in.world_position.xz));
+    let tilt = cross(dpdx(in.world_position), dpdy(in.world_position));
+#endif
     let layer = i32(in.surface & 0xFFFu);
     var albedo = textureSample(block_textures, block_sampler, in.uv, layer);
     let kind = tint_kind(in.surface);
@@ -340,18 +375,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let sky = fog.base_color.rgb * 1.15;
     let open = smoothstep(0.5, 0.95, in.light.y);
     if kind == TINT_WATER {
-        if in.face == 2u && in.covered == 0u {
-            // Fresnel reflection of the sky and a sun glint on rippled water.
-            let n = water_normal(in.world_position);
-            let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, to_eye), 0.0), 5.0);
-            let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 220.0) * open
-                * sun_shadow(in.world_position, n, in.clip_position.xy);
-            // Shallows show their bed: light through the water fades with depth, and what
-            // remains takes the water's colour.
-            let through = exp(-in.water_depth * WATER_EXTINCTION);
-            color = mix(color, color * 0.55, 1.0 - through);
-            color = mix(color, sky * open + color * (1.0 - open), fresnel) + sun_color() * glint * 4.0;
-            alpha = mix(mix(0.92, 0.18, through), 1.0, fresnel);
+        // Water composes itself over the scene behind it, fog included (water_surface.wgsl).
+        // Under ice it lies still and reflects nothing; ice draws over it.
+        if in.covered == 0u {
+            var normal = NORMALS[in.face];
+            if in.face == 2u && dot(tilt, tilt) > 1e-14 {
+                let sloped = normalize(tilt) * sign(tilt.y);
+                normal = select(normal, sloped, sloped.y > 0.7);
+            }
+            let water = shade_water(in.world_position, normal, biome_tint(in.surface, in.colours, in.world_position, in.face), in.light.y, in.clip_position, footprint, in.flow, in.falling != 0u);
+            return vec4(water, 1.0);
         }
     } else {
         // Solid see-through blocks (ice) show only their outside, like any solid block, so

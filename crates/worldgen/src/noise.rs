@@ -32,13 +32,14 @@ pub fn supported_3d(noise: &FastNoiseLite) -> bool {
         && noise.weighted_strength == 0.
 }
 
-/// Whether this module evaluates the 2D `noise` itself: fractal OpenSimplex2 of a few
-/// octaves (a single octave gains nothing by it).
+/// Whether this module evaluates the 2D `noise` itself: fractal OpenSimplex2 of three
+/// octaves or more (four side by side cost about as much as two one after the other, so
+/// fewer gain nothing).
 pub fn supported_2d(noise: &FastNoiseLite) -> bool {
     cfg!(target_arch = "aarch64")
         && noise.noise_type == NoiseType::OpenSimplex2
         && matches!(noise.fractal_type, FractalType::FBm | FractalType::Ridged)
-        && noise.octaves > 1
+        && noise.octaves >= 3
         && noise.weighted_strength == 0.
 }
 
@@ -439,7 +440,7 @@ mod tests {
             (11, 1.3, FractalType::FBm, 8),
         ] {
             let n = noise(0x5eed ^ salt, salt as u32, frequency, fractal, octaves);
-            assert_eq!(supported_2d(&n), cfg!(target_arch = "aarch64"));
+            assert_eq!(supported_2d(&n), cfg!(target_arch = "aarch64") && octaves >= 3);
             for i in 0..40_000 {
                 let (x, y) = if i % 4 == 0 {
                     (rng.unit() * 2e6 - 1e6, rng.unit() * 2e6 - 1e6)

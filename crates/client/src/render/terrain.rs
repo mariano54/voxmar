@@ -13,10 +13,7 @@
 
 use std::ops::Range;
 
-use bevy::core_pipeline::core_3d::{
-    AlphaMask3d, CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey, Transparent3d,
-    TransparentSortingInfo3d,
-};
+use bevy::core_pipeline::core_3d::{AlphaMask3d, CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey};
 use bevy::core_pipeline::prepass::{OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey};
 use bevy::ecs::system::{SystemParam, SystemParamItem};
 use bevy::ecs::system::lifetimeless::{Read, SRes};
@@ -29,9 +26,8 @@ use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
-    AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem, PhaseItemExtraIndex,
+    AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem,
     RenderCommand, RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases,
-    ViewSortedRenderPhases,
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
@@ -57,7 +53,9 @@ mod compact;
 
 use compact::Compaction;
 
+use super::atmosphere::{Atmosphere, AtmosphereBuffer};
 use super::lod::{LodVertex, TileKey, TileMesh};
+use super::water::{self, WaterParams};
 use super::wind::Breeze;
 use super::{ATTRIBUTE_LOD, ATTRIBUTE_VOXEL, DISTANT_SHADER, GRASS_SHADER, TerrainPass, VOXEL_SHADER};
 
@@ -112,7 +110,6 @@ impl Plugin for TerrainPlugin {
             .add_render_command::<Opaque3d, DrawDistantTerrain>()
             .add_render_command::<Opaque3d, DrawGrassBlades>()
             .add_render_command::<AlphaMask3d, DrawTerrainMain>()
-            .add_render_command::<Transparent3d, DrawTerrainMain>()
             .add_render_command::<Shadow, DrawTerrainShadow>()
             .add_systems(RenderStartup, (init_pipelines, compact::init_pipeline))
             .add_systems(
@@ -257,9 +254,10 @@ impl RangeAllocator {
 
 struct Page {
     vertex_buffer: Buffer,
-    index_buffer: Buffer,
     vertices: RangeAllocator,
-    indices: RangeAllocator,
+    /// Distant tile pages only: the tiles' indices. Chunk pages keep none, since a
+    /// chunk's quads say how to split themselves into triangles (see `compact`).
+    indices: Option<(Buffer, RangeAllocator)>,
     /// Chunk pages only: the chunk slot of each block of `VERTEX_BLOCK` vertices, and the
     /// bind group (group 3) that holds it.
     chunks: Option<(Buffer, BindGroup)>,
@@ -267,13 +265,14 @@ struct Page {
 
 /// Pages of one vertex format.
 ///
-/// Chunk pages hand vertices out in whole blocks of `VERTEX_BLOCK` and store page-wide
-/// indices, recording which chunk owns each block. The shader finds a vertex's chunk
-/// from its index, so neighbouring chunks' meshes in a page draw as one range.
+/// Chunk pages hold only vertices, four to a quad, handed out in whole blocks of
+/// `VERTEX_BLOCK` and recording which chunk owns each block, so the shader finds a
+/// vertex's chunk from its index. Each view builds the indices of the quads it draws
+/// (see `compact`), so a page stores no index data at all, 24 bytes a quad saved.
 struct PagePool {
     label: &'static str,
     vertex_size: u64,
-    /// Vertices per page; indices get one and a half times as many.
+    /// Vertices per page; distant tile pages get one and a half times as many indices.
     page_vertices: u32,
     pages: Vec<Page>,
     chunk_pages: bool,
@@ -291,61 +290,57 @@ impl PagePool {
         Self { label, vertex_size: vertex_size as u64, page_vertices, pages: Vec::new(), chunk_pages }
     }
 
-    /// Copies a mesh into the first page with room, adding a page if none has. A chunk
-    /// mesh's indices count from `first_vertex`, and are stored counting from the page.
+    /// Copies a mesh into the first page with room, adding a page if none has. Chunk
+    /// meshes' indices are not stored.
     fn allocate<V: bytemuck::Pod>(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,
         vertices: &[V],
         indices: &[u32],
-        first_vertex: u32,
         owner: Option<Owner>,
     ) -> Allocation {
-        let mut vertex_count = vertices.len() as u32;
-        if self.chunk_pages {
-            vertex_count = vertex_count.next_multiple_of(VERTEX_BLOCK);
-        }
+        let len = vertices.len() as u32;
+        let reserved = if self.chunk_pages { len.next_multiple_of(VERTEX_BLOCK) } else { len };
         let index_count = indices.len() as u32;
-        let found = self.pages.iter_mut().enumerate().find_map(|(i, page)| {
-            let vertices = page.vertices.allocate(vertex_count)?;
-            match page.indices.allocate(index_count) {
-                Some(indices) => Some((i, vertices, indices)),
+        let fit = |page: &mut Page| -> Option<(Range<u32>, Range<u32>)> {
+            let vertices = page.vertices.allocate(reserved)?;
+            let Some((_, free)) = &mut page.indices else { return Some((vertices, 0..0)) };
+            match free.allocate(index_count) {
+                Some(indices) => Some((vertices, indices)),
                 None => {
                     page.vertices.release(vertices);
                     None
                 }
             }
-        });
-        let (page, vertex_range, index_range) = found.unwrap_or_else(|| {
+        };
+        let found = self.pages.iter_mut().enumerate().find_map(|(i, page)| fit(page).map(|ranges| (i, ranges)));
+        let (page, (vertex_range, index_range)) = found.unwrap_or_else(|| {
             let mut page = self.new_page(device, owner.as_ref().map(|owner| owner.layout));
-            let vertices = page.vertices.allocate(vertex_count).expect("a mesh fits a page");
-            let indices = page.indices.allocate(index_count).expect("a mesh fits a page");
+            let ranges = fit(&mut page).expect("a mesh fits a page");
             self.pages.push(page);
-            (self.pages.len() - 1, vertices, indices)
+            (self.pages.len() - 1, ranges)
         });
         let target = &self.pages[page];
         queue.write_buffer(&target.vertex_buffer, vertex_range.start as u64 * self.vertex_size, bytemuck::cast_slice(vertices));
-        let index_offset = |indices: &[u32]| indices.iter().map(|&i| i - first_vertex + vertex_range.start).collect::<Vec<_>>();
-        match (&target.chunks, owner) {
-            (Some((chunks, _)), Some(owner)) => {
-                queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(&index_offset(indices)));
-                let blocks = vec![owner.slot; (vertex_range.len() as u32 / VERTEX_BLOCK) as usize];
-                queue.write_buffer(chunks, (vertex_range.start / VERTEX_BLOCK) as u64 * 4, bytemuck::cast_slice(&blocks));
-            }
-            _ => queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices)),
+        if let (Some((chunks, _)), Some(owner)) = (&target.chunks, owner) {
+            let blocks = vec![owner.slot; (reserved / VERTEX_BLOCK) as usize];
+            queue.write_buffer(chunks, (vertex_range.start / VERTEX_BLOCK) as u64 * 4, bytemuck::cast_slice(&blocks));
         }
-        Allocation { page: page as u32, vertices: vertex_range, indices: index_range }
+        if let Some((buffer, _)) = &target.indices {
+            queue.write_buffer(buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices));
+        }
+        Allocation { page: page as u32, vertices: vertex_range.start..vertex_range.start + len, reserved, indices: index_range }
     }
 
     fn free(&mut self, allocation: Allocation) {
         let page = &mut self.pages[allocation.page as usize];
-        page.vertices.release(allocation.vertices);
-        page.indices.release(allocation.indices);
-    }
-
-    fn index_usage(&self) -> BufferUsages {
-        if self.chunk_pages { BufferUsages::STORAGE } else { BufferUsages::empty() }
+        page.vertices.release(allocation.vertices.start..allocation.vertices.start + allocation.reserved);
+        if let Some((_, free)) = &mut page.indices
+            && !allocation.indices.is_empty()
+        {
+            free.release(allocation.indices);
+        }
     }
 
     fn new_page(&self, device: &RenderDevice, layout: Option<&BindGroupLayout>) -> Page {
@@ -358,7 +353,6 @@ impl PagePool {
                 mapped_at_creation: false,
             })
         };
-        let page_indices = self.page_vertices / 2 * 3;
         let chunks = layout.filter(|_| self.chunk_pages).map(|layout| {
             let chunks = buffer("chunks", (self.page_vertices / VERTEX_BLOCK) as u64 * 4, BufferUsages::STORAGE);
             let bind_group = device.create_bind_group(
@@ -368,21 +362,26 @@ impl PagePool {
             );
             (chunks, bind_group)
         });
+        let page_indices = self.page_vertices / 2 * 3;
+        let indices = (!self.chunk_pages)
+            .then(|| (buffer("indices", page_indices as u64 * 4, BufferUsages::INDEX), RangeAllocator::new(page_indices)));
+        // Chunk vertices are also read by the pass that builds each view's indices.
+        let usage = if self.chunk_pages { BufferUsages::VERTEX | BufferUsages::STORAGE } else { BufferUsages::VERTEX };
         Page {
-            vertex_buffer: buffer("vertices", self.page_vertices as u64 * self.vertex_size, BufferUsages::VERTEX),
-            // Chunk indices are also read by the compaction pass.
-            index_buffer: buffer("indices", page_indices as u64 * 4, BufferUsages::INDEX | self.index_usage()),
+            vertex_buffer: buffer("vertices", self.page_vertices as u64 * self.vertex_size, usage),
             vertices: RangeAllocator::new(self.page_vertices),
-            indices: RangeAllocator::new(page_indices),
+            indices,
             chunks,
         }
     }
 }
 
-/// Where a mesh lives.
+/// Where a mesh lives: its vertices, the share of the page they hold (whole blocks, for
+/// chunk pages) and, on distant tile pages, its indices.
 struct Allocation {
     page: u32,
     vertices: Range<u32>,
+    reserved: u32,
     indices: Range<u32>,
 }
 
@@ -393,6 +392,7 @@ struct Allocation {
 /// faces by `Face`, then cut-out faces, plants, inner, translucent and fringe.
 const STREAMS: usize = 11;
 const PLANTS: usize = 7;
+const FRINGE: usize = 10;
 /// Plants have sunk into the ground by this distance, in blocks (`PLANT_FADE` in
 /// voxel.wgsl), so further chunks skip them.
 const PLANT_DISTANCE: f32 = 320.0;
@@ -406,12 +406,21 @@ fn streams(pass: TerrainPass) -> Range<usize> {
     }
 }
 
+/// Indices each quad of a stream draws with: plants and leaf fringes are drawn from both
+/// sides, with both windings.
+fn indices_per_quad(stream: usize) -> u32 {
+    match stream {
+        PLANTS | FRINGE => 12,
+        _ => 6,
+    }
+}
+
 /// Vertices per page of each stream: the opaque directions and cut-outs hold most quads.
 fn stream_page_vertices(stream: usize) -> u32 {
     match stream {
         0..=6 => 1 << 21,
         PLANTS => 1 << 20,
-        10 => 1 << 18,
+        FRINGE => 1 << 18,
         _ => 1 << 19,
     }
 }
@@ -545,11 +554,15 @@ struct DistantView {
     /// xy: column of the coverage mask's first bit, z: its width in columns, w: the real
     /// chunks' radius in columns.
     coverage: IVec4,
+    /// The sky's zenith and horizon colours, which distant water reflects as real water
+    /// does where its reflections leave the screen.
+    zenith: Vec4,
+    horizon: Vec4,
 }
 
 /// Render world state: pages, chunk records and the bind group shared by every draw.
 #[derive(Resource)]
-struct TerrainGpu {
+pub(super) struct TerrainGpu {
     /// Chunk pages of each stream.
     streams: [PagePool; STREAMS],
     tile_pages: PagePool,
@@ -691,7 +704,7 @@ impl TerrainGpu {
             let vertices = &mesh.vertices[quads.start * 4..quads.end * 4];
             let indices = &mesh.indices[quads.start * 6..quads.end * 6];
             let owner = Owner { slot, layout };
-            let allocation = self.streams[stream].allocate(device, queue, vertices, indices, quads.start as u32 * 4, Some(owner));
+            let allocation = self.streams[stream].allocate(device, queue, vertices, indices, Some(owner));
             self.record(chunk).streams[stream] = Some(allocation);
             self.revision += 1;
         }
@@ -738,7 +751,7 @@ impl TerrainGpu {
 
     fn upload_tile(&mut self, device: &RenderDevice, queue: &RenderQueue, tile: TileMesh) {
         self.remove_tile(tile.key);
-        let mesh = self.tile_pages.allocate(device, queue, &tile.vertices, &tile.indices, 0, None);
+        let mesh = self.tile_pages.allocate(device, queue, &tile.vertices, &tile.indices, None);
         let corner = tile.key.origin();
         let slot = self.new_slot(IVec4::new(corner.x, 0, corner.y, tile.key.cell()));
         let size = tile.key.size() as f32;
@@ -847,7 +860,7 @@ impl TerrainGpu {
     }
 
     /// Writes which columns around `camera` have real chunks, and the real radius.
-    fn write_coverage(&mut self, device: &RenderDevice, queue: &RenderQueue, camera: Vec3) {
+    fn write_coverage(&mut self, device: &RenderDevice, queue: &RenderQueue, camera: Vec3, sky: [Vec4; 2]) {
         let first = IVec2::new(camera.x.floor() as i32, camera.z.floor() as i32).div_euclid(IVec2::splat(CHUNK_SIZE))
             - COVERAGE_SIZE / 2;
         let mut bits = [0u32; COVERAGE_WORDS];
@@ -867,7 +880,8 @@ impl TerrainGpu {
             })
         });
         queue.write_buffer(coverage, 0, bytemuck::cast_slice(&bits));
-        let view = DistantView { coverage: IVec4::new(first.x, first.y, COVERAGE_SIZE, self.real_columns) };
+        let [zenith, horizon] = sky;
+        let view = DistantView { coverage: IVec4::new(first.x, first.y, COVERAGE_SIZE, self.real_columns), zenith, horizon };
         let mut uniform = encase::UniformBuffer::new(Vec::<u8>::new());
         uniform.write(&view).expect("distant view fits a uniform");
         let buffer = self.distant_view.get_or_insert_with(|| {
@@ -893,6 +907,7 @@ fn receive(
     breeze: Option<Res<Breeze>>,
     pipelines: Res<TerrainPipelines>,
     pipeline_cache: Res<PipelineCache>,
+    water: Option<Res<WaterParams>>,
 ) {
     let layout = pipeline_cache.get_bind_group_layout(&pipelines.chunks_layout);
     gpu.ensure_arenas(&device, &queue);
@@ -915,7 +930,7 @@ fn receive(
     if let Some(camera) = cameras.iter().next() {
         let position = camera.world_from_view.translation();
         gpu.camera = position;
-        gpu.write_coverage(&device, &queue, position);
+        gpu.write_coverage(&device, &queue, position, water.map_or([Vec4::ZERO; 2], |w| w.sky()));
     }
 }
 
@@ -926,6 +941,7 @@ fn prepare_bind_group(
     images: Res<RenderAssets<GpuImage>>,
     device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
+    atmosphere: Res<AtmosphereBuffer>,
 ) {
     if gpu.bind_group.is_some() && gpu.distant_bind_group.is_some() && !gpu.bind_group_dirty {
         return;
@@ -934,7 +950,12 @@ fn prepare_bind_group(
     let distant = device.create_bind_group(
         "distant_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipelines.distant_layout),
-        &BindGroupEntries::sequential((origins.as_entire_binding(), view.as_entire_binding(), coverage.as_entire_binding())),
+        &BindGroupEntries::with_indices((
+            (0, origins.as_entire_binding()),
+            (1, view.as_entire_binding()),
+            (2, coverage.as_entire_binding()),
+            (6, atmosphere.0.as_entire_binding()),
+        )),
     );
     let blocks = textures.as_ref().and_then(|t| images.get(&t.textures));
     let (Some(blocks), Some(seeds), Some(wind), Some(colours)) =
@@ -953,6 +974,7 @@ fn prepare_bind_group(
             seeds.as_entire_binding(),
             wind.as_entire_binding(),
             colours.as_entire_binding(),
+            atmosphere.0.as_entire_binding(),
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -985,14 +1007,35 @@ struct BladeDraw {
 
 /// The draws of each pass that survive a view's frustum, in drawing order.
 #[derive(Component, Default)]
-struct TerrainDraws {
+pub(super) struct TerrainDraws {
     passes: [Vec<ChunkDraw>; 5],
     /// Where the passes' indices are gathered from the pages.
     compaction: Compaction,
+    /// What the water pass draws the translucent terrain with, when there is any; cameras
+    /// only.
+    water: Option<WaterDraw>,
     /// Distant terrain tiles, cameras only.
     distant: Vec<TileDraw>,
     /// Grass blades near the camera, nearest first; cameras only.
     blades: Vec<BladeDraw>,
+}
+
+/// The translucent terrain's pipeline and item entity, for the water pass (see `water`).
+#[derive(Clone, Copy)]
+pub(super) struct WaterDraw {
+    pub pipeline: CachedRenderPipelineId,
+    pub entity: (Entity, MainEntity),
+}
+
+impl TerrainDraws {
+    /// Whether the view has water or ice in sight.
+    pub(super) fn has_water(&self) -> bool {
+        !self.passes[TerrainPass::Translucent as usize].is_empty()
+    }
+
+    pub(super) fn water(&self) -> Option<WaterDraw> {
+        self.water.filter(|_| self.has_water())
+    }
 }
 
 /// A view whose draws `cull` fills: a camera or a shadow cascade.
@@ -1056,7 +1099,7 @@ fn cull(
                     if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && distance >= PLANT_DISTANCE) {
                         continue;
                     }
-                    let range = (allocation.page, allocation.indices.clone());
+                    let range = (allocation.page, allocation.vertices.clone());
                     if pass == TerrainPass::Translucent {
                         let centre = min + CHUNK_SIZE as f32 / 2.0;
                         translucent.push((centre.distance_squared(eye), range));
@@ -1075,10 +1118,11 @@ fn cull(
         for pass in PASSES {
             for stream in streams(pass) {
                 let ranges = &mut ranges[stream];
-                ranges.sort_unstable_by_key(|(page, indices)| (*page, indices.start));
+                ranges.sort_unstable_by_key(|(page, vertices)| (*page, vertices.start));
                 for run in ranges.chunk_by(|a, b| a.0 == b.0) {
                     let page = run[0].0;
-                    let indices = draws.compaction.gather(stream, page, run.iter().map(|(_, indices)| indices.clone()));
+                    let quads = run.iter().map(|(_, vertices)| vertices.clone());
+                    let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
                     draws.passes[pass as usize].push(ChunkDraw { stream: stream as u8, page, indices });
                 }
                 ranges.clear();
@@ -1089,7 +1133,8 @@ fn cull(
         let stream = streams(TerrainPass::Translucent).start;
         for run in translucent.chunk_by(|a, b| a.1.0 == b.1.0) {
             let page = run[0].1.0;
-            let indices = draws.compaction.gather(stream, page, run.iter().map(|(_, (_, indices))| indices.clone()));
+            let quads = run.iter().map(|(_, (_, vertices))| vertices.clone());
+            let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
             draws.passes[TerrainPass::Translucent as usize].push(ChunkDraw { stream: stream as u8, page, indices });
         }
         draws.distant.clear();
@@ -1143,7 +1188,7 @@ impl Frustum {
 
 /// Marks the render entity that stands for one terrain pass in the phases.
 #[derive(Component, Clone, Copy)]
-struct TerrainPassItem(TerrainPass);
+pub(super) struct TerrainPassItem(TerrainPass);
 
 #[derive(Resource)]
 struct TerrainPipelines {
@@ -1180,6 +1225,8 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 uniform_buffer::<WindUniform>(false),
                 // Biome colours of columns, by block.
                 storage_buffer_read_only_sized(false, None),
+                // The air and light (lighting.wgsl).
+                uniform_buffer::<Atmosphere>(false),
             ),
         ),
     );
@@ -1203,12 +1250,14 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
     let items = PASSES.map(|pass| commands.spawn(TerrainPassItem(pass)).id());
     let distant_layout = BindGroupLayoutDescriptor::new(
         "distant_layout",
-        &BindGroupLayoutEntries::sequential(
+        &BindGroupLayoutEntries::with_indices(
             ShaderStages::VERTEX_FRAGMENT,
             (
-                storage_buffer_read_only_sized(false, None),
-                uniform_buffer::<DistantView>(false),
-                storage_buffer_read_only_sized(false, None),
+                (0, storage_buffer_read_only_sized(false, None)),
+                (1, uniform_buffer::<DistantView>(false)),
+                (2, storage_buffer_read_only_sized(false, None)),
+                // The air and light, at the binding lighting.wgsl expects.
+                (6, uniform_buffer::<Atmosphere>(false)),
             ),
         ),
     );
@@ -1311,6 +1360,10 @@ impl TerrainPipelines {
         let label = format!("terrain_{pass:?}");
         let mut descriptor = mesh_like(mesh_pipeline, layouts, key, &self.vertex_layout, &self.layout, &self.shader, label)?;
         descriptor.layout.push(self.chunks_layout.clone());
+        if pass == TerrainPass::Translucent {
+            // The scene so far, which the water pass binds (see `water`).
+            descriptor.layout.push(water::layout(key.msaa_samples() > 1));
+        }
         let (defs, cull_mode) = pass_setup(pass);
         descriptor.primitive.cull_mode = cull_mode;
         // With several samples per pixel, cut-outs cover samples by their alpha instead of
@@ -1318,6 +1371,8 @@ impl TerrainPipelines {
         let alpha_to_coverage =
             key.msaa_samples() > 1 && matches!(pass, TerrainPass::Cutout | TerrainPass::Inner | TerrainPass::Fringe);
         descriptor.multisample.alpha_to_coverage_enabled = alpha_to_coverage;
+        // The vertex stage too: what it passes on differs by pass (water's flow).
+        descriptor.vertex.shader_defs.extend(defs.iter().map(|&def| ShaderDefVal::from(def)));
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.extend(defs.iter().map(|&def| ShaderDefVal::from(def)));
             if alpha_to_coverage {
@@ -1424,11 +1479,9 @@ impl TerrainPipelines {
 struct Phases<'w> {
     opaque: ResMut<'w, ViewBinnedRenderPhases<Opaque3d>>,
     mask: ResMut<'w, ViewBinnedRenderPhases<AlphaMask3d>>,
-    transparent: ResMut<'w, ViewSortedRenderPhases<Transparent3d>>,
     shadow: ResMut<'w, ViewBinnedRenderPhases<Shadow>>,
     opaque_draw: Res<'w, DrawFunctions<Opaque3d>>,
     mask_draw: Res<'w, DrawFunctions<AlphaMask3d>>,
-    transparent_draw: Res<'w, DrawFunctions<Transparent3d>>,
     shadow_draw: Res<'w, DrawFunctions<Shadow>>,
 }
 
@@ -1444,7 +1497,7 @@ fn queue(
     view_keys: Res<ViewKeyCache>,
     mut phases: Phases,
     keys: Res<TerrainKeys>,
-    views: Query<(&ExtractedView, Has<LightEntity>)>,
+    mut views: Query<(&ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>)>,
 ) {
     let items = PASSES.map(|pass| (pipelines.items[pass as usize], keys.passes[pass as usize]));
     let distant_item = (pipelines.distant_item, keys.distant);
@@ -1452,13 +1505,12 @@ fn queue(
     let registered = "terrain draw is registered";
     let opaque_draw = phases.opaque_draw.read().get_id::<DrawTerrainMain>().expect(registered);
     let mask_draw = phases.mask_draw.read().get_id::<DrawTerrainMain>().expect(registered);
-    let transparent_draw = phases.transparent_draw.read().get_id::<DrawTerrainMain>().expect(registered);
     let shadow_draw = phases.shadow_draw.read().get_id::<DrawTerrainShadow>().expect(registered);
     let distant_draw = phases.opaque_draw.read().get_id::<DrawDistantTerrain>().expect(registered);
     let blade_draw = phases.opaque_draw.read().get_id::<DrawGrassBlades>().expect(registered);
     let bin = || Opaque3dBinKey { asset_id: AssetId::<Mesh>::default().untyped() };
 
-    for (view, is_light) in &views {
+    for (view, is_light, draws) in &mut views {
         let retained = &view.retained_view_entity;
         if is_light {
             let Some(phase) = phases.shadow.get_mut(retained) else { continue };
@@ -1506,19 +1558,11 @@ fn queue(
                 phase.add(key, bin, item, InputUniformIndex::default(), BinnedRenderPhaseType::NonMesh);
             }
         }
-        if let (Some(phase), Some(id)) = (phases.transparent.get_mut(retained), pipeline(TerrainPass::Translucent)) {
-            // Water and ice sort among themselves; as a whole they go before other
-            // see-through things (precipitation, which always falls in front).
-            phase.add_transient(Transparent3d {
-                sorting_info: TransparentSortingInfo3d::Sorted { mesh_center: view.world_from_view.translation(), depth_bias: -1.0e8 },
-                distance: -1.0e8,
-                pipeline: id,
-                entity: items[TerrainPass::Translucent as usize],
-                draw_function: transparent_draw,
-                batch_range: 0..1,
-                extra_index: PhaseItemExtraIndex::None,
-                indexed: true,
-            });
+        // Water and ice are drawn by the water pass, which reads the scene behind them.
+        let translucent = pipeline(TerrainPass::Translucent);
+        if let Some(mut draws) = draws {
+            let entity = items[TerrainPass::Translucent as usize];
+            draws.water = translucent.map(|pipeline| WaterDraw { pipeline, entity });
         }
     }
 }
@@ -1583,9 +1627,12 @@ impl<P: PhaseItem> RenderCommand<P> for DrawDistant {
         let mut current = None;
         for draw in &draws.distant {
             if current != Some(draw.page) {
-                let Some(page) = gpu.tile_pages.pages.get(draw.page as usize) else { return RenderCommandResult::Skip };
+                let page = gpu.tile_pages.pages.get(draw.page as usize);
+                let Some((page, (indices, _))) = page.and_then(|page| Some((page, page.indices.as_ref()?))) else {
+                    return RenderCommandResult::Skip;
+                };
                 render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(page.index_buffer.slice(..), IndexFormat::Uint32);
+                render_pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
                 current = Some(draw.page);
             }
             render_pass.draw_indexed(draw.indices.clone(), draw.base_vertex, draw.slot..draw.slot + 1);
@@ -1595,7 +1642,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawDistant {
 }
 
 /// Draws a view's culled chunks of the item's pass.
-struct DrawTerrain;
+pub(super) struct DrawTerrain;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
     type Param = SRes<TerrainGpu>;

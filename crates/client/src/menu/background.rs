@@ -10,11 +10,11 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, unbounded};
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos};
 use voxmar_engine::world::Column;
-use voxmar_worldgen::{Generator, Overworld, SEA_LEVEL};
+use voxmar_worldgen::{Generator, SEA_LEVEL};
 
 use super::InMenu;
 use crate::render::DayCycle;
-use crate::render::lod::{self, Lod};
+use crate::render::lod::{self, WorldGenerator};
 use crate::settings::Settings;
 use crate::world::ClientWorld;
 
@@ -54,16 +54,16 @@ fn start(
     mut commands: Commands,
     time: Res<Time>,
     mut world: ResMut<ClientWorld>,
-    mut lod: ResMut<Lod>,
+    mut world_generator: ResMut<WorldGenerator>,
     mut cycle: ResMut<DayCycle>,
     mut spawn: Local<Option<ColumnPos>>,
 ) {
-    let generator = Arc::new(Overworld::new(SEED, world.registry.clone()));
+    world.reset(RADIUS);
+    // The same generator, with the loaded content packages, makes the real and distant
+    // terrain.
+    let generator = world_generator.start(SEED, world.registry.clone());
     // Searching for the spawn point takes a moment; it never changes.
     let center = *spawn.get_or_insert_with(|| ColumnPos::of_block(generator.spawn_point()));
-    world.reset(RADIUS);
-    lod.clear();
-    lod.start(SEED, world.registry.clone());
     cycle.ticks = START_TICKS;
     cycle.view_distance = lod::view_distance(RADIUS);
 
@@ -98,14 +98,14 @@ fn stop(
     backdrop: Option<Res<Backdrop>>,
     settings: Res<Settings>,
     mut world: ResMut<ClientWorld>,
-    mut lod: ResMut<Lod>,
+    mut generator: ResMut<WorldGenerator>,
 ) {
     if let Some(backdrop) = backdrop {
         backdrop.cancelled.store(true, Ordering::Relaxed);
     }
     commands.remove_resource::<Backdrop>();
     world.reset(settings.view_distance);
-    lod.clear();
+    generator.clear();
 }
 
 fn receive_columns(backdrop: Res<Backdrop>, mut world: ResMut<ClientWorld>) {

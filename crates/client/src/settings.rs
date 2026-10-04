@@ -25,6 +25,7 @@ use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::DayCycle;
 use crate::render::pack::{ActivePack, ShaderPacks};
 use crate::render::lod::{self, Lod};
+use crate::render::water::WaterQuality;
 use crate::world::ClientWorld;
 
 pub struct SettingsPlugin;
@@ -91,6 +92,8 @@ pub struct Settings {
     pub hud_raise: i32,
     /// Name of the shader pack in use (see `render::pack`).
     pub shader_pack: String,
+    /// How much work water does: waves, and reflections of the terrain (`render::water`).
+    pub water_quality: WaterQuality,
     /// Which texture pack comes first; takes effect the next time the game starts.
     pub textures: TextureOrder,
     /// How many particles effects show (breaking blocks).
@@ -234,6 +237,7 @@ impl Default for Settings {
             zoom_in_survival: false,
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
+            water_quality: WaterQuality::default(),
             textures: TextureOrder::default(),
             particles: ParticleAmount::default(),
             far_detail: FarDetail::default(),
@@ -439,6 +443,7 @@ enum Choice {
     FarDetail,
     AntiAliasing,
     ShaderPack,
+    Water,
     Textures,
     Particles,
 }
@@ -449,6 +454,7 @@ impl Choice {
             Choice::FarDetail => "Far detail",
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
+            Choice::Water => "Water",
             Choice::Textures => "Textures (on restart)",
             Choice::Particles => "Particles",
         }
@@ -459,6 +465,7 @@ impl Choice {
             Choice::FarDetail => settings.far_detail.label().into(),
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
+            Choice::Water => settings.water_quality.label().into(),
             Choice::Textures => settings.textures.label().into(),
             Choice::Particles => settings.particles.label().into(),
         }
@@ -475,6 +482,10 @@ impl Choice {
                 settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
             }
             Choice::ShaderPack => settings.shader_pack = packs.next(&settings.shader_pack).to_owned(),
+            Choice::Water => {
+                let i = WaterQuality::ALL.iter().position(|&q| q == settings.water_quality).unwrap_or(0);
+                settings.water_quality = WaterQuality::ALL[(i + 1) % WaterQuality::ALL.len()];
+            }
             Choice::Textures => {
                 settings.textures = match settings.textures {
                     TextureOrder::Minecraft => TextureOrder::Voxmar,
@@ -537,6 +548,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::Textures),
             Control::Choice(Choice::AntiAliasing),
+            Control::Choice(Choice::Water),
             Control::Choice(Choice::Particles),
             Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::Vsync),
@@ -920,8 +932,10 @@ fn apply(
     mut cycle: ResMut<DayCycle>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
     mut camera: Query<(Entity, &mut Msaa), With<Camera3d>>,
+    mut water: ResMut<WaterQuality>,
     mut commands: Commands,
 ) {
+    water.set_if_neq(settings.water_quality);
     if world.view_distance != settings.view_distance {
         world.set_view_distance(settings.view_distance);
         cycle.view_distance = lod::view_distance(settings.view_distance);

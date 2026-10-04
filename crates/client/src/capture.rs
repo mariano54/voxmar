@@ -3,8 +3,15 @@
 //! and benchmarking.
 //! Runs without a window and renders into an offscreen image, so frame times measure the
 //! engine rather than the display, and it works with the display asleep.
+//!
+//! `--flicker` measures shimmer instead: with the clock stopped, it takes the shot, steps
+//! the camera 4 cm sideways, takes another, and reports the share of pixels that changed
+//! by more than 60 levels (of 255) in any channel. Animation is frozen, so only aliasing
+//! (geometry, texture and shading detail smaller than a pixel) moves pixels that much.
+//! Changed pixels are marked in red in `OUT-flicker.png`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -38,7 +45,16 @@ pub struct CapturePlugin {
     pub mine: Option<f32>,
     /// Show the settings menu.
     pub menu: bool,
+    /// Measure flicker for a small camera step (see the module docs).
+    pub flicker: bool,
 }
+
+/// How far `--flicker` steps the camera sideways, in blocks.
+const FLICKER_STEP: f32 = 0.04;
+/// A pixel flickers when a channel changes by more than this many levels.
+const FLICKER_LEVELS: u8 = 60;
+/// Frames to let a change of pose or clock reach the screen before a flicker shot.
+const FLICKER_FRAMES: u32 = 3;
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
@@ -56,9 +72,10 @@ impl Plugin for CapturePlugin {
             taken_at: None,
             saved: false,
             frame_times: Vec::new(),
+            flicker: self.flicker.then(Flicker::default),
         })
         .add_systems(PostStartup, render_offscreen)
-        .add_systems(Update, (target_ui, capture))
+        .add_systems(Update, (target_ui, capture, measure_flicker.after(capture)))
         .add_systems(
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
@@ -87,6 +104,19 @@ struct Capture {
     /// Whether the screenshot has been written, which can take a while on a busy machine.
     saved: bool,
     frame_times: Vec<f32>,
+    flicker: Option<Flicker>,
+}
+
+/// Progress of a `--flicker` measurement, which starts once the world has settled.
+#[derive(Default)]
+struct Flicker {
+    started: bool,
+    /// Frames since the clock stopped.
+    frames: u32,
+    /// The camera's sideways step, once the first shot is taken.
+    step: Vec3,
+    /// The two shots, as they arrive.
+    shots: Arc<Mutex<Vec<Image>>>,
 }
 
 fn render_offscreen(
@@ -119,7 +149,8 @@ fn target_ui(
 
 fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&mut Transform, With<Camera3d>>) {
     let (Some([x, y, z, yaw, pitch]), Ok(mut transform)) = (state.pose, camera.single_mut()) else { return };
-    transform.translation = player.eye() + Vec3::new(x, y, z);
+    let step = state.flicker.as_ref().map_or(Vec3::ZERO, |f| f.step);
+    transform.translation = player.eye() + Vec3::new(x, y, z) + step;
     transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
 }
 
@@ -186,6 +217,7 @@ fn fly(time: &Time, player: &mut LocalPlayer) {
 fn capture(
     mut commands: Commands,
     time: Res<Time>,
+    real: Res<Time<Real>>,
     mut state: ResMut<Capture>,
     world: Res<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
@@ -195,11 +227,15 @@ fn capture(
     screen: Res<State<Screen>>,
     (weather, air): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>),
 ) {
-    let now = time.elapsed_secs();
+    // Real time while `--flicker` stops the game's clock.
+    let now = if state.flicker.is_some() { real.elapsed_secs() } else { time.elapsed_secs() };
     if let Some(taken) = state.taken_at {
-        if state.saved || now - taken > 30.0 {
+        if state.saved || state.flicker.is_some() || now - taken > 30.0 {
             exit.write(AppExit::Success);
         }
+        return;
+    }
+    if state.flicker.as_ref().is_some_and(|f| f.started) {
         return;
     }
     let stats = world.stats;
@@ -218,7 +254,8 @@ fn capture(
     let flying = state.flight_started.is_some();
     // A mined block's pieces are caught in the air, while its column remeshes.
     let broken = state.broken_at.map(|at| now - at);
-    if busy && !flying && broken.is_none() && now < 60.0 {
+    let patience = if state.flicker.is_some() { 300.0 } else { 60.0 };
+    if busy && !flying && broken.is_none() && now < patience {
         state.settled_at = None;
         return;
     }
@@ -263,9 +300,109 @@ fn capture(
     info!("weather: {}: {}; effects: {}", shown.describe(), shown.summary(), weather.effects.join(", "));
     let particles: Vec<String> = air.particles.iter().map(|p| format!("{} {:.0}%", p.name, p.density * 100.0)).collect();
     info!("air: haze {:.2} ×{:.2}, warmth {:.2}, saturation {:.2}; particles: {}", air.haze, air.haze_density, air.warmth, air.saturation, particles.join(", "));
+    if let Some(flicker) = &mut state.flicker {
+        // `measure_flicker` takes over.
+        flicker.started = true;
+        return;
+    }
     commands
         .spawn(Screenshot::image(state.target.clone()))
         .observe(save_to_disk(state.path.clone()))
         .observe(|_: On<ScreenshotCaptured>, mut state: ResMut<Capture>| state.saved = true);
     state.taken_at = Some(now);
+}
+
+/// Runs a `--flicker` measurement once `capture` has started it: stops the clock, takes
+/// a shot, steps the camera sideways, takes another and compares them.
+fn measure_flicker(
+    mut commands: Commands,
+    mut state: ResMut<Capture>,
+    real: Res<Time<Real>>,
+    mut virtual_time: ResMut<Time<Virtual>>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
+) {
+    let (target, path) = (state.target.clone(), state.path.clone());
+    let Some(flicker) = state.flicker.as_mut().filter(|f| f.started) else { return };
+    virtual_time.pause();
+    flicker.frames += 1;
+    let shot = |name: PathBuf, commands: &mut Commands, shots: &Arc<Mutex<Vec<Image>>>| {
+        let shots = shots.clone();
+        commands
+            .spawn(Screenshot::image(target.clone()))
+            .observe(save_to_disk(name))
+            .observe(move |captured: On<ScreenshotCaptured>| shots.lock().expect("flicker shots").push(captured.image.clone()));
+    };
+    if flicker.frames == FLICKER_FRAMES {
+        shot(path.clone(), &mut commands, &flicker.shots);
+    } else if flicker.frames == FLICKER_FRAMES + 1 {
+        let Ok(camera) = camera.single() else { return };
+        flicker.step = camera.right() * FLICKER_STEP;
+    } else if flicker.frames == 2 * FLICKER_FRAMES + 1 {
+        shot(sibling(&path, "moved"), &mut commands, &flicker.shots);
+    }
+    let shots = flicker.shots.clone();
+    let shots = shots.lock().expect("flicker shots");
+    if shots.len() < 2 || state.taken_at.is_some() {
+        return;
+    }
+    let (Some(a), Some(b)) = (&shots[0].data, &shots[1].data) else { return };
+    let (changed, map) = flicker_map(a, b);
+    let mut marked = shots[0].clone();
+    marked.data = Some(map);
+    let pixels = (a.len() / 4).max(1);
+    info!(
+        "flicker: {changed} of {pixels} pixels ({:.3}%) changed by more than {FLICKER_LEVELS} levels for a {:.0} cm step",
+        changed as f64 * 100.0 / pixels as f64,
+        FLICKER_STEP * 100.0,
+    );
+    let marked_path = sibling(&path, "flicker");
+    match marked.try_into_dynamic() {
+        Ok(image) => match image.to_rgb8().save(&marked_path) {
+            Ok(()) => info!("flicker map saved to {}", marked_path.display()),
+            Err(e) => error!("cannot save the flicker map: {e}"),
+        },
+        Err(e) => error!("cannot convert the flicker map: {e}"),
+    }
+    drop(shots);
+    state.taken_at = Some(real.elapsed_secs());
+}
+
+/// Compares two RGBA8 images: how many pixels changed by more than `FLICKER_LEVELS` in any
+/// channel, and the first image dimmed with those pixels in red.
+fn flicker_map(a: &[u8], b: &[u8]) -> (usize, Vec<u8>) {
+    let mut changed = 0;
+    let mut map = Vec::with_capacity(a.len());
+    for (a, b) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
+        let flickers = (0..3).any(|c| a[c].abs_diff(b[c]) > FLICKER_LEVELS);
+        changed += flickers as usize;
+        let pixel = if flickers { [255, 0, 0, 255] } else { [a[0] / 3, a[1] / 3, a[2] / 3, 255] };
+        map.extend_from_slice(&pixel);
+    }
+    (changed, map)
+}
+
+/// `OUT.png` → `OUT-suffix.png`.
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let stem = path.file_stem().map_or_else(Default::default, |s| s.to_string_lossy().into_owned());
+    let extension = path.extension().map_or_else(|| "png".into(), |e| e.to_string_lossy().into_owned());
+    path.with_file_name(format!("{stem}-{suffix}.{extension}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flicker_counts_pixels_that_change_by_more_than_the_threshold() {
+        let a = [10, 10, 10, 255, 100, 100, 100, 255, 0, 0, 0, 255];
+        let b = [10, 10, 70, 255, 100, 161, 100, 255, 0, 0, 0, 0];
+        let (changed, map) = flicker_map(&a, &b);
+        assert_eq!(changed, 1);
+        assert_eq!(map, [3, 3, 3, 255, 255, 0, 0, 255, 0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn sibling_adds_a_suffix_before_the_extension() {
+        assert_eq!(sibling(Path::new("shots/far.png"), "moved"), PathBuf::from("shots/far-moved.png"));
+    }
 }

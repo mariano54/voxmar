@@ -135,7 +135,7 @@
             flora: (
                 forest: 0.03,
                 trees: [Name("oak", 1.0), Name("shrub", 1.0)],
-                cover: 0.7, flowers: 0.5,
+                cover: 0.7, flowers: 0.5, bloom: 0.6,
                 plants: [Tag("meadow", 1.0), Name("tall_grass", 0.2)],
             ),
         ),
@@ -722,7 +722,7 @@
             flora: (
                 forest: 0.05,
                 trees: [Name("cypress", 1.0), Name("shrub", 0.5)],
-                cover: 0.6, flowers: 0.6,
+                cover: 0.6, flowers: 0.6, bloom: 0.8,
                 plants: [Name("short_grass", 1.0), Name("lavender", 8.0), Name("sage", 1.0), Name("thyme", 1.0)],
             ),
             variants: [],

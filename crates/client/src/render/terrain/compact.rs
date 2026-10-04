@@ -1,9 +1,10 @@
-//! Gathers each view's visible chunk meshes into one index buffer on the GPU, so terrain
-//! takes a draw per page and stream instead of one per chunk. Culling on the CPU decides
-//! what is visible and where in the view's buffer each chunk's indices go; a compute pass
-//! copies them. The copy costs the GPU a small fraction of a millisecond and saves the
-//! CPU a draw call (and the driver's work behind it) for each of the thousands of chunks
-//! in view.
+//! Builds each view's index buffer on the GPU from the quads of the chunks it sees, so
+//! terrain takes a draw per page and stream instead of one per chunk, and pages need
+//! store no indices. Culling on the CPU decides what is visible and where in the view's
+//! buffer each chunk's indices go; a compute pass writes them, splitting each quad along
+//! its darker diagonal, as the mesher does, from the ambient occlusion of its corners.
+//! That costs the GPU a small fraction of a millisecond and saves the CPU a draw call
+//! (and the driver's work behind it) for each of the thousands of chunks in view.
 
 use std::num::NonZeroU64;
 use std::ops::Range;
@@ -23,18 +24,20 @@ use super::{TerrainDraws, TerrainGpu};
 pub(super) const COMPACT_SHADER: &str = "embedded://voxmar/render/terrain/compact.wgsl";
 /// The most workgroups (one per copy) a dispatch may have.
 const MAX_GROUPS: u32 = 65_535;
-/// The most indices one copy moves. One workgroup does each copy, so long runs are split
-/// to spread over the GPU's cores; this is eight passes of compact.wgsl's 256 threads.
-const COPY_LIMIT: u32 = 2048;
+/// The most quads one copy covers. One workgroup does each copy, so long runs are split
+/// to spread over the GPU's cores; this is four passes of compact.wgsl's 64 threads.
+const COPY_LIMIT: u32 = 256;
 
-/// One range of indices to copy, as compact.wgsl reads it.
+/// A run of quads whose indices to write, as compact.wgsl reads it.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 struct Copy {
-    source: u32,
+    /// The run's first vertex in its page, four to a quad.
+    first_vertex: u32,
     destination: u32,
-    count: u32,
-    padding: u32,
+    quads: u32,
+    /// 6, or 12 for quads drawn from both sides.
+    indices_per_quad: u32,
 }
 
 /// Copies that read from one page, one dispatch.
@@ -74,16 +77,23 @@ impl Compaction {
         self.ready = false;
     }
 
-    /// Gathers ranges of one page's indices, in order, and says where they ended up.
-    pub fn gather(&mut self, stream: usize, page: u32, ranges: impl IntoIterator<Item = Range<u32>>) -> Range<u32> {
+    /// Gathers the quads of ranges of one page's vertices, in order, and says where their
+    /// indices ended up.
+    pub fn gather(
+        &mut self,
+        stream: usize,
+        page: u32,
+        ranges: impl IntoIterator<Item = Range<u32>>,
+        indices_per_quad: u32,
+    ) -> Range<u32> {
         let start = self.len;
         let first = self.copies.len() as u32;
         for range in ranges {
-            let end = range.end;
-            for source in range.step_by(COPY_LIMIT as usize) {
-                let count = (end - source).min(COPY_LIMIT);
-                self.copies.push(Copy { source, destination: self.len, count, padding: 0 });
-                self.len += count;
+            let (first_quad, end) = (range.start / 4, range.end / 4);
+            for quad in (first_quad..end).step_by(COPY_LIMIT as usize) {
+                let quads = (end - quad).min(COPY_LIMIT);
+                self.copies.push(Copy { first_vertex: quad * 4, destination: self.len, quads, indices_per_quad });
+                self.len += quads * indices_per_quad;
             }
         }
         let copies = first..self.copies.len() as u32;
@@ -202,7 +212,7 @@ pub(super) fn dispatch(
                         &BindGroupEntries::sequential((
                             BufferBinding { buffer: &buffers.params, offset: 0, size: NonZeroU64::new(16) },
                             buffers.copies.as_entire_binding(),
-                            source.index_buffer.as_entire_binding(),
+                            source.vertex_buffer.as_entire_binding(),
                             buffers.indices.as_entire_binding(),
                         )),
                     )

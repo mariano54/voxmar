@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use super::DisplayTransform;
+use crate::weather::atmosphere::ClientAtmosphere;
 
 /// One look. Every field has a neutral default, so a pack lists only what it changes.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -21,10 +22,21 @@ pub struct ShaderPack {
     pub ambient: f32,
     /// Tints the ambient light, usually towards blue so shade reads cool against warm sun.
     pub shade_tint: Vec3,
+    /// Multiplies the sunlight the ground bounces onto walls and undersides (0 turns it
+    /// off), which keeps shaded sides from going black beside sunlit ground.
+    pub bounce: f32,
     /// Multiplies how quickly distant terrain fades into haze.
     pub haze: f32,
     /// Tints the horizon and haze.
     pub haze_tint: Vec3,
+    /// How thick ground fog (valley fog, dawn mist, sea fog) and the weather's fog (mist,
+    /// whiteout, rain, dust) are, relative to the weather's own.
+    pub mist: f32,
+    pub fog: f32,
+    /// How much the air of the place shows (`weather::atmosphere::ClientAtmosphere`: a
+    /// biome's or climate's dusty, damp or cold haze, its sky tint and grading nudges), as
+    /// a nudge on top of the pack's own look; 0 ignores it.
+    pub local_air: f32,
     pub exposure: f32,
     /// Spreads tones around mid grey (1 leaves them).
     pub contrast: f32,
@@ -38,6 +50,34 @@ pub struct ShaderPack {
     pub particles: f32,
     /// How strongly cracks show over a block being mined, 0..1.
     pub cracks: f32,
+    pub water: WaterLook,
+}
+
+/// How water looks (see `render::water`). Each strength scales the renderer's own, so 1
+/// leaves it and 0 switches that part off.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct WaterLook {
+    /// How quickly light fades through water: higher is murkier, lower clearer.
+    pub absorption: f32,
+    /// How much light the water itself scatters back: the brightness of deep water.
+    pub scattering: f32,
+    /// Reflections of the terrain and sky.
+    pub reflections: f32,
+    pub waves: f32,
+    /// How far waves bend the view of the bed.
+    pub refraction: f32,
+    /// Foam along shores.
+    pub foam: f32,
+    /// One wave normal per texel of the block textures, so water glitters in little
+    /// squares up close, as in Complementary's Reimagined style.
+    pub pixelated: bool,
+}
+
+impl Default for WaterLook {
+    fn default() -> Self {
+        Self { absorption: 1.0, scattering: 1.0, reflections: 1.0, waves: 1.0, refraction: 1.0, foam: 1.0, pixelated: false }
+    }
 }
 
 impl Default for ShaderPack {
@@ -47,8 +87,12 @@ impl Default for ShaderPack {
             sun: 1.0,
             ambient: 1.0,
             shade_tint: Vec3::ONE,
+            bounce: 1.0,
             haze: 1.0,
             haze_tint: Vec3::ONE,
+            mist: 1.0,
+            fog: 1.0,
+            local_air: 0.5,
             exposure: 1.0,
             contrast: 1.0,
             saturation: 1.0,
@@ -57,6 +101,7 @@ impl Default for ShaderPack {
             bloom: 0.1,
             particles: 1.0,
             cracks: 1.0,
+            water: WaterLook::default(),
         }
     }
 }
@@ -103,13 +148,20 @@ impl ShaderPacks {
 #[derive(Resource, Clone, Default, Deref)]
 pub struct ActivePack(pub ShaderPack);
 
-/// Applies the active pack's grading and bloom to the camera when it changes.
-pub fn apply_pack(pack: Res<ActivePack>, mut camera: Query<(&mut DisplayTransform, &mut Bloom), With<Camera3d>>) {
-    if !pack.is_changed() {
-        return;
-    }
+/// Applies the active pack's grading and bloom to the camera, with the place's grading
+/// nudges (warmth and saturation of the local air) as far as the pack lets them show.
+pub fn apply_pack(pack: Res<ActivePack>, air: Res<ClientAtmosphere>, mut camera: Query<(&mut DisplayTransform, &mut Bloom), With<Camera3d>>) {
+    let share = pack.local_air.clamp(0.0, 1.0);
+    let mut grading = DisplayTransform::from(&pack.0);
+    grading.warmth += air.warmth * LOCAL_WARMTH * share;
+    grading.saturation *= 1.0 + (air.saturation - 1.0) * share;
     for (mut display, mut bloom) in &mut camera {
-        *display = DisplayTransform::from(&pack.0);
-        bloom.intensity = pack.bloom;
+        display.set_if_neq(grading);
+        if bloom.intensity != pack.bloom {
+            bloom.intensity = pack.bloom;
+        }
     }
 }
+
+/// How far the local air's warmth (−1..1) shifts the grading's.
+const LOCAL_WARMTH: f32 = 0.08;

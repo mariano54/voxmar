@@ -45,9 +45,12 @@ driver turned into milliseconds of CPU time. Instead:
   finds its chunk's origin through the table, so any set of chunks in a page can be drawn
   with one draw call.
 - Culling writes, per view, where each surviving chunk's indices go in that view's own
-  index buffer, and a compute pass (`terrain/compact.wgsl`) copies them there, in pieces
-  of at most 2,048 indices so the copy spreads over the GPU. Translucent chunks are
-  gathered back to front.
+  index buffer, and a compute pass (`terrain/compact.wgsl`) writes them there, a thread
+  per quad. Pages keep no indices at all: a quad's four vertices are consecutive, and
+  the pass splits it along its darker diagonal from the ambient occlusion of its corners,
+  exactly as the mesher does, which saves 24 of every 56 bytes of chunk geometry.
+  Translucent chunks are gathered back to front. When neither a view's chunks nor their
+  meshes changed since the last frame, the pass is skipped.
 - Each view then draws once per page and stream: about 100 draws for the camera and 5–10
   per shadow cascade at view distance 32.
 
@@ -96,6 +99,34 @@ nearest-texel when minified, and sub-pixel grass. Now:
 Measured as pixels that change by more than 60 levels when the camera moves 4 cm: 0.33%
 before, 0.12% now.
 
+A far waterline under MSAA showed a row of black dashes with bright blue glints that
+crawled as the camera moved. With MSAA the fragment shader runs once per pixel, at the
+pixel's centre even where a triangle covers only a corner of it, so its inputs are
+extrapolated past the triangle. Far water and terrain are slivers seen edge on, and
+values extrapolated that far run wild: sky light past full (which `light_curve` turns
+into infinity), negative colours and water depths, a position off the surface that lights
+a glint. The resolve turned them into black pixels and bloom into blue blobs, all along
+the edge of the real water where it meets the distant sheet. The lighting inputs of
+terrain, water and distant terrain are now interpolated at the centroid of the covered
+samples (`@interpolate(perspective, centroid)`), which always lies inside the triangle.
+Texture coordinates stay at the pixel centre, where the derivatives that pick the mip
+level are exact. With the clock stopped and a 4 cm step at
+render distance 32, looking over the sea at a far shore (seed 3), 0.17% of pixels
+flickered before and 0.025% after, and none of those left are on the waterline; a high
+view over land stayed at 0.045%.
+
+## Dark teeth on terraced ground
+
+Beaches and grass ledges are staircases of one-block steps with jagged edges. Where an
+edge jogs, a one-block riser faces along the step; seen from above, the tread in front
+hides its lower half, so it shows as a triangle standing out of the ground (the mesher
+was checked: every face is where it should be). Facing away from the sun, it was lit by
+the sky alone, with Verdant's deep shade several times darker than the sunlit sand
+beside it, so these triangles looked like dark teeth. Walls and undersides now also get
+the sunlight the open ground around bounces onto them (`GROUND_ALBEDO`, 0.3, half of it
+for a wall), which lifts shaded sides next to sunlit ground as real ones are lifted; the
+shader pack's `bounce` scales it.
+
 ## Next steps, in order of payoff
 
 1. **Quad pulling.** Store each quad once (8 bytes) and expand it to vertices in the
@@ -136,7 +167,11 @@ What voxmar takes from it, and where it differs (`render/lod.rs`, `render/lod.wg
 
 - Distant terrain uses the real terrain's lighting inputs: the shared `shade_normal`, the
   same face shade table, sky light that fades under water two levels per block. Colours
-  are texture averages times climate tint, as before.
+  are texture averages times the biome's grass, foliage and water colours, which the
+  generator's surface samples carry (`SurfaceSample::colors`), so they match real terrain
+  once its chunks take the same colours. The generator is the one the world was made with,
+  content packages included (`render::lod::WorldGenerator`, shared with anything else on
+  the client that samples the world far away).
 - Tiles stay smooth heightfields rather than boxes: a quarter of the triangles of
   4-block columns, no cracks, and 4-block columns would be a coarser staircase than the
   real one beside them anyway. Instead the shader renders what the one-block staircase
@@ -145,7 +180,15 @@ What voxmar takes from it, and where it differs (`render/lod.rs`, `render/lod.wg
   sides, hiding the ground at low angles). Near the real chunks the risers resolve into
   the same contour lines real terrain shows; further out they average out. This is
   analytic, so it does not shimmer, and it costs no geometry.
-- Water and ice are a sheet over the true sea floor, shaded like real water: same
+- Up to where a tree spans about two pixels, forests resolve into single crowns: blobs of
+  smooth noise five blocks across, as many as the canopy's cover, domed so they are lit
+  on the sun's side, over ground darkened by their shade. Open ground gets patches a few
+  blocks across, a little lighter and darker, as real ground is with its mix of blocks.
+  Both fade by the pixel's area (so a crown shows where it spans several pixels across
+  even if only one deep) and soften their edges by the pixel's longer side, so they blur
+  rather than shimmer: flicker over distant forest and hills stayed at 0.27% and 0.20%.
+- Water and ice are a sheet over the true floor at the level of their own water (the sea,
+  or a lake's or river's), shaded like real water: same
   ripples near the real chunks fading into their average (a broader glint, fresnel facing
   the eye by the ripples' slope variance), sky reflection, the floor dimmed by depth.
 - No fade pass is needed: tiles come from the same generator functions as the chunks,
@@ -328,6 +371,92 @@ puts its fronts at `mean * seconds`, so when the mean changes by δ they jump by
 `δ * seconds` (with `seconds` in the hundreds of thousands, a whole meadow would lurch
 as the wind veered).
 
+## Water
+
+Water used to be an alpha-blended sheet: the block texture in the biome's colour, made more
+opaque by a count of water blocks below each vertex (up to seven), with a fresnel blend
+towards the fog colour. It read as flat, nearly opaque light blue, every block of depth
+along a shore showed as a band, and it reflected nothing. Complementary Reimagined's water,
+which Mariano wanted, gets its look from things only the finished scene can give: what lies
+behind the surface, and what lies around it.
+
+**Its own pass** (`render/water.rs`). Water and ice (`TerrainPass::Translucent`) are drawn
+after the opaque terrain and before Bevy's transparent pass, with the scene so far bound at
+group 4 (`water_surface.wgsl`; group 3 is the chunks of a page). Nothing is copied that
+need not be:
+
+- Depth is sampled through a read-only depth attachment, so the pass reads the depth buffer
+  it tests against (water writes no depth).
+- Colour is read from the main image as the opaque pass left it, while the pass writes the
+  other main image of Bevy's post-processing ping-pong, which then becomes the main one.
+  With MSAA the pass draws into the multisampled image and resolves into it, so no extra
+  pass or copy is needed; without MSAA it first copies the scene into it.
+
+The water shader then composes the surface over the scene itself (alpha 1):
+
+- **Light through water** (`water.wgsl`). Absorption is what turns white light into the
+  biome's water colour over six blocks (`-ln(colour) / 6`, plus a little for clear water),
+  and a little light is scattered back, a muted version of the colour. The path is the real
+  distance from the surface to the scene behind it along the view, plus the depth of water
+  above that point for the light that lit it. Shallows are nearly clear, a few blocks take the
+  colour, deep water is its own dark colour, and the colour changes smoothly with depth along
+  the eye's ray instead of in whole-block bands. The scene behind already carries the haze
+  between it and the eye; the haze in front of the surface is taken back out, the water
+  applied, and the haze put back, so far water is not fogged twice.
+- **Refraction.** The view is bent by the waves' departure from the face normal and looks up
+  the scene where the bent ray ends (no further than six blocks past the surface); where that
+  lands on something nearer than the surface, the straight view is kept.
+- **Reflections.** A march through the depth buffer in screen space, where a straight 3D
+  line stays straight (uv and reverse-Z depth are both affine in 1/z), in steps that
+  lengthen by 15% each so nearby banks are resolved finely, then halved back to the surface
+  it passed behind. Rays that would dip into the water are bent to skim it, and hits below
+  the surface are thrown away. Where the march leaves the screen the reflection is the sky's
+  gradient (the sky dome's zenith and horizon colours), dark where no sky light reaches. The
+  march is skipped where the fresnel term is under 3%: seen from above, water reflects
+  almost nothing. The march reads a half-resolution depth (the nearest of each 2×2
+  pixels, single-sampled, made by a small pass before the water: `water_depth.wgsl`),
+  which took the water pass at High from about 1.7–1.9 to 1.25–1.3 ms on a lake filling
+  most of a 1080p MSAA frame; the hit is then refined and confirmed at full resolution.
+- **Waves**: octaves of afl_ext's `exp(sin x)` waves, each dragging the next along its slope
+  (see THIRD_PARTY_NOTICES.md). Their directions, frequencies and phases are worked out on
+  the CPU each frame in double precision around the camera, so the shader only adds small
+  offsets and the waves stay smooth however far from the origin. The weather's wind turns
+  the long waves to run with it and raises them, from a calm ripple to choppy water in a
+  breeze. The slope is summed analytically in one pass (not from three height samples), and
+  octaves fade out as they shrink below about three pixels, which both stops distant water
+  sparkling and ends the loop early. Small drifting ripples go over the waves, and in caves,
+  where little sky light reaches, the water is calmer. A shader pack can make water
+  **pixelated**, one normal per texel of the block textures, the glittering squares of
+  Complementary's Reimagined style (Verdant does).
+- **Glints and foam.** A sharp sun highlight with a broader sheen, shadowed by the sun's
+  shadow maps; foam in drifting patches where the bed comes within a third of a block of the
+  surface, which lines every shore with a broken edge.
+- **Under water**, looking up, the surface shows the world above inside Snell's window and
+  mirrors the deep water outside it.
+- **Flowing water** (see "Fluid state" below for what the mesher reads). The surface slopes
+  down from its source, the top edge of the sides with it, and the normal tilts with the
+  slope. The waves are carried along the flow in two layers half a cycle (1.6 s) apart,
+  each fading out as it starts again, so the pattern moves with the water without ever
+  stretching; each layer sums at most ten octaves, and the water gets choppier the faster
+  it runs. From 1.6 blocks a second it froths, as do pools where water falls in (the mesher
+  gives their surface a churning flow away from the fall). Falling water, and water pouring
+  over an edge, is streaked white and runs down its sides.
+
+Distant water (`lod.wgsl`) uses the same optics and the same biome water colour (the
+generator's, carried by the sheet's vertices): the floor seen through a depth derived from
+the sky light at the floor, the water's own colour where deep, and the sky's gradient as the
+reflected sky (its zenith and horizon colours come with `DistantView`), so the two meet in
+nearly the same colour where real chunks give way to tiles: within about 10 levels of 255
+at view distance 8, seen from 30 blocks up, where they had differed by over 20.
+
+The water's colour is the biome's (`Column::colors`, looked up per block like grass), so
+absorption and the colour of deep water follow it.
+
+The Water setting picks how much work this is: Low (the old ripples, sky reflections only),
+Medium (8 wave octaves, a 12-step march) and High (12 octaves, 20 steps, the default). Shader
+packs scale absorption, scattering, reflections, waves, refraction and foam, and choose
+pixelated water (`ShaderPack::water`).
+
 ## The air (ClientAtmosphere)
 
 `weather::atmosphere::ClientAtmosphere`, next to `ClientWeather`, is the air around the
@@ -354,6 +483,24 @@ grading). Particle sets showing only by day, at night or at twilight, in dry or 
 weather, are already filtered; hovering ones settle out of a strong wind; night-time ones
 (fireflies) come out on six nights in ten. The precipitation particles draw the four
 densest sets. docs/weather-effects.md has the rest of the weather's handover.
+
+## The air
+
+Mariano's playtest (2026-10-04): shadows flickered, the look still did not read like
+Complementary Reimagined, and there was no atmospheric light, mist or fog. What changed,
+and why:
+
+The air (atmosphere.wgsl, render/atmosphere.rs) is clear-air haze densest at sea level
+and thinning with height, a layer of ground fog under the weather's `fog_top` (valley fog,
+dawn mist, sea fog), and the weather's fog, dust and falling rain and snow, each
+integrated analytically along the view ray (the ground fog's density profile is a
+logistic step whose integral is a softplus), so fog costs a few exponentials per pixel and
+never bands. Weather fog is an extinction set from `Weather::visibility` (2% shows at that
+distance, so a blizzard closes the view to ~60 blocks); fog is lit by the sky and sun and
+takes the colour of blowing dust; the haze takes the place's colour and density from
+`ClientAtmosphere` as far as the pack's `local_air` lets it. The sky is fogged by the same
+functions as the far edge of the land, so they always meet. Everything shares one uniform
+(`Atmosphere`), bound with the terrain and the sky.
 
 ## Fluid state
 
@@ -388,6 +535,14 @@ whole water blocks. A mesher reads it like this:
   calls the same function, so what scrolls is what pushes a swimmer.
 - **Falling.** `falling` cells are full columns of water pouring down; scroll their sides
   downwards.
+
+The mesher (`engine/src/mesh.rs`) does all of this for see-through fluids. Faces between
+cells of one fluid are hidden; water faces carry, where ambient occlusion would be, how far
+the surface lies below the block's top at each corner (eighths, from `corner_heights`, on
+the top face and the top edge of the sides), the flow (a direction in 16ths and one of the
+speeds 0, 0.7, 1.4 and 2.8; the mean over the cells around each top corner, so it changes
+smoothly), and whether the cell falls. Lava is opaque and keeps whole blocks: lowering its
+top would open holes where neighbours' faces were culled against it.
 
 Fluid changes reach the client as `ServerMessage::Blocks` (one message per tick with every
 change in columns the player has) and go through `ClientWorld::set_block` like any edit.

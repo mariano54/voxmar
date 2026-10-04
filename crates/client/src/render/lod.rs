@@ -9,9 +9,11 @@
 //! chunks wherever they have actually been meshed, so loading never leaves a hole. Tiles
 //! are drawn by the terrain renderer (`terrain.rs`), not as entities.
 //!
-//! The heightfield is the true ground, sea floor included, with tree crowns raised over
-//! forests. Water and ice are a separate sheet at sea level over it, so the floor shows
-//! through real translucent water at the edge of the real chunks. Vertices carry the
+//! The heightfield is the true ground, sea and lake floors and river beds included, with
+//! tree crowns raised over forests. Water and ice are a separate sheet over it at the level
+//! of their water (the sea, or a lake's or river's own), so the floor shows through real
+//! translucent water at the edge of the real chunks. Colours are the biome's (grass,
+//! foliage and water) from the generator's surface samples. Vertices carry the
 //! albedo of the ground's top and side faces and of tree crowns, and how much of the
 //! ground is under crowns or small plants; the shader shades the heightfield as the
 //! staircase of blocks it stands for (see `lod.wgsl`), with the same lighting as real
@@ -25,7 +27,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::FxHashSet;
 use voxmar_engine::block::{BlockId, BlockRegistry, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, Face};
-use voxmar_worldgen::{Overworld, SEA_LEVEL};
+use voxmar_worldgen::{BiomeColors, Overworld, WorldContent};
 
 use super::terrain::Terrain;
 use crate::textures::Rgba;
@@ -63,12 +65,10 @@ pub struct LodPalette {
     /// Average opacity of top faces, for seeing through ice.
     opacity: Vec<f32>,
     tints: Vec<(Tint, Tint)>,
-    grass: Rgba,
-    foliage: Rgba,
 }
 
 impl LodPalette {
-    pub fn new(registry: &BlockRegistry, textures: &[Rgba], colormaps: &[Rgba; 2]) -> Self {
+    pub fn new(registry: &BlockRegistry, textures: &[Rgba]) -> Self {
         let average = |layer: u16| {
             let texture = &textures[layer as usize];
             // Average in sRGB space, as the texture mipmaps do, so distant terrain has the
@@ -93,27 +93,25 @@ impl LodPalette {
             side.push(average(info.layers[Face::PosX as usize]).0);
             tints.push((info.tints[Face::PosY as usize], info.tints[Face::PosX as usize]));
         }
-        Self { top, side, opacity, tints, grass: colormaps[0].clone(), foliage: colormaps[1].clone() }
+        Self { top, side, opacity, tints }
     }
 
-    fn color(&self, block: BlockId, top: bool, climate: [u8; 2]) -> [f32; 3] {
+    /// The colour of a block's top or side faces where the biome colours are `colors`.
+    fn color(&self, block: BlockId, top: bool, colors: &BiomeColors) -> [f32; 3] {
         let i = block.0 as usize;
         let (base, tint) = if top { (self.top[i], self.tints[i].0) } else { (self.side[i], self.tints[i].1) };
         let tint = match tint {
-            Tint::None => [1.0; 3],
-            Tint::Grass => colormap(&self.grass, climate),
-            Tint::Foliage => colormap(&self.foliage, climate),
-            Tint::Water => {
-                let t = climate[0] as f32 / 255.0;
-                [0.16 + (0.14 - 0.16) * t, 0.30 + (0.50 - 0.30) * t, 0.78 + (0.66 - 0.78) * t]
-            }
+            Tint::None => return base,
+            Tint::Grass => colors.grass,
+            Tint::Foliage => colors.foliage,
+            Tint::Water => colors.water,
         };
-        [base[0] * tint[0], base[1] * tint[1], base[2] * tint[2]]
+        std::array::from_fn(|c| base[c] * srgb_to_linear(tint[c]))
     }
 
     /// Top and side colours of a block.
-    fn faces(&self, block: BlockId, climate: [u8; 2]) -> ([f32; 3], [f32; 3]) {
-        (self.color(block, true, climate), self.color(block, false, climate))
+    fn faces(&self, block: BlockId, colors: &BiomeColors) -> ([f32; 3], [f32; 3]) {
+        (self.color(block, true, colors), self.color(block, false, colors))
     }
 
     /// Water gets ripples and reflections; other see-through blocks only their opacity.
@@ -136,16 +134,6 @@ fn linear_to_srgb_byte(c: f32) -> u32 {
     let c = c.clamp(0.0, 1.0);
     let s = if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
     (s * 255.0).round() as u32
-}
-
-/// Minecraft-style colormap lookup by temperature and humidity.
-fn colormap(map: &Rgba, [temperature, humidity]: [u8; 2]) -> [f32; 3] {
-    let t = temperature as f32 / 255.0;
-    let h = humidity as f32 / 255.0 * t;
-    let x = ((1.0 - t) * (map.width - 1) as f32) as u32;
-    let y = ((1.0 - h) * (map.height - 1) as f32) as u32;
-    let i = ((y * map.width + x) * 4) as usize;
-    [srgb_to_linear(map.pixels[i]), srgb_to_linear(map.pixels[i + 1]), srgb_to_linear(map.pixels[i + 2])]
 }
 
 /// A tile of one ring.
@@ -181,9 +169,43 @@ pub struct TileMesh {
     pub indices: Vec<u32>,
 }
 
-/// Distant terrain state. Inactive until the server tells us the world seed.
+/// The generator of the world on screen (the one being played, or the menus' backdrop),
+/// made with the loaded content packages so that modded biomes, trees and plants show far
+/// away as they do nearby. Distant terrain follows it, and anything else on the client
+/// that samples the world beyond the real chunks (ambience) shares it rather than
+/// building its own. None between worlds.
+#[derive(Resource)]
+pub struct WorldGenerator {
+    content: Arc<WorldContent>,
+    current: Option<Arc<Overworld>>,
+}
+
+impl WorldGenerator {
+    pub fn new(content: Arc<WorldContent>) -> Self {
+        Self { content, current: None }
+    }
+
+    /// Makes the generator of the world with this seed the current one, and returns it.
+    pub fn start(&mut self, seed: u64, registry: Arc<BlockRegistry>) -> Arc<Overworld> {
+        let generator = Arc::new(Overworld::with_content(seed, registry, &self.content));
+        self.current = Some(generator.clone());
+        generator
+    }
+
+    /// Leaves the world: distant terrain is removed until the next `start`.
+    pub fn clear(&mut self) {
+        self.current = None;
+    }
+
+    pub fn get(&self) -> Option<&Arc<Overworld>> {
+        self.current.as_ref()
+    }
+}
+
+/// Distant terrain state. Follows [`WorldGenerator`]: empty until there is a world.
 #[derive(Resource)]
 pub struct Lod {
+    /// The generator the tiles come from.
     generator: Option<Arc<Overworld>>,
     palette: Arc<LodPalette>,
     terrain: Terrain,
@@ -213,19 +235,13 @@ impl Lod {
         }
     }
 
-    /// Starts generating distant terrain for the world with this seed.
-    pub fn start(&mut self, seed: u64, registry: Arc<BlockRegistry>) {
-        self.generator = Some(Arc::new(Overworld::new(seed, registry)));
-        self.last_camera = None;
-    }
-
-    /// Removes all distant terrain and stops making it until `start` is called again.
-    /// Tiles still being built are discarded.
-    pub fn clear(&mut self) {
+    /// Removes all distant terrain and makes it anew from `generator`, if any, around a
+    /// world with no real chunks yet. Tiles still being built are discarded.
+    fn follow(&mut self, generator: Option<Arc<Overworld>>) {
         for key in self.tiles.drain() {
             self.terrain.remove_tile(key);
         }
-        self.generator = None;
+        self.generator = generator;
         self.pending.clear();
         self.wanted.clear();
         (self.results_tx, self.results_rx) = unbounded();
@@ -286,7 +302,10 @@ impl Lod {
     }
 }
 
-fn request_tiles(mut lod: ResMut<Lod>, camera: Query<&GlobalTransform, With<Camera3d>>) {
+fn request_tiles(mut lod: ResMut<Lod>, world: Res<WorldGenerator>, camera: Query<&GlobalTransform, With<Camera3d>>) {
+    if !Option::eq(&lod.generator.as_ref().map(Arc::as_ptr), &world.get().map(Arc::as_ptr)) {
+        lod.follow(world.get().cloned());
+    }
     let Some(generator) = lod.generator.clone() else { return };
     let Ok(camera) = camera.single() else { return };
     let position = camera.translation().xz().floor().as_ivec2();
@@ -348,9 +367,12 @@ struct Corner {
     canopy: f32,
     /// Fraction of the ground with a small plant on it.
     plants: f32,
-    /// Water or ice at sea level above the terrain.
+    /// Water or ice above the terrain: the sea, a lake or a river.
     sheet: Option<BlockId>,
-    climate: [u8; 2],
+    /// Height of the sheet's surface where there is one: the top of its water.
+    level: f32,
+    /// Grass, foliage and water colours, which tint the sheet over the terrain.
+    colors: BiomeColors,
 }
 
 /// Seen from afar, leaves are darker than their texture: the gaps show the shaded inside of
@@ -363,9 +385,9 @@ const CANOPY_HEIGHT: f32 = 6.0;
 const GRASS_PLANTS: f32 = 0.4;
 /// Depth of the walls hanging from tile edges, hiding cracks between rings.
 const SKIRT: f32 = 24.0;
-/// Water and ice sheets lie a hair below the top of real water, so dry ground at sea level
-/// stays above them.
-const SHEET_HEIGHT: f32 = (SEA_LEVEL + 1) as f32 - 1.0 / 32.0;
+/// Water and ice sheets lie a hair below the top of real water, so dry ground at the
+/// water's level stays above them.
+const SHEET_SINK: f32 = 1.0 / 32.0;
 /// Vertex kinds, see `lod.wgsl`.
 const TERRAIN: u32 = 0;
 const WATER: u32 = 1;
@@ -399,19 +421,20 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
                 0
             };
             let surface = sampler.surface(wx, wz, h, slope);
-            let (top, side) = palette.faces(surface.ground, surface.climate);
+            let (top, side) = palette.faces(surface.ground, &surface.colors);
             let (leaves, cover) = surface.canopy.unwrap_or((surface.ground, 0.0));
             corners.push(Corner {
                 height: h as f32 + 1.0 + CANOPY_HEIGHT * cover,
                 top,
                 side,
-                leaves: palette.color(leaves, true, surface.climate).map(|c| c * CROWN_SHADE),
+                leaves: palette.color(leaves, true, &surface.colors).map(|c| c * CROWN_SHADE),
                 // Sky light fades by two levels per block of water or ice.
-                sky: (15 - 2 * (SEA_LEVEL - h).max(0)).max(0) as u8,
+                sky: if surface.water.is_some() { (15 - 2 * (surface.water_level - h).max(0)).max(0) as u8 } else { 15 },
                 canopy: cover,
                 plants: if palette.is_grassy(surface.ground) { GRASS_PLANTS * (1.0 - cover) } else { 0.0 },
                 sheet: surface.water,
-                climate: surface.climate,
+                level: (surface.water_level + 1) as f32 - SHEET_SINK,
+                colors: surface.colors,
             });
         }
     }
@@ -479,24 +502,36 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
         }
     }
 
-    // The sheet covers every cell with water or ice at a corner; dry ground pokes through
-    // it along the shore. Its vertices carry the floor beneath as their side colour.
+    // The sheet covers every cell with water or ice at a corner, at the level of its water
+    // (the sea, or a lake's or river's own); dry ground pokes through it along the shore.
+    // Its vertices carry the floor beneath as their side colour.
     let mut sheet = vec![u32::MAX; ((CELLS + 1) * (CELLS + 1)) as usize];
+    let mut sheet_top = f32::MIN;
     for z in 0..CELLS {
         for x in 0..CELLS {
             let cell_corners = [(x, z), (x + 1, z), (x + 1, z + 1), (x, z + 1)];
-            let Some(block) = cell_corners.iter().find_map(|&(x, z)| corner(x, z).sheet) else { continue };
+            let Some(wet) = cell_corners.iter().map(|&(x, z)| corner(x, z)).find(|c| c.sheet.is_some()) else { continue };
             for (x, z) in cell_corners {
                 let slot = &mut sheet[index(x, z) as usize];
                 if *slot == u32::MAX {
                     *slot = vertices.len() as u32;
                     let c = corner(x, z);
-                    let block = c.sheet.unwrap_or(block);
-                    let (kind, opacity) =
-                        if palette.is_water(block) { (WATER, 1.0) } else { (ICE, palette.opacity[block.0 as usize]) };
+                    // Dry corners take the level and kind of the water beside them.
+                    let (block, level) = match c.sheet {
+                        Some(block) => (block, c.level),
+                        None => (wet.sheet.expect("found wet"), wet.level),
+                    };
+                    sheet_top = sheet_top.max(level);
+                    // Water carries the biome's water colour itself, which real water is shaded
+                    // from; ice its own colour and opacity.
+                    let (kind, color, opacity) = if palette.is_water(block) {
+                        (WATER, c.colors.water.map(srgb_to_linear), 1.0)
+                    } else {
+                        (ICE, palette.color(block, true, &c.colors), palette.opacity[block.0 as usize])
+                    };
                     vertices.push([
-                        pack_position(x, z, SHEET_HEIGHT, c.sky, kind),
-                        pack_color(palette.color(block, true, c.climate)) | ((opacity * 255.0) as u32) << 24,
+                        pack_position(x, z, level, c.sky, kind),
+                        pack_color(color) | ((opacity * 255.0) as u32) << 24,
                         encode_normal(Vec3::Y),
                         pack_color(c.top),
                     ]);
@@ -508,7 +543,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
     }
 
     let low = corners.iter().map(|c| c.height).fold(f32::MAX, f32::min) - SKIRT;
-    let high = corners.iter().map(|c| c.height).fold(SHEET_HEIGHT, f32::max);
+    let high = corners.iter().map(|c| c.height).fold(sheet_top, f32::max);
     let heights = low..high;
     TileMesh { key, heights: heights.start.floor() as i32..heights.end.ceil() as i32 + 1, vertices, indices }
 }
