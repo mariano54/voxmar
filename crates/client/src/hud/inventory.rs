@@ -28,6 +28,7 @@ use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
+use crate::ui::sound::{Silent, UiSound};
 use crate::ui::widgets::{BODY, GOLD, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, spawn_heading, text};
 use crate::world::ClientWorld;
 
@@ -40,7 +41,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, click, number_keys, preview).chain().in_set(InventorySystems), (follow_pointer, tooltip).after(InventorySystems))
+                ((toggle, click, number_keys, preview).chain().in_set(InventorySystems), (follow_pointer, tooltip, tap).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -109,7 +110,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| {
                 let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
-                grid.spawn((Button, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image()))
+                grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image()))
                     .with_children(|cell| slot_contents(cell, font, slot));
             };
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
@@ -380,6 +381,17 @@ fn follow_pointer(
         if image.image != piece.handle() {
             image.image = piece.handle();
         }
+    }
+}
+
+/// A light tap whenever the pointer picks up or puts down items.
+fn tap(ui: Res<UiState>, player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut held: Local<Option<ItemStack>>) {
+    let now = player.inventory.cursor.filter(|_| ui.inventory_open);
+    if now != *held {
+        if ui.inventory_open {
+            sounds.write(UiSound::Item);
+        }
+        *held = now;
     }
 }
 

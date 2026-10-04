@@ -8,7 +8,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu) or
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
@@ -77,6 +77,7 @@ struct Options {
     mine: Option<f32>,
     time: Option<f32>,
     menu: bool,
+    inventory: bool,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
     screen: Option<Screen>,
@@ -102,6 +103,7 @@ fn parse_options() -> Result<Options, String> {
         mine: None,
         time: None,
         menu: false,
+        inventory: false,
         flicker: None,
         clip: None,
         screen: None,
@@ -130,6 +132,7 @@ fn parse_options() -> Result<Options, String> {
             "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
+            "--inventory" => options.inventory = true,
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -257,6 +260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mine: options.mine,
             time: options.time,
             menu: options.menu,
+            inventory: options.inventory,
             flicker: options.flicker,
             clip: options.clip,
         });

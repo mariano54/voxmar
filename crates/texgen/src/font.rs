@@ -622,4 +622,18 @@ compose Ó O acute
         let sum = ttf.chunks(4).fold(0u32, |s, w| s.wrapping_add(u32::from_be_bytes(w.try_into().unwrap())));
         assert_eq!(sum, 0xB1B0_AFBA);
     }
+
+    #[test]
+    fn the_game_font_covers_ascii_and_spanish() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/ui/font.txt");
+        let font = PixelFont::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for c in (' '..='~').chain("áéíóúñÁÉÍÓÚÑ¿¡°×…◆▸◂".chars()) {
+            assert!(font.glyphs.contains_key(&c), "the font has no `{c}`");
+        }
+        // Nothing reaches above the ascent or below the descent the font promises.
+        for (c, glyph) in &font.glyphs {
+            let rows = glyph.top..glyph.top + glyph.rows.len() as i32;
+            assert!(rows.start >= CAP_HEIGHT - ASCENT && rows.end <= CAP_HEIGHT + DESCENT, "`{c}` overflows");
+        }
+    }
 }

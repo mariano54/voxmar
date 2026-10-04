@@ -18,6 +18,7 @@ use voxmar_protocol::MAX_FLY_SPEED;
 use crate::keys::Key;
 use crate::menu::Screen;
 use crate::ui::skin::{PX, Piece};
+use crate::ui::sound::Silent;
 use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, LARGE, MUTED, Pressed, SCRIM, SOFT, Selected, TEXT, UiFont, button_row, panel, screen,
     shadowed, spawn_button, spawn_rule, text,
@@ -766,7 +767,7 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
 /// A label on the left and its control on the right.
 fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Control) {
     let node = Node { height: Val::Px(ROW), justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() };
-    let mut row = panel.spawn((Button, SettingRow(control), node));
+    let mut row = panel.spawn((Button, Silent, SettingRow(control), node));
     if control == Control::Slider(Slider::FlySpeed) {
         row.insert(ShownWhen::Admin);
     }

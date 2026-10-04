@@ -22,7 +22,7 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --inventory | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
 time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
@@ -40,9 +40,20 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
-(hold), right mouse place, 1-9 or wheel select hotbar slot, E inventory (click a slot, then
-another to move it), T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
+(hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
+inventory, T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
+
+The inventory works as Minecraft's: click picks up, puts down, merges or swaps a stack;
+right click (or Control-click) takes half or puts down one; dragging a held stack spreads it
+evenly over the slots crossed (right button: one each); a double click gathers the item onto
+the pointer; Shift-click moves a stack between the hotbar and the pack (Shift double click:
+every stack of it); 1-9 over a slot swaps it with that hotbar slot. Hovering an item names it,
+coloured by rarity, with what it is good for. Esc or E closes it and puts back what you hold.
+
+The interface (menus, HUD, inventory) has one look: a pixel font drawn in
+`assets/ui/font.txt` and pixel-art pieces that are `ui/*` textures of the default pack
+(`recipes/ui.ron`), so a texture pack can reskin it. Menus blur the world behind them.
 
 ### Console and commands
 
@@ -82,7 +93,9 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
+Esc opens the settings menu, in tabs (Video, Graphics, Audio, Controls, Interface) with a
+line explaining the setting under the pointer; a choice steps forward on click and back on
+right click, and the wheel moves a slider. The settings: render distance, far detail (Balanced, Fast or Full: how soon
 distant chunks merge two or four columns into one, which draws far terrain much faster), field
 of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
