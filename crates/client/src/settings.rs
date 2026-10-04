@@ -82,6 +82,8 @@ pub struct Settings {
     pub cinematic_zoom: bool,
     /// Whether zooming works in survival too, not only in creative.
     pub zoom_in_survival: bool,
+    /// How far the hotbar and hearts sit above the bottom edge, in HUD pixels.
+    pub hud_raise: i32,
 }
 
 /// How edges are smoothed.
@@ -127,6 +129,7 @@ impl Default for Settings {
             zoom: 400,
             cinematic_zoom: true,
             zoom_in_survival: false,
+            hud_raise: 3,
         }
     }
 }
@@ -200,11 +203,20 @@ enum Slider {
     Sounds,
     FlySpeed,
     Zoom,
+    HudRaise,
 }
 
 impl Slider {
-    const ALL: [Slider; 7] =
-        [Slider::ViewDistance, Slider::Fov, Slider::Sensitivity, Slider::Music, Slider::Sounds, Slider::FlySpeed, Slider::Zoom];
+    const ALL: [Slider; 8] = [
+        Slider::ViewDistance,
+        Slider::Fov,
+        Slider::HudRaise,
+        Slider::Sensitivity,
+        Slider::Music,
+        Slider::Sounds,
+        Slider::FlySpeed,
+        Slider::Zoom,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -215,6 +227,7 @@ impl Slider {
             Slider::Sounds => "Sound effects",
             Slider::FlySpeed => "Fly speed",
             Slider::Zoom => "Zoom",
+            Slider::HudRaise => "Raise HUD",
         }
     }
 
@@ -227,6 +240,7 @@ impl Slider {
             Slider::Music | Slider::Sounds => (0, 100, 10),
             Slider::FlySpeed => (100, (MAX_FLY_SPEED * 100.0) as i32, 25),
             Slider::Zoom => ((Zoom::MIN * 100.0) as i32, 1000, 50),
+            Slider::HudRaise => (0, 40, 1),
         }
     }
 
@@ -239,6 +253,7 @@ impl Slider {
             Slider::Sounds => settings.sound_volume,
             Slider::FlySpeed => settings.fly_speed,
             Slider::Zoom => settings.zoom,
+            Slider::HudRaise => settings.hud_raise,
         }
     }
 
@@ -251,6 +266,7 @@ impl Slider {
             Slider::Sounds => &mut settings.sound_volume,
             Slider::FlySpeed => &mut settings.fly_speed,
             Slider::Zoom => &mut settings.zoom,
+            Slider::HudRaise => &mut settings.hud_raise,
         } = value;
     }
 
@@ -261,6 +277,8 @@ impl Slider {
             Slider::Music | Slider::Sounds if value == 0 => "Off".into(),
             Slider::Sensitivity | Slider::Music | Slider::Sounds => format!("{value}%"),
             Slider::FlySpeed | Slider::Zoom => format!("{}×", value as f32 / 100.0),
+            Slider::HudRaise if value == 0 => "Off".into(),
+            Slider::HudRaise => format!("{value} px"),
         }
     }
 }
@@ -373,6 +391,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Slider(Slider::ViewDistance),
             Control::Slider(Slider::Fov),
             Control::Choice(Choice::AntiAliasing),
+            Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::Vsync),
             Control::Switch(Toggle::DebugOverlay),
         ],
