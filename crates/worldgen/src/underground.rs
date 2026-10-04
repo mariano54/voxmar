@@ -165,9 +165,9 @@ impl Underground {
                         on: (!d.on_tags.is_empty()).then(|| {
                             (0..registry.len()).map(|i| d.on_tags.iter().any(|t| registry.def(BlockId(i as u16)).has_tag(t))).collect()
                         }),
-                        block: Mat::new(&d.block, registry),
+                        block: Mat::new(&d.block, registry, None),
                         length: d.length,
-                        tip: d.tip.as_ref().map(|(m, chance)| (Mat::new(m, registry), *chance)),
+                        tip: d.tip.as_ref().map(|(m, chance)| (Mat::new(m, registry, None), *chance)),
                     })
                     .collect()
             })

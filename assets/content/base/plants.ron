@@ -94,7 +94,8 @@
         // Grasses and reeds.
         (name: "dune_grass", block: "dune_grass", habitat: Shore, comfort: (temperature: (2.0, 40.0)), ground: [Sand]),
         (name: "bunchgrass", block: "bunchgrass", habitat: Open, comfort: (temperature: (4.0, 40.0), moisture: (0.1, 0.7)), ground: [Soil, Sand]),
-        (name: "pampas_grass", block: "pampas_grass", habitat: Open, comfort: (temperature: (14.0, 36.0), moisture: (0.3, 1.2))),
+        // Pale plumes that read as blooms from afar: in drifts, like flowers.
+        (name: "pampas_grass", block: "pampas_grass", spread: Drifts, habitat: Open, comfort: (temperature: (14.0, 36.0), moisture: (0.3, 1.2))),
         (name: "cotton_grass", block: "cotton_grass", habitat: Open, comfort: (temperature: (-10.0, 10.0), moisture: (1.25, 3.0))),
         (name: "wild_wheat", block: "wild_wheat", spread: Drifts, habitat: Open, comfort: (temperature: (4.0, 26.0), moisture: (0.25, 1.0))),
         (name: "cattail", block: "cattail", spread: Alone, habitat: Water, comfort: (temperature: (4.0, 30.0)), ground: [Soil, Sand]),

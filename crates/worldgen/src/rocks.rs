@@ -23,6 +23,9 @@ pub struct Province {
     pub name: String,
     pub tags: Vec<String>,
     pub(crate) stones: Palette,
+    /// The stones where the rock shows at the surface (outcrops, scree, boulders): the
+    /// same, keeping to the colour of the main one (see `crate::hue`).
+    pub(crate) outcrop: Palette,
 }
 
 pub struct Rocks {
@@ -49,7 +52,12 @@ impl Rocks {
         let provinces = content
             .provinces
             .iter()
-            .map(|p| Province { name: p.name.clone(), tags: p.tags.clone(), stones: Palette::new(&p.stones, registry) })
+            .map(|p| Province {
+                name: p.name.clone(),
+                tags: p.tags.clone(),
+                stones: Palette::new(&p.stones, registry),
+                outcrop: Palette::harmonious(&p.stones, registry, [128.0; 3]),
+            })
             .collect();
         Self { provinces, shares, seed: seed ^ PURPOSE }
     }
