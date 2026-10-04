@@ -76,7 +76,7 @@ struct Options {
     mine: Option<f32>,
     time: Option<f32>,
     menu: bool,
-    flicker: bool,
+    flicker: Option<capture::FlickerKind>,
     screen: Option<Screen>,
     music: bool,
 }
@@ -100,7 +100,7 @@ fn parse_options() -> Result<Options, String> {
         mine: None,
         time: None,
         menu: false,
-        flicker: false,
+        flicker: None,
         screen: None,
         music: true,
     };
@@ -127,7 +127,8 @@ fn parse_options() -> Result<Options, String> {
             "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
-            "--flicker" => options.flicker = true,
+            "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
+            "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--screen" => {
                 let name = value()?;
                 options.screen = Some(Screen::from_name(&name).ok_or_else(|| format!("--screen: no screen called {name}"))?);

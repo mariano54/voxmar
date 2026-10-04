@@ -454,40 +454,39 @@ Medium (8 wave octaves, a 12-step march) and High (12 octaves, 20 steps, the def
 packs scale absorption, scattering, reflections, waves, refraction and foam, and choose
 pixelated water (`ShaderPack::water`).
 
-## The air (ClientAtmosphere)
-
-`weather::atmosphere::ClientAtmosphere`, next to `ClientWeather`, is the air around the
-player: the land's (`Overworld::atmosphere_at`, sampled twice a second from the client's
-own generator and eased over a few seconds, so biome borders pass gradually) with the
-weather, wind and time of day applied.
-
-```rust
-pub struct ClientAtmosphere {
-    pub haze: Vec3,          // haze colour, linear RGB; towards the dust colour in dust,
-                             // towards grey-white in fog and rain
-    pub haze_density: f32,   // relative to the pack's haze, ~1; up to ~4 in fog and dust
-    pub sky: Vec3,           // tint multiplied into the sky, linear; white leaves it
-    pub warmth: f32,         // grading, -1 cooler ..= 1 warmer, ~0
-    pub saturation: f32,     // grading, ~1; less under overcast, rain and fog
-    pub particles: Vec<AmbientParticles>, // sets showing now, densest first:
-                             // name, density 0..1, color (linear), size, motion, glow
-}
-```
-
-The colour parts are for the shader pack to apply within its own look (haze colour and
-density into the haze, `sky` into the sky colours, `warmth` and `saturation` into the
-grading). Particle sets showing only by day, at night or at twilight, in dry or wet
-weather, are already filtered; hovering ones settle out of a strong wind; night-time ones
-(fireflies) come out on six nights in ten. The precipitation particles draw the four
-densest sets. docs/weather-effects.md has the rest of the weather's handover.
-
-## The air
+## Shadows and the air
 
 Mariano's playtest (2026-10-04): shadows flickered, the look still did not read like
 Complementary Reimagined, and there was no atmospheric light, mist or fog. What changed,
 and why:
 
-The air (atmosphere.wgsl, render/atmosphere.rs) is clear-air haze densest at sea level
+**Shadows stand still.** Bevy already snaps each cascade to its texels, so a static
+scene rasterises identically as the camera moves; what kept shadows moving was the sun,
+which turned a little every frame and so redrew every shadow edge, leaf hole and grazing
+face at a new sub-texel position. The light now moves in steps of a tenth of a degree of
+its arc (about a third of a second at the normal pace; `LIGHT_STEP` in render/mod.rs).
+Between steps nothing in the shadow maps changes; a step moves a shadow cast from eight
+blocks up by under a texel of the nearest cascade, which the soft filter hides, so there
+is nothing to blend. Leaves cut out of the shadow maps at the mip whose texels are half
+again as large as the cascade's (voxel.wgsl, `alpha_test`), so their holes are never finer
+than the map holds and the dappled shade under a crown does not sparkle as cascades move.
+
+**Soft shadows with a penumbra** (shadows.wgsl, our own sampling of Bevy's cascades): a
+blocker search finds how far the caster is and the filter widens with that distance
+(percentage-closer soft shadows), so a trunk's contact shadow is crisp and a canopy's
+shade on the forest floor soft-edged, as under a sun of real size. Taps are hardware 2×2
+comparisons on a fixed golden-angle spiral at most five texels wide, so a shadow depends
+only on where a point is and nothing in it changes as the camera moves (a per-pixel noise
+pattern, the usual way to hide the taps, swims with the camera and sparkles at the edges
+of bright sunflecks unless temporal anti-aliasing resolves it, which we do not have).
+Receiver plane depth bias makes each tap compare against the face's own depth there; voxel
+faces are flat with exact normals, so a wide filter never shades the face itself. Cascades
+blend over their overlap and shadows fade over the last 15% of their reach instead of
+ending in a line. The first cascade ends at 12 blocks (texels of about 2 cm), shadows reach 200
+blocks at High. Settings: Shadows Off, Low (one hard tap, two cascades to 96 blocks),
+Medium (8 taps, three to 160), High (16 taps, four to 200, the default).
+
+**The air** (atmosphere.wgsl, render/atmosphere.rs): clear-air haze densest at sea level
 and thinning with height, a layer of ground fog under the weather's `fog_top` (valley fog,
 dawn mist, sea fog), and the weather's fog, dust and falling rain and snow, each
 integrated analytically along the view ray (the ground fog's density profile is a
@@ -497,7 +496,7 @@ distance, so a blizzard closes the view to ~60 blocks); fog is lit by the sky an
 takes the colour of blowing dust; the haze takes the place's colour and density from
 `ClientAtmosphere` as far as the pack's `local_air` lets it. The sky is fogged by the same
 functions as the far edge of the land, so they always meet. Everything shares one uniform
-(`Atmosphere`), bound with the terrain and the sky.
+(`Atmosphere`), bound with the terrain and the sky, which also carries the shadow filter's settings.
 
 ## Fluid state
 

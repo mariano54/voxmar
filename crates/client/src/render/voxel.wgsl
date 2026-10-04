@@ -200,9 +200,26 @@ fn face_uv(local: vec3<f32>, face: u32) -> vec2<f32> {
     }
 }
 
-// Cut-out texel test.
+// Cut-out texel test. Shadow cascades test at the mip level whose texels are half again
+// as large as the map's own, so a leaf's holes are never finer than the map can hold and
+// the dappled shade under a crown stays put as the cascades move with the camera, instead
+// of sparkling as each move samples the leaf texture at new points. (The mips keep each
+// texture's coverage, so crowns cast as much shade far away as near.)
 fn alpha_test(uv: vec2<f32>, surface: u32, solid: u32) {
-    if solid == 0u && textureSample(block_textures, block_sampler, uv, i32(surface & 0xFFFu)).a < 0.5 {
+    if solid != 0u {
+        return;
+    }
+    let layer = i32(surface & 0xFFFu);
+    var alpha: f32;
+    if view.clip_from_view[3][3] == 1.0 {
+        // Orthographic: a shadow cascade. Blocks per shadow texel, and texels per block.
+        let texel = 2.0 / (view.clip_from_view[0][0] * view.viewport.z);
+        let size = f32(textureDimensions(block_textures).x);
+        alpha = textureSampleLevel(block_textures, block_sampler, uv, layer, max(log2(texel * size * 1.5), 0.0)).a;
+    } else {
+        alpha = textureSample(block_textures, block_sampler, uv, layer).a;
+    }
+    if alpha < 0.5 {
         discard;
     }
 }

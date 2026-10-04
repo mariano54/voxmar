@@ -8,6 +8,7 @@
     haze: 2.6,
     haze_tint: (0.9, 0.97, 1.06),
     local_air: 0.7,
+    shadow_softness: 0.025,
     exposure: 1.0,
     contrast: 1.18,
     saturation: 1.15,

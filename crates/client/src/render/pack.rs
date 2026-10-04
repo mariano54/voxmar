@@ -37,6 +37,9 @@ pub struct ShaderPack {
     /// biome's or climate's dusty, damp or cold haze, its sky tint and grading nudges), as
     /// a nudge on top of the pack's own look; 0 ignores it.
     pub local_air: f32,
+    /// Shadow penumbra width per block between a caster and the shade it casts (the sun's
+    /// apparent size); 0 keeps every shadow edge as sharp as the shadow map allows.
+    pub shadow_softness: f32,
     pub exposure: f32,
     /// Spreads tones around mid grey (1 leaves them).
     pub contrast: f32,
@@ -93,6 +96,7 @@ impl Default for ShaderPack {
             mist: 1.0,
             fog: 1.0,
             local_air: 0.5,
+            shadow_softness: 0.015,
             exposure: 1.0,
             contrast: 1.0,
             saturation: 1.0,

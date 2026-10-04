@@ -8,6 +8,10 @@
 #define_import_path voxmar::atmosphere
 
 struct Atmosphere {
+    // Shadows. x: filter taps (0: no shadows, 1: one bilinear tap), y: penumbra width per
+    // block between caster and receiver, z: normal offset in shadow texels, w: widest
+    // penumbra, in blocks.
+    shadow: vec4<f32>,
     // Clear-air haze. rgb: its colour, lit by the sky (the horizon's colour), w: how much
     // light it takes out per block at its base.
     haze: vec4<f32>,

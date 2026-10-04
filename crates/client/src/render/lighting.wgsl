@@ -1,4 +1,4 @@
-// Shared terrain lighting: sky ambient, sun or moon with cascaded shadows, block light,
+// Shared terrain lighting: sky ambient, sun or moon with soft cascaded shadows, block light,
 // water ripples, and the air between the eye and the surface. Everything dynamic comes
 // from the view bind group (directional and ambient light) and the atmosphere uniform, so
 // day/night never touches material assets.
@@ -6,8 +6,8 @@
 #define_import_path voxmar::lighting
 
 #import bevy_pbr::mesh_view_bindings::{view, lights, globals}
-#import bevy_pbr::shadows::fetch_directional_shadow
 #import voxmar::atmosphere::{Atmosphere, Aerial, aerial}
+#import voxmar::shadows::soft_shadow
 
 // Bound with every terrain material (terrain.rs, binding 6 of group 2).
 @group(2) @binding(6) var<uniform> atmosphere: Atmosphere;
@@ -40,14 +40,11 @@ fn sun_color() -> vec3<f32> {
     return lights.directional_lights[0].color.rgb;
 }
 
-// Fraction of direct sun reaching `world`, from the cascaded shadow maps.
-fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
-    let light = lights.directional_lights[0];
-    if lights.n_directional_lights == 0u || (light.flags & 1u) == 0u {
-        return 1.0;
-    }
-    let view_z = (view.view_from_world * vec4(world, 1.0)).z;
-    return fetch_directional_shadow(0u, vec4(world, 1.0), normal, view_z, frag_xy);
+// Fraction of direct sun reaching `world` on a face with `normal`, from the cascaded
+// shadow maps (see shadows.wgsl). Filtering depends on the world position alone, so
+// `_frag_xy` (the pixel) is not needed.
+fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, _frag_xy: vec2<f32>) -> f32 {
+    return soft_shadow(atmosphere, world, normal);
 }
 
 // Lit colour of a voxel face. `sky` and `block` are 0..1 light levels, `ao` the occlusion

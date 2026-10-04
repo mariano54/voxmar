@@ -1,11 +1,13 @@
-//! The atmosphere uniform: everything the terrain and sky shaders need about the air
-//! besides Bevy's sun and ambient light: clear-air haze, ground fog (valley fog, dawn mist,
-//! sea fog), the weather's fog, rain and dust, and the ground's bounce light.
+//! The atmosphere uniform: everything the terrain and sky shaders need about the air and
+//! the light besides Bevy's sun and ambient light: shadow filtering, clear-air haze, ground
+//! fog (valley fog, dawn mist, sea fog), the weather's fog, rain and dust, and the ground's
+//! bounce light.
 //!
 //! It is computed once a frame on the main thread from the time of day, the weather, the
-//! air of the place and the shader pack ([`Atmosphere::new`], pure, so it is tested without
-//! a GPU), extracted, and written to one small uniform buffer that every terrain bind group
-//! and the sky material bind. See atmosphere.wgsl for how the shaders use it.
+//! air of the place, the shader pack and the quality settings ([`Atmosphere::new`], pure,
+//! so it is tested without a GPU), extracted, and written to one small uniform buffer that
+//! every terrain bind group and the sky material bind. See atmosphere.wgsl for how the
+//! shaders use it.
 
 use bevy::color::ColorToComponents;
 use bevy::prelude::*;
@@ -16,6 +18,7 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::load_shader_library;
 use voxmar_protocol::Weather;
 
+use super::Quality;
 use super::pack::ShaderPack;
 
 pub struct AtmospherePlugin;
@@ -23,6 +26,7 @@ pub struct AtmospherePlugin;
 impl Plugin for AtmospherePlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "atmosphere.wgsl");
+        load_shader_library!(app, "shadows.wgsl");
         app.init_resource::<Atmosphere>().add_plugins(ExtractResourcePlugin::<Atmosphere>::default());
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
@@ -47,6 +51,10 @@ const GROUND_FOG_SOFTNESS: f32 = 2.5;
 /// by e every `FOG_HEIGHT` blocks above that.
 const FOG_BELOW_EYE: f32 = 16.0;
 const FOG_HEIGHT: f32 = 120.0;
+/// The widest shadow penumbra, in blocks, and how far shadow lookups step off a surface,
+/// in shadow texels.
+const MAX_PENUMBRA: f32 = 0.6;
+const NORMAL_OFFSET: f32 = 1.0;
 /// How far one sees in clear air, in blocks (as `Weather::visibility`).
 const CLEAR_VISIBILITY: f32 = 3030.0;
 /// Under water, the view closes in over this many blocks.
@@ -55,6 +63,7 @@ const UNDERWATER_VIEW: f32 = 40.0;
 /// See atmosphere.wgsl for each field.
 #[derive(Resource, ShaderType, ExtractResource, Clone, Copy, Debug, PartialEq)]
 pub struct Atmosphere {
+    pub shadow: Vec4,
     pub haze: Vec4,
     pub haze_shape: Vec4,
     pub glow: Vec4,
@@ -66,7 +75,7 @@ pub struct Atmosphere {
 
 impl Default for Atmosphere {
     fn default() -> Self {
-        Self::new(&Light::default(), &Weather::NONE, &Air::default(), &ShaderPack::default(), View::new(4096.0))
+        Self::new(&Light::default(), &Weather::NONE, &Air::default(), &ShaderPack::default(), Quality::default(), View::new(4096.0))
     }
 }
 
@@ -127,10 +136,12 @@ impl Default for Air {
 
 impl Atmosphere {
     /// The air and light for this moment, seen from `view`.
-    pub fn new(light: &Light, weather: &Weather, air: &Air, pack: &ShaderPack, view: View) -> Self {
+    pub fn new(light: &Light, weather: &Weather, air: &Air, pack: &ShaderPack, quality: Quality, view: View) -> Self {
         let View { distance: view_distance, eye_height, underwater } = view;
+        let shadow = Vec4::new(quality.shadows.taps() as f32, pack.shadow_softness, NORMAL_OFFSET, MAX_PENUMBRA);
         if underwater {
             return Self {
+                shadow,
                 haze: light.horizon.extend(0.0),
                 haze_shape: Vec4::new(HAZE_BASE, HAZE_HEIGHT, 0.0, UNDERWATER_VIEW),
                 glow: Vec4::ZERO,
@@ -164,6 +175,7 @@ impl Atmosphere {
         let ground_fog = weather.ground_fog.clamp(0.0, 1.0) * GROUND_FOG * pack.mist;
 
         Self {
+            shadow,
             haze: haze_color.extend(haze_density),
             haze_shape: Vec4::new(HAZE_BASE, HAZE_HEIGHT, view_distance * EDGE_FADE, view_distance),
             glow: light.glow.extend(0.0),
@@ -242,13 +254,13 @@ mod tests {
     fn ground_fog_follows_the_weather_and_the_pack() {
         let pack = ShaderPack::default();
         let light = Light::default();
-        let clear = Atmosphere::new(&light, &Weather::NONE, &Air::default(), &pack, View::new(2000.0));
+        let clear = Atmosphere::new(&light, &Weather::NONE, &Air::default(), &pack, Quality::default(), View::new(2000.0));
         assert_eq!(clear.mist.x, 0.0);
         let valley = Weather { ground_fog: 0.9, fog_top: 82.0, ..Weather::NONE };
-        let foggy = Atmosphere::new(&light, &valley, &Air::default(), &pack, View::new(2000.0));
+        let foggy = Atmosphere::new(&light, &valley, &Air::default(), &pack, Quality::default(), View::new(2000.0));
         assert!(foggy.mist.x > 0.04 && foggy.mist.y == 82.0);
         let none = ShaderPack { mist: 0.0, ..ShaderPack::default() };
-        assert_eq!(Atmosphere::new(&light, &valley, &Air::default(), &none, View::new(2000.0)).mist.x, 0.0);
+        assert_eq!(Atmosphere::new(&light, &valley, &Air::default(), &none, Quality::default(), View::new(2000.0)).mist.x, 0.0);
     }
 
     #[test]
@@ -257,8 +269,8 @@ mod tests {
         let air = Air { haze: Some(Vec3::new(0.9, 0.6, 0.3)), density: 2.0 };
         let follows = ShaderPack { local_air: 1.0, ..ShaderPack::default() };
         let ignores = ShaderPack { local_air: 0.0, ..ShaderPack::default() };
-        let tinted = Atmosphere::new(&light, &Weather::NONE, &air, &follows, View::new(2000.0));
-        let plain = Atmosphere::new(&light, &Weather::NONE, &air, &ignores, View::new(2000.0));
+        let tinted = Atmosphere::new(&light, &Weather::NONE, &air, &follows, Quality::default(), View::new(2000.0));
+        let plain = Atmosphere::new(&light, &Weather::NONE, &air, &ignores, Quality::default(), View::new(2000.0));
         assert_eq!(plain.haze.truncate(), light.horizon);
         assert!(tinted.haze.x > tinted.haze.z, "dusty air should warm the haze");
         // The tint keeps the horizon's brightness; density doubles.
