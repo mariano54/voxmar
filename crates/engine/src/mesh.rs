@@ -18,7 +18,9 @@
 //! marks a double-sided face between two leaves (meshed apart, in `ChunkMesh::inner`), and
 //! flag 2 one with leaves behind it, which casts a solid shadow. On translucent faces flag 1 marks a
 //! face covered by a block (water under ice). On plant vertices flag 1 marks the top edge,
-//! the one that sways in the wind.
+//! the one that sways in the wind. Plants carry no ambient occlusion: their `ao` bits hold the
+//! vertex's corner (0..=3, in the order the quad is built), and bits 25..27 how many plant
+//! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`).
 
 use glam::IVec3;
 
@@ -40,6 +42,8 @@ pub const PLANT_DIAGONAL: u32 = 6;
 pub const PLANT_ANTIDIAGONAL: u32 = 7;
 /// Vertex flag 1 (see the module docs).
 const FLAG_INNER: u32 = 1 << 23;
+/// On plant vertices, bits 25..27 hold how many plant cells lie below in the same stack.
+const PLANT_STACK_SHIFT: u32 = 25;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
 const INNER_LEAF_AO: u64 = 1;
 
@@ -156,7 +160,7 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     mesh.inner = split_inner(&mut mesh.cutout);
     for i in plants {
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
-        emit_plant(&mut mesh.cutout, registry, column, &cells[i], local);
+        emit_plant(&mut mesh.cutout, registry, column, &cells[i], local, cy * CHUNK_SIZE);
     }
     mesh
 }
@@ -522,8 +526,12 @@ fn emit_quad(
 
 /// Two crossed quads through the cell's diagonals, drawn from both sides, lit by the
 /// plant's own cell and without ambient occlusion.
-fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, cell: &Cell, pos: IVec3) {
+fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, cell: &Cell, pos: IVec3, chunk_y: i32) {
     let info = registry.info(cell.block);
+    // How many plant cells this one stands on (tall grass, sugar cane), so the shader can
+    // shape the whole stack as one plant.
+    let is_plant = |y: i32| y >= 0 && registry.info(column.block(IVec3::new(pos.x, y, pos.z))).render == RenderKind::Plant;
+    let stack = (1..=3).take_while(|&d| is_plant(chunk_y + pos.y - d)).count() as u32;
     let tint = info.tints[Face::PosX as usize];
     let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { column.climate_at(pos.x, pos.z) };
     let w1 = info.layers[Face::PosX as usize] as u32
@@ -533,9 +541,15 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
         | (cell.light as u32) << 24;
     for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
         let base = out.vertices.len() as u32;
-        for (dx, dz, top) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)] {
+        for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
             let p = pos + IVec3::new(dx, top, dz);
-            let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | face << 18 | 3 << 21 | (top as u32) << 23;
+            let w0 = p.x as u32
+                | (p.y as u32) << 6
+                | (p.z as u32) << 12
+                | face << 18
+                | (corner as u32) << 21
+                | (top as u32) << 23
+                | stack << PLANT_STACK_SHIFT;
             out.vertices.push([w0, w1]);
         }
         // Both windings, so back-face culling keeps one of them from either side.
@@ -615,9 +629,11 @@ mod tests {
             let face = (w0 >> 18) & 7;
             assert_eq!(face, if i < 4 { PLANT_DIAGONAL } else { PLANT_ANTIDIAGONAL });
             assert!((4..=5).contains(&x) && (1..=2).contains(&y) && (7..=8).contains(&z));
-            // No occlusion, top edge flagged, lit by open sky.
-            assert_eq!((w0 >> 21) & 3, 3);
+            // The corner in place of occlusion, top edge flagged, alone in its stack, lit
+            // by open sky.
+            assert_eq!((w0 >> 21) & 3, i as u32 % 4);
             assert_eq!((w0 >> 23) & 1, y - 1);
+            assert_eq!(w0 >> PLANT_STACK_SHIFT & 3, 0);
             assert_eq!(w1 >> 28, 15);
         }
         // Each quad lies on its diagonal plane.
