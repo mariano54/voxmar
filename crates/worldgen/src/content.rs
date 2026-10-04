@@ -726,16 +726,45 @@ pub struct WorldContent {
     pub trees: Vec<TreeDef>,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
+    pub trails: TrailsDef,
+}
+
+/// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
+/// one's.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TrailsDef {
+    /// The first rule whose tags the biome has picks the tread.
+    pub tread: Vec<TreadDef>,
+    /// What grass at the edge of the tread is worn to.
+    pub edge: String,
+    /// The deck of a bridge, of a short bridge over a creek, and the stones of a ford.
+    pub bridge: String,
+    pub log: String,
+    pub stepping_stone: String,
+    /// The stones of cairns and of waymarkers.
+    pub cairn: Vec<Select>,
+    pub waymarker: Vec<Select>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TreadDef {
+    /// Any of these biome tags; none matches every biome.
+    #[serde(default)]
+    pub biome: Vec<String>,
+    pub blocks: Vec<Select>,
 }
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 6] = [
+pub(crate) const BASE_FILES: [(&str, &str); 7] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
     ("rocks.ron", include_str!("../../../assets/content/base/rocks.ron")),
+    ("trails.ron", include_str!("../../../assets/content/base/trails.ron")),
     ("trees.ron", include_str!("../../../assets/content/base/trees.ron")),
 ];
 
@@ -757,6 +786,7 @@ impl WorldContent {
     /// replaces an earlier one's; other definitions accumulate.
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
+        let mut trails = None;
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles) = (Vec::new(), Vec::new(), Vec::new());
         let mut raw = Vec::new();
@@ -805,12 +835,27 @@ impl WorldContent {
                     let q = |n: &str| qualify(&file.package, n);
                     PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), ..p }
                 })),
+                "trails.ron" => {
+                    let def = parse::<TrailsDef>(&at, &file.source)?;
+                    let tread = def.tread.iter().map(|t| TreadDef { blocks: t.blocks.iter().map(|s| qualify_select(&file.package, s)).collect(), ..t.clone() }).collect();
+                    let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect();
+                    trails = Some(TrailsDef {
+                        tread,
+                        edge: q(&def.edge),
+                        bridge: q(&def.bridge),
+                        log: q(&def.log),
+                        stepping_stone: q(&def.stepping_stone),
+                        cairn: stones(&def.cairn),
+                        waymarker: stones(&def.waymarker),
+                    });
+                }
                 _ => {}
             }
         }
         let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
+        let trails = trails.ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
         let biomes = inherit(&raw)?;
-        let content = Self { climate, provinces, biomes, trees, plants, particles };
+        let content = Self { climate, provinces, biomes, trees, plants, particles, trails };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }
@@ -855,6 +900,21 @@ impl WorldContent {
             }
             Ok(())
         };
+
+        // Trails.
+        let trails_at = || "trails.ron".to_owned();
+        if !self.trails.tread.last().is_some_and(|t| t.biome.is_empty()) {
+            return Err(ContentError(format!("{}: the last tread rule must match every biome (no tags)", trails_at())));
+        }
+        for tread in &self.trails.tread {
+            blocks(&trails_at, &tread.blocks)?;
+        }
+        block(&trails_at, &self.trails.edge)?;
+        block(&trails_at, &self.trails.bridge)?;
+        block(&trails_at, &self.trails.log)?;
+        blocks(&trails_at, &self.trails.cairn)?;
+        blocks(&trails_at, &self.trails.waymarker)?;
+        block(&trails_at, &self.trails.stepping_stone)?;
 
         // Climate.
         let climate_at = || "climate.ron".to_owned();

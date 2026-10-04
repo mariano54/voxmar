@@ -20,7 +20,7 @@
 //! is ground, water, or the lower water a waterfall drops into, so nothing generated
 //! needs to settle.
 
-mod cache;
+pub(crate) mod cache;
 mod channel;
 mod drainage;
 
@@ -408,6 +408,7 @@ impl Rivers {
                 body: if height < SEA_LEVEL && carved.water.is_none() { Body::Sea } else { body },
                 current: if submerged { carved.current } else { None },
                 cavity: carved.cavity,
+                trail: None,
             },
             near: carved.near.is_some() || carved.wet > 0.0,
         }

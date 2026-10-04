@@ -116,6 +116,19 @@
             color: (100, 160, 70),
             tags: ["soil", "fertile", "natural", "surface"],
         ),
+        // Ground worn by feet: grass trodden thin, and the packed earth of a well-used
+        // path (generated trails, and the stages of wear in wear.ron).
+        (
+            name: "worn_grass_block", sound: Grass,
+            textures: Sides(top: "worn_grass_block_top", bottom: "dirt", side: "grass_block_side"),
+            tint: Grass,
+            tint_top_only: true,
+            hardness: 0.6,
+            drops: "dirt",
+            color: (125, 135, 75),
+            tags: ["soil", "worn", "natural", "surface"],
+        ),
+        (name: "packed_earth", sound: Soil, textures: All("packed_earth"), hardness: 0.6, drops: "dirt", color: (150, 116, 80), tags: ["soil", "worn", "path", "surface"]),
         (name: "clay", sound: Soil, textures: All("clay"), hardness: 0.6, color: (160, 166, 179), tags: ["clay", "wet", "natural"]),
         (name: "gravel", sound: Gravel, textures: All("gravel"), hardness: 0.6, color: (136, 126, 126), tags: ["gravel", "natural", "surface"]),
         (name: "loam", sound: Soil, textures: All("loam"), hardness: 0.5, color: (94, 71, 54), tags: ["soil", "fertile", "natural", "surface"]),

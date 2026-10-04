@@ -1,0 +1,28 @@
+// Hiking trails (see crates/worldgen/src/trails): what their worn tread is made of, and
+// how they cross water.
+//
+// tread: the first rule whose biome tags match the biome under the trail picks its
+//   blocks; a rule with no tags matches everywhere. Blocks are chosen in patches, by
+//   weight (Name("block", weight) or Tag("tag", weight), as in biomes.ron).
+// edge: what grass at the edge of the tread is worn to.
+// bridge: the deck over water too deep to ford; log: the deck of a short bridge over a
+//   creek. stepping_stone: stones across shallow water, every other block.
+// cairn: the stones of cairns, which mark trails above the treeline and stand on
+//   summits. waymarker: the stones of the old, half-fallen markers at trailheads.
+(
+    tread: [
+        (biome: ["desert"], blocks: [Name("sandstone", 2), Name("gravel", 1)]),
+        (biome: ["mesa"], blocks: [Name("red_sandstone", 2), Name("coarse_dirt", 1)]),
+        (biome: ["wetland"], blocks: [Name("mud", 2), Name("coarse_dirt", 2), Name("rooted_dirt", 1)]),
+        (biome: ["conifer"], blocks: [Name("packed_earth", 3), Name("coarse_dirt", 2), Name("podzol", 1), Name("gravel", 1)]),
+        (biome: ["forest"], blocks: [Name("packed_earth", 4), Name("coarse_dirt", 2), Name("rooted_dirt", 1)]),
+        (biome: ["mountain", "highland", "tundra"], blocks: [Name("gravel", 3), Name("packed_earth", 1)]),
+        (biome: [], blocks: [Name("packed_earth", 5), Name("coarse_dirt", 1), Name("gravel", 1)]),
+    ],
+    edge: "worn_grass_block",
+    bridge: "spruce_planks",
+    log: "spruce_log",
+    stepping_stone: "mossy_cobblestone",
+    cairn: [Name("cobblestone", 3), Name("mossy_cobblestone", 1), Name("andesite", 1)],
+    waymarker: [Name("mossy_cobblestone", 3), Name("cobblestone", 1)],
+)

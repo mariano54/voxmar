@@ -58,7 +58,7 @@ impl Features {
                     continue;
                 }
                 let geo = geology.get(x, z);
-                if geo.water - geo.height > 2 {
+                if geo.water - geo.height > 2 || geo.trail.is_some_and(|t| t.clear) {
                     continue;
                 }
                 let site = area.site_on(&geo, x, z, 0);
