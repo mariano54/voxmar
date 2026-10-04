@@ -17,7 +17,7 @@ use voxmar_engine::block::{BlockId, BlockRegistry};
 
 use crate::content::{Condition, LayersDef, Material, NoiseDef, Select, SurfaceDef, WorldContent};
 use crate::geology::noise;
-use crate::rarity::name_hash;
+use crate::rarity::{Tier, name_hash};
 use crate::rocks::{ProvinceId, Rocks};
 use crate::{SEA_LEVEL, Site};
 
@@ -30,15 +30,19 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// From selectors already checked at load. Tags select no blocks yet.
+    /// From selectors already checked at load. A tag selects every block carrying it,
+    /// each at the selector's weight times its rarity, so a stone a mod adds with the
+    /// right tag joins every palette that asks for the tag.
     pub fn new(selects: &[Select], registry: &BlockRegistry) -> Self {
-        let named: Vec<(BlockId, f32)> = selects
-            .iter()
-            .filter_map(|s| match s {
-                Select::Name(name, weight) => Some((registry.expect(name), *weight)),
-                Select::Tag(..) => None,
-            })
-            .collect();
+        let mut named: Vec<(BlockId, f32)> = Vec::new();
+        for select in selects {
+            match select {
+                Select::Name(name, weight) => named.push((registry.expect(name), *weight)),
+                Select::Tag(tag, weight) => {
+                    named.extend(registry.tagged(tag).map(|block| (block, weight * registry.def(block).rarity.multiplier())))
+                }
+            }
+        }
         let total: f32 = named.iter().map(|n| n.1).sum();
         let mut sum = 0.0;
         let ends = named

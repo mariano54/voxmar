@@ -9,7 +9,7 @@
 //! Below the surface lie the stones of the biome or of its rock province.
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
-use voxmar_engine::block::{BlockId, BlockRegistry, Sound};
+use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::chunk::Chunk;
 use voxmar_engine::coords::{CHUNK_SIZE, CHUNK_VOLUME, COLUMN_CHUNKS, ColumnPos, WORLD_HEIGHT, local_index};
 use voxmar_engine::glam::{IVec2, IVec3};
@@ -77,14 +77,16 @@ impl Terrain {
         let soft = by_id(&|block| block.is_air() || block == water || registry.def(block).name.ends_with("_leaves"));
         let mut stones: Vec<BlockId> = rocks.stones().chain([id("stone"), id("deepslate")]).collect();
         stones.extend(biomes.iter().filter_map(|(_, b)| b.stones.as_ref()).flat_map(|p| p.blocks()));
-        // Until blocks carry tags, what a block offers plants follows the material it
-        // sounds like.
+        // What a block offers plants follows its tags: snow over soil, then soil, sand.
         let grounds = (0..registry.len())
-            .map(|i| match registry.def(BlockId(i as u16)).sound {
-                Sound::Grass | Sound::Soil => Ground::Soil,
-                Sound::Sand => Ground::Sand,
-                Sound::Snow => Ground::Snow,
-                _ => Ground::Bare,
+            .map(|i| {
+                let def = registry.def(BlockId(i as u16));
+                match () {
+                    _ if def.has_tag("snow") => Ground::Snow,
+                    _ if def.has_tag("soil") => Ground::Soil,
+                    _ if def.has_tag("sand") => Ground::Sand,
+                    _ => Ground::Bare,
+                }
             })
             .collect();
         Self {

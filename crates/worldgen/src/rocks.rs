@@ -8,7 +8,7 @@
 use voxmar_engine::block::{BlockId, BlockRegistry};
 
 use crate::content::WorldContent;
-use crate::rarity::{Featured, Rarity};
+use crate::rarity::{Featured, Rarity, Tier};
 use crate::rng::hash3;
 use crate::surface::Palette;
 

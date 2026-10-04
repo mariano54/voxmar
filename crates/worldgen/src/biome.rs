@@ -29,7 +29,7 @@ use voxmar_engine::glam::IVec2;
 
 use crate::content::{Axis, BiomeDef, Colors, Layer, Role, Stones, WorldContent};
 use crate::geology::{smoothstep, spline};
-use crate::rarity::{Featured, Rarity, name_hash};
+use crate::rarity::{Featured, Rarity, Tier, name_hash};
 use crate::rocks::Rocks;
 use crate::surface::{Palette, Surface, SurfaceRules};
 

@@ -11,25 +11,22 @@
 //! the seed, the kind of thing and its name, so any system (biomes, plants, weather
 //! effects) can ask for its own list without a central registry.
 
-use serde::Deserialize;
+pub use voxmar_engine::block::Rarity;
 
 use crate::rng::{hash3, mix};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-pub enum Rarity {
-    #[default]
-    Common,
-    Uncommon,
-    Rare,
-    VeryRare,
-    Legendary,
+/// What the rarity tiers mean in numbers, for the world generator.
+pub trait Tier {
+    /// How often something of this rarity occurs relative to a common one.
+    fn multiplier(self) -> f32;
+    /// The tier `steps` more common than this one, stopping at common.
+    fn commoner(self, steps: usize) -> Rarity;
 }
 
-impl Rarity {
-    pub const ALL: [Rarity; 5] = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::VeryRare, Rarity::Legendary];
+const TIERS: [Rarity; 5] = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::VeryRare, Rarity::Legendary];
 
-    /// How often something of this rarity occurs relative to a common one.
-    pub fn multiplier(self) -> f32 {
+impl Tier for Rarity {
+    fn multiplier(self) -> f32 {
         match self {
             Rarity::Common => 1.0,
             Rarity::Uncommon => 0.3,
@@ -39,9 +36,8 @@ impl Rarity {
         }
     }
 
-    /// The tier `steps` more common than this one, stopping at common.
     fn commoner(self, steps: usize) -> Rarity {
-        Self::ALL[(self as usize).saturating_sub(steps)]
+        TIERS[(self as usize).saturating_sub(steps)]
     }
 }
 
@@ -105,7 +101,7 @@ mod tests {
     use super::*;
 
     fn items() -> Vec<(String, Rarity)> {
-        (0..40).map(|i| (format!("base:thing_{i}"), Rarity::ALL[i % 5])).collect()
+        (0..40).map(|i| (format!("base:thing_{i}"), TIERS[i % 5])).collect()
     }
 
     fn featured(seed: u64) -> Vec<f32> {

@@ -37,7 +37,7 @@ pub use biome::{Biome, BiomeId, Biomes};
 pub use climate::LAPSE_RATE;
 pub use content::{ContentError, WorldContent};
 pub use dials::WorldDials;
-pub use rarity::{Featured, Rarity};
+pub use rarity::{Featured, Rarity, Tier};
 pub use rocks::ProvinceId;
 
 use fastnoise_lite::{FastNoiseLite, FractalType};

@@ -463,7 +463,6 @@ impl WorldContent {
         let block = |at: &dyn Fn() -> String, name: &str| {
             registry.id(name).map(|_| ()).ok_or_else(|| ContentError(format!("{}: unknown block `{name}`", at())))
         };
-        // Blocks have no tags yet, so a tag selects none of them.
         let blocks = |at: &dyn Fn() -> String, selects: &[Select]| -> Result<(), ContentError> {
             if selects.is_empty() {
                 return Err(ContentError(format!("{}: an empty list of blocks", at())));
@@ -474,7 +473,12 @@ impl WorldContent {
                         block(at, name)?;
                         positive(at, "weight", *weight)?;
                     }
-                    Select::Tag(tag, _) => return Err(ContentError(format!("{}: no block has the tag `{tag}`", at()))),
+                    Select::Tag(tag, weight) => {
+                        if registry.tagged(tag).next().is_none() {
+                            return Err(ContentError(format!("{}: no block has the tag `{tag}`", at())));
+                        }
+                        positive(at, "weight", *weight)?;
+                    }
                 }
             }
             Ok(())
@@ -941,7 +945,7 @@ mod tests {
             ("(name: \"a\", inherit: \"b\"), (name: \"b\", inherit: \"a\")", "inherits from itself"),
             ("(name: \"a\", climate: [()], weight: 0.0, SURFACE)", "weight must be positive"),
             ("(name: \"a\", climate: [()], surface: (rules: [(when: [Province(\"chalk\")], place: (top: Stones))], ground: (top: Stones), underwater: (top: Stones)))", "rock province"),
-            ("(name: \"a\", climate: [()], surface: (ground: (top: Mix([Tag(\"soil\", 1.0)])), underwater: (top: Stones)))", "tag `soil`"),
+            ("(name: \"a\", climate: [()], surface: (ground: (top: Mix([Tag(\"no_such_tag\", 1.0)])), underwater: (top: Stones)))", "tag `no_such_tag`"),
         ];
         for (extra, expected) in cases {
             let message = error(&extra.replace("SURFACE", GROUND));
