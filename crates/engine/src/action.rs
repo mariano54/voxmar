@@ -9,7 +9,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockId, BlockInfo, RegistryError};
+use crate::block::{BlockId, BlockInfo, RegistryError, Support};
 use crate::coords::Face;
 use crate::glam::{IVec3, Vec3};
 use crate::physics::player::REACH;
@@ -48,7 +48,8 @@ pub enum Requirement {
     Replaceable,
     /// No agent stands where the held block would go.
     Unobstructed,
-    /// A held block that needs support (a plant) would stand on solid ground.
+    /// A held block that needs support would have it: a plant solid ground beneath, a
+    /// hanging plant a solid block above.
     Supported,
 }
 
@@ -154,10 +155,14 @@ pub fn placement_cell(ctx: &impl ActionContext, block: IVec3, face: Face) -> IVe
     if ctx.block(block).is_some_and(|b| ctx.info(b).replaceable) { block } else { block + face.normal() }
 }
 
-/// The blocks resting on `pos` that go when it is cleared: the plants stacked on it
-/// (a flower, both halves of tall grass, a stalk of sugar cane).
+/// The blocks resting on `pos` that go when it is cleared: the plants standing on it (a
+/// flower, both halves of tall grass, a stalk of sugar cane) and the column hanging from
+/// it (vines, roots, a stalactite).
 pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
-    (1..).map(|dy| pos + IVec3::Y * dy).take_while(|&p| ctx.block(p).is_some_and(|b| ctx.info(b).needs_support)).collect()
+    let column = |step: i32, support: Support| {
+        (1..).map(move |d| pos + IVec3::Y * (d * step)).take_while(move |&p| ctx.block(p).is_some_and(|b| ctx.info(b).support == support))
+    };
+    column(1, Support::Below).chain(column(-1, Support::Above)).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,9 +210,13 @@ impl ActionDef {
             }
             Requirement::Supported => {
                 let (block, face) = block_target()?;
-                let below = placement_cell(ctx, block, face) - IVec3::Y;
-                !ctx.actor_held().is_some_and(|b| ctx.info(b).needs_support)
-                    || ctx.block(below).is_some_and(|b| ctx.info(b).solid)
+                let cell = placement_cell(ctx, block, face);
+                let solid = |p: IVec3| ctx.block(p).is_some_and(|b| ctx.info(b).solid);
+                match ctx.actor_held().map_or(Support::None, |b| ctx.info(b).support) {
+                    Support::None => true,
+                    Support::Below => solid(cell - IVec3::Y),
+                    Support::Above => solid(cell + IVec3::Y),
+                }
             }
         })
     }
@@ -261,12 +270,21 @@ mod tests {
 
     const STONE: BlockId = BlockId(1);
     const FLOWER: BlockId = BlockId(2);
+    const VINE: BlockId = BlockId(3);
 
     /// Stone at the origin with a flower on it, and bare stone next to it along +z.
     fn world(held: BlockId) -> World {
         let registry = BlockRegistry::new(vec![
             BlockDef { name: "test:stone".into(), ..Default::default() },
             BlockDef { name: "test:flower".into(), render: RenderKind::Plant, solid: false, hardness: 0.0, ..Default::default() },
+            BlockDef {
+                name: "test:vine".into(),
+                render: RenderKind::Plant,
+                solid: false,
+                hardness: 0.0,
+                support: Some(Support::Above),
+                ..Default::default()
+            },
         ])
         .unwrap();
         let blocks = [(IVec3::ZERO, STONE), (IVec3::Y, FLOWER), (IVec3::Z, STONE)].into_iter().collect();
@@ -304,5 +322,30 @@ mod tests {
         let in_the_air = ActionTarget::Block { block: IVec3::Z, face: Face::PosZ };
         assert!(place().validate(&world, on_stone).is_ok());
         assert_eq!(place().validate(&world, in_the_air), Err(Rejection::Unmet(Requirement::Supported)));
+    }
+
+    #[test]
+    fn hanging_plants_need_a_ceiling_and_fall_with_it() {
+        let mut world = world(VINE);
+        // Under the stone at +z, not on top of it.
+        let under_stone = ActionTarget::Block { block: IVec3::Z, face: Face::NegY };
+        let on_stone = ActionTarget::Block { block: IVec3::Z, face: Face::PosY };
+        assert!(place().validate(&world, under_stone).is_ok());
+        assert_eq!(place().validate(&world, on_stone), Err(Rejection::Unmet(Requirement::Supported)));
+        // A column of vines hangs under the stone; the flower on top stands on it.
+        world.blocks.insert(IVec3::Z + IVec3::Y, FLOWER);
+        for dy in 1..=3 {
+            world.blocks.insert(IVec3::Z - IVec3::Y * dy, VINE);
+        }
+        world.blocks.insert(IVec3::Z - IVec3::Y * 5, VINE);
+        // Clearing the stone takes the flower above and the three vines below, but not the
+        // vine past the gap, which hangs from something else.
+        let gone = supported_by(&world, IVec3::Z);
+        assert_eq!(gone, vec![IVec3::new(0, 1, 1), IVec3::new(0, -1, 1), IVec3::new(0, -2, 1), IVec3::new(0, -3, 1)]);
+        // Clearing a vine takes only the ones hanging below it.
+        assert_eq!(supported_by(&world, IVec3::new(0, -2, 1)), vec![IVec3::new(0, -3, 1)]);
+        // Plants default to standing on the ground; other blocks need nothing.
+        assert_eq!(world.info(FLOWER).support, Support::Below);
+        assert_eq!(world.info(STONE).support, Support::None);
     }
 }
