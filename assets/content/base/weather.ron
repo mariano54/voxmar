@@ -213,6 +213,13 @@
         (name: "aether_storm", cover: 0.75, convection: 0.8, humidity: 0.7, precipitation: 0.1, wind: 9.0, effects: ["aether_storm"]),
         (name: "starfall", cover: 0.0, convection: 0.0, cirrus: 0.0, humidity: 0.3, precipitation: 0.0, wind: 1.0, effects: ["starfall"]),
     ],
+    // Winds `/wind KIND` brings: speed in blocks per second and how much it gusts.
+    winds: [
+        (name: "calm", wind: 0.3, gusts: 0.05),
+        (name: "breeze", wind: 4.5, gusts: 0.35),
+        (name: "strong", wind: 10.0, gusts: 0.65),
+        (name: "gale", wind: 18.0, gusts: 1.0),
+    ],
     // Ground blocks lying snow whitens, and what they become; as the snow melts they turn
     // back. The generator places the same snowy blocks where snow lies all year.
     snow_cover: [("base:grass_block", "base:snowy_grass_block")],

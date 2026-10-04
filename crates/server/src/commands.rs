@@ -84,6 +84,7 @@ impl Server {
             Run::Seed => Ok(format!("Seed: {}", self.meta.seed)),
             Run::Time => self.time(args),
             Run::Weather => self.weather_command(id, args),
+            Run::Wind => self.wind_command(id, args),
             Run::Teleport => self.teleport(id, args),
             Run::GameMode => self.game_mode(id, args),
             Run::Biome | Run::Locate => Err("This world has no biomes yet.".into()),
@@ -290,6 +291,39 @@ impl Server {
         }
     }
 
+    fn wind_command(&mut self, id: PlayerId, args: &[String]) -> Reply {
+        let position = self.players[&id].position;
+        let at = Vec2::new(position.x, position.z);
+        let (tick, day) = (self.tick, self.day);
+        match args.first().map(String::as_str) {
+            None => {
+                let wind = self.weather.local(&mut self.temperature, at, tick, day).weather;
+                let from = if wind.wind.length() < 0.05 { "nowhere".to_owned() } else { format!("the {}", compass(-wind.wind)) };
+                Ok(format!("Wind {:.1} blocks/s from {from}, gusting {:.0}%.", wind.wind.length(), wind.gusts * 100.0))
+            }
+            Some("list") => {
+                let names: Vec<&str> = self.content.weather.winds().iter().map(|w| w.short_name()).collect();
+                Ok(format!("Winds: {}.", names.join(", ")))
+            }
+            Some(name) => {
+                let mut wind = self.content.weather.wind(name).ok_or_else(|| format!("There is no wind called `{name}`; /wind list names them."))?.clone();
+                let mut rest = &args[1..];
+                if let Some(from) = rest.first().and_then(|word| direction_from(word)) {
+                    wind.direction = Some(-from);
+                    rest = &rest[1..];
+                }
+                if rest.len() > 1 {
+                    return Err("Too many words.".into());
+                }
+                let seconds = weather_seconds(rest.first())?;
+                let from = wind.direction.map_or(String::new(), |d| format!(" from the {}", compass(-d)));
+                let reply = format!("Bringing a {}{from} to the land around you for {}.", wind.short_name(), minutes(seconds as u64));
+                self.weather.force_wind(&wind, at, seconds, tick);
+                Ok(reply)
+            }
+        }
+    }
+
     /// The online player called `name`, ignoring case if no name matches exactly.
     fn find_player(&self, name: &str) -> Result<PlayerId, String> {
         let joined = || self.players.values().filter(|p| p.joined);
@@ -325,6 +359,31 @@ fn axis(word: &str, current: f32, horizontal: bool) -> Result<f32, String> {
         }
     };
     if value.is_finite() { Ok(value) } else { Err(error()) }
+}
+
+/// The direction a wind named as coming from `word` (a compass point or degrees clockwise
+/// from north) comes from, as a unit vector (x, z). North is −z.
+fn direction_from(word: &str) -> Option<Vec2> {
+    let degrees: f32 = match word.to_ascii_lowercase().as_str() {
+        "n" | "north" => 0.0,
+        "ne" | "northeast" => 45.0,
+        "e" | "east" => 90.0,
+        "se" | "southeast" => 135.0,
+        "s" | "south" => 180.0,
+        "sw" | "southwest" => 225.0,
+        "w" | "west" => 270.0,
+        "nw" | "northwest" => 315.0,
+        other => other.parse().ok().filter(|d: &f32| d.is_finite())?,
+    };
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    Some(Vec2::new(sin, -cos))
+}
+
+/// The compass point nearest a direction (x, z): `north-east`.
+fn compass(direction: Vec2) -> &'static str {
+    const POINTS: [&str; 8] = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+    let degrees = direction.x.atan2(-direction.y).to_degrees().rem_euclid(360.0);
+    POINTS[((degrees + 22.5) / 45.0) as usize % 8]
 }
 
 /// `5 minutes`, `90 seconds`.
@@ -375,6 +434,17 @@ mod tests {
         assert_eq!(parse_duration("-1d"), None);
         assert_eq!(parse_duration("soon"), None);
         assert_eq!(parse_duration(""), None);
+    }
+
+    #[test]
+    fn compass_points() {
+        let north = direction_from("n").unwrap();
+        assert!((north - Vec2::new(0.0, -1.0)).length() < 1e-6);
+        assert!((direction_from("90").unwrap() - Vec2::X).length() < 1e-6);
+        assert_eq!(compass(north), "north");
+        assert_eq!(compass(direction_from("sw").unwrap()), "south-west");
+        assert_eq!(compass(direction_from("100").unwrap()), "east");
+        assert!(direction_from("up").is_none());
     }
 
     #[test]

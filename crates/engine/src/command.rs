@@ -38,6 +38,8 @@ pub enum Run {
     Time,
     /// Forces the weather around the player for a while, or tells what it is.
     Weather,
+    /// Forces the wind around the player for a while, or tells what it is.
+    Wind,
     /// Moves a player to coordinates or to another player.
     Teleport,
     /// Switches a player between survival and creative.

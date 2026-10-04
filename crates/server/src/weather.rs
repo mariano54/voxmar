@@ -295,6 +295,23 @@ impl WeatherState {
         self.changes.push(Change { center, tick, release: false });
     }
 
+    /// Holds the wind of `wind` (its speed, gusts and direction, if it has one) over the
+    /// land around `center` for `seconds`, on top of whatever weather is forced there.
+    pub fn force_wind(&mut self, wind: &Preset, center: Vec2, seconds: u32, tick: u64) {
+        let until = tick + seconds as u64 * TICKS_PER_SECOND as u64;
+        let mut preset = match self.forced.iter().rev().find(|f| f.weight(center, tick) > 0.0 && tick < f.until) {
+            Some(forcing) => Preset { name: forcing.preset.name.clone(), ..forcing.preset.clone() },
+            None => Preset { name: wind.name.clone(), ..Preset::default() },
+        };
+        preset.wind = wind.wind.or(preset.wind);
+        preset.gusts = wind.gusts.or(preset.gusts);
+        preset.direction = wind.direction.or(preset.direction);
+        let until = self.forced_at(center, tick).map_or(until, |(_, left)| until.max(tick + left * TICKS_PER_SECOND as u64));
+        self.forced.retain(|f| f.center.distance(center) > FORCE_RADIUS);
+        self.forced.push(Forcing { preset, center, until });
+        self.changes.push(Change { center, tick, release: false });
+    }
+
     /// Ends the weather forced around `center`, bringing back the natural weather at once.
     /// Returns whether any was.
     pub fn release(&mut self, center: Vec2, tick: u64) -> bool {
@@ -630,16 +647,22 @@ impl WeatherState {
         let ahead = 0.8 * smoothstep(0.15, 0.7, upwind.air - drivers.air);
         let cirrus = ahead.max(0.5 * smoothstep(0.6, 0.85, fair)) * (1.0 - cover);
 
-        // Wind: the prevailing direction, veering and strengthening over hours, gusting in
-        // showers, stronger on open heights and over water, calmer in forests and valleys.
-        let strength = sky.noise(GUSTS, DVec2::ZERO, seconds / 1500.0) as f32;
-        let veer = sky.noise(GUSTS + 16, DVec2::ZERO, seconds / 900.0) - 0.5;
-        let direction = (sky.prevailing + sky.prevailing.perp() * veer * 1.2).normalize();
+        // Wind: the prevailing direction, veering over hours and swinging round as a front
+        // passes. Light under settled skies, freshening where air masses meet, strong in
+        // storms and livelier in the afternoon; stronger on open heights and over water,
+        // calmer in forests and valleys.
+        let contrast = upwind.air - drivers.air;
+        let front = smoothstep(0.2, 1.2, contrast.abs());
+        let settled = sky.noise(GUSTS, at.as_dvec2() / 6000.0, seconds / 1500.0) as f32;
+        let veer = (sky.noise(GUSTS + 16, DVec2::ZERO, seconds / 900.0) - 0.5) as f32 + 0.4 * contrast.clamp(-1.0, 1.0);
+        let direction = (sky.prevailing + sky.prevailing.perp() * (veer * 1.2) as f64).normalize();
+        let afternoon = 1.0 - (((fraction - 0.35) / 0.35) as f32).abs().min(1.0);
         let exposure = (1.0 + smoothstep(10.0, 90.0, place.altitude) * 0.5 + 0.25 * place.water)
             * (1.0 - 0.35 * place.forest)
             * (1.0 - 0.3 * smoothstep(2.0, 20.0, place.valley));
-        let speed = (1.5 + 7.0 * strength + 6.0 * precipitation * convection) * exposure;
-        let gusts = (0.15 + 0.35 * smoothstep(3.0, 10.0, speed) + 0.5 * precipitation * convection).min(1.0);
+        let storm = precipitation * convection;
+        let speed = (0.6 + 4.5 * settled * settled + 6.0 * front + 9.0 * storm) * (0.75 + 0.35 * afternoon) * exposure;
+        let gusts = (0.1 + 0.35 * smoothstep(3.0, 10.0, speed) + 0.25 * front + 0.5 * storm).min(1.0);
 
         let celsius = now_temperature(mean, cover, place.moisture, fraction);
         let mut weather = LocalWeather {

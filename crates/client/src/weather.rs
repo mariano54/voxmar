@@ -19,6 +19,7 @@ pub struct WeatherPlugin;
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ClientWeather>()
+            .init_resource::<Wind>()
             .add_message::<Thunder>()
             .add_systems(Update, (ease, draw_bolts).chain())
             .add_systems(OnExit(Screen::InGame), |mut weather: ResMut<ClientWeather>| weather.leave());
@@ -49,6 +50,47 @@ pub struct ClientWeather {
     tick: u64,
     told_at: f64,
     strikes: Vec<Strike>,
+}
+
+/// The wind, for anything that sways or drifts with it: grass and leaves, particles,
+/// sounds. The mean wind and how much it gusts come from the server's weather (eased like
+/// the rest of it), and the gusts at any place and moment from the deterministic function
+/// the server uses, so client and server agree on it. See docs/rendering.md.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct Wind {
+    /// Unit vector (x, z) the mean wind blows towards.
+    pub direction: Vec2,
+    /// Mean speed, blocks per second: under 1 calm, about 4 a breeze, 10 strong, 18 a gale.
+    pub speed: f32,
+    /// How much it gusts around the mean, 0..1.
+    pub gustiness: f32,
+    /// Seed of the gusts, as the server's.
+    pub seed: u64,
+    /// Seconds of world time now: the server's simulation clock, which the gusts run on.
+    pub seconds: f64,
+}
+
+impl Default for Wind {
+    fn default() -> Self {
+        Self { direction: FAIR.wind.normalize(), speed: FAIR.wind.length(), gustiness: FAIR.gusts, seed: 0, seconds: 0.0 }
+    }
+}
+
+impl Wind {
+    /// The mean wind, in blocks per second along x and z.
+    pub fn mean(&self) -> Vec2 {
+        self.direction * self.speed
+    }
+
+    /// The wind at `at` (x, z) and `seconds` of world time, gusts included.
+    pub fn at(&self, at: Vec2, seconds: f64) -> Vec2 {
+        gust(self.seed, at, seconds, self.mean(), self.gustiness)
+    }
+
+    /// The wind at `at` now.
+    pub fn now(&self, at: Vec2) -> Vec2 {
+        self.at(at, self.seconds)
+    }
 }
 
 /// Cloud drift wraps around after this many blocks, keeping shader coordinates small.
@@ -280,6 +322,7 @@ fn bolt_shape(ground: Vec3, seed: u32) -> (Vec<Vec3>, Vec<Vec<Vec3>>) {
 fn ease(
     time: Res<Time>,
     mut weather: ResMut<ClientWeather>,
+    mut wind: ResMut<Wind>,
     mut thunder: MessageWriter<Thunder>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
@@ -311,8 +354,14 @@ fn ease(
         weather.mean_wind += (target.wind - weather.mean_wind) * pace(10.0);
     }
     let at = camera.single().map_or(Vec2::ZERO, |camera| camera.translation().xz());
-    let seconds = weather.world_seconds(time.elapsed_secs_f64());
-    weather.current.wind = gust(weather.seed, at, seconds, weather.mean_wind, weather.current.gusts);
+    *wind = Wind {
+        direction: weather.mean_wind.normalize_or(wind.direction),
+        speed: weather.mean_wind.length(),
+        gustiness: weather.current.gusts,
+        seed: weather.seed,
+        seconds: weather.world_seconds(time.elapsed_secs_f64()),
+    };
+    weather.current.wind = wind.now(at);
     // Clouds drift with the mean wind; gusts are too quick and too local to move them.
     weather.drift = (weather.drift + weather.mean_wind * dt).rem_euclid(Vec2::splat(DRIFT_WRAP));
 }

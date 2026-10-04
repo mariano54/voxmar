@@ -24,6 +24,13 @@
             run: Weather,
         ),
         (
+            name: "wind",
+            usage: "[KIND [FROM] [SECONDS] | list]",
+            help: "Shows the wind here, or brings a wind (calm, breeze, strong or gale; /wind list names them) to the land around you, from a direction (n, ne, e, se, s, sw, w, nw or degrees from north) if you say, for five minutes unless you say. /weather natural ends it.",
+            permission: Admin,
+            run: Wind,
+        ),
+        (
             name: "tp",
             usage: "<x> <y> <z> | <x> <z> | <player> | <player> <x> <y> <z> | <player> <player>",
             help: "Teleports you, or a player, to coordinates or to another player. ~ is where the player is now, so ~ ~10 ~ goes ten blocks up; with only x and z you land on the ground.",

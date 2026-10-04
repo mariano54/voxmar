@@ -425,8 +425,13 @@ pub struct Preset {
     pub humidity: Option<f32>,
     pub precipitation: Option<f32>,
     pub snow: Option<f32>,
-    /// Wind speed in blocks per second; it keeps blowing from where it does.
+    /// Wind speed in blocks per second; it keeps blowing from where it does unless
+    /// `direction` says otherwise.
     pub wind: Option<f32>,
+    /// How much the wind gusts, 0..1.
+    pub gusts: Option<f32>,
+    /// The direction (x, z) the wind blows towards.
+    pub direction: Option<Vec2>,
     /// Air temperature, °C: a cold snap lets snow lie, a heat wave dries the land.
     pub temperature: Option<f32>,
     /// Effects held at full strength, by name, whatever their conditions and rarity.
@@ -444,6 +449,10 @@ impl Preset {
     pub fn blend(&self, natural: &Weather, weight: f32) -> Weather {
         let mix = |natural: f32, forced: Option<f32>| forced.map_or(natural, |f| natural + (f - natural) * weight);
         let speed = natural.wind.length();
+        let mut direction = natural.wind.normalize_or(Vec2::X);
+        if let Some(forced) = self.direction.map(|d| d.normalize_or(direction)) {
+            direction = direction.lerp(forced, weight).normalize_or(forced);
+        }
         Weather {
             cover: mix(natural.cover, self.cover),
             convection: mix(natural.convection, self.convection),
@@ -452,7 +461,8 @@ impl Preset {
             precipitation: mix(natural.precipitation, self.precipitation),
             snow: mix(natural.snow, self.snow),
             temperature: mix(natural.temperature, self.temperature),
-            wind: natural.wind.normalize_or(Vec2::X) * mix(speed, self.wind),
+            wind: direction * mix(speed, self.wind),
+            gusts: mix(natural.gusts, self.gusts),
             ..*natural
         }
     }
@@ -466,6 +476,9 @@ struct WeatherFile {
     effects: Vec<Effect>,
     #[serde(default)]
     presets: Vec<Preset>,
+    /// Winds `/wind` can bring, as presets that set only the wind.
+    #[serde(default)]
+    winds: Vec<Preset>,
     /// Ground blocks and the snowy blocks snow lying on them turns them into.
     #[serde(default)]
     snow_cover: Vec<(String, String)>,
@@ -480,6 +493,7 @@ pub struct WeatherTable {
     /// (in package order) to use it.
     effect_names: FxHashMap<String, usize>,
     preset_names: FxHashMap<String, usize>,
+    winds: Vec<Preset>,
     snow_cover: Vec<(String, String)>,
 }
 
@@ -514,11 +528,19 @@ impl WeatherTable {
             self.effect_names.entry(effect.short_name().to_owned()).or_insert(index);
             self.effects.push(effect);
         }
+        for mut wind in file.winds {
+            qualify(&mut wind.name);
+            if wind.wind.is_none_or(|w| !(0.0..=40.0).contains(&w)) || wind.gusts.is_some_and(|g| !(0.0..=1.0).contains(&g)) {
+                return Err(error(format!("wind `{}` needs a speed from 0 to 40 and gusts from 0 to 1", wind.name)));
+            }
+            self.winds.push(wind);
+        }
         for mut preset in file.presets {
             qualify(&mut preset.name);
             let values = [preset.cover, preset.convection, preset.cirrus, preset.humidity, preset.precipitation, preset.snow];
             if values.into_iter().flatten().any(|v| !(0.0..=1.0).contains(&v))
                 || preset.wind.is_some_and(|w| !(0.0..=40.0).contains(&w))
+                || preset.gusts.is_some_and(|g| !(0.0..=1.0).contains(&g))
                 || preset.temperature.is_some_and(|t| !(-60.0..=60.0).contains(&t))
             {
                 return Err(error(format!("weather `{}` has a value out of range", preset.name)));
@@ -551,6 +573,15 @@ impl WeatherTable {
 
     pub fn presets(&self) -> &[Preset] {
         &self.presets
+    }
+
+    /// A wind `/wind` can bring, by short name.
+    pub fn wind(&self, name: &str) -> Option<&Preset> {
+        self.winds.iter().find(|w| w.short_name() == name || w.name == name)
+    }
+
+    pub fn winds(&self) -> &[Preset] {
+        &self.winds
     }
 
     /// An effect's index by name, with or without its namespace.
