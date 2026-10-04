@@ -8,3 +8,9 @@ license.workspace = true
 voxmar_engine.workspace = true
 fastnoise-lite.workspace = true
 tracing.workspace = true
+serde.workspace = true
+ron.workspace = true
+
+[dev-dependencies]
+# Thread CPU time for the generation benchmark, which stays meaningful on a busy machine.
+libc = "0.2"
