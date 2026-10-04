@@ -469,6 +469,10 @@ impl trails::Land for RiverLand<'_> {
     fn sample(&self, x: i32, z: i32) -> GeoSample {
         self.rivers.sample(self.stages, x, z)
     }
+
+    fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        self.rivers.grid(self.stages, origin, step, size)
+    }
 }
 
 /// Samples sites over an area, computing the regional climate once per lattice point.

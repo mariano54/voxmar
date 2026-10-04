@@ -59,10 +59,10 @@ impl Weigh for Grid {
 
 impl Grid {
     pub fn new(land: &dyn Land, region: IVec2) -> Self {
-        let origin = region * REGION;
-        let cells = (0..CELLS * CELLS)
-            .map(|i| {
-                let g = land.sample(origin.x + (i % CELLS) * CELL, origin.y + (i / CELLS) * CELL);
+        let cells = land
+            .grid(region * REGION, CELL, CELLS)
+            .into_iter()
+            .map(|g| {
                 let submerged = g.submerged();
                 Cell { height: g.height as i16, water: if submerged { g.water } else { g.height } as i16, body: g.body as u8 }
             })

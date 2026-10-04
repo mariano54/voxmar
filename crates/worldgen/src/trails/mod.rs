@@ -66,6 +66,12 @@ pub enum Marker {
 /// The land trails are planned over: the ground with rivers and lakes, before trails.
 pub trait Land: Sync {
     fn sample(&self, x: i32, z: i32) -> GeoSample;
+
+    /// The `size`×`size` samples `step` blocks apart from `origin`, row by row: the same
+    /// as sampling each, but free to share the work.
+    fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        (0..size * size).map(|i| self.sample(origin.x + i % size * step, origin.y + i / size * step)).collect()
+    }
 }
 
 /// Blocks along a side of a tile of stamps.

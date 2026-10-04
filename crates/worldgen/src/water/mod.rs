@@ -425,12 +425,33 @@ impl Rivers {
     /// The geology of one column, with its rivers and lakes.
     pub fn sample(&self, land: Stages, x: i32, z: i32) -> GeoSample {
         let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-        let column = self.unsealed(land, &tiers, x, z);
+        self.sealed(land, &tiers, x, z)
+    }
+
+    /// One column with both tiers carved in and sealed: the same whatever the columns
+    /// `tiers` were found for, as long as they include it and its neighbours. (A region
+    /// whose index does not reach a column adds nothing to it, and `near` keeps regions
+    /// in the same order however many it finds.)
+    fn sealed(&self, land: Stages, tiers: &(Near, Near), x: i32, z: i32) -> GeoSample {
+        let column = self.unsealed(land, tiers, x, z);
         if !column.near || column.sample.water > column.sample.height {
             return column.sample;
         }
-        let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, &tiers, x + dx, z + dz).sample);
+        let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, tiers, x + dx, z + dz).sample);
         seal(column.sample, &neighbours)
+    }
+
+    /// The geology of the `size`×`size` columns `step` blocks apart from `origin`, row by
+    /// row: the same as sampling each, finding the rivers near them once.
+    pub fn grid(&self, land: Stages, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        let (min, max) = (origin - 1, origin + (size - 1) * step + 1);
+        let regions = ((max + TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) - (min - TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) + 1).element_product();
+        let at = |i: i32| origin + IVec2::new(i % size, i / size) * step;
+        if regions > 4 {
+            return (0..size * size).map(|i| self.sample(land, at(i).x, at(i).y)).collect();
+        }
+        let tiers = self.tiers(land, min, max);
+        (0..size * size).map(|i| self.sealed(land, &tiers, at(i).x, at(i).y)).collect()
     }
 
     /// The geology of every column of a `size`×`size` square from `min`, with rivers and
