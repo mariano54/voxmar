@@ -135,6 +135,7 @@ fn receive(
                 player.flying = flying;
                 player.allow_flight = allow_flight;
                 player.admin = admin;
+                player.seed = seed;
                 player.joined = true;
             }
             ServerMessage::Rejected { reason } => {

@@ -168,6 +168,15 @@ pub struct SurfaceSample {
     pub colors: BiomeColors,
 }
 
+fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
+}
+
+/// Patches a little lighter or darker, warmer or cooler, by the palette noise `n`.
+fn palette(c: [f32; 3], n: f32) -> [f32; 3] {
+    [c[0] * (1.0 + 0.06 * n), c[1] * (1.0 + 0.03 * n), c[2] * (1.0 - 0.04 * n)]
+}
+
 /// The colours of grass, foliage and water at a position, sRGB. They follow a
 /// continuous climate colour map, broken up by palette noise, except where a biome sets
 /// its own; near a border the two biomes' colours blend, so there are no seams.
@@ -402,7 +411,8 @@ impl Sampler<'_> {
         // Distant terrain takes the colours of the cell alone.
         let pick = self.pick(x, z);
         let byte = |c: [f32; 3]| c.map(|v| v.round().clamp(0.0, 255.0) as u8);
-        let [grass, foliage, water_color] = self.blend_colors(&site, x, z, &pick, Biomes::blend(pick.edge, site.fertility)).map(byte);
+        let (climate, n) = self.climate_colors(&site, x, z);
+        let [grass, foliage, water_color] = self.biome_colors(climate, n, &pick, Biomes::blend(pick.edge, site.fertility)).map(byte);
         let colors = BiomeColors { grass, foliage, water: water_color };
         SurfaceSample { height, ground, water, water_level: site.water, canopy, climate: site.tint(), colors }
     }
@@ -410,7 +420,12 @@ impl Sampler<'_> {
     /// The grass, foliage and water colours at a position inside the sampler's area,
     /// changing smoothly from block to block.
     pub fn colors(&self, x: i32, z: i32) -> BiomeColors {
-        let site = self.site(x, z);
+        self.colors_of(&self.site(x, z), x, z)
+    }
+
+    /// The colours at a site already sampled at (x, z).
+    pub(crate) fn colors_of(&self, site: &Site, x: i32, z: i32) -> BiomeColors {
+        let (climate, n) = self.climate_colors(site, x, z);
         // Bilinear between the four nearest cell centres, so identity colours fade in
         // block by block rather than in steps of a cell.
         let p = IVec2::new(x, z) - biome::CELL / 2;
@@ -420,7 +435,7 @@ impl Sampler<'_> {
         for (dx, dz, w) in [(0, 0, (1.0 - f.x) * (1.0 - f.y)), (1, 0, f.x * (1.0 - f.y)), (0, 1, (1.0 - f.x) * f.y), (1, 1, f.x * f.y)] {
             let at = (cell + IVec2::new(dx, dz)) * biome::CELL;
             let pick = self.pick(at.x, at.y);
-            let colors = self.blend_colors(&site, x, z, &pick, Biomes::blend(pick.edge, site.fertility));
+            let colors = self.biome_colors(climate, n, &pick, Biomes::blend(pick.edge, site.fertility));
             for (total, c) in sum.iter_mut().zip(colors) {
                 for k in 0..3 {
                     total[k] += w * c[k];
@@ -431,32 +446,32 @@ impl Sampler<'_> {
         BiomeColors { grass: byte(sum[0]), foliage: byte(sum[1]), water: byte(sum[2]) }
     }
 
-    /// Colours from the climate at `site` and the biomes of `pick`, the neighbour's taking
-    /// `share`: grass, foliage and water.
-    fn blend_colors(&self, site: &Site, x: i32, z: i32, pick: &Pick, share: f32) -> [[f32; 3]; 3] {
+    /// The climate's colours at a site (grass, foliage, water), and the palette noise there.
+    fn climate_colors(&self, site: &Site, x: i32, z: i32) -> ([[f32; 3]; 3], f32) {
         let [t, h] = site.tint().map(|c| c as f32 / 255.0);
-        let mix = |a: [f32; 3], b: [f32; 3], t: f32| -> [f32; 3] { std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t) };
         // Blue-green when cold, olive when hot and dry, deep green when hot and wet.
-        let grass = mix([128.0, 167.0, 140.0], mix([191.0, 183.0, 85.0], [71.0, 176.0, 26.0], h), t);
-        let foliage = mix([97.0, 140.0, 110.0], mix([174.0, 164.0, 42.0], [48.0, 150.0, 18.0], h), t);
-        let water = mix([61.0, 87.0, 214.0], [67.0, 213.0, 238.0], t * (0.4 + 0.6 * h));
-        // Patches a little lighter or darker, warmer or cooler.
+        let grass = mix3([128.0, 167.0, 140.0], mix3([191.0, 183.0, 85.0], [71.0, 176.0, 26.0], h), t);
+        let foliage = mix3([97.0, 140.0, 110.0], mix3([174.0, 164.0, 42.0], [48.0, 150.0, 18.0], h), t);
+        let water = mix3([61.0, 87.0, 214.0], [67.0, 213.0, 238.0], t * (0.4 + 0.6 * h));
         let n = self.world.tint.get_noise_2d(x as f32, z as f32);
-        let palette = |c: [f32; 3]| [c[0] * (1.0 + 0.06 * n), c[1] * (1.0 + 0.03 * n), c[2] * (1.0 - 0.04 * n)];
-        let climate = [palette(grass), palette(foliage), water];
+        ([palette(grass, n), palette(foliage, n), water], n)
+    }
 
+    /// Colours from the climate's and the biomes of `pick`, the neighbour's taking `share`:
+    /// grass, foliage and water.
+    fn biome_colors(&self, climate: [[f32; 3]; 3], n: f32, pick: &Pick, share: f32) -> [[f32; 3]; 3] {
         let own = |biome: BiomeId| {
             let colors = &self.world.biomes.get(biome).colors;
             let mut own = climate;
             for (c, set) in own.iter_mut().zip([colors.grass, colors.foliage, colors.water]) {
                 if let Some((r, g, b)) = set {
-                    *c = palette([r as f32, g as f32, b as f32]);
+                    *c = palette([r as f32, g as f32, b as f32], n);
                 }
             }
             own
         };
         let (home, neighbour) = (own(pick.home), own(pick.neighbour));
-        std::array::from_fn(|i| mix(home[i], neighbour[i], share))
+        std::array::from_fn(|i| mix3(home[i], neighbour[i], share))
     }
 
     /// The biome pick of the cell holding (x, z).

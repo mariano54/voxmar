@@ -70,11 +70,11 @@ lines with the arguments filled in (`$1`, `$*`), which is how a package adds its
 is `time set day`).
 
 Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
-sits above the bottom edge (Raise HUD), VSync, debug overlay, music and sound volume, mouse
-sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom (the
-view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins, with
-Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved to
-`voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
+sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
+mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
+(the view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins,
+with Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved
+to `voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
 `$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces
 `…/voxmar`); `--view-distance` and `--no-vsync` override them. On a dedicated server, name
 admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
@@ -150,6 +150,15 @@ texel, optionally beside the same name from another pack (`--pack DIR` picks the
 
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
 same registry a mod will use. Client and server compare a content fingerprint on join. Templates
+make whole families from one line (a wood: log, stripped log, wood, planks, leaves, sapling; a
+rock: raw, cobbled, polished, bricks; a flower in three looks), and templates are shared across
+packages, so a mod's new wood is one line. Blocks carry tags from a shared vocabulary (listed at
+the top of `blocks.ron`: what a block is, where it grows, what it is good for, such as `meadow`,
+`edible`, `alchemy:calming`, `dye:blue`, `wonder`), a rarity and an optional inventory icon, so
+biomes, food and alchemy select blocks without naming them. A plant's `variants` are other looks
+of it, each its own block that drops the plant itself, as many as its size;
+`BlockRegistry::looks` lists them for generators. The inventory shows plants as their sprite and
+full blocks as a shaded cube. Templates
 make whole families from one line (a wood's log, stripped log, wood, planks, leaves and sapling;
 a rock's raw, cobbled, polished and brick blocks), and templates are shared across packages, so
 a mod's new wood is one line too. A plant can list variants, other looks of itself that become
@@ -323,6 +332,23 @@ short, soft and warm, with several variants per cue and a small random pitch cha
 repeats exactly. Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain
 is heavy and quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes
 every cue to `target/sfx_preview.wav`.
+
+Ambience is synthesized the same way and follows where the player is. About once a second a
+flood fill from the eye (on a worker, capped at 16,000 cells) measures how much air is around,
+how much of it is open to the sky or under leaves, and the leaves, wood, water, grass, rock,
+sand and snow it meets, nearer ones counting more. With the climate and biome from the world
+generator, height above the land around, depth underground, the weather and the time of day,
+that makes an environment vector, and `ambience.ron` in any content package lists what plays
+where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
+streams, surf, cave air) as stereo segments that crossfade and never repeat back to back, and
+one-shots at a rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker
+on a trunk, owls, a cricket in the grass, frogs and plops in the water, gusts on heights,
+creaking trees, drips and rumbles in caves). One-shots sound from real blocks the fill found,
+panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
+range with a fade, and rain ducks layers rather than silencing them. Captures run it silently
+and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
+writes about twenty seconds of each of nine typical places to `target/ambience_preview.wav`, and
+`ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
 
 ## Rendering and performance
 
