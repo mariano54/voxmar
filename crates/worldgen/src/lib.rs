@@ -22,6 +22,7 @@ mod dials;
 mod ecology;
 mod features;
 mod geology;
+mod hue;
 mod lattice;
 mod noise;
 mod parallel;
@@ -270,7 +271,7 @@ impl Overworld {
             .shapes
             .iter()
             .map(|shape| {
-                let surface = rules.compile(shape.surface.as_ref()?, &registry, &rocks);
+                let surface = rules.compile(shape.surface.as_ref()?, &registry, &rocks, None);
                 Some(ShapeSurface { surface, strata: shape.strata.iter().map(|name| registry.expect(name)).collect() })
             })
             .collect();
@@ -574,9 +575,7 @@ impl Sampler<'_> {
     /// The climate's colours at a site (grass, foliage, water), and the palette noise there.
     fn climate_colors(&self, site: &Site, x: i32, z: i32) -> ([[f32; 3]; 3], f32) {
         let [t, h] = site.tint().map(|c| c as f32 / 255.0);
-        // Blue-green when cold, olive when hot and dry, deep green when hot and wet.
-        let grass = mix3([128.0, 167.0, 140.0], mix3([191.0, 183.0, 85.0], [71.0, 176.0, 26.0], h), t);
-        let foliage = mix3([97.0, 140.0, 110.0], mix3([174.0, 164.0, 42.0], [48.0, 150.0, 18.0], h), t);
+        let [grass, foliage] = hue::climate_tints(t, h);
         let water = mix3([61.0, 87.0, 214.0], [67.0, 213.0, 238.0], t * (0.4 + 0.6 * h));
         let n = self.world.tint.get_noise_2d(x as f32, z as f32);
         ([palette(grass, n), palette(foliage, n), water], n)
@@ -1102,11 +1101,15 @@ mod tests {
         if let Ok(names) = std::env::var("BIOMES") {
             for name in names.split(',') {
                 let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
-                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 6000).and_then(|at| {
-                    (0..400).map(|i| spiral(i / 16, i % 16)).map(|(dx, dz)| at + IVec2::new(dx * 16, dz * 16)).find(|p| {
-                        let site = world.site(p.x, p.y);
-                        site.home == id && site.edge > 24.0 && dry(&site) && site.slope <= 2
-                    })
+                // The first place found, then the point deepest inside the biome around it.
+                let found = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 12000).and_then(|at| {
+                    let sampler = world.sampler(at - 256, at + 256);
+                    (0..64 * 64)
+                        .map(|i| at + IVec2::new(i % 64 * 8 - 256, i / 64 * 8 - 256))
+                        .map(|p| (p, sampler.site(p.x, p.y)))
+                        .filter(|(_, site)| site.home == id && dry(site) && site.slope <= 2)
+                        .max_by(|a, b| a.1.edge.total_cmp(&b.1.edge))
+                        .map(|(p, _)| p)
                 });
                 let Some(at) = found else {
                     println!("{name}: not found");

@@ -303,7 +303,16 @@ name, and the climate at each spot weighs the candidates, so a new plant with th
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
 runs high: wonder plants scattered, wonder trees as a find (a lone tree or a tiny grove every
-few kilometres) except in the fantasy biomes that name them. Forests have structure: one field grades them from dense old-growth cores with the
+few kilometres) except in the fantasy biomes that name them. Each biome keeps to a palette
+(`crates/worldgen/src/hue.rs`): every candidate's colour is worked out at load (its block's
+colour, or the grass or foliage colour where tinted) and weighed by how near it lies to the
+biome's foliage, grass or ground colour (or a `palette` colour the biome sets, as maple woods
+and cherry groves do), so many kinds of similar colour grow together while a clashing one is
+a rare accent; flowers grow a few neighbouring hues per place, mixed ground blocks keep to
+their main block's colour, and ground patches unlike the ground grow fewer and smaller.
+Forests grow in stands: a slow noise picks each stand's kind, with a few of the others among
+it, and stands of different biomes meet along the border rather than mixing across it.
+Forests have structure: one field grades them from dense old-growth cores with the
 giant trees through ordinary woodland to scrubby edges and gaps, and a global field opens
 clearings with a soft edge. Ground decoration (`decorations.ron`, another shared pool biomes
 select by tag) is placed in a fixed order of stages: patches of dirt, gravel and moss; boulders

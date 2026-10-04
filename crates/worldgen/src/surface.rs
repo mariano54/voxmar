@@ -21,6 +21,10 @@ use crate::rarity::{Tier, name_hash};
 use crate::rocks::{ProvinceId, Rocks};
 use crate::{SEA_LEVEL, Site};
 
+/// How far the threshold of a ground patch rises when its colour is wholly unlike the
+/// ground's, in noise units: such patches become rare and small.
+const PATCH_CONTRAST: f32 = 0.3;
+
 /// Blocks chosen by weight from a uniform value.
 #[derive(Clone, Debug)]
 pub struct Palette {
@@ -34,6 +38,25 @@ impl Palette {
     /// each at the selector's weight times its rarity, so a stone a mod adds with the
     /// right tag joins every palette that asks for the tag.
     pub fn new(selects: &[Select], registry: &BlockRegistry) -> Self {
+        Self::from_weights(Self::selected(selects, registry))
+    }
+
+    /// Like `new`, with each block weighed by how well its colour sits with the heaviest
+    /// one's (`crate::hue`), grass-tinted blocks in `grass`: a mix of similar colours
+    /// keeps its variety, while a clashing block is a rare speck.
+    pub fn harmonious(selects: &[Select], registry: &BlockRegistry, grass: [f32; 3]) -> Self {
+        let mut named = Self::selected(selects, registry);
+        let shown = |block: BlockId| crate::hue::shown(registry.def(block), grass, grass);
+        if let Some(&(main, _)) = named.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
+            let anchor = shown(main);
+            for (block, weight) in &mut named {
+                *weight *= crate::hue::harmony(shown(*block), anchor, crate::hue::GROUND_SPREAD);
+            }
+        }
+        Self::from_weights(named)
+    }
+
+    fn selected(selects: &[Select], registry: &BlockRegistry) -> Vec<(BlockId, f32)> {
         let mut named: Vec<(BlockId, f32)> = Vec::new();
         for select in selects {
             match select {
@@ -43,6 +66,10 @@ impl Palette {
                 }
             }
         }
+        named
+    }
+
+    fn from_weights(named: Vec<(BlockId, f32)>) -> Self {
         let total: f32 = named.iter().map(|n| n.1).sum();
         let mut sum = 0.0;
         let ends = named
@@ -53,6 +80,19 @@ impl Palette {
             })
             .collect();
         Self { blocks: named.into_iter().map(|n| n.0).collect(), ends }
+    }
+
+    /// The block it holds most of.
+    pub fn main(&self) -> Option<BlockId> {
+        let mut last = 0.0;
+        let mut best = None;
+        for (&block, &end) in self.blocks.iter().zip(&self.ends) {
+            if best.is_none_or(|(_, share)| end - last > share) {
+                best = Some((block, end - last));
+            }
+            last = end;
+        }
+        best.map(|(block, _)| block)
     }
 
     pub fn one(block: BlockId) -> Self {
@@ -86,10 +126,14 @@ pub(crate) enum Mat {
 }
 
 impl Mat {
-    pub(crate) fn new(material: &Material, registry: &BlockRegistry) -> Self {
+    /// With `grass` (the biome's grass colour), mixes keep to the colour of their main block.
+    pub(crate) fn new(material: &Material, registry: &BlockRegistry, grass: Option<[f32; 3]>) -> Self {
         match material {
             Material::Block(name) => Mat::Mix(Palette::one(registry.expect(name))),
-            Material::Mix(selects) => Mat::Mix(Palette::new(selects, registry)),
+            Material::Mix(selects) => Mat::Mix(match grass {
+                Some(grass) => Palette::harmonious(selects, registry, grass),
+                None => Palette::new(selects, registry),
+            }),
             Material::Stones => Mat::Stones,
             Material::Strata => Mat::Strata,
         }
@@ -242,20 +286,43 @@ impl SurfaceRules {
         self.noises.len() - 1
     }
 
-    pub fn compile(&mut self, def: &SurfaceDef, registry: &BlockRegistry, rocks: &Rocks) -> Surface {
-        let material = |m: &Material| Mat::new(m, registry);
+    /// With `grass` (the biome's grass colour), mixed materials keep to their main block's
+    /// colour (see `Mat::new`).
+    pub fn compile(&mut self, def: &SurfaceDef, registry: &BlockRegistry, rocks: &Rocks, grass: Option<[f32; 3]>) -> Surface {
+        let material = |m: &Material| Mat::new(m, registry, grass);
         let layers = |l: &LayersDef| LayersRule {
             top: material(&l.top),
             filler: l.filler.as_ref().map_or_else(|| material(&l.top), material),
             depth: l.depth.unwrap_or(3),
         };
+        // The colour a material mostly shows; none for rock, which follows the province.
+        let colour = |m: &Material, grass: [f32; 3]| -> Option<[f32; 3]> {
+            let block = match m {
+                Material::Block(name) => registry.expect(name),
+                Material::Mix(selects) => Palette::harmonious(selects, registry, grass).main()?,
+                Material::Stones | Material::Strata => return None,
+            };
+            Some(crate::hue::shown(registry.def(block), grass, grass))
+        };
         let rules = def
             .rules
             .iter()
-            .map(|r| Rule {
-                underwater: r.when.contains(&Condition::Underwater),
-                when: r.when.iter().map(|c| self.condition(c, rocks)).collect(),
-                place: layers(&r.place),
+            .map(|r| {
+                let mut when: Vec<Cond> = r.when.iter().map(|c| self.condition(c, rocks)).collect();
+                // Patches on dry land of a colour unlike the ground's are fewer and smaller:
+                // their threshold rises as the colours part (no change where they agree).
+                let underwater = r.when.contains(&Condition::Underwater);
+                if let Some(grass) = grass.filter(|_| !underwater)
+                    && let (Some(ground), Some(top)) = (colour(&def.ground.top, grass), colour(&r.place.top, grass))
+                {
+                    let apart = 1.0 - crate::hue::harmony(top, ground, crate::hue::GROUND_SPREAD);
+                    for c in &mut when {
+                        if let Cond::Patch(_, threshold) = c {
+                            *threshold += PATCH_CONTRAST * apart;
+                        }
+                    }
+                }
+                Rule { underwater, when, place: layers(&r.place) }
             })
             .collect();
         Surface {

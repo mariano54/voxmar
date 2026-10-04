@@ -582,9 +582,6 @@ pub struct TreeDef {
     pub habitat: Habitat,
     #[serde(default)]
     pub comfort: Comfort,
-    /// Grows in stands of its own kind among other trees (birch among oaks).
-    #[serde(default)]
-    pub stands: bool,
     /// Where in the forest's structure it grows (`Site::stand`, 0 in gaps and scrubby
     /// edges ..= 1 in old-growth cores), fading out over a small margin: giants in the
     /// cores, shrubs at the edges. Everywhere when left out.
@@ -682,6 +679,21 @@ pub struct FloraDef {
     pub decorations: Option<Vec<Select>>,
     /// Tags whose trees, plants and decorations never grow here, whatever selects them.
     pub exclude: Vec<String>,
+    /// The colours the biome keeps to (see `crate::hue`).
+    pub palette: PaletteDef,
+}
+
+/// A biome's palette: anchor colours its vegetation is weighed against, so kinds whose
+/// colours sit together grow freely and a clashing one is a rare accent.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct PaletteDef {
+    /// The canopy's colour; the biome's foliage colour when left out, so tinted leaves of
+    /// every kind fit and strongly coloured ones (red maple, pink cherry) stand out.
+    pub canopy: Option<(u8, u8, u8)>,
+    /// The flowers' colour; when left out, any, each place growing a few kinds that are
+    /// neighbours in hue.
+    pub flowers: Option<(u8, u8, u8)>,
 }
 
 // ---------------------------------------------------------------------------------------

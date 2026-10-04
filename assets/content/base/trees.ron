@@ -30,7 +30,7 @@
             comfort: (temperature: (10.0, 20.0), moisture: (1.0, 3.0)),
         ),
         (
-            name: "birch", tags: ["broadleaf", "temperate", "cold"], stands: true,
+            name: "birch", tags: ["broadleaf", "temperate", "cold"],
             log: "birch_log", leaves: "birch_leaves", height: (5, 9), lean: 0.4,
             crown: Round(branches: (1, 3), reach: (0.5, 1.5), radius: (1.6, 2.2), squash: 1.3),
             comfort: (temperature: (2.0, 14.0), moisture: (0.8, 3.0)),

@@ -723,13 +723,14 @@ impl Decor {
         for i in 0..log.length {
             let at = start + axis * i;
             if log.thick {
-                // Three wide and three high, corners rounded off at random, hollow along
-                // its middle if it rotted from the inside.
+                // Three wide and three high, corners rounded off at random, or hollow along
+                // its middle if it rotted from the inside (then square, so its walls hold
+                // together rather than meeting only at their edges).
                 for dy in 0..3 {
                     for ds in -1..=1 {
                         let corner = dy != 1 && ds != 0;
                         let cell = at + side * ds + IVec3::Y * dy;
-                        if (corner && unit(hash3(seed, cell.x, cell.y, cell.z)) < 0.6) || (hollow && dy == 1 && ds == 0) {
+                        if (corner && !hollow && unit(hash3(seed, cell.x, cell.y, cell.z)) < 0.6) || (hollow && dy == 1 && ds == 0) {
                             continue;
                         }
                         if dy == 0 && blocks.contains(cell) && !area.world.terrain.is_firm(blocks.get(cell - IVec3::Y)) {

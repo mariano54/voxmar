@@ -23,7 +23,11 @@
 //
 // Flora: `cover` is how much of the ground grasses and ferns carpet (most of it in a
 // meadow), `flowers` how many flowers grow in the bloom field's drifts: keep it low (a few
-// hundredths) for ordinary land; only flower meadows and rare variants run high.
+// hundredths) for ordinary land; only flower meadows and rare variants run high. Trees,
+// carpets, flowers and the mixed blocks of the ground keep to the biome's palette (see
+// crates/worldgen/src/hue.rs): selectors may pick many kinds, and those whose colours sit
+// with the biome's foliage, grass and ground grow freely while a clashing one is a rare
+// accent. `palette` builds a biome around another colour (a maple wood, a cherry grove).
 // `decorations` select from decorations.ron (rocks, logs, bushes, patches, litter); left
 // out, a biome takes every decoration carrying one of its tags.
 (
@@ -135,7 +139,7 @@
             flora: (
                 forest: 0.03,
                 trees: [Name("oak", 1.0), Name("shrub", 1.0)],
-                cover: 0.7, flowers: 0.5, bloom: 0.6,
+                cover: 0.7, flowers: 0.35, bloom: 0.4,
                 plants: [Tag("meadow", 1.0), Name("tall_grass", 0.2)],
             ),
         ),
@@ -219,6 +223,7 @@
                 forest: 0.55,
                 trees: [Name("cherry", 1.0), Name("oak", 0.1)],
                 cover: 0.7, flowers: 0.12,
+                palette: (canopy: (229, 172, 205)),
                 plants: [Tag("meadow", 1.0), Name("pink_tulip", 2.0)],
             ),
             rarity: Rare,
@@ -248,6 +253,8 @@
                 forest: 0.75,
                 trees: [Name("maple", 0.9), Name("amber_maple", 0.8), Name("green_maple", 0.7), Name("birch", 0.6), Name("golden_birch", 0.4), Name("oak", 0.5), Name("spruce", 0.3), Name("big_oak", 0.2)],
                 cover: 0.75, flowers: 0.03,
+                // Built around autumn colour: amber and red maples, golden birch.
+                palette: (canopy: (215, 125, 50)),
                 plants: [Tag("forest_floor", 0.8), Tag("meadow", 0.6), Name("bracken", 0.6), Tag("autumn", 0.6)],
             ),
             surface: (
@@ -724,6 +731,14 @@
                 trees: [Name("cypress", 1.0), Name("shrub", 0.5)],
                 cover: 0.6, flowers: 0.6, bloom: 0.8,
                 plants: [Name("short_grass", 1.0), Name("lavender", 8.0), Name("sage", 1.0), Name("thyme", 1.0)],
+                palette: (flowers: (150, 120, 220)),
+            ),
+            // Grass and lavender over the hills, the rock showing only where it is steep.
+            surface: (
+                include: ["soil_slopes"],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Block("sand")),
+                shore: (top: Block("sand")),
             ),
             variants: [],
         ),
@@ -893,13 +908,13 @@
                 cover: 0.75, flowers: 0.02,
                 // Mostly green grass under the climate's dry tint; straw-coloured bunchgrass
                 // in tufts among it, pampas plumes only in drifts.
-                plants: [Name("short_grass", 3.0), Name("tall_grass", 1.0), Name("bunchgrass", 0.6), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 1.0), Name("chili", 0.2)],
+                plants: [Name("short_grass", 3.0), Name("tall_grass", 1.0), Name("bunchgrass", 0.3), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 1.0), Name("chili", 0.2)],
             ),
             surface: (
                 include: ["soil_slopes", "washes"],
                 rules: [
                     (when: [Band((name: "game_trails", scale: 140.0), 0.012)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
-                    (when: [Patch((name: "savanna_soil", scale: 30.0, octaves: 2), 0.4)], place: (top: Mix([Name("coarse_dirt", 3.0), Name("red_earth", 1.0)]), filler: Block("dirt"))),
+                    (when: [Patch((name: "savanna_soil", scale: 30.0, octaves: 2), 0.4)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
                 ],
                 ground: (top: Block("grass_block"), filler: Block("dirt")),
                 underwater: (top: Block("sand")),
@@ -916,7 +931,7 @@
                 forest: 0.12,
                 trees: [Name("baobab", 2.0), Name("acacia", 0.4), Name("shrub", 0.3)],
                 cover: 0.75, flowers: 0.02,
-                plants: [Name("short_grass", 3.0), Name("tall_grass", 0.8), Name("bunchgrass", 0.6), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 1.0), Name("chili", 0.2)],
+                plants: [Name("short_grass", 3.0), Name("tall_grass", 0.8), Name("bunchgrass", 0.3), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 1.0), Name("chili", 0.2)],
             ),
             variants: [],
         ),
@@ -986,6 +1001,7 @@
                 forest: 0.05,
                 trees: [Name("birch", 1.0), Name("shrub", 0.5), Name("silverwood", 4.0)],
                 cover: 0.7, flowers: 0.3,
+                palette: (canopy: (150, 200, 220), flowers: (215, 225, 240)),
                 plants: [Tag("meadow", 1.0), Name("azure_bluet", 3.0), Name("oxeye_daisy", 2.0), Name("lily_of_the_valley", 2.0), Name("moonbloom", 20.0)],
                 wonders: [Name("starlily", 1.0), Name("heartbloom", 1.0)],
             ),
@@ -1015,6 +1031,7 @@
                 forest: 0.6,
                 trees: [Name("silverwood", 14.0), Name("birch", 0.6), Name("spruce", 0.4)],
                 cover: 0.7, flowers: 0.05,
+                palette: (canopy: (150, 200, 220)),
                 plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0)],
                 wonders: [Name("starlily", 1.0), Name("crystal_bloom", 1.0)],
             ),
@@ -1041,6 +1058,7 @@
                 forest: 0.85,
                 trees: [Name("giant_glowcap", 14.0), Name("dark_oak", 1.0), Name("oak", 0.4)],
                 cover: 0.6, flowers: 0.02,
+                palette: (canopy: (60, 220, 210)),
                 plants: [Tag("fungus", 2.0), Name("glowcap", 30.0), Name("dreamshade", 15.0), Name("whisperfern", 10.0), Tag("fern", 1.0), Name("short_grass", 0.6)],
                 wonders: [Name("aether_orchid", 1.0)],
             ),
@@ -1066,6 +1084,7 @@
                 forest: 0.18,
                 trees: [Name("emberwood", 14.0), Name("dead_tree", 1.0)],
                 cover: 0.15, flowers: 0.02,
+                palette: (canopy: (230, 100, 30)),
                 plants: [Name("emberbloom", 25.0), Name("dead_bush", 2.0), Name("bunchgrass", 0.5)],
                 wonders: [Name("sunspire", 1.0)],
             ),
@@ -1093,6 +1112,7 @@
                 forest: 0.03,
                 trees: [Name("silverwood", 10.0)],
                 cover: 0.2, flowers: 0.0,
+                palette: (canopy: (150, 200, 220)),
                 plants: [Name("crystal_bloom", 60.0), Name("frostpetal", 15.0)],
                 decorations: [Name("ice_crystals", 1.0), Tag("tundra", 0.3)],
             ),
