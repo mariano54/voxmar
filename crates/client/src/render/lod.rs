@@ -351,6 +351,8 @@ struct Corner {
     /// Water or ice at sea level above the terrain.
     sheet: Option<BlockId>,
     climate: [u8; 2],
+    /// The biome's water colour, linear: what real water there is tinted with.
+    water: [f32; 3],
 }
 
 /// Seen from afar, leaves are darker than their texture: the gaps show the shaded inside of
@@ -412,6 +414,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
                 plants: if palette.is_grassy(surface.ground) { GRASS_PLANTS * (1.0 - cover) } else { 0.0 },
                 sheet: surface.water,
                 climate: surface.climate,
+                water: surface.colors.water.map(srgb_to_linear),
             });
         }
     }
@@ -492,11 +495,16 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
                     *slot = vertices.len() as u32;
                     let c = corner(x, z);
                     let block = c.sheet.unwrap_or(block);
-                    let (kind, opacity) =
-                        if palette.is_water(block) { (WATER, 1.0) } else { (ICE, palette.opacity[block.0 as usize]) };
+                    // Water carries the biome's water colour, which real water is shaded from;
+                    // ice its own colour and opacity.
+                    let (kind, color, opacity) = if palette.is_water(block) {
+                        (WATER, c.water, 1.0)
+                    } else {
+                        (ICE, palette.color(block, true, c.climate), palette.opacity[block.0 as usize])
+                    };
                     vertices.push([
                         pack_position(x, z, SHEET_HEIGHT, c.sky, kind),
-                        pack_color(palette.color(block, true, c.climate)) | ((opacity * 255.0) as u32) << 24,
+                        pack_color(color) | ((opacity * 255.0) as u32) << 24,
                         encode_normal(Vec3::Y),
                         pack_color(c.top),
                     ]);

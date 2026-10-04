@@ -372,9 +372,12 @@ The water shader then composes the surface over the scene itself (alpha 1):
   gives their surface a churning flow away from the fall). Falling water, and water pouring
   over an edge, is streaked white and runs down its sides.
 
-Distant water (`lod.wgsl`) uses the same optics: the floor seen through a depth derived from
-the sky light at the floor, the water's own colour where deep, and the fog colour as the
-reflected sky, so the two meet in the same colour where real chunks give way to tiles.
+Distant water (`lod.wgsl`) uses the same optics and the same biome water colour (the
+generator's, carried by the sheet's vertices): the floor seen through a depth derived from
+the sky light at the floor, the water's own colour where deep, and the sky's gradient as the
+reflected sky (its zenith and horizon colours come with `DistantView`), so the two meet in
+nearly the same colour where real chunks give way to tiles: within about 10 levels of 255
+at view distance 8, seen from 30 blocks up, where they had differed by over 20.
 
 The water's colour is the biome's (`Column::colors`, looked up per block like grass), so
 absorption and the colour of deep water follow it.

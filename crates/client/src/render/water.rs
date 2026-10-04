@@ -182,7 +182,14 @@ pub struct WaterParams {
     uniform: WaterUniform,
 }
 
-/// See `Water` in water.wgsl.
+impl WaterParams {
+    /// The sky's zenith and horizon colours this frame, which water reflects.
+    pub fn sky(&self) -> [Vec4; 2] {
+        [self.uniform.zenith, self.uniform.horizon]
+    }
+}
+
+/// See `Water` in water_surface.wgsl.
 #[derive(ShaderType, Clone, Copy, Default)]
 struct WaterUniform {
     waves: [Vec4; MAX_OCTAVES],

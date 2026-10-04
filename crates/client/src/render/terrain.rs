@@ -54,7 +54,7 @@ mod compact;
 use compact::Compaction;
 
 use super::lod::{LodVertex, TileKey, TileMesh};
-use super::water;
+use super::water::{self, WaterParams};
 use super::wind::Breeze;
 use super::{ATTRIBUTE_LOD, ATTRIBUTE_VOXEL, DISTANT_SHADER, GRASS_SHADER, TerrainPass, VOXEL_SHADER};
 
@@ -541,6 +541,10 @@ struct DistantView {
     /// xy: column of the coverage mask's first bit, z: its width in columns, w: the real
     /// chunks' radius in columns.
     coverage: IVec4,
+    /// The sky's zenith and horizon colours, which distant water reflects as real water
+    /// does where its reflections leave the screen.
+    zenith: Vec4,
+    horizon: Vec4,
 }
 
 /// Render world state: pages, chunk records and the bind group shared by every draw.
@@ -837,7 +841,7 @@ impl TerrainGpu {
     }
 
     /// Writes which columns around `camera` have real chunks, and the real radius.
-    fn write_coverage(&mut self, device: &RenderDevice, queue: &RenderQueue, camera: Vec3) {
+    fn write_coverage(&mut self, device: &RenderDevice, queue: &RenderQueue, camera: Vec3, sky: [Vec4; 2]) {
         let first = IVec2::new(camera.x.floor() as i32, camera.z.floor() as i32).div_euclid(IVec2::splat(CHUNK_SIZE))
             - COVERAGE_SIZE / 2;
         let mut bits = [0u32; COVERAGE_WORDS];
@@ -857,7 +861,8 @@ impl TerrainGpu {
             })
         });
         queue.write_buffer(coverage, 0, bytemuck::cast_slice(&bits));
-        let view = DistantView { coverage: IVec4::new(first.x, first.y, COVERAGE_SIZE, self.real_columns) };
+        let [zenith, horizon] = sky;
+        let view = DistantView { coverage: IVec4::new(first.x, first.y, COVERAGE_SIZE, self.real_columns), zenith, horizon };
         let mut uniform = encase::UniformBuffer::new(Vec::<u8>::new());
         uniform.write(&view).expect("distant view fits a uniform");
         let buffer = self.distant_view.get_or_insert_with(|| {
@@ -883,6 +888,7 @@ fn receive(
     breeze: Option<Res<Breeze>>,
     pipelines: Res<TerrainPipelines>,
     pipeline_cache: Res<PipelineCache>,
+    water: Option<Res<WaterParams>>,
 ) {
     let layout = pipeline_cache.get_bind_group_layout(&pipelines.chunks_layout);
     gpu.ensure_arenas(&device, &queue);
@@ -905,7 +911,7 @@ fn receive(
     if let Some(camera) = cameras.iter().next() {
         let position = camera.world_from_view.translation();
         gpu.camera = position;
-        gpu.write_coverage(&device, &queue, position);
+        gpu.write_coverage(&device, &queue, position, water.map_or([Vec4::ZERO; 2], |w| w.sky()));
     }
 }
 

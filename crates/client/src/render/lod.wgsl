@@ -8,13 +8,16 @@
 //                                    beneath; a: cover of small plants)
 
 #import bevy_pbr::mesh_view_bindings::{view, fog}
-#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, fog_color, sun_direction, sun_color, water_normal}
-#import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel}
+#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, water_normal}
+#import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct DistantView {
     // xy: column of the coverage mask's first bit, z: the mask's width in columns, w: the
     // real chunks' radius in columns.
     coverage: vec4<i32>,
+    // The sky's zenith and horizon colours, for water's reflection.
+    zenith: vec4<f32>,
+    horizon: vec4<f32>,
 };
 
 // Tile origins (x, z) and cell size (w), by instance index; shared with the real chunks.
@@ -239,7 +242,7 @@ fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surfa
 // through, the water's own colour where it is deep, and a reflection of the sky.
 fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     let light = shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, in.clip_position.xy);
-    let floor = in.side * face_light(in, UP, 1.0, 1.0, false);
+    let floor = saturate(in.side) * face_light(in, UP, 1.0, 1.0, false);
     if in.kind == ICE {
         return mix(floor, in.top * light, in.params.y);
     }
@@ -253,9 +256,9 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     let r = reflect(-to_eye, n);
     let glint = pow(max(dot(r, sun_direction()), 0.0), mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples))
         * mix(GLINT.x, GLINT.y, ripples);
-    // The top colour is the water texture's average in the biome's colour; scaled to the
-    // brightness of the colours real water is tinted with.
-    let tint = in.top / max(max(in.top.r, in.top.g), max(in.top.b, 1e-3)) * 0.75;
+    // The top colour is the biome's water colour, as real water's. Saturated, like every
+    // colour here: seen edge-on, a sheet interpolates at pixel centres outside it.
+    let tint = saturate(in.top);
     let absorbed = absorption(tint, 1.0);
     let scattered = scattering(tint, 1.0);
     // Sky light at the floor fell by two levels per block of water above it. Saturated,
@@ -265,7 +268,9 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     let depth = (1.0 - sky) * SHEET_DEPTH;
     let path = select(depth / max(to_eye.y, 0.05), 1e4, sky <= 0.0);
     let seen = floor * transmittance(absorbed, scattered, path + depth) + inscattered(absorbed, scattered, path, light);
-    return mix(seen, fog_color(r), fresnel(facing)) + sun_color() * glint * 4.0;
+    // The sky as real water reflects it where its reflections leave the screen.
+    let reflected = sky_gradient(r, distant.zenith.rgb, distant.horizon.rgb);
+    return mix(seen, reflected, fresnel(facing)) + sun_color() * glint * 4.0;
 }
 
 @fragment
