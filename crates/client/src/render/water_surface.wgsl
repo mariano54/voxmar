@@ -51,6 +51,8 @@ struct Water {
 @group(4) @binding(1) var scene_color: texture_2d<f32>;
 @group(4) @binding(2) var scene_sampler: sampler;
 @group(4) @binding(3) var<uniform> water: Water;
+// The nearest depth of each 2×2 pixels (water_depth.wgsl), which the reflection march reads.
+@group(4) @binding(4) var march_depth: texture_2d<f32>;
 
 // How far each wave drags the next along its slope (afl_ext's 0.2 to 0.38 for weights that
 // start at one; ours sum to one).
@@ -113,6 +115,12 @@ fn pixel(uv: vec2<f32>) -> vec2<i32> {
 // Depth of the scene behind the water (reverse-Z: 1 at the eye, 0 at infinity).
 fn depth_at(uv: vec2<f32>) -> f32 {
     return textureLoad(scene_depth, pixel(uv), 0);
+}
+
+// The half-resolution depth at `uv`, for the march.
+fn coarse_depth_at(uv: vec2<f32>) -> f32 {
+    let at = (view.viewport.xy + clamp(uv, vec2(0.0), vec2(1.0)) * view.viewport.zw) * 0.5;
+    return textureLoad(march_depth, min(vec2<i32>(at), vec2<i32>(textureDimensions(march_depth)) - 1), 0).r;
 }
 
 fn color_at(uv: vec2<f32>) -> vec3<f32> {
@@ -249,7 +257,7 @@ fn trace(origin: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
     var hit = false;
     for (var i = 0u; i < steps; i++) {
         ray += delta;
-        let scene = depth_at(ray.xy);
+        let scene = coarse_depth_at(ray.xy);
         // Passed behind something, but not so far behind that it went past it.
         let slack = max(abs(delta.z) * 2.0, ray.z * ray.z * THICKNESS / near);
         if scene > ray.z && scene - ray.z < slack {
@@ -264,6 +272,12 @@ fn trace(origin: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
     for (var i = 0u; i < water.budget.z; i++) {
         delta *= 0.5;
         ray += select(delta, -delta, depth_at(ray.xy) > ray.z);
+    }
+    // The march saw the nearest of each 2×2 pixels, which along silhouettes includes
+    // things the full-resolution pixel has not: the hit must hold there too.
+    let scene = depth_at(ray.xy);
+    if abs(scene - ray.z) > max(abs(delta.z) * 8.0, ray.z * ray.z * THICKNESS / near) {
+        return vec4(0.0);
     }
     let edge = max(abs(ray.x - 0.5), abs(ray.y - 0.5)) * 2.0;
     return vec4(ray, 1.0 - smoothstep(0.85, 1.0, edge));

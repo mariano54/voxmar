@@ -31,15 +31,19 @@ use bevy::render::render_phase::{
 };
 use bevy::render::render_resource::{
     AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
-    BufferUsages, CachedRenderPipelineId, Extent3d, FilterMode, LoadOp, Operations, PipelineCache, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-    ShaderType, StoreOp, TextureSampleType, encase,
+    BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState, LoadOp,
+    Operations, PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
+    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, StoreOp,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, encase,
     binding_types::{sampler, texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
 use bevy::render::view::{ViewDepthTexture, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::asset::embedded_asset;
+use bevy::core_pipeline::FullscreenShader;
+use bevy::render::texture::{CachedTexture, TextureCache};
 use bevy::shader::load_shader_library;
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +61,7 @@ impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "water.wgsl");
         load_shader_library!(app, "water_surface.wgsl");
+        embedded_asset!(app, "water_depth.wgsl");
         app.init_resource::<WaterQuality>()
             .init_resource::<WaterParams>()
             .add_plugins(ExtractResourcePlugin::<WaterParams>::default())
@@ -69,7 +74,7 @@ impl Plugin for WaterPlugin {
             .add_systems(RenderStartup, init_gpu)
             .add_systems(
                 Render,
-                write_uniform.in_set(RenderSystems::PrepareResources),
+                (write_uniform, prepare_depth_textures).in_set(RenderSystems::PrepareResources),
             )
             .add_systems(
                 Core3d,
@@ -246,7 +251,7 @@ fn update_params(
 }
 
 /// The water bind group's layout (group 4 of the translucent terrain pipeline): the scene's
-/// depth and colour, a sampler and the uniform.
+/// depth and colour, a sampler, the uniform and the half-resolution depth.
 pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
     let entries = if multisampled {
         BindGroupLayoutEntries::sequential(
@@ -256,6 +261,7 @@ pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
                 texture_2d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<WaterUniform>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         )
     } else {
@@ -266,6 +272,7 @@ pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
                 texture_2d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<WaterUniform>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         )
     };
@@ -276,9 +283,21 @@ pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
 struct WaterGpu {
     uniform: Buffer,
     sampler: Sampler,
+    /// The half-resolution depth's layouts and pipelines, without and with MSAA.
+    depth_layouts: [BindGroupLayoutDescriptor; 2],
+    depth_pipelines: [CachedRenderPipelineId; 2],
 }
 
-fn init_gpu(mut commands: Commands, device: Res<RenderDevice>) {
+/// The half-resolution depth the reflection march reads (`water_depth.wgsl`).
+const MARCH_DEPTH_FORMAT: TextureFormat = TextureFormat::R32Float;
+
+fn init_gpu(
+    mut commands: Commands,
+    device: Res<RenderDevice>,
+    pipeline_cache: Res<PipelineCache>,
+    fullscreen: Res<FullscreenShader>,
+    asset_server: Res<AssetServer>,
+) {
     let uniform = device.create_buffer(&BufferDescriptor {
         label: Some("water_uniform"),
         size: WaterUniform::min_size().get(),
@@ -293,7 +312,58 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>) {
         min_filter: FilterMode::Linear,
         ..default()
     });
-    commands.insert_resource(WaterGpu { uniform, sampler });
+    let shader = asset_server.load("embedded://voxmar/render/water_depth.wgsl");
+    let depth_layouts = [false, true].map(|multisampled| {
+        let entry = if multisampled { texture_depth_2d_multisampled() } else { texture_depth_2d() };
+        BindGroupLayoutDescriptor::new("water_depth_layout", &BindGroupLayoutEntries::single(ShaderStages::FRAGMENT, entry))
+    });
+    let depth_pipelines = [0, 1].map(|i| {
+        pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("water_depth".into()),
+            layout: vec![depth_layouts[i].clone()],
+            vertex: fullscreen.to_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: shader.clone(),
+                shader_defs: if i == 1 { vec!["MULTISAMPLED".into()] } else { Vec::new() },
+                targets: vec![Some(ColorTargetState { format: MARCH_DEPTH_FORMAT, blend: None, write_mask: ColorWrites::ALL })],
+                ..default()
+            }),
+            ..default()
+        })
+    });
+    commands.insert_resource(WaterGpu { uniform, sampler, depth_layouts, depth_pipelines });
+}
+
+/// Each camera's half-resolution depth, while it has water in sight.
+#[derive(Component)]
+struct MarchDepth(CachedTexture);
+
+fn prepare_depth_textures(
+    mut commands: Commands,
+    mut cache: ResMut<TextureCache>,
+    device: Res<RenderDevice>,
+    views: Query<(Entity, &ExtractedCamera, Option<&TerrainDraws>)>,
+) {
+    for (entity, camera, draws) in &views {
+        let Some(size) = camera.physical_target_size.filter(|_| draws.is_some_and(TerrainDraws::has_water)) else {
+            commands.entity(entity).remove::<MarchDepth>();
+            continue;
+        };
+        let texture = cache.get(
+            &device,
+            TextureDescriptor {
+                label: Some("water_march_depth"),
+                size: Extent3d { width: size.x.div_ceil(2), height: size.y.div_ceil(2), depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: MARCH_DEPTH_FORMAT,
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+        );
+        commands.entity(entity).insert(MarchDepth(texture));
+    }
 }
 
 fn write_uniform(params: Res<WaterParams>, gpu: Option<Res<WaterGpu>>, queue: Res<RenderQueue>) {
@@ -354,7 +424,14 @@ impl CachedRenderPipelinePhaseItem for WaterItem {
 type DrawWater = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>, DrawTerrain);
 
 /// What the water pass needs of a camera.
-type WaterView = (&'static ExtractedCamera, &'static ViewTarget, &'static ViewDepthTexture, &'static Msaa, &'static TerrainDraws);
+type WaterView = (
+    &'static ExtractedCamera,
+    &'static ViewTarget,
+    &'static ViewDepthTexture,
+    &'static Msaa,
+    &'static TerrainDraws,
+    Option<&'static MarchDepth>,
+);
 
 /// Draws the translucent terrain of a camera with the scene so far bound for reading. With
 /// MSAA it draws into the multisampled image, reading the resolved one, and resolves into
@@ -369,9 +446,38 @@ fn water_pass(
     mut ctx: RenderContext,
 ) {
     let view_entity = view.entity();
-    let (camera, target, depth, msaa, draws) = view.into_inner();
-    let (Some(gpu), Some(water), Some(size)) = (gpu, draws.water(), camera.physical_target_size) else { return };
+    let (camera, target, depth, msaa, draws, march) = view.into_inner();
+    let (Some(gpu), Some(water), Some(size), Some(MarchDepth(march))) = (gpu, draws.water(), camera.physical_target_size, march) else {
+        return;
+    };
     let multisampled = *msaa != Msaa::Off;
+    let Some(depth_pipeline) = pipeline_cache.get_render_pipeline(gpu.depth_pipelines[multisampled as usize]) else { return };
+
+    // The half-resolution depth for the reflection march.
+    let depth_bind_group = ctx.render_device().create_bind_group(
+        "water_depth_bind_group",
+        &pipeline_cache.get_bind_group_layout(&gpu.depth_layouts[multisampled as usize]),
+        &BindGroupEntries::single(depth.view()),
+    );
+    {
+        let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
+            label: Some("water_depth"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &march.default_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations { load: LoadOp::Clear(Default::default()), store: StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_render_pipeline(depth_pipeline);
+        pass.set_bind_group(0, &depth_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
     // The scene so far stays the source the water reads, and the water's result goes to the
     // other main image, which then becomes the main one.
     let write = target.post_process_write();
@@ -401,7 +507,7 @@ fn water_pass(
     let bind_group = ctx.render_device().create_bind_group(
         "water_bind_group",
         &pipeline_cache.get_bind_group_layout(&layout(multisampled)),
-        &BindGroupEntries::sequential((depth.view(), write.source, &gpu.sampler, gpu.uniform.as_entire_binding())),
+        &BindGroupEntries::sequential((depth.view(), write.source, &gpu.sampler, gpu.uniform.as_entire_binding(), &march.default_view)),
     );
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();

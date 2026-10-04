@@ -604,14 +604,17 @@ impl Mesher<'_> {
         // occlusion, which water's shading has no use for (see the module docs).
         let mut fluid = 0u128;
         let mut falling = false;
-        // Chunks merged for distance keep whole, still blocks: the flow's detail would not show.
-        if let Some(state) = info.fluid.filter(|_| info.render == RenderKind::Translucent && self.detail == 1) {
+        if let Some(state) = info.fluid.filter(|_| info.render == RenderKind::Translucent) {
             ao = 0;
-            for (corner, (drop, speed, direction)) in self.fluid_corners(face, fa, pos, state).into_iter().enumerate() {
-                ao |= (speed as u64) << (corner * 2);
-                fluid |= (drop as u128) << (corner * 3) | (direction as u128) << (12 + corner * 4);
+            // Chunks merged for distance keep whole, still blocks: the flow's detail would
+            // not show.
+            if self.detail == 1 {
+                for (corner, (drop, speed, direction)) in self.fluid_corners(face, fa, pos, state).into_iter().enumerate() {
+                    ao |= (speed as u64) << (corner * 2);
+                    fluid |= (drop as u128) << (corner * 3) | (direction as u128) << (12 + corner * 4);
+                }
+                falling = state.falling;
             }
-            falling = state.falling;
         }
         if inner && info.render == RenderKind::Leaves {
             // One double-sided face serves both leaves: lit evenly by both, and shaded as

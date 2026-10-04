@@ -370,7 +370,10 @@ The water shader then composes the surface over the scene itself (alpha 1):
   the surface are thrown away. Where the march leaves the screen the reflection is the sky's
   gradient (the sky dome's zenith and horizon colours), dark where no sky light reaches. The
   march is skipped where the fresnel term is under 3%: seen from above, water reflects
-  almost nothing.
+  almost nothing. The march reads a half-resolution depth (the nearest of each 2×2
+  pixels, single-sampled, made by a small pass before the water: `water_depth.wgsl`),
+  which took the water pass at High from about 1.7–1.9 to 1.25–1.3 ms on a lake filling
+  most of a 1080p MSAA frame; the hit is then refined and confirmed at full resolution.
 - **Waves**: octaves of afl_ext's `exp(sin x)` waves, each dragging the next along its slope
   (see THIRD_PARTY_NOTICES.md). Their directions, frequencies and phases are worked out on
   the CPU each frame in double precision around the camera, so the shader only adds small
