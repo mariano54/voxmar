@@ -16,10 +16,45 @@ voxmar_engine.workspace = true
 voxmar_protocol.workspace = true
 voxmar_server.workspace = true
 voxmar_worldgen.workspace = true
-bevy = { workspace = true, features = ["3d", "ui", "bevy_audio", "mp3", "wav"] }
+# Only the parts in use: every plugin adds systems and render graph nodes that run each
+# frame whether or not anything uses them.
+bevy = { workspace = true, features = [
+    "std",
+    "multi_threaded",
+    "async_executor",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_state",
+    "bevy_window",
+    "bevy_winit",
+    "x11",
+    "wayland",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_post_process",
+    "bevy_light",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_image",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "png",
+    "bevy_text",
+    "default_font",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_gizmos",
+    "bevy_gizmos_render",
+    "bevy_audio",
+    "mp3",
+    "wav",
+] }
 crossbeam-channel.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
+bytemuck.workspace = true
 ron.workspace = true
 serde.workspace = true
 tracing.workspace = true

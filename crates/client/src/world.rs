@@ -1,11 +1,9 @@
 //! Client copy of the world: applies server updates, relights and remeshes columns on
-//! worker threads, and keeps one entity per non-empty chunk mesh.
+//! worker threads, and hands the meshes to the terrain renderer.
 
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use bevy::camera::primitives::Aabb;
-use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
@@ -16,7 +14,8 @@ use voxmar_engine::mesh::{ChunkMesh, MeshBuffers, mesh_chunk};
 use voxmar_engine::visibility::{Connectivity, visible_chunks};
 use voxmar_engine::world::{Column, VoxelWorld};
 
-use crate::render::{TerrainPass, VoxelMaterials, build_mesh};
+use crate::render::TerrainPass;
+use crate::render::terrain::Terrain;
 
 pub struct WorldPlugin;
 
@@ -28,15 +27,14 @@ impl Plugin for WorldPlugin {
 
 #[derive(Default)]
 struct ChunkRender {
-    /// Entity and mesh per `TerrainPass`.
-    passes: [Option<(Entity, Handle<Mesh>)>; 4],
+    /// Which `TerrainPass`es have a mesh.
+    passes: [bool; 4],
     hashes: [u64; 4],
     quads: [usize; 4],
     connectivity: Connectivity,
 }
 
-/// A finished relight+remesh job. Meshes are built on the worker so the main thread only
-/// hands them to the renderer.
+/// A finished relight+remesh job.
 struct MeshResult {
     pos: ColumnPos,
     chunks: Vec<ChunkResult>,
@@ -50,17 +48,15 @@ struct ChunkResult {
 struct PassResult {
     hash: u64,
     quads: usize,
-    mesh: Option<Mesh>,
+    mesh: MeshBuffers,
 }
 
 impl PassResult {
-    fn new(buffers: MeshBuffers) -> Self {
+    fn new(mesh: MeshBuffers) -> Self {
         let mut hasher = FxHasher::default();
-        buffers.vertices.hash(&mut hasher);
-        buffers.indices.hash(&mut hasher);
-        let quads = buffers.vertices.len() / 4;
-        let mesh = (!buffers.is_empty()).then(|| build_mesh(buffers));
-        Self { hash: hasher.finish(), quads, mesh }
+        mesh.vertices.hash(&mut hasher);
+        mesh.indices.hash(&mut hasher);
+        Self { hash: hasher.finish(), quads: mesh.vertices.len() / 4, mesh }
     }
 }
 
@@ -71,12 +67,11 @@ impl ChunkResult {
     }
 }
 
-const INNER: usize = TerrainPass::Inner as usize;
-const TRANSLUCENT: usize = TerrainPass::Translucent as usize;
-
-/// Quads handed to the renderer per frame (about 3 MB of vertex and index data), so
+/// Quads handed to the renderer per frame (about 1.7 MB of vertex and index data), so
 /// streaming and edits never cause a long frame.
-const UPLOAD_BUDGET: usize = 64_000;
+const UPLOAD_BUDGET: usize = 32_000;
+
+const PASSES: [TerrainPass; 4] = [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent];
 
 #[derive(Resource)]
 pub struct ClientWorld {
@@ -88,6 +83,7 @@ pub struct ClientWorld {
     results_tx: Sender<MeshResult>,
     results_rx: Receiver<MeshResult>,
     chunks: FxHashMap<ChunkPos, ChunkRender>,
+    terrain: Terrain,
     /// Set when chunk meshes or connectivity changed, so culling must rerun.
     visibility_dirty: bool,
     pub view_distance: i32,
@@ -105,7 +101,7 @@ pub struct WorldStats {
 }
 
 impl ClientWorld {
-    pub fn new(registry: Arc<BlockRegistry>, view_distance: i32) -> Self {
+    pub fn new(registry: Arc<BlockRegistry>, view_distance: i32, terrain: Terrain) -> Self {
         let (results_tx, results_rx) = unbounded();
         Self {
             voxels: VoxelWorld::default(),
@@ -115,19 +111,18 @@ impl ClientWorld {
             results_tx,
             results_rx,
             chunks: FxHashMap::default(),
+            terrain,
             visibility_dirty: true,
             view_distance,
             stats: WorldStats::default(),
         }
     }
 
-    /// Forgets every column and despawns their meshes, for leaving a world. Jobs still
-    /// running deliver to a channel nobody reads any more.
-    pub fn reset(&mut self, view_distance: i32, commands: &mut Commands) {
-        for (entity, _) in self.chunks.values().flat_map(|render| render.passes.iter().flatten()) {
-            commands.entity(*entity).despawn();
-        }
-        *self = Self::new(self.registry.clone(), view_distance);
+    /// Forgets every column and its meshes, for leaving a world. Jobs still running
+    /// deliver to a channel nobody reads any more.
+    pub fn reset(&mut self, view_distance: i32) {
+        self.terrain.clear();
+        *self = Self::new(self.registry.clone(), view_distance, self.terrain.clone());
     }
 
     pub fn set_view_distance(&mut self, view_distance: i32) {
@@ -144,13 +139,14 @@ impl ClientWorld {
         }
     }
 
-    pub fn remove_column(&mut self, pos: ColumnPos, commands: &mut Commands) {
+    pub fn remove_column(&mut self, pos: ColumnPos) {
         self.voxels.remove(pos);
         self.dirty.remove(&pos);
         for cy in 0..COLUMN_CHUNKS {
-            if let Some(render) = self.chunks.remove(&pos.chunk(cy)) {
-                for (entity, _) in render.passes.into_iter().flatten() {
-                    commands.entity(entity).despawn();
+            let chunk = pos.chunk(cy);
+            if let Some(render) = self.chunks.remove(&chunk) {
+                for (pass, _) in PASSES.iter().zip(render.passes).filter(|(_, present)| *present) {
+                    self.terrain.remove(chunk, *pass);
                 }
             }
         }
@@ -236,14 +232,8 @@ fn dispatch_jobs(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform,
     world.stats.pending_columns = world.dirty.iter().filter(|p| world.neighborhood(**p).is_some()).count();
 }
 
-/// Hands finished jobs to the renderer, skipping meshes that did not change. Existing
-/// chunks keep their entity and mesh handle; only the mesh asset is replaced.
-fn apply_meshes(
-    mut commands: Commands,
-    mut world: ResMut<ClientWorld>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    materials: Res<VoxelMaterials>,
-) {
+/// Hands finished jobs to the renderer, skipping meshes that did not change.
+fn apply_meshes(mut world: ResMut<ClientWorld>) {
     let world = &mut *world;
     let mut uploaded = 0;
     while uploaded < UPLOAD_BUDGET
@@ -260,55 +250,31 @@ fn apply_meshes(
                 render.connectivity = chunk_result.connectivity;
                 world.visibility_dirty = true;
             }
-            for (pass, (result, material)) in chunk_result.passes.into_iter().zip(&materials.passes).enumerate() {
-                if render.hashes[pass] == result.hash {
+            for (pass, result) in PASSES.into_iter().zip(chunk_result.passes) {
+                let i = pass as usize;
+                if render.hashes[i] == result.hash {
                     continue;
                 }
-                render.hashes[pass] = result.hash;
-                render.quads[pass] = result.quads;
+                render.hashes[i] = result.hash;
+                render.quads[i] = result.quads;
                 uploaded += result.quads;
-                match (result.mesh, &render.passes[pass]) {
-                    (None, Some((entity, _))) => {
-                        commands.entity(*entity).despawn();
-                        render.passes[pass] = None;
-                    }
-                    (None, None) => {}
-                    (Some(mesh), Some((_, handle))) => {
-                        meshes.insert(handle, mesh).expect("chunk mesh handle is live");
-                    }
-                    (Some(mesh), None) => {
-                        let handle = meshes.add(mesh);
-                        let mut entity = commands.spawn((
-                            Mesh3d(handle.clone()),
-                            MeshMaterial3d(material.clone()),
-                            Transform::from_translation(chunk.origin().as_vec3()),
-                            Aabb::from_min_max(Vec3::ZERO, Vec3::splat(CHUNK_SIZE as f32)),
-                        ));
-                        if pass == INNER || pass == TRANSLUCENT {
-                            // The crowns' shells cast their shadows; water would shadow itself.
-                            entity.insert(NotShadowCaster);
-                        }
-                        let entity = entity.id();
-                        render.passes[pass] = Some((entity, handle));
-                        world.visibility_dirty = true;
-                    }
+                let present = !result.mesh.is_empty();
+                if present || render.passes[i] {
+                    world.terrain.upload(chunk, pass, result.mesh);
                 }
+                world.visibility_dirty |= present != render.passes[i];
+                render.passes[i] = present;
             }
         }
     }
     if uploaded > 0 {
-        world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.passes.iter().flatten()).count();
+        world.stats.chunk_entities = world.chunks.values().flat_map(|c| c.passes).filter(|&p| p).count();
         world.stats.quads = world.chunks.values().flat_map(|c| c.quads).sum();
     }
 }
 
 /// Hides chunks the camera cannot see through the terrain (cave culling).
-fn cull_chunks(
-    mut world: ResMut<ClientWorld>,
-    camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut visibility: Query<&mut Visibility>,
-    mut last_chunk: Local<Option<IVec3>>,
-) {
+fn cull_chunks(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform, With<Camera3d>>, mut last_chunk: Local<Option<IVec3>>) {
     let Ok(camera) = camera.single() else { return };
     let eye = camera.translation().floor().as_ivec3();
     let camera_chunk = eye.div_euclid(IVec3::splat(CHUNK_SIZE));
@@ -322,15 +288,12 @@ fn cull_chunks(
     let visible = visible_chunks(eye, world.view_distance, |pos| world.chunks.get(&pos).map(|c| c.connectivity));
     let (mut count, mut quads) = (0, 0);
     for (pos, render) in &world.chunks {
-        let shown = visible.contains(pos);
-        count += shown as usize;
-        quads += if shown { render.quads.iter().sum() } else { 0 };
-        for (entity, _) in render.passes.iter().flatten() {
-            if let Ok(mut v) = visibility.get_mut(*entity) {
-                v.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
-            }
+        if visible.contains(pos) {
+            count += 1;
+            quads += render.quads.iter().sum::<usize>();
         }
     }
     world.stats.visible_chunks = count;
     world.stats.visible_quads = quads;
+    world.terrain.set_visible(visible);
 }

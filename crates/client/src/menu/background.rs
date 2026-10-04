@@ -62,7 +62,7 @@ fn start(
     let generator = Arc::new(Overworld::new(SEED, world.registry.clone()));
     // Searching for the spawn point takes a moment; it never changes.
     let center = *spawn.get_or_insert_with(|| ColumnPos::of_block(generator.spawn_point()));
-    world.reset(RADIUS, &mut commands);
+    world.reset(RADIUS);
     lod.clear(&mut commands, &mut lod_materials);
     lod.start(SEED, world.registry.clone());
     cycle.ticks = START_TICKS;
@@ -106,7 +106,7 @@ fn stop(
         backdrop.cancelled.store(true, Ordering::Relaxed);
     }
     commands.remove_resource::<Backdrop>();
-    world.reset(settings.view_distance, &mut commands);
+    world.reset(settings.view_distance);
     lod.clear(&mut commands, &mut lod_materials);
 }
 

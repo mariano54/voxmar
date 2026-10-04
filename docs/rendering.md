@@ -19,21 +19,32 @@ meshes, 3–4 million quads), plus distant terrain rings out to ~6.6 km.
 
 | Technique in the video | voxmar today |
 | --- | --- |
-| 1. Render from raw vertex/index data, not engine mesh objects | Chunks are Bevy meshes, but Bevy packs all of them into shared slab buffers and draws from GPU-built indirect arguments. Remeshing replaces one chunk's range. |
-| 2. Batch chunks with indexed indirect drawing | Bevy batches into multi-draw-indirect. **Metal has no native multi-draw**, so wgpu issues one indirect draw per chunk. This is the one real gap. |
-| 3. GPU frustum culling | Yes, Bevy's GPU preprocessing. |
+| 1. Render from raw vertex/index data, not engine mesh objects | Yes (`render/terrain.rs`): chunk meshes live in shared pages with no entity per chunk, and a table of chunk origins is indexed by instance. Remeshing replaces one chunk's range. |
+| 2. Batch chunks with indexed indirect drawing | One phase item per pass and view issues all of that pass's chunk draws. **Metal has no native multi-draw**, so it is still one draw call per chunk. |
+| 3. GPU frustum culling | CPU culling per view (cameras and shadow cascades), in parallel, ~0.05 ms. |
 | 4. Hierarchical (octree) culling | Not needed yet: per-chunk tests for ~3,500 chunks are negligible, the visibility graph culls through terrain, and LOD rings keep the chunk count constant as the view grows. |
-| 5. Paged geometry buffers | Yes, Bevy's mesh allocator slabs. |
+| 5. Paged geometry buffers | Yes: 32 MB vertex and 24 MB index pages with first-fit range allocation. |
 | 6–11. Vertex compression, 48 → 16 bytes | **8 bytes per vertex**: normal from a 3-bit face id, UVs from position, 12-bit texture layer, tint as a 2-bit kind plus climate, AO and light bit-packed. |
 | Not in the video | Binary greedy meshing, cave culling, distant LOD rings, meshing and lighting on worker threads with a per-frame upload budget. |
 
+## Where a frame goes now
+
+Moving terrain off Bevy's mesh entities and trimming Bevy to the plugins in use took a
+dense view from 3.25 to 2.8 ms (and flights from 2.6–2.9 to 2.4–2.5 ms median). What
+remains is mostly Bevy's fixed per-frame cost, not terrain:
+
+- Render thread ~2.9 ms: ~1.5 ms of render-world systems and their scheduling before the
+  graph runs, ~1.3 ms encoding the graph (terrain draws, shadows, bloom, UI).
+- Main thread ~1.4 ms, which overlaps the render thread.
+- Uploading streamed meshes is budgeted at 32k quads a frame (~0.5 ms at most).
+
 ## Next steps, in order of payoff
 
-1. **Custom GPU-driven terrain pass.** Store each quad once (8 bytes) and expand it to
-   vertices in the vertex shader (5× less vertex memory than now). A compute pass culls
-   chunks against the frustum and last frame's depth pyramid and writes a compacted draw
-   list, so each geometry page is one draw per pass. That removes the per-chunk draw cost
-   on Metal and makes 32+ chunk view distances practical. The shadow pass reuses it.
+1. **Quad pulling.** Store each quad once (8 bytes) and expand it to vertices in the
+   vertex shader (5× less vertex memory than now), and let a compute pass cull chunks
+   against the frustum and last frame's depth pyramid into a compacted list, so a page is
+   one draw per pass. That removes the remaining per-chunk draw calls on Metal and makes
+   32+ chunk view distances practical.
 2. **Light out of the vertex.** Sample sky and block light (and derive AO) from a small
    per-chunk 3D texture. Greedy merging then only has to match textures, which typically
    cuts quads by 2–3×.

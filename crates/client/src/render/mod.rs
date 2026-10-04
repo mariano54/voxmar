@@ -15,7 +15,7 @@ use bevy::ecs::system::BoxedSystem;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
 use bevy::math::DVec2;
-use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues};
+use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
 use bevy::post_process::bloom::{Bloom, bloom};
 use bevy::render::extract_component::ExtractComponent;
@@ -25,7 +25,6 @@ use bevy::render::render_resource::{
     TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension, VertexFormat,
 };
 use bevy::shader::{ShaderRef, load_shader_library};
-use voxmar_engine::mesh::MeshBuffers;
 use voxmar_protocol::{TICKS_PER_DAY, Weather};
 
 use crate::textures::Rgba;
@@ -33,6 +32,7 @@ use crate::weather::{ClientWeather, DRIFT_WRAP};
 
 pub mod lod;
 pub mod precipitation;
+pub mod terrain;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
 
@@ -47,7 +47,7 @@ impl Plugin for RenderPlugin {
         embedded_asset!(app, "sky.wgsl");
         embedded_asset!(app, "display.wgsl");
         app.add_plugins((
-            MaterialPlugin::<VoxelMaterial>::default(),
+            terrain::TerrainPlugin,
             MaterialPlugin::<SkyMaterial>::default(),
             FullscreenMaterialPlugin::<DisplayTransform>::default(),
             lod::LodPlugin,
@@ -59,96 +59,16 @@ impl Plugin for RenderPlugin {
     }
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
-#[bind_group_data(VoxelMaterialKey)]
-pub struct VoxelMaterial {
-    #[texture(0, dimension = "2d_array")]
-    #[sampler(1)]
-    pub textures: Handle<Image>,
-    #[texture(2, dimension = "2d_array")]
-    #[sampler(3)]
-    pub colormaps: Handle<Image>,
-    pub pass: TerrainPass,
-}
-
-/// Terrain is drawn in four passes; each mesh pass of a chunk uses the matching material.
+/// Terrain is drawn in four passes (see `terrain`).
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TerrainPass {
     Opaque,
+    /// Alpha-tested faces: leaves, glass, plants.
     Cutout,
     /// Cut-out, double-sided faces between two leaves, which cast no shadow.
     Inner,
     Translucent,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct VoxelMaterialKey {
-    pass: TerrainPass,
-}
-
-impl From<&VoxelMaterial> for VoxelMaterialKey {
-    fn from(material: &VoxelMaterial) -> Self {
-        Self { pass: material.pass }
-    }
-}
-
-impl Material for VoxelMaterial {
-    fn vertex_shader() -> ShaderRef {
-        VOXEL_SHADER.into()
-    }
-
-    fn fragment_shader() -> ShaderRef {
-        VOXEL_SHADER.into()
-    }
-
-    fn prepass_vertex_shader() -> ShaderRef {
-        VOXEL_SHADER.into()
-    }
-
-    fn prepass_fragment_shader() -> ShaderRef {
-        VOXEL_SHADER.into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        match self.pass {
-            TerrainPass::Opaque => AlphaMode::Opaque,
-            // Cut-out faces need the alpha test in the depth and shadow passes too.
-            TerrainPass::Cutout | TerrainPass::Inner => AlphaMode::Mask(0.5),
-            TerrainPass::Translucent => AlphaMode::Blend,
-        }
-    }
-
-    fn specialize(
-        _pipeline: &MaterialPipeline,
-        descriptor: &mut RenderPipelineDescriptor,
-        layout: &MeshVertexBufferLayoutRef,
-        key: MaterialPipelineKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.vertex.buffers = vec![layout.0.get_layout(&[ATTRIBUTE_VOXEL.at_shader_location(0)])?];
-        // Faces are one-sided (plants emit both windings); the prepass and shadow pipelines
-        // default to no culling.
-        descriptor.primitive.cull_mode = Some(bevy::render::render_resource::Face::Back);
-        let defs: &[&str] = match key.bind_group_data.pass {
-            TerrainPass::Opaque => &[],
-            TerrainPass::Cutout => &["CUTOUT"],
-            TerrainPass::Inner => {
-                // One face serves the two leaves on either side of it.
-                descriptor.primitive.cull_mode = None;
-                &["CUTOUT", "INNER"]
-            }
-            TerrainPass::Translucent => {
-                // Water is visible from below too.
-                descriptor.primitive.cull_mode = None;
-                &["TRANSLUCENT"]
-            }
-        };
-        if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.extend(defs.iter().map(|&def| def.into()));
-        }
-        Ok(())
-    }
 }
 
 /// Maps the HDR image to the screen in place of a tonemapper (see `display.wgsl`): colours
@@ -227,12 +147,9 @@ impl Material for SkyMaterial {
     }
 }
 
-/// Handles to the shared terrain materials, indexed by `TerrainPass`.
+/// The sky dome's material, which the day cycle updates.
 #[derive(Resource)]
-pub struct VoxelMaterials {
-    pub passes: [Handle<VoxelMaterial>; 4],
-    pub sky: Handle<SkyMaterial>,
-}
+pub struct SkyHandle(pub Handle<SkyMaterial>);
 
 /// Server time, advanced locally between updates.
 #[derive(Resource, Default)]
@@ -254,20 +171,15 @@ pub fn setup(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
-    voxel_materials: &mut Assets<VoxelMaterial>,
     sky_materials: &mut Assets<SkyMaterial>,
     block_textures: &[Rgba],
     colormaps: &[Rgba],
 ) {
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat));
     let colormaps = images.add(array_image(colormaps, false, ImageAddressMode::ClampToEdge));
-    let material = |pass| VoxelMaterial { textures: textures.clone(), colormaps: colormaps.clone(), pass };
+    commands.insert_resource(terrain::TerrainTextures { textures, colormaps });
     let sky = sky_materials.add(SkyMaterial { params: SkyParams::default() });
-    commands.insert_resource(VoxelMaterials {
-        passes: [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent]
-            .map(|pass| voxel_materials.add(material(pass))),
-        sky: sky.clone(),
-    });
+    commands.insert_resource(SkyHandle(sky.clone()));
     commands.spawn((
         SkyDome,
         Mesh3d(meshes.add(Sphere::new(1.0).mesh().uv(32, 16))),
@@ -417,19 +329,6 @@ pub fn ui_image(texture: &Rgba) -> Image {
     image
 }
 
-/// Builds one mesh pass of a chunk. Uses 16-bit indices whenever they fit. Runs on worker
-/// threads.
-pub fn build_mesh(buffers: MeshBuffers) -> Mesh {
-    let indices = if buffers.vertices.len() <= u16::MAX as usize + 1 {
-        Indices::U16(buffers.indices.iter().map(|&i| i as u16).collect())
-    } else {
-        Indices::U32(buffers.indices)
-    };
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL, VertexAttributeValues::Uint32x2(buffers.vertices))
-        .with_inserted_indices(indices)
-}
-
 /// Sun position, light colours and sky colours for a time of day (0..1, 0 = sunrise).
 struct Environment {
     to_sun: Vec3,
@@ -522,14 +421,14 @@ fn update_environment(
     time: Res<Time>,
     mut cycle: ResMut<DayCycle>,
     weather: Res<ClientWeather>,
-    handles: Option<Res<VoxelMaterials>>,
+    sky_handle: Option<Res<SkyHandle>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut camera: Query<(&GlobalTransform, &mut AmbientLight, &mut DistanceFog), With<Camera3d>>,
     mut sun: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>)>,
     mut clear: ResMut<ClearColor>,
 ) {
-    let Some(handles) = handles else { return };
+    let Some(sky_handle) = sky_handle else { return };
     let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
     cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
     let days = cycle.ticks / TICKS_PER_DAY as f64;
@@ -575,7 +474,7 @@ fn update_environment(
     fog.falloff = FogFalloff::Linear { start: fog_start, end: fog_end };
 
     // The sky dome is the only entity using its material, so updating it is cheap.
-    if let Some(mut sky) = sky_materials.get_mut(&handles.sky) {
+    if let Some(mut sky) = sky_materials.get_mut(&sky_handle.0) {
         let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
         let position = camera.translation().as_dvec3();
         let layer = (DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT;

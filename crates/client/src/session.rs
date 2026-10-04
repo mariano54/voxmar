@@ -71,7 +71,7 @@ fn end_session(
     mut cycle: ResMut<DayCycle>,
 ) {
     commands.remove_resource::<Net>();
-    world.reset(settings.view_distance, &mut commands);
+    world.reset(settings.view_distance);
     lod.clear(&mut commands, &mut lod_materials);
     cycle.underwater = false;
     commands.insert_resource(LocalPlayer::default());

@@ -109,7 +109,7 @@ fn receive(
                 break;
             }
             ServerMessage::Column { pos, column } => world.insert_column(pos, column),
-            ServerMessage::Unload { pos } => world.remove_column(pos, &mut commands),
+            ServerMessage::Unload { pos } => world.remove_column(pos),
             ServerMessage::BlockChanged { pos, block } => {
                 if world.block(pos) != Some(block) {
                     world.set_block(pos, block);

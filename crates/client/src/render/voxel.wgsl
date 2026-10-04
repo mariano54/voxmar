@@ -9,22 +9,25 @@
 // depth and hidden surface removal), CUTOUT for leaves, glass and plants, plus INNER for the
 // double-sided faces between two leaves, TRANSLUCENT for water and ice.
 
-#import bevy_pbr::mesh_functions::get_world_from_local
-#import bevy_pbr::mesh_view_bindings::view
+// Chunks are drawn from shared buffers (see terrain.rs): the instance index picks the
+// chunk's origin from a table.
+
 #import bevy_render::globals::Globals
 
 #ifdef PREPASS_PIPELINE
+#import bevy_render::view::View
+@group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<uniform> globals: Globals;
 #else
-#import bevy_pbr::mesh_view_bindings::globals
+#import bevy_pbr::mesh_view_bindings::{view, globals, fog}
 #import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, water_normal}
-#import bevy_pbr::mesh_view_bindings::fog
 #endif
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var block_textures: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var block_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var colormaps: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var colormap_sampler: sampler;
+@group(2) @binding(0) var block_textures: texture_2d_array<f32>;
+@group(2) @binding(1) var block_sampler: sampler;
+@group(2) @binding(2) var colormaps: texture_2d_array<f32>;
+@group(2) @binding(3) var colormap_sampler: sampler;
+@group(2) @binding(4) var<storage, read> chunk_origins: array<vec4<i32>>;
 
 const TINT_NONE: u32 = 0u;
 const TINT_FOLIAGE: u32 = 2u;
@@ -54,8 +57,7 @@ fn face_of(w0: u32) -> u32 {
 // World position, with leaves swaying gently and plants bending from their base. Shared
 // by every pass so depth matches.
 fn world_position(in: Vertex) -> vec3<f32> {
-    let world_from_local = get_world_from_local(in.instance_index);
-    var world = (world_from_local * vec4(local_position(in.packed.x), 1.0)).xyz;
+    var world = vec3<f32>(chunk_origins[in.instance_index].xyz) + local_position(in.packed.x);
     let t = globals.time;
     if face_of(in.packed.x) >= FACE_PLANT {
         if (in.packed.x & FLAG_INNER) != 0u {

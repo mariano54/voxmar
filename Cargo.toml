@@ -26,6 +26,7 @@ fastnoise-lite = "1.1"
 crossbeam-channel = "0.5"
 tracing = "0.1"
 rustc-hash = "2"
+bytemuck = "1"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 # The backend zip's `deflate` feature already uses.
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }

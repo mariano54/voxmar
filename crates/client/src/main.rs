@@ -43,7 +43,7 @@ use voxmar_server::ServerConfig;
 use crate::hud::HudImages;
 use crate::menu::{FirstScreen, Screen};
 use crate::render::lod::{Lod, LodMaterial, LodPalette};
-use crate::render::{SkyMaterial, VoxelMaterial, ui_image};
+use crate::render::{SkyMaterial, ui_image};
 use crate::session::Launch;
 use crate::settings::Settings;
 use crate::textures::{Rgba, Source};
@@ -176,8 +176,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menu::MenuPlugin,
         session::SessionPlugin,
         weather::WeatherPlugin,
-    ))
-    .insert_resource(ClientWorld::new(registry.clone(), settings.view_distance))
+    ));
+    let terrain = app.world().resource::<render::terrain::Terrain>().clone();
+    app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
     .insert_resource(Actions(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(settings)
@@ -255,7 +256,6 @@ fn setup(
     registry: Res<Registry>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut voxel_materials: ResMut<Assets<VoxelMaterial>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut lod_materials: ResMut<Assets<LodMaterial>>,
     world: Res<ClientWorld>,
@@ -279,7 +279,7 @@ fn setup(
         }
     }
     let colormaps = source.colormaps();
-    render::setup(&mut commands, &mut images, &mut meshes, &mut voxel_materials, &mut sky_materials, &block_textures, &colormaps);
+    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &colormaps);
     let palette = LodPalette::new(registry, &block_textures, &colormaps);
     commands.insert_resource(Lod::new(palette, world.view_distance, &mut lod_materials));
 
