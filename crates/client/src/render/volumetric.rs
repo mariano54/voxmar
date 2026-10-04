@@ -301,7 +301,7 @@ fn prepare(
     atmosphere: Res<Atmosphere>,
     buffer: Res<AtmosphereBuffer>,
     cloud_map: Option<Res<CloudMap>>,
-    views: Query<(Entity, &ExtractedView, &ViewDepthTexture), With<ExtractedCamera>>,
+    views: Query<(Entity, &ExtractedView, &ViewDepthTexture), (With<ExtractedCamera>, With<Camera3d>)>,
 ) {
     let Some(cloud_map) = cloud_map else { return };
     for (entity, view, depth) in &views {

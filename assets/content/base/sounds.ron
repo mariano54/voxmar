@@ -1,0 +1,16 @@
+// Recorded sounds the game plays for events: paths within this package. Field recordings
+// from Freesound, all CC0; who made each is in THIRD_PARTY_NOTICES.md. Rain and running
+// water are ambience beds (ambience.ron).
+(
+    // Thunder by how far off the lightning struck: close strikes that crack and roll, the
+    // same heard from farther off (muffled), and far rolls.
+    thunder: (
+        near: ["sounds/thunder_near_1.mp3", "sounds/thunder_near_2.mp3"],
+        middle: ["sounds/thunder_middle_1.mp3", "sounds/thunder_middle_2.mp3"],
+        far: ["sounds/thunder_far_1.mp3", "sounds/thunder_far_2.mp3", "sounds/thunder_far_3.mp3"],
+    ),
+    // Strokes while swimming.
+    swim: ["sounds/swim_1.mp3", "sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_5.mp3", "sounds/swim_6.mp3"],
+    // Jumping or falling into water.
+    splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
+)

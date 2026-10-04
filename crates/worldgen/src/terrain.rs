@@ -72,6 +72,9 @@ pub struct Terrain {
     mixes: FastNoiseLite,
     /// Whether wood may replace a block: air, water, leaves and small plants, by block id.
     soft: Vec<bool>,
+    /// Whether a block is the ground or rock a tree's wood may grow into, where a limb
+    /// meets a hillside: solid and neither wood nor leaves, by block id.
+    earth: Vec<bool>,
     /// Whether ore may replace a block: every stone, by block id.
     stone: Vec<bool>,
     /// What each block offers plants, by block id.
@@ -127,6 +130,7 @@ impl Terrain {
             })
             .collect();
         let plants = by_id(&|block| registry.def(block).render == voxmar_engine::block::RenderKind::Plant);
+        let earth = by_id(&|block| earth(registry, block));
         let firm = by_id(&|block| registry.def(block).solid && registry.def(block).render != voxmar_engine::block::RenderKind::Plant);
         let blanket = (0..registry.len())
             .map(|i| {
@@ -164,6 +168,7 @@ impl Terrain {
             patches: noise(seed, 24, 0.04, FractalType::FBm, 2),
             mixes: noise(seed, 25, 1.0 / 9.0, FractalType::FBm, 2),
             soft,
+            earth,
             // Ores replace plain stone, never gems: a crystal cave's walls, a geode's lining.
             stone: by_id(&|block| stones.contains(&block) && !registry.def(block).has_tag("gem")),
             grounds,
@@ -191,6 +196,16 @@ pub struct Blocks<'a> {
     data: Vec<BlockId>,
     stone: &'a [bool],
     soft: &'a [bool],
+    earth: &'a [bool],
+}
+
+#[cfg(test)]
+impl<'a> Blocks<'a> {
+    /// An empty column at `origin`, for tests: wood grows through what `soft` marks, ore
+    /// replaces what `stone` marks (both by block id).
+    pub(crate) fn empty(origin: IVec3, stone: &'a [bool], soft: &'a [bool], earth: &'a [bool]) -> Self {
+        Self { origin, data: vec![BlockId::AIR; CHUNK_VOLUME * COLUMN_CHUNKS as usize], stone, soft, earth }
+    }
 }
 
 impl Blocks<'_> {
@@ -231,6 +246,18 @@ impl Blocks<'_> {
         self.index(pos).is_some()
     }
 
+    /// Whether `pos` holds ground or rock a tree could stand on (and false outside the
+    /// column).
+    pub fn earth(&self, pos: IVec3) -> bool {
+        self.index(pos).is_some_and(|i| self.earth[self.data[i].0 as usize])
+    }
+
+    /// Whether (x, z) lies within `margin` blocks of the column, sideways.
+    pub fn near(&self, x: i32, z: i32, margin: i32) -> bool {
+        let (x, z) = (x - self.origin.x, z - self.origin.z);
+        (-margin..CHUNK_SIZE + margin).contains(&x) && (-margin..CHUNK_SIZE + margin).contains(&z)
+    }
+
     /// The block at `pos`; air outside the column.
     pub fn get(&self, pos: IVec3) -> BlockId {
         self.index(pos).map_or(BlockId::AIR, |i| self.data[i])
@@ -240,6 +267,25 @@ impl Blocks<'_> {
     pub fn put_if_air(&mut self, pos: IVec3, block: BlockId) -> bool {
         if let Some(i) = self.index(pos)
             && self.data[i].is_air()
+        {
+            self.data[i] = block;
+            return true;
+        }
+        false
+    }
+
+    /// Whether wood may grow into `pos`: air, water, leaves or a small plant (and false
+    /// outside the column).
+    pub fn soft(&self, pos: IVec3) -> bool {
+        self.index(pos).is_some_and(|i| self.soft[self.data[i].0 as usize])
+    }
+
+    /// A tree's wood grows through air, water, leaves and small plants, and into the
+    /// ground or rock where a limb meets a hillside (so its far end never hangs in the
+    /// air); whether it did.
+    pub fn put_wood(&mut self, pos: IVec3, block: BlockId) -> bool {
+        if let Some(i) = self.index(pos)
+            && (self.soft[self.data[i].0 as usize] || self.earth[self.data[i].0 as usize])
         {
             self.data[i] = block;
             return true;
@@ -303,6 +349,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         data: vec![BlockId::AIR; CHUNK_VOLUME * COLUMN_CHUNKS as usize],
         stone: &terrain.stone,
         soft: &terrain.soft,
+        earth: &terrain.earth,
     };
     let mut column = Column::default();
     let mut surfaces = Vec::with_capacity((CHUNK_SIZE * CHUNK_SIZE) as usize);
@@ -442,16 +489,20 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         }
     }
 
-    {
+    // The arches and leaning spires near enough for the column to build, or for a tree or
+    // decoration reaching into it to keep clear of (see `features::ROCK_REACH`).
+    let pieces = {
         let _stage = stage::enter(Stage::Shapes);
-        sculpt(world, &geology, origin, &surfaces, &mut blocks);
-    }
+        let pieces = world.pieces(corner - features::ROCK_REACH, corner + CHUNK_SIZE - 1 + features::ROCK_REACH);
+        sculpt(world, &geology, origin, &pieces, &surfaces, &mut blocks);
+        pieces
+    };
     {
         let _stage = stage::enter(Stage::Ores);
         terrain.resources.place(world.seed, pos, &mut blocks);
     }
     let decoration = stage::enter(Stage::Decoration);
-    terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
+    terrain.features.place(world, &area, &geology, &caves, &pieces, pos, &mut blocks, &mut column.colors);
     {
         let _stage = stage::enter(Stage::Trails);
         terrain.markers(world, &area, &geology, pos, &mut blocks);
@@ -529,7 +580,7 @@ const NOTCH: i32 = 3;
 /// The 3D work of terrain shapes on a column: arches and leaning spires of the rock
 /// beneath, section by section wherever they reach, and notches cut by the waves at the
 /// foot of sea cliffs.
-fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, surfaces: &[(Site, BlockId)], blocks: &mut Blocks) {
+fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, pieces: &[Piece], surfaces: &[(Site, BlockId)], blocks: &mut Blocks) {
     let terrain = &world.terrain;
     let corner = IVec2::new(origin.x, origin.z);
     let rock = |site: &Site, x: i32, y: i32, z: i32| {
@@ -541,7 +592,7 @@ fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, surfaces: &[(Site
         }
     };
     let shapes = world.geology.shapes();
-    for piece in world.pieces(corner) {
+    for piece in pieces {
         let (low, high) = piece.heights();
         let (low, high) = (low.max(1), high.min(WORLD_HEIGHT - 1));
         for section in low.div_euclid(SECTION)..=high.div_euclid(SECTION) {
@@ -555,7 +606,7 @@ fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, surfaces: &[(Site
                     let site = &surfaces[(z * CHUNK_SIZE + x) as usize].0;
                     for y in y0.max(site.height + 1)..=y1 {
                         let here = blocks.get_local(x, y, z);
-                        if (here.is_air() || here == terrain.ids.water) && shapes.solid(&piece, wx, y, wz) {
+                        if (here.is_air() || here == terrain.ids.water) && shapes.solid(piece, wx, y, wz) {
                             blocks.set_local(x, y, z, rock(site, wx, y, wz));
                         }
                     }
@@ -778,8 +829,8 @@ impl Terrain {
 }
 
 impl Overworld {
-    /// The arches and leaning spires that reach the column whose corner is `corner`.
-    pub(crate) fn pieces(&self, corner: IVec2) -> Vec<Piece> {
+    /// The arches and leaning spires that reach the columns of blocks from `min` to `max`.
+    pub(crate) fn pieces(&self, min: IVec2, max: IVec2) -> Vec<Piece> {
         let anchors = Anchors {
             regional: &|x, z| self.geology.regional(x, z),
             ground: &|x, z| {
@@ -788,7 +839,7 @@ impl Overworld {
             },
             edge: &|x, z| self.site(x, z).edge,
         };
-        self.geology.shapes().pieces(corner, corner + CHUNK_SIZE - 1, &anchors)
+        self.geology.shapes().pieces(min, max, &anchors)
     }
 
     /// The surface rules a site's ground follows and the strata they band with: its biome's,
@@ -901,6 +952,13 @@ fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) ->
     let damp = site.soil_moisture() > 0.85 && site.temperature > 0.0;
     let stone = |bits: u64| if damp && !bits.is_multiple_of(3) { ids.mossy_boulder } else { ids.boulder };
     Some([Some(stone(hash >> 8)), (hash >> 16 & 3 == 0).then(|| stone(hash >> 20))])
+}
+
+/// Whether a block is ground or rock (see `Terrain::earth`).
+pub(crate) fn earth(registry: &BlockRegistry, block: BlockId) -> bool {
+    let def = registry.def(block);
+    let wooden = ["_log", "_wood", "_stem", "_roots", "_leaves", "_cap"].iter().any(|s| def.name.ends_with(s)) || def.name.ends_with("cactus");
+    def.solid && def.render != voxmar_engine::block::RenderKind::Plant && !wooden && registry.fluid(block).is_none()
 }
 
 /// The band of `strata` at height `y`, shifted by its wobble.

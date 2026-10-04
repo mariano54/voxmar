@@ -96,8 +96,9 @@ is `time set day`).
 Esc opens the settings menu, in tabs (Video, Graphics, Audio, Controls, Interface) with a
 line explaining the setting under the pointer; a choice steps forward on click and back on
 right click, and the wheel moves a slider. The settings: render distance, far detail (Balanced, Fast or Full: how soon
-distant chunks merge two or four columns into one, which draws far terrain much faster), field
-of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
+distant chunks merge two or four columns into one, which draws far terrain much faster),
+resolution (75%, 50% or Full: how many pixels the world is drawn at before it is stretched over
+the window; menus and text stay sharp), field of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
 broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key
@@ -385,7 +386,10 @@ labyrinths, ravines, sinkholes, entrances, geodes, bare fossils and the best vie
 biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the
 `--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
 there; `decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest
-edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
+edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn
+(or, with `BIOMES=a,b`, the nearest place well inside each named biome); `tree_preview`
+(optionally `TREES=oak,birch`, `SAMPLES=n`, `VIGOUR=0..1`) draws every tree species a few times
+over, at the ages they happen to draw, in isometric views to `target/trees_N.ppm`;
 `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
 `generation_stages` breaks generation time per column down by stage (climate, biomes, rivers
@@ -529,24 +533,27 @@ Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain i
 quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
 synthesized cue to `target/sfx_preview.wav`.
 
-Ambience is synthesized the same way and follows where the player is. About once a second a
+Ambience follows where the player is. About once a second a
 flood fill from the eye (on a worker, capped at 16,000 cells) measures how much air is around,
 how much of it is open to the sky or under leaves, and the leaves, wood, water, grass, rock,
 sand and snow it meets, nearer ones counting more. With the climate and biome from the world
 generator, height above the land around, depth underground, the weather and the time of day,
 that makes an environment vector, and `ambience.ron` in any content package lists what plays
 where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
-streams, surf, cave air) as stereo segments that crossfade and never repeat back to back, and
-one-shots at a rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker
-on a trunk, owls, a cricket in the grass, frogs and plops in the water, gusts on heights,
-creaking trees, drips and rumbles in caves). One-shots sound from real blocks the fill found,
+surf, cave air, synthesized; rain by strength and cover, dripping trees, streams and lakes,
+recorded) as stereo segments that crossfade and never repeat back to back, and one-shots at a
+rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker on a trunk,
+owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips and
+rumbles in caves). Recordings are CC0 field recordings in the package
+(`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
+far, swimming strokes and splashes (`sounds.ron`). One-shots sound from real blocks the fill found,
 panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
 range with a fade, and rain ducks layers rather than silencing them. Captures run it silently
 and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
-writes about twenty seconds of each of nine typical places to `target/ambience_preview.wav`, and
+writes about twenty seconds of each of seventeen typical places to `target/ambience_preview.wav`, and
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
-`weather_sound_preview -- --ignored` writes rain at four strengths, thunder near to far, the
-brook, gurgles, swimming and a splash to `target/sound_preview/`, as the game plays them.
+`weather_sound_preview -- --ignored` writes the thunder, swimming and splashes to
+`target/sound_preview/`, as the game plays them.
 
 ## Rendering and performance
 

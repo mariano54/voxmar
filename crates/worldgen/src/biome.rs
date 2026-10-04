@@ -253,16 +253,24 @@ impl Biomes {
                         (name_hash(name), v, area * share(v.0 as usize))
                     })
                     .collect();
-                slots.sort_by_key(|s| s.0);
+                // The smallest take the ends of the variant field, alternating, so they lie
+                // in whole patches around its highs and lows rather than in thin rings
+                // around a middle value; larger ones lie next to them.
+                slots.sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
                 let scale = 1.0 / slots.iter().map(|s| s.2).sum::<f32>().max(1.0);
-                let mut start = 0.0;
+                let (mut bottom, mut top) = (0.0f32, 1.0f32);
                 slots
                     .into_iter()
-                    .map(|(_, biome, area)| {
-                        let end = start + area * scale;
-                        let slot = Slot { start, end, biome };
-                        start = end;
-                        slot
+                    .enumerate()
+                    .map(|(i, (_, biome, area))| {
+                        let width = area * scale;
+                        if i % 2 == 0 {
+                            bottom += width;
+                            Slot { start: bottom - width, end: bottom, biome }
+                        } else {
+                            top -= width;
+                            Slot { start: top, end: top + width, biome }
+                        }
                     })
                     .collect()
             })
@@ -623,7 +631,8 @@ mod tests {
         let biomes = biomes();
         // Temperature rises 0.01 °C a block along x across the cold/cool edge at 4 °C,
         // between taiga and plains.
-        let at = |x: f32| point(3.0 + 0.01 * x, 0.75, 0.4, 0.0, 0.5, 0.0, 0.9);
+        // The variant field's middle, where no variant lies.
+        let at = |x: f32| point(3.0 + 0.01 * x, 0.75, 0.4, 0.0, 0.5, 0.0, 0.5);
         let step = GRADIENT_STEP as f32;
         let pick = |x: f32| biomes.pick(&at(x), &[at(x + step), at(x - step), at(x), at(x)]);
         let near = pick(60.0);
@@ -677,8 +686,8 @@ mod tests {
         // Humid: taiga below 4 °C, forest above (where the weirdness gives the cell to
         // forest rather than the other woods sharing it), birch taiga within a degree of
         // the edge.
-        let w = (0..100).map(|i| i as f32 / 100.0).find(|&w| biomes.get(biomes.resolve(&point(5.5, 1.1, 0.4, 0.0, w, 0.0, 0.99))).name == "base:forest").unwrap();
-        let at = |t: f32| biomes.get(biomes.resolve(&point(t, 1.1, 0.4, 0.0, w, 0.0, 0.99))).name.as_str();
+        let w = (0..100).map(|i| i as f32 / 100.0).find(|&w| biomes.get(biomes.resolve(&point(5.5, 1.1, 0.4, 0.0, w, 0.0, 0.5))).name == "base:forest").unwrap();
+        let at = |t: f32| biomes.get(biomes.resolve(&point(t, 1.1, 0.4, 0.0, w, 0.0, 0.5))).name.as_str();
         assert_eq!(at(2.5), "base:taiga");
         assert_eq!(at(3.5), "base:birch_taiga");
         assert_eq!(at(4.5), "base:birch_taiga");

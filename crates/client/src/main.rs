@@ -8,7 +8,12 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory) or
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory),
+//! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--clip SECONDS` (save
+//! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
+//! (draw to a real window and shoot that, for what only a window has, such as the render
+//! scale; with the saved settings when `VOXMAR_CONFIG` is set), `--flicker` or
+//! `--flicker-still` (measure shimmer; see capture.rs) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
@@ -81,6 +86,8 @@ struct Options {
     inventory: bool,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
+    size: UVec2,
+    windowed: bool,
     screen: Option<Screen>,
     music: bool,
 }
@@ -107,6 +114,8 @@ fn parse_options() -> Result<Options, String> {
         inventory: false,
         flicker: None,
         clip: None,
+        size: UVec2::new(1920, 1080),
+        windowed: false,
         screen: None,
         music: true,
     };
@@ -137,6 +146,12 @@ fn parse_options() -> Result<Options, String> {
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
+            "--windowed" => options.windowed = true,
+            "--size" => {
+                let size = value()?;
+                let (w, h) = size.split_once('x').ok_or("--size needs WIDTHxHEIGHT")?;
+                options.size = UVec2::new(w.parse().map_err(|e| format!("--size: {e}"))?, h.parse().map_err(|e| format!("--size: {e}"))?);
+            }
             "--screen" => {
                 let name = value()?;
                 options.screen = Some(Screen::from_name(&name).ok_or_else(|| format!("--screen: no screen called {name}"))?);
@@ -192,11 +207,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // developing would otherwise play over whoever is at the machine. Such runs never open
     // an audio device at all (see `silence`).
     let muted = options.capture.is_some() || std::env::var_os("VOXMAR_MUTE").is_some();
-    let mut plugins = DefaultPlugins.set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() });
+    // Our few Bevy meshes (the sky, rain, cracks, other players) are batched on the CPU:
+    // building their instances on the GPU takes four compute passes and two checks of
+    // indirect draws a frame, and every pass costs about 0.2 ms on Metal however little it
+    // does (see docs/rendering.md).
+    let mut plugins = DefaultPlugins
+        .set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() })
+        .set(bevy::pbr::PbrPlugin { use_gpu_instance_buffer_builder: false, ..default() });
     if muted {
         plugins = plugins.disable::<bevy::audio::AudioPlugin>();
     }
-    if options.capture.is_some() {
+    if options.capture.is_some() && !options.windowed {
         // Headless: render offscreen as fast as possible, independent of any display.
         app.add_plugins((
             plugins
@@ -274,6 +295,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             inventory: options.inventory,
             flicker: options.flicker,
             clip: options.clip,
+            size: options.size,
+            windowed: options.windowed,
         });
     }
     app.run();

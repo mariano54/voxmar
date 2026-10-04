@@ -89,6 +89,44 @@ from Metal traces one game at a time on an M5 Max (about 100–110 fps):
 The CPU side is no longer the limit: about 130 terrain draws a frame, about 2 ms of render
 thread work. Before this work the same view took about 6,600 draw calls.
 
+### Every pass costs a command buffer
+
+Those GPU times added up to far less than a frame took. At the player's settings (view
+distance 32, SMAA, the Retina window at 3024×1964) a frame took about 9–10 ms while the GPU
+was busy for 6.4 ms of it: it sat idle between passes. wgpu records every render or
+compute pass into a Metal command buffer of its own (so it can slip barriers in front of
+it), and on Metal each command buffer costs about 0.1–0.2 ms of frame time however little
+it draws: the kernel call that submits it, and the GPU waiting for the next. A frame had
+about 50 of them:
+
+- Bevy's bloom, a render pass per level of its chain: 16. Ours (`render::post`) runs the
+  same filters as compute dispatches in one pass, and the display transform, now our own
+  render pass, adds it to the image: 2 in place of 17.
+- Bevy's light clustering, five compute and render passes for point and spot lights we
+  do not have: none now, clustered on the CPU.
+- Bevy building mesh instances on the GPU for our handful of Bevy meshes (sky, rain,
+  cracks, other players): four compute passes, plus wgpu's checks of the indirect draws
+  they feed and their own copies. Batched on the CPU instead.
+- The terrain's index compaction submitted itself every frame, with a command buffer of
+  pending writes, even with nothing to copy. It now rides in the frame's own submission.
+
+That leaves about 19 a frame: four shadow cascades, the opaque, water and translucent
+passes, two for light shafts, bloom and display, three for SMAA, the interface and the
+final copy. Turning Bevy's bloom off alone took the full-resolution frame from 97 to 138
+fps; all of the above together, measured in Low Power Mode on battery, from 48 to 76 fps
+at full resolution. Measurements on this machine swing widely while other work runs, so
+these compare runs interleaved with each other, not with the numbers above.
+
+### Render scale
+
+Most of what is left scales with pixels (shading the terrain, light shafts, SMAA, the
+display transform), and a Retina screen has four times the pixels of its size in points.
+The Resolution setting (`render::scale`) draws the world at 75% (the default) or 50% of
+the window's width and height and stretches it over the window, while menus, text and the
+HUD stay at full resolution on a second camera. At Full the world draws to the window
+directly and the second camera does not exist. Headless captures always draw at their
+`--size`; `--windowed` captures draw to a real window and so take the setting.
+
 ## Distant shimmer and anti-aliasing
 
 Flicker in the distance came from real chunks 50–500 blocks out, not from the distant

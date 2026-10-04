@@ -44,6 +44,41 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Bevy (bloom)
+
+- Source: https://github.com/bevyengine/bevy (`crates/bevy_post_process/src/bloom`, 0.19.1)
+- Author: the Bevy contributors
+- Licence: MIT or Apache-2.0, at our choice; we take it under MIT
+- What we adapted: its bloom: the 13-tap downsample with Karis's firefly weighting on the
+  first level, the soft threshold, the 3x3 tent upsample, the sizing of the chain and the
+  energy-conserving blend between its levels. Bevy draws it as a render pass per level;
+  ours runs the same filters as compute dispatches in one pass (rewritten in our own code).
+- Where: `crates/client/src/render/bloom.wgsl`, `post.rs` and the bloom in `display.wgsl`.
+
+```
+MIT License
+
+Copyright (c) the Bevy contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## FastNoiseLite
 
 - Source: https://github.com/Auburn/FastNoiseLite (the Rust port, crate `fastnoise-lite` 1.1.1)
@@ -122,3 +157,28 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Field recordings from Freesound (rain, thunder, water)
+
+Every recording below is dedicated to the public domain under Creative Commons CC0 1.0
+Universal (https://creativecommons.org/publicdomain/zero/1.0/), which requires no notice;
+we credit the recordists anyway. Licences were checked on each sound's page on 5 October
+2026. We used Freesound's high-quality previews and changed them: cut into short pieces,
+filtered (high- and low-pass), levelled, faded in and out, a mono recording made stereo
+from two different stretches, a close thunder clap low-passed to sound farther off, and
+encoded as MP3. The files are in `assets/content/base/sounds/` and are listed in
+`ambience.ron` (rain, drips, stream, lake) and `sounds.ron` (thunder, swimming, splashes).
+
+| Our files | Recording | Recordist | Source |
+| --- | --- | --- | --- |
+| `rain_light_1..3.mp3` | rain in the forest atmo field recording | Garuda1982 | https://freesound.org/s/536843/ |
+| `rain_heavy_1..3.mp3` | heavy_rain_outside | Gustavo_C | https://freesound.org/s/768870/ |
+| `rain_roof_1..3.mp3` | Rain On Tarp Texture.wav | dflee4 | https://freesound.org/s/685596/ |
+| `drips_1..3.mp3` | forest drop rain.wav | bruno.auzet | https://freesound.org/s/670303/ |
+| `brook_1..3.mp3` | Kervijen babbling creek travelling.wav | bruno.auzet | https://freesound.org/s/690326/ |
+| `lake_1..3.mp3` | Waves gentle med cu lake water TTP 24-96 180618.wav | TRP | https://freesound.org/s/573191/ |
+| `thunder_near_1.mp3`, `thunder_middle_1.mp3` | th_loud.wav | Pingel | https://freesound.org/s/2689/ |
+| `thunder_near_2.mp3`, `thunder_middle_2.mp3` | thunder crack.wav | cognito perceptu | https://freesound.org/s/347853/ |
+| `thunder_far_1..3.mp3` | Dry storm thunders | fran_marenco | https://freesound.org/s/796529/ |
+| `swim_1..6.mp3` | water movements swimming around various splashes random.flac | kyles | https://freesound.org/s/637958/ |
+| `splash_1..3.mp3` | Foley_Natural_Water_Jump_Mono.wav | Nox_Sound | https://freesound.org/s/585744/ |

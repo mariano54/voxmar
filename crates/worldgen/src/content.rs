@@ -488,40 +488,89 @@ pub struct Comfort {
     pub moisture: Option<(f32, f32)>,
 }
 
-/// The shape of the leafy part of a tree.
+/// The shape of the leafy part of a tree. Sizes are those of a mature tree; young trees
+/// and giants scale them.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub enum Crown {
-    /// Leaf blobs at the ends of branches spreading from the upper trunk, and one on top.
-    /// `squash` flattens the blobs.
-    Round { branches: (i32, i32), reach: (f32, f32), radius: (f32, f32), squash: f32 },
-    /// Whorls of leaves narrowing to a tip, from `start` (a fraction of the trunk) up.
-    Conical { radius: (f32, f32), start: f32 },
+    /// Clumps of leaves at the ends of limbs climbing the trunk from `start` (a fraction of
+    /// it, a half when left out), and one on top. `squash` flattens the clumps.
+    Round {
+        branches: (i32, i32),
+        reach: (f32, f32),
+        radius: (f32, f32),
+        squash: f32,
+        #[serde(default = "half")]
+        start: f32,
+    },
+    /// Tiers of lobed whorls narrowing to a spike, from `start` (a fraction of the trunk)
+    /// up. `ragged` (0 ..= 1, 0.3 when left out) is how deeply the whorls are lobed and how
+    /// often the tiers part.
+    Conical {
+        radius: (f32, f32),
+        start: f32,
+        #[serde(default = "ragged")]
+        ragged: f32,
+    },
+    /// Pads of needles on upswept limbs high on a bare trunk, from `start` (a fraction of
+    /// it) up, under a flattish dome; `radius` is how far the lowest limbs and their pads
+    /// reach, the pads up to two blocks past the limbs' ends.
+    Pine { radius: (f32, f32), start: f32 },
     /// A narrow flame of leaves from `start` (a fraction of the trunk) to well above its
     /// top, widest a third of the way up (cypresses).
     Spire { radius: (f32, f32), start: f32 },
     /// A domed cap with a hanging rim, on a stem (giant mushrooms).
     Cap { radius: (f32, f32) },
-    /// Flat canopies on a few long branches that fork off the trunk.
-    Umbrella { branches: (i32, i32), reach: (f32, f32), radius: (f32, f32) },
-    /// A round crown with curtains of leaves hanging from its rim.
-    Weeping { radius: (f32, f32), drape: (i32, i32) },
+    /// Flat pads of leaves on a few long limbs that fork off the trunk from `fork` (a
+    /// fraction of it, 0.45 when left out) up. `squash` is how thick the pads are against
+    /// their width (0.4 when left out).
+    Umbrella {
+        branches: (i32, i32),
+        reach: (f32, f32),
+        radius: (f32, f32),
+        #[serde(default = "pads")]
+        squash: f32,
+        #[serde(default = "fork")]
+        fork: f32,
+    },
+    /// A round crown on short limbs with curtains of leaves `drape` blocks long hanging
+    /// from its underside.
+    Weeping { radius: (f32, f32), drape: (f32, f32) },
     /// Long drooping fronds at the top of a bare trunk.
     Palm { fronds: (i32, i32), length: (f32, f32) },
-    /// A low mound of leaves on a stub of wood.
+    /// A low, lumpy mound of leaves on a stub of wood, draped over the ground.
     Bush { radius: (f32, f32) },
-    /// Bare branches.
+    /// Bare limbs stepping up and out from a snag.
     Dead { branches: (i32, i32), reach: (f32, f32) },
     /// No crown at all (cacti).
     Bare,
 }
 
+fn half() -> f32 {
+    0.5
+}
+
+fn ragged() -> f32 {
+    0.3
+}
+
+fn pads() -> f32 {
+    0.4
+}
+
+fn fork() -> f32 {
+    0.45
+}
+
 impl Crown {
-    /// Farthest the crown reaches from the top of the trunk, horizontally.
+    /// Farthest the crown reaches from the top of the trunk, horizontally, on a mature
+    /// tree.
     pub fn reach(&self) -> f32 {
         match *self {
             Crown::Round { reach, radius, .. } | Crown::Umbrella { reach, radius, .. } => reach.1 + radius.1,
-            Crown::Conical { radius, .. } | Crown::Spire { radius, .. } | Crown::Weeping { radius, .. } | Crown::Bush { radius } => radius.1,
+            Crown::Conical { radius, .. } | Crown::Spire { radius, .. } | Crown::Bush { radius } => radius.1,
+            Crown::Pine { radius, .. } => radius.1 + 2.0,
+            Crown::Weeping { radius, .. } => radius.1 + 2.5,
             Crown::Cap { radius } => radius.1 + 0.5,
             Crown::Palm { length, .. } => length.1,
             Crown::Dead { reach, .. } => reach.1,
@@ -1058,6 +1107,10 @@ struct ShapeFile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TreeFile {
+    /// How densely trees grow in forests, against the base game's (1); a later package's
+    /// replaces an earlier one's.
+    #[serde(default)]
+    density: Option<f32>,
     trees: Vec<TreeDef>,
 }
 
@@ -1092,6 +1145,9 @@ pub struct WorldContent {
     pub provinces: Vec<ProvinceDef>,
     pub biomes: Vec<BiomeDef>,
     pub trees: Vec<TreeDef>,
+    /// How densely trees grow in forests, a factor on every biome's tree cover (`density`
+    /// in `trees.ron`).
+    pub tree_density: f32,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
     pub shapes: Vec<ShapeDef>,
@@ -1167,6 +1223,7 @@ impl WorldContent {
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
         let mut trails = None;
+        let mut tree_density = None;
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
@@ -1200,17 +1257,26 @@ impl WorldContent {
                         raw.push((at.clone(), qualify_biome(&file.package, biome)));
                     }
                 }
-                "trees.ron" => trees.extend(parse::<TreeFile>(&at, &file.source)?.trees.into_iter().map(|t| {
-                    let q = |n: &str| qualify(&file.package, n);
-                    TreeDef {
-                        name: q(&t.name),
-                        log: q(&t.log),
-                        leaves: t.leaves.as_deref().map(q),
-                        alternate: t.alternate.as_ref().map(|(n, share)| (q(n), *share)),
-                        root_block: t.root_block.as_deref().map(q),
-                        ..t
+                "trees.ron" => {
+                    let def = parse::<TreeFile>(&at, &file.source)?;
+                    if let Some(density) = def.density {
+                        if !(density > 0.0 && density <= 4.0) {
+                            return Err(ContentError(format!("{at}: the tree density {density} is outside (0, 4]")));
+                        }
+                        tree_density = Some(density);
                     }
-                })),
+                    trees.extend(def.trees.into_iter().map(|t| {
+                        let q = |n: &str| qualify(&file.package, n);
+                        TreeDef {
+                            name: q(&t.name),
+                            log: q(&t.log),
+                            leaves: t.leaves.as_deref().map(q),
+                            alternate: t.alternate.as_ref().map(|(n, share)| (q(n), *share)),
+                            root_block: t.root_block.as_deref().map(q),
+                            ..t
+                        }
+                    }));
+                }
                 "ambient.ron" => particles.extend(
                     parse::<AmbientFile>(&at, &file.source)?.particles.into_iter().map(|p| ParticleDef { name: qualify(&file.package, &p.name), ..p }),
                 ),
@@ -1279,7 +1345,8 @@ impl WorldContent {
             surface.rules = rules;
         }
         let snow_cover = weather.snow_cover().to_vec();
-        let content = Self { climate, provinces, biomes, trees, plants, particles, shapes, decorations, rule_sets, snow_cover, trails };
+        let tree_density = tree_density.unwrap_or(1.0);
+        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }

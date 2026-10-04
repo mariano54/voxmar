@@ -203,7 +203,7 @@ impl Climate {
             aether: noise(seed, 14, 1.0 / 2200.0, FractalType::FBm, 2),
             aether_exponent: dials.fantasy.clamp(0.01, 0.99).ln() / 0.5f32.ln(),
             fertility: noise(seed, 15, 1.0 / 700.0, FractalType::FBm, 2),
-            variant: noise(seed, 16, 1.0 / 450.0, FractalType::FBm, 2),
+            variant: noise(seed, 16, 1.0 / 800.0, FractalType::FBm, 2),
             warp: [noise(seed, 17, 1.0 / 1100.0, FractalType::FBm, 2), noise(seed, 18, 1.0 / 1100.0, FractalType::FBm, 2)],
         }
     }

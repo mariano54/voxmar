@@ -453,7 +453,7 @@ fn queue(
     view_keys: Res<ViewKeyCache>,
     mut phases: ResMut<ViewBinnedRenderPhases<AlphaMask3d>>,
     draw_functions: Res<DrawFunctions<AlphaMask3d>>,
-    views: Query<&ExtractedView, Without<LightEntity>>,
+    views: Query<&ExtractedView, (Without<LightEntity>, With<Camera3d>)>,
 ) {
     let draw_function = draw_functions.read().get_id::<DrawParticleQuads>().expect("particle draw is registered");
     let drawing = inbox.alive && gpu.filled > 0 && gpu.bind_group.is_some();

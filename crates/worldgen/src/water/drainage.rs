@@ -19,9 +19,18 @@
 //! water crosses its border: the cells where it enters, and for each cell where it
 //! leaves, the water gathered inside plus which entries feed it. The total through an
 //! exit is then its local part plus whatever the upstream regions send in, worked out
-//! lazily crossing by crossing, following the water upstream. Water only runs downhill,
-//! so this never loops; the work grows only with the area actually upstream, every cell
-//! belongs to exactly one region, and a river may be any length.
+//! lazily crossing by crossing, following the water upstream; the work grows only with the
+//! area actually upstream, every cell belongs to exactly one region, and a river may be
+//! any length.
+//!
+//! Each region routes its own cells, and its view decides where they send their water: an
+//! entry counts a cell outside as a feeder only where that cell's own region sends it there,
+//! so every crossing is decided once. Water runs downhill, but lakes rise to their spill
+//! points, and two regions that resolve a lake across their border a little differently
+//! could pass water round in a circle. So the crossings are a function from each exit to the
+//! next one downstream, and in the rare circle the exit with the lowest cell keeps its water
+//! (`cut`): a choice that depends on nothing but the circle, never on which region or thread
+//! asked first. Without it, two threads could each wait on the other's half of the circle.
 
 use std::cell::RefCell;
 use std::cmp::{Ordering, Reverse};
@@ -408,6 +417,10 @@ struct Entry {
 /// Water leaving a region from a cell inside.
 struct Exit {
     cell: IVec2,
+    /// The cell outside the region it drains into, by its own region's routing.
+    to: IVec2,
+    /// Whether it ends a circle of crossings (see the module's docs), once known.
+    cut: OnceLock<bool>,
     /// Water gathered inside the region.
     local: f32,
     /// The entries whose water passes through this exit.
@@ -425,7 +438,7 @@ pub struct Flow {
 impl Weigh for Flow {
     fn bytes(&self) -> usize {
         let entries: usize = self.entries.iter().map(|e| 32 + e.feeders.len() * 8).sum();
-        let exits: usize = self.exits.iter().map(|e| 64 + e.upstream.len() * 4).sum();
+        let exits: usize = self.exits.iter().map(|e| 80 + e.upstream.len() * 4).sum();
         entries + exits
     }
 }
@@ -504,6 +517,11 @@ pub struct Drainage {
     id: u64,
 }
 
+/// How often the guard against loops had to end one, in tests: never, now that circles of
+/// crossings are cut where they close.
+#[cfg(test)]
+pub(crate) static LOOPS_ENDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 thread_local! {
     /// Exits whose totals this thread is working out, so that a loop in the water (which
     /// routing rules out) would end instead of waiting on itself.
@@ -568,16 +586,17 @@ impl Drainage {
     /// Water leaving its region through `cell`, which must drain out of that region.
     pub fn exit_total(&self, ground: &dyn Ground, cell: IVec2) -> f32 {
         let flow = self.flow(ground, self.region_of(cell));
-        let Ok(i) = flow.exits.binary_search_by(|exit| (exit.cell.x, exit.cell.y).cmp(&(cell.x, cell.y))) else {
+        let Some(exit) = Self::exit_of(&flow, cell) else {
             debug_assert!(false, "{cell} drains out of its region in a neighbour's view but not its own");
             return 0.0;
         };
-        let exit = &flow.exits[i];
         if let Some(&total) = exit.total.get() {
             return total;
         }
         let key = (self.id, cell);
         if !PENDING.with(|pending| pending.borrow_mut().insert(key)) {
+            #[cfg(test)]
+            LOOPS_ENDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             debug_assert!(false, "water loops through {cell}");
             return exit.local;
         }
@@ -601,8 +620,55 @@ impl Drainage {
         });
     }
 
+    /// Water entering through `entry`: the totals of the cells outside whose own regions
+    /// send their water into it, but for a cell that ends a circle.
     fn inflow(&self, ground: &dyn Ground, entry: &Entry) -> f32 {
-        entry.feeders.iter().map(|&feeder| self.exit_total(ground, feeder)).sum()
+        entry.feeders.iter().filter(|&&feeder| self.feeds(ground, feeder, entry.cell)).map(|&feeder| self.exit_total(ground, feeder)).sum()
+    }
+
+    /// The exit record of a cell in its own region, if its region sends water out there.
+    fn exit_of<'f>(flow: &'f Flow, cell: IVec2) -> Option<&'f Exit> {
+        flow.exits.binary_search_by(|exit| (exit.cell.x, exit.cell.y).cmp(&(cell.x, cell.y))).ok().map(|i| &flow.exits[i])
+    }
+
+    /// Whether `feeder` passes its water into the entry at `cell`.
+    fn feeds(&self, ground: &dyn Ground, feeder: IVec2, cell: IVec2) -> bool {
+        let flow = self.flow(ground, self.region_of(feeder));
+        Self::exit_of(&flow, feeder).is_some_and(|exit| exit.to == cell) && !self.cut(ground, feeder)
+    }
+
+    /// The exit downstream of the exit at `cell`, where the water it sends out leaves the
+    /// next region; `None` where it ends there (the sea, a closed lake).
+    fn next_exit(&self, ground: &dyn Ground, cell: IVec2) -> Option<IVec2> {
+        let to = Self::exit_of(&self.flow(ground, self.region_of(cell)), cell)?.to;
+        let flow = self.flow(ground, self.region_of(to));
+        let entry = flow.entries.iter().position(|e| e.cell == to)? as u32;
+        flow.exits.iter().find(|exit| exit.upstream.binary_search(&entry).is_ok()).map(|exit| exit.cell)
+    }
+
+    /// Whether the exit at `cell` lies on a circle of crossings and has the lowest cell of
+    /// it, so that its water stops there and the circle is broken.
+    fn cut(&self, ground: &dyn Ground, cell: IVec2) -> bool {
+        /// Longest chain of crossings followed; rivers cross far fewer regions than this.
+        const LONGEST: usize = 512;
+        let flow = self.flow(ground, self.region_of(cell));
+        let Some(exit) = Self::exit_of(&flow, cell) else { return false };
+        *exit.cut.get_or_init(|| {
+            let mut seen = vec![cell];
+            let mut at = cell;
+            while seen.len() < LONGEST {
+                match self.next_exit(ground, at) {
+                    None => return false,
+                    Some(next) if next == cell => return seen.iter().all(|c| (c.x, c.y) >= (cell.x, cell.y)),
+                    Some(next) if seen.contains(&next) => return false,
+                    Some(next) => {
+                        seen.push(next);
+                        at = next;
+                    }
+                }
+            }
+            false
+        })
     }
 
     /// What water does at a pit.
@@ -1035,7 +1101,8 @@ impl Drainage {
                 None => {
                     let cell = origin + IVec2::new(i as i32 % side, i as i32 / side);
                     if next[core_index(cell).unwrap()] < 8 {
-                        exits.push(Exit { cell, local: local[i], upstream: upstream[i].clone(), total: OnceLock::new() });
+                        let to = cell + DIRS[next[core_index(cell).unwrap()] as usize];
+                        exits.push(Exit { cell, to, cut: OnceLock::new(), local: local[i], upstream: upstream[i].clone(), total: OnceLock::new() });
                     }
                 }
             }

@@ -167,6 +167,8 @@ pub struct Ecology {
     /// Which few kinds of flower grow in a region.
     varieties: FastNoiseLite,
     richness: f32,
+    /// The content's tree density, on forest trees.
+    tree_density: f32,
     seed: u64,
 }
 
@@ -294,6 +296,7 @@ impl Ecology {
             kinds: noise(seed, 34, 1.0 / 22.0, FractalType::FBm, 2),
             varieties: noise(seed, 36, 1.0 / 600.0, FractalType::FBm, 2),
             richness: dials.vegetation,
+            tree_density: content.tree_density,
             seed,
         }
     }
@@ -379,7 +382,7 @@ impl Ecology {
                 out.push((tree, share));
             }
             let all: f32 = flora.canopy.iter().map(|c| c.1).sum();
-            let forest = site.forest * TREE_CHANCE * (total / (SUITED * all)).min(1.0);
+            let forest = site.forest * TREE_CHANCE * self.tree_density * (total / (SUITED * all)).min(1.0);
             let jitter = (hash3(self.seed ^ STANDS, x, 0, z) & 0xffff) as f32 / 65536.0 - 0.5;
             let u = (crate::climate::uniform(self.groves.get_noise_2d(x as f32, z as f32)) + 0.04 * jitter).clamp(0.0, 0.9999);
             let canopy = &mut out[start..];
@@ -607,9 +610,22 @@ impl Flora {
         // and the flowers' where data sets them.
         let [grass, foliage] = hue::biome_tints(content, biome);
         let rgb = |c: (u8, u8, u8)| [c.0 as f32, c.1 as f32, c.2 as f32];
-        let canopy_anchor = def.palette.canopy.map_or(foliage, rgb);
         let flower_anchor = def.palette.flowers.map(rgb);
         let shown = |block: &str| hue::shown(registry.def(registry.expect(block)), grass, foliage);
+        // How a tree's crown fits the palette. Tinted leaves take the place's foliage colour,
+        // so they always fit; leaves of their own colour (cherry, maple, silverwood) grow
+        // only in a biome whose palette is built around a colour like theirs, never as
+        // specks among other colours.
+        let canopy_fit = |tree: &TreeDef| -> f32 {
+            let crown = tree.leaves.as_deref().unwrap_or(&tree.log);
+            if !tree.crown.shades() || registry.def(registry.expect(crown)).tint != voxmar_engine::block::Tint::None {
+                return 1.0;
+            }
+            let fit = def.palette.canopy.map_or(0.0, |anchor| hue::harmony(shown(crown), rgb(anchor), hue::CANOPY_SPREAD));
+            if fit < hue::CLASH { 0.0 } else { fit }
+        };
+        // Plants much brighter or more saturated than the grass are rarer accents.
+        let contrast = |block: &str| 1.0 - hue::ACCENT_RARITY * (1.0 - hue::harmony(shown(block), grass, hue::CONTRAST_SPREAD));
         let wonders = def.wonders.clone().unwrap_or_else(|| vec![Select::Tag("wonder".into(), 1.0)]);
         let mut flora = Flora { forest: def.forest, cover: def.cover, flowers: def.flowers, bloom: def.bloom, ..Default::default() };
         for (i, tree) in content.trees.iter().enumerate() {
@@ -617,17 +633,12 @@ impl Flora {
             let id = TreeId(i as u16);
             // A tree the biome names is part of its forest, wonder or not.
             let named = def.trees.iter().any(|s| matches!(s, Select::Name(n, _) if *n == tree.name));
-            let wonder = if named { 0.0 } else { selected(&wonders, &def.exclude, &tree.name, tags.clone()) * tree_rarity[i] };
+            let wonder = if named { 0.0 } else { selected(&wonders, &def.exclude, &tree.name, tags.clone()) * tree_rarity[i] * canopy_fit(tree) };
             if wonder > 0.0 {
                 flora.wonder_trees.push((id, wonder));
                 continue;
             }
-            let mut weight = selected(&def.trees, &def.exclude, &tree.name, tags) * tree_rarity[i];
-            // Canopies keep to the palette; shrubs, snags and cacti make none.
-            if weight > 0.0 && tree.crown.shades() {
-                let crown = tree.leaves.as_deref().unwrap_or(&tree.log);
-                weight *= hue::harmony(shown(crown), canopy_anchor, hue::CANOPY_SPREAD);
-            }
+            let weight = selected(&def.trees, &def.exclude, &tree.name, tags) * tree_rarity[i] * canopy_fit(tree);
             if weight > 0.0 {
                 let own_terms = matches!(tree.habitat, Habitat::Water | Habitat::Shore | Habitat::Shallows);
                 if own_terms { &mut flora.habitat } else { &mut flora.canopy }.push((id, weight));
@@ -636,17 +647,18 @@ impl Flora {
         for (i, plant) in content.plants.iter().enumerate() {
             let tags = content.plant_tags(plant, registry);
             let id = PlantId(i as u16);
-            let wonder = selected(&wonders, &def.exclude, &plant.name, tags.clone()) * plant_rarity[i];
+            let wonder = selected(&wonders, &def.exclude, &plant.name, tags.clone()) * plant_rarity[i] * contrast(&plant.block);
             if wonder > 0.0 {
                 flora.wonder_plants.push((id, wonder));
                 continue;
             }
             let mut weight = selected(&def.plants, &def.exclude, &plant.name, tags) * plant_rarity[i];
-            // Carpets keep to the grass's colour, flowers to their palette where one is set.
+            // Carpets keep to the grass's colour; flowers to their palette where one is set,
+            // else, like plants that grow alone, the brightest against the grass are rarest.
             match (plant.spread, flower_anchor) {
                 (Spread::Cover, _) => weight *= hue::harmony(shown(&plant.block), grass, hue::CARPET_SPREAD),
                 (Spread::Drifts, Some(anchor)) => weight *= hue::harmony(shown(&plant.block), anchor, hue::FLOWER_SPREAD),
-                _ => {}
+                (Spread::Drifts | Spread::Alone, _) => weight *= contrast(&plant.block),
             }
             if weight > 0.0 {
                 match plant.spread {
@@ -741,11 +753,12 @@ mod tests {
         };
         // The forest takes broadleaf trees: the green one joins it, the red one hardly.
         assert!(share("base:forest", "mod:green_ash") > 0.1, "{}", share("base:forest", "mod:green_ash"));
-        assert!(share("base:forest", "mod:red_ash") < 0.01, "{}", share("base:forest", "mod:red_ash"));
-        assert!(share("base:forest", "base:maple") < 0.01);
+        assert_eq!(share("base:forest", "mod:red_ash"), 0.0);
+        assert_eq!(share("base:forest", "base:maple"), 0.0);
         // Biomes built around other colours keep to them.
         assert!(share("base:maple_forest", "base:amber_maple") > 0.2);
-        assert!(share("base:cherry_grove", "base:cherry") > 0.9);
+        assert!(share("base:cherry_grove", "base:cherry") > 0.8);
+        assert_eq!(share("base:forest", "base:cherry"), 0.0);
     }
 
     #[test]

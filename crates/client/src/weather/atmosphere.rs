@@ -3,8 +3,9 @@
 //! their own), eased as the player walks so borders pass gradually, then combined with
 //! the weather, the wind and the time of day. Fog, dust and overcast skies thicken the
 //! haze and drain colour; rain grounds pollen and fireflies; wind stills hovering spores,
-//! and dust is only blown about by a real wind; daytime sets (pollen) come out only on
-//! some days and fireflies only on some nights.
+//! and dust is only blown about by a real wind; pollen comes out only on some days, mostly
+//! in sunshine and where flowers are near (as the ambience's scan finds them), and
+//! fireflies only on some nights.
 //!
 //! `ClientAtmosphere` is what the renderer reads: the colour parts are applied within the
 //! active shader pack (see docs/rendering.md), and the particle sets are drawn by the
@@ -19,6 +20,7 @@ use voxmar_protocol::TICKS_PER_DAY;
 use voxmar_worldgen::{DayTime, Motion, Overworld, ParticleDef, WeatherWhen, WorldContent};
 
 use super::ClientWeather;
+use crate::ambience::Surroundings;
 use crate::menu::Screen;
 use crate::player::LocalPlayer;
 use crate::render::DayCycle;
@@ -194,11 +196,21 @@ fn sample(time: Res<Time>, mut air: ResMut<ClientAtmosphere>, player: Res<LocalP
 }
 
 /// The land's air with the weather, wind and time of day applied.
-fn combine(mut air: ResMut<ClientAtmosphere>, weather: Res<ClientWeather>, cycle: Res<DayCycle>) {
+fn combine(
+    mut air: ResMut<ClientAtmosphere>,
+    weather: Res<ClientWeather>,
+    cycle: Res<DayCycle>,
+    surroundings: Option<Res<Surroundings>>,
+) {
     let shown = &weather.current;
     let day = (cycle.ticks / TICKS_PER_DAY as f64).rem_euclid(1.0) as f32;
-    let night_index = (cycle.ticks / TICKS_PER_DAY as f64 + 0.25).floor() as i64;
-    let day_index = (cycle.ticks / TICKS_PER_DAY as f64 - 0.25).floor() as i64;
+    // Days are numbered from midnight to midnight and nights from noon to noon (0 is
+    // sunrise), so neither changes while it is out.
+    let days = cycle.ticks / TICKS_PER_DAY as f64;
+    let (day_index, night_index) = ((days + 0.25).floor() as i64, (days - 0.25).floor() as i64);
+    let flowers = surroundings.map_or(0.0, |s| s.flowers);
+    // Sunshine: pollen keeps to bright days.
+    let sunny = 1.0 - 0.8 * smoothstep(0.5, 0.95, shown.cover);
     let land = air.land.clone();
 
     // Fog, dust and humid air thicken the haze and tint it; overcast and rain drain colour.
@@ -233,13 +245,16 @@ fn combine(mut air: ResMut<ClientAtmosphere>, weather: Res<ClientWeather>, cycle
                 Motion::Blow => smoothstep(3.5, 8.0, wind),
                 _ => 1.0,
             };
-            // Night creatures come out only on some nights, pollen and dust on some days.
+            // Night creatures come out only on some nights, pollen on some days and then
+            // mostly in sunshine; dust follows the wind instead.
             let out = match set.time {
                 DayTime::Night => out_on(seed, night_index, &set.name, NIGHTS_OUT),
-                DayTime::Day => out_on(seed, day_index, &set.name, DAYS_OUT),
+                DayTime::Day if set.motion != Motion::Blow => out_on(seed, day_index, &set.name, DAYS_OUT) * sunny,
                 _ => 1.0,
             };
-            let density = density * when * weather * calm * out;
+            // Sets tagged `flowers` (pollen) keep mostly to where flowers are near.
+            let near = if set.tags.iter().any(|t| t == "flowers") { 0.15 + 0.85 * flowers } else { 1.0 };
+            let density = density * when * weather * calm * out * near;
             (density > 0.005).then(|| AmbientParticles {
                 name: set.name.clone(),
                 density,

@@ -28,6 +28,7 @@ use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::{DayCycle, Quality, ShadowQuality};
 use crate::render::pack::{ActivePack, ShaderPacks};
 use crate::render::lod::{self, Lod};
+use crate::render::scale::RenderScale;
 use crate::render::water::WaterQuality;
 use crate::world::ClientWorld;
 
@@ -110,6 +111,41 @@ pub struct Settings {
     pub particles: ParticleAmount,
     /// How coarsely far chunks are meshed.
     pub far_detail: FarDetail,
+    /// How many pixels the world is drawn at (`render::scale`).
+    pub resolution: Resolution,
+}
+
+/// The share of the window's pixels the world is drawn at before it is stretched over the
+/// window; menus and text are always drawn at full resolution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Resolution {
+    Full,
+    /// Three quarters of the width and height: on a Retina screen still sharper than its
+    /// size in points, for a little over half the cost.
+    #[default]
+    Balanced,
+    /// Half the width and height, the screen's size in points on a Retina display.
+    Fast,
+}
+
+impl Resolution {
+    const ALL: [Resolution; 3] = [Resolution::Full, Resolution::Balanced, Resolution::Fast];
+
+    fn label(self) -> &'static str {
+        match self {
+            Resolution::Full => "Full",
+            Resolution::Balanced => "75%",
+            Resolution::Fast => "50%",
+        }
+    }
+
+    pub fn scale(self) -> f32 {
+        match self {
+            Resolution::Full => 1.0,
+            Resolution::Balanced => 0.75,
+            Resolution::Fast => 0.5,
+        }
+    }
 }
 
 /// How far from the player chunks keep every block, and how far they are meshed with two
@@ -253,6 +289,7 @@ impl Default for Settings {
             textures: TextureOrder::default(),
             particles: ParticleAmount::default(),
             far_detail: FarDetail::default(),
+            resolution: Resolution::default(),
         }
     }
 }
@@ -457,6 +494,7 @@ impl Toggle {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Choice {
     FarDetail,
+    Resolution,
     AntiAliasing,
     ShaderPack,
     Shadows,
@@ -469,6 +507,7 @@ impl Choice {
     fn label(self) -> &'static str {
         match self {
             Choice::FarDetail => "Far detail",
+            Choice::Resolution => "Resolution",
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
             Choice::Shadows => "Shadows",
@@ -481,6 +520,7 @@ impl Choice {
     fn text(self, settings: &Settings, packs: &ShaderPacks) -> String {
         match self {
             Choice::FarDetail => settings.far_detail.label().into(),
+            Choice::Resolution => settings.resolution.label().into(),
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
             Choice::Shadows => settings.shadows.label().into(),
@@ -494,6 +534,7 @@ impl Choice {
     fn step(self, settings: &mut Settings, packs: &ShaderPacks, forward: bool) {
         match self {
             Choice::FarDetail => settings.far_detail = cycle(&FarDetail::ALL, settings.far_detail, forward),
+            Choice::Resolution => settings.resolution = cycle(&Resolution::ALL, settings.resolution, forward),
             Choice::AntiAliasing => settings.anti_aliasing = cycle(&AntiAliasing::ALL, settings.anti_aliasing, forward),
             Choice::ShaderPack => {
                 let current = settings.shader_pack.clone();
@@ -595,6 +636,7 @@ impl Control {
             Control::Switch(Toggle::CinematicZoom) => "The view follows the mouse smoothly while zoomed.",
             Control::Switch(Toggle::ZoomInSurvival) => "Lets the zoom key work in survival, not only in creative.",
             Control::Choice(Choice::FarDetail) => "How soon far chunks merge blocks. Fast suits slower machines and huge distances.",
+            Control::Choice(Choice::Resolution) => "How many pixels the world is drawn at; menus and text stay sharp. Lower is faster.",
             Control::Choice(Choice::AntiAliasing) => "How edges are smoothed. MSAA also smooths leaves and plants.",
             Control::Choice(Choice::ShaderPack) => "The look of light, sky, water and colour.",
             Control::Choice(Choice::Shadows) => "How sun shadows are drawn: higher is softer and reaches further.",
@@ -615,6 +657,7 @@ const SECTIONS: [(&str, &[Control]); 5] = [
         &[
             Control::Slider(Slider::ViewDistance),
             Control::Choice(Choice::FarDetail),
+            Control::Choice(Choice::Resolution),
             Control::Slider(Slider::Fov),
             Control::Choice(Choice::AntiAliasing),
             Control::Switch(Toggle::Vsync),
@@ -1130,6 +1173,7 @@ fn apply(
     mut window: Query<&mut Window, With<PrimaryWindow>>,
     mut camera: Query<(Entity, &mut Msaa), With<Camera3d>>,
     mut water: ResMut<WaterQuality>,
+    mut scale: ResMut<RenderScale>,
     mut commands: Commands,
 ) {
     water.set_if_neq(settings.water_quality);
@@ -1139,6 +1183,7 @@ fn apply(
     }
     quality.set_if_neq(Quality { shadows: settings.shadows, volumetric_light: settings.volumetric_light });
     world.set_far_detail(settings.far_detail.range());
+    scale.set_if_neq(RenderScale(settings.resolution.scale()));
     let present_mode = if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     if let Ok(mut window) = window.single_mut()
         && window.present_mode != present_mode

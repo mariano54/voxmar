@@ -1,8 +1,8 @@
 // Ground decorations: a shared pool biomes draw from by tag or name (by default, every
 // decoration carrying one of the biome's tags), placed in a fixed order of stages decided by
-// their shape: Patch (ground repainted), then Boulder and Rocks, then Bush (with the trees),
-// then the ornaments trees make of their own blocks (Litter, LeafPiles, Foot), then
-// FallenLog and Stump. The small plants and the snow blanket follow.
+// their shape: Patch (ground repainted), then Bush (with the trees), then the ornaments trees
+// make of their own blocks (Litter, LeafPiles, Foot), then Boulder, Rocks and
+// StandingStones, then FallenLog and Stump. The small plants and the snow blanket follow.
 //
 // Placed decorations stand about one every `spacing` blocks each way where they are
 // densest; ornaments decorate a `chance` share of the trees `trees` selects. Density is then

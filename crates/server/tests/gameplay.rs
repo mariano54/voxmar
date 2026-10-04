@@ -328,7 +328,9 @@ fn commands_set_the_time_and_the_weather() {
     assert_eq!(client.ok("/weather storm max 60"), "Bringing max storm (100%) to the land around you for 60 seconds.");
     client.pump_until(|c| c.quick && c.weather.is_some_and(|w| w.precipitation == 1.0));
     let report = client.ok("/weather");
-    assert!(report.starts_with("thunderstorm, storm for 5"), "{report}");
+    // Named by its strongest effect, which follows the local climate (a thunderstorm, or
+    // hail where it is cool), so the world's seed decides which.
+    assert!(report.contains(", storm for 5"), "{report}");
     assert_eq!(client.command("/weather hurricane")[0].0, ChatKind::Error);
     assert!(client.ok("/weather list").contains("drizzle"));
     assert_eq!(client.ok("/weather natural"), "The natural weather is back.");

@@ -175,28 +175,6 @@ impl Default for SkyMap {
 }
 
 impl SkyMap {
-    /// Top of the highest block rain lands on in a column, plus one.
-    fn height(&self, column: IVec2) -> Option<u32> {
-        let i = column - self.origin;
-        ((0..MAP).contains(&i.x) && (0..MAP).contains(&i.y)).then(|| self.heights[(i.y * MAP + i.x) as usize] & TOP_BITS)
-    }
-
-    /// How well rain can be heard at `eye`, from the columns around it: 1 out in the open,
-    /// less under a roof, nothing deep underground.
-    pub fn openness(&self, eye: Vec3) -> f32 {
-        let center = eye.xz().floor().as_ivec2();
-        let (mut heard, mut total) = (0.0, 0.0);
-        for dz in -3..=3 {
-            for dx in -3..=3 {
-                let weight = 1.0 / (1.0 + (dx * dx + dz * dz) as f32);
-                let cover = self.height(center + IVec2::new(dx, dz)).map_or(0.0, |top| top as f32 - (eye.y + 1.0));
-                heard += weight * if cover <= 0.0 { 1.0 } else { 0.3 * (1.0 - (cover / 16.0).min(1.0)) };
-                total += weight;
-            }
-        }
-        heard / total
-    }
-
     /// Re-reads the columns around `camera` from the client's world.
     fn refresh(&mut self, world: &ClientWorld, camera: IVec2) {
         self.origin = camera - MAP / 2;
@@ -255,10 +233,10 @@ fn top(column: &voxmar_engine::world::Column, registry: &BlockRegistry, local: I
     let Some((top, block)) = below(COLUMN_CHUNKS * CHUNK_SIZE, false) else { return 0 };
     if leaves(block) {
         let ground = below(top as i32 - 1, true).map_or(0, |(y, _)| y);
-        top | ground << 10 | LEAVES
+        (top & TOP_BITS) | (ground & TOP_BITS) << 10 | LEAVES
     } else {
         let water = if registry.info(block).sound == Sound::Water { WATER } else { 0 };
-        top | top << 10 | water
+        (top & TOP_BITS) | (top & TOP_BITS) << 10 | water
     }
 }
 

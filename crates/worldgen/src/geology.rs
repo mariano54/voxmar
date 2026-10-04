@@ -666,7 +666,7 @@ mod tests {
         let mut pieces = 0;
         for i in 0..400 {
             let corner = voxmar_engine::glam::IVec2::new(i % 20 * 32 - 320, i / 20 * 32 - 320);
-            pieces += world.pieces(corner).len();
+            pieces += world.pieces(corner, corner + voxmar_engine::coords::CHUNK_SIZE - 1).len();
         }
         println!("pieces     {:.1} µs per column ({pieces} pieces)", start.elapsed().as_secs_f64() * 1e6 / 400.0);
     }

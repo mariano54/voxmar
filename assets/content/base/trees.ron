@@ -5,9 +5,12 @@
 // in, outside which it fades over a small margin. Lean plus the crown's reach stays within
 // 8 blocks of the trunk.
 //
-// Crowns: Round(branches, reach, radius, squash), Conical(radius, start), Spire(radius,
-// start), Umbrella(branches, reach, radius), Weeping(radius, drape), Palm(fronds, length),
-// Cap(radius), Bush(radius), Dead(branches, reach), Bare. Ranges are (least, most).
+// Crowns: Round(branches, reach, radius, squash, start), Conical(radius, start, ragged),
+// Pine(radius, start), Spire(radius, start), Umbrella(branches, reach, radius, squash),
+// Weeping(radius, drape), Palm(fronds, length), Cap(radius), Bush(radius), Dead(branches,
+// reach), Bare. Ranges are (least, most). Heights and crowns are a mature tree's: each tree
+// draws an age, so a stand mixes young trees (about half to four fifths the size), mature
+// ones and now and then a giant half again as tall, more of them in old-growth cores.
 //
 // `stand` is where in the forest's structure a tree grows, 0 in gaps and scrubby edges ..= 1
 // in old-growth cores: giants keep to the cores, shrubs to the edges. Trees grow taller
@@ -16,98 +19,101 @@
 // Tags: broadleaf, conifer, tropical, palm (as on wood families), plus temperate, cold,
 // dry, wetland, blossom, giant, shrub, snag.
 (
+    // How densely trees grow in forests: a factor on every biome's tree cover (1 is the
+    // biomes' own). Thinner forests show more of the ground and the trees' own shapes.
+    density: 0.87,
     trees: [
         (
             name: "oak", tags: ["broadleaf", "temperate"],
-            log: "oak_log", leaves: "oak_leaves", height: (4, 7), lean: 0.6,
-            crown: Round(branches: (2, 4), reach: (1.5, 2.5), radius: (2.0, 2.8), squash: 0.8),
+            log: "oak_log", leaves: "oak_leaves", height: (5, 8), lean: 0.6,
+            crown: Round(branches: (3, 5), reach: (1.8, 3.0), radius: (1.8, 2.5), squash: 0.95, start: 0.45),
             comfort: (temperature: (7.0, 23.0)),
         ),
         (
             name: "big_oak", tags: ["broadleaf", "temperate", "giant"], rarity: Uncommon, stand: (0.5, 1.0),
-            log: "oak_log", leaves: "oak_leaves", height: (8, 12), lean: 0.8,
-            crown: Round(branches: (4, 6), reach: (2.5, 4.0), radius: (2.2, 3.0), squash: 0.75),
+            log: "oak_log", leaves: "oak_leaves", height: (9, 13), lean: 0.8,
+            crown: Round(branches: (5, 7), reach: (2.8, 4.2), radius: (2.0, 2.8), squash: 0.9, start: 0.4),
             comfort: (temperature: (10.0, 20.0), moisture: (1.0, 8.0)),
         ),
         (
             name: "birch", tags: ["broadleaf", "temperate", "cold"],
-            log: "birch_log", leaves: "birch_leaves", height: (5, 9), lean: 0.4,
-            crown: Round(branches: (1, 3), reach: (0.5, 1.5), radius: (1.6, 2.2), squash: 1.3),
+            log: "birch_log", leaves: "birch_leaves", height: (7, 12), lean: 0.4,
+            crown: Round(branches: (2, 4), reach: (0.8, 1.8), radius: (1.6, 2.2), squash: 0.95, start: 0.62),
             comfort: (temperature: (2.0, 14.0), moisture: (0.8, 8.0)),
         ),
         (
             name: "spruce", tags: ["conifer", "cold", "evergreen"],
-            log: "spruce_log", leaves: "spruce_leaves", height: (7, 12), lean: 0.2,
-            crown: Conical(radius: (2.2, 3.2), start: 0.25),
+            log: "spruce_log", leaves: "spruce_leaves", height: (8, 14), lean: 0.2,
+            crown: Conical(radius: (2.4, 3.4), start: 0.12),
             ground: [Soil, Snow],
             comfort: (temperature: (-12.0, 7.0), moisture: (0.8, 8.0)),
         ),
         (
             name: "giant_spruce", tags: ["conifer", "cold", "evergreen", "giant"], rarity: Uncommon, stand: (0.5, 1.0),
-            log: "spruce_log", leaves: "spruce_leaves", height: (16, 24), thick: true, lean: 0.3,
-            crown: Conical(radius: (3.5, 5.0), start: 0.4),
+            log: "spruce_log", leaves: "spruce_leaves", height: (18, 26), thick: true, lean: 0.3,
+            crown: Conical(radius: (3.6, 5.0), start: 0.3, ragged: 0.4),
             ground: [Soil, Snow],
             comfort: (temperature: (-2.0, 5.0), moisture: (1.3, 8.0)),
         ),
         (
             name: "pine", tags: ["conifer", "cold", "dry", "evergreen"],
-            log: "spruce_log", leaves: "spruce_leaves", height: (9, 14), lean: 0.5,
-            crown: Conical(radius: (2.2, 3.0), start: 0.5),
+            log: "spruce_log", leaves: "spruce_leaves", height: (10, 16), lean: 0.5,
+            crown: Pine(radius: (2.8, 4.0), start: 0.45),
             ground: [Soil, Snow],
             comfort: (temperature: (-10.0, 9.0), moisture: (0.2, 1.0)),
         ),
         (
             name: "dark_oak", tags: ["broadleaf", "temperate", "dense"],
             log: "dark_oak_log", leaves: "dark_oak_leaves", height: (6, 9), thick: true, lean: 0.8,
-            crown: Round(branches: (3, 5), reach: (2.0, 3.5), radius: (2.8, 3.6), squash: 0.6),
+            crown: Round(branches: (4, 6), reach: (2.2, 3.4), radius: (2.2, 3.0), squash: 0.6, start: 0.45),
             comfort: (temperature: (12.0, 22.0), moisture: (1.2, 8.0)),
         ),
         (
             name: "cherry", tags: ["broadleaf", "blossom", "temperate"], rarity: Uncommon,
             log: "cherry_log", leaves: "cherry_leaves", height: (4, 7), lean: 0.8,
-            crown: Umbrella(branches: (2, 4), reach: (2.5, 4.0), radius: (2.5, 3.2)),
-            comfort: (temperature: (5.0, 15.0), moisture: (0.7, 8.0)),
+            crown: Umbrella(branches: (3, 5), reach: (2.2, 3.6), radius: (2.0, 2.8), squash: 0.65),
+            comfort: (temperature: (4.0, 22.0), moisture: (0.7, 8.0)),
         ),
         (
             name: "jungle", tags: ["tropical", "broadleaf"],
-            log: "jungle_log", leaves: "jungle_leaves", height: (8, 13), lean: 0.5,
-            crown: Round(branches: (2, 4), reach: (2.0, 3.0), radius: (2.2, 3.0), squash: 0.7),
+            log: "jungle_log", leaves: "jungle_leaves", height: (9, 15), lean: 0.5,
+            crown: Round(branches: (3, 5), reach: (2.0, 3.0), radius: (2.1, 2.8), squash: 0.75, start: 0.55),
             comfort: (temperature: (19.0, 40.0), moisture: (1.0, 8.0)),
         ),
         (
             name: "giant_jungle", tags: ["tropical", "broadleaf", "giant"], rarity: Uncommon, stand: (0.45, 1.0),
-            log: "jungle_log", leaves: "jungle_leaves", height: (18, 26), thick: true, lean: 0.6, roots: Buttress,
-            crown: Round(branches: (3, 5), reach: (2.5, 4.0), radius: (2.8, 3.4), squash: 0.65),
+            log: "jungle_log", leaves: "jungle_leaves", height: (20, 28), thick: true, lean: 0.6, roots: Buttress,
+            crown: Round(branches: (5, 7), reach: (2.8, 4.0), radius: (2.6, 3.4), squash: 0.65, start: 0.65),
             comfort: (temperature: (21.0, 40.0), moisture: (1.3, 8.0)),
         ),
         (
             name: "jungle_bush", tags: ["tropical", "shrub"], stand: (0.0, 0.7),
             log: "jungle_log", leaves: "oak_leaves", height: (1, 2),
-            crown: Bush(radius: (1.6, 2.6)),
+            crown: Bush(radius: (1.2, 2.0)),
             comfort: (temperature: (19.0, 40.0), moisture: (0.9, 8.0)),
         ),
         (
             name: "acacia", tags: ["savanna", "dry", "broadleaf"],
-            log: "acacia_log", leaves: "acacia_leaves", height: (4, 7), lean: 1.0,
-            crown: Umbrella(branches: (1, 3), reach: (2.5, 3.8), radius: (2.5, 3.2)),
+            log: "acacia_log", leaves: "acacia_leaves", height: (5, 8), lean: 1.0,
+            crown: Umbrella(branches: (2, 3), reach: (2.5, 3.8), radius: (2.4, 3.2), squash: 0.3),
             comfort: (temperature: (16.0, 40.0), moisture: (0.1, 1.05)),
         ),
         (
             name: "willow", tags: ["broadleaf", "wetland", "riverbank"], habitat: Water,
-            log: "willow_log", leaves: "willow_leaves", height: (5, 8), lean: 0.8,
-            crown: Weeping(radius: (2.8, 3.8), drape: (10, 18)),
+            log: "willow_log", leaves: "willow_leaves", height: (6, 9), lean: 0.8,
+            crown: Weeping(radius: (2.4, 3.2), drape: (3.0, 6.0)),
             comfort: (temperature: (8.0, 24.0)),
         ),
         (
             name: "mangrove", tags: ["tropical", "wetland"], habitat: Shallows,
             log: "mangrove_log", leaves: "mangrove_leaves", root_block: "mangrove_roots", height: (5, 8), lean: 0.6, roots: Stilts,
-            crown: Round(branches: (2, 3), reach: (1.5, 2.5), radius: (2.2, 2.8), squash: 0.7),
+            crown: Round(branches: (2, 4), reach: (1.5, 2.5), radius: (1.8, 2.4), squash: 0.7, start: 0.5),
             ground: [Shallows, Soil, Sand],
             comfort: (temperature: (21.0, 40.0), moisture: (1.0, 8.0)),
         ),
         (
             name: "palm", tags: ["tropical", "palm", "shore"], habitat: Shore,
-            log: "palm_log", leaves: "palm_leaves", height: (6, 10), lean: 3.0,
+            log: "palm_log", leaves: "palm_leaves", height: (6, 11), lean: 3.0,
             crown: Palm(fronds: (6, 8), length: (3.5, 5.0)),
             ground: [Sand, Soil],
             comfort: (temperature: (20.0, 40.0), moisture: (0.4, 8.0)),
@@ -115,13 +121,13 @@
         (
             name: "shrub", tags: ["shrub", "temperate", "dry"], stand: (0.0, 0.6),
             log: "oak_log", leaves: "azalea_leaves", alternate: ("flowering_azalea_leaves", 0.35), height: (1, 2),
-            crown: Bush(radius: (1.4, 2.4)),
+            crown: Bush(radius: (1.0, 1.7)),
             comfort: (temperature: (6.0, 40.0), moisture: (0.2, 1.1)),
         ),
         (
             name: "dead_tree", tags: ["snag", "dry"],
-            log: "oak_log", height: (3, 6), lean: 1.0,
-            crown: Dead(branches: (2, 4), reach: (1.5, 3.0)),
+            log: "oak_log", height: (3, 7), lean: 1.0,
+            crown: Dead(branches: (1, 3), reach: (1.5, 3.0)),
             ground: [Soil, Snow, Sand],
         ),
         (
@@ -135,53 +141,53 @@
             // Red in every season: the colour of autumn woods. Amber maples, maples not yet
             // turned and golden birch grow beside it, so a maple wood is a mix of colours.
             name: "maple", tags: ["broadleaf", "temperate", "autumn"],
-            log: "maple_log", leaves: "maple_leaves", height: (6, 10), lean: 0.5,
-            crown: Round(branches: (3, 5), reach: (1.5, 2.8), radius: (2.2, 3.0), squash: 0.85),
+            log: "maple_log", leaves: "maple_leaves", height: (7, 11), lean: 0.5,
+            crown: Round(branches: (4, 6), reach: (1.4, 2.4), radius: (1.8, 2.5), squash: 0.95, start: 0.45),
             comfort: (temperature: (2.0, 16.0), moisture: (0.75, 8.0)),
         ),
         (
             name: "amber_maple", tags: ["broadleaf", "temperate", "autumn"],
-            log: "maple_log", leaves: "amber_maple_leaves", height: (6, 10), lean: 0.5,
-            crown: Round(branches: (3, 5), reach: (1.5, 2.8), radius: (2.2, 3.0), squash: 0.85),
+            log: "maple_log", leaves: "amber_maple_leaves", height: (7, 11), lean: 0.5,
+            crown: Round(branches: (4, 6), reach: (1.4, 2.4), radius: (1.8, 2.5), squash: 0.95, start: 0.45),
             comfort: (temperature: (2.0, 16.0), moisture: (0.75, 8.0)),
         ),
         (
             // A maple still green, or turning where the place's foliage is turning.
             name: "green_maple", tags: ["broadleaf", "temperate"],
-            log: "maple_log", leaves: "oak_leaves", height: (6, 10), lean: 0.5,
-            crown: Round(branches: (3, 5), reach: (1.5, 2.8), radius: (2.2, 3.0), squash: 0.85),
+            log: "maple_log", leaves: "oak_leaves", height: (7, 11), lean: 0.5,
+            crown: Round(branches: (4, 6), reach: (1.4, 2.4), radius: (1.8, 2.5), squash: 0.95, start: 0.45),
             comfort: (temperature: (2.0, 16.0), moisture: (0.75, 8.0)),
         ),
         (
             name: "golden_birch", tags: ["broadleaf", "temperate", "autumn"],
-            log: "birch_log", leaves: "golden_birch_leaves", height: (5, 9), lean: 0.4,
-            crown: Round(branches: (1, 3), reach: (0.5, 1.5), radius: (1.6, 2.2), squash: 1.3),
+            log: "birch_log", leaves: "golden_birch_leaves", height: (7, 12), lean: 0.4,
+            crown: Round(branches: (2, 4), reach: (0.8, 1.8), radius: (1.6, 2.2), squash: 0.95, start: 0.62),
             comfort: (temperature: (2.0, 14.0), moisture: (0.8, 8.0)),
         ),
         (
             name: "redwood", tags: ["conifer", "evergreen", "giant", "temperate"], stand: (0.35, 1.0),
-            log: "redwood_log", leaves: "redwood_leaves", height: (22, 34), thick: true, lean: 0.2,
-            crown: Conical(radius: (3.0, 4.6), start: 0.55),
+            log: "redwood_log", leaves: "redwood_leaves", height: (24, 36), thick: true, lean: 0.2,
+            crown: Conical(radius: (3.0, 4.4), start: 0.5, ragged: 0.6),
             comfort: (temperature: (7.0, 18.0), moisture: (1.15, 8.0)),
         ),
         (
             // A narrow flame of a tree, of warm hills and swamps.
             name: "cypress", tags: ["conifer", "evergreen", "warm", "wetland"],
-            log: "cypress_log", leaves: "cypress_leaves", height: (8, 14), lean: 0.3,
-            crown: Spire(radius: (1.8, 2.8), start: 0.12),
+            log: "cypress_log", leaves: "cypress_leaves", height: (8, 15), lean: 0.3,
+            crown: Spire(radius: (1.8, 2.8), start: 0.1),
             comfort: (temperature: (13.0, 30.0), moisture: (0.35, 8.0)),
         ),
         (
             name: "baobab", tags: ["broadleaf", "savanna", "dry", "giant"], rarity: Uncommon,
             log: "baobab_log", leaves: "baobab_leaves", height: (7, 11), thick: true, lean: 0.3,
-            crown: Umbrella(branches: (3, 5), reach: (2.0, 3.5), radius: (2.0, 2.8)),
+            crown: Umbrella(branches: (4, 6), reach: (1.8, 3.0), radius: (1.4, 2.0), squash: 0.5, fork: 0.75),
             comfort: (temperature: (20.0, 40.0), moisture: (0.15, 0.95)),
         ),
         (
             // An oak centuries old, alone at the heart of the oldest woods.
             name: "ancient_oak", tags: ["broadleaf", "temperate", "giant", "ancient"], rarity: VeryRare, stand: (0.8, 1.0),
             log: "oak_log", leaves: "oak_leaves", height: (14, 19), thick: true, lean: 0.6, roots: Buttress,
-            crown: Round(branches: (6, 9), reach: (3.0, 4.2), radius: (2.6, 3.2), squash: 0.75),
+            crown: Round(branches: (7, 10), reach: (3.0, 4.2), radius: (2.2, 2.9), squash: 0.7, start: 0.35),
             comfort: (temperature: (7.0, 20.0), moisture: (0.8, 8.0)),
         ),
         (
@@ -197,7 +203,7 @@
             // Silver bark and pale, faintly glowing leaves, in the cold.
             name: "silverwood", tags: ["broadleaf", "cold", "wonder"], rarity: Rare,
             log: "silverwood_log", leaves: "silverwood_leaves", height: (7, 12), lean: 0.4,
-            crown: Round(branches: (2, 4), reach: (1.5, 2.5), radius: (2.0, 2.8), squash: 1.1),
+            crown: Round(branches: (3, 5), reach: (1.2, 2.2), radius: (1.6, 2.3), squash: 1.15, start: 0.45),
             ground: [Soil, Snow],
             comfort: (temperature: (-8.0, 12.0)),
         ),
@@ -205,7 +211,7 @@
             // Smouldering leaves on a twisted trunk, in hot dry land.
             name: "emberwood", tags: ["broadleaf", "hot", "dry", "wonder"], rarity: Rare,
             log: "emberwood_log", leaves: "emberwood_leaves", height: (5, 8), lean: 1.2,
-            crown: Umbrella(branches: (2, 3), reach: (2.0, 3.0), radius: (1.8, 2.6)),
+            crown: Umbrella(branches: (2, 3), reach: (2.0, 3.0), radius: (1.6, 2.4), squash: 0.45),
             ground: [Soil, Sand],
             comfort: (temperature: (19.0, 45.0), moisture: (0.0, 0.8)),
         ),

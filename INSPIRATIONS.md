@@ -25,6 +25,17 @@ copied.
 
 ## Copied code (also in THIRD_PARTY_NOTICES.md)
 
+### Freesound recordists (rain, thunder, water)
+
+- Authors: Garuda1982, Gustavo_C, dflee4, bruno.auzet, TRP, Pingel, cognito perceptu,
+  fran_marenco, kyles and Nox_Sound
+- Link: https://freesound.org (each recording's page is in the notices)
+- Licence: CC0 1.0. **Copied**: field recordings, cut, filtered and levelled (see the
+  notices for which recording became which file).
+- What we took: the sound of rain on leaves, a downpour, rain on a tarp, drops off trees, a
+  babbling creek, a lake lapping, close and distant thunder, swimming and splashes.
+- Where: `assets/content/base/sounds/`, played by `ambience.ron` and `sounds.ron`.
+
 ### RoadWeaver
 
 - Author: shiroha-233
@@ -48,16 +59,6 @@ copied.
 - What we took: all of our noise. Most of generation still calls the crate itself.
 - Where: everywhere in `crates/worldgen/src/`; the vectorised port is in `noise.rs`.
 
-### "Very fast procedural ocean"
-
-- Author: afl_ext
-- Link: https://www.shadertoy.com/view/MdXyzX
-- Licence: MIT. **Copied**: the wave function and its constants (see the notices).
-- What we took: water waves as octaves of `exp(sin x - 1)`, each turned by a fixed angle
-  and dragging the next along its slope.
-- Where: `crates/client/src/render/water_surface.wgsl` (`wave_normal`) and
-  `crates/client/src/render/water.rs` (`octaves`).
-
 ### Glimmer
 
 - Author: Josh Britain (jbritain); its screen-space tracer credits a public gist by Belmu
@@ -66,8 +67,18 @@ copied.
   light-through-water model (see the notices).
 - What we took: reflections traced through the depth buffer with a binary refinement,
   refraction that keeps the straight view where the bent one lands in front of the water,
-  and water as absorption plus in-scattering. It is also where we found afl_ext's waves.
+  and water as absorption plus in-scattering. It is also where we found afl_ext's waves
+  ("Very fast procedural ocean", MIT), which we used until our own wave texture replaced them.
 - Where: `crates/client/src/render/water_surface.wgsl` and `water.wgsl`.
+
+### Bevy (bloom)
+
+- Author: the Bevy contributors
+- Link: https://github.com/bevyengine/bevy
+- Licence: MIT or Apache-2.0. Copied (adapted).
+- What we took: its bloom's filters, threshold, chain sizing and blend, rebuilt as one
+  compute pass instead of a render pass per level.
+- Where: `crates/client/src/render/bloom.wgsl`, `post.rs` and `display.wgsl`.
 
 ## World generation
 
@@ -125,9 +136,13 @@ copied.
 - What we took: ecotones (thin biomes along the border of two others, such as birch taiga
   between taiga and forest); clearings opened by a global noise with a soft edge, where trees
   fade out first and meadow plants fill in; a snow blanket laid on every level open to the
-  sky, down through the canopy; and hollowed fallen logs.
+  sky, down through the canopy; hollowed fallen logs; and three of its tree shapes: snags'
+  and junipers' limbs that climb in irregular stairs (each step goes up with a chance that
+  grows with how much of the way left is up), the willow trunk that jogs a block sideways
+  where it forks, and leaves that hang from the underside of willow crowns.
 - Where: `crates/worldgen/src/content.rs` (`EcotoneDef`), `biome.rs`, `ecology.rs`,
-  `terrain.rs` and `decor.rs` (the logs).
+  `terrain.rs`, `decor.rs` (the logs) and `trees.rs` (`Grower::walk`, `Grower::curtains`,
+  the willow's jog).
 
 ### Geophilic
 
@@ -136,8 +151,9 @@ copied.
 - Licence: all rights reserved (only its Python tooling is MIT). Ideas only.
 - What we took: ground decoration placed in a fixed order of stages (patches of ground,
   rocks, trees, tree ornaments, fallen logs, flowers, fungi, moss, grass), forests that come
-  in dense stands with gaps, and flowers whose species follows a noise so they grow in drifts.
-- Where: `crates/worldgen/src/decor.rs` and `ecology.rs`.
+  in dense stands with gaps, flowers whose species follows a noise so they grow in drifts,
+  and lumpy bushes: a main mound with smaller ones beside it, on a buried stem.
+- Where: `crates/worldgen/src/decor.rs`, `ecology.rs` and `trees.rs` (`Grower::mound`).
 
 ### Terrestria and Biolith
 
@@ -148,9 +164,11 @@ copied.
 - What we took: sub-biomes that take a share of a parent biome's land instead of a climate
   box of their own (our variants); a distance to the nearest biome border, and which biome
   lies across it, for every column, which we work out analytically rather than by marching;
-  and the idea of biome terrain shapes (dunes, canyons, volcanoes) that fade out towards a
-  biome's edges.
-- Where: `crates/worldgen/src/biome.rs` (variants, border distance) and `shapes.rs`.
+  the idea of biome terrain shapes (dunes, canyons, volcanoes) that fade out towards a
+  biome's edges; and from its tree placers, the cypress's crown profile (a radius of
+  6.25·x(1−x)² along the crown) and roots flaring on the sides of big trunks.
+- Where: `crates/worldgen/src/biome.rs` (variants, border distance), `shapes.rs` and
+  `trees.rs` (the `Spire` crown, `Grower::flare`).
 
 ### Blooming Biosphere
 
@@ -203,7 +221,8 @@ copied.
 - Link: https://github.com/TanTanDev/shrubbery
 - Licence: MIT or Apache-2.0. Ideas only; no code copied.
 - What we took: trees as a handful of species parameters in data (trunk height, thickness
-  and lean, roots, crown shape), laid out in continuous space and then voxelized.
+  and lean, roots, crown shape), laid out in continuous space and then voxelized. The rest
+  of our trees (ages, clumped crowns, tiered conifers, tapering trunks) is our own.
 - Where: `crates/worldgen/src/trees.rs` and `assets/content/base/trees.ron`.
 
 ## Rendering
@@ -277,8 +296,14 @@ copied.
 - Link: https://modrinth.com/mod/grassier-grass
 - Licence: all rights reserved. Ideas only.
 - What we took: real grass blades growing from grass blocks near the camera, rolling across
-  a meadow in waves with the wind and parting around the player.
-- Where: `crates/client/src/render/grass.wgsl` and `wind.wgsl`.
+  a meadow in waves with the wind and parting around the player. From studying how it moves
+  them: the motion is mostly a lean that follows a gust field scrolling with the wind, so
+  neighbours bend together, with only a small flutter on top whose phase is advanced
+  frame by frame on the CPU rather than computed from the clock; each blade gives to the
+  wind a little more or less than its neighbours and flutters at its own pace; and the
+  gusts show as a lighter sheen on the blades they bend. Our gust field, constants and
+  shader are our own.
+- Where: `crates/client/src/render/grass.wgsl`, `wind.wgsl` and `wind.rs`.
 
 ### Particle Rain
 
@@ -299,7 +324,9 @@ copied.
 - Licence: LGPL-3.0. Ideas only.
 - What we took: measuring how enclosed the player is with a capped flood fill from the eye,
   which gives openness, sky exposure and what blocks are near; and sound layers whose
-  conditions are soft ranges that fade, ducked rather than muted by rain.
+  conditions are soft ranges that fade, ducked rather than muted by rain; and rain as
+  recorded layers by strength and cover (open ground, a downpour, under a roof, dripping
+  trees), as its rain sounds are.
 - Where: `crates/client/src/ambience/enclosure.rs` and `defs.rs`.
 
 ### Resonance
@@ -420,6 +447,10 @@ General techniques we use under their usual names, credited where they appear in
   `crates/client/src/render/clouds.wgsl` and `voxel.wgsl`.
 - SplitMix64 for seeds and hashing: `crates/worldgen/src/rng.rs` and elsewhere.
 - Schlick's approximation for the reflectance of water: `crates/client/src/render/water.wgsl`.
+- Bloom by a chain of 13-tap downsamples and tent upsamples, after Jimenez's "Next
+  Generation Post Processing in Call of Duty: Advanced Warfare" (SIGGRAPH 2014), with Brian
+  Karis's weighting against fireflies, as Bevy implements it (adapted; see
+  THIRD_PARTY_NOTICES.md): `crates/client/src/render/bloom.wgsl` and `post.rs`.
 - Percentage-closer soft shadows: `crates/client/src/render/shadows.wgsl`.
 - The Gabriel graph for which places trails join: `crates/worldgen/src/trails/network.rs`.
 - Catmull-Rom curves for trails and river channels: `trails/path.rs` and `water/channel.rs`.
