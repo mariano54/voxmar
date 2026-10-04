@@ -395,18 +395,15 @@ impl Biomes {
         let span = 2.0 * GRADIENT_STEP as f32;
         let gradient: [f32; 7] = std::array::from_fn(|a| (around[0].0[a] - around[1].0[a]).hypot(around[2].0[a] - around[3].0[a]) / span);
 
-        let (mut edge, mut neighbour) = (EDGE_HORIZON, home);
+        // Every boundary within reach, nearest first; the nearest across which the biome
+        // changes is the border. Most cells are far from all of them and probe none.
+        let mut candidates = [(0.0f32, 0u8, 0.0f32); 96];
+        let mut count = 0;
         let mut consider = |axis: usize, boundary: f32| {
             let distance = (p.0[axis] - boundary).abs() / gradient[axis].max(1e-9);
-            if distance >= edge {
-                return;
-            }
-            let mut across = *p;
-            let nudge = if axis == T { 1e-3 } else { 1e-5 };
-            across.0[axis] = boundary + if p.0[axis] < boundary { nudge } else { -nudge };
-            let other = self.resolve(&across);
-            if other != home {
-                (edge, neighbour) = (distance, other);
+            if distance < EDGE_HORIZON && count < candidates.len() {
+                candidates[count] = (distance, axis as u8, boundary);
+                count += 1;
             }
         };
 
@@ -440,6 +437,21 @@ impl Biomes {
         for slot in &self.variants[self.parent(p).0 as usize] {
             consider(V, slot.start);
             consider(V, slot.end);
+        }
+
+        let candidates = &mut candidates[..count];
+        candidates.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let (mut edge, mut neighbour) = (EDGE_HORIZON, home);
+        for &(distance, axis, boundary) in candidates.iter() {
+            let axis = axis as usize;
+            let mut across = *p;
+            let nudge = if axis == T { 1e-3 } else { 1e-5 };
+            across.0[axis] = boundary + if p.0[axis] < boundary { nudge } else { -nudge };
+            let other = self.resolve(&across);
+            if other != home {
+                (edge, neighbour) = (distance, other);
+                break;
+            }
         }
 
         Pick { home, neighbour, edge, from_centre: self.centrality(home, p), river: self.river(p) }

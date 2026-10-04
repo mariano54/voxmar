@@ -37,6 +37,7 @@ pub use biome::{Biome, BiomeId, Biomes};
 pub use climate::LAPSE_RATE;
 pub use content::{ContentError, WorldContent};
 pub use dials::WorldDials;
+pub use ecology::PlantProperties;
 pub use rarity::{Featured, Rarity, Tier};
 pub use rocks::ProvinceId;
 
@@ -200,7 +201,7 @@ impl Overworld {
             dials,
             geology: Geology::new(stream, &dials),
             climate: Climate::new(stream, &dials),
-            ecology: Ecology::new(stream, &dials, &registry),
+            ecology: Ecology::new(stream, &dials, content, &registry),
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
             biomes,
             rocks,
@@ -214,6 +215,12 @@ impl Overworld {
     /// The biomes of this world.
     pub fn biomes(&self) -> &Biomes {
         &self.biomes
+    }
+
+    /// What the plant with this name (`base:dandelion`) is good for: nutrition,
+    /// alchemical properties, dye.
+    pub fn plant_properties(&self, name: &str) -> Option<&PlantProperties> {
+        self.ecology.plant_properties(name)
     }
 
     /// The biome whose rules make the ground at (x, z).
@@ -438,14 +445,12 @@ impl Sampler<'_> {
             edge: 0.0,
             from_centre: 0.0,
         };
-        if geo.height >= SEA_LEVEL {
-            let water = site.soil_moisture();
-            site.vegetation = ecology::ground_cover(temperature, water);
-            site.forest = self.world.ecology.forest(x, z, temperature, water);
-        }
-
         let pick = self.pick(x, z);
         let share = Biomes::blend(pick.edge, regional.fertility);
+        if geo.height >= SEA_LEVEL {
+            site.vegetation = ecology::ground_cover(temperature, site.soil_moisture());
+            site.forest = self.world.ecology.forest(x, z, pick.home, pick.neighbour, share, regional.fertility);
+        }
         let dither = if share > 0.0 || geo.river > 0.0 { self.world.blend_dither(x, z) } else { 1.0 };
         site.biome = if dither < share { pick.neighbour } else { pick.home };
         // Rivers and lakes and their banks, with ragged edges.

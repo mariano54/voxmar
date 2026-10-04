@@ -164,9 +164,14 @@ variants take shares of their parent; ecotones sit on borders; fantastical biome
 where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
 lines such as game trails) over the stones of its rock province, while snow, ice and bare rock
-follow the climate everywhere. Trees and plants still follow the climate directly: each
-climate has its own procedurally shaped trees (giant spruce, pine, birch, oak, dark oak,
-cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti).
+follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
+birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
+and plants (`plants.ron`, with nutrition, alchemy and dye properties) are a shared pool:
+each says what climate, ground and habitat it likes, biomes select from the pool by tag or
+name, and the climate at each spot weighs the candidates, so a new plant with the right
+tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
+tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
+runs high.
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
