@@ -13,7 +13,7 @@ use crate::hud::console::Console;
 use crate::menu::{Notice, Screen};
 use crate::player::LocalPlayer;
 use crate::render::DayCycle;
-use crate::render::lod::Lod;
+use crate::render::lod::WorldGenerator;
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
@@ -106,7 +106,7 @@ fn receive(
     mut player: ResMut<LocalPlayer>,
     mut cycle: ResMut<DayCycle>,
     mut remote: ResMut<RemotePlayers>,
-    mut lod: ResMut<Lod>,
+    mut generator: ResMut<WorldGenerator>,
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
@@ -127,7 +127,7 @@ fn receive(
         match message {
             ServerMessage::Welcome { position, yaw, flying, allow_flight, admin, seed, weather_seed, .. } => {
                 weather.set_seed(weather_seed);
-                lod.start(seed, world.registry.clone());
+                generator.start(seed, world.registry.clone());
                 player.position = position;
                 player.yaw = yaw;
                 player.flying = flying;

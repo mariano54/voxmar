@@ -42,10 +42,11 @@ use voxmar_engine::action::ActionRegistry;
 use voxmar_engine::block::{BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::Face;
 use voxmar_server::ServerConfig;
+use voxmar_worldgen::WorldContent;
 
 use crate::hud::HudImages;
 use crate::menu::{FirstScreen, Screen};
-use crate::render::lod::{Lod, LodPalette};
+use crate::render::lod::{Lod, LodPalette, WorldGenerator};
 use crate::render::{SkyMaterial, ui_image};
 use crate::session::Launch;
 use crate::settings::Settings;
@@ -146,6 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content = voxmar_server::load_content(&assets)?;
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
+    let world_content = Arc::new(WorldContent::load(&content)?);
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.
@@ -195,7 +197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(shader_packs)
     .insert_resource(settings)
-    .insert_resource(Registry(registry))
+    .insert_resource(Registry { blocks: registry, world: world_content })
     .add_systems(Startup, setup);
     if let Some(forced) = options.weather {
         app.world_mut().resource_mut::<weather::ClientWeather>().force(forced);
@@ -258,8 +260,13 @@ fn lower_thread_priority() {
     }
 }
 
+/// Block definitions and the world generator's definitions from the loaded content
+/// packages (biomes, trees, plants), for distant terrain to match the server's world.
 #[derive(Resource)]
-struct Registry(Arc<BlockRegistry>);
+struct Registry {
+    blocks: Arc<BlockRegistry>,
+    world: Arc<WorldContent>,
+}
 
 /// Action definitions, shared with the server, for proposing and predicting actions.
 #[derive(Resource)]
@@ -276,7 +283,7 @@ fn setup(
     world: Res<ClientWorld>,
     terrain: Res<render::terrain::Terrain>,
 ) {
-    let registry = &registry.0;
+    let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures);
     let (_, mut block_textures) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
@@ -298,6 +305,7 @@ fn setup(
     render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &colormaps);
     let palette = LodPalette::new(registry, &block_textures, &colormaps);
     commands.insert_resource(Lod::new(palette, terrain.clone(), world.view_distance));
+    commands.insert_resource(WorldGenerator::new(world_content));
 
     let icons = (0..registry.len())
         .map(|id| {

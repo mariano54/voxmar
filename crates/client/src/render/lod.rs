@@ -25,7 +25,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use rustc_hash::FxHashSet;
 use voxmar_engine::block::{BlockId, BlockRegistry, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, Face};
-use voxmar_worldgen::{Overworld, SEA_LEVEL};
+use voxmar_worldgen::{Overworld, SEA_LEVEL, WorldContent};
 
 use super::terrain::Terrain;
 use crate::textures::Rgba;
@@ -181,9 +181,43 @@ pub struct TileMesh {
     pub indices: Vec<u32>,
 }
 
-/// Distant terrain state. Inactive until the server tells us the world seed.
+/// The generator of the world on screen (the one being played, or the menus' backdrop),
+/// made with the loaded content packages so that modded biomes, trees and plants show far
+/// away as they do nearby. Distant terrain follows it, and anything else on the client
+/// that samples the world beyond the real chunks (ambience) shares it rather than
+/// building its own. None between worlds.
+#[derive(Resource)]
+pub struct WorldGenerator {
+    content: Arc<WorldContent>,
+    current: Option<Arc<Overworld>>,
+}
+
+impl WorldGenerator {
+    pub fn new(content: Arc<WorldContent>) -> Self {
+        Self { content, current: None }
+    }
+
+    /// Makes the generator of the world with this seed the current one, and returns it.
+    pub fn start(&mut self, seed: u64, registry: Arc<BlockRegistry>) -> Arc<Overworld> {
+        let generator = Arc::new(Overworld::with_content(seed, registry, &self.content));
+        self.current = Some(generator.clone());
+        generator
+    }
+
+    /// Leaves the world: distant terrain is removed until the next `start`.
+    pub fn clear(&mut self) {
+        self.current = None;
+    }
+
+    pub fn get(&self) -> Option<&Arc<Overworld>> {
+        self.current.as_ref()
+    }
+}
+
+/// Distant terrain state. Follows [`WorldGenerator`]: empty until there is a world.
 #[derive(Resource)]
 pub struct Lod {
+    /// The generator the tiles come from.
     generator: Option<Arc<Overworld>>,
     palette: Arc<LodPalette>,
     terrain: Terrain,
@@ -213,19 +247,13 @@ impl Lod {
         }
     }
 
-    /// Starts generating distant terrain for the world with this seed.
-    pub fn start(&mut self, seed: u64, registry: Arc<BlockRegistry>) {
-        self.generator = Some(Arc::new(Overworld::new(seed, registry)));
-        self.last_camera = None;
-    }
-
-    /// Removes all distant terrain and stops making it until `start` is called again.
-    /// Tiles still being built are discarded.
-    pub fn clear(&mut self) {
+    /// Removes all distant terrain and makes it anew from `generator`, if any, around a
+    /// world with no real chunks yet. Tiles still being built are discarded.
+    fn follow(&mut self, generator: Option<Arc<Overworld>>) {
         for key in self.tiles.drain() {
             self.terrain.remove_tile(key);
         }
-        self.generator = None;
+        self.generator = generator;
         self.pending.clear();
         self.wanted.clear();
         (self.results_tx, self.results_rx) = unbounded();
@@ -286,7 +314,10 @@ impl Lod {
     }
 }
 
-fn request_tiles(mut lod: ResMut<Lod>, camera: Query<&GlobalTransform, With<Camera3d>>) {
+fn request_tiles(mut lod: ResMut<Lod>, world: Res<WorldGenerator>, camera: Query<&GlobalTransform, With<Camera3d>>) {
+    if !Option::eq(&lod.generator.as_ref().map(Arc::as_ptr), &world.get().map(Arc::as_ptr)) {
+        lod.follow(world.get().cloned());
+    }
     let Some(generator) = lod.generator.clone() else { return };
     let Ok(camera) = camera.single() else { return };
     let position = camera.translation().xz().floor().as_ivec2();
