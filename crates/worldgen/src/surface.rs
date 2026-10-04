@@ -61,7 +61,9 @@ impl Palette {
 
     /// The block for a uniform value `u` in 0..1.
     pub fn pick(&self, u: f32) -> BlockId {
-        let i = self.ends.partition_point(|&end| end <= u).min(self.blocks.len() - 1);
+        // The ends rise, so the ends at or below `u` are the ones before its block. Palettes
+        // are short: counting them all beats a branching search.
+        let i = self.ends.iter().map(|&end| (end <= u) as usize).sum::<usize>().min(self.blocks.len() - 1);
         self.blocks[i]
     }
 

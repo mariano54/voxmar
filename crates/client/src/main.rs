@@ -46,10 +46,11 @@ use voxmar_engine::action::ActionRegistry;
 use voxmar_engine::block::{BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::Face;
 use voxmar_server::ServerConfig;
+use voxmar_worldgen::WorldContent;
 
 use crate::hud::HudImages;
 use crate::menu::{FirstScreen, Screen};
-use crate::render::lod::{Lod, LodPalette};
+use crate::render::lod::{Lod, LodPalette, WorldGenerator};
 use crate::render::{SkyMaterial, ui_image};
 use crate::session::Launch;
 use crate::settings::Settings;
@@ -75,6 +76,7 @@ struct Options {
     mine: Option<f32>,
     time: Option<f32>,
     menu: bool,
+    flicker: bool,
     screen: Option<Screen>,
     music: bool,
 }
@@ -98,6 +100,7 @@ fn parse_options() -> Result<Options, String> {
         mine: None,
         time: None,
         menu: false,
+        flicker: false,
         screen: None,
         music: true,
     };
@@ -124,6 +127,7 @@ fn parse_options() -> Result<Options, String> {
             "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
+            "--flicker" => options.flicker = true,
             "--screen" => {
                 let name = value()?;
                 options.screen = Some(Screen::from_name(&name).ok_or_else(|| format!("--screen: no screen called {name}"))?);
@@ -154,6 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
+    let world_content = Arc::new(WorldContent::load(&content)?);
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.
@@ -208,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(shader_packs)
     .insert_resource(settings)
-    .insert_resource(Registry(registry))
+    .insert_resource(Registry { blocks: registry, world: world_content })
     .add_systems(Startup, setup);
     if let Some(forced) = options.weather.as_deref().map(|name| weather::preset(&content_weather, name)).transpose()? {
         app.world_mut().resource_mut::<weather::ClientWeather>().force(forced);
@@ -246,6 +251,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mine: options.mine,
             time: options.time,
             menu: options.menu,
+            flicker: options.flicker,
         });
     }
     app.run();
@@ -273,8 +279,13 @@ fn lower_thread_priority() {
     }
 }
 
+/// Block definitions and the world generator's definitions from the loaded content
+/// packages (biomes, trees, plants), for distant terrain to match the server's world.
 #[derive(Resource)]
-struct Registry(Arc<BlockRegistry>);
+struct Registry {
+    blocks: Arc<BlockRegistry>,
+    world: Arc<WorldContent>,
+}
 
 /// Action definitions, shared with the server, for proposing and predicting actions.
 #[derive(Resource)]
@@ -292,7 +303,7 @@ fn setup(
     world: Res<ClientWorld>,
     terrain: Res<render::terrain::Terrain>,
 ) {
-    let registry = &registry.0;
+    let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures);
     let (_, mut block_textures) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
@@ -314,8 +325,9 @@ fn setup(
     render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures);
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
     render::cracks::setup(&mut commands, &mut images, &mut meshes, &mut crack_materials, crack_stages);
-    let palette = LodPalette::new(registry, &block_textures, &colormaps);
+    let palette = LodPalette::new(registry, &block_textures);
     commands.insert_resource(Lod::new(palette, terrain.clone(), world.view_distance));
+    commands.insert_resource(WorldGenerator::new(world_content));
 
     // Inventory icons: a block's own `icon` when it names one, a plant's sprite, or a cube
     // seen from above, with tinted faces in a temperate climate's colours.

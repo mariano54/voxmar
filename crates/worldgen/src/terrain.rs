@@ -277,11 +277,6 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let geology = GeoGrid::new(world, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
     let top = geology.samples().iter().map(|g| g.height.max(g.water)).max().unwrap_or(0).max(SEA_LEVEL);
 
-    let rock = {
-        let _stage = stage::enter(Stage::Fill);
-        Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0)
-    };
-    let mut rock_profile = Profile::default();
     let mut caves = {
         let _stage = stage::enter(Stage::Caves);
         world.caves.column(&geology, origin, top)
@@ -290,6 +285,15 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         let _stage = stage::enter(Stage::CaveBiomes);
         world.underground.column(world, &area, &geology, origin, top)
     };
+    // The rock noise picks among the stones above the deepslate, and anywhere among a cave
+    // biome's own.
+    let rock = {
+        let _stage = stage::enter(Stage::Fill);
+        let low = if underground.any_rocky() { 0 } else { DEEPSLATE };
+        Lattice::noise(&terrain.rock, origin, low, top, lattice::STEP, 1.0)
+    };
+    let mut rock_profile = Profile::default();
+    let mut settled = Vec::new();
     let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
     let mut blocks = Blocks {
@@ -321,8 +325,29 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             }
             rock.profile(x, z, &mut rock_profile);
             let rocky = underground.rocky(x, z);
+            if rocky {
+                underground.settled(x, z, &mut settled);
+            }
             // Strata wobble the same all the way down a block column.
             let mut wobble = None;
+            // The ground's own stone at a height below the surface's layers: a cave biome's
+            // rock, deepslate, or the stones beneath.
+            let mut stone = |y: i32| {
+                let rock = match rocky.then(|| settled[(y >> 3) as usize]) {
+                    Some(Some(pick)) => underground.rock_of(pick),
+                    Some(None) => underground.rock(x, y, z),
+                    None => None,
+                };
+                match rock {
+                    Some(Rock::Stones(stones)) => stones.pick((0.5 + rock_profile.at(y) * 0.53).clamp(0.0, 0.9999)),
+                    Some(Rock::Strata(strata)) => stratum(strata, y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))),
+                    None if y < DEEPSLATE => ids.deepslate,
+                    None => stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz),
+                }
+            };
+            // Below this the ground is that stone (from bedrock up): the bulk of the column,
+            // taken first.
+            let body = height - if layers.filler != Fill::Stones { layers.depth } else { 0 };
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -338,7 +363,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         continue;
                     }
                 }
-                let block = if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
+                let block = if y >= 4 && y < body {
+                    stone(y)
+                } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
                     ids.bedrock
                 } else if below_surface == 0 {
                     layers.top
@@ -348,12 +375,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         _ => terrain.band(strata, y, wx, wz),
                     }
                 } else {
-                    let rock = rock_profile.at(y);
-                    match if rocky { underground.rock(x, y, z) } else { None } {
-                        Some(Rock::Stones(stones)) => stones.pick((0.5 + rock * 0.53).clamp(0.0, 0.9999)),
-                        Some(Rock::Strata(strata)) => stratum(strata, y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))),
-                        None => stone_at(ids, stones, rock, world.seed, y, wx, wz),
-                    }
+                    stone(y)
                 };
                 blocks.set_local(x, y, z, block);
             }
