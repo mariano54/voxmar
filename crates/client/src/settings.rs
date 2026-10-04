@@ -4,6 +4,8 @@
 
 use std::path::PathBuf;
 
+use bevy::anti_alias::fxaa::Fxaa;
+use bevy::anti_alias::smaa::Smaa;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use bevy::window::{PresentMode, PrimaryWindow};
@@ -30,7 +32,14 @@ impl Plugin for SettingsPlugin {
             Update,
             (
                 toggle_debug,
-                (drag_sliders, click_switches, click_buttons, sync_controls.run_if(resource_changed::<Settings>), show_menu)
+                (
+                    drag_sliders,
+                    click_switches,
+                    click_choices,
+                    click_buttons,
+                    sync_controls.run_if(resource_changed::<Settings>),
+                    show_menu,
+                )
                     .chain(),
                 apply.run_if(resource_changed::<Settings>),
                 fit_lod_hole,
@@ -58,6 +67,34 @@ pub struct Settings {
     pub debug_overlay: bool,
     /// Flight speed, in percent. Only admins may fly faster than normal.
     pub fly_speed: i32,
+    pub anti_aliasing: AntiAliasing,
+}
+
+/// How edges are smoothed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AntiAliasing {
+    Off,
+    /// A fast, slightly soft filter over the finished image.
+    Fxaa,
+    /// A sharper filter over the finished image.
+    Smaa,
+    /// Four samples per pixel: smooths block edges and, through alpha to coverage, the
+    /// cut-outs of leaves and plants, which shimmer most in the distance.
+    #[default]
+    Msaa4,
+}
+
+impl AntiAliasing {
+    const ALL: [AntiAliasing; 4] = [AntiAliasing::Off, AntiAliasing::Fxaa, AntiAliasing::Smaa, AntiAliasing::Msaa4];
+
+    fn label(self) -> &'static str {
+        match self {
+            AntiAliasing::Off => "Off",
+            AntiAliasing::Fxaa => "FXAA",
+            AntiAliasing::Smaa => "SMAA",
+            AntiAliasing::Msaa4 => "MSAA 4×",
+        }
+    }
 }
 
 impl Default for Settings {
@@ -71,6 +108,7 @@ impl Default for Settings {
             sound_volume: 100,
             debug_overlay: false,
             fly_speed: 100,
+            anti_aliasing: AntiAliasing::default(),
         }
     }
 }
@@ -233,10 +271,40 @@ impl Toggle {
     }
 }
 
+/// A setting chosen from a few options; clicking steps to the next one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Choice {
+    AntiAliasing,
+}
+
+impl Choice {
+    fn label(self) -> &'static str {
+        match self {
+            Choice::AntiAliasing => "Anti-aliasing",
+        }
+    }
+
+    fn text(self, settings: &Settings) -> &'static str {
+        match self {
+            Choice::AntiAliasing => settings.anti_aliasing.label(),
+        }
+    }
+
+    fn step(self, settings: &mut Settings) {
+        match self {
+            Choice::AntiAliasing => {
+                let i = AntiAliasing::ALL.iter().position(|&a| a == settings.anti_aliasing).unwrap_or(0);
+                settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Control {
     Slider(Slider),
     Switch(Toggle),
+    Choice(Choice),
 }
 
 const SECTIONS: [(&str, &[Control]); 3] = [
@@ -245,6 +313,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
         &[
             Control::Slider(Slider::ViewDistance),
             Control::Slider(Slider::Fov),
+            Control::Choice(Choice::AntiAliasing),
             Control::Switch(Toggle::Vsync),
             Control::Switch(Toggle::DebugOverlay),
         ],
@@ -283,6 +352,10 @@ struct SliderFill(Slider);
 struct SliderValue(Slider);
 #[derive(Component)]
 struct Switch(Toggle);
+#[derive(Component)]
+struct ChoiceButton(Choice);
+#[derive(Component)]
+struct ChoiceValue(Choice);
 
 const PANEL_WIDTH: f32 = 520.0;
 const SLIDER_WIDTH: f32 = 200.0;
@@ -318,6 +391,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
     let label = match control {
         Control::Slider(slider) => slider.label(),
         Control::Switch(toggle) => toggle.label(),
+        Control::Choice(choice) => choice.label(),
     };
     let node = Node {
         height: Val::Px(38.0),
@@ -334,6 +408,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
         match control {
             Control::Slider(slider) => spawn_slider(row, font, slider),
             Control::Switch(toggle) => spawn_switch(row, toggle),
+            Control::Choice(choice) => spawn_choice(row, font, choice),
         }
     });
 }
@@ -377,6 +452,20 @@ fn spawn_switch(row: &mut ChildSpawnerCommands, toggle: Toggle) {
     row.spawn((Button, Switch(toggle), track, BackgroundColor(TRACK))).with_child((knob, BackgroundColor(Color::WHITE)));
 }
 
+/// A pill showing the current option.
+fn spawn_choice(row: &mut ChildSpawnerCommands, font: &Handle<Font>, choice: Choice) {
+    let pill = Node {
+        width: Val::Px(120.0),
+        height: Val::Px(26.0),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        border_radius: BorderRadius::MAX,
+        ..default()
+    };
+    row.spawn((Button, ChoiceButton(choice), pill, BackgroundColor(TRACK)))
+        .with_child((ChoiceValue(choice), text(font, "", 14.0, TEXT)));
+}
+
 /// F3 toggles the debug overlay, menu or not.
 fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
     if keys.just_pressed(KeyCode::F3) {
@@ -402,6 +491,14 @@ fn click_switches(mut settings: ResMut<Settings>, switches: Query<(&Switch, &Int
         if *interaction == Interaction::Pressed {
             let on = switch.0.get(&settings);
             switch.0.set(&mut settings, !on);
+        }
+    }
+}
+
+fn click_choices(mut settings: ResMut<Settings>, choices: Query<(&ChoiceButton, &Interaction), Changed<Interaction>>) {
+    for (choice, interaction) in &choices {
+        if *interaction == Interaction::Pressed {
+            choice.0.step(&mut settings);
         }
     }
 }
@@ -436,7 +533,14 @@ fn sync_controls(
     mut fills: Query<(&SliderFill, &mut Node), Without<Switch>>,
     mut values: Query<(&SliderValue, &mut Text)>,
     mut switches: Query<(&Switch, &mut Node, &mut BackgroundColor)>,
+    mut choices: Query<(&ChoiceValue, &mut Text), Without<SliderValue>>,
 ) {
+    for (choice, mut text) in &mut choices {
+        let value = choice.0.text(&settings);
+        if text.0 != value {
+            value.clone_into(&mut text.0);
+        }
+    }
     for (fill, mut node) in &mut fills {
         let (min, max, _) = fill.0.range();
         node.width = Val::Percent((fill.0.get(&settings) - min) as f32 / (max - min) as f32 * 100.0);
@@ -508,7 +612,8 @@ fn apply(
     mut world: ResMut<ClientWorld>,
     mut cycle: ResMut<DayCycle>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
-    mut camera: Query<&mut Projection, With<Camera3d>>,
+    mut camera: Query<(Entity, &mut Projection, &mut Msaa), With<Camera3d>>,
+    mut commands: Commands,
 ) {
     if world.view_distance != settings.view_distance {
         world.set_view_distance(settings.view_distance);
@@ -520,11 +625,17 @@ fn apply(
     {
         window.present_mode = present_mode;
     }
-    if let Ok(mut projection) = camera.single_mut()
-        && let Projection::Perspective(perspective) = &mut *projection
-    {
+    let Ok((entity, mut projection, mut msaa)) = camera.single_mut() else { return };
+    if let Projection::Perspective(perspective) = &mut *projection {
         perspective.fov = (settings.fov as f32).to_radians();
     }
+    msaa.set_if_neq(if settings.anti_aliasing == AntiAliasing::Msaa4 { Msaa::Sample4 } else { Msaa::Off });
+    let mut camera = commands.entity(entity);
+    match settings.anti_aliasing {
+        AntiAliasing::Fxaa => camera.insert(Fxaa::default()).remove::<Smaa>(),
+        AntiAliasing::Smaa => camera.insert(Smaa::default()).remove::<Fxaa>(),
+        AntiAliasing::Off | AntiAliasing::Msaa4 => camera.remove::<(Fxaa, Smaa)>(),
+    };
 }
 
 /// Fits the distant terrain's hole for real chunks to the render distance: at once when it

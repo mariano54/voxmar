@@ -38,6 +38,22 @@ remains is mostly Bevy's fixed per-frame cost, not terrain:
 - Main thread ~1.4 ms, which overlaps the render thread.
 - Uploading streamed meshes is budgeted at 32k quads a frame (~0.5 ms at most).
 
+## Distant shimmer and anti-aliasing
+
+Flicker in the distance came from real chunks 50–500 blocks out, not from the distant
+terrain: leaf and plant cut-outs passing or failing whole pixels, block textures sampled
+nearest-texel when minified, and sub-pixel grass. Now:
+
+- Block textures blend when minified (linear min and mip filtering; magnification stays
+  nearest, so texels are crisp up close).
+- Anti-aliasing is a setting: Off, FXAA, SMAA or MSAA 4× (the default). With MSAA, leaves
+  and plants use alpha to coverage, so their cut-outs fade over samples instead of
+  flickering. MSAA costs about 0.2 ms at 1080p.
+- Plants sink into the ground between 192 and 320 blocks.
+
+Measured as pixels that change by more than 60 levels when the camera moves 4 cm: 0.33%
+before, 0.12% now.
+
 ## Next steps, in order of payoff
 
 1. **Quad pulling.** Store each quad once (8 bytes) and expand it to vertices in the

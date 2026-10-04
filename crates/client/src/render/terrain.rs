@@ -555,9 +555,16 @@ impl TerrainPipelines {
         descriptor.vertex.shader = self.shader.clone();
         descriptor.vertex.buffers = vec![self.vertex_layout.layout().clone()];
         descriptor.primitive.cull_mode = cull_mode;
+        // With several samples per pixel, cut-outs cover samples by their alpha instead of
+        // passing or failing whole: leaves and plants stay smooth in the distance.
+        let alpha_to_coverage = key.msaa_samples() > 1 && matches!(pass, TerrainPass::Cutout | TerrainPass::Inner);
+        descriptor.multisample.alpha_to_coverage_enabled = alpha_to_coverage;
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = self.shader.clone();
             fragment.shader_defs.extend(defs.iter().map(|&def| ShaderDefVal::from(def)));
+            if alpha_to_coverage {
+                fragment.shader_defs.push("ALPHA_TO_COVERAGE".into());
+            }
         }
         let id = cache.queue_render_pipeline(descriptor);
         self.main.insert((view_key, pass), id);

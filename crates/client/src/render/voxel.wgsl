@@ -36,6 +36,8 @@ const FACE_PLANT: u32 = 6u;
 const FLAG_INNER: u32 = 1u << 23u;
 const FLAG_BACKED: u32 = 1u << 24u;
 const AO_CURVE = array<f32, 4>(0.45, 0.65, 0.84, 1.0);
+// Plants shrink away between these distances, in blocks.
+const PLANT_FADE = vec2(192.0, 320.0);
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -154,6 +156,12 @@ fn vertex(in: Vertex) -> VertexOutput {
     let w1 = in.packed.y;
     var out: VertexOutput;
     out.world_position = world_position(in);
+    if face_of(w0) >= FACE_PLANT && (w0 & FLAG_INNER) != 0u {
+        // Plants sink into the ground with distance, where they would only be a shimmer of
+        // sub-pixel blades. Their shadows stay, which far away nobody can tell apart.
+        let distance = length(out.world_position.xz - view.world_position.xz);
+        out.world_position.y -= smoothstep(PLANT_FADE.x, PLANT_FADE.y, distance);
+    }
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
     out.face = face_of(w0);
     out.uv = face_uv(local_position(w0), out.face);
@@ -185,6 +193,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let layer = i32(in.surface & 0xFFFu);
     var albedo = textureSample(block_textures, block_sampler, in.uv, layer);
     let kind = tint_kind(in.surface);
+#ifdef ALPHA_TO_COVERAGE
+    // Sharpened so a texel edge stays crisp up close; once the texture is minified the
+    // alpha spreads over a few samples instead of flickering between pass and fail.
+    albedo.a = saturate((albedo.a - 0.5) / max(fwidth(albedo.a), 0.0001) + 0.5);
+    if albedo.a <= 0.0 {
+        discard;
+    }
+#else
 #ifdef CUTOUT
     if albedo.a < 0.5 {
         discard;
@@ -192,6 +208,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
 #ifndef TRANSLUCENT
     albedo.a = 1.0;
+#endif
 #endif
     let base = albedo.rgb * biome_tint(in.surface);
     let plant = in.face >= FACE_PLANT;

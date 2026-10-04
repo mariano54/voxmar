@@ -251,12 +251,14 @@ fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode) -> Ima
     image.texture_descriptor.mip_level_count = levels;
     image.texture_view_descriptor =
         Some(TextureViewDescriptor { dimension: Some(TextureViewDimension::D2Array), ..default() });
-    let filter = if mipmaps { ImageFilterMode::Nearest } else { ImageFilterMode::Linear };
+    // Block textures keep crisp texels up close and blend when minified, so distant
+    // blocks do not sparkle as texels drop in and out between pixels.
+    let mag_filter = if mipmaps { ImageFilterMode::Nearest } else { ImageFilterMode::Linear };
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: address,
         address_mode_v: address,
-        mag_filter: filter,
-        min_filter: filter,
+        mag_filter,
+        min_filter: ImageFilterMode::Linear,
         mipmap_filter: ImageFilterMode::Linear,
         ..default()
     });
