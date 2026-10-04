@@ -44,7 +44,7 @@ T opens the console to chat with everyone on the server; / opens it with a comma
 recall earlier lines, Tab completes a command's name, Enter sends and Esc closes. Replies and
 chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
 like actions: admins (the singleplayer host, and players named with `--admin` on a dedicated
-server) may use them all, everyone else `/help`, `/seed` and `/list`.
+server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
 
 - `/time` tells the time; `/time set sunrise|day|morning|noon|afternoon|sunset|dusk|night|midnight|dawn|TICKS`
   moves forward to that time of day (a day is 24000 ticks, 0 is sunrise), `/time add 100|30s|2h|1d`
@@ -60,6 +60,8 @@ server) may use them all, everyone else `/help`, `/seed` and `/list`.
 - `/tp X Y Z`, `/tp X Z` (onto the ground), `/tp PLAYER`, `/tp PLAYER X Y Z`, `/tp PLAYER PLAYER`;
   `~` means where the player is, so `/tp ~ ~10 ~` goes ten blocks up.
 - `/gamemode survival|creative [PLAYER]` switches a player's mode, which is kept with them.
+- `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
+  (within 4000 blocks unless you say).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
 Commands are data: each package's `commands.ron` names its commands, who may use them, their

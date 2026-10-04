@@ -37,6 +37,9 @@ pub struct Weather {
     pub wind: Vec2,
     /// How much the wind gusts around its mean.
     pub gusts: f32,
+    /// How far the gust fronts have travelled with the wind where the player is (x, z),
+    /// wrapped every `GUST_WRAP` blocks; see `gust`.
+    pub gust_offset: Vec2,
     /// Rain or snow reaching the ground, 0 (none) to 1 (downpour).
     pub precipitation: f32,
     /// How much of it falls as snow.
@@ -88,6 +91,7 @@ impl Weather {
         temperature: 15.0,
         wind: Vec2::ZERO,
         gusts: 0.0,
+        gust_offset: Vec2::ZERO,
         precipitation: 0.0,
         snow: 0.0,
         drizzle: 0.0,
@@ -629,35 +633,49 @@ pub fn ramp(from: f32, to: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The wind at a place and moment: `mean` (blocks per second) with gusts that sweep
-/// across the land with it, as strong as `gusts` (0..1) asks. A pure function of the world
-/// seed, place and time in seconds of world time, so the server (for gameplay) and every
-/// client (for swaying plants and blowing particles) agree on it. Uses only exact
-/// arithmetic on 32-bit hashes, so it is the same on every machine and easy to port to a
-/// shader (see docs/weather-effects.md).
-pub fn gust(seed: u64, at: Vec2, seconds: f64, mean: Vec2, gusts: f32) -> Vec2 {
+/// Gust fronts repeat every this many blocks, so how far they have travelled can wrap.
+pub const GUST_WRAP: f32 = 40.0 * GUST_CELLS as f32;
+/// Lattice cells of the gust noise before it repeats.
+const GUST_CELLS: u32 = 1024;
+
+/// The wind at a place and moment: `mean` (blocks per second) with gusts as strong as
+/// `gusts` (0..1) asks. Gust fronts some 40 blocks across change over a few seconds and
+/// travel with the wind: `offset` is how far they have travelled, the mean wind integrated
+/// over time (wrapped every `GUST_WRAP` blocks), which the server keeps for each player
+/// and sends with the weather, and clients advance between reports. Integrating rather
+/// than taking `mean * seconds` keeps the fronts from leaping when the mean wind changes.
+/// Uses only exact arithmetic on 32-bit hashes, so it is the same on every machine and
+/// easy to port to a shader (see docs/rendering.md).
+pub fn gust(seed: u64, at: Vec2, seconds: f64, offset: Vec2, mean: Vec2, gusts: f32) -> Vec2 {
     if gusts <= 0.0 || mean == Vec2::ZERO {
         return mean;
     }
-    // Gust fronts some 40 blocks across travel with the wind and change over seconds.
-    let p = (at.as_dvec2() - mean.as_dvec2() * seconds) / 40.0;
+    let p = (at.as_dvec2() - offset.as_dvec2()) / 40.0;
     let t = seconds / 5.0;
     let seed = (seed ^ (seed >> 32)) as u32 ^ 0x6775_7374; // "gust"
     let strength = value_noise(seed, p, t);
-    let veer = value_noise(seed ^ 0x9e37_79b9, p * 0.5, t * 0.7) - 0.5;
+    let veer = value_noise(seed ^ 0x9e37_79b9, p, t * 0.7) - 0.5;
     // Lulls a little below the mean, gusts well above it.
     let speed = 1.0 + gusts * (1.8 * strength * strength - 0.45);
     mean * speed + mean.perp() * (veer * 0.6 * gusts)
 }
 
-/// Smooth noise in 0..1 over a plane and time, from 32-bit hashes on an integer lattice.
+/// `offset` carried `dt` seconds further by `mean`, wrapped every `GUST_WRAP` blocks.
+pub fn advance_gusts(offset: Vec2, mean: Vec2, dt: f32) -> Vec2 {
+    (offset + mean * dt).rem_euclid(Vec2::splat(GUST_WRAP))
+}
+
+/// Smooth noise in 0..1 over a plane and time, from 32-bit hashes on an integer lattice
+/// that repeats every `GUST_CELLS` cells across.
 fn value_noise(seed: u32, p: DVec2, t: f64) -> f32 {
     let (cell, cell_t) = (p.floor(), t.floor());
     let fade = |x: f32| x * x * (3.0 - 2.0 * x);
     let (fx, fz, ft) = (fade((p.x - cell.x) as f32), fade((p.y - cell.y) as f32), fade((t - cell_t) as f32));
-    let (ix, iz, it) = (cell.x as i64 as u32, cell.y as i64 as u32, cell_t as i64 as u32);
+    let wrap = |v: f64| (v as i64).rem_euclid(GUST_CELLS as i64) as u32;
+    let (ix, iz, it) = (wrap(cell.x), wrap(cell.y), cell_t as i64 as u32);
     let corner = |dx: u32, dz: u32, dt: u32| {
-        let h = pcg(seed ^ pcg(ix.wrapping_add(dx) ^ pcg(iz.wrapping_add(dz) ^ pcg(it.wrapping_add(dt)))));
+        let (x, z) = ((ix + dx) % GUST_CELLS, (iz + dz) % GUST_CELLS);
+        let h = pcg(seed ^ pcg(x ^ pcg(z ^ pcg(it.wrapping_add(dt)))));
         (h >> 8) as f32 / 16_777_216.0
     };
     let plane = |dt| {
@@ -738,15 +756,23 @@ mod tests {
     fn gusts_are_deterministic_and_bounded() {
         let mean = Vec2::new(6.0, -2.0);
         let at = Vec2::new(1234.5, -987.25);
-        assert_eq!(gust(7, at, 1e7, mean, 0.0), mean);
-        let speeds: Vec<f32> = (0..2000).map(|i| gust(7, at, 1e7 + i as f64 * 0.25, mean, 1.0).length()).collect();
-        assert_eq!(gust(7, at, 1e7 + 3.0, mean, 1.0), gust(7, at, 1e7 + 3.0, mean, 1.0));
-        assert_ne!(gust(7, at, 1e7 + 3.0, mean, 1.0), gust(8, at, 1e7 + 3.0, mean, 1.0));
+        assert_eq!(gust(7, at, 1e7, Vec2::ZERO, mean, 0.0), mean);
+        let mut offset = Vec2::new(40_000.0, 3.0);
+        let mut speeds = Vec::new();
+        for i in 0..2000 {
+            speeds.push(gust(7, at, 1e7 + i as f64 * 0.25, offset, mean, 1.0).length());
+            offset = advance_gusts(offset, mean, 0.25);
+        }
+        assert_eq!(gust(7, at, 1e7 + 3.0, offset, mean, 1.0), gust(7, at, 1e7 + 3.0, offset, mean, 1.0));
+        assert_ne!(gust(7, at, 1e7 + 3.0, offset, mean, 1.0), gust(8, at, 1e7 + 3.0, offset, mean, 1.0));
         let (low, high) = speeds.iter().fold((f32::MAX, 0.0f32), |(lo, hi), &s| (lo.min(s), hi.max(s)));
         let base = mean.length();
         assert!(low > base * 0.4 && high < base * 2.6 && high > base * 1.5, "{low}..{high} around {base}");
-        // Gusts change within seconds, not every frame.
+        // Gusts change within seconds, not every frame, even as the offset wraps round.
         let step = speeds.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
         assert!(step < base * 0.2, "jumps {step}");
+        // The pattern repeats exactly where the offset wraps.
+        let (a, b) = (Vec2::new(5.0, 7.0), Vec2::new(5.0 + GUST_WRAP, 7.0 - GUST_WRAP));
+        assert_eq!(gust(3, a, 100.0, Vec2::ZERO, mean, 1.0), gust(3, b, 100.0, Vec2::ZERO, mean, 1.0));
     }
 }
