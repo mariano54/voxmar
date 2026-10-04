@@ -901,6 +901,38 @@ mod tests {
         assert!(found.iter().filter(|&&n| n > 0).count() >= 5, "{found:?}");
     }
 
+    /// Geodes are hollow and lined with crystal, in calcite and dark rock.
+    #[test]
+    fn geodes_are_hollow_and_lined() {
+        let registry = registry();
+        let world = Overworld::new(5, registry.clone());
+        let crystal = [registry.expect("base:blue_ice"), registry.expect("base:sea_lantern")];
+        let mut checked = 0;
+        for i in 0..400 {
+            let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
+            let origin = pos.origin();
+            let geology = geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
+            let column = world.generate(pos);
+            for geode in world.caves.geodes_near(&geology, origin) {
+                let centre = geode.centre.floor().as_ivec3();
+                if ColumnPos::of_block(centre) != pos {
+                    continue;
+                }
+                let local = |p: IVec3| IVec3::new(p.x & 31, p.y, p.z & 31);
+                let middle = column.block(local(centre));
+                assert!(!registry.info(middle).solid, "a geode at {centre} is not hollow");
+                // Straight up and down from the centre, through the lining, unless a cave cut it.
+                for dir in [IVec3::Y, IVec3::NEG_Y] {
+                    let p = centre + dir * (geode.radius + 0.6).floor() as i32;
+                    let block = column.block(local(p));
+                    assert!(crystal.contains(&block) || !registry.info(block).solid, "{} at {p} lines the geode at {centre}", registry.def(block).name);
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2, "only {checked} geodes");
+    }
+
     /// `cargo test --release -p voxmar_worldgen cave_preview -- --ignored --nocapture`
     /// (optionally with `SEED=n` and a centre `X=x Z=z`, by default spawn) writes views of
     /// the caves over 1.5 km to `target/`: `caves_xray.ppm`, a top-down view where brighter
@@ -1031,7 +1063,8 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen cave_sights -- --ignored --nocapture`
-    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`) prints `--pose` arguments for
+    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
+    /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
     /// in-game captures of caves near spawn: inside the largest open space under each sight.
     #[test]
     #[ignore]
@@ -1041,7 +1074,21 @@ mod tests {
         let (water, lava) = (registry.expect("base:water"), registry.expect("base:lava"));
         for seed in seeds.split(',').map(|s| s.parse::<u64>().unwrap()) {
             let world = Overworld::new(seed, registry.clone());
-            let spawn = world.spawn_point();
+            // Around spawn, or around `X`, `Z`, which a capture reaches with
+            // `--command "/tp X Z"` (the poses are from the eye of a player standing there).
+            // `NEAR=biome` finds the nearest of that surface biome to spawn instead.
+            let near = std::env::var("NEAR").ok().and_then(|name| {
+                let spawn = world.spawn_point();
+                world.locate_biome(&name, IVec2::new(spawn.x, spawn.z), 8000).map(|p| (p.x, p.y))
+            });
+            let place = near.or_else(|| std::env::var("X").ok().zip(std::env::var("Z").ok()).and_then(|(x, z)| Some((x.parse::<i32>().ok()?, z.parse::<i32>().ok()?))));
+            let spawn = match place {
+                Some((x, z)) => {
+                    println!("  capture with --command \"/tp {x} {z}\"");
+                    IVec3::new(x, world.height(x, z) + 1, z)
+                }
+                None => world.spawn_point(),
+            };
             let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.62, 0.5);
             println!("seed {seed}: spawn {spawn}, {:?}", world.cave_style());
             for (kind, x, z) in world.caves.sights((spawn.x, spawn.z), 420) {
@@ -1172,6 +1219,42 @@ mod tests {
                     }
                 }
             }
+            // Geodes, from inside, and fossils where a cave lays them bare.
+            let air_around = |p: IVec3| [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y].into_iter().find(|&d| air(p + d));
+            let mut fossils: Vec<IVec3> = Vec::new();
+            for i in 0..19 * 19 {
+                let corner = first.offset(i % 19, i / 19).origin();
+                let geology = geology::GeoGrid::new(&world, (corner.x - 1, corner.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
+                for geode in world.caves.geodes_near(&geology, corner) {
+                    let c = geode.centre.floor().as_ivec3();
+                    if ColumnPos::of_block(c) == ColumnPos::of_block(corner) && air(c) {
+                        let d = c.as_vec3() + 0.5 - eye;
+                        println!("  geode, {:.0} across at {c}: --pose {:.1},{:.1},{:.1},0,-30", 2.0 * geode.radius, d.x, d.y, d.z);
+                    }
+                }
+                for fossil in world.underground.fossils_near(&world, corner) {
+                    if fossils.contains(&fossil.min) {
+                        continue;
+                    }
+                    fossils.push(fossil.min);
+                    let bare: Vec<(IVec3, IVec3)> = (fossil.min.y..=fossil.max.y)
+                        .flat_map(|y| (fossil.min.z..=fossil.max.z).flat_map(move |z| (fossil.min.x..=fossil.max.x).map(move |x| IVec3::new(x, y, z))))
+                        .filter(|&p| fossil.contains(p) && block(p).is_some_and(|b| !b.is_air()))
+                        .filter_map(|p| air_around(p).map(|d| (p, d)))
+                        .collect();
+                    // From as far back as the cave allows, at the barest part.
+                    let view = |&(p, d): &(IVec3, IVec3)| (1..9).map(|k| p + d * k).take_while(|&c| air(c)).count();
+                    if let Some(&(p, d)) = bare.iter().max_by_key(|b| (view(b), bare.iter().filter(|o| o.0.distance_squared(b.0) < 16).count())) {
+                        println!("  ({} bones bare)", bare.len());
+                        let camera = p + d * view(&(p, d)) as i32;
+                        let look = (p - camera).as_vec3();
+                        let yaw = (-look.x).atan2(-look.z).to_degrees();
+                        let e = camera.as_vec3() + 0.5 - eye;
+                        println!("  fossil laid bare at {p}: --pose {:.1},{:.1},{:.1},{yaw:.0},-20", e.x, e.y, e.z);
+                    }
+                }
+            }
+
             biomes.sort_by_key(|b| std::cmp::Reverse(b.1));
             for (name, count, (score, camera, yaw)) in biomes {
                 let d = camera.as_vec3() + 0.5 - eye;
