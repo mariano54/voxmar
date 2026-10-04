@@ -319,8 +319,21 @@ copied.
 - Licences: LGPL-3.0; custom terms that allow use as a reference only. Ideas only.
 - What we took: ambient particles (fireflies, pollen, falling leaves) as a table in data,
   keyed by climate, time and weather; and fireflies as an event that comes out only on some
-  nights (Particular's).
+  nights (Particular's), which we extended to days: pollen and dust come out only on some.
 - Where: `assets/content/base/ambient.ron` and `crates/client/src/weather/atmosphere.rs`.
+
+### Designing Sound
+
+- Author: Andy Farnell
+- Link: https://mitpress.mit.edu/9780262014410/designing-sound/
+- Licence: a book, all rights reserved. Ideas only.
+- What we took: its procedural models. Rain as countless short taps of noise over a band of
+  broadband noise, never tones; thunder as a sharp crack and tearing followed by a rumble
+  made of sound arriving from farther and farther along the bolt, darker with distance;
+  running water and splashes as many small bubbles, each a brief tone rising slightly in
+  pitch, over the rush of the flow.
+- Where: `crates/client/src/sfx.rs` (`rain_loop`, `thunder_clip`, `water`), `sfx/dsp.rs`
+  (`bubble`, `tap`) and `crates/client/src/ambience/synth.rs` (`stream`, `plop`).
 
 ### Presence Footsteps
 
@@ -404,6 +417,8 @@ General techniques we use under their usual names, credited where they appear in
 - Percentage-closer soft shadows: `crates/client/src/render/shadows.wgsl`.
 - The Gabriel graph for which places trails join: `crates/worldgen/src/trails/network.rs`.
 - Catmull-Rom curves for trails and river channels: `trails/path.rs` and `water/channel.rs`.
+- Pink noise from white with Paul Kellet's economical filter (musicdsp.org), and the
+  resonance of an air bubble in water after Minnaert (1933): `crates/client/src/sfx/dsp.rs`.
 
 ## Read, but not used yet
 

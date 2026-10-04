@@ -185,8 +185,8 @@ fn ambience_preview() {
                         let [l, r] = place(dry, wet, position, Vec3::ZERO, Vec3::X, Vec3::NEG_Z, reverb);
                         for (i, (l, r)) in l.iter().zip(&r).enumerate() {
                             if let (Some(a), Some(b)) = (left.get_mut(at + i), right.get_mut(at + i)) {
-                                *a += l * volume * sfx::MASTER;
-                                *b += r * volume * sfx::MASTER;
+                                *a += l * volume * sfx::MASTER * super::AMBIENCE_GAIN;
+                                *b += r * volume * sfx::MASTER * super::AMBIENCE_GAIN;
                             }
                         }
                     }
@@ -194,7 +194,7 @@ fn ambience_preview() {
             }
             for (bed, variant, offset) in &mut playing {
                 let [l, r] = &beds[*bed][*variant];
-                let level = mixer.level(*bed) * sfx::MASTER;
+                let level = mixer.level(*bed) * sfx::MASTER * super::AMBIENCE_GAIN;
                 for i in 0..block {
                     if let Some(s) = l.get(*offset + i) {
                         left[at + i] += s * level;

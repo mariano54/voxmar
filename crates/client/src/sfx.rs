@@ -19,10 +19,15 @@
 //! - Deterministic generation, like textures: a material always sounds the same on every
 //!   machine, and nothing is downloaded or shipped.
 //!
-//! Rain is a soft loop of tiny drops over a hiss, as loud as the rain is heavy and quieter
-//! under cover. Thunder rumbles low and long, opening with a crack when the lightning is close.
+//! Rain is two seamless stereo loops, a light patter and a heavy roar, crossfaded with how
+//! hard it rains and quieter under cover: a soft broadband hiss of countless drops, each a
+//! tiny tap of noise rather than a tone, so it never buzzes. Thunder from lightning close
+//! by cracks and tears before its boom and rumble; from farther off only a muffled rip,
+//! and from far away a low roll, arriving as late as sound takes to travel. Water
+//! (swimming, splashing in) is moving water and fine bubbles, never a cartoon bloop. The
+//! models for rain, thunder and water follow Andy Farnell's *Designing Sound*.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
@@ -31,6 +36,7 @@ use rustc_hash::FxHashMap;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
 use voxmar_engine::physics::player as dims;
 
+use self::dsp::{Drift, OnePole, Pink, Svf};
 use self::minecraft::SoundStore;
 use crate::player::LocalPlayer;
 use crate::render::precipitation::SkyMap;
@@ -38,6 +44,7 @@ use crate::settings::Settings;
 use crate::weather::{ClientWeather, Thunder};
 use crate::world::ClientWorld;
 
+pub(crate) mod dsp;
 mod minecraft;
 
 /// Sample rate of every synthesized sound, shared with `ambience`.
@@ -45,13 +52,17 @@ pub(crate) const RATE: u32 = 44_100;
 const VARIANTS: u64 = 4;
 /// Volume at 100% in the settings.
 pub(crate) const MASTER: f32 = 0.6;
-/// Seconds in the rain loop, and its volume in the heaviest rain out in the open.
-const RAIN_LOOP: f32 = 4.0;
-const RAIN_GAIN: f32 = 0.45;
+/// Seconds in each rain loop, and their volume in the heaviest rain out in the open.
+const RAIN_LOOP: f32 = 6.0;
+const RAIN_GAIN: f32 = 0.42;
 /// Thunder's volume from lightning right overhead.
 const THUNDER_GAIN: f32 = 0.9;
-/// Lightning closer than this many blocks cracks before it rumbles.
-const NEAR_LIGHTNING: f32 = 300.0;
+/// Lightning closer than the first of these many blocks cracks before it rumbles; closer
+/// than the second, it tears muffled before it rolls; beyond, only the roll is heard.
+const NEAR_LIGHTNING: f32 = 250.0;
+const FAR_LIGHTNING: f32 = 900.0;
+/// Variants of each kind of thunder.
+const THUNDER_VARIANTS: u64 = 3;
 /// Cues placed in the world fade out over this many blocks from the listener, as
 /// Minecraft's block sounds do.
 const HEARD_WITHIN: f32 = 16.0;
@@ -64,7 +75,7 @@ impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SoundCue>()
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, play_cues).chain(), rain, thunder));
+            .add_systems(Update, ((footsteps, play_cues).chain(), weather_sounds, rain, thunder));
     }
 }
 
@@ -138,8 +149,8 @@ struct Clip {
 #[derive(Resource)]
 struct Sfx {
     clips: FxHashMap<(Sound, Cue), Vec<Clip>>,
-    /// Thunder from near and far lightning, a few variants each.
-    thunder: [Vec<Handle<AudioSource>>; 2],
+    /// Thunder from near, middling and far lightning, a few variants each.
+    thunder: [Vec<Handle<AudioSource>>; 3],
     counter: u64,
 }
 
@@ -165,7 +176,13 @@ fn minecraft_event(sound: Sound, cue: Cue) -> Option<(String, f32, f32)> {
         Sound::Glass => "glass",
         Sound::Mud => "mud",
         Sound::Moss => "moss",
-        Sound::Water => return (cue == Cue::Step).then(|| ("entity.player.swim".to_owned(), 0.2, 1.0)),
+        Sound::Water => {
+            return match cue {
+                Cue::Step => Some(("entity.player.swim".to_owned(), 0.2, 1.0)),
+                Cue::Land => Some(("entity.player.splash".to_owned(), 0.3, 1.0)),
+                _ => None,
+            };
+        }
     };
     let (event, volume, pitch) = match cue {
         Cue::Step => ("step", 0.15, 1.0),
@@ -244,14 +261,50 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
         clips.len(),
         started.elapsed().as_millis()
     );
-    let thunder = [true, false].map(|near| {
-        let clip = |v: u64| AudioSource { bytes: Arc::from(wav(&thunder_clip(mix(v * 7 + near as u64), near))) };
-        (0..VARIANTS).map(|v| sources.add(clip(v))).collect()
+    commands.insert_resource(Sfx { clips, thunder: Default::default(), counter: 0 });
+    // Rain and thunder take a few hundred milliseconds to make; they are made on a worker
+    // and arrive within the first second, long before any storm.
+    let (sender, receiver) = crossbeam_channel::bounded(1);
+    std::thread::spawn(move || {
+        let thunder = Reach::ALL.map(|reach| {
+            (0..THUNDER_VARIANTS).map(|v| wav(&thunder_clip(mix(v * 7 + reach as u64), reach))).collect()
+        });
+        let rain = [false, true].map(|heavy| {
+            let [left, right] = rain_loop(0x7261_696e, heavy);
+            wav_stereo(&left, &right)
+        });
+        let _ = sender.send(WeatherClips { thunder, rain });
     });
-    commands.insert_resource(Sfx { clips, thunder, counter: 0 });
-    let rain = sources.add(AudioSource { bytes: Arc::from(wav(&rain_loop(0x7261_696e))) });
-    let playback = PlaybackSettings { paused: true, ..PlaybackSettings::LOOP.with_volume(Volume::SILENT) };
-    commands.spawn((RainSound, AudioPlayer(rain), playback));
+    commands.insert_resource(PendingWeather(receiver));
+}
+
+/// Rain and thunder as WAV files, made on a worker.
+struct WeatherClips {
+    thunder: [Vec<Vec<u8>>; 3],
+    rain: [Vec<u8>; 2],
+}
+
+#[derive(Resource)]
+struct PendingWeather(crossbeam_channel::Receiver<WeatherClips>);
+
+/// Takes rain and thunder once they are made: the thunder to play, and the two rain
+/// loops, silent and paused until it rains.
+fn weather_sounds(
+    mut commands: Commands,
+    pending: Option<Res<PendingWeather>>,
+    sfx: Option<ResMut<Sfx>>,
+    mut sources: ResMut<Assets<AudioSource>>,
+) {
+    let (Some(pending), Some(mut sfx)) = (pending, sfx) else { return };
+    let Ok(clips) = pending.0.try_recv() else { return };
+    commands.remove_resource::<PendingWeather>();
+    let mut add = |bytes: Vec<u8>| sources.add(AudioSource { bytes: Arc::from(bytes) });
+    let [near, middle, far] = clips.thunder;
+    sfx.thunder = [near, middle, far].map(|variants| variants.into_iter().map(&mut add).collect());
+    for (heavy, bytes) in [false, true].into_iter().zip(clips.rain) {
+        let playback = PlaybackSettings { paused: true, ..PlaybackSettings::LOOP.with_volume(Volume::SILENT) };
+        commands.spawn((RainSound { heavy }, AudioPlayer(add(bytes)), playback));
+    }
 }
 
 /// How loud a clip is: the RMS of its loudest stretch of [`LOUDNESS_WINDOW`], so short
@@ -283,48 +336,92 @@ fn measure(source: &AudioSource) -> Option<f32> {
     (!samples.is_empty()).then(|| loudness(&samples, channels))
 }
 
+/// One of the two rain loops: the light patter or the heavy roar.
 #[derive(Component)]
-struct RainSound;
+struct RainSound {
+    heavy: bool,
+}
+
+/// How far off lightning is, for which thunder it makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reach {
+    Near,
+    Middle,
+    Far,
+}
+
+impl Reach {
+    const ALL: [Reach; 3] = [Reach::Near, Reach::Middle, Reach::Far];
+
+    fn of(distance: f32) -> Self {
+        if distance < NEAR_LIGHTNING {
+            Reach::Near
+        } else if distance < FAR_LIGHTNING {
+            Reach::Middle
+        } else {
+            Reach::Far
+        }
+    }
+}
+
 
 /// Plays thunder as it reaches the player, quieter the farther the lightning.
 fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
     let Some(mut sfx) = sfx else { return };
     let master = MASTER * settings.sound_volume as f32 / 100.0;
     for thunder in heard.read() {
-        let variant = (sfx.random() * VARIANTS as f32) as usize % VARIANTS as usize;
-        let speed = 0.9 + sfx.random() * 0.2;
-        let clip = sfx.thunder[(thunder.distance >= NEAR_LIGHTNING) as usize][variant].clone();
+        let variant = (sfx.random() * THUNDER_VARIANTS as f32) as usize % THUNDER_VARIANTS as usize;
+        let speed = 0.92 + sfx.random() * 0.16;
+        let Some(clip) = sfx.thunder[Reach::of(thunder.distance) as usize].get(variant).cloned() else { continue };
         let volume = Volume::Linear(THUNDER_GAIN / (1.0 + thunder.distance / 400.0) * master);
         commands.spawn((AudioPlayer(clip), PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(volume) }));
     }
 }
 
-/// Fades the rain loop with how hard it rains (snow is silent) and how open the sky is
-/// above the player.
+/// Fades the rain loops with how hard it rains (snow is silent) and how open the sky is
+/// above the player: light rain is the patter alone, heavier rain crossfades into the roar.
 fn rain(
     time: Res<Time>,
     weather: Res<ClientWeather>,
     map: Res<SkyMap>,
     settings: Res<Settings>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut sink: Query<&mut AudioSink, With<RainSound>>,
-    mut level: Local<f32>,
+    mut sinks: Query<(&RainSound, &mut AudioSink)>,
+    mut level: Local<(f32, f32)>,
 ) {
-    let (Ok(camera), Ok(mut sink)) = (camera.single(), sink.single_mut()) else { return };
+    let Ok(camera) = camera.single() else { return };
     let shown = &weather.current;
     let rain = shown.precipitation * (1.0 - shown.snow);
-    let target = if rain > 0.01 { rain.sqrt() * map.openness(camera.translation()) } else { 0.0 };
-    *level += (target - *level) * (time.delta_secs() * 2.0).min(1.0);
-    if *level < 0.002 {
-        if !sink.is_paused() {
-            sink.pause();
+    let (loud, heavy) = rain_levels(rain);
+    let open = map.openness(camera.translation());
+    let targets = (loud * (1.0 - heavy).sqrt() * open, loud * heavy.sqrt() * open);
+    let ease = (time.delta_secs() * 2.0).min(1.0);
+    level.0 += (targets.0 - level.0) * ease;
+    level.1 += (targets.1 - level.1) * ease;
+    let master = RAIN_GAIN * MASTER * settings.sound_volume as f32 / 100.0;
+    for (sound, mut sink) in &mut sinks {
+        let level = if sound.heavy { level.1 } else { level.0 };
+        if level < 0.002 {
+            if !sink.is_paused() {
+                sink.pause();
+            }
+            continue;
         }
-        return;
+        sink.set_volume(Volume::Linear(level * master));
+        if sink.is_paused() {
+            sink.play();
+        }
     }
-    sink.set_volume(Volume::Linear(*level * RAIN_GAIN * MASTER * settings.sound_volume as f32 / 100.0));
-    if sink.is_paused() {
-        sink.play();
+}
+
+/// How loud rain of this strength (0..1) is, and how much of it is the heavy roar rather
+/// than the light patter.
+fn rain_levels(rain: f32) -> (f32, f32) {
+    if rain <= 0.01 {
+        return (0.0, 0.0);
     }
+    let t = ((rain - 0.2) / 0.6).clamp(0.0, 1.0);
+    (0.25 + 0.75 * rain.sqrt(), t * t * (3.0 - 2.0 * t))
 }
 
 fn play_cues(
@@ -362,6 +459,7 @@ struct Strides {
     was_grounded: bool,
     /// Highest point since last on the ground.
     peak: f32,
+    was_in_water: bool,
 }
 
 /// Footsteps every stride, from whatever is underfoot, in the manner of Minecraft and of
@@ -370,6 +468,11 @@ struct Strides {
 /// shallow water; strokes while swimming; and a thud when landing from a fall.
 fn footsteps(player: Res<LocalPlayer>, world: Res<ClientWorld>, mut cues: MessageWriter<SoundCue>, mut state: Local<Strides>) {
     let state = &mut *state;
+    // Falling or jumping into water splashes.
+    if player.joined && player.in_water && !state.was_in_water && player.velocity.y < -3.0 {
+        cues.write(SoundCue::new(Sound::Water, Cue::Land));
+    }
+    state.was_in_water = player.in_water;
     let position = player.position;
     let previous = state.last.replace(position).unwrap_or(position);
     if !player.joined || player.flying {
@@ -527,6 +630,9 @@ fn recipe(sound: Sound) -> Recipe {
 
 /// Synthesizes one variant of a cue as mono samples in -1..1.
 fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
+    if sound == Sound::Water {
+        return water(cue, seed);
+    }
     let recipe = recipe(sound);
     let (length_scale, pitch, grain_scale) = match cue {
         Cue::Step => (1.0, 1.0, 1.0),
@@ -572,9 +678,6 @@ fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
         for &(frequency, tone_decay) in recipe.tones {
             sample += recipe.tone_gain * (TAU * frequency * pitch * t).sin() * (-t * tone_decay).exp();
         }
-        if sound == Sound::Water {
-            sample += water_bubbles(t, seed) * 0.6;
-        }
         // Placing gets a soft low thump under the material.
         if cue == Cue::Place || cue == Cue::Land {
             sample += 0.5 * (TAU * 70.0 * t).sin() * (-t * 28.0).exp();
@@ -602,112 +705,273 @@ fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
     samples
 }
 
-/// Rain on the ground, looping seamlessly: a dense patter of tiny drops (short decaying
-/// tones, mostly faint, a few closer and louder) over a soft hiss and a low body.
-fn rain_loop(seed: u64) -> Vec<f32> {
+/// Rain, looping seamlessly, as `[left, right]`. Each channel is a soft broadband hiss
+/// (pink noise with its lowest and highest octaves rolled off) under the patter of drops,
+/// each a tap of noise a millisecond or two long rather than a tone, most faint and a few
+/// close and clear. The light loop is a sparse patter with now and then a heavier drop
+/// off the leaves; the heavy one has ten times the drops, merging into a roar over a low
+/// body of water hitting the ground.
+fn rain_loop(seed: u64, heavy: bool) -> [Vec<f32>; 2] {
     let length = (RAIN_LOOP * RATE as f32) as usize;
-    let overlap = RATE as usize / 2;
-    let mut noise = Noise(seed);
-    let mut samples = vec![0.0f32; length + overlap];
-    let drop_length = (0.012 * RATE as f32) as usize;
-    for _ in 0..((RAIN_LOOP + 0.5) * 1100.0) as usize {
-        let start = (noise.unit() * samples.len() as f32) as usize;
-        let step = TAU * (1800.0 + 4200.0 * noise.unit()) / RATE as f32;
-        let loudness = 0.04 + 0.4 * noise.unit().powi(4);
-        let decay = (-(250.0 + 500.0 * noise.unit()) / RATE as f32).exp();
-        let mut amplitude = loudness;
-        for (j, sample) in samples.iter_mut().skip(start).take(drop_length).enumerate() {
-            *sample += amplitude * (step * j as f32).sin();
-            amplitude *= decay;
+    let channel = |seed: u64| {
+        let mut noise = Noise(seed);
+        let overlap = RATE as usize / 2;
+        let total = length + overlap;
+        let span = total as f32 / RATE as f32;
+        let swell = Drift::new(&mut noise, 0.15);
+        let mut pink = Pink::default();
+        let mut cuts = (OnePole::new(220.0), OnePole::new(220.0), OnePole::new(if heavy { 5000.0 } else { 6500.0 }));
+        let mut body = Svf::new(350.0, 0.8);
+        let (hiss, low) = if heavy { (0.5, 0.3) } else { (0.16, 0.0) };
+        let mut samples: Vec<f32> = (0..total)
+            .map(|i| {
+                let p = pink.next(noise.next());
+                let air = cuts.2.low(cuts.1.high(cuts.0.high(p)));
+                (air * hiss + body.band(p) * low) * (0.85 + 0.15 * swell.at(i as f32 / RATE as f32))
+            })
+            .collect();
+        let rate = if heavy { 2600.0 } else { 240.0 };
+        let mut t = 0.0;
+        while t < span {
+            let near = noise.unit().powi(if heavy { 8 } else { 5 });
+            let gain = (0.06 + 0.94 * near) * if heavy { 0.35 } else { 0.8 };
+            let decay = dsp::between(&mut noise, 0.0006, 0.0018) * (1.0 + 1.5 * near);
+            let center = dsp::between(&mut noise, 1000.0, 5000.0);
+            dsp::tap(&mut samples, &mut noise, t, decay, center, gain);
+            t += dsp::gap(&mut noise, rate * (0.8 + 0.4 * swell.unit(t)));
         }
-    }
-    // Hiss and body: band-passed and low-passed noise from one state-variable filter each.
-    let svf = |center: f32| 2.0 * (std::f32::consts::PI * center / RATE as f32).sin();
-    let (hiss, body) = (svf(3200.0), svf(320.0));
-    let (mut hiss_low, mut hiss_band, mut body_low, mut body_band) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-    for sample in &mut samples {
-        let input = noise.next();
-        hiss_low += hiss * hiss_band;
-        hiss_band += hiss * (input - hiss_low - 1.4 * hiss_band);
-        body_low += body * body_band;
-        body_band += body * (input - body_low - 1.2 * body_band);
-        *sample += 0.12 * hiss_band + 0.35 * body_low;
-    }
-    // Crossfade the extra tail into the start, keeping the power steady, so the loop has
-    // no seam.
-    for i in 0..overlap {
-        let w = i as f32 / overlap as f32;
-        samples[i] = samples[i] * w.sqrt() + samples[length + i] * (1.0 - w).sqrt();
-    }
-    samples.truncate(length);
-    let mut warm = 0.0f32;
-    for sample in &mut samples {
-        warm += 0.5 * (*sample - warm);
-        *sample = warm;
-    }
-    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt().max(1e-6);
-    let peak = samples.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
-    let scale = (0.15 / rms).min(0.9 / peak);
-    samples.iter_mut().for_each(|s| *s *= scale);
-    samples
-}
-
-/// Thunder: a long, low rumble that swells as sound arrives from farther along the bolt, and
-/// for lightning close by, a sharp crack first.
-fn thunder_clip(seed: u64, near: bool) -> Vec<f32> {
-    let length = (6.0 * RATE as f32) as usize;
-    let mut noise = Noise(seed);
-    // When, how strongly and for how long sound from each stretch of the bolt arrives.
-    let swells: Vec<(f32, f32, f32)> =
-        (0..5).map(|_| (0.1 + 2.4 * noise.unit(), 0.3 + 0.7 * noise.unit(), 0.25 + 0.6 * noise.unit())).collect();
-    // Two cascaded low-passes for the rumble; distant thunder has lost more of its highs.
-    let low = 2.0 * (std::f32::consts::PI * if near { 180.0 } else { 110.0 } / RATE as f32).sin();
-    let crack = 2.0 * (std::f32::consts::PI * 1400.0 / RATE as f32).sin();
-    let mut filters = [(0.0f32, 0.0f32); 3];
-    let mut samples = Vec::with_capacity(length);
-    for i in 0..length {
-        let t = i as f32 / RATE as f32;
-        let white = noise.next();
-        let mut input = white;
-        for (low_state, band) in &mut filters[..2] {
-            *low_state += low * *band;
-            *band += low * (input - *low_state - *band);
-            input = *low_state;
-        }
-        let swell: f32 = swells.iter().map(|&(at, strength, width)| strength * (-((t - at) / width).powi(2)).exp()).sum();
-        let envelope = (t / 0.03).min(1.0) * (swell + 0.3) * (-t / 2.5).exp();
-        let mut sample = input * envelope;
-        if near {
-            let (low_state, band) = &mut filters[2];
-            *low_state += crack * *band;
-            *band += crack * (white - *low_state - 0.8 * *band);
-            sample += *band * 1.5 * (-t * 14.0).exp();
-        }
-        samples.push(sample);
-    }
-    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt().max(1e-6);
-    let peak = samples.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
-    let scale = (0.2 / rms).min(0.95 / peak);
-    let fade = RATE as usize / 2;
-    for (i, sample) in samples.iter_mut().enumerate() {
-        *sample *= scale * ((length - i) as f32 / fade as f32).min(1.0);
-    }
-    samples
-}
-
-/// A few rising bubble chirps for water.
-fn water_bubbles(t: f32, seed: u64) -> f32 {
-    (0..3)
-        .map(|k| {
-            let start = 0.02 + 0.07 * k as f32 + (mix(seed + k) >> 58) as f32 * 0.004;
-            let local = t - start;
-            if local < 0.0 {
-                return 0.0;
+        if !heavy {
+            // Now and then a heavier drop off the leaves: a soft, duller tap, and some
+            // landing in a puddle with a small, brief plink.
+            let mut t = dsp::gap(&mut noise, 0.6);
+            while t < span {
+                let center = dsp::between(&mut noise, 800.0, 1800.0);
+                let (decay, gain) = (dsp::between(&mut noise, 0.004, 0.01), dsp::between(&mut noise, 0.5, 1.0));
+                dsp::tap(&mut samples, &mut noise, t, decay, center, gain);
+                if noise.unit() < 0.3 {
+                    let frequency = dsp::between(&mut noise, 1200.0, 2600.0);
+                    dsp::bubble(&mut samples, t + 0.004, frequency, 0.15 * gain, dsp::between(&mut noise, 0.05, 0.2));
+                }
+                t += dsp::gap(&mut noise, 0.6);
             }
-            let frequency = 380.0 * (1.0 + local * 9.0);
-            (TAU * frequency * local).sin() * (-local * 45.0).exp()
+        }
+        // Soften the very top, so the patter is never sharp.
+        let mut soft = OnePole::new(if heavy { 6000.0 } else { 7000.0 });
+        samples.iter_mut().for_each(|s| *s = soft.low(*s));
+        // Crossfade the extra tail into the start, keeping the power steady, so the loop
+        // has no seam.
+        for i in 0..overlap {
+            let w = i as f32 / overlap as f32;
+            samples[i] = samples[i] * w.sqrt() + samples[length + i] * (1.0 - w).sqrt();
+        }
+        samples.truncate(length);
+        samples
+    };
+    let (a, b) = (channel(mix(seed ^ heavy as u64)), channel(mix(seed ^ 0x5bd1_e995 ^ heavy as u64)));
+    // Mostly independent channels, with a little shared: wide, like rain all around.
+    let (c, s) = (0.3f32.cos(), 0.3f32.sin());
+    let mut left: Vec<f32> = a.iter().zip(&b).map(|(a, b)| a * c + b * s).collect();
+    let mut right: Vec<f32> = a.iter().zip(&b).map(|(a, b)| b * c + a * s).collect();
+    let power = left.iter().chain(&right).map(|s| s * s).sum::<f32>() / (2 * length) as f32;
+    let top = left.iter().chain(&right).fold(1e-6f32, |p, s| p.max(s.abs()));
+    let scale = (if heavy { 0.15 } else { 0.1 } / power.sqrt().max(1e-6)).min(0.9 / top);
+    left.iter_mut().chain(right.iter_mut()).for_each(|s| *s *= scale);
+    [left, right]
+}
+
+/// Thunder for lightning at `reach`. Close by: a sharp crack that tears for a moment,
+/// then the boom and a long low roll that swells and fades as sound arrives from farther
+/// along the bolt. From farther off the crack has lost its highs to a muffled rip, and
+/// from far away there is only the roll, slow to rise and deep.
+fn thunder_clip(seed: u64, reach: Reach) -> Vec<f32> {
+    let mut noise = Noise(seed);
+    let (length, attack, decay, bright, dark) = match reach {
+        Reach::Near => (9.0, 0.01, 3.0, 280.0, 90.0),
+        Reach::Middle => (10.0, 0.15, 3.4, 200.0, 80.0),
+        Reach::Far => (11.0, 0.7, 3.8, 130.0, 65.0),
+    };
+    let count = dsp::seconds(length);
+    let between = |noise: &mut Noise, low: f32, high: f32| dsp::between(noise, low, high);
+
+    // The roll: low noise, darkening as it goes, in swells.
+    let swells: Vec<(f32, f32, f32)> = (0..7)
+        .map(|k| {
+            let at = if k == 0 { between(&mut noise, 0.1, 0.4) } else { between(&mut noise, 0.4, length * 0.55) };
+            (at, between(&mut noise, 0.35, 1.0), between(&mut noise, 0.5, 1.8))
         })
-        .sum()
+        .collect();
+    let roll = Drift::new(&mut noise, 2.2);
+    let mut lows = [Svf::new(bright, 0.7), Svf::new(bright, 0.7)];
+    // A fainter band above the rumble, so the roll carries on small speakers too.
+    let mut middle = Svf::new(bright * 2.0, 0.8);
+    let presence = if reach == Reach::Far { 0.15 } else { 0.3 };
+    // The envelope and the darkening change slowly: work them out every `CONTROL` samples
+    // and glide between.
+    const CONTROL: usize = 32;
+    let envelope = |t: f32| {
+        // Each roll arrives quickly and dies away slowly.
+        let swell: f32 = swells
+            .iter()
+            .map(|&(at, strength, width)| {
+                let x = t - at;
+                strength * if x < 0.0 { (-(x / (0.25 * width)).powi(2)).exp() } else { (-x / width).exp() }
+            })
+            .sum();
+        let rise = (t / attack).min(1.0);
+        (rise * PI / 2.0).sin().powi(2) * (0.2 + swell) * (-t / decay).exp() * (1.0 + 0.3 * roll.at(t))
+    };
+    let mut low = Vec::with_capacity(count);
+    let mut level = envelope(0.0);
+    for block in (0..count).step_by(CONTROL) {
+        let t = block as f32 / RATE as f32;
+        let cutoff = dark + (bright - dark) * (-t / 2.5).exp();
+        lows.iter_mut().for_each(|filter| filter.tune(cutoff));
+        middle.tune(cutoff * 2.0);
+        let next = envelope((block + CONTROL) as f32 / RATE as f32);
+        for j in 0..CONTROL.min(count - block) {
+            let white = noise.next();
+            let x = lows.iter_mut().fold(white, |x, filter| filter.low(x)) + presence * middle.band(white);
+            low.push(x * (level + (next - level) * j as f32 / CONTROL as f32));
+        }
+        level = next;
+    }
+
+    let mut crack = vec![0.0f32; count];
+    if reach != Reach::Far {
+        let near = reach == Reach::Near;
+        // The boom: the first and strongest pressure wave.
+        let (gain, tau, start) = if near { (2.2, 0.4, 0.01) } else { (1.2, 0.7, 0.08) };
+        let mut booms = [Svf::new(110.0, 0.7), Svf::new(110.0, 0.7)];
+        let first = dsp::seconds(start);
+        for (j, sample) in low.iter_mut().skip(first).take(dsp::seconds(tau * 6.0)).enumerate() {
+            let t = j as f32 / RATE as f32;
+            let x = booms.iter_mut().fold(noise.next(), |x, f| f.low(x));
+            *sample += gain * x * (t / 0.01).min(1.0) * (-t / tau).exp();
+        }
+        // The tearing: a quick run of sharp bursts, each fainter, bright close by and
+        // muffled from farther off.
+        let mut bright_pass = OnePole::new(350.0);
+        let mut muffle = (OnePole::new(900.0), OnePole::new(900.0));
+        let mut t = 0.0;
+        let mut amplitude = 1.0;
+        for _ in 0..if near { 8 } else { 5 } + (noise.unit() * 6.0) as usize {
+            if t > 0.9 {
+                break;
+            }
+            let burst = between(&mut noise, 0.002, 0.01);
+            let strength = amplitude * between(&mut noise, 0.6, 1.0);
+            for j in 0..dsp::seconds(burst * 5.0) {
+                let Some(sample) = crack.get_mut(dsp::seconds(t) + j) else { break };
+                let white = noise.next();
+                let x = if near { bright_pass.high(white) } else { muffle.1.low(muffle.0.low(white)) * 3.0 };
+                *sample += strength * x * (-(j as f32 / RATE as f32) / burst).exp();
+            }
+            t += between(&mut noise, 0.01, 0.07) * (1.0 + 0.3 * amplitude.recip());
+            amplitude *= between(&mut noise, 0.6, 0.85);
+        }
+        if near {
+            // The air sizzling after the crack.
+            let mut sizzle = OnePole::new(1500.0);
+            for (i, sample) in crack.iter_mut().enumerate().take(dsp::seconds(1.0)) {
+                let t = i as f32 / RATE as f32;
+                *sample += 0.12 * sizzle.high(noise.next()) * (t / 0.01).min(1.0) * (-t / 0.18).exp();
+            }
+        }
+    }
+
+    // Balance: the roll at a steady level, the crack's sharp peaks above it held in by a
+    // soft limit, then the whole as loud as it may go without clipping.
+    let low_peak = low.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
+    let crack_peak = crack.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
+    let crack_level = match reach {
+        Reach::Near => 1.1,
+        Reach::Middle => 0.4,
+        Reach::Far => 0.0,
+    };
+    let mut samples: Vec<f32> = low
+        .iter()
+        .zip(&crack)
+        .map(|(l, c)| (0.8 * l / low_peak + (crack_level * c / crack_peak).tanh()).tanh())
+        .collect();
+    let peak = samples.iter().fold(1e-6f32, |p, s| p.max(s.abs()));
+    let fade = dsp::seconds(1.5);
+    for (i, sample) in samples.iter_mut().enumerate() {
+        *sample *= 0.95 / peak * ((count - i) as f32 / fade as f32).min(1.0);
+    }
+    samples
+}
+
+/// Water: a stroke while swimming (a step in water) is a soft swash of moving water with
+/// a few fine bubbles in its wake; landing in water is a splash; anything else a small
+/// swash.
+fn water(cue: Cue, seed: u64) -> Vec<f32> {
+    let mut noise = Noise(seed);
+    let mut samples = match cue {
+        Cue::Land => splash(&mut noise),
+        Cue::Step => swash(&mut noise, 1.0),
+        _ => swash(&mut noise, 0.6),
+    };
+    dsp::normalise(&mut samples, 0.16, 0.9);
+    samples
+}
+
+/// Water pushed aside: a band of soft noise that swells and ebbs, sloshing a little, its
+/// tone rising with the push, with a hint of fizz and a few small bubbles left behind.
+fn swash(noise: &mut Noise, size: f32) -> Vec<f32> {
+    let length = dsp::between(noise, 0.45, 0.6) * (0.6 + 0.4 * size);
+    let count = dsp::seconds(length);
+    let slosh = (dsp::between(noise, 7.0, 12.0), TAU * noise.unit());
+    let mut pink = Pink::default();
+    let mut body = Svf::new(500.0, 0.8);
+    let mut dark = OnePole::new(2000.0);
+    let mut fizz = OnePole::new(3000.0);
+    let mut samples: Vec<f32> = (0..count)
+        .map(|i| {
+            let x = i as f32 / count as f32;
+            let t = i as f32 / RATE as f32;
+            let swell = if x < 0.3 { (x / 0.3 * PI / 2.0).sin().powi(2) } else { ((1.0 - x) / 0.7).powf(1.5) };
+            body.tune(420.0 + 520.0 * swell);
+            let wobble = 1.0 + 0.3 * (TAU * slosh.0 * t + slosh.1).sin();
+            (dark.low(body.band(pink.next(noise.next()))) * wobble + 0.02 * fizz.high(noise.next())) * swell
+        })
+        .collect();
+    for _ in 0..6 + (noise.unit() * 8.0) as usize {
+        let at = dsp::between(noise, 0.1, 0.9) * length;
+        let frequency = 600.0 * 3.5f32.powf(noise.unit());
+        dsp::bubble(&mut samples, at, frequency, dsp::between(noise, 0.05, 0.15), dsp::between(noise, 0.05, 0.3));
+    }
+    samples
+}
+
+/// Falling into water: the slap of the surface, the low whump of water thrown aside, the
+/// spray pattering back down and the air dragged under bubbling up.
+fn splash(noise: &mut Noise) -> Vec<f32> {
+    let mut samples = vec![0.0f32; dsp::seconds(1.1)];
+    let (mut slap, mut soft) = (OnePole::new(500.0), OnePole::new(4000.0));
+    for (i, sample) in samples.iter_mut().enumerate().take(dsp::seconds(0.3)) {
+        let t = i as f32 / RATE as f32;
+        *sample += 0.8 * soft.low(slap.high(noise.next())) * (t / 0.002).min(1.0) * (-t / 0.035).exp();
+    }
+    let mut whump = [Svf::new(260.0, 0.7), Svf::new(260.0, 0.7)];
+    for (i, sample) in samples.iter_mut().enumerate().take(dsp::seconds(0.6)) {
+        let t = i as f32 / RATE as f32;
+        let x = whump.iter_mut().fold(noise.next(), |x, f| f.low(x));
+        *sample += 3.0 * x * (t / 0.006).min(1.0) * (-t / 0.09).exp();
+    }
+    let mut t = 0.03f32;
+    while t < 0.8 {
+        let strength = 0.35 * (-(t - 0.03) / 0.22).exp() * dsp::between(noise, 0.2, 1.0);
+        let (decay, center) = (dsp::between(noise, 0.0006, 0.002), dsp::between(noise, 1500.0, 4500.0));
+        dsp::tap(&mut samples, noise, t, decay, center, strength);
+        t += dsp::gap(noise, 500.0);
+    }
+    for _ in 0..14 {
+        let at = dsp::between(noise, 0.04, 0.6);
+        let frequency = 450.0 * 4.5f32.powf(noise.unit().powf(0.8));
+        let gain = dsp::between(noise, 0.06, 0.2) * (1.0 - at);
+        dsp::bubble(&mut samples, at, frequency, gain, dsp::between(noise, 0.1, 0.4));
+    }
+    samples
 }
 
 /// Encodes mono samples as a 16-bit PCM WAV file.
@@ -791,8 +1055,8 @@ mod tests {
 
     #[test]
     fn thunder_renders_clean_audio() {
-        for near in [true, false] {
-            let samples = thunder_clip(5, near);
+        for reach in Reach::ALL {
+            let samples = thunder_clip(5, reach);
             assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
             assert!(samples.last().unwrap().abs() < 0.01);
         }
@@ -800,10 +1064,17 @@ mod tests {
 
     #[test]
     fn rain_loops_without_a_seam() {
-        let samples = rain_loop(3);
-        assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
-        let steepest = samples.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
-        assert!((samples[0] - samples[samples.len() - 1]).abs() <= steepest);
+        for heavy in [false, true] {
+            for samples in rain_loop(3, heavy) {
+                assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+                let steepest = samples.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+                assert!((samples[0] - samples[samples.len() - 1]).abs() <= steepest);
+            }
+        }
+        // Light rain is the patter alone; the roar takes over as it pours.
+        assert_eq!(rain_levels(0.0), (0.0, 0.0));
+        assert!(rain_levels(0.15).1 == 0.0 && rain_levels(0.9).1 == 1.0);
+        assert!(rain_levels(0.2).0 < rain_levels(1.0).0);
     }
 
     /// `cargo test -p voxmar_client minecraft_sounds_decode -- --ignored` checks that every
@@ -829,6 +1100,73 @@ mod tests {
         println!("{decoded} clips decoded");
     }
 
+    /// `cargo test --profile iter -p voxmar_client weather_sound_preview -- --ignored`
+    /// writes the weather and water sounds, each to its own file in
+    /// `target/sound_preview/`, at the levels the game plays them, for listening.
+    #[test]
+    #[ignore]
+    fn weather_sound_preview() {
+        use crate::ambience::synth::{self, Synth};
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sound_preview");
+        std::fs::create_dir_all(&dir).unwrap();
+        let gap = |seconds: f32| vec![0.0f32; (seconds * RATE as f32) as usize];
+        let stereo = |name: &str, left: &[f32], right: &[f32]| std::fs::write(dir.join(name), wav_stereo(left, right)).unwrap();
+        let mono = |name: &str, samples: &[f32]| std::fs::write(dir.join(name), wav(samples)).unwrap();
+        // Rain at a few strengths, as the two loops are mixed for it.
+        for (name, strength) in [("rain_light", 0.15), ("rain_moderate", 0.45), ("rain_heavy", 0.75), ("rain_downpour", 1.0)] {
+            let (loud, heavy) = rain_levels(strength);
+            let (patter, roar) = (rain_loop(1, false), rain_loop(1, true));
+            let (a, b) = (loud * (1.0 - heavy).sqrt() * RAIN_GAIN, loud * heavy.sqrt() * RAIN_GAIN);
+            let channel = |c: usize| -> Vec<f32> {
+                patter[c].iter().zip(&roar[c]).map(|(p, r)| (p * a + r * b) * MASTER).cycle().take(patter[c].len() * 2).collect()
+            };
+            stereo(&format!("{name}.wav"), &channel(0), &channel(1));
+        }
+        // Thunder, near to far, at the volume of a strike 100, 500 and 1500 blocks away.
+        for (reach, distance) in Reach::ALL.into_iter().zip([100.0, 500.0, 1500.0]) {
+            let mut all = Vec::new();
+            for v in 0..2 {
+                all.extend(thunder_clip(mix(v * 7 + reach as u64), reach).iter().map(|s| s * THUNDER_GAIN / (1.0 + distance / 400.0) * MASTER));
+                all.extend(gap(1.0));
+            }
+            mono(&format!("thunder_{}.wav", format!("{reach:?}").to_lowercase()), &all);
+        }
+        // Swimming strokes every 0.7 s, and two splashes.
+        let mut swim = Vec::new();
+        for v in 0..6 {
+            let stroke = render(Sound::Water, Cue::Step, v);
+            swim.extend(stroke.iter().map(|s| s * Cue::Step.gain() * MASTER));
+            swim.extend(gap(0.7 - stroke.len() as f32 / RATE as f32));
+        }
+        mono("swim.wav", &swim);
+        let mut splashes = Vec::new();
+        for v in 0..2 {
+            splashes.extend(render(Sound::Water, Cue::Land, v).iter().map(|s| s * Cue::Land.gain() * MASTER));
+            splashes.extend(gap(1.0));
+        }
+        mono("splash.wav", &splashes);
+        // The brook: its three segments overlapped as the mixer plays them, then gurgles.
+        let segments: Vec<[Vec<f32>; 2]> = (0..synth::BED_VARIANTS).map(|v| synth::bed(Synth::Stream, v)).collect();
+        let step = ((synth::SEGMENT - synth::OVERLAP) * RATE as f32) as usize;
+        let length = segments[0][0].len();
+        let mut brook = [vec![0.0f32; step * 6 + length], vec![0.0f32; step * 6 + length]];
+        for k in 0..6 {
+            for c in 0..2 {
+                for (i, s) in segments[k % 3][c].iter().enumerate() {
+                    brook[c][k * step + i] += s * 0.32 * MASTER;
+                }
+            }
+        }
+        stereo("brook.wav", &brook[0], &brook[1]);
+        let mut gurgles = Vec::new();
+        for v in 0..synth::ONE_SHOT_VARIANTS {
+            gurgles.extend(synth::one_shot(Synth::Plop, v).0.iter().map(|s| s * 0.3 * MASTER));
+            gurgles.extend(gap(0.6));
+        }
+        mono("gurgle.wav", &gurgles);
+        println!("wrote {}", dir.display());
+    }
+
     /// `cargo test -p voxmar_client sfx_preview -- --ignored` writes every cue, one after
     /// another, to `target/sfx_preview.wav` for listening.
     #[test]
@@ -844,11 +1182,13 @@ mod tests {
             }
             all.extend(std::iter::repeat_n(0.0, RATE as usize / 2));
         }
-        for _ in 0..2 {
-            all.extend(rain_loop(1).iter().map(|s| s * RAIN_GAIN));
+        for heavy in [false, true] {
+            for _ in 0..2 {
+                all.extend(rain_loop(1, heavy)[0].iter().map(|s| s * RAIN_GAIN));
+            }
         }
-        for near in [true, false] {
-            all.extend(thunder_clip(2, near).iter().map(|s| s * THUNDER_GAIN));
+        for reach in Reach::ALL {
+            all.extend(thunder_clip(2, reach).iter().map(|s| s * THUNDER_GAIN));
         }
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sfx_preview.wav");
         std::fs::write(path, wav(&all)).unwrap();
