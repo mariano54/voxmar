@@ -3,7 +3,8 @@
 // Texture names refer to `textures/block/<name>` in the texture packs (our default pack in
 // assets/packs/default draws them all); `color` is the placeholder used when no pack has
 // the texture. `sound` is the material it sounds like (Stone when omitted). Plants are not
-// solid, break instantly and need ground beneath; `drops: "core:air"` drops nothing.
+// solid, break instantly and need ground beneath; `support: Above` makes a plant hang from
+// the block above instead, and go with it. `drops: "core:air"` drops nothing.
 //
 // `templates` make whole families of blocks: each family below is one line that fills in
 // `{name}` (see engine/src/block.rs). `variants` are other looks of a plant: each becomes
@@ -183,15 +184,14 @@
             tags: ["wood", "natural", "wetland"],
         ),
         // Caves: dripstone, glowing growth, crystals, magma, the deep dark's gloomvein,
-        // giant mushroom blocks and roots hanging from the roof. Hanging plants are drawn
-        // hanging but, like all plants, rest on the block below for now.
+        // giant mushroom blocks and roots hanging from the roof.
         (name: "dripstone_block", textures: All("dripstone_block"), hardness: 1.5, color: (130, 104, 88), tags: ["stone", "sedimentary", "natural", "cave", "dripstone"]),
         (name: "pointed_dripstone", render: Plant, solid: false, textures: All("pointed_dripstone_up_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalagmite"]),
-        (name: "hanging_dripstone", render: Plant, solid: false, textures: All("pointed_dripstone_down_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalactite", "hanging"]),
-        (name: "glow_berries", render: Plant, solid: false, sound: Leaves, textures: All("cave_vines_lit"), light: 10, hardness: 0.0, color: (90, 120, 40), rarity: Uncommon, tags: ["plant", "cave", "hanging", "berry", "edible", "flavour:sweet", "glowing", "alchemy:night_sight"]),
+        (name: "hanging_dripstone", render: Plant, solid: false, support: Above, textures: All("pointed_dripstone_down_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalactite", "hanging"]),
+        (name: "glow_berries", render: Plant, solid: false, support: Above, sound: Leaves, textures: All("cave_vines_lit"), light: 10, hardness: 0.0, color: (90, 120, 40), rarity: Uncommon, tags: ["plant", "cave", "hanging", "berry", "edible", "flavour:sweet", "glowing", "alchemy:night_sight"]),
         (name: "glow_lichen", render: Plant, solid: false, sound: Grass, textures: All("glow_lichen"), light: 7, hardness: 0.0, drops: "core:air", color: (110, 160, 140), tags: ["plant", "cave", "groundcover", "glowing", "alchemy:luminous"]),
         (name: "moss_carpet", render: Plant, solid: false, sound: Grass, textures: All("moss_carpet"), hardness: 0.0, color: (89, 110, 45), tags: ["plant", "groundcover", "cave", "forest_floor", "shade", "wet"]),
-        (name: "hanging_roots", render: Plant, solid: false, sound: Grass, textures: All("hanging_roots"), hardness: 0.0, color: (160, 120, 90), tags: ["plant", "cave", "hanging", "root", "fibre"]),
+        (name: "hanging_roots", render: Plant, solid: false, support: Above, sound: Grass, textures: All("hanging_roots"), hardness: 0.0, color: (160, 120, 90), tags: ["plant", "cave", "hanging", "root", "fibre"]),
         (name: "crystal_block", sound: Glass, textures: All("crystal_block"), light: 2, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity"]),
         (name: "crystal_cluster", render: Plant, solid: false, sound: Glass, textures: All("crystal_cluster"), light: 5, hardness: 1.0, color: (170, 150, 220), rarity: Uncommon, tags: ["gem", "cave", "glowing", "alchemy:clarity", "alchemy:aether"]),
         (name: "magma_block", textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
