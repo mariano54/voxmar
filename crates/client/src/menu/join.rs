@@ -8,8 +8,9 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, bounded};
 use voxmar_protocol::{ClientConnection, DEFAULT_PORT, tcp};
 
-use super::widgets::{
-    ButtonStyle, Disabled, ERROR, MUTED, Pressed, SCRIM, SOFT, SUBTLE, SUBTLE_HOVER, TextField, UiFont, button_row, heading,
+use crate::ui::skin::{PX, Piece};
+use crate::ui::widgets::{
+    BODY, ButtonStyle, Disabled, ERROR, MUTED, Pressed, SCRIM, SOFT, TextField, UiFont, button_row, spawn_heading,
     label, panel, screen, spawn_button, spawn_text_field, text,
 };
 use super::{Notice, Screen};
@@ -101,30 +102,29 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, connecting: Option<Res<Conne
     let recent = load_recent();
     let address = connecting.map(|c| c.address.clone()).or_else(|| recent.first().cloned()).unwrap_or_default();
     commands.spawn((DespawnOnExit(Screen::Join), screen(SCRIM))).with_children(|root| {
-        root.spawn(panel(520.0)).with_children(|panel| {
-            panel.spawn(heading(font, "Multiplayer"));
+        root.spawn(panel(260.0 * PX)).with_children(|panel| {
+            spawn_heading(panel, font, "Multiplayer");
             panel.spawn(label(font, "Server address"));
             spawn_text_field(panel, font, &address, "host or host:port", 80, 0, true, AddressField);
             if !recent.is_empty() {
                 panel.spawn(label(font, "Recent servers"));
-                let list = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(6.0), ..default() };
+                let list = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), ..default() };
                 panel.spawn(list).with_children(|list| {
                     for address in &recent {
                         let node = Node {
-                            height: Val::Px(38.0),
-                            padding: UiRect::horizontal(Val::Px(14.0)),
+                            height: Val::Px(18.0 * PX),
+                            padding: UiRect::horizontal(Val::Px(6.0 * PX)),
                             align_items: AlignItems::Center,
-                            border_radius: BorderRadius::all(Val::Px(10.0)),
                             ..default()
                         };
-                        list.spawn((Button, RecentServer(address.clone()), node, BackgroundColor(SUBTLE)))
-                            .with_child(text(font, address.clone(), 15.0, SOFT));
+                        list.spawn((Button, RecentServer(address.clone()), node, Piece::Button.image()))
+                            .with_child(text(font, address.clone(), BODY, SOFT));
                     }
                 });
             }
             let message = notice.0.take().unwrap_or_default();
-            panel.spawn((Status, Node { margin: UiRect::top(Val::Px(14.0)), ..default() }, text(font, message, 14.0, ERROR)));
-            panel.spawn(button_row(18.0)).with_children(|row| {
+            panel.spawn((Status, Node { margin: UiRect::top(Val::Px(6.0 * PX)), ..default() }, text(font, message, BODY, ERROR)));
+            panel.spawn(button_row(6.0 * PX)).with_children(|row| {
                 spawn_button(row, font, "Join", ButtonStyle::Primary, Action::Join);
                 spawn_button(row, font, "Back", ButtonStyle::Secondary, Action::Back);
             });
@@ -135,12 +135,15 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, connecting: Option<Res<Conne
 /// Clicking a recent server fills in its address; clicking it again joins it.
 fn pick_recent(
     mut commands: Commands,
-    mut servers: Query<(&RecentServer, Ref<Interaction>, &mut BackgroundColor)>,
+    mut servers: Query<(&RecentServer, Ref<Interaction>, &mut ImageNode)>,
     mut field: Query<&mut TextField, With<AddressField>>,
     connecting: Option<Res<Connecting>>,
 ) {
-    for (server, interaction, mut background) in &mut servers {
-        background.set_if_neq(BackgroundColor(if *interaction == Interaction::None { SUBTLE } else { SUBTLE_HOVER }));
+    for (server, interaction, mut image) in &mut servers {
+        let piece = if *interaction == Interaction::None { Piece::Button } else { Piece::ButtonHover };
+        if image.image != piece.handle() {
+            image.image = piece.handle();
+        }
         if *interaction != Interaction::Pressed || !interaction.is_changed() || connecting.is_some() {
             continue;
         }

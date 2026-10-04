@@ -135,9 +135,21 @@ impl Server {
                     player.changed(traits::INVENTORY);
                     self.set_block(cell, item);
                 }
-                (Effect::MoveStack, ActionTarget::Slots { from, to }) => {
+                (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
-                    if player.inventory.move_stack(from as usize, to as usize) {
+                    if player.inventory.move_items(from as usize, to as usize, count) {
+                        player.changed(traits::INVENTORY);
+                    }
+                }
+                (Effect::QuickMove, ActionTarget::Slot(slot)) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    if player.inventory.quick_move(slot as usize) {
+                        player.changed(traits::INVENTORY);
+                    }
+                }
+                (Effect::StowCursor, _) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    if player.inventory.stow_cursor() {
                         player.changed(traits::INVENTORY);
                     }
                 }

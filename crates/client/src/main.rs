@@ -32,6 +32,7 @@ mod session;
 mod settings;
 mod sfx;
 mod textures;
+mod ui;
 mod weather;
 mod world;
 
@@ -207,6 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menu::MenuPlugin,
         session::SessionPlugin,
         weather::WeatherPlugin,
+        ui::UiPlugin,
     ));
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
@@ -298,6 +300,7 @@ fn setup(
     registry: Res<Registry>,
     settings: Res<Settings>,
     mut images: ResMut<Assets<Image>>,
+    mut fonts: ResMut<Assets<Font>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut crack_materials: ResMut<Assets<render::cracks::CrackMaterial>>,
@@ -330,6 +333,7 @@ fn setup(
             glow[layer as usize] = glow[layer as usize].max(info.emission as f32 / 15.0);
         }
     }
+    ui::skin::load(&mut source, &mut images, &mut fonts);
     let colormaps = source.colormaps();
     render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &glow);
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
@@ -388,16 +392,8 @@ fn setup(
         });
         icons.push(images.add(ui_image(&icon)));
     }
-    let mut sprite = |name: &str, size: (u32, u32), color: [u8; 4]| images.add(ui_image(&source.sprite(name, (size.0, size.1, color))));
-    commands.insert_resource(HudImages {
-        icons,
-        hotbar: sprite("hotbar", (182, 22), [0, 0, 0, 140]),
-        selection: sprite("hotbar_selection", (24, 23), [255, 255, 255, 90]),
-        crosshair: sprite("crosshair", (15, 15), [255, 255, 255, 0]),
-        heart_full: sprite("heart/full", (9, 9), [220, 30, 30, 255]),
-        heart_half: sprite("heart/half", (9, 9), [150, 20, 20, 255]),
-        heart_container: sprite("heart/container", (9, 9), [40, 0, 0, 255]),
-    });
+    let crosshair = images.add(ui_image(&source.sprite("crosshair", (15, 15, [255, 255, 255, 0]))));
+    commands.insert_resource(HudImages { icons, crosshair });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

@@ -185,7 +185,14 @@ fn ink(canvas: &Canvas, text: &str) -> Result<Ink, Error> {
 }
 
 fn draw_grid(canvas: &mut Canvas, grid: &Grid) -> Result<(), Error> {
-    let legend: BTreeMap<char, Ink> = grid.legend.iter().map(|(&c, text)| Ok((c, ink(canvas, text)?))).collect::<Result<_, Error>>()?;
+    // Only the characters the rows use: a book's shared legend may name palettes that a
+    // recipe without those characters does not have.
+    let legend: BTreeMap<char, Ink> = grid
+        .legend
+        .iter()
+        .filter(|(c, _)| grid.rows.iter().any(|row| row.contains(**c)))
+        .map(|(&c, text)| Ok((c, ink(canvas, text)?)))
+        .collect::<Result<_, Error>>()?;
     let origins = if grid.at.is_empty() { vec![(0, 0)] } else { grid.at.clone() };
     let size = canvas.size;
     for (ox, oy) in origins {

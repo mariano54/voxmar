@@ -15,7 +15,11 @@
             requires: [Alive, InReach, HoldingBlock, Replaceable, Unobstructed, Supported],
             effects: [PlaceHeld],
         ),
-        (name: "transfer", duration: Instant, requires: [Alive], effects: [MoveStack]),
+        // The inventory screen's moves: between two slots or the pointer, a shift click,
+        // and putting what the pointer holds back when the screen closes.
+        (name: "transfer", duration: Instant, requires: [Alive], effects: [MoveItems]),
+        (name: "quick_move", duration: Instant, requires: [Alive], effects: [QuickMove]),
+        (name: "stow", duration: Instant, effects: [StowCursor]),
         (name: "respawn", duration: Instant, requires: [Dead], effects: [Respawn]),
     ],
 )

@@ -21,6 +21,7 @@
 
 mod colour;
 mod field;
+pub mod font;
 pub mod icon;
 mod image;
 mod library;

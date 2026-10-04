@@ -9,10 +9,12 @@ use std::collections::VecDeque;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
+use bevy::text::FontSmoothing;
 use voxmar_protocol::{ChatKind, MAX_LINE};
 
 use crate::menu::Screen;
-use crate::menu::widgets::UiFont;
+use crate::ui::skin::Piece;
+use crate::ui::widgets::{SHADOW, UiFont};
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
@@ -105,7 +107,7 @@ struct ConsoleLine(usize);
 struct ConsoleInput;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
-    let font = TextFont { font: (&font.0).into(), font_size: FontSize::Px(TEXT_SIZE), ..default() };
+    let font = TextFont { font: (&font.0).into(), font_size: FontSize::Px(TEXT_SIZE), font_smoothing: FontSmoothing::None, ..default() };
     let root = Node {
         position_type: PositionType::Absolute,
         left: Val::Px(8.0),
@@ -121,12 +123,12 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 BackgroundColor(Color::NONE),
                 Visibility::Hidden,
                 ConsoleLine(i),
-                children![(Text::default(), font.clone(), TextColor(Color::WHITE), TextShadow::default())],
+                children![(Text::default(), font.clone(), TextColor(Color::WHITE), TextShadow { offset: Vec2::splat(2.0), color: SHADOW })],
             ));
         }
         console.spawn((
             Node { padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)), margin: UiRect::top(Val::Px(4.0)), ..default() },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            Piece::Well.image(),
             Visibility::Hidden,
             ConsoleInput,
             children![(Text::default(), font, TextColor(Color::WHITE))],

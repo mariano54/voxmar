@@ -3,7 +3,10 @@
 
 use bevy::prelude::*;
 
-use super::widgets::{ButtonStyle, ERROR, MUTED, Pressed, TEXT, UiFont, button_row, panel, spawn_button, strong, text};
+use crate::ui::skin::{PX, font_size};
+use crate::ui::widgets::{
+    ACCENT, BODY, ButtonStyle, ERROR, GOLD, MUTED, Pressed, UiFont, button_row, panel, shadowed, spawn_button, text,
+};
 use super::{Notice, Screen};
 
 pub struct TitlePlugin;
@@ -39,14 +42,16 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, mut notice: ResMut<Notice>) 
         ..default()
     };
     commands.spawn((DespawnOnExit(Screen::Title), root, BackgroundGradient::from(shade))).with_children(|root| {
-        let wordmark = strong(font, "voxmar", 96.0, TEXT, FontWeight::BOLD);
-        let shadow = TextShadow { offset: Vec2::new(0.0, 3.0), color: Color::srgba(0.0, 0.0, 0.0, 0.35) };
-        root.spawn((wordmark, shadow, Node { margin: UiRect::bottom(Val::Px(36.0)), ..default() }));
+        // The name in big gold pixels, between teal diamonds.
+        let title = Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), margin: UiRect::bottom(Val::Px(18.0 * PX)), ..default() };
+        root.spawn(title).with_children(|title| {
+            title.spawn(shadowed(font, "◆", font_size(4), ACCENT));
+            title.spawn(shadowed(font, "VOXMAR", font_size(10), GOLD));
+            title.spawn(shadowed(font, "◆", font_size(4), ACCENT));
+        });
 
-        let mut card = panel(380.0);
-        card.0.padding = UiRect::all(Val::Px(20.0));
-        card.0.row_gap = Val::Px(12.0);
-        card.1 = BackgroundColor(Color::srgba(0.08, 0.09, 0.11, 0.82));
+        let mut card = panel(200.0 * PX);
+        card.0.row_gap = Val::Px(4.0 * PX);
         root.spawn(card).with_children(|card| {
             card.spawn(button_row(0.0)).with_children(|row| {
                 spawn_button(row, font, "Singleplayer", ButtonStyle::Primary, Action::Singleplayer);
@@ -59,13 +64,13 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, mut notice: ResMut<Notice>) 
                 spawn_button(row, font, "Quit", ButtonStyle::Secondary, Action::Quit);
             });
             if let Some(message) = notice.0.take() {
-                let node = Node { max_width: Val::Px(340.0), margin: UiRect::top(Val::Px(4.0)), ..default() };
-                card.spawn((node, text(font, message, 14.0, ERROR)));
+                let node = Node { max_width: Val::Px(170.0 * PX), margin: UiRect::top(Val::Px(4.0)), ..default() };
+                card.spawn((node, text(font, message, BODY, ERROR)));
             }
         });
 
-        let corner = Node { position_type: PositionType::Absolute, left: Val::Px(16.0), bottom: Val::Px(12.0), ..default() };
-        root.spawn((corner, text(font, concat!("voxmar ", env!("CARGO_PKG_VERSION")), 12.0, MUTED)));
+        let corner = Node { position_type: PositionType::Absolute, left: Val::Px(6.0 * PX), bottom: Val::Px(5.0 * PX), ..default() };
+        root.spawn((corner, shadowed(font, concat!("voxmar ", env!("CARGO_PKG_VERSION")), BODY, MUTED)));
     });
 }
 
