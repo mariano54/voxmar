@@ -22,12 +22,14 @@ use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
 use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS, ColumnPos, local_index};
 
 use crate::weather::ClientWeather;
+use crate::weather::atmosphere::ClientAtmosphere;
+use voxmar_worldgen::Motion;
 use crate::world::ClientWorld;
 
 /// Drops in the box at the heaviest rain or snow, including the splashes the shader makes
 /// of some of them and the specks of dust and motes it carries on the wind, and the box of
 /// falling drops around the camera, in blocks. The shader has the same constants.
-const DROPS: u32 = 20_000;
+const DROPS: u32 = 28_000;
 const BOX: Vec3 = Vec3::new(40.0, 36.0, 40.0);
 /// Falling speeds, in blocks per second.
 const RAIN_SPEED: f32 = 14.0;
@@ -42,6 +44,9 @@ const MAP: i32 = 64;
 const MAP_WORDS: usize = (MAP * MAP / 8) as usize;
 const RECENTER: i32 = 8;
 const REFRESH: f32 = 1.0;
+
+/// Ambient particle sets drawn at once: the densest of `ClientAtmosphere::particles`.
+const AMBIENT_SETS: usize = 4;
 
 const ATTRIBUTE_DROP: MeshVertexAttribute = MeshVertexAttribute::new("Drop", 0x7261_696e, VertexFormat::Uint32);
 
@@ -83,6 +88,10 @@ struct PrecipitationParams {
     dust_color: Vec4,
     /// xyz: the wind, in blocks per second.
     wind: Vec4,
+    /// Up to `AMBIENT_SETS` sets of ambient particles, three entries each: xyz how far
+    /// they have drifted, w how many; rgb their colour (linear), w 1 if they glow; x their
+    /// size in blocks, y how they move (see `motion_code`).
+    ambient: [Vec4; 3 * AMBIENT_SETS],
     /// Top of the highest block plus one in each column of the map, 16 bits per column.
     heights: [UVec4; MAP_WORDS],
 }
@@ -245,6 +254,7 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         motes: Vec4::ZERO,
         dust_color: Vec4::ZERO,
         wind: Vec4::ZERO,
+        ambient: [Vec4::ZERO; 3 * AMBIENT_SETS],
         heights: [UVec4::ZERO; MAP_WORDS],
     };
     commands.spawn((
@@ -266,6 +276,30 @@ struct Fallen {
     hail: Vec3,
     dust: Vec3,
     motes: Vec3,
+    /// Per ambient particle set, by name.
+    ambient: Vec<(String, Vec3)>,
+}
+
+/// How the shader moves an ambient particle set.
+fn motion_code(motion: Motion) -> f32 {
+    match motion {
+        Motion::Drift => 0.0,
+        Motion::Hover => 1.0,
+        Motion::Fall => 2.0,
+        Motion::Rise => 3.0,
+        Motion::Blow => 4.0,
+    }
+}
+
+/// How an ambient particle set moves through the air, in blocks per second.
+fn motion_velocity(motion: Motion, wind: Vec3) -> Vec3 {
+    match motion {
+        Motion::Drift => wind * 0.35,
+        Motion::Hover => wind * 0.05,
+        Motion::Fall => wind * 0.5 - Vec3::Y * 0.8,
+        Motion::Rise => wind * 0.2 + Vec3::Y * 0.4,
+        Motion::Blow => wind,
+    }
 }
 
 /// Advances the falling drops, refreshes the height map and lights the drops like the sky.
@@ -273,6 +307,7 @@ struct Fallen {
 fn update(
     time: Res<Time>,
     weather: Res<ClientWeather>,
+    air: Res<ClientAtmosphere>,
     world: Res<ClientWorld>,
     mut map: ResMut<SkyMap>,
     camera: Query<(&GlobalTransform, &AmbientLight), With<Camera3d>>,
@@ -282,17 +317,20 @@ fn update(
 ) {
     let (Ok((camera, ambient)), Ok(handle)) = (camera.single(), drops.single()) else { return };
     let shown = &weather.current;
-    if shown.precipitation <= 0.01 && shown.dust <= 0.01 && shown.motes <= 0.01 {
+    if shown.precipitation <= 0.01 && shown.dust <= 0.01 && shown.motes <= 0.01 && air.particles.is_empty() {
         // The drops stay drawn while nothing falls, every one culled in the vertex shader, so
         // their pipeline is built with the world rather than when the first rain starts:
         // where pipelines are built synchronously (macOS) that would stall a frame.
-        let showing = |p: &PrecipitationParams| p.rain.w > 0.0 || p.dust.w > 0.0 || p.motes.w > 0.0;
+        let showing = |p: &PrecipitationParams| {
+            p.rain.w > 0.0 || p.dust.w > 0.0 || p.motes.w > 0.0 || p.ambient.iter().step_by(3).any(|a| a.w > 0.0)
+        };
         if materials.get(&handle.0).is_some_and(|m| showing(&m.params))
             && let Some(mut material) = materials.get_mut(&handle.0)
         {
             material.params.rain.w = 0.0;
             material.params.dust.w = 0.0;
             material.params.motes.w = 0.0;
+            material.params.ambient.iter_mut().step_by(3).for_each(|a| a.w = 0.0);
         }
         return;
     }
@@ -318,6 +356,23 @@ fn update(
     // Dust rides the wind, settling slowly; motes drift and rise.
     fall(&mut fallen.dust, wind - Vec3::Y * 0.3);
     fall(&mut fallen.motes, wind * 0.15 + Vec3::Y * 0.4);
+    // Each ambient set keeps its own drift while it shows.
+    fallen.ambient.retain(|(name, _)| air.particles.iter().any(|p| &p.name == name));
+    let mut sets = [Vec4::ZERO; 3 * AMBIENT_SETS];
+    for (i, set) in air.particles.iter().take(AMBIENT_SETS).enumerate() {
+        let at = match fallen.ambient.iter_mut().find(|(name, _)| *name == set.name) {
+            Some((_, at)) => at,
+            None => {
+                fallen.ambient.push((set.name.clone(), Vec3::ZERO));
+                &mut fallen.ambient.last_mut().unwrap().1
+            }
+        };
+        *at = (*at + motion_velocity(set.motion, wind) * dt).rem_euclid(BOX);
+        // Sets ask for a share of the most shown; sparse ones are lifted to be seen.
+        sets[i * 3] = at.extend((set.density * 2.5).min(1.0));
+        sets[i * 3 + 1] = set.color.extend(if set.glow { 1.0 } else { 0.0 });
+        sets[i * 3 + 2] = Vec4::new(set.size, motion_code(set.motion), 0.0, 0.0);
+    }
 
     let Some(mut material) = materials.get_mut(&handle.0) else { return };
     let light = ambient.color.to_linear();
@@ -335,6 +390,7 @@ fn update(
         motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3)),
         dust_color: Color::srgb_u8(shown.dust_color[0], shown.dust_color[1], shown.dust_color[2]).to_linear().to_vec4(),
         wind: wind.extend(0.0),
+        ambient: sets,
         heights: map.packed(),
     };
 }

@@ -31,6 +31,7 @@ struct ChunkRender {
     passes: [bool; 5],
     hashes: [u64; 5],
     quads: [usize; 5],
+    blades_hash: u64,
     connectivity: Connectivity,
 }
 
@@ -43,6 +44,8 @@ struct MeshResult {
 struct ChunkResult {
     connectivity: Connectivity,
     passes: [PassResult; 5],
+    blades: Vec<u32>,
+    blades_hash: u64,
 }
 
 struct PassResult {
@@ -63,7 +66,9 @@ impl PassResult {
 impl ChunkResult {
     fn new(mesh: ChunkMesh) -> Self {
         let passes = [mesh.opaque, mesh.cutout, mesh.inner, mesh.translucent, mesh.fringe].map(PassResult::new);
-        Self { connectivity: mesh.connectivity, passes }
+        let mut hasher = FxHasher::default();
+        mesh.blades.hash(&mut hasher);
+        Self { connectivity: mesh.connectivity, passes, blades: mesh.blades, blades_hash: hasher.finish() }
     }
 }
 
@@ -149,6 +154,7 @@ impl ClientWorld {
                 for (pass, _) in PASSES.iter().zip(render.passes).filter(|(_, present)| *present) {
                     self.terrain.remove(chunk, *pass);
                 }
+                self.terrain.upload_blades(chunk, Vec::new());
             }
         }
         self.visibility_dirty = true;
@@ -250,6 +256,10 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
             if render.connectivity != chunk_result.connectivity {
                 render.connectivity = chunk_result.connectivity;
                 world.visibility_dirty = true;
+            }
+            if render.blades_hash != chunk_result.blades_hash {
+                render.blades_hash = chunk_result.blades_hash;
+                world.terrain.upload_blades(chunk, chunk_result.blades);
             }
             for (pass, result) in PASSES.into_iter().zip(chunk_result.passes) {
                 let i = pass as usize;

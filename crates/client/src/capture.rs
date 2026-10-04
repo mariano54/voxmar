@@ -29,6 +29,8 @@ pub struct CapturePlugin {
     pub pose: Option<[f32; 5]>,
     /// Seconds to fly forward after loading, measuring frame pacing while streaming.
     pub flight: Option<f32>,
+    /// Extra seconds to let the world run before capturing, for weather to build.
+    pub wait: f32,
     /// Fixed time of day, as a fraction of the day from sunrise.
     pub time: Option<f32>,
     /// Show the settings menu.
@@ -41,6 +43,7 @@ impl Plugin for CapturePlugin {
             path: self.path.clone(),
             pose: self.pose,
             flight: self.flight,
+            wait: self.wait,
             time: self.time,
             target: Handle::default(),
             settled_at: None,
@@ -62,6 +65,7 @@ struct Capture {
     path: PathBuf,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    wait: f32,
     time: Option<f32>,
     target: Handle<Image>,
     settled_at: Option<f32>,
@@ -131,6 +135,7 @@ fn capture(
     mut exit: MessageWriter<AppExit>,
     lod: Res<Lod>,
     screen: Res<State<Screen>>,
+    (weather, air): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>),
 ) {
     let now = time.elapsed_secs();
     if let Some(taken) = state.taken_at {
@@ -159,7 +164,7 @@ fn capture(
     }
     // Measure a few seconds of steady-state rendering before capturing.
     let settled = *state.settled_at.get_or_insert(now);
-    if now - settled < 4.0 {
+    if now - settled < 4.0 + state.wait {
         return;
     }
     if let Some(duration) = state.flight
@@ -194,6 +199,10 @@ fn capture(
         stats.jobs_in_flight,
         stats.pending_columns,
     );
+    let shown = &weather.current;
+    info!("weather: {}: {}; effects: {}", shown.describe(), shown.summary(), weather.effects.join(", "));
+    let particles: Vec<String> = air.particles.iter().map(|p| format!("{} {:.0}%", p.name, p.density * 100.0)).collect();
+    info!("air: haze {:.2} ×{:.2}, warmth {:.2}, saturation {:.2}; particles: {}", air.haze, air.haze_density, air.warmth, air.saturation, particles.join(", "));
     commands.spawn(Screenshot::image(state.target.clone())).observe(save_to_disk(state.path.clone()));
     state.taken_at = Some(now);
 }

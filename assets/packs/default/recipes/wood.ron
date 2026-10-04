@@ -2,11 +2,11 @@
 // `wood` (the inside: planks, stripped logs, log ends), `leaves` and `sapling`. Leaves are
 // grey for woods whose leaves the game tints with the climate's foliage colour, and in
 // colour for woods whose leaves keep their own (maple, cherry, the fantasy woods).
-// `{name}_leaves_bushy` is a round leaf cluster with clear margins, for drawing leaves as
-// tilted cards around a crown.
+// `{name}_leaves_bushy` is a round 32×32 leaf cluster with clear margins, for drawing
+// leaves as tilted cards around a crown (the renderer does not use it yet).
 (
     palettes: {
-        "leaf_grey": ["#555555", "#6d6d6d", "#858585", "#9d9d9d", "#b5b5b5", "#cdcdcd"],
+        "leaf_grey": ["#5c5c5c", "#757575", "#8e8e8e", "#a7a7a7", "#c0c0c0", "#d8d8d8"],
         "sapling_green": ["#2d4a1c", "#3a5e22", "#4a742a", "#5c8a33", "#70a03f"],
         "oak_bark": ["#3b2c1b", "#4a3722", "#59432a", "#685033", "#775d3d"],
         "oak_wood": ["#6f5532", "#83643c", "#967447", "#a88452", "#b8935e", "#c6a26b"],
@@ -92,10 +92,14 @@
                 // A dark mass, lit clumps of leaves on it, then gaps.
                 Paint(palette: "leaves", base: 0.35, shade: [Noise(cells: (8, 8), amount: 0.3)]),
                 Clusters(palette: "leaves", count: 40, size: (3, 5), spacing: 2.2, shade: 2, shadow: -1),
-                Cut(mask: [Noise(cells: (5, 5), amount: 1.0), Speckle(chance: 0.15, amount: 0.4)], above: 0.12),
+                Cut(mask: [Noise(cells: (8, 8), amount: 1.0), Speckle(chance: 0.2, amount: 0.4)], above: 0.17),
             ]),
-            "block/{name}_leaves_bushy": (base: "block/{name}_leaves", layers: [
-                Cut(mask: [Circle(radius: 7.2, rough: 1.6)], below: 0.5),
+            // As Better Leaves Lite bakes them (MIT; the technique, not its images): the
+            // leaf tile 3×3 on a canvas twice its size, so the pattern runs on past every
+            // edge, cut to a ragged round cluster whose middle is the tile itself.
+            "block/{name}_leaves_bushy": (size: (32, 32), layers: [
+                Stamp(texture: "block/{name}_leaves", at: [(-8, -8), (8, -8), (24, -8), (-8, 8), (8, 8), (24, 8), (-8, 24), (8, 24), (24, 24)]),
+                Cut(mask: [Circle(radius: 14.0, rough: 2.5)], below: 0.5),
             ]),
             "block/{name}_sapling": (palettes: {"sapling": "sapling_green"}, layers: [
                 Grid(
@@ -181,6 +185,18 @@
         "block/emberwood_log_top": (base: "block/stripped_emberwood_log_top", palettes: {"bark": "emberwood_bark"}, layers: [
             Paint(palette: "bark", base: 0.45, shade: [Noise(cells: (16, 16), amount: 0.6)], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
         ]),
+        // Glowcaps: giant mushrooms with pale fibrous stems and glowing teal caps.
+        "block/glowcap_stem": (palettes: {"main": ["#8e8676", "#a89f8e", "#c0b8a6", "#d6cfbd", "#e8e2d2"]}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (16, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.2, warp: 0.6)], clean: true),
+        ]),
+        "block/glowcap_stem_top": (palettes: {"main": ["#8e8676", "#a89f8e", "#c0b8a6", "#d6cfbd", "#e8e2d2"]}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Rings(spacing: 2.0, width: 0.3, amount: -0.25, wobble: 0.8, square: 0.2), Border(width: 1, amount: -0.3)]),
+        ]),
+        "block/glowcap_cap": (palettes: {"main": ["#0a4a54", "#0e6e74", "#16969a", "#28c2be", "#5ae6da", "#b4fff2"], "spot": ["#bffff4", "#f0fffc"]}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.6), Cells(count: (3, 3), value: 0.2, edge: -0.25, bevel: 0.2, warp: 1.0)], clean: true),
+            Clusters(palette: "spot", count: 4, size: (2, 4), spacing: 6.0, shade: 0, shadow: -1, margin: 1),
+        ]),
+        "block/glowcap_planks": (base: "block/oak_planks", palettes: {"wood": ["#7c8a86", "#929f9a", "#a8b4ae", "#bcc6c0", "#ced6d0", "#dee4de"]}, seed: 31),
         // Conifer saplings are narrow spires.
         "block/spruce_sapling": (base: "block/oak_sapling", palettes: {"bark": "spruce_bark", "sapling": "spruce_sapling"}, layers: [
             Grid(legend: {'x': "clear"}, rows: ["xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxx"]),

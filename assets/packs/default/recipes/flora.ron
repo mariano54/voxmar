@@ -28,6 +28,7 @@
         "shape/plant": (palettes: {
             "leaf": "green", "petal": "red", "centre": ["#3a2a12", "#a8781c", "#f2cc40"],
             "wood": ["#3c2a1a", "#5a412a", "#7a5a3c"], "fruit": ["#4a0e14", "#8e1c28", "#d8404e"],
+            "glow": ["#ffe8a0", "#fff4d0", "#ffffff"],
         }),
         "block/short_grass": (base: "shape/plant", palettes: {"leaf": "grey"}, layers: [Grid(rows: [
             "................",
