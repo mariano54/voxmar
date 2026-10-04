@@ -455,12 +455,10 @@ fn split(pass: TerrainPass, mesh: &MeshBuffers) -> Vec<Range<usize>> {
         .collect()
 }
 
+#[derive(Default)]
 struct ChunkRecord {
     /// Index into the origin table, which the shader finds from the vertex's block.
     slot: u32,
-    /// Whether cave culling leaves the chunk visible (a copy of `TerrainGpu::visible`, so
-    /// culling each view needs no lookup per chunk).
-    visible: bool,
     streams: [Option<Allocation>; STREAMS],
     /// Where the chunk's grass blade seeds are in the seed buffer.
     blades: Option<Range<u32>>,
@@ -575,7 +573,17 @@ pub(super) struct TerrainGpu {
     /// Chunk pages of each stream.
     streams: [PagePool; STREAMS],
     tile_pages: PagePool,
-    chunks: FxHashMap<ChunkPos, ChunkRecord>,
+    /// Each chunk's record, in `records`.
+    chunks: FxHashMap<ChunkPos, u32>,
+    /// Chunk records, and the places of forgotten ones for new chunks to take.
+    records: Vec<ChunkRecord>,
+    free_records: Vec<u32>,
+    /// Each record's chunk's minimum corner, and whether it is drawn at all (a chunk cave
+    /// culling leaves visible, not a forgotten record): all that culling a view reads for
+    /// each chunk until one is in view, 16 bytes beside the records' few hundred, so a
+    /// view's scan of every chunk stays in cache and no list of candidates is gathered
+    /// first.
+    bounds: Vec<(Vec3, bool)>,
     tiles: FxHashMap<TileKey, TileRecord>,
     /// Chunks with a mesh, per column.
     columns: FxHashMap<IVec2, u32>,
@@ -618,6 +626,9 @@ impl Default for TerrainGpu {
             }),
             tile_pages: PagePool::new("distant", size_of::<LodVertex>(), TILE_PAGE_VERTICES, false),
             chunks: FxHashMap::default(),
+            records: Vec::new(),
+            free_records: Vec::new(),
+            bounds: Vec::new(),
             tiles: FxHashMap::default(),
             columns: FxHashMap::default(),
             visible: FxHashSet::default(),
@@ -659,30 +670,57 @@ impl TerrainGpu {
     /// The chunk's record, made if it has none.
     /// Takes cave culling's new set of visible chunks, marking each record.
     fn set_visible(&mut self, visible: FxHashSet<ChunkPos>) {
-        for (pos, record) in &mut self.chunks {
-            record.visible = visible.contains(pos);
+        for (pos, &index) in &self.chunks {
+            self.bounds[index as usize].1 = visible.contains(pos);
         }
         self.visible = visible;
     }
 
     fn record(&mut self, chunk: ChunkPos) -> &mut ChunkRecord {
-        if !self.chunks.contains_key(&chunk) {
-            let column = IVec2::new(chunk.0.x, chunk.0.z);
-            let colours = self.column_colours.get(&column).or(self.default_colours.as_ref()).map_or(0, |range| range.start);
-            let slot = self.new_slot(chunk.origin().extend(colours as i32));
-            let visible = self.visible.contains(&chunk);
-            self.chunks.insert(chunk, ChunkRecord { slot, visible, streams: Default::default(), blades: None });
-            *self.columns.entry(IVec2::new(chunk.0.x, chunk.0.z)).or_default() += 1;
-        }
-        self.chunks.get_mut(&chunk).expect("record was just ensured")
+        let index = match self.chunks.get(&chunk) {
+            Some(&index) => index,
+            None => {
+                let column = IVec2::new(chunk.0.x, chunk.0.z);
+                let colours = self.column_colours.get(&column).or(self.default_colours.as_ref()).map_or(0, |range| range.start);
+                let slot = self.new_slot(chunk.origin().extend(colours as i32));
+                let bounds = (chunk.origin().as_vec3(), self.visible.contains(&chunk));
+                let record = ChunkRecord { slot, ..default() };
+                let index = match self.free_records.pop() {
+                    Some(index) => {
+                        self.records[index as usize] = record;
+                        self.bounds[index as usize] = bounds;
+                        index
+                    }
+                    None => {
+                        self.records.push(record);
+                        self.bounds.push(bounds);
+                        self.records.len() as u32 - 1
+                    }
+                };
+                self.chunks.insert(chunk, index);
+                *self.columns.entry(column).or_default() += 1;
+                index
+            }
+        };
+        &mut self.records[index as usize]
+    }
+
+    /// The chunk's record, if it has one.
+    fn record_mut(&mut self, chunk: ChunkPos) -> Option<&mut ChunkRecord> {
+        let &index = self.chunks.get(&chunk)?;
+        Some(&mut self.records[index as usize])
     }
 
     /// Forgets a chunk with nothing left to draw.
     fn forget_if_empty(&mut self, chunk: ChunkPos) {
-        if !self.chunks.get(&chunk).is_some_and(ChunkRecord::is_empty) {
+        let Some(&index) = self.chunks.get(&chunk) else { return };
+        if !self.records[index as usize].is_empty() {
             return;
         }
-        let record = self.chunks.remove(&chunk).expect("record exists");
+        self.chunks.remove(&chunk);
+        self.free_records.push(index);
+        self.bounds[index as usize].1 = false;
+        let record = std::mem::take(&mut self.records[index as usize]);
         self.free_slots.push(record.slot);
         let column = IVec2::new(chunk.0.x, chunk.0.z);
         if let Some(count) = self.columns.get_mut(&column) {
@@ -694,7 +732,8 @@ impl TerrainGpu {
     }
 
     fn release(&mut self, chunk: ChunkPos, pass: TerrainPass) {
-        let Some(record) = self.chunks.get_mut(&chunk) else { return };
+        let Some(&index) = self.chunks.get(&chunk) else { return };
+        let record = &mut self.records[index as usize];
         for stream in streams(pass) {
             if let Some(allocation) = record.streams[stream].take() {
                 self.streams[stream].free(allocation);
@@ -729,7 +768,7 @@ impl TerrainGpu {
     }
 
     fn upload_blades(&mut self, device: &RenderDevice, queue: &RenderQueue, chunk: ChunkPos, seeds: &[u32]) {
-        if let Some(range) = self.chunks.get_mut(&chunk).and_then(|record| record.blades.take()) {
+        if let Some(range) = self.record_mut(chunk).and_then(|record| record.blades.take()) {
             self.seeds.ranges.release(range);
         }
         if seeds.is_empty() {
@@ -1092,9 +1131,6 @@ fn cull(
     lights: Query<&ExtractedDirectionalLight>,
     mut views: Query<CulledView, CulledViewFilter>,
 ) {
-    // Chunks cave culling leaves visible, with their bounds' minimum corner.
-    let candidates: Vec<(Vec3, &ChunkRecord)> =
-        gpu.chunks.iter().filter(|(_, record)| record.visible).map(|(pos, record)| (pos.origin().as_vec3(), record)).collect();
     for (entity, _, _, draws) in &views {
         if draws.is_none() {
             commands.entity(entity).insert(TerrainDraws::default());
@@ -1121,9 +1157,9 @@ fn cull(
         let mut ranges = std::mem::take(&mut draws.ranges);
         let mut translucent = Vec::new();
         let mut blades = Vec::new();
-        for &(min, record) in &candidates {
+        for (record, &(min, drawn)) in gpu.records.iter().zip(&gpu.bounds) {
             let max = min + CHUNK_SIZE as f32;
-            if !frustum.intersects(min, max) || casters.as_ref().is_some_and(|c| !c.matter(min, max)) {
+            if !drawn || !frustum.intersects(min, max) || casters.as_ref().is_some_and(|c| !c.matter(min, max)) {
                 continue;
             }
             // Distance from the camera (not a shadow view's light) to the chunk's bounds.
