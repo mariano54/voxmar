@@ -10,8 +10,8 @@
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
-//! `--fov DEGREES`, `--weather KIND` (show that instead of the server's weather; the kinds
-//! are in `weather.ron`), `--command LINE` (run a console command once in game, such as
+//! `--fov DEGREES`, `--weather KIND[:INTENSITY]` (show that instead of the server's
+//! weather; the kinds are in `weather.ron`, intensities 0..1 or light|moderate|heavy|max), `--command LINE` (run a console command once in game, such as
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings.
 

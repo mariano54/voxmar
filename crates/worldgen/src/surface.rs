@@ -127,6 +127,8 @@ enum Cond {
     Drier(f32, f32),
     Forest(f32, f32),
     River(f32, f32),
+    Clearing(f32, f32),
+    Stand(f32, f32),
     /// A bit per matching province.
     Province(u64),
     Band(usize, f32),
@@ -185,6 +187,33 @@ pub struct Spot<'a> {
     pub mix: &'a dyn Fn() -> f32,
     /// Uniform per-column randomness.
     pub chance: f32,
+    /// Noise values already sampled here: rules often test one noise twice (a trail and
+    /// its fringe, a patch and its rim).
+    pub sampled: Sampled,
+}
+
+/// A few noise values sampled at one spot, by noise index.
+#[derive(Default)]
+pub struct Sampled {
+    values: std::cell::Cell<[(u32, f32); 6]>,
+    len: std::cell::Cell<usize>,
+}
+
+impl Sampled {
+    fn get(&self, noise: usize, sample: impl FnOnce() -> f32) -> f32 {
+        let mut values = self.values.get();
+        let len = self.len.get();
+        if let Some(&(_, v)) = values[..len].iter().find(|(i, _)| *i == noise as u32) {
+            return v;
+        }
+        let v = sample();
+        if len < values.len() {
+            values[len] = (noise as u32, v);
+            self.values.set(values);
+            self.len.set(len + 1);
+        }
+        v
+    }
 }
 
 /// The named noise fields of every biome's rules.
@@ -199,7 +228,8 @@ impl SurfaceRules {
         Self { noises: Vec::new(), names: FxHashMap::default(), seed }
     }
 
-    fn noise(&mut self, def: &NoiseDef) -> usize {
+    /// The index of a named noise field, made on first use.
+    pub(crate) fn noise(&mut self, def: &NoiseDef) -> usize {
         let key = format!("{}/{}/{}", def.name, def.scale, def.octaves);
         if let Some(&i) = self.names.get(&key) {
             return i;
@@ -257,6 +287,8 @@ impl SurfaceRules {
             Condition::Drier(a, b) => Cond::Drier(*a, *b),
             Condition::Forest(a, b) => Cond::Forest(*a, *b),
             Condition::River(a, b) => Cond::River(*a, *b),
+            Condition::Clearing(a, b) => Cond::Clearing(*a, *b),
+            Condition::Stand(a, b) => Cond::Stand(*a, *b),
             Condition::Province(name) => {
                 Cond::Province((0..rocks.len().min(64)).filter(|&i| rocks.matches(ProvinceId(i as u8), name)).fold(0, |m, i| m | 1 << i))
             }
@@ -269,10 +301,15 @@ impl SurfaceRules {
         }
     }
 
+    /// A noise field's value at a position, −1 ..= 1.
+    pub(crate) fn sample(&self, noise: usize, x: i32, z: i32) -> f32 {
+        self.noises[noise].get_noise_2d(x as f32, z as f32)
+    }
+
     fn holds(&self, c: &Cond, spot: &Spot) -> bool {
         let site = spot.site;
         let at = |a: f32, b: f32| a + (b - a) * spot.dither;
-        let noise = |i: usize| self.noises[i].get_noise_2d(spot.x as f32, spot.z as f32);
+        let noise = |i: usize| spot.sampled.get(i, || self.noises[i].get_noise_2d(spot.x as f32, spot.z as f32));
         let above = (site.height - SEA_LEVEL) as f32;
         match c {
             Cond::Underwater => true,
@@ -286,6 +323,8 @@ impl SurfaceRules {
             Cond::Drier(a, b) => site.soil_moisture() < at(*a, *b),
             Cond::Forest(a, b) => site.forest > at(*a, *b),
             Cond::River(a, b) => site.river > at(*a, *b),
+            Cond::Clearing(a, b) => site.clearing > at(*a, *b),
+            Cond::Stand(a, b) => site.stand > at(*a, *b),
             Cond::Province(mask) => mask & (1 << site.province.0) != 0,
             Cond::Band(n, w) => noise(*n).abs() < *w,
             Cond::Tapered(n, by, widths) => {

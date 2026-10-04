@@ -186,10 +186,10 @@ fn receive(
                 player.admin = admin;
             }
             ServerMessage::Chat { kind, text } => console.push(kind, &text, time.elapsed_secs()),
-            ServerMessage::Weather { weather: report, effects, quick } => {
-                weather.receive(report, effects, quick, time.elapsed_secs())
+            ServerMessage::Weather { weather: report, effects, nearby, quick } => {
+                weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }
-            ServerMessage::Lightning { at, seed } => weather.lightning(at, seed, at.distance(player.eye())),
+            ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
         }
     }

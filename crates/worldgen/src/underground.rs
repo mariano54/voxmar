@@ -410,7 +410,7 @@ impl UndergroundColumn<'_> {
             // The stones beneath: the cave biome's own, or those of the column.
             let stones = biome.stones.as_ref().unwrap_or(column_stones);
             let at = Site { height: y, slope: 0, ..*site };
-            let spot = Spot { site: &at, x: wx, z: wz, dither, mix: &mix, chance };
+            let spot = Spot { site: &at, x: wx, z: wz, dither, mix: &mix, chance, sampled: Default::default() };
             let pos = IVec3::new(wx, y, wz);
             if floor && work.floor {
                 let underwater = cave[y as usize + 1] == Cave::Water;

@@ -19,8 +19,8 @@ it rebuilds in seconds rather than minutes after an edit and runs nearly as fast
 
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
-frame rate), `--weather KIND` (show a kind of weather from `weather.ron`, such as `storm`,
-instead of the server's), `--command LINE` (run a console line once in game, such as
+frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
+`storm` or `rain:0.3`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
 `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
@@ -51,9 +51,11 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   moves it on, `/time speed 10` runs days ten times as fast, `/time freeze` stops the sun and
   `/time resume` lets it run normally. `/day` and `/night` are shortcuts. The time of day and its
   speed are saved with the world; the weather keeps its own pace.
-- `/weather` describes the weather where you are. `/weather KIND [SECONDS]` brings that kind
-  (`/weather list`) to the land within about a kilometre of you, for five minutes unless you
-  say; then the natural weather takes over again, slowly. `/weather natural` ends it at once.
+- `/weather` describes the weather where you are. `/weather KIND [INTENSITY] [SECONDS]` brings
+  that kind (`/weather list`) to the land within about a kilometre of you, as intense as you say
+  (`light`, `moderate`, `heavy`, `max` or 0 to 1; each kind has its usual intensity, and 1 is its
+  fiercest), for five minutes unless you say; then the natural weather takes over again, slowly.
+  `/weather natural` ends it at once.
 - `/wind` describes the wind; `/wind calm|breeze|strong|gale [FROM] [SECONDS]` brings that
   wind (from a compass point, `n` to `nw`, or degrees from north) on top of any forced
   weather.
@@ -96,7 +98,9 @@ and when it stops (leaving to the title screen or quitting). Every file is writt
 temporary file and renamed, so a crash never leaves half a file. Saved columns are unloaded
 like any other. The dedicated server keeps its world in `--world DIR` (default `./world`),
 created with `--seed N` and, given `--no-flight`, in survival mode if it does not exist yet;
-type `stop` to save and quit.
+type `stop` to save and quit. Anything else typed there runs as a command, as an admin
+standing at spawn (`time set noon`, `weather storm 600`, `gamemode creative Ada`), and
+`say …` tells everyone.
 
 ### Textures
 
@@ -256,15 +260,26 @@ the weirdness field, so they appear in whole regions of some worlds and not in o
 variants take shares of their parent; ecotones sit on borders; fantastical biomes claim cells
 where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
-lines such as game trails) over the stones of its rock province, while snow, ice and bare rock
-follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
+lines such as game trails; shared sets in `surfaces.ron` break every soil slope up into
+coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
+rock follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
 birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
 and plants (`plants.ron`, with nutrition, alchemy and dye properties) are a shared pool:
 each says what climate, ground and habitat it likes, biomes select from the pool by tag or
 name, and the climate at each spot weighs the candidates, so a new plant with the right
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
-runs high. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
+runs high. Forests have structure: one field grades them from dense old-growth cores with the
+giant trees through ordinary woodland to scrubby edges and gaps, and a global field opens
+clearings with a soft edge. Ground decoration (`decorations.ron`, another shared pool biomes
+select by tag) is placed in a fixed order of stages: patches of dirt, gravel and moss; boulders
+and scattered stones of the rock province, mossy on their north side in damp woods; bushes of
+the trees growing there; ornaments each tree makes of its own blocks (needle and leaf litter,
+fallen leaves, fungi at the trunk's foot); fallen logs (some thick and hollow, with branches and
+the stump they broke from) and stumps, each laid only where the ground holds it; then flowers
+(sparse, a few kinds at a time, thicker at forest edges and along creeks), fungi and a carpet
+of grasses and ferns over most open ground; and last a snow blanket on every level open to the
+sky where snow lies, using the same snowy blocks as snow that falls in play. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
 colour-grading nudges, and ambient particle sets from `ambient.ron` such as pollen,
 fireflies, spores, dust, drifting snow and aether motes), taken from the climate unless a
 biome sets parts of it, and blended across borders.
@@ -304,11 +319,20 @@ near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
+<<<<<<< HEAD
+labyrinths, ravines, sinkholes, entrances and the best view of each cave biome near spawn,
+with each cave biome's share of the caves there;
+`decor_sights` prints `--pose` arguments for captures of old-growth forest, a forest edge,
+a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
+`column_timing` reports generation time per column, and `river_speed` the cost of building a
+region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+=======
 labyrinths, ravines, sinkholes, entrances, geodes, bare fossils and the best view of each cave
 biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, with the
 `--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
 there; `column_timing` reports generation time per column, and `river_speed` the cost of
 building a region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+>>>>>>> main
 
 ## Worn paths
 
@@ -355,16 +379,21 @@ later gameplay agree.
 Effects come on top, as data in `assets/content/base/weather.ron`: each is a product of
 smooth conditions on the weather, the local climate and land (coast, valley, altitude,
 latitude, moisture, vegetation, aether) and the time of day, raises channels of the weather
-clients draw, and has a rarity. There are drizzle and downpours, thunderstorms, sleet, hail,
-blizzards, thundersnow, squalls, drifting snow, dust and sandstorms, mist after rain, dawn
-mist, valley fog, sea fog, frost, heat haze, rainbows (and rarely double ones), halos and sun
-dogs, the aurora near the poles (and rarely far from them), shooting stars, meteor showers,
-ball lightning, marsh lights, and where the land's aether is high glowing motes, the very rare
-aether storm and the legendary starfall. Rarity is drawn per stretch of land (1.5 km) and time
+clients draw, and has a rarity. There are drizzle and downpours, thunderstorms (and the
+towering supercells of hot, wet country, common there and rare elsewhere), heat lightning on
+humid summer nights, sleet, freezing rain, hail, blizzards, thundersnow, squalls, drifting
+snow, dust and sandstorms, mist after rain, dawn mist, mist off lakes on cool mornings, steam
+off hot ground after rain, valley fog, sea fog, frost, diamond dust in bitter cold, heat haze,
+rainbows (and rarely double ones), halos and sun dogs, the aurora near the poles (and rarely
+far from them), shooting stars, meteor showers, ball lightning, marsh lights, and where the
+land's aether is high glowing motes, the very rare aether storm and the legendary starfall.
+Light rain and cloud are everyday; heavy rain is uncommon outside the tropics; wind is calm
+to a light breeze most of the time, strong now and then, and a gale only in storms. Rarity is drawn per stretch of land (1.5 km) and time
 (the effect's typical length) from the seed, and each world features a few rare effects and
 suppresses a common one, so drizzle and mist are everyday sights and a meteor shower is an
 event. `cargo test -p voxmar_server effect_spread -- --ignored --nocapture` prints how often
-each shows across kinds of country.
+each shows across kinds of country, and `climate_spread` how often each kind of country is
+cloudy, rains or snows at each intensity and how hard the wind blows.
 
 Each player is sent `ServerMessage::Weather` for where they stand when it changes or every five
 seconds, with the effects showing, and the client eases towards it: cloud builds and clears

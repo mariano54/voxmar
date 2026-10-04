@@ -71,6 +71,10 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "coast", &["ocean"], &[("water", 1.0), ("sand", 0.6), ("continentalness", 0.0), ("height", 3.0), ("wind", 6.0)]),
         scene(ambience, "summit", &["mountain"], &[("rock", 0.8), ("snowpack", 0.5), ("relief", 70.0), ("height", 160.0), ("wind", 12.0), ("temperature", -6.0)]),
         scene(ambience, "cave", &["mountain"], &[("rock", 1.0), ("sky", 0.0), ("air", 0.3), ("reverb", 0.8), ("depth", 40.0)]),
+        scene(ambience, "hailstorm", &["grassland", "temperate", "open"], &[("grass", 1.0), ("hail", 0.6), ("rain", 0.5), ("storm", 0.8), ("wind", 9.0), ("gusts", 1.0), ("cover", 1.0)]),
+        scene(ambience, "sandstorm", &["desert", "dry", "open"], &[("sand", 1.0), ("dust", 1.0), ("wind", 13.0), ("gusts", 1.0), ("temperature", 30.0), ("moisture", 0.1)]),
+        scene(ambience, "blizzard", &["frozen", "cold", "open"], &[("snowpack", 1.0), ("snow", 0.9), ("wind", 13.0), ("gusts", 1.0), ("temperature", -10.0), ("cover", 1.0)]),
+        scene(ambience, "sleet", &["grassland", "temperate", "open"], &[("grass", 1.0), ("sleet", 0.5), ("rain", 0.3), ("temperature", 1.0), ("cover", 1.0)]),
     ]
 }
 
@@ -113,6 +117,10 @@ fn each_place_has_its_own_sound() {
             "coast" => (&["surf"], &["stream", "frog"]),
             "summit" => (&["high_wind", "gust"], &["leaves", "warbler", "crickets", "meadow"]),
             "cave" => (&["cave", "drip"], &["breeze", "high_wind", "leaves", "warbler"]),
+            "hailstorm" => (&["hail", "gusty"], &["sandstorm", "sleet", "meadow"]),
+            "sandstorm" => (&["sandstorm", "gusty"], &["hail", "blizzard", "meadow", "crickets"]),
+            "blizzard" => (&["blizzard"], &["sandstorm", "hail", "meadow"]),
+            "sleet" => (&["sleet"], &["hail", "sandstorm"]),
             other => panic!("{other}"),
         };
         for name in must {
