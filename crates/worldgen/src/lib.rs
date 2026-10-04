@@ -742,6 +742,7 @@ mod tests {
     fn column_timing() {
         // CPU time on this thread measures all the work only if it all stays here.
         crate::parallel::set_enabled(false);
+        crate::perf::prefer_fast_cores();
         let registry = registry();
         let mut total = std::time::Duration::ZERO;
         let mut count = 0;
@@ -1811,6 +1812,7 @@ mod tests {
     fn river_speed() {
         // CPU time on this thread measures all the work only if it all stays here.
         crate::parallel::set_enabled(false);
+        crate::perf::prefer_fast_cores();
         let registry = registry();
         let (mut first, mut warm, mut columns) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
         for seed in [1, 3, 0x5eed] {
@@ -1837,6 +1839,7 @@ mod tests {
     fn generation_speed() {
         // CPU time on this thread measures all the work only if it all stays here.
         crate::parallel::set_enabled(false);
+        crate::perf::prefer_fast_cores();
         use std::time::Duration;
         let registry = registry();
         let (mut columns, mut generating) = (0, Duration::ZERO);
