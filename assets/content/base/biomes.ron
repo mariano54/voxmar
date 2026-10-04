@@ -150,14 +150,14 @@
                 cover: 0.8, flowers: 0.04,
                 plants: [Tag("meadow", 0.6), Tag("steppe", 0.6), Name("short_grass", 2.0), Name("tall_grass", 0.4)],
             ),
-            ecotone: (between: ("steppe", "plains"), axis: Moisture, width: 0.12),
+            ecotone: (between: ("steppe", "plains"), axis: Moisture, width: 0.08),
         ),
         (
             // Lush lowland grass, tall and deep, with old oaks standing alone.
             name: "meadow",
             tags: ["grassland", "temperate", "open", "lush"],
-            weight: 0.6,
-            climate: [(temperature: ("temperate", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "flat"))],
+            weight: 0.5,
+            climate: [(temperature: ("temperate", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
                 forest: 0.06,
                 trees: [Name("big_oak", 1.0), Name("oak", 0.6), Name("maple", 0.2), Name("willow", 1.0)],
@@ -176,9 +176,8 @@
             name: "forest",
             tags: ["forest", "temperate", "broadleaf"],
             climate: [
-                (temperature: ("cool", "warm"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills")),
-                (temperature: ("cool", "cool"), moisture: ("wet", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills")),
-                (temperature: ("warm", "warm"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "slopes")),
+                (temperature: ("cool", "warm"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes")),
+                (temperature: ("cool", "cool"), moisture: ("wet", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes")),
                 (temperature: ("temperate", "warm"), moisture: ("wet", "wet"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "slopes")),
                 (temperature: ("warm", "warm"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks")),
             ],
@@ -243,10 +242,8 @@
             // Maples in autumn colour among birch and the odd spruce, on hills and slopes.
             name: "maple_forest",
             tags: ["forest", "temperate", "broadleaf", "autumn"],
-            climate: [
-                (temperature: ("cool", "temperate"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "slopes")),
-                (temperature: ("cool", "cool"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("hills", "hills")),
-            ],
+            weight: 0.6,
+            climate: [(temperature: ("cool", "temperate"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
                 forest: 0.75,
                 trees: [Name("maple", 2.0), Name("birch", 0.8), Name("oak", 0.5), Name("spruce", 0.3), Name("big_oak", 0.2)],
@@ -268,7 +265,8 @@
             // Spruce, oak, birch and maple together, in cool hill country.
             name: "mixed_forest",
             tags: ["forest", "temperate", "broadleaf", "conifer", "cool"],
-            climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "far_inland"), erosion: ("hills", "slopes"))],
+            weight: 0.6,
+            climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
                 forest: 0.7,
                 trees: [Name("spruce", 1.0), Name("oak", 0.8), Name("birch", 0.8), Name("maple", 0.5), Name("pine", 0.3), Name("giant_spruce", 0.3)],
@@ -289,8 +287,8 @@
             // Heather and bracken over the hills, granite breaking through, a few junipers.
             name: "heath",
             tags: ["heath", "highland", "cool", "open", "rocky"],
-            weight: 0.7,
-            climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "inland"), erosion: ("hills", "hills"))],
+            weight: 0.5,
+            climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "inland"), erosion: ("hills", "slopes"))],
             flora: (
                 forest: 0.05,
                 trees: [Name("pine", 1.0), Name("birch", 0.6), Name("shrub", 0.6)],
@@ -335,7 +333,8 @@
             // Redwoods on wet coastal hills: giant trunks over ferns and moss, in the fog.
             name: "redwood_forest",
             tags: ["forest", "temperate", "conifer", "giant", "wet"],
-            climate: [(temperature: ("temperate", "temperate"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("hills", "slopes"))],
+            weight: 0.8,
+            climate: [(temperature: ("temperate", "temperate"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "slopes"))],
             flora: (
                 forest: 0.85,
                 trees: [Name("redwood", 3.0), Name("spruce", 0.6), Name("maple", 0.2)],
@@ -693,7 +692,8 @@
             // Sunny scrub hills: cypress spires, sage, thyme and lavender, pale stone.
             name: "mediterranean",
             tags: ["scrubland", "warm", "dry", "open"],
-            climate: [(temperature: ("warm", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("hills", "slopes"))],
+            weight: 0.7,
+            climate: [(temperature: ("warm", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
                 forest: 0.18,
                 trees: [Name("cypress", 2.0), Name("oak", 0.4), Name("shrub", 1.5), Name("pine", 0.4)],
