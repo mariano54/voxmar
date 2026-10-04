@@ -39,7 +39,6 @@
 //! generated fluids are always contained and never hang in the air.
 
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType};
-use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::CHUNK_SIZE;
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 
@@ -250,17 +249,6 @@ impl Caves {
 
     pub fn style(&self) -> &CaveStyle {
         &self.style
-    }
-
-    /// What lines a cave where its rock at `pos`, `depth` blocks under the surface, meets
-    /// the open cave: the floor (open above) or the ceiling (open below).
-    ///
-    /// This is where cave biomes (dripstone, lush, fungal, frozen, molten, painted, crystal)
-    /// will choose their blocks and decorations from depth, climate and rock. Until they
-    /// exist caves are bare rock, so this returns `None`.
-    #[inline]
-    pub fn decoration(&self, _pos: IVec3, _depth: i32, _face: CaveFace) -> Option<BlockId> {
-        None
     }
 
     /// Radius of the main tunnels in field units at height `y`, `depth` under the surface,
@@ -536,13 +524,6 @@ impl Heights {
             more: ys.map(|y| 0.7 * smoothstep((DEEP_TUNNELS - 2) as f32, (DEEP_TUNNELS - 60) as f32, y as f32)).collect(),
         }
     }
-}
-
-/// Which side of a block of rock is open cave (see [`Caves::decoration`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CaveFace {
-    Floor,
-    Ceiling,
 }
 
 /// A ravine's path before it is fitted to the ground.

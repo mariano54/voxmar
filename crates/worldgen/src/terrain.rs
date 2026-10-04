@@ -17,7 +17,7 @@ use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
 use crate::biome::Biomes;
-use crate::caves::{Cave, CaveFace};
+use crate::caves::Cave;
 use crate::content::WorldContent;
 use crate::ecology::{Ground, Plant};
 use crate::features::{self, Features};
@@ -28,6 +28,7 @@ use crate::rng::hash3;
 use crate::rocks::Rocks;
 use crate::surface::{Fill, Layers, Palette, Spot};
 use crate::trees::TreeId;
+use crate::underground::Rock;
 use crate::{Body, Overworld, SEA_LEVEL, Site};
 
 /// Stone turns to deepslate below this height, 48 blocks under sea level.
@@ -152,6 +153,11 @@ impl Blocks<'_> {
         low.cmple(high).all().then_some((low, high))
     }
 
+    /// The block at `pos`; air outside the column.
+    pub fn get(&self, pos: IVec3) -> BlockId {
+        self.index(pos).map_or(BlockId::AIR, |i| self.data[i])
+    }
+
     /// Puts `block` at `pos` if it is air there; whether it did.
     pub fn put_if_air(&mut self, pos: IVec3, block: BlockId) -> bool {
         if let Some(i) = self.index(pos)
@@ -198,6 +204,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let rock = Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0);
     let mut rock_profile = Profile::default();
     let mut caves = world.caves.column(&geology, origin, top);
+    let underground = world.underground.column(world, &area, &geology, origin, top);
     let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
     let mut blocks = Blocks {
@@ -223,6 +230,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let strata = &world.biomes.get(site.biome).strata;
             caves.carve(x, z, &mut cave);
             rock.profile(x, z, &mut rock_profile);
+            let rocky = underground.rocky(x, z);
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -238,17 +246,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         continue;
                     }
                 }
-                let open = |y: i32| cave.get(y as usize).is_some_and(|&c| c != Cave::Rock);
-                let lining = if open(y + 1) {
-                    world.caves.decoration(IVec3::new(wx, y, wz), below_surface, CaveFace::Floor)
-                } else if open(y - 1) {
-                    world.caves.decoration(IVec3::new(wx, y, wz), below_surface, CaveFace::Ceiling)
-                } else {
-                    None
-                };
-                let block = if let Some(lining) = lining {
-                    lining
-                } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
+                let block = if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
                     ids.bedrock
                 } else if below_surface == 0 {
                     layers.top
@@ -258,14 +256,35 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         _ => terrain.band(strata, y, wx, wz),
                     }
                 } else {
-                    stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz)
+                    let rock = rock_profile.at(y);
+                    match underground.rock(x, y, z).filter(|_| rocky) {
+                        Some(Rock::Stones(stones)) => stones.pick((0.5 + rock * 0.53).clamp(0.0, 0.9999)),
+                        Some(Rock::Strata(strata)) => terrain.band(strata, y, wx, wz),
+                        None => stone_at(ids, stones, rock, world.seed, y, wx, wz),
+                    }
                 };
                 blocks.set_local(x, y, z, block);
             }
+            underground.decorate(x, z, &site, &cave, &mut blocks);
             // Fast water stays open in the cold.
             let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3));
             for y in height + 1..=geo.water {
                 blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
+            }
+            // Rocks break the surface of rapids, though not right under a fall, whose water
+            // must land in water.
+            if geo.current.is_some_and(|c| c.speed >= 3)
+                && matches!(geo.body, Body::Creek | Body::River)
+                && hash3(world.seed ^ 0xb01d, wx, 0, wz) % 100 < 9
+                && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().all(|&(dx, dz)| {
+                    let n = geology.get(wx + dx, wz + dz);
+                    !n.submerged() || n.water <= geo.water
+                })
+            {
+                let rock = stones.pick((hash3(world.seed ^ 0xb01e, wx, 0, wz) & 0xffff) as f32 / 65536.0);
+                for y in height + 1..=geo.water {
+                    blocks.set_local(x, y, z, rock);
+                }
             }
             // A river running in a tunnel under the ground.
             if let Some(cavity) = geo.cavity {
@@ -315,15 +334,20 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
 impl Terrain {
     /// A uniform-ish 0..1 value for dithering thresholds: smooth patches plus per-block
     /// speckle, so materials interleave in clumps and scattered blocks across a band.
-    fn dither(&self, x: i32, z: i32) -> f32 {
+    pub(crate) fn dither(&self, x: i32, z: i32) -> f32 {
         let speckle = (hash3(self.seed ^ 0x5fac, x, 0, z) & 0xffff) as f32 / 65536.0;
         let patch = self.patches.get_noise_2d(x as f32, z as f32) * 0.6 + 0.5;
         (0.55 * patch + 0.45 * speckle).clamp(0.0, 1.0)
     }
 
+    /// Uniform per-column randomness for the surface rules.
+    pub(crate) fn chance(&self, x: i32, z: i32) -> f32 {
+        (hash3(self.seed ^ 0xc4a, x, 0, z) & 0xffff) as f32 / 65536.0
+    }
+
     /// Another clumpy value in 0..1, independent of `dither`, for choosing among mixed
     /// blocks so that each forms patches with speckled edges.
-    fn mix(&self, x: i32, z: i32) -> f32 {
+    pub(crate) fn mix(&self, x: i32, z: i32) -> f32 {
         let speckle = (hash3(self.seed ^ 0x3a1f, x, 0, z) & 0xffff) as f32 / 65536.0;
         let patch = crate::climate::uniform(self.mixes.get_noise_2d(x as f32, z as f32));
         (0.8 * patch + 0.2 * speckle).clamp(0.0, 0.9999)
@@ -373,9 +397,8 @@ impl Overworld {
         let ids = &terrain.ids;
         let biome = self.biomes.get(site.biome);
         let d = terrain.dither(x, z);
-        let chance = (hash3(terrain.seed ^ 0xc4a, x, 0, z) & 0xffff) as f32 / 65536.0;
         let mix = || terrain.mix(x, z);
-        let spot = Spot { site, x, z, dither: d, mix: &mix, chance };
+        let spot = Spot { site, x, z, dither: d, mix: &mix, chance: terrain.chance(x, z) };
         let (stones, strata) = (self.stones(site), &biome.strata);
         let rules = &self.rules;
         // Whether `v` lies past a threshold that is dithered across `lo..hi`.
@@ -406,11 +429,9 @@ impl Overworld {
         if past(exposure, 3.0, 5.5) {
             return cliff();
         }
-        // Beaches along the sea and banks along rivers and lakes.
-        let beach = match site.body {
-            Body::Sea => site.continentalness < 0.7 && !past(above, 0.5, 2.5),
-            _ => site.river > 0.3 && !past(shore, 0.5, 2.5),
-        };
+        // Beaches along the sea. Banks of rivers and lakes are the river biome's own
+        // (`Site::biome` takes it near fresh water).
+        let beach = site.body == Body::Sea && site.continentalness < 0.7 && !past(above, 0.5, 2.5);
         let ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
         if past(-t, -2.5, 1.5) && terrain.ground(ground.top) == Ground::Soil {
             return Layers { top: ids.snowy_ground, ..ground };

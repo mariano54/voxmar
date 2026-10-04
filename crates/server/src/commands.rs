@@ -93,6 +93,8 @@ impl Server {
             Run::Biome => Ok(self.biome(id)),
             Run::Locate => self.locate(id, args),
         };
+        let (Ok(text) | Err(text)) = &reply;
+        tracing::debug!("/{}: {text}", def.short_name());
         match reply {
             Ok(text) if !text.is_empty() => self.tell(id, ChatKind::Info, text),
             Ok(_) => {}
