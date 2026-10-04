@@ -302,6 +302,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let rocky = underground.rocky(x, z);
             // Strata wobble the same all the way down a block column.
             let mut wobble = None;
+            // Below this the ground is plain stone (from bedrock up), unless a cave biome's
+            // rock is near: the bulk of the column, taken first.
+            let body = if rocky { 0 } else { height - if layers.filler != Fill::Stones { layers.depth } else { 0 } };
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -317,7 +320,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         continue;
                     }
                 }
-                let block = if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
+                let block = if y >= 4 && y < body {
+                    if y < DEEPSLATE { ids.deepslate } else { stone_at(ids, stones, rock_profile.at(y), world.seed, y, wx, wz) }
+                } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
                     ids.bedrock
                 } else if below_surface == 0 {
                     layers.top
