@@ -7,7 +7,6 @@ mod create;
 mod join;
 mod loading;
 mod title;
-pub mod widgets;
 mod worlds;
 
 use bevy::prelude::*;
@@ -23,7 +22,6 @@ impl Plugin for MenuPlugin {
             .add_computed_state::<InMenu>()
             .init_resource::<Notice>()
             .add_plugins((
-                widgets::WidgetsPlugin,
                 background::BackgroundPlugin,
                 title::TitlePlugin,
                 worlds::WorldsPlugin,

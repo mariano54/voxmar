@@ -7,7 +7,7 @@ use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use voxmar_engine::action::{ActionContext, ActionTarget, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo};
-use voxmar_engine::inventory::HOTBAR_SLOTS;
+use voxmar_engine::inventory::{HOTBAR_SLOTS, SLOTS};
 use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
 
 use crate::Actions;
@@ -24,7 +24,7 @@ impl Plugin for InteractPlugin {
         app.init_resource::<Target>()
             .add_systems(
                 Update,
-                (select_slot.after(player::zoom), find_target, break_and_place, draw_target)
+                (select_slot.after(player::zoom), find_target, pick_block, break_and_place, draw_target)
                     .chain()
                     .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),
@@ -76,6 +76,36 @@ fn select_slot(
     if scroll.delta.y.abs() > 0.0 && !zoom.held {
         let step = if scroll.delta.y > 0.0 { HOTBAR_SLOTS - 1 } else { 1 };
         player.selected = (player.selected + step) % HOTBAR_SLOTS;
+    }
+}
+
+/// The middle button picks the block looked at: it selects the hotbar slot holding it, or
+/// swaps it into the selected slot from the rest of the inventory, as in Minecraft.
+fn pick_block(
+    mouse: Res<ButtonInput<MouseButton>>,
+    ui: Res<UiState>,
+    target: Res<Target>,
+    world: Res<ClientWorld>,
+    net: Res<Net>,
+    actions: Res<Actions>,
+    mut player: ResMut<LocalPlayer>,
+) {
+    if !ui.cursor_locked || !mouse.just_pressed(MouseButton::Middle) {
+        return;
+    }
+    let Some(block) = target.hit.and_then(|hit| world.block(hit.block)) else { return };
+    let item = world.registry.info(block).drops;
+    let item = if item.is_air() { block } else { item };
+    let holds = |slot: usize| player.inventory.get(slot).is_some_and(|s| s.item == item);
+    if let Some(slot) = (0..HOTBAR_SLOTS).find(|&slot| holds(slot)) {
+        player.selected = slot;
+    } else if let Some(slot) = (HOTBAR_SLOTS..SLOTS).find(|&slot| holds(slot)) {
+        let selected = player.selected;
+        let count = player.inventory.get(slot).map_or(0, |s| s.count);
+        if player.inventory.move_items(slot, selected, count) {
+            let target = ActionTarget::Slots { from: slot as u8, to: selected as u8, count };
+            net.propose(actions.0.expect("core:transfer"), target);
+        }
     }
 }
 

@@ -8,7 +8,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu) or
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
@@ -33,6 +33,7 @@ mod session;
 mod settings;
 mod sfx;
 mod textures;
+mod ui;
 mod weather;
 mod world;
 
@@ -77,6 +78,7 @@ struct Options {
     mine: Option<f32>,
     time: Option<f32>,
     menu: bool,
+    inventory: bool,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
     screen: Option<Screen>,
@@ -102,6 +104,7 @@ fn parse_options() -> Result<Options, String> {
         mine: None,
         time: None,
         menu: false,
+        inventory: false,
         flicker: None,
         clip: None,
         screen: None,
@@ -130,6 +133,7 @@ fn parse_options() -> Result<Options, String> {
             "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
+            "--inventory" => options.inventory = true,
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -217,6 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menu::MenuPlugin,
         session::SessionPlugin,
         weather::WeatherPlugin,
+        ui::UiPlugin,
     ));
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
@@ -262,6 +267,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mine: options.mine,
             time: options.time,
             menu: options.menu,
+            inventory: options.inventory,
             flicker: options.flicker,
             clip: options.clip,
         });
@@ -309,6 +315,7 @@ fn setup(
     registry: Res<Registry>,
     settings: Res<Settings>,
     mut images: ResMut<Assets<Image>>,
+    mut fonts: ResMut<Assets<Font>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut crack_materials: ResMut<Assets<render::cracks::CrackMaterial>>,
@@ -341,6 +348,7 @@ fn setup(
             glow[layer as usize] = glow[layer as usize].max(info.emission as f32 / 15.0);
         }
     }
+    ui::skin::load(&mut source, &mut images, &mut fonts);
     let colormaps = source.colormaps();
     render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &glow);
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
@@ -399,16 +407,8 @@ fn setup(
         });
         icons.push(images.add(ui_image(&icon)));
     }
-    let mut sprite = |name: &str, size: (u32, u32), color: [u8; 4]| images.add(ui_image(&source.sprite(name, (size.0, size.1, color))));
-    commands.insert_resource(HudImages {
-        icons,
-        hotbar: sprite("hotbar", (182, 22), [0, 0, 0, 140]),
-        selection: sprite("hotbar_selection", (24, 23), [255, 255, 255, 90]),
-        crosshair: sprite("crosshair", (15, 15), [255, 255, 255, 0]),
-        heart_full: sprite("heart/full", (9, 9), [220, 30, 30, 255]),
-        heart_half: sprite("heart/half", (9, 9), [150, 20, 20, 255]),
-        heart_container: sprite("heart/container", (9, 9), [40, 0, 0, 255]),
-    });
+    let crosshair = images.add(ui_image(&source.sprite("crosshair", (15, 15, [255, 255, 255, 0]))));
+    commands.insert_resource(HudImages { icons, crosshair });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use bevy::anti_alias::fxaa::Fxaa;
 use bevy::anti_alias::smaa::Smaa;
 use bevy::input::InputSystems;
+use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use bevy::window::{PresentMode, PrimaryWindow};
@@ -16,9 +17,11 @@ use voxmar_protocol::MAX_FLY_SPEED;
 
 use crate::keys::Key;
 use crate::menu::Screen;
-use crate::menu::widgets::{
-    ACCENT, ButtonStyle, MUTED, Pressed, SCRIM, SOFT, TEXT, TRACK, UiFont, button_row, heading, panel, screen, spawn_button,
-    text,
+use crate::ui::skin::{PX, Piece};
+use crate::ui::sound::Silent;
+use crate::ui::widgets::{
+    ACCENT, BODY, ButtonStyle, GOLD, LARGE, MUTED, Pressed, SCRIM, SOFT, Selected, TEXT, UiFont, button_row, panel, screen,
+    shadowed, spawn_button, spawn_rule, text,
 };
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState, Zoom};
@@ -33,6 +36,7 @@ pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Rebinding>()
+            .init_resource::<OpenSection>()
             .add_systems(PostStartup, spawn_menu)
             .add_systems(PreUpdate, rebind.after(InputSystems))
             .add_systems(
@@ -45,6 +49,8 @@ impl Plugin for SettingsPlugin {
                     click_choices,
                     click_bindings,
                     click_buttons,
+                    pick_section,
+                    show_section,
                     sync_controls.run_if(resource_changed::<Settings>.or_eager(resource_changed::<Rebinding>)),
                     show_menu,
                 )
@@ -484,37 +490,43 @@ impl Choice {
         }
     }
 
-    fn step(self, settings: &mut Settings, packs: &ShaderPacks) {
+    /// Moves to the next option, or the previous one.
+    fn step(self, settings: &mut Settings, packs: &ShaderPacks, forward: bool) {
         match self {
-            Choice::FarDetail => {
-                let i = FarDetail::ALL.iter().position(|&d| d == settings.far_detail).unwrap_or(0);
-                settings.far_detail = FarDetail::ALL[(i + 1) % FarDetail::ALL.len()];
-            }
-            Choice::AntiAliasing => {
-                let i = AntiAliasing::ALL.iter().position(|&a| a == settings.anti_aliasing).unwrap_or(0);
-                settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
-            }
-            Choice::ShaderPack => settings.shader_pack = packs.next(&settings.shader_pack).to_owned(),
-            Choice::Shadows => {
-                let i = ShadowQuality::ALL.iter().position(|&q| q == settings.shadows).unwrap_or(0);
-                settings.shadows = ShadowQuality::ALL[(i + 1) % ShadowQuality::ALL.len()];
-            }
-            Choice::Water => {
-                let i = WaterQuality::ALL.iter().position(|&q| q == settings.water_quality).unwrap_or(0);
-                settings.water_quality = WaterQuality::ALL[(i + 1) % WaterQuality::ALL.len()];
-            }
-            Choice::Textures => {
-                settings.textures = match settings.textures {
-                    TextureOrder::Minecraft => TextureOrder::Voxmar,
-                    TextureOrder::Voxmar => TextureOrder::Minecraft,
+            Choice::FarDetail => settings.far_detail = cycle(&FarDetail::ALL, settings.far_detail, forward),
+            Choice::AntiAliasing => settings.anti_aliasing = cycle(&AntiAliasing::ALL, settings.anti_aliasing, forward),
+            Choice::ShaderPack => {
+                let current = settings.shader_pack.clone();
+                let mut pick = packs.next(&current).to_owned();
+                if !forward {
+                    // The pack whose next is the current one; there are only a few.
+                    let mut previous = current.clone();
+                    for _ in 0..64 {
+                        let next = packs.next(&previous).to_owned();
+                        if next == current {
+                            break;
+                        }
+                        previous = next;
+                    }
+                    pick = previous;
                 }
+                settings.shader_pack = pick;
             }
-            Choice::Particles => {
-                let i = ParticleAmount::ALL.iter().position(|&a| a == settings.particles).unwrap_or(0);
-                settings.particles = ParticleAmount::ALL[(i + 1) % ParticleAmount::ALL.len()];
+            Choice::Shadows => settings.shadows = cycle(&ShadowQuality::ALL, settings.shadows, forward),
+            Choice::Water => settings.water_quality = cycle(&WaterQuality::ALL, settings.water_quality, forward),
+            Choice::Textures => {
+                settings.textures = cycle(&[TextureOrder::Minecraft, TextureOrder::Voxmar], settings.textures, forward);
             }
+            Choice::Particles => settings.particles = cycle(&ParticleAmount::ALL, settings.particles, forward),
         }
     }
+}
+
+/// The option after (or before) `current` in `all`, wrapping around.
+fn cycle<T: Copy + PartialEq>(all: &[T], current: T, forward: bool) -> T {
+    let i = all.iter().position(|&o| o == current).unwrap_or(0);
+    let step = if forward { 1 } else { all.len() - 1 };
+    all[(i + step) % all.len()]
 }
 
 /// A key the player can rebind.
@@ -555,23 +567,68 @@ enum Control {
     Key(Binding),
 }
 
-const SECTIONS: [(&str, &[Control]); 3] = [
+impl Control {
+    fn label(self) -> &'static str {
+        match self {
+            Control::Slider(slider) => slider.label(),
+            Control::Switch(toggle) => toggle.label(),
+            Control::Choice(choice) => choice.label(),
+            Control::Key(binding) => binding.label(),
+        }
+    }
+
+    /// What the setting does, shown at the foot of the panel while the pointer is on it.
+    fn hint(self) -> &'static str {
+        match self {
+            Control::Slider(Slider::ViewDistance) => "How far the world is built in full around you. Distant terrain goes on beyond it.",
+            Control::Slider(Slider::Fov) => "How wide you see.",
+            Control::Slider(Slider::Sensitivity) => "How fast the view follows the mouse.",
+            Control::Slider(Slider::Music) => "The music's volume.",
+            Control::Slider(Slider::Sounds) => "Footsteps, blocks breaking and everything else you do.",
+            Control::Slider(Slider::Ambience) => "Wind, birds and water, as a share of the sound effects.",
+            Control::Slider(Slider::FlySpeed) => "How fast you fly. Only admins may fly faster than normal.",
+            Control::Slider(Slider::Zoom) => "How much holding the zoom key magnifies.",
+            Control::Slider(Slider::HudRaise) => "Lifts the hotbar and hearts off the bottom edge, clear of rounded corners.",
+            Control::Switch(Toggle::Vsync) => "Waits for the display between frames: no tearing, frame rate capped.",
+            Control::Switch(Toggle::VolumetricLight) => "Shafts of sunlight through trees, haze and mist.",
+            Control::Switch(Toggle::DebugOverlay) => "Frame rate, position and what you look at, top left. F3 also toggles it.",
+            Control::Switch(Toggle::CinematicZoom) => "The view follows the mouse smoothly while zoomed.",
+            Control::Switch(Toggle::ZoomInSurvival) => "Lets the zoom key work in survival, not only in creative.",
+            Control::Choice(Choice::FarDetail) => "How soon far chunks merge blocks. Fast suits slower machines and huge distances.",
+            Control::Choice(Choice::AntiAliasing) => "How edges are smoothed. MSAA also smooths leaves and plants.",
+            Control::Choice(Choice::ShaderPack) => "The look of light, sky, water and colour.",
+            Control::Choice(Choice::Shadows) => "How sun shadows are drawn: higher is softer and reaches further.",
+            Control::Choice(Choice::Water) => "Waves and reflections of the land in water.",
+            Control::Choice(Choice::Textures) => "Which texture pack comes first. Takes effect when the game next starts.",
+            Control::Choice(Choice::Particles) => "How many particles effects such as breaking blocks show.",
+            Control::Key(Binding::Chat) => "Opens the chat line. / always opens it for a command.",
+            Control::Key(Binding::Zoom) => "Hold to zoom in.",
+        }
+    }
+}
+
+/// The panel's tabs, each a page of settings. A new setting goes into the page where
+/// players would look for it.
+const SECTIONS: [(&str, &[Control]); 5] = [
     (
         "Video",
         &[
             Control::Slider(Slider::ViewDistance),
             Control::Choice(Choice::FarDetail),
             Control::Slider(Slider::Fov),
-            Control::Choice(Choice::ShaderPack),
-            Control::Choice(Choice::Textures),
             Control::Choice(Choice::AntiAliasing),
+            Control::Switch(Toggle::Vsync),
+            Control::Choice(Choice::Textures),
+        ],
+    ),
+    (
+        "Graphics",
+        &[
+            Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::Shadows),
             Control::Switch(Toggle::VolumetricLight),
             Control::Choice(Choice::Water),
             Control::Choice(Choice::Particles),
-            Control::Slider(Slider::HudRaise),
-            Control::Switch(Toggle::Vsync),
-            Control::Switch(Toggle::DebugOverlay),
         ],
     ),
     ("Audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds), Control::Slider(Slider::Ambience)]),
@@ -587,6 +644,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Slider(Slider::FlySpeed),
         ],
     ),
+    ("Interface", &[Control::Slider(Slider::HudRaise), Control::Switch(Toggle::DebugOverlay)]),
 ];
 
 #[derive(Component, Clone, Copy)]
@@ -601,6 +659,9 @@ enum MenuButton {
 
 #[derive(Component)]
 struct MenuRoot;
+/// The panel's title: "Game paused" in game, "Settings" on the title screen.
+#[derive(Component)]
+struct MenuTitle;
 /// Parts of the panel that only make sense in some places.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum ShownWhen {
@@ -610,6 +671,18 @@ enum ShownWhen {
     /// world.
     Admin,
 }
+/// A tab, by its index in `SECTIONS`.
+#[derive(Component)]
+struct SectionTab(usize);
+/// A tab's page of settings.
+#[derive(Component)]
+struct SectionPage(usize);
+/// A row of the panel, which shows its hint while the pointer is on it.
+#[derive(Component)]
+struct SettingRow(Control);
+/// Where the hovered row's hint shows.
+#[derive(Component)]
+struct HintText;
 /// The draggable area of a slider.
 #[derive(Component)]
 struct SliderTrack(Slider);
@@ -632,28 +705,58 @@ struct KeyValue(Binding);
 #[derive(Resource, Default)]
 struct Rebinding(Option<Binding>);
 
-const PANEL_WIDTH: f32 = 520.0;
-const SLIDER_WIDTH: f32 = 200.0;
-const VALUE_WIDTH: f32 = 84.0;
-const KNOB: f32 = 16.0;
+/// The tab showing; kept while the panel is closed, so it opens where it was left.
+#[derive(Resource, Default)]
+struct OpenSection(usize);
+
+const PANEL_WIDTH: f32 = 380.0 * PX;
+const TAB_WIDTH: f32 = 72.0 * PX;
+const ROW: f32 = 18.0 * PX;
+const SLIDER_WIDTH: f32 = 96.0 * PX;
+const VALUE_WIDTH: f32 = 50.0 * PX;
+const CONTROL_WIDTH: f32 = 100.0 * PX;
 
 fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
+    let tallest = SECTIONS.iter().map(|(_, controls)| controls.len()).max().unwrap_or(0) as f32;
     commands.spawn((MenuRoot, screen(SCRIM), GlobalZIndex(1), Visibility::Hidden)).with_children(|root| {
         root.spawn(panel(PANEL_WIDTH)).with_children(|panel| {
-            panel.spawn(heading(font, "Settings"));
-            for (section, controls) in SECTIONS {
-                let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(18.0), Val::Px(2.0));
-                panel.spawn((Node { margin, ..default() }, text(font, section.to_uppercase(), 12.0, MUTED)));
-                for &control in controls {
-                    spawn_row(panel, font, control);
-                }
-            }
-            panel.spawn(button_row(26.0)).with_children(|row| {
-                spawn_button(row, font, "Resume", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
+            let title = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
+            panel.spawn(title).with_children(|row| {
+                row.spawn(shadowed(font, "◆", BODY, ACCENT));
+                row.spawn((MenuTitle, shadowed(font, "Settings", LARGE, GOLD)));
+                row.spawn(shadowed(font, "◆", BODY, ACCENT));
+            });
+            spawn_rule(panel, 4.0 * PX);
+            let body = Node { column_gap: Val::Px(8.0 * PX), min_height: Val::Px(tallest * ROW), ..default() };
+            panel.spawn(body).with_children(|body| {
+                let tabs = Node { width: Val::Px(TAB_WIDTH), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0 * PX), ..default() };
+                body.spawn(tabs).with_children(|tabs| {
+                    for (index, (name, _)) in SECTIONS.iter().enumerate() {
+                        tabs.spawn(Node::default()).with_children(|row| {
+                            spawn_button(row, font, name, ButtonStyle::Secondary, SectionTab(index));
+                        });
+                    }
+                });
+                body.spawn(Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, ..default() }).with_children(|pages| {
+                    for (index, (_, controls)) in SECTIONS.iter().enumerate() {
+                        let page = Node { flex_direction: FlexDirection::Column, display: Display::None, ..default() };
+                        pages.spawn((SectionPage(index), page)).with_children(|page| {
+                            for &control in *controls {
+                                spawn_row(page, font, control);
+                            }
+                        });
+                    }
+                });
+            });
+            spawn_rule(panel, 4.0 * PX);
+            let hint = Node { min_height: Val::Px(10.0 * PX), ..default() };
+            panel.spawn(hint).with_child((HintText, text(font, "", BODY, MUTED)));
+            panel.spawn(button_row(4.0 * PX)).with_children(|row| {
+                spawn_button(row, font, "Back to game", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
                 spawn_button(row, font, "Done", ButtonStyle::Primary, (MenuButton::Done, ShownWhen::OnTitle));
             });
-            panel.spawn((button_row(12.0), ShownWhen::InGame)).with_children(|row| {
+            panel.spawn((button_row(4.0 * PX), ShownWhen::InGame)).with_children(|row| {
                 spawn_button(row, font, "Save and quit to title", ButtonStyle::Secondary, MenuButton::QuitToTitle);
                 spawn_button(row, font, "Quit game", ButtonStyle::Secondary, MenuButton::Quit);
             });
@@ -663,24 +766,13 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
 
 /// A label on the left and its control on the right.
 fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Control) {
-    let label = match control {
-        Control::Slider(slider) => slider.label(),
-        Control::Switch(toggle) => toggle.label(),
-        Control::Choice(choice) => choice.label(),
-        Control::Key(binding) => binding.label(),
-    };
-    let node = Node {
-        height: Val::Px(38.0),
-        justify_content: JustifyContent::SpaceBetween,
-        align_items: AlignItems::Center,
-        ..default()
-    };
-    let mut row = panel.spawn(node);
+    let node = Node { height: Val::Px(ROW), justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() };
+    let mut row = panel.spawn((Button, Silent, SettingRow(control), node));
     if control == Control::Slider(Slider::FlySpeed) {
         row.insert(ShownWhen::Admin);
     }
     row.with_children(|row| {
-        row.spawn(text(font, label, 16.0, TEXT));
+        row.spawn(text(font, control.label(), BODY, TEXT));
         match control {
             Control::Slider(slider) => spawn_slider(row, font, slider),
             Control::Switch(toggle) => spawn_switch(row, toggle),
@@ -690,71 +782,75 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
     });
 }
 
-/// A thin track filled up to the value, with a round knob at its end, and the value.
+/// A recessed track lit teal up to the value, a gold knob at its end, and the value.
 fn spawn_slider(row: &mut ChildSpawnerCommands, font: &Handle<Font>, slider: Slider) {
-    let rounded = |radius: f32| BorderRadius::all(Val::Px(radius));
-    let area = Node { width: Val::Px(SLIDER_WIDTH), height: Val::Px(24.0), align_items: AlignItems::Center, ..default() };
-    let track = Node { width: Val::Percent(100.0), height: Val::Px(4.0), border_radius: rounded(2.0), ..default() };
-    let fill = Node { height: Val::Percent(100.0), border_radius: rounded(2.0), ..default() };
+    let knob = Piece::Knob.size();
+    let area = Node { width: Val::Px(SLIDER_WIDTH), height: Val::Px(knob.y), align_items: AlignItems::Center, ..default() };
+    let track = Node { width: Val::Percent(100.0), height: Val::Px(6.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
+    let fill = Node { height: Val::Percent(100.0), ..default() };
     let knob = Node {
         position_type: PositionType::Absolute,
-        right: Val::Px(-KNOB / 2.0),
-        top: Val::Px((4.0 - KNOB) / 2.0),
-        width: Val::Px(KNOB),
-        height: Val::Px(KNOB),
-        border_radius: rounded(KNOB / 2.0),
+        right: Val::Px(-knob.x / 2.0),
+        top: Val::Px((4.0 * PX - knob.y) / 2.0),
+        width: Val::Px(knob.x),
+        height: Val::Px(knob.y),
         ..default()
     };
     let value = Node { width: Val::Px(VALUE_WIDTH), justify_content: JustifyContent::FlexEnd, ..default() };
-    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(16.0), ..default() }).with_children(|control| {
+    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), ..default() }).with_children(|control| {
         control.spawn((Button, SliderTrack(slider), RelativeCursorPosition::default(), area)).with_children(|area| {
-            area.spawn((track, BackgroundColor(TRACK))).with_children(|track| {
-                track.spawn((SliderFill(slider), fill, BackgroundColor(ACCENT))).with_child((knob, BackgroundColor(Color::WHITE)));
+            area.spawn((track, Piece::Well.image())).with_children(|track| {
+                track.spawn((SliderFill(slider), fill, Piece::Bar.image())).with_child((knob, Piece::Knob.image()));
             });
         });
-        control.spawn(value).with_child((SliderValue(slider), text(font, "", 15.0, SOFT)));
+        control.spawn(value).with_child((SliderValue(slider), text(font, "", BODY, SOFT)));
     });
 }
 
-/// A pill whose knob sits right and lights up when on.
+/// A recess with a gold knob that slides right, and lights teal, when on.
 fn spawn_switch(row: &mut ChildSpawnerCommands, toggle: Toggle) {
+    let size = Piece::KnobSmall.size();
     let track = Node {
-        width: Val::Px(44.0),
-        height: Val::Px(24.0),
-        padding: UiRect::all(Val::Px(3.0)),
-        border_radius: BorderRadius::MAX,
+        width: Val::Px(2.5 * size.x + 4.0 * PX),
+        height: Val::Px(size.y + 4.0 * PX),
+        padding: UiRect::all(Val::Px(2.0 * PX)),
         ..default()
     };
-    let knob = Node { width: Val::Px(18.0), height: Val::Px(18.0), border_radius: BorderRadius::MAX, ..default() };
-    row.spawn((Button, Switch(toggle), track, BackgroundColor(TRACK))).with_child((knob, BackgroundColor(Color::WHITE)));
+    let knob = Node { width: Val::Px(size.x), height: Val::Px(size.y), ..default() };
+    row.spawn((Button, Switch(toggle), track, Piece::Well.image())).with_child((knob, Piece::KnobSmall.image()));
 }
 
-/// A pill showing the current option.
+/// A button showing the current option between arrows: a click steps forward, a right
+/// click back.
 fn spawn_choice(row: &mut ChildSpawnerCommands, font: &Handle<Font>, choice: Choice) {
-    let pill = Node {
-        width: Val::Px(120.0),
-        height: Val::Px(26.0),
+    let mut button = Entity::PLACEHOLDER;
+    row.spawn(Node { width: Val::Px(CONTROL_WIDTH), ..default() }).with_children(|cell| {
+        button = spawn_button(cell, font, "", ButtonStyle::Secondary, ChoiceButton(choice));
+    });
+    row.commands().entity(button).insert(Node {
+        flex_grow: 1.0,
+        height: Val::Px(14.0 * PX),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
-        border_radius: BorderRadius::MAX,
         ..default()
-    };
-    row.spawn((Button, ChoiceButton(choice), pill, BackgroundColor(TRACK)))
-        .with_child((ChoiceValue(choice), text(font, "", 14.0, TEXT)));
+    });
+    row.commands().entity(button).with_child((ChoiceValue(choice), Node::default()));
 }
 
-/// A pill showing the bound key; clicked, it waits for the next key pressed.
+/// A button showing the bound key; clicked, it waits for the next key pressed.
 fn spawn_key(row: &mut ChildSpawnerCommands, font: &Handle<Font>, binding: Binding) {
-    let pill = Node {
-        width: Val::Px(120.0),
-        height: Val::Px(26.0),
+    let mut button = Entity::PLACEHOLDER;
+    row.spawn(Node { width: Val::Px(CONTROL_WIDTH), ..default() }).with_children(|cell| {
+        button = spawn_button(cell, font, "", ButtonStyle::Secondary, KeyButton(binding));
+    });
+    row.commands().entity(button).insert(Node {
+        flex_grow: 1.0,
+        height: Val::Px(14.0 * PX),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
-        border_radius: BorderRadius::MAX,
         ..default()
-    };
-    row.spawn((Button, KeyButton(binding), pill, BackgroundColor(TRACK)))
-        .with_child((KeyValue(binding), text(font, "", 14.0, TEXT)));
+    });
+    row.commands().entity(button).with_child((KeyValue(binding), Node::default()));
 }
 
 /// F3 toggles the debug overlay, menu or not.
@@ -765,10 +861,21 @@ fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>)
 }
 
 /// Sets a slider's value from the cursor while it is held, snapped to the slider's steps.
-fn drag_sliders(mut settings: ResMut<Settings>, sliders: Query<(&SliderTrack, &Interaction, &RelativeCursorPosition)>) {
+/// The wheel over a slider moves it a step.
+fn drag_sliders(
+    mut settings: ResMut<Settings>,
+    sliders: Query<(&SliderTrack, &Interaction, &RelativeCursorPosition)>,
+    wheel: Res<AccumulatedMouseScroll>,
+) {
     for (slider, interaction, cursor) in &sliders {
-        let (Interaction::Pressed, Some(cursor)) = (interaction, cursor.normalized) else { continue };
         let (min, max, step) = slider.0.range();
+        if *interaction == Interaction::Hovered && wheel.delta.y != 0.0 {
+            let value = (slider.0.get(&settings) + step * wheel.delta.y.signum() as i32).clamp(min, max);
+            if slider.0.get(&settings) != value {
+                slider.0.set(&mut settings, value);
+            }
+        }
+        let (Interaction::Pressed, Some(cursor)) = (interaction, cursor.normalized) else { continue };
         let along = (cursor.x + 0.5).clamp(0.0, 1.0);
         let value = (min + (along * (max - min) as f32 / step as f32).round() as i32 * step).min(max);
         if slider.0.get(&settings) != value {
@@ -786,19 +893,25 @@ fn click_switches(mut settings: ResMut<Settings>, switches: Query<(&Switch, &Int
     }
 }
 
+/// A click steps a choice forward; a right click (or Control-click) steps it back.
 fn click_choices(
     mut settings: ResMut<Settings>,
     packs: Res<ShaderPacks>,
-    choices: Query<(&ChoiceButton, &Interaction), Changed<Interaction>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    choices: Query<(&ChoiceButton, &Interaction)>,
 ) {
+    let back_click = mouse.just_pressed(MouseButton::Right);
     for (choice, interaction) in &choices {
-        if *interaction == Interaction::Pressed {
-            choice.0.step(&mut settings, &packs);
+        let pressed = *interaction == Interaction::Pressed && mouse.just_pressed(MouseButton::Left);
+        if pressed || (back_click && *interaction == Interaction::Hovered) {
+            let control = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+            choice.0.step(&mut settings, &packs, pressed && !control);
         }
     }
 }
 
-/// Clicking a key's pill waits for a new key; clicking it again stops waiting.
+/// Clicking a key's button waits for a new key; clicking it again stops waiting.
 fn click_bindings(mut rebinding: ResMut<Rebinding>, buttons: Query<(&KeyButton, &Interaction), Changed<Interaction>>) {
     for (button, interaction) in &buttons {
         if *interaction == Interaction::Pressed {
@@ -817,6 +930,58 @@ fn rebind(mut keys: ResMut<ButtonInput<KeyCode>>, mut rebinding: ResMut<Rebindin
     rebinding.0 = None;
     if key != KeyCode::Escape && binding.get(&settings) != Key(key) {
         binding.set(&mut settings, Key(key));
+    }
+}
+
+/// A tab clicked opens its page; Tab and Shift-Tab step through the pages.
+fn pick_section(
+    tabs: Query<(&SectionTab, &Interaction), Changed<Interaction>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    rebinding: Res<Rebinding>,
+    mut open: ResMut<OpenSection>,
+    root: Query<&Visibility, With<MenuRoot>>,
+) {
+    for (tab, interaction) in &tabs {
+        if *interaction == Interaction::Pressed && open.0 != tab.0 {
+            open.0 = tab.0;
+        }
+    }
+    let shown = root.single().is_ok_and(|v| *v != Visibility::Hidden);
+    if shown && rebinding.0.is_none() && keys.just_pressed(KeyCode::Tab) {
+        let back = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        open.0 = (open.0 + if back { SECTIONS.len() - 1 } else { 1 }) % SECTIONS.len();
+    }
+}
+
+/// Shows the open tab's page, marks its tab, and says what the hovered row does.
+fn show_section(
+    mut commands: Commands,
+    open: Res<OpenSection>,
+    tabs: Query<(Entity, &SectionTab, Has<Selected>)>,
+    mut pages: Query<(&SectionPage, &mut Node)>,
+    rows: Query<(&SettingRow, &Interaction)>,
+    mut hint: Query<&mut Text, With<HintText>>,
+) {
+    for (entity, tab, selected) in &tabs {
+        if (tab.0 == open.0) != selected {
+            if selected {
+                commands.entity(entity).remove::<Selected>();
+            } else {
+                commands.entity(entity).insert(Selected);
+            }
+        }
+    }
+    for (page, mut node) in &mut pages {
+        let display = if page.0 == open.0 { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
+        }
+    }
+    let hovered = rows.iter().find(|(_, interaction)| **interaction != Interaction::None).map_or("", |(row, _)| row.0.hint());
+    if let Ok(mut text) = hint.single_mut()
+        && text.0 != hovered
+    {
+        hovered.clone_into(&mut text.0);
     }
 }
 
@@ -847,26 +1012,30 @@ fn click_buttons(
 /// Mirrors the settings in the menu's controls.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_controls(
+    mut commands: Commands,
+    font: Res<UiFont>,
     settings: Res<Settings>,
     mut fills: Query<(&SliderFill, &mut Node), Without<Switch>>,
     mut values: Query<(&SliderValue, &mut Text)>,
-    mut switches: Query<(&Switch, &mut Node, &mut BackgroundColor)>,
-    mut choices: Query<(&ChoiceValue, &mut Text), Without<SliderValue>>,
-    mut keys: Query<(&KeyValue, &mut Text), (Without<SliderValue>, Without<ChoiceValue>)>,
+    mut switches: Query<(&Switch, &mut Node, &mut ImageNode)>,
+    choices: Query<(Entity, &ChoiceValue)>,
+    keys: Query<(Entity, &KeyValue)>,
     rebinding: Res<Rebinding>,
     packs: Res<ShaderPacks>,
 ) {
-    for (key, mut text) in &mut keys {
-        let value = if rebinding.0 == Some(key.0) { "Press a key" } else { key.0.get(&settings).label() };
-        if text.0 != value {
-            value.clone_into(&mut text.0);
+    // Choice and key buttons show their value as one text, replaced when it changes.
+    let mut show = |entity: Entity, value: String, color: Color| {
+        commands.entity(entity).despawn_children().with_child(shadowed(&font.0, value, BODY, color));
+    };
+    for (entity, key) in &keys {
+        if rebinding.0 == Some(key.0) {
+            show(entity, "Press a key".into(), ACCENT);
+        } else {
+            show(entity, key.0.get(&settings).label().into(), TEXT);
         }
     }
-    for (choice, mut text) in &mut choices {
-        let value = choice.0.text(&settings, &packs);
-        if text.0 != value {
-            text.0 = value;
-        }
+    for (entity, choice) in &choices {
+        show(entity, format!("◂ {} ▸", choice.0.text(&settings, &packs)), TEXT);
     }
     for (fill, mut node) in &mut fills {
         let (min, max, _) = fill.0.range();
@@ -875,10 +1044,10 @@ fn sync_controls(
     for (value, mut text) in &mut values {
         text.0 = value.0.text(value.0.get(&settings));
     }
-    for (switch, mut node, mut background) in &mut switches {
+    for (switch, mut node, mut image) in &mut switches {
         let on = switch.0.get(&settings);
         node.justify_content = if on { JustifyContent::FlexEnd } else { JustifyContent::FlexStart };
-        background.0 = if on { ACCENT } else { TRACK };
+        image.image = if on { Piece::Bar.handle() } else { Piece::Well.handle() };
     }
 }
 
@@ -896,7 +1065,8 @@ fn show_menu(
     mut root: Query<&mut Visibility, With<MenuRoot>>,
     mut nodes: Query<(&mut Node, &ShownWhen)>,
     quit_to_title: Query<(&MenuButton, &Children)>,
-    mut texts: Query<&mut Text>,
+    mut title: Query<&mut Text, With<MenuTitle>>,
+    mut texts: Query<&mut Text, Without<MenuTitle>>,
     mut rebinding: ResMut<Rebinding>,
 ) {
     let in_game = *screen.get() == Screen::InGame;
@@ -911,6 +1081,12 @@ fn show_menu(
     }
     if !open {
         return;
+    }
+    if let Ok(mut text) = title.single_mut() {
+        let heading = if in_game { "Game paused" } else { "Settings" };
+        if text.0 != heading {
+            heading.clone_into(&mut text.0);
+        }
     }
     for (mut node, when) in &mut nodes {
         let shown = match when {

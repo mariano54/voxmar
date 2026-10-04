@@ -1,0 +1,234 @@
+// The interface's pixel art: panels, buttons, slots, wells, sliders, tooltips and the HUD,
+// drawn at two screen pixels per texel. Dark slate bodies with a gold trim are the frame;
+// arcane teal marks what the pointer is on and what is chosen.
+//
+// Most pieces are nine-sliced: the corners stay as drawn and the edges and middle stretch,
+// so every row of an edge must look the same along it. The game slices each piece at a
+// fixed inset (see `crates/client/src/ui/skin.rs`); a pack that redraws a piece keeps its
+// size and inset. Variants are the same rows with other palettes: `body` is the slate
+// (darkest first), `edge` the outline and `glow` the teal.
+(
+    legend: {
+        'k': "#06070c",
+        'e': "edge:0",
+        'D': "body:0", 'd': "body:1", 'f': "body:2", 'm': "body:3", 'h': "body:4",
+        'b': "frame:0", 'g': "frame:1", 'G': "frame:2", 'W': "frame:3",
+        'q': "glow:0", 't': "glow:1", 'T': "glow:2",
+        'w': "well:0", 'v': "well:1", 'x': "well:2",
+    },
+    palettes: {
+        "ui_slate": ["#0d0f17", "#141724", "#1c2031", "#283048", "#3a4363"],
+        "ui_slate_raised": ["#11141f", "#1a1e2e", "#262b42", "#333b58", "#4c5680"],
+        "ui_slate_hover": ["#141826", "#1f2438", "#2d3450", "#3c4568", "#5a6696"],
+        "ui_slate_down": ["#0a0c13", "#11141f", "#1d2134", "#272d45", "#3a4363"],
+        "ui_gold": ["#6b4b1f", "#b08236", "#e8c164", "#fff1b8"],
+        "ui_teal": ["#17504b", "#3fb3a5", "#a6fff2"],
+        "ui_teal_body": ["#0a2a29", "#103f3c", "#175a55", "#1f7770", "#3aa79b"],
+        "ui_teal_body_hover": ["#0c3331", "#134b47", "#1c6b65", "#258c83", "#4cc4b6"],
+        "ui_red_body": ["#2c0b10", "#4a121a", "#6b1b25", "#8a2632", "#b8404d"],
+        "ui_red_body_hover": ["#360e14", "#591620", "#80222d", "#a12f3c", "#d45662"],
+        "ui_black": ["#06070c"],
+        "ui_teal_edge": ["#5fe1d0"],
+        "ui_gold_edge": ["#e8c164"],
+        "ui_red_edge": ["#ff8a80"],
+        "ui_pit": ["#07080d", "#0e1019", "#2a3048"],
+        "ui_pit_hover": ["#07080d", "#161b2a", "#3fb3a5"],
+    },
+    textures: {
+        // A window: black outline, gold trim, an inner outline, then a bevelled slate
+        // body. Sliced at 4.
+        "ui/panel": (size: (16, 16), palettes: {"body": "ui_slate", "frame": "ui_gold"}, layers: [
+            Grid(rows: [
+                ".kkkkkkkkkkkkkk.",
+                "kGGGGGGGGGGGGGgk",
+                "kGkkkkkkkkkkkkbk",
+                "kGkhhhhhhhhhmkbk",
+                "kGkhffffffffdkbk",
+                "kGkhffffffffdkbk",
+                "kGkhffffffffdkbk",
+                "kGkhffffffffdkbk",
+                "kGkhffffffffdkbk",
+                "kGkhffffffffdkbk",
+                "kGkhffffffffdkbk",
+                "kGkhffffffffdkbk",
+                "kGkmddddddddDkbk",
+                "kgkkkkkkkkkkkkbk",
+                "kgbbbbbbbbbbbbbk",
+                ".kkkkkkkkkkkkkk.",
+            ]),
+        ]),
+        // A raised slate block with a chunky shadow underneath. Sliced at 3.
+        "ui/button": (size: (10, 10), palettes: {"body": "ui_slate_raised", "edge": "ui_black"}, layers: [
+            Grid(rows: [
+                ".eeeeeeee.",
+                "ehhhhhhhme",
+                "ehffffffde",
+                "ehffffffde",
+                "ehffffffde",
+                "ehffffffde",
+                "ehffffffde",
+                "ehffffffde",
+                "emdddddddD",
+                ".eeeeeeee.",
+            ]),
+        ]),
+        "ui/button_hover": (base: "ui/button", palettes: {"body": "ui_slate_hover", "edge": "ui_teal_edge"}),
+        "ui/button_selected": (base: "ui/button", palettes: {"body": "ui_slate_hover", "edge": "ui_gold_edge"}),
+        // Pressed in: the light moves to the bottom edge and the face drops a texel.
+        "ui/button_down": (size: (10, 10), palettes: {"body": "ui_slate_down", "edge": "ui_teal_edge"}, layers: [
+            Grid(rows: [
+                ".eeeeeeee.",
+                "eDDDDDDDDe",
+                "eDddddddde",
+                "edffffffme",
+                "edffffffme",
+                "edffffffme",
+                "edffffffme",
+                "edffffffme",
+                "edmmmmmmhe",
+                ".eeeeeeee.",
+            ]),
+        ]),
+        "ui/primary": (base: "ui/button", palettes: {"body": "ui_teal_body"}),
+        "ui/primary_hover": (base: "ui/button", palettes: {"body": "ui_teal_body_hover", "edge": "ui_teal_edge"}),
+        "ui/primary_down": (base: "ui/button_down", palettes: {"body": "ui_teal_body"}),
+        "ui/danger": (base: "ui/button", palettes: {"body": "ui_red_body"}),
+        "ui/danger_hover": (base: "ui/button", palettes: {"body": "ui_red_body_hover", "edge": "ui_red_edge"}),
+        "ui/danger_down": (base: "ui/button_down", palettes: {"body": "ui_red_body", "edge": "ui_red_edge"}),
+        // A recess: item slots, text fields, slider tracks. Shadowed along the top and left,
+        // lit along the bottom and right. Sliced at 2.
+        "ui/well": (size: (6, 6), palettes: {"well": "ui_pit"}, layers: [
+            Grid(rows: [
+                "wwwwwx",
+                "wvvvvx",
+                "wvvvvx",
+                "wvvvvx",
+                "wvvvvx",
+                "xxxxxx",
+            ]),
+        ]),
+        "ui/well_hover": (base: "ui/well", palettes: {"well": "ui_pit_hover"}),
+        // A focused text field or the slot the pointer is on: lit teal all round.
+        "ui/well_focus": (size: (6, 6), palettes: {"well": "ui_pit", "glow": "ui_teal"}, layers: [
+            Grid(rows: [
+                "tttttt",
+                "tvvvvt",
+                "tvvvvt",
+                "tvvvvt",
+                "tvvvvt",
+                "tttttt",
+            ]),
+        ]),
+        // What fills a slider's track, and a switch that is on. Sliced at 1.
+        "ui/bar": (size: (4, 4), palettes: {"glow": "ui_teal"}, layers: [
+            Grid(rows: ["TTTT", "tttt", "tttt", "qqqq"]),
+        ]),
+        // A slider's knob, drawn whole at two pixels per texel.
+        "ui/knob": (size: (6, 9), palettes: {"frame": "ui_gold"}, layers: [
+            Grid(rows: [
+                ".kkkk.",
+                "kWGGgk",
+                "kGggbk",
+                "kGggbk",
+                "kGggbk",
+                "kGggbk",
+                "kGggbk",
+                "kgbbbk",
+                ".kkkk.",
+            ]),
+        ]),
+        // A switch's knob.
+        "ui/knob_small": (size: (6, 6), palettes: {"frame": "ui_gold"}, layers: [
+            Grid(rows: [
+                ".kkkk.",
+                "kWGGgk",
+                "kGggbk",
+                "kGggbk",
+                "kgbbbk",
+                ".kkkk.",
+            ]),
+        ]),
+        // A tooltip: near-black glass with a teal rim, lit along the top. Sliced at 3.
+        "ui/tooltip": (size: (8, 8), palettes: {"glow": "ui_teal"}, layers: [
+            Grid(legend: {'F': "#0a0b12f0"}, rows: [
+                ".kkkkkk.",
+                "kTTTTTTk",
+                "ktFFFFtk",
+                "ktFFFFtk",
+                "ktFFFFtk",
+                "ktFFFFtk",
+                "kqqqqqqk",
+                ".kkkkkk.",
+            ]),
+        ]),
+        // The hotbar's frame: the panel's trim, slimmer. Sliced at 3.
+        "ui/frame": (size: (8, 8), palettes: {"body": "ui_slate", "frame": "ui_gold"}, layers: [
+            Grid(rows: [
+                ".kkkkkk.",
+                "kGGGGGgk",
+                "kGkkkkbk",
+                "kGkDDkbk",
+                "kGkDDkbk",
+                "kgkkkkbk",
+                "kgbbbbbk",
+                ".kkkkkk.",
+            ]),
+        ]),
+        // The chosen hotbar slot: a gold ring with bright corners, open in the middle.
+        // Sliced at 3.
+        "ui/selection": (size: (10, 10), palettes: {"frame": "ui_gold"}, layers: [
+            Grid(rows: [
+                "kkkkkkkkkk",
+                "kWWGGGGWWk",
+                "kWbbbbbbGk",
+                "kGb....bGk",
+                "kGb....bGk",
+                "kGb....bGk",
+                "kGb....bGk",
+                "kWbbbbbbWk",
+                "kWWGGGGWWk",
+                "kkkkkkkkkk",
+            ]),
+        ]),
+        // Health.
+        "ui/heart": (size: (9, 9), layers: [
+            Grid(legend: {'r': "#d8263b", 'h': "#ff7d86", 'w': "#ffe0e0", 'd': "#8c1022"}, rows: [
+                ".kk...kk.",
+                "kwhkkkhrk",
+                "khrrkrrrk",
+                "krrrrrrdk",
+                "krrrrrrdk",
+                ".krrrrdk.",
+                "..krrdk..",
+                "...kdk...",
+                "....k....",
+            ]),
+        ]),
+        "ui/heart_half": (size: (9, 9), layers: [
+            Grid(legend: {'r': "#d8263b", 'h': "#ff7d86", 'w': "#ffe0e0", 'd': "#8c1022", 'o': "#2a1218"}, rows: [
+                ".kk...kk.",
+                "kwhkkkook",
+                "khrrkoook",
+                "krrrroook",
+                "krrrroook",
+                ".krrrook.",
+                "..krrok..",
+                "...kdk...",
+                "....k....",
+            ]),
+        ]),
+        "ui/heart_empty": (size: (9, 9), layers: [
+            Grid(legend: {'o': "#2a1218", 'p': "#3d1a22"}, rows: [
+                ".kk...kk.",
+                "kppkkkppk",
+                "kpookoook",
+                "koooooook",
+                "koooooook",
+                ".koooook.",
+                "..koook..",
+                "...kok...",
+                "....k....",
+            ]),
+        ]),
+    },
+)

@@ -366,10 +366,16 @@ copied.
 - What we took: the voxel grammar the whole game builds on, and many rules matched to it:
   how water and lava flow, how breaking a block cracks and scatters it, its light curve and
   per-face shading, fancy leaves, how music plays now and then, the 1.18 noise caves
-  (cheese, spaghetti and noodle caves) and aquifers, and multi-noise biome placement.
+  (cheese, spaghetti and noodle caves) and aquifers, and multi-noise biome placement. Its
+  interface conventions: the inventory screen's mouse and keyboard handling (click,
+  right-click halves, drag to spread evenly or one by one, double-click to gather,
+  shift-click between hotbar and pack, number keys to swap), item names coloured by rarity
+  in tooltips and above the hotbar, middle-click to pick a block, and the blurred world
+  behind menus (1.20.5). Our font and interface art are our own drawings, not Minecraft's.
 - Where: `crates/engine/src/fluid.rs`, `crates/client/src/breaking.rs`,
   `render/cracks.rs`, `render/lighting.wgsl`, `music.rs`, `sfx/minecraft.rs`,
-  `textures.rs`, and `crates/worldgen/src/caves.rs`.
+  `textures.rs`, `crates/worldgen/src/caves.rs`, `crates/engine/src/inventory.rs`,
+  `crates/client/src/hud/inventory.rs`, `hud.rs`, `interact.rs` and `ui/blur.rs`.
 - Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md): the 1.18 noise
   router as the foundation of our terrain. Continentalness, erosion and peaks-and-valleys
   noises define a point at every position; nested cubic Hermite splines turn it into the
