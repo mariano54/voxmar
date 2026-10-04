@@ -238,9 +238,9 @@ const BASE: [(f32, f32); 11] = [
     (-0.12, -10.0),
     (-0.07, -4.0),
     (COAST, 0.5),
-    (0.02, 3.0),
-    (0.12, 6.0),
-    (0.4, 15.0),
+    (0.02, 4.0),
+    (0.12, 7.5),
+    (0.4, 16.0),
     (1.0, 30.0),
 ];
 
@@ -345,8 +345,10 @@ impl Geology {
         // Broad valleys, and passes where they cross the ranges.
         let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, self.valleys.get_noise_2d(wx, wz).abs());
         let land = above.max(0.0) + shelf + rise;
+        // Valleys cut into what rises above the lowest land, so they never sink low plains
+        // into the sea.
         let depth = VALLEY_DEPTH + (PASS_DEPTH - VALLEY_DEPTH) * mountain;
-        let above = above.min(0.0) + land * (1.0 - depth * valley * smoothstep(0.0, 0.1, continental));
+        let above = above.min(0.0) + land - depth * valley * smoothstep(0.0, 0.1, continental) * (land - 5.0).max(0.0);
 
         let hilly = 1.0 - smoothstep(-0.4, 0.5, hilliness);
         Relief {

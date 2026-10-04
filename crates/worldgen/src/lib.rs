@@ -783,24 +783,38 @@ mod tests {
             }
         }
         println!("seed {seed}, spawn {spawn}, volcanism {:.2}", world.dials().volcanism);
-        let view = |name: &str, x: i32, z: i32, top: f32, back: f32| {
-            // From the south-east, raised, looking at the top.
+        // A camera `back` blocks from (x, z) towards `direction` (radians from +x), `raise`
+        // above the top or clear of the ground and any water there, looking at the top.
+        let view = |name: &str, x: i32, z: i32, top: f32, back: f32, direction: f32, raise: f32| {
             let target = voxmar_engine::glam::Vec3::new(x as f32, top, z as f32);
-            let (cx, cz) = ((x as f32 + back * 0.7) as i32, (z as f32 + back * 0.7) as i32);
-            let ground = world.height(cx, cz) as f32;
-            let eye = ground + 1.0 + 1.62;
-            let camera_y = (top + back * 0.25).max(ground + 6.0);
+            let (cx, cz) = ((x as f32 + back * direction.cos()) as i32, (z as f32 + back * direction.sin()) as i32);
+            let geo = world.geo(cx, cz);
+            let eye = geo.height as f32 + 1.0 + 1.62;
+            let camera_y = (top + raise).max(geo.height.max(geo.water) as f32 + 6.0);
             let d = target - voxmar_engine::glam::Vec3::new(cx as f32, camera_y, cz as f32);
             let yaw = (-d.x).atan2(-d.z).to_degrees();
             let pitch = d.y.atan2(d.x.hypot(d.z)).to_degrees();
             println!("{name} at {x},{top:.0},{z}: --command \"/tp {cx} {cz}\" --pose 0,{:.0},0,{yaw:.0},{pitch:.0}", camera_y - eye);
         };
-        view("highest peak", peak.1, peak.2, peak.0, 600.0);
+        // The range from afar: from the dry lowland, about a kilometre off, that sees most
+        // of it.
+        let lowland = (0..16)
+            .map(|k| k as f32 * std::f32::consts::TAU / 16.0)
+            .filter_map(|a| {
+                let (cx, cz) = ((peak.1 as f32 + 900.0 * a.cos()) as i32, (peak.2 as f32 + 900.0 * a.sin()) as i32);
+                let geo = world.geo(cx, cz);
+                (!geo.submerged() && geo.height > SEA_LEVEL).then_some((geo.height, a))
+            })
+            .min_by_key(|&(h, _)| h);
+        if let Some((ground, a)) = lowland {
+            view("range from afar", peak.1, peak.2, peak.0, 900.0, a, ground as f32 + 40.0 - peak.0);
+        }
+        view("highest peak", peak.1, peak.2, peak.0, 600.0, std::f32::consts::FRAC_PI_4, 150.0);
         for (i, &(score, x, z, height)) in best.iter().enumerate().filter(|(_, b)| b.0 > 0.0) {
             let name = shapes.name(ShapeId(i as u8));
             let back = if name.contains("volcano") { 420.0 } else if name.contains("mesa") || name.contains("canyon") { 160.0 } else { 70.0 };
             print!("score {score:.2}: ");
-            view(name, x, z, height, back);
+            view(name, x, z, height, back, std::f32::consts::FRAC_PI_4, back * 0.25);
         }
     }
 
@@ -1769,19 +1783,23 @@ mod tests {
 
     #[test]
     fn the_air_follows_climate_and_biome() {
-        let world = Overworld::new(3, registry());
-        let set = |name: &str| world.particle_sets().iter().position(|p| p.name == name).map(|i| ParticleId(i as u16)).unwrap();
-        let has = |air: &Atmosphere, name: &str| air.particles.iter().any(|&(p, d)| p == set(name) && d > 0.0);
-        // Deep in a dry desert, away from water.
-        let id = world.biomes().id("base:desert").unwrap();
-        let sampler = world.sampler(IVec2::splat(-4000), IVec2::splat(4000));
-        let desert = (0..200 * 200)
-            .map(|i| IVec2::new(i % 200 * 40 - 4000, i / 200 * 40 - 4000))
-            .find(|p| {
-                let site = sampler.site(p.x, p.y);
-                site.home == id && site.edge > 40.0 && site.soil_moisture() < 0.3
+        // Deep in a dry, ordinary desert, low and away from water (high deserts are cooler
+        // and fantastical ones violet), in the first of these worlds with one near the origin.
+        let (world, desert) = [3, 7, 42]
+            .into_iter()
+            .find_map(|seed| {
+                let world = Overworld::new(seed, registry());
+                let id = world.biomes().id("base:desert").unwrap();
+                let sampler = world.sampler(IVec2::splat(-4000), IVec2::splat(4000));
+                let desert = (0..200 * 200).map(|i| IVec2::new(i % 200 * 40 - 4000, i / 200 * 40 - 4000)).find(|p| {
+                    let site = sampler.site(p.x, p.y);
+                    site.home == id && site.edge > 40.0 && site.soil_moisture() < 0.3 && site.height < SEA_LEVEL + 40 && site.aether < 0.6
+                })?;
+                Some((world, desert))
             })
             .expect("a desert");
+        let set = |name: &str| world.particle_sets().iter().position(|p| p.name == name).map(|i| ParticleId(i as u16)).unwrap();
+        let has = |air: &Atmosphere, name: &str| air.particles.iter().any(|&(p, d)| p == set(name) && d > 0.0);
         let air = world.atmosphere_at(desert.x, desert.y);
         assert_eq!(air, world.atmosphere_at(desert.x, desert.y));
         assert!(has(&air, "base:dust") && !has(&air, "base:drifting_snow"), "{air:?}");
