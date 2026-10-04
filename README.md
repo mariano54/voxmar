@@ -150,6 +150,15 @@ texel, optionally beside the same name from another pack (`--pack DIR` picks the
 
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
 same registry a mod will use. Client and server compare a content fingerprint on join. Templates
+make whole families from one line (a wood: log, stripped log, wood, planks, leaves, sapling; a
+rock: raw, cobbled, polished, bricks; a flower in three looks), and templates are shared across
+packages, so a mod's new wood is one line. Blocks carry tags from a shared vocabulary (listed at
+the top of `blocks.ron`: what a block is, where it grows, what it is good for, such as `meadow`,
+`edible`, `alchemy:calming`, `dye:blue`, `wonder`), a rarity and an optional inventory icon, so
+biomes, food and alchemy select blocks without naming them. A plant's `variants` are other looks
+of it, each its own block that drops the plant itself, as many as its size;
+`BlockRegistry::looks` lists them for generators. The inventory shows plants as their sprite and
+full blocks as a shaded cube. Templates
 make whole families from one line (a wood's log, stripped log, wood, planks, leaves and sapling;
 a rock's raw, cobbled, polished and brick blocks), and templates are shared across packages, so
 a mod's new wood is one line too. A plant can list variants, other looks of itself that become

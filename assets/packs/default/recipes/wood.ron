@@ -6,7 +6,7 @@
 // leaves as tilted cards around a crown (the renderer does not use it yet).
 (
     palettes: {
-        "leaf_grey": ["#555555", "#6d6d6d", "#858585", "#9d9d9d", "#b5b5b5", "#cdcdcd"],
+        "leaf_grey": ["#5c5c5c", "#757575", "#8e8e8e", "#a7a7a7", "#c0c0c0", "#d8d8d8"],
         "sapling_green": ["#2d4a1c", "#3a5e22", "#4a742a", "#5c8a33", "#70a03f"],
         "oak_bark": ["#3b2c1b", "#4a3722", "#59432a", "#685033", "#775d3d"],
         "oak_wood": ["#6f5532", "#83643c", "#967447", "#a88452", "#b8935e", "#c6a26b"],

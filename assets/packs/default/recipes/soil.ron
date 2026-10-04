@@ -11,7 +11,7 @@
         "red_sand": ["#9c4e1c", "#a95922", "#b5632a", "#c06e33", "#ca7a3e", "#d3864a"],
         "gravel": ["#5a5452", "#6b6461", "#7c7572", "#8b8481", "#9b9491", "#aca6a3"],
         "clay": ["#8a909e", "#979dab", "#a3a9b6", "#afb4c0", "#babfca", "#c6cad4"],
-        "mud": ["#2f2a2c", "#383234", "#413b3c", "#4a4445", "#544d4e", "#5e5758"],
+        "mud": ["#2c2b2c", "#353334", "#3e3c3c", "#474545", "#514e4e", "#5b5858"],
         "moss": ["#3c5420", "#476226", "#53702c", "#5f7e33", "#6b8b3b", "#789945"],
         "podzol": ["#4e3214", "#5e3d18", "#6e491d", "#7c5524", "#8a612c", "#996e35"],
         "loam": ["#3a2a1f", "#463326", "#523d2e", "#5e4736", "#6a513f", "#775c49"],
@@ -73,7 +73,7 @@
             Paint(palette: "top", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.7)], mask: [Fringe(depth: (2, 4), smooth: 0.4)], above: 0.5, shadow: -1),
         ]),
         "block/grass_block_top": (palettes: {"main": "grass_grey"}, layers: [
-            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.45), Noise(cells: (16, 16), amount: 0.55)], clean: true),
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.45), Noise(cells: (16, 16), amount: 0.7)], clean: true),
         ]),
         "block/grass_block_side": (base: "block/dirt", palettes: {"grass": "grass_side"}, layers: [
             Paint(palette: "grass", base: 0.5, shade: [Noise(cells: (16, 16), amount: 0.6), Gradient(from: 0.15, to: -0.3)], mask: [Fringe(depth: (2, 5), smooth: 0.2)], above: 0.5, shadow: -1),
