@@ -37,6 +37,9 @@ pub struct WorldDials {
     pub river_density: f32,
     /// How richly plants grow wherever the climate allows, 0 ..= 1.
     pub vegetation: f32,
+    /// How cavernous the underground is, 0 (solid rock with few tunnels) ..= 1 (riddled
+    /// with caves). Each kind of cave varies around it from the seed too.
+    pub caves: f32,
 }
 
 impl WorldDials {
@@ -55,18 +58,23 @@ impl WorldDials {
         let river_density = (0.25 + 0.5 * humidity + 0.4 * (unit() - 0.5)).clamp(0.0, 1.0);
         let vegetation = (0.4 + 0.35 * humidity + 0.15 * warmth + 0.2 * (unit() - 0.5)).clamp(0.0, 1.0);
         let angle = unit() * std::f32::consts::TAU;
+        let latitude_gradient = 26.0 + 12.0 * unit();
+        let pole_distance = 3500.0 + 2000.0 * unit();
+        let continent_size = 1400.0 + 1800.0 * unit();
+        let caves = (unit() + unit()) / 2.0;
         Self {
             mean_temperature: 8.0 + 7.0 * warmth,
-            latitude_gradient: 26.0 + 12.0 * unit(),
-            pole_distance: 3500.0 + 2000.0 * unit(),
+            latitude_gradient,
+            pole_distance,
             ocean_fraction,
-            continent_size: 1400.0 + 1800.0 * unit(),
+            continent_size,
             humidity,
             wind: [angle.cos(), angle.sin()],
             tectonic_activity,
             erosion_age,
             river_density,
             vegetation,
+            caves,
         }
     }
 }
@@ -81,7 +89,7 @@ mod tests {
         assert_ne!(WorldDials::sample(7), WorldDials::sample(8));
         for seed in 0..200 {
             let d = WorldDials::sample(seed);
-            for unit in [d.ocean_fraction, d.humidity, d.tectonic_activity, d.erosion_age, d.river_density, d.vegetation] {
+            for unit in [d.ocean_fraction, d.humidity, d.tectonic_activity, d.erosion_age, d.river_density, d.vegetation, d.caves] {
                 assert!((0.0..=1.0).contains(&unit), "{d:?}");
             }
             // Every world has temperate land somewhere between its equator and poles.

@@ -118,7 +118,7 @@ of ground and caves below it, 256 of land, mountains and sky above. There are no
 world draws a few physically meaningful dials from its seed
 (`Overworld::dials`: mean temperature, equator-to-pole temperature difference and distance,
 ocean fraction, continent size, humidity, prevailing wind, tectonic activity, erosion age,
-river density, vegetation), with sensible correlations. Everything else is a continuous field:
+river density, vegetation, caves), with sensible correlations. Everything else is a continuous field:
 
 - **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
   hot, temperate and cold land always lie in that order) and with altitude.
@@ -129,10 +129,23 @@ river density, vegetation), with sensible correlations. Everything else is a con
   transitions are bands where materials interleave (grass, snowy grass, snow; grass, coarse
   dirt, sand), and each climate has its own procedurally shaped trees (giant spruce, pine,
   birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti).
+- **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
+  everywhere, more tangled with depth, opening to the surface as entrances in some places;
+  cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
+  labyrinths, ravines (30–70 deep, some open to the sky, a few a kilometre long) and
+  sinkholes; and very rare giant cavern systems, most holding one great lake. Water tables
+  per 16×16×12 cell (as in Minecraft 1.18) flood some caves at their own levels, with sea
+  level near the surface so caves under the sea are flooded rather than draining it, and lava
+  below y 10, with rock left wherever a fluid would otherwise touch air. The cave dial and
+  the seed set how much of each kind a world has (`Overworld::cave_style`).
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use.
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored` (optionally with `SEED=n`)
-writes a shaded 8 km map to `target/map_preview.ppm`.
+writes a shaded 8 km map to `target/map_preview.ppm`. `cave_preview` (with `SEED`, and a
+centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts) writes an x-ray map, sections and
+level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
+arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;
+`column_timing` reports generation time per column (all `-- --ignored --nocapture`).
 
 ## Weather
 

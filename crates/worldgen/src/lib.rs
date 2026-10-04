@@ -10,11 +10,13 @@
 //! on any thread, and features that cross column borders (trees, veins) come out
 //! identical on both sides.
 
+mod caves;
 mod climate;
 mod dials;
 mod ecology;
 mod features;
 mod geology;
+mod lattice;
 mod resources;
 mod rng;
 mod terrain;
@@ -27,6 +29,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
+pub use caves::{CaveStyle, LAVA_LEVEL};
 pub use climate::LAPSE_RATE;
 pub use dials::WorldDials;
 
@@ -111,6 +114,7 @@ pub struct Overworld {
     geology: Geology,
     climate: Climate,
     ecology: Ecology,
+    caves: caves::Caves,
     terrain: terrain::Terrain,
     seed: u64,
 }
@@ -128,6 +132,7 @@ impl Overworld {
             geology: Geology::new(stream, &dials),
             climate: Climate::new(stream, &dials),
             ecology: Ecology::new(stream, &dials, &registry),
+            caves: caves::Caves::new(stream, &dials),
             terrain: terrain::Terrain::new(stream, &registry),
             seed: stream,
         }
@@ -136,6 +141,11 @@ impl Overworld {
     /// The world's global parameters.
     pub fn dials(&self) -> &WorldDials {
         &self.dials
+    }
+
+    /// How much of each kind of cave the world has.
+    pub fn cave_style(&self) -> &CaveStyle {
+        self.caves.style()
     }
 
     /// Surface height only; cheap enough to sample on coarse grids.
@@ -322,6 +332,259 @@ mod tests {
         }
         println!("mean {:.2} ms per column", total.as_secs_f64() * 1000.0 / count as f64);
     }
+
+    /// Generates the `count`×`count` columns from `first` on all cores.
+    fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let mut columns: Vec<Option<Column>> = (0..count * count).map(|_| None).collect();
+        let chunk = columns.len().div_ceil(threads);
+        std::thread::scope(|scope| {
+            for (part, slots) in columns.chunks_mut(chunk).enumerate() {
+                scope.spawn(move || {
+                    for (i, slot) in slots.iter_mut().enumerate() {
+                        let i = (part * chunk + i) as i32;
+                        *slot = Some(world.generate(first.offset(i % count, i / count)));
+                    }
+                });
+            }
+        });
+        columns.into_iter().map(Option::unwrap).collect()
+    }
+
+    /// Generated water and lava stay put: no fluid touches air beside or below it, water
+    /// never touches lava, and lava lies only at the bottom of the world. Checked across
+    /// column borders, so it also shows the columns agree with each other.
+    #[test]
+    fn fluids_are_contained() {
+        let registry = registry();
+        let (water, lava) = (registry.expect("base:water"), registry.expect("base:lava"));
+        let (mut fluids, mut caves) = (0, 0);
+        for (seed, place) in [(1, (0, 0)), (42, (3000, -2000)), (0x5eed, (-4100, 900)), (7, (1500, 5200))] {
+            let world = Overworld::new(seed, registry.clone());
+            // Some coast too, where caves meet the sea.
+            let coast = (0..4000).map(|i| (place.0 + i % 64 * 48, place.1 + i / 64 * 48)).find(|&(x, z)| (world.height(x, z) - SEA_LEVEL).abs() <= 2).unwrap();
+            for (x, z) in [place, (place.0 + 700, place.1 + 300), (place.0 - 900, place.1 - 600), coast] {
+                let first = ColumnPos::of_block(IVec3::new(x, 0, z)).offset(-2, -2);
+                let columns = generate_area(&world, first, 5);
+                let origin = first.origin();
+                let block = |p: IVec3| {
+                    let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+                    (0..voxmar_engine::coords::WORLD_HEIGHT).contains(&p.y).then(|| columns[(cz * 5 + cx) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31)))
+                };
+                // The middle 3×3 columns, whose neighbours are all generated.
+                for z in origin.z + 32..origin.z + 128 {
+                    for x in origin.x + 32..origin.x + 128 {
+                        for y in 0..voxmar_engine::coords::WORLD_HEIGHT {
+                            let p = IVec3::new(x, y, z);
+                            let here = block(p).unwrap();
+                            if here.is_air() && y < world.height(x, z) {
+                                caves += 1;
+                            }
+                            if here != water && here != lava {
+                                continue;
+                            }
+                            fluids += 1;
+                            assert!(here == water || y < LAVA_LEVEL, "seed {seed}: lava at {p}");
+                            for d in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::NEG_Y] {
+                                let next = block(p + d);
+                                let other = if here == water { lava } else { water };
+                                assert!(next.is_none_or(|b| !b.is_air() && b != other), "seed {seed}: {} at {p} beside {} at {}", registry.def(here).name, registry.def(next.unwrap()).name, p + d);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(fluids > 0 && caves > 0);
+    }
+
+    /// `cargo test --release -p voxmar_worldgen cave_preview -- --ignored --nocapture`
+    /// (optionally with `SEED=n` and a centre `X=x Z=z`, by default spawn) writes views of
+    /// the caves over 1.5 km to `target/`: `caves_xray.ppm`, a top-down view where brighter
+    /// means more open cave under the ground (blue for water, red for lava, white where it
+    /// opens to the sky), `caves_section.ppm`, west-east and north-south cuts through the
+    /// centre with the sky above the ground, and `caves_levels.ppm`, level cuts at heights
+    /// `Y1` and `Y2` (by default 50 and 100).
+    #[test]
+    #[ignore]
+    fn cave_preview() {
+        const COLUMNS: i32 = 48;
+        const SIZE: i32 = COLUMNS * 32;
+        let registry = registry();
+        let env = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<i64>().ok());
+        let seed = env("SEED").unwrap_or(0x5eed) as u64;
+        let world = Overworld::new(seed, registry.clone());
+        let spawn = world.spawn_point();
+        let centre = IVec3::new(env("X").map_or(spawn.x, |x| x as i32), 0, env("Z").map_or(spawn.z, |z| z as i32));
+        let first = ColumnPos::of_block(centre).offset(-COLUMNS / 2, -COLUMNS / 2);
+        let start = std::time::Instant::now();
+        let columns = generate_area(&world, first, COLUMNS);
+        println!("generated {} columns in {:?}", columns.len(), start.elapsed());
+        let (water, lava) = (registry.expect("base:water"), registry.expect("base:lava"));
+        let origin = first.origin();
+        let block = |x: i32, y: i32, z: i32| {
+            let (cx, cz) = ((x - origin.x) >> 5, (z - origin.z) >> 5);
+            columns[(cz * COLUMNS + cx) as usize].block(IVec3::new(x & 31, y, z & 31))
+        };
+        let write = |name: &str, width: i32, height: i32, pixels: &[[f32; 3]]| {
+            let path = format!("{}/../../target/{name}", env!("CARGO_MANIFEST_DIR"));
+            let mut file = format!("P6 {width} {height} 255\n").into_bytes();
+            file.extend(pixels.iter().flat_map(|p| p.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8)));
+            std::fs::write(&path, file).unwrap();
+            println!("wrote {path}");
+        };
+
+        let mut xray = Vec::with_capacity((SIZE * SIZE) as usize);
+        let (mut carved, mut ground) = (0u64, 0u64);
+        for z in origin.z..origin.z + SIZE {
+            for x in origin.x..origin.x + SIZE {
+                let height = world.height(x, z);
+                let (mut air, mut wet, mut hot) = (0, 0, 0);
+                for y in 4..height.min(WORLD_HEIGHT_FOR_TESTS) {
+                    match block(x, y, z) {
+                        b if b.is_air() => air += 1,
+                        b if b == water => wet += 1,
+                        b if b == lava => hot += 1,
+                        _ => {}
+                    }
+                }
+                carved += (air + wet + hot) as u64;
+                ground += (height - 4).max(0) as u64;
+                let open = block(x, height, z).is_air() && height > SEA_LEVEL;
+                let f = |n: i32| (n as f32 / 24.0).min(1.0);
+                xray.push(if open { [1.0, 1.0, 1.0] } else { [0.12 + 0.75 * f(air) + 0.6 * f(hot), 0.12 + 0.75 * f(air) + 0.1 * f(hot), 0.14 + 0.75 * f(air) + 0.8 * f(wet)] });
+            }
+        }
+        println!("{:.1}% of the ground is open cave", 100.0 * carved as f64 / ground as f64);
+        write("caves_xray.ppm", SIZE, SIZE, &xray);
+
+        let colour = |x: i32, y: i32, z: i32| -> [f32; 3] {
+            let b = block(x, y, z);
+            let above = y > world.height(x, z);
+            match b {
+                _ if b == water => if above { [0.2, 0.35, 0.7] } else { [0.15, 0.3, 0.95] },
+                _ if b == lava => [1.0, 0.45, 0.1],
+                _ if b.is_air() => if above { [0.65, 0.8, 0.95] } else { [0.02, 0.02, 0.03] },
+                _ => {
+                    let c = registry.def(b).color.map(|c| c as f32 / 255.0);
+                    c.map(|c| 0.25 + 0.5 * c)
+                }
+            }
+        };
+        let mut section = Vec::new();
+        for y in (0..WORLD_HEIGHT_FOR_TESTS).rev() {
+            for x in origin.x..origin.x + SIZE {
+                section.push(colour(x, y, centre.z));
+            }
+        }
+        for y in (0..WORLD_HEIGHT_FOR_TESTS).rev() {
+            for z in origin.z..origin.z + SIZE {
+                section.push(colour(centre.x, y, z));
+            }
+        }
+        write("caves_section.ppm", SIZE, 2 * WORLD_HEIGHT_FOR_TESTS, &section);
+        // Level cuts at two heights, side by side.
+        let levels = [env("Y1").unwrap_or(50) as i32, env("Y2").unwrap_or(100) as i32];
+        let mut cuts = Vec::with_capacity((2 * SIZE * SIZE) as usize);
+        for z in origin.z..origin.z + SIZE {
+            for y in levels {
+                for x in origin.x..origin.x + SIZE {
+                    cuts.push(colour(x, y, z));
+                }
+            }
+        }
+        write("caves_levels.ppm", 2 * SIZE, SIZE, &cuts);
+        println!("{:#?}\ncentre {centre}, spawn {spawn}", world.cave_style());
+    }
+
+    /// `cargo test --release -p voxmar_worldgen cave_sights -- --ignored --nocapture`
+    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`) prints `--pose` arguments for
+    /// in-game captures of caves near spawn: inside the largest open space under each sight.
+    #[test]
+    #[ignore]
+    fn cave_sights() {
+        let registry = registry();
+        let seeds = std::env::var("SEEDS").or_else(|_| std::env::var("SEED")).unwrap_or("24301".into());
+        let (water, lava) = (registry.expect("base:water"), registry.expect("base:lava"));
+        for seed in seeds.split(',').map(|s| s.parse::<u64>().unwrap()) {
+            let world = Overworld::new(seed, registry.clone());
+            let spawn = world.spawn_point();
+            let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.62, 0.5);
+            println!("seed {seed}: spawn {spawn}, {:?}", world.cave_style());
+            for (kind, x, z) in world.caves.sights((spawn.x, spawn.z), 420) {
+                if kind == "ravine" || kind == "sinkhole" {
+                    // From above and to the east, looking west and down into it.
+                    let ground = (-20..=20).map(|d| world.height(x + 18, z + d)).max().unwrap();
+                    let d = voxmar_engine::glam::Vec3::new(x as f32 + 18.0, ground as f32 + 14.0, z as f32) - eye;
+                    println!("  {kind} from above: --pose {:.1},{:.1},{:.1},90,-40", d.x, d.y, d.z);
+                }
+                // The tallest open run of cave in the 5×5 columns around the sight.
+                let mut best = (0, 0, 0, 0, 0);
+                for (dx, dz) in (-2..=2).flat_map(|a| (-2..=2).map(move |b| (a * 6, b * 6))) {
+                    let (cx, cz) = (x + dx, z + dz);
+                    let pos = ColumnPos::of_block(IVec3::new(cx, 0, cz));
+                    let column = world.generate(pos);
+                    let height = world.height(cx, cz);
+                    let local = |y: i32| column.block(IVec3::new(cx & 31, y, cz & 31));
+                    let mut run = 0;
+                    for y in (5..=height + 1).rev() {
+                        let b = local(y);
+                        if b.is_air() && y <= height || kind == "ravine" && b.is_air() {
+                            run += 1;
+                        } else {
+                            if run > best.0 {
+                                best = (run, cx, y + 1, cz, if b == water { 1 } else if b == lava { 2 } else { 0 });
+                            }
+                            run = 0;
+                        }
+                    }
+                }
+                let (run, cx, floor, cz, under) = best;
+                if run == 0 {
+                    continue;
+                }
+                let camera = voxmar_engine::glam::Vec3::new(cx as f32 + 0.5, floor as f32 + (run as f32 * 0.5).min(6.0), cz as f32 + 0.5);
+                let d = camera - eye;
+                let fluid = ["", " over water", " over lava"][under];
+                println!("  {kind}: {run} tall at {cx} {floor} {cz}{fluid}: --pose {:.1},{:.1},{:.1},0,0", d.x, d.y, d.z);
+            }
+            // Openings in the ground within 300 blocks: the largest few, with a pose a little
+            // way off looking down into them.
+            let first = ColumnPos::of_block(spawn).offset(-9, -9);
+            let columns = generate_area(&world, first, 19);
+            let mut openings = Vec::new();
+            for (i, column) in columns.iter().enumerate() {
+                let origin = first.offset(i as i32 % 19, i as i32 / 19).origin();
+                let mut count = 0;
+                let mut deepest = (0, IVec3::ZERO);
+                for z in 0..32 {
+                    for x in 0..32 {
+                        let h = world.height(origin.x + x, origin.z + z);
+                        if h <= SEA_LEVEL || !column.block(IVec3::new(x, h, z)).is_air() {
+                            continue;
+                        }
+                        count += 1;
+                        let depth = (0..h).rev().take_while(|&y| column.block(IVec3::new(x, y, z)).is_air()).count() as i32;
+                        if depth > deepest.0 {
+                            deepest = (depth, origin + IVec3::new(x, h, z));
+                        }
+                    }
+                }
+                if count > 0 {
+                    openings.push((count, deepest));
+                }
+            }
+            openings.sort_by_key(|o| -o.0);
+            println!("  {} columns with openings", openings.len());
+            for (count, (depth, at)) in openings.into_iter().take(5) {
+                let camera = at.as_vec3() + voxmar_engine::glam::Vec3::new(10.0, 9.0, 10.0);
+                let d = camera - eye;
+                println!("  opening: {count} blocks, {depth} deep at {at}: --pose {:.1},{:.1},{:.1},45,-35", d.x, d.y, d.z);
+            }
+        }
+    }
+
+    const WORLD_HEIGHT_FOR_TESTS: i32 = voxmar_engine::coords::WORLD_HEIGHT;
 
     /// `cargo test --release -p voxmar_worldgen map_preview -- --ignored` writes a shaded
     /// top-down map (north up, 8 blocks per pixel) around the origin to

@@ -86,6 +86,16 @@
             hardness: -1.0,
             color: (63, 118, 228),
         ),
+        // Lava: still for now, glowing.
+        (
+            name: "lava", sound: Water,
+            textures: All("lava_still"),
+            solid: false,
+            light: 15,
+            hardness: -1.0,
+            drops: Some("core:air"),
+            color: (214, 96, 24),
+        ),
         // Wood
         (name: "oak_log", sound: Wood, textures: Column(end: "oak_log_top", side: "oak_log"), hardness: 2.0, color: (109, 85, 50)),
         (name: "oak_leaves", sound: Leaves, textures: All("oak_leaves"), render: Leaves, tint: Foliage, light_filter: 1, hardness: 0.3, color: (60, 120, 40)),

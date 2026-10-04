@@ -6,6 +6,7 @@ use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos};
 use voxmar_engine::glam::{IVec3, Vec3};
 
+use crate::caves::CaveColumn;
 use crate::ecology::Ground;
 use crate::geology::{GeoGrid, smoothstep};
 use crate::rng::{Rng, hash3};
@@ -37,7 +38,8 @@ impl Features {
         &self.trees
     }
 
-    pub fn place(&self, world: &Overworld, area: &Sampler, geology: &GeoGrid, seed: u64, pos: ColumnPos, blocks: &mut Blocks) {
+    pub fn place(&self, world: &Overworld, area: &Sampler, geology: &GeoGrid, caves: &CaveColumn, pos: ColumnPos, blocks: &mut Blocks) {
+        let seed = world.seed;
         let origin = pos.origin();
         let first = (origin.x - REACH).div_euclid(CELL)..=(origin.x + CHUNK_SIZE + REACH).div_euclid(CELL);
         for cz in (origin.z - REACH).div_euclid(CELL)..=(origin.z + CHUNK_SIZE + REACH).div_euclid(CELL) {
@@ -59,6 +61,10 @@ impl Features {
                 let site = area.site_on(&geo, x, z, 0);
                 let roll = rng.unit();
                 let base = IVec3::new(x, geo.height + 1, z);
+                // Nothing grows over a cave mouth.
+                if caves.surface_open(x, z, &geo) {
+                    continue;
+                }
                 let ecology = &world.ecology;
                 if roll >= ecology.tree_chances(&site, None, x, z).iter().sum::<f32>() {
                     if roll > 1.0 - boulder_chance(&site) && site.height > SEA_LEVEL {
