@@ -117,6 +117,17 @@ Measured with the same poses at view distance 8 and 16, so the band 256–512 bl
 real terrain in one capture and distant terrain in the other: the mean colour difference
 over eight regions fell from 10–17 to 4–6 levels per channel (of 255).
 
+## Plants
+
+Every grass, fern and flower is placed as a whole in the vertex shader from a hash of its
+cell, in the manner of Rainbow's Foliage: turned up to 40° either way, shifted up to 0.15
+blocks, sunk up to 0.25, and scaled 0.6–1.25 in height, with a smooth noise making
+tufts of taller and shorter plants across a meadow. Stacks (tall grass, sugar cane) are
+shaped as one plant. The mesher marks each plant vertex with its corner (in the AO bits,
+which plants do not use) and how many plant cells it stands on (bits 25..27), so no extra
+vertex data is needed. Model variants with their own textures can come from block data
+later; the placement already varies every plant.
+
 ## What we took from Voxy
 
 Voxy (Fabric LOD mod, read from its source) stores the world as 32³ voxel sections mipped

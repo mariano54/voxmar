@@ -35,6 +35,7 @@ const TINT_WATER: u32 = 3u;
 const FACE_PLANT: u32 = 6u;
 const FLAG_INNER: u32 = 1u << 23u;
 const FLAG_BACKED: u32 = 1u << 24u;
+const PLANT_STACK_SHIFT: u32 = 25u;
 const AO_CURVE = array<f32, 4>(0.45, 0.65, 0.84, 1.0);
 // Plants shrink away between these distances, in blocks.
 const PLANT_FADE = vec2(192.0, 320.0);
@@ -58,9 +59,66 @@ fn face_of(w0: u32) -> u32 {
 
 // World position, with leaves swaying gently and plants bending from their base. Shared
 // by every pass so depth matches.
+fn pcg3d(seed: vec3<u32>) -> vec3<f32> {
+    var v = seed * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> vec3(16u);
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return vec3<f32>(v >> vec3(8u)) / 16777216.0;
+}
+
+// Smooth noise over the ground, for patches of taller and shorter plants.
+fn tufts(p: vec2<f32>) -> f32 {
+    let cell = floor(p);
+    let f = fract(p);
+    let w = f * f * (3.0 - 2.0 * f);
+    let at = vec4(
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x), 7, i32(cell.y)))).x,
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x) + 1, 7, i32(cell.y)))).x,
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x), 7, i32(cell.y) + 1))).x,
+        pcg3d(vec3<u32>(vec3<i32>(i32(cell.x) + 1, 7, i32(cell.y) + 1))).x,
+    );
+    return mix(mix(at.x, at.y, w.x), mix(at.z, at.w, w.x), w.y);
+}
+
+// A plant's vertex, with the plant placed as a whole from a hash of its cell, much as
+// Rainbow's Foliage varies its models: turned up to 40° either way, shifted and sunk a
+// little, and taller or shorter, in tufts across a meadow.
+fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
+    let corner = (w0 >> 21u) & 3u;
+    let far = corner == 1u || corner == 2u;
+    var across = select(vec2(0.0), vec2(1.0), far);
+    if face_of(w0) != FACE_PLANT {
+        across = select(vec2(1.0, 0.0), vec2(0.0, 1.0), far);
+    }
+    let up = f32((w0 >> 23u) & 1u) + f32((w0 >> PLANT_STACK_SHIFT) & 3u);
+    // The corner of the cell the whole plant stands in.
+    let base = origin + local_position(w0) - vec3(across.x, up, across.y);
+    let cell = vec3<i32>(floor(base + 0.5));
+    let a = pcg3d(vec3<u32>(cell));
+    let b = pcg3d(vec3<u32>(cell + vec3(0, 991, 0)));
+    let angle = (a.x - 0.5) * 1.4;
+    let offset = across - 0.5;
+    let turned = vec2(offset.x * cos(angle) - offset.y * sin(angle), offset.x * sin(angle) + offset.y * cos(angle));
+    let shift = (a.yz - 0.5) * 0.3;
+    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x));
+    let sink = b.y * 0.25;
+    return vec3(base.x + 0.5 + turned.x + shift.x, base.y + up * height - sink, base.z + 0.5 + turned.y + shift.y);
+}
+
 fn world_position(in: Vertex) -> vec3<f32> {
-    var world = vec3<f32>(chunk_origins[in.instance_index].xyz) + local_position(in.packed.x);
+    let origin = chunk_origins[in.instance_index];
     let t = globals.time;
+    var world: vec3<f32>;
+    if face_of(in.packed.x) >= FACE_PLANT {
+        world = plant_position(in.packed.x, vec3<f32>(origin.xyz));
+    } else {
+        world = vec3<f32>(origin.xyz) + local_position(in.packed.x);
+    }
     if face_of(in.packed.x) >= FACE_PLANT {
         if (in.packed.x & FLAG_INNER) != 0u {
             // Gusts roll across the field: a slow wave plus a quicker flutter.
@@ -165,7 +223,9 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
     out.face = face_of(w0);
     out.uv = face_uv(local_position(w0), out.face);
-    out.light = vec3(AO_CURVE[(w0 >> 21u) & 3u], f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
+    // Plants have no ambient occlusion; their AO bits hold the corner.
+    let ao = select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, face_of(w0) >= FACE_PLANT);
+    out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
     return out;
