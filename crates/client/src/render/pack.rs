@@ -34,6 +34,34 @@ pub struct ShaderPack {
     /// Shifts the image towards warm (positive) or cool (negative).
     pub warmth: f32,
     pub bloom: f32,
+    pub water: WaterLook,
+}
+
+/// How water looks (see `render::water`). Each strength scales the renderer's own, so 1
+/// leaves it and 0 switches that part off.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct WaterLook {
+    /// How quickly light fades through water: higher is murkier, lower clearer.
+    pub absorption: f32,
+    /// How much light the water itself scatters back: the brightness of deep water.
+    pub scattering: f32,
+    /// Reflections of the terrain and sky.
+    pub reflections: f32,
+    pub waves: f32,
+    /// How far waves bend the view of the bed.
+    pub refraction: f32,
+    /// Foam along shores.
+    pub foam: f32,
+    /// One wave normal per texel of the block textures, so water glitters in little
+    /// squares up close, as in Complementary's Reimagined style.
+    pub pixelated: bool,
+}
+
+impl Default for WaterLook {
+    fn default() -> Self {
+        Self { absorption: 1.0, scattering: 1.0, reflections: 1.0, waves: 1.0, refraction: 1.0, foam: 1.0, pixelated: false }
+    }
 }
 
 impl Default for ShaderPack {
@@ -51,6 +79,7 @@ impl Default for ShaderPack {
             vibrance: 0.0,
             warmth: 0.0,
             bloom: 0.1,
+            water: WaterLook::default(),
         }
     }
 }

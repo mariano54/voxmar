@@ -8,7 +8,8 @@
 //                                    beneath; a: cover of small plants)
 
 #import bevy_pbr::mesh_view_bindings::{view, fog}
-#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, water_normal}
+#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, fog_color, sun_direction, sun_color, water_normal}
+#import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel}
 
 struct DistantView {
     // xy: column of the coverage mask's first bit, z: the mask's width in columns, w: the
@@ -58,8 +59,9 @@ const RIPPLE_FADE: f32 = 256.0;
 const GLINT_SHARPNESS = vec2(50.0, 220.0);
 const GLINT = vec2(0.9, 1.0);
 const RIPPLE_SLOPE_VARIANCE: f32 = 0.0013;
-// How fast light fades through water, per block (as in voxel.wgsl).
-const WATER_EXTINCTION: f32 = 0.32;
+// Depth of water at which sky light at the floor has run out, in blocks (it falls two
+// levels per block).
+const SHEET_DEPTH: f32 = 7.5;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -232,13 +234,14 @@ fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surfa
     return mix(crown, ground, gaps);
 }
 
-// Water and ice: the surface over the floor beneath, which dims with depth as sky light fades
-// through it. Water reflects the sky like real water does.
+// Water and ice: the surface over the floor beneath. Water is shaded like real water
+// (water.wgsl): the floor seen through it, dimmed and coloured by the water it is seen and lit
+// through, the water's own colour where it is deep, and a reflection of the sky.
 fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
-    let surface = in.top * shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, in.clip_position.xy);
+    let light = shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, in.clip_position.xy);
     let floor = in.side * face_light(in, UP, 1.0, 1.0, false);
     if in.kind == ICE {
-        return mix(floor, surface, in.params.y);
+        return mix(floor, in.top * light, in.params.y);
     }
     let past_real = max(abs(in.world_position.x - view.world_position.x), abs(in.world_position.z - view.world_position.z))
         - f32(distant.coverage.w) * COLUMN;
@@ -247,15 +250,22 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     // Ripples facing the eye fill more of the view than those facing away, the more so the
     // lower the angle, so on average real water faces the eye more than a flat sheet.
     let facing = dot(n, to_eye) + (1.0 - ripples) * RIPPLE_SLOPE_VARIANCE / max(to_eye.y, 0.01);
-    let fresnel = 0.02 + 0.98 * pow(1.0 - clamp(facing, 0.0, 1.0), 5.0);
-    let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples))
+    let r = reflect(-to_eye, n);
+    let glint = pow(max(dot(r, sun_direction()), 0.0), mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples))
         * mix(GLINT.x, GLINT.y, ripples);
-    let reflected = mix(surface, fog.base_color.rgb * 1.15, fresnel) + sun_color() * glint * 4.0;
-    // As over real shallows, the floor shows through as far as light reaches it; sky light
-    // at the floor fell by two levels per block of water.
-    let depth = (1.0 - in.params.x) * 7.5;
-    let through = exp(-depth * WATER_EXTINCTION);
-    return mix(floor, reflected, mix(mix(0.92, 0.18, through), 1.0, fresnel));
+    // The top colour is the water texture's average in the biome's colour; scaled to the
+    // brightness of the colours real water is tinted with.
+    let tint = in.top / max(max(in.top.r, in.top.g), max(in.top.b, 1e-3)) * 0.75;
+    let absorbed = absorption(tint, 1.0);
+    let scattered = scattering(tint, 1.0);
+    // Sky light at the floor fell by two levels per block of water above it. Saturated,
+    // because a sheet seen edge-on interpolates its vertices' values at pixel centres
+    // outside it, which an exponential would blow up.
+    let sky = saturate(in.params.x);
+    let depth = (1.0 - sky) * SHEET_DEPTH;
+    let path = select(depth / max(to_eye.y, 0.05), 1e4, sky <= 0.0);
+    let seen = floor * transmittance(absorbed, scattered, path + depth) + inscattered(absorbed, scattered, path, light);
+    return mix(seen, fog_color(r), fresnel(facing)) + sun_color() * glint * 4.0;
 }
 
 @fragment

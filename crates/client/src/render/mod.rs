@@ -22,7 +22,7 @@ use bevy::render::extract_component::ExtractComponent;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDataOrder,
-    TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension, VertexFormat,
+    TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexFormat,
 };
 use bevy::shader::{ShaderRef, load_shader_library};
 use voxmar_protocol::{TICKS_PER_DAY, Weather};
@@ -34,6 +34,7 @@ pub mod lod;
 pub mod pack;
 pub mod precipitation;
 pub mod terrain;
+pub mod water;
 pub mod wind;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
@@ -56,6 +57,7 @@ impl Plugin for RenderPlugin {
         embedded_asset!(app, "display.wgsl");
         app.add_plugins((
             terrain::TerrainPlugin,
+            water::WaterPlugin,
             wind::WindPlugin,
             MaterialPlugin::<SkyMaterial>::default(),
             FullscreenMaterialPlugin::<DisplayTransform>::default(),
@@ -229,7 +231,8 @@ pub fn setup(
         .build(),
     ));
     commands.spawn((
-        Camera3d::default(),
+        // Water reads the depth of the scene behind it (see `water`).
+        Camera3d { depth_texture_usages: (TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING).into(), ..default() },
         Projection::Perspective(PerspectiveProjection { fov: 75f32.to_radians(), near: 0.05, ..default() }),
         Hdr,
         // No depth prepass: it doubles opaque vertex work and measured slower than the

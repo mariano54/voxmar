@@ -21,7 +21,10 @@
 @group(0) @binding(1) var<uniform> globals: Globals;
 #else
 #import bevy_pbr::mesh_view_bindings::{view, globals, fog}
-#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, water_normal}
+#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow}
+#ifdef TRANSLUCENT
+#import voxmar::water_surface::shade_water
+#endif
 #endif
 
 @group(2) @binding(0) var block_textures: texture_2d_array<f32>;
@@ -38,9 +41,6 @@ const FACE_PLANT: u32 = 6u;
 const FLAG_INNER: u32 = 1u << 23u;
 const FLAG_BACKED: u32 = 1u << 24u;
 const PLANT_STACK_SHIFT: u32 = 25u;
-const WATER_DEPTH_SHIFT: u32 = 25u;
-// How fast light fades through water, per block.
-const WATER_EXTINCTION: f32 = 0.32;
 const FLAG_FRINGE: u32 = 1u << 27u;
 // Leaf fringes shrink back into their block between these distances, in blocks (the
 // renderer stops drawing them a little beyond).
@@ -238,8 +238,6 @@ struct VertexOutput {
     @location(3) @interpolate(flat) surface: u32,
     @location(4) @interpolate(flat) face: u32,
     @location(5) @interpolate(flat) covered: u32,
-    // Depth of water below a water surface, in blocks.
-    @location(6) water_depth: f32,
 };
 
 @vertex
@@ -262,7 +260,6 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
-    out.water_depth = f32((w0 >> WATER_DEPTH_SHIFT) & 7u);
     return out;
 }
 
@@ -285,6 +282,11 @@ fn biome_tint(surface: u32) -> vec3<f32> {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+#ifdef TRANSLUCENT
+    // Blocks a pixel spans on the surface, for the water's waves; derivatives are only
+    // defined here, before any branch.
+    let footprint = length(fwidth(in.world_position.xz));
+#endif
     let layer = i32(in.surface & 0xFFFu);
     var albedo = textureSample(block_textures, block_sampler, in.uv, layer);
     let kind = tint_kind(in.surface);
@@ -326,18 +328,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let sky = fog.base_color.rgb * 1.15;
     let open = smoothstep(0.5, 0.95, in.light.y);
     if kind == TINT_WATER {
-        if in.face == 2u && in.covered == 0u {
-            // Fresnel reflection of the sky and a sun glint on rippled water.
-            let n = water_normal(in.world_position);
-            let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, to_eye), 0.0), 5.0);
-            let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 220.0) * open
-                * sun_shadow(in.world_position, n, in.clip_position.xy);
-            // Shallows show their bed: light through the water fades with depth, and what
-            // remains takes the water's colour.
-            let through = exp(-in.water_depth * WATER_EXTINCTION);
-            color = mix(color, color * 0.55, 1.0 - through);
-            color = mix(color, sky * open + color * (1.0 - open), fresnel) + sun_color() * glint * 4.0;
-            alpha = mix(mix(0.92, 0.18, through), 1.0, fresnel);
+        // Water composes itself over the scene behind it, fog included (water_surface.wgsl).
+        // Under ice it lies still and reflects nothing; ice draws over it.
+        if in.covered == 0u {
+            let water = shade_water(in.world_position, NORMALS[in.face], biome_tint(in.surface), in.light.y, in.clip_position, footprint);
+            return vec4(water, 1.0);
         }
     } else {
         // Solid see-through blocks (ice) show only their outside, like any solid block, so

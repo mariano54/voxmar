@@ -13,4 +13,5 @@
     vibrance: 0.35,
     warmth: 0.05,
     bloom: 0.12,
+    water: (pixelated: true),
 )

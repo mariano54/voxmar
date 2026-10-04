@@ -67,16 +67,16 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
-sits above the bottom edge (Raise HUD), VSync, debug overlay, music and sound volume, mouse
-sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom (the
-view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins, with
-Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved to
-`voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
-`$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces
-`…/voxmar`); `--view-distance` and `--no-vsync` override them. On a dedicated server, name
-admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
-(default 32).
+Esc opens the settings menu: render distance, field of view, anti-aliasing, water quality, how
+far the hotbar sits above the bottom edge (Raise HUD), VSync, debug overlay, music and sound
+volume, mouse sensitivity, the zoom key (click it, then press a key), zoom magnification,
+cinematic zoom (the view follows the mouse smoothly while zoomed), zoom in survival, and fly
+speed for admins, with Resume, Save and quit to title (Disconnect on a server) and Quit game.
+Settings are saved to `voxmar/settings.ron` in the OS config directory (`~/Library/Application
+Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows;
+`$VOXMAR_CONFIG` replaces `…/voxmar`); `--view-distance` and `--no-vsync` override them. On a
+dedicated server, name admins with `--admin NAME` (repeatable), and cap render distance with
+`--view-distance N` (default 32).
 
 ### Saved worlds
 
@@ -309,6 +309,11 @@ every cue to `target/sfx_preview.wav`.
   meet, none between leaves buried on every side, and only a crown's shell casts shadows.
   Faces between two of the same glass, ice or water are hidden; ice is clear blue with a sky
   reflection over still water.
+- Water is drawn in its own pass over the finished scene: clear in the shallows and taking
+  the biome's colour with depth, from how far light really travels through it; the bed bent
+  by wind-driven waves; reflections of the terrain marched through the depth buffer, and of
+  the sky elsewhere; sun glints and foam along shores. The Water setting (Low, Medium, High)
+  trades waves and reflections for speed, and shader packs scale each part.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
   aerial perspective (haze that thins with height and glows around the sun), HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
@@ -328,7 +333,8 @@ Profile with Tracy: `cargo run --release --features tracy` (engine work is instr
 `tracing` spans).
 
 See [docs/rendering.md](docs/rendering.md) for measurements, a comparison with GPU-driven
-pipeline techniques, and the rendering plan.
+pipeline techniques, and the rendering plan. Code adapted from other projects, and its
+licences, is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Next steps
 

@@ -13,10 +13,7 @@
 
 use std::ops::Range;
 
-use bevy::core_pipeline::core_3d::{
-    AlphaMask3d, CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey, Transparent3d,
-    TransparentSortingInfo3d,
-};
+use bevy::core_pipeline::core_3d::{AlphaMask3d, CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey};
 use bevy::core_pipeline::prepass::{OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey};
 use bevy::ecs::system::{SystemParam, SystemParamItem};
 use bevy::ecs::system::lifetimeless::{Read, SRes};
@@ -29,9 +26,8 @@ use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
-    AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem, PhaseItemExtraIndex,
+    AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem,
     RenderCommand, RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases,
-    ViewSortedRenderPhases,
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor,
@@ -53,6 +49,7 @@ use voxmar_engine::coords::{CHUNK_SIZE, ChunkPos};
 use voxmar_engine::mesh::{MeshBuffers, Vertex};
 
 use super::lod::{LodVertex, TileKey, TileMesh};
+use super::water;
 use super::wind::Breeze;
 use super::{ATTRIBUTE_LOD, ATTRIBUTE_VOXEL, DISTANT_SHADER, GRASS_SHADER, TerrainPass, VOXEL_SHADER};
 
@@ -91,7 +88,6 @@ impl Plugin for TerrainPlugin {
             .add_render_command::<Opaque3d, DrawDistantTerrain>()
             .add_render_command::<Opaque3d, DrawGrassBlades>()
             .add_render_command::<AlphaMask3d, DrawTerrainMain>()
-            .add_render_command::<Transparent3d, DrawTerrainMain>()
             .add_render_command::<Shadow, DrawTerrainShadow>()
             .add_systems(RenderStartup, init_pipelines)
             .add_systems(
@@ -388,7 +384,7 @@ struct DistantView {
 
 /// Render world state: pages, chunk records and the bind group shared by every draw.
 #[derive(Resource)]
-struct TerrainGpu {
+pub(super) struct TerrainGpu {
     chunk_pages: PagePool,
     tile_pages: PagePool,
     chunks: FxHashMap<ChunkPos, ChunkRecord>,
@@ -716,12 +712,33 @@ struct BladeDraw {
 
 /// The draws of each pass that survive a view's frustum, in drawing order.
 #[derive(Component, Default)]
-struct TerrainDraws {
+pub(super) struct TerrainDraws {
     passes: [Vec<Draw>; 5],
+    /// What the water pass draws the translucent terrain with, when there is any; cameras
+    /// only.
+    water: Option<WaterDraw>,
     /// Distant terrain tiles, cameras only.
     distant: Vec<Draw>,
     /// Grass blades near the camera, nearest first; cameras only.
     blades: Vec<BladeDraw>,
+}
+
+/// The translucent terrain's pipeline and item entity, for the water pass (see `water`).
+#[derive(Clone, Copy)]
+pub(super) struct WaterDraw {
+    pub pipeline: CachedRenderPipelineId,
+    pub entity: (Entity, MainEntity),
+}
+
+impl TerrainDraws {
+    /// Whether the view has water or ice in sight.
+    pub(super) fn has_water(&self) -> bool {
+        !self.passes[TerrainPass::Translucent as usize].is_empty()
+    }
+
+    pub(super) fn water(&self) -> Option<WaterDraw> {
+        self.water.filter(|_| self.has_water())
+    }
 }
 
 /// A view whose draws `cull` fills: a camera or a shadow cascade.
@@ -851,7 +868,7 @@ impl Frustum {
 
 /// Marks the render entity that stands for one terrain pass in the phases.
 #[derive(Component, Clone, Copy)]
-struct TerrainPassItem(TerrainPass);
+pub(super) struct TerrainPassItem(TerrainPass);
 
 #[derive(Resource)]
 struct TerrainPipelines {
@@ -1011,6 +1028,10 @@ impl TerrainPipelines {
         let key = view_key | alpha;
         let label = format!("terrain_{pass:?}");
         let mut descriptor = mesh_like(mesh_pipeline, layouts, key, &self.vertex_layout, &self.layout, &self.shader, label)?;
+        if pass == TerrainPass::Translucent {
+            // The scene so far, which the water pass binds (see `water`).
+            descriptor.layout.push(water::layout(key.msaa_samples() > 1));
+        }
         let (defs, cull_mode) = pass_setup(pass);
         descriptor.primitive.cull_mode = cull_mode;
         // With several samples per pixel, cut-outs cover samples by their alpha instead of
@@ -1119,11 +1140,9 @@ impl TerrainPipelines {
 struct Phases<'w> {
     opaque: ResMut<'w, ViewBinnedRenderPhases<Opaque3d>>,
     mask: ResMut<'w, ViewBinnedRenderPhases<AlphaMask3d>>,
-    transparent: ResMut<'w, ViewSortedRenderPhases<Transparent3d>>,
     shadow: ResMut<'w, ViewBinnedRenderPhases<Shadow>>,
     opaque_draw: Res<'w, DrawFunctions<Opaque3d>>,
     mask_draw: Res<'w, DrawFunctions<AlphaMask3d>>,
-    transparent_draw: Res<'w, DrawFunctions<Transparent3d>>,
     shadow_draw: Res<'w, DrawFunctions<Shadow>>,
 }
 
@@ -1139,7 +1158,7 @@ fn queue(
     view_keys: Res<ViewKeyCache>,
     mut phases: Phases,
     keys: Res<TerrainKeys>,
-    views: Query<(&ExtractedView, Has<LightEntity>)>,
+    mut views: Query<(&ExtractedView, Has<LightEntity>, Option<&mut TerrainDraws>)>,
 ) {
     let items = PASSES.map(|pass| (pipelines.items[pass as usize], keys.passes[pass as usize]));
     let distant_item = (pipelines.distant_item, keys.distant);
@@ -1147,13 +1166,12 @@ fn queue(
     let registered = "terrain draw is registered";
     let opaque_draw = phases.opaque_draw.read().get_id::<DrawTerrainMain>().expect(registered);
     let mask_draw = phases.mask_draw.read().get_id::<DrawTerrainMain>().expect(registered);
-    let transparent_draw = phases.transparent_draw.read().get_id::<DrawTerrainMain>().expect(registered);
     let shadow_draw = phases.shadow_draw.read().get_id::<DrawTerrainShadow>().expect(registered);
     let distant_draw = phases.opaque_draw.read().get_id::<DrawDistantTerrain>().expect(registered);
     let blade_draw = phases.opaque_draw.read().get_id::<DrawGrassBlades>().expect(registered);
     let bin = || Opaque3dBinKey { asset_id: AssetId::<Mesh>::default().untyped() };
 
-    for (view, is_light) in &views {
+    for (view, is_light, draws) in &mut views {
         let retained = &view.retained_view_entity;
         if is_light {
             let Some(phase) = phases.shadow.get_mut(retained) else { continue };
@@ -1201,19 +1219,11 @@ fn queue(
                 phase.add(key, bin, item, InputUniformIndex::default(), BinnedRenderPhaseType::NonMesh);
             }
         }
-        if let (Some(phase), Some(id)) = (phases.transparent.get_mut(retained), pipeline(TerrainPass::Translucent)) {
-            // Water and ice sort among themselves; as a whole they go before other
-            // see-through things (precipitation, which always falls in front).
-            phase.add_transient(Transparent3d {
-                sorting_info: TransparentSortingInfo3d::Sorted { mesh_center: view.world_from_view.translation(), depth_bias: -1.0e8 },
-                distance: -1.0e8,
-                pipeline: id,
-                entity: items[TerrainPass::Translucent as usize],
-                draw_function: transparent_draw,
-                batch_range: 0..1,
-                extra_index: PhaseItemExtraIndex::None,
-                indexed: true,
-            });
+        // Water and ice are drawn by the water pass, which reads the scene behind them.
+        let translucent = pipeline(TerrainPass::Translucent);
+        if let Some(mut draws) = draws {
+            let entity = items[TerrainPass::Translucent as usize];
+            draws.water = translucent.map(|pipeline| WaterDraw { pipeline, entity });
         }
     }
 }
@@ -1280,7 +1290,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawDistant {
 }
 
 /// Draws a view's culled chunks of the item's pass.
-struct DrawTerrain;
+pub(super) struct DrawTerrain;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
     type Param = SRes<TerrainGpu>;

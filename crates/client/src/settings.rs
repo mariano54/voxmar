@@ -25,6 +25,7 @@ use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::DayCycle;
 use crate::render::pack::{ActivePack, ShaderPacks};
 use crate::render::lod::{self, Lod};
+use crate::render::water::WaterQuality;
 use crate::world::ClientWorld;
 
 pub struct SettingsPlugin;
@@ -89,6 +90,8 @@ pub struct Settings {
     pub hud_raise: i32,
     /// Name of the shader pack in use (see `render::pack`).
     pub shader_pack: String,
+    /// How much work water does: waves, and reflections of the terrain (`render::water`).
+    pub water_quality: WaterQuality,
 }
 
 /// The look new players start with.
@@ -140,6 +143,7 @@ impl Default for Settings {
             zoom_in_survival: false,
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
+            water_quality: WaterQuality::default(),
         }
     }
 }
@@ -336,6 +340,7 @@ impl Toggle {
 enum Choice {
     AntiAliasing,
     ShaderPack,
+    Water,
 }
 
 impl Choice {
@@ -343,6 +348,7 @@ impl Choice {
         match self {
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
+            Choice::Water => "Water",
         }
     }
 
@@ -350,6 +356,7 @@ impl Choice {
         match self {
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
+            Choice::Water => settings.water_quality.label().into(),
         }
     }
 
@@ -360,6 +367,10 @@ impl Choice {
                 settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
             }
             Choice::ShaderPack => settings.shader_pack = packs.next(&settings.shader_pack).to_owned(),
+            Choice::Water => {
+                let i = WaterQuality::ALL.iter().position(|&q| q == settings.water_quality).unwrap_or(0);
+                settings.water_quality = WaterQuality::ALL[(i + 1) % WaterQuality::ALL.len()];
+            }
         }
     }
 }
@@ -410,6 +421,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Slider(Slider::Fov),
             Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::AntiAliasing),
+            Control::Choice(Choice::Water),
             Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::Vsync),
             Control::Switch(Toggle::DebugOverlay),
@@ -791,8 +803,10 @@ fn apply(
     mut cycle: ResMut<DayCycle>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
     mut camera: Query<(Entity, &mut Msaa), With<Camera3d>>,
+    mut water: ResMut<WaterQuality>,
     mut commands: Commands,
 ) {
+    water.set_if_neq(settings.water_quality);
     if world.view_distance != settings.view_distance {
         world.set_view_distance(settings.view_distance);
         cycle.view_distance = lod::view_distance(settings.view_distance);
