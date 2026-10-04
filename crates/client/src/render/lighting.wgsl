@@ -102,7 +102,8 @@ fn water_normal(world: vec3<f32>) -> vec3<f32> {
 // fog.be.y) fades out completely. Real chunks, distant terrain and the sky's horizon all
 // meet in the same colour.
 const HAZE_DENSITY: f32 = 0.0002;
-const HAZE_BASE: f32 = 64.0;
+// Sea level (voxmar_worldgen::SEA_LEVEL).
+const HAZE_BASE: f32 = 128.0;
 const HAZE_HEIGHT: f32 = 90.0;
 
 // How much of what lies `offset` from the eye is hidden by haze.
