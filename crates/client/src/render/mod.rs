@@ -80,9 +80,17 @@ impl Plugin for RenderPlugin {
             .init_resource::<DayCycle>()
             .init_resource::<Quality>()
             .init_resource::<pack::ActivePack>()
+            .add_systems(Startup, cluster_lights_on_the_cpu)
             .add_systems(Update, (pack::apply_pack, apply_quality.run_if(resource_changed::<Quality>)))
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
     }
+}
+
+/// Bevy sorts point and spot lights into clusters of the view on the GPU, in five render
+/// passes a frame, and every pass costs about 0.2 ms of frame time on Metal however little
+/// it does (see docs/rendering.md). We have no such lights, so the CPU does it for free.
+fn cluster_lights_on_the_cpu(mut settings: ResMut<bevy::light::cluster::GlobalClusterSettings>) {
+    settings.gpu_clustering = None;
 }
 
 /// Terrain is drawn in four passes (see `terrain`).
