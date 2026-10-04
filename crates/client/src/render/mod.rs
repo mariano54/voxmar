@@ -516,7 +516,8 @@ fn update_environment(
     clear.0 = horizon_color;
     ambient.color = Color::linear_rgb(env.ambient.x, env.ambient.y, env.ambient.z);
     fog.color = horizon_color;
-    fog.directional_light_color = Color::linear_rgb(glow.x, glow.y, glow.z);
+    // The alpha, unused by Bevy, carries the pack's ground bounce to lighting.wgsl.
+    fog.directional_light_color = Color::linear_rgba(glow.x, glow.y, glow.z, pack.bounce);
     fog.falloff = FogFalloff::Linear { start: fog_start, end: fog_end };
     // Unused by our shaders as Bevy means it; lighting.wgsl reads it as the haze density.
     fog.directional_light_exponent = pack.haze;
