@@ -68,6 +68,11 @@ captures log the weather and air they show. Every kind: `/weather list`.
 - Ground fog (`ground_fog`, `fog_top`: valley fog, dawn mist, sea fog): a layer, full below
   the top and thinning over a few blocks above it, integrated in closed form along each
   view ray, so from a hill it lies as a white sea between ridges and from inside it is fog.
+  Volumetric light scatters sunlight in it, so it glows where the sun reaches.
+- Wet ground and puddles (`wetness`), frost (`frost`) and a snow dusting on top faces
+  (`snow_cover` over 0.3), on surfaces open to the sky (render/lighting.wgsl, `weathered`
+  and `wet_sheen`): wet surfaces darken and mirror the sky at glancing angles, puddles
+  gather on level ground as it gets wetter and mirror it strongly.
 
 ## Waiting on the graphics thread
 
@@ -126,22 +131,7 @@ the `pcg` already in sky.wgsl with the world seconds), only through clear sky.
 offset the screen UV by a scrolling noise of amplitude `1.5 px * heat_haze`, masked to
 pixels farther than ~30 blocks and within ~8° of the horizon, rising slowly.
 
-### 7. Wet ground and puddles
-
-`w.wetness` (0..1): rises in rain, halves in 300 s (faster in sun and warmth), 0 under snow.
-In the terrain shader, on faces open to the sky (sky light 15): darken albedo by
-`0.3 * wetness`, raise specular/reflectance; on flat top faces, puddles where a world-space
-noise is below `wetness - 0.4` reflect the sky. Never under roofs, in caves or under dense
-leaves. (W12 shader pack.)
-
-### 8. Frost and lying snow on surfaces
-
-`w.frost` (0..1, clear cold nights and mornings): whiten top faces and plants with a
-blue-white rime, `0.5 * frost`, on surfaces open to the sky. `w.snow_cover` (0..1): the
-server already turns grass snowy block by block; a shader can add a thin white dusting on
-other top faces (stone, sand, leaves) at `snow_cover > 0.3`, open to the sky.
-
-### 9. Wisps and fantastical storms
+### 7. Wisps and fantastical storms
 
 `w.wisps` (ball lightning in storms, marsh lights on calm wet nights): a few (up to about
 12) large glowing orbs, 0.3–0.6 blocks, drifting 0.5–3 blocks above the ground within 30
@@ -151,7 +141,7 @@ motes and wisps are grounded, so ball lightning shows nothing until it has its o
 with `aether_storm` in `ClientWeather::effects` mark the rare aether storm: a violet tint to
 the storm cloud and the lightning would sell it.
 
-### 10. Rain and snow: what the mods and the hiking video still have that we don't
+### 8. Rain and snow: what the mods and the hiking video still have that we don't
 
 Compared side by side with Particle Rain (MIT; read for its techniques, nothing copied) and
 the hiking video's rain frames (`voxmar-reference/hiking-video-frames/0440`, `0449`), what
@@ -159,8 +149,7 @@ the precipitation particles cannot do on their own:
 
 - **Haze in and after rain**: drawn now (the weather's fog from `visibility()`, and
   `ClientAtmosphere`'s haze and saturation), see "Already drawn".
-- **Wet surfaces**: rain darkens exposed blocks and leaves and makes them glossy (item 7);
-  in the video every top face reads wet.
+- **Wet surfaces**: drawn now (wet ground and puddles).
 - **Near streaks as glassy sheets**: the video's closest streaks are wide, refracting
   smears. A refraction pass sampling the scene behind each near streak (offset by its
   normal) would give it; our streaks are only tinted.
@@ -178,8 +167,7 @@ the precipitation particles cannot do on their own:
 - **Lightning inside clouds**: most flashes now stay within the cloud
   (`ClientWeather::cloud_flashes()`: position about 160 blocks up and brightness). Light the
   cloud layer around that point (a soft glow of 200–400 blocks) rather than the whole sky.
-- **Snow on leaves and other surfaces**: `w.snow_cover` whitens grass blocks already; tops of
-  leaves, stone and sand should whiten in the shader too (item 8).
+- **Snow on leaves and other surfaces**: drawn now (a dusting on top faces).
 - **A rainbow over waterfall mist**: once waterfalls are known (the ambience track finds
   them at meshing time), a small bow in the spray when the sun is behind the player.
 

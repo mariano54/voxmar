@@ -34,7 +34,7 @@ use bevy::render::render_resource::{
     BufferUsages, CachedRenderPipelineId, CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -126,10 +126,11 @@ impl Plugin for TerrainPlugin {
     }
 }
 
-/// The block texture array.
+/// The block texture array, and how brightly each texture layer glows by itself.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TerrainTextures {
     pub textures: Handle<Image>,
+    pub glow: Handle<Image>,
 }
 
 /// The main world's handle on terrain rendering.
@@ -254,9 +255,10 @@ impl RangeAllocator {
 
 struct Page {
     vertex_buffer: Buffer,
-    index_buffer: Buffer,
     vertices: RangeAllocator,
-    indices: RangeAllocator,
+    /// Distant tile pages only: the tiles' indices. Chunk pages keep none, since a
+    /// chunk's quads say how to split themselves into triangles (see `compact`).
+    indices: Option<(Buffer, RangeAllocator)>,
     /// Chunk pages only: the chunk slot of each block of `VERTEX_BLOCK` vertices, and the
     /// bind group (group 3) that holds it.
     chunks: Option<(Buffer, BindGroup)>,
@@ -264,13 +266,14 @@ struct Page {
 
 /// Pages of one vertex format.
 ///
-/// Chunk pages hand vertices out in whole blocks of `VERTEX_BLOCK` and store page-wide
-/// indices, recording which chunk owns each block. The shader finds a vertex's chunk
-/// from its index, so neighbouring chunks' meshes in a page draw as one range.
+/// Chunk pages hold only vertices, four to a quad, handed out in whole blocks of
+/// `VERTEX_BLOCK` and recording which chunk owns each block, so the shader finds a
+/// vertex's chunk from its index. Each view builds the indices of the quads it draws
+/// (see `compact`), so a page stores no index data at all, 24 bytes a quad saved.
 struct PagePool {
     label: &'static str,
     vertex_size: u64,
-    /// Vertices per page; indices get one and a half times as many.
+    /// Vertices per page; distant tile pages get one and a half times as many indices.
     page_vertices: u32,
     pages: Vec<Page>,
     chunk_pages: bool,
@@ -288,61 +291,57 @@ impl PagePool {
         Self { label, vertex_size: vertex_size as u64, page_vertices, pages: Vec::new(), chunk_pages }
     }
 
-    /// Copies a mesh into the first page with room, adding a page if none has. A chunk
-    /// mesh's indices count from `first_vertex`, and are stored counting from the page.
+    /// Copies a mesh into the first page with room, adding a page if none has. Chunk
+    /// meshes' indices are not stored.
     fn allocate<V: bytemuck::Pod>(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,
         vertices: &[V],
         indices: &[u32],
-        first_vertex: u32,
         owner: Option<Owner>,
     ) -> Allocation {
-        let mut vertex_count = vertices.len() as u32;
-        if self.chunk_pages {
-            vertex_count = vertex_count.next_multiple_of(VERTEX_BLOCK);
-        }
+        let len = vertices.len() as u32;
+        let reserved = if self.chunk_pages { len.next_multiple_of(VERTEX_BLOCK) } else { len };
         let index_count = indices.len() as u32;
-        let found = self.pages.iter_mut().enumerate().find_map(|(i, page)| {
-            let vertices = page.vertices.allocate(vertex_count)?;
-            match page.indices.allocate(index_count) {
-                Some(indices) => Some((i, vertices, indices)),
+        let fit = |page: &mut Page| -> Option<(Range<u32>, Range<u32>)> {
+            let vertices = page.vertices.allocate(reserved)?;
+            let Some((_, free)) = &mut page.indices else { return Some((vertices, 0..0)) };
+            match free.allocate(index_count) {
+                Some(indices) => Some((vertices, indices)),
                 None => {
                     page.vertices.release(vertices);
                     None
                 }
             }
-        });
-        let (page, vertex_range, index_range) = found.unwrap_or_else(|| {
+        };
+        let found = self.pages.iter_mut().enumerate().find_map(|(i, page)| fit(page).map(|ranges| (i, ranges)));
+        let (page, (vertex_range, index_range)) = found.unwrap_or_else(|| {
             let mut page = self.new_page(device, owner.as_ref().map(|owner| owner.layout));
-            let vertices = page.vertices.allocate(vertex_count).expect("a mesh fits a page");
-            let indices = page.indices.allocate(index_count).expect("a mesh fits a page");
+            let ranges = fit(&mut page).expect("a mesh fits a page");
             self.pages.push(page);
-            (self.pages.len() - 1, vertices, indices)
+            (self.pages.len() - 1, ranges)
         });
         let target = &self.pages[page];
         queue.write_buffer(&target.vertex_buffer, vertex_range.start as u64 * self.vertex_size, bytemuck::cast_slice(vertices));
-        let index_offset = |indices: &[u32]| indices.iter().map(|&i| i - first_vertex + vertex_range.start).collect::<Vec<_>>();
-        match (&target.chunks, owner) {
-            (Some((chunks, _)), Some(owner)) => {
-                queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(&index_offset(indices)));
-                let blocks = vec![owner.slot; (vertex_range.len() as u32 / VERTEX_BLOCK) as usize];
-                queue.write_buffer(chunks, (vertex_range.start / VERTEX_BLOCK) as u64 * 4, bytemuck::cast_slice(&blocks));
-            }
-            _ => queue.write_buffer(&target.index_buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices)),
+        if let (Some((chunks, _)), Some(owner)) = (&target.chunks, owner) {
+            let blocks = vec![owner.slot; (reserved / VERTEX_BLOCK) as usize];
+            queue.write_buffer(chunks, (vertex_range.start / VERTEX_BLOCK) as u64 * 4, bytemuck::cast_slice(&blocks));
         }
-        Allocation { page: page as u32, vertices: vertex_range, indices: index_range }
+        if let Some((buffer, _)) = &target.indices {
+            queue.write_buffer(buffer, index_range.start as u64 * 4, bytemuck::cast_slice(indices));
+        }
+        Allocation { page: page as u32, vertices: vertex_range.start..vertex_range.start + len, reserved, indices: index_range }
     }
 
     fn free(&mut self, allocation: Allocation) {
         let page = &mut self.pages[allocation.page as usize];
-        page.vertices.release(allocation.vertices);
-        page.indices.release(allocation.indices);
-    }
-
-    fn index_usage(&self) -> BufferUsages {
-        if self.chunk_pages { BufferUsages::STORAGE } else { BufferUsages::empty() }
+        page.vertices.release(allocation.vertices.start..allocation.vertices.start + allocation.reserved);
+        if let Some((_, free)) = &mut page.indices
+            && !allocation.indices.is_empty()
+        {
+            free.release(allocation.indices);
+        }
     }
 
     fn new_page(&self, device: &RenderDevice, layout: Option<&BindGroupLayout>) -> Page {
@@ -355,7 +354,6 @@ impl PagePool {
                 mapped_at_creation: false,
             })
         };
-        let page_indices = self.page_vertices / 2 * 3;
         let chunks = layout.filter(|_| self.chunk_pages).map(|layout| {
             let chunks = buffer("chunks", (self.page_vertices / VERTEX_BLOCK) as u64 * 4, BufferUsages::STORAGE);
             let bind_group = device.create_bind_group(
@@ -365,21 +363,26 @@ impl PagePool {
             );
             (chunks, bind_group)
         });
+        let page_indices = self.page_vertices / 2 * 3;
+        let indices = (!self.chunk_pages)
+            .then(|| (buffer("indices", page_indices as u64 * 4, BufferUsages::INDEX), RangeAllocator::new(page_indices)));
+        // Chunk vertices are also read by the pass that builds each view's indices.
+        let usage = if self.chunk_pages { BufferUsages::VERTEX | BufferUsages::STORAGE } else { BufferUsages::VERTEX };
         Page {
-            vertex_buffer: buffer("vertices", self.page_vertices as u64 * self.vertex_size, BufferUsages::VERTEX),
-            // Chunk indices are also read by the compaction pass.
-            index_buffer: buffer("indices", page_indices as u64 * 4, BufferUsages::INDEX | self.index_usage()),
+            vertex_buffer: buffer("vertices", self.page_vertices as u64 * self.vertex_size, usage),
             vertices: RangeAllocator::new(self.page_vertices),
-            indices: RangeAllocator::new(page_indices),
+            indices,
             chunks,
         }
     }
 }
 
-/// Where a mesh lives.
+/// Where a mesh lives: its vertices, the share of the page they hold (whole blocks, for
+/// chunk pages) and, on distant tile pages, its indices.
 struct Allocation {
     page: u32,
     vertices: Range<u32>,
+    reserved: u32,
     indices: Range<u32>,
 }
 
@@ -390,6 +393,7 @@ struct Allocation {
 /// faces by `Face`, then cut-out faces, plants, inner, translucent and fringe.
 const STREAMS: usize = 11;
 const PLANTS: usize = 7;
+const FRINGE: usize = 10;
 /// Plants have sunk into the ground by this distance, in blocks (`PLANT_FADE` in
 /// voxel.wgsl), so further chunks skip them.
 const PLANT_DISTANCE: f32 = 320.0;
@@ -403,12 +407,21 @@ fn streams(pass: TerrainPass) -> Range<usize> {
     }
 }
 
+/// Indices each quad of a stream draws with: plants and leaf fringes are drawn from both
+/// sides, with both windings.
+fn indices_per_quad(stream: usize) -> u32 {
+    match stream {
+        PLANTS | FRINGE => 12,
+        _ => 6,
+    }
+}
+
 /// Vertices per page of each stream: the opaque directions and cut-outs hold most quads.
 fn stream_page_vertices(stream: usize) -> u32 {
     match stream {
         0..=6 => 1 << 21,
         PLANTS => 1 << 20,
-        10 => 1 << 18,
+        FRINGE => 1 << 18,
         _ => 1 << 19,
     }
 }
@@ -692,7 +705,7 @@ impl TerrainGpu {
             let vertices = &mesh.vertices[quads.start * 4..quads.end * 4];
             let indices = &mesh.indices[quads.start * 6..quads.end * 6];
             let owner = Owner { slot, layout };
-            let allocation = self.streams[stream].allocate(device, queue, vertices, indices, quads.start as u32 * 4, Some(owner));
+            let allocation = self.streams[stream].allocate(device, queue, vertices, indices, Some(owner));
             self.record(chunk).streams[stream] = Some(allocation);
             self.revision += 1;
         }
@@ -739,7 +752,7 @@ impl TerrainGpu {
 
     fn upload_tile(&mut self, device: &RenderDevice, queue: &RenderQueue, tile: TileMesh) {
         self.remove_tile(tile.key);
-        let mesh = self.tile_pages.allocate(device, queue, &tile.vertices, &tile.indices, 0, None);
+        let mesh = self.tile_pages.allocate(device, queue, &tile.vertices, &tile.indices, None);
         let corner = tile.key.origin();
         let slot = self.new_slot(IVec4::new(corner.x, 0, corner.y, tile.key.cell()));
         let size = tile.key.size() as f32;
@@ -945,9 +958,9 @@ fn prepare_bind_group(
             (6, atmosphere.0.as_entire_binding()),
         )),
     );
-    let blocks = textures.as_ref().and_then(|t| images.get(&t.textures));
-    let (Some(blocks), Some(seeds), Some(wind), Some(colours)) =
-        (blocks, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer)
+    let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.glow)?)));
+    let (Some((blocks, glow)), Some(seeds), Some(wind), Some(colours)) =
+        (textures, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer)
     else {
         gpu.distant_bind_group = Some(distant);
         return;
@@ -963,6 +976,7 @@ fn prepare_bind_group(
             wind.as_entire_binding(),
             colours.as_entire_binding(),
             atmosphere.0.as_entire_binding(),
+            &glow.texture_view,
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -1087,7 +1101,7 @@ fn cull(
                     if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && distance >= PLANT_DISTANCE) {
                         continue;
                     }
-                    let range = (allocation.page, allocation.indices.clone());
+                    let range = (allocation.page, allocation.vertices.clone());
                     if pass == TerrainPass::Translucent {
                         let centre = min + CHUNK_SIZE as f32 / 2.0;
                         translucent.push((centre.distance_squared(eye), range));
@@ -1106,10 +1120,11 @@ fn cull(
         for pass in PASSES {
             for stream in streams(pass) {
                 let ranges = &mut ranges[stream];
-                ranges.sort_unstable_by_key(|(page, indices)| (*page, indices.start));
+                ranges.sort_unstable_by_key(|(page, vertices)| (*page, vertices.start));
                 for run in ranges.chunk_by(|a, b| a.0 == b.0) {
                     let page = run[0].0;
-                    let indices = draws.compaction.gather(stream, page, run.iter().map(|(_, indices)| indices.clone()));
+                    let quads = run.iter().map(|(_, vertices)| vertices.clone());
+                    let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
                     draws.passes[pass as usize].push(ChunkDraw { stream: stream as u8, page, indices });
                 }
                 ranges.clear();
@@ -1120,7 +1135,8 @@ fn cull(
         let stream = streams(TerrainPass::Translucent).start;
         for run in translucent.chunk_by(|a, b| a.1.0 == b.1.0) {
             let page = run[0].1.0;
-            let indices = draws.compaction.gather(stream, page, run.iter().map(|(_, (_, indices))| indices.clone()));
+            let quads = run.iter().map(|(_, (_, vertices))| vertices.clone());
+            let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
             draws.passes[TerrainPass::Translucent as usize].push(ChunkDraw { stream: stream as u8, page, indices });
         }
         draws.distant.clear();
@@ -1211,8 +1227,9 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 uniform_buffer::<WindUniform>(false),
                 // Biome colours of columns, by block.
                 storage_buffer_read_only_sized(false, None),
-                // The air and light (lighting.wgsl).
+                // The air and light (lighting.wgsl), and each texture layer's glow.
                 uniform_buffer::<Atmosphere>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );
@@ -1613,9 +1630,12 @@ impl<P: PhaseItem> RenderCommand<P> for DrawDistant {
         let mut current = None;
         for draw in &draws.distant {
             if current != Some(draw.page) {
-                let Some(page) = gpu.tile_pages.pages.get(draw.page as usize) else { return RenderCommandResult::Skip };
+                let page = gpu.tile_pages.pages.get(draw.page as usize);
+                let Some((page, (indices, _))) = page.and_then(|page| Some((page, page.indices.as_ref()?))) else {
+                    return RenderCommandResult::Skip;
+                };
                 render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(page.index_buffer.slice(..), IndexFormat::Uint32);
+                render_pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
                 current = Some(draw.page);
             }
             render_pass.draw_indexed(draw.indices.clone(), draw.base_vertex, draw.slot..draw.slot + 1);

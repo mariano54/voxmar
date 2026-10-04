@@ -22,7 +22,7 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
 time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
@@ -30,6 +30,8 @@ the view that far (0..1, cracks and chips showing; 1 breaks it just before the s
 `--flicker` measures shimmer: with the clock stopped it also takes `OUT-moved.png` after
 stepping the camera 4 cm sideways, logs the share of pixels that changed by more than 60
 levels, and marks them in red in `OUT-flicker.png`.
+`--flicker-still` instead keeps the camera still and lets the game run on one 60 fps frame
+between the shots (the sun and wind moving), as shadows and leaves flicker over time.
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
@@ -82,7 +84,8 @@ is `time set day`).
 
 Esc opens the settings menu: render distance, far detail (Balanced, Fast or Full: how soon
 distant chunks merge two or four columns into one, which draws far terrain much faster), field
-of view, anti-aliasing, water quality, particles (All, Fewer or Off: the pieces that fly from
+of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
+(volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
 broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
@@ -435,11 +438,11 @@ of the highest block around the camera, so nothing falls indoors, under trees or
 Ambient particles from the land's air (pollen by day, fireflies on some warm nights, spores in
 damp forests, drifting snow in the cold) come from `ClientAtmosphere`, which samples
 `Overworld::atmosphere_at` around the player and applies the weather and time of day, and
-also tints the haze, sky and grading. Fog, mist, whiteout, rain and dust close in the view;
-valley fog, dawn mist and sea fog lie in a layer under the weather's fog top. Rainbows,
-halos, aurora, shooting stars, heat haze, frost and wet ground are in the weather the client
-receives and wait on the renderer (docs/weather-effects.md). F3 shows the weather and the
-effects showing.
+also tints the haze, sky and grading. Fog, mist, whiteout and dust close in the view; valley
+fog, dawn mist and sea fog lie in a layer under the weather's fog top; rain wets the ground
+and fills puddles; frost whitens it; clouds cast moving shadows. Rainbows, halos, aurora,
+shooting stars and heat haze are in the weather the client receives and wait on the renderer
+(docs/weather-effects.md). F3 shows the weather and the effects showing.
 
 An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
 (kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`
@@ -532,9 +535,15 @@ writes about twenty seconds of each of nine typical places to `target/ambience_p
   trades waves and reflections for speed, and shader packs scale each part.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
   aerial perspective (haze that thins with height and glows around the sun), ground fog and
-  weather fog, HDR with bloom.
+  weather fog, volumetric light (shafts through canopies, the sun's glow in haze and mist),
+  HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
   of view. Nights are dark, lit by a faint blue moon.
+- Soft cascaded sun shadows whose penumbra widens with distance from the caster, and which
+  stand still (the sun's light moves in tenth-of-a-degree steps); sky light that falls off
+  steeply into forests and overhangs, ambient occlusion, leaves glowing against the sun,
+  moving cloud shadows, and blocks that give off light glowing by themselves. Shader packs
+  (`assets/shaderpacks/*.ron`; Verdant by default, Classic the plain look) scale all of it.
 - A sunlit top face gets about as much light as Minecraft's full brightness, and the display
   transform passes colours up to 0.8 through unchanged (rolling off only brighter ones), so
   blocks keep their texture colours in daylight.

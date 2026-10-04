@@ -22,7 +22,7 @@ use crate::menu::widgets::{
 };
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState, Zoom};
-use crate::render::DayCycle;
+use crate::render::{DayCycle, Quality, ShadowQuality};
 use crate::render::pack::{ActivePack, ShaderPacks};
 use crate::render::lod::{self, Lod};
 use crate::render::water::WaterQuality;
@@ -92,6 +92,10 @@ pub struct Settings {
     pub hud_raise: i32,
     /// Name of the shader pack in use (see `render::pack`).
     pub shader_pack: String,
+    /// How sun shadows are drawn.
+    pub shadows: ShadowQuality,
+    /// Shafts of sunlight through canopies and the sun's glow in haze and mist.
+    pub volumetric_light: bool,
     /// How much work water does: waves, and reflections of the terrain (`render::water`).
     pub water_quality: WaterQuality,
     /// Which texture pack comes first; takes effect the next time the game starts.
@@ -237,6 +241,8 @@ impl Default for Settings {
             zoom_in_survival: false,
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
+            shadows: ShadowQuality::default(),
+            volumetric_light: true,
             water_quality: WaterQuality::default(),
             textures: TextureOrder::default(),
             particles: ParticleAmount::default(),
@@ -403,6 +409,7 @@ impl Slider {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Toggle {
     Vsync,
+    VolumetricLight,
     DebugOverlay,
     CinematicZoom,
     ZoomInSurvival,
@@ -412,6 +419,7 @@ impl Toggle {
     fn label(self) -> &'static str {
         match self {
             Toggle::Vsync => "VSync",
+            Toggle::VolumetricLight => "Light shafts",
             Toggle::DebugOverlay => "Debug overlay",
             Toggle::CinematicZoom => "Cinematic zoom",
             Toggle::ZoomInSurvival => "Zoom in survival",
@@ -421,6 +429,7 @@ impl Toggle {
     fn get(self, settings: &Settings) -> bool {
         match self {
             Toggle::Vsync => settings.vsync,
+            Toggle::VolumetricLight => settings.volumetric_light,
             Toggle::DebugOverlay => settings.debug_overlay,
             Toggle::CinematicZoom => settings.cinematic_zoom,
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
@@ -430,6 +439,7 @@ impl Toggle {
     fn set(self, settings: &mut Settings, on: bool) {
         *match self {
             Toggle::Vsync => &mut settings.vsync,
+            Toggle::VolumetricLight => &mut settings.volumetric_light,
             Toggle::DebugOverlay => &mut settings.debug_overlay,
             Toggle::CinematicZoom => &mut settings.cinematic_zoom,
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
@@ -443,6 +453,7 @@ enum Choice {
     FarDetail,
     AntiAliasing,
     ShaderPack,
+    Shadows,
     Water,
     Textures,
     Particles,
@@ -454,6 +465,7 @@ impl Choice {
             Choice::FarDetail => "Far detail",
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
+            Choice::Shadows => "Shadows",
             Choice::Water => "Water",
             Choice::Textures => "Textures (on restart)",
             Choice::Particles => "Particles",
@@ -465,6 +477,7 @@ impl Choice {
             Choice::FarDetail => settings.far_detail.label().into(),
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
+            Choice::Shadows => settings.shadows.label().into(),
             Choice::Water => settings.water_quality.label().into(),
             Choice::Textures => settings.textures.label().into(),
             Choice::Particles => settings.particles.label().into(),
@@ -482,6 +495,10 @@ impl Choice {
                 settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
             }
             Choice::ShaderPack => settings.shader_pack = packs.next(&settings.shader_pack).to_owned(),
+            Choice::Shadows => {
+                let i = ShadowQuality::ALL.iter().position(|&q| q == settings.shadows).unwrap_or(0);
+                settings.shadows = ShadowQuality::ALL[(i + 1) % ShadowQuality::ALL.len()];
+            }
             Choice::Water => {
                 let i = WaterQuality::ALL.iter().position(|&q| q == settings.water_quality).unwrap_or(0);
                 settings.water_quality = WaterQuality::ALL[(i + 1) % WaterQuality::ALL.len()];
@@ -548,6 +565,8 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::Textures),
             Control::Choice(Choice::AntiAliasing),
+            Control::Choice(Choice::Shadows),
+            Control::Switch(Toggle::VolumetricLight),
             Control::Choice(Choice::Water),
             Control::Choice(Choice::Particles),
             Control::Slider(Slider::HudRaise),
@@ -930,6 +949,7 @@ fn apply(
     settings: Res<Settings>,
     mut world: ResMut<ClientWorld>,
     mut cycle: ResMut<DayCycle>,
+    mut quality: ResMut<Quality>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
     mut camera: Query<(Entity, &mut Msaa), With<Camera3d>>,
     mut water: ResMut<WaterQuality>,
@@ -940,6 +960,7 @@ fn apply(
         world.set_view_distance(settings.view_distance);
         cycle.view_distance = lod::view_distance(settings.view_distance);
     }
+    quality.set_if_neq(Quality { shadows: settings.shadows, volumetric_light: settings.volumetric_light });
     world.set_far_detail(settings.far_detail.range());
     let present_mode = if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     if let Ok(mut window) = window.single_mut()

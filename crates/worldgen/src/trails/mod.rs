@@ -296,16 +296,18 @@ impl Trails {
     }
 
     /// Makes on every core what the trails of the regions around `region` are planned
-    /// from and not made yet: in turn the grids of the regions four around, the places of
-    /// those three around, the routes two around and the paths next door, which is what
-    /// a tile in `region` reads (see `paths`, `routes` and `sites::places`).
+    /// from and not made yet: in turn the grids of the regions three around, the places
+    /// and routes of those two around and the paths next door. A tile in `region` reads
+    /// all of them (see `paths`, `routes` and `sites::places`); it may read some further
+    /// out too, as the places it joins lie, which are left to be made when asked for, so
+    /// that nothing is made that is not needed.
     fn prepare(&self, land: &dyn Land, region: IVec2) {
         let around = |reach: i32| (-reach..=reach).flat_map(move |dz| (-reach..=reach).map(move |dx| region + IVec2::new(dx, dz)));
         let missing = |reach: i32, has: &dyn Fn(IVec2) -> bool| around(reach).filter(|&r| !has(r)).collect::<Vec<IVec2>>();
-        crate::parallel::for_each(&missing(4, &|r| self.grids.has(r)), |&r| {
+        crate::parallel::for_each(&missing(3, &|r| self.grids.has(r)), |&r| {
             self.grid(land, r);
         });
-        crate::parallel::for_each(&missing(3, &|r| self.places.has(r)), |&r| {
+        crate::parallel::for_each(&missing(2, &|r| self.places.has(r)), |&r| {
             self.places(land, r);
         });
         crate::parallel::for_each(&missing(2, &|r| self.routes.has(r)), |&r| {

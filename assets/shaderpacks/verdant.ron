@@ -1,18 +1,29 @@
-// Verdant: a warm, contrasty look after Complementary Reimagined. Strong sun against cool,
-// deep shade, a blue haze over the distance, and richer greens.
+// Verdant: a warm, contrasty look after Complementary Reimagined. Warm sun against cool,
+// deep shade, soft shadows with wide penumbrae, dark forest floors, corners grounded by
+// occlusion, leaves glowing against the sun, light shafts and mist, and a blue haze over
+// the distance.
 (
     name: "Verdant",
     sun: 1.4,
-    ambient: 0.55,
+    sun_tint: (1.12, 1.0, 0.8),
+    ambient: 0.5,
     shade_tint: (0.82, 0.95, 1.2),
-    haze: 2.6,
+    haze: 3.0,
     haze_tint: (0.9, 0.97, 1.06),
+    mist: 1.0,
+    fog: 1.0,
     local_air: 0.7,
+    rays: 1.0,
+    shadow_softness: 0.025,
+    sky_falloff: 3.0,
+    ambient_occlusion: 1.6,
+    subsurface: 0.35,
+    cloud_shadows: 0.5,
     exposure: 1.0,
-    contrast: 1.18,
+    contrast: 1.2,
     saturation: 1.15,
-    vibrance: 0.35,
-    warmth: 0.05,
-    bloom: 0.12,
+    vibrance: 0.25,
+    warmth: 0.06,
+    bloom: 0.08,
     water: (pixelated: true),
 )
