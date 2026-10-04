@@ -4,7 +4,9 @@
 //   ones counting more (10 within 5 blocks, 5 within 10, 2 within 15, 1 up to 24). Each
 //   group is selected by block tags or materials and is an axis of its own, 0 below the
 //   first number of its range and 1 above the second.
-// beds: continuous layers. `volume` at full strength; `when` holds soft ranges on axes,
+// beds: continuous layers, synthesized (`sound`) or recorded (`recording`: three segments in
+//   this package, eight seconds each, fading in and out over their first and last second
+//   and a half, as the mixer crossfades them). `volume` at full strength; `when` holds soft ranges on axes,
 //   each full between `min` and `max` and fading out over `fade` beyond them; `biome` and
 //   `not_biome` want or avoid biome tags; `duck` turns the bed down by an axis or another
 //   bed (0.8: to a fifth at its fullest); `fade` is the seconds to fade fully in or out.
@@ -16,8 +18,10 @@
 // Axes: air (0 enclosed .. 1 open land), sky (share of nearby air open to the sky),
 // canopy (share of that under leaves), reverb (0 outdoors .. 1 large cave), sun (-1
 // midnight .. 1 noon), temperature (°C), moisture, continentalness (-1 ocean, 0 coast, 1
-// inland), river, forest, height (above sea), relief (above the land around), depth
-// (below the ground surface here), rain, snow, storm (0..1), wind (blocks/s, gusts
+// inland), river (1 by a river or lake), flowing (by running water only), still (by a lake
+// or spring only), forest, height (above sea), relief (above the land around), depth
+// (below the ground surface here), rain (heard falling, less under a roof), raining
+// (falling at all), wetness (of the ground), snow, storm (0..1), wind (blocks/s, gusts
 // included), gusts (how gusty, 0..1), hail, sleet, dust (0..1, as heard here), cover,
 // underwater, and the groups below.
 (
@@ -34,6 +38,27 @@
         (name: "snowpack", materials: [Snow], range: (60, 600)),
     ],
     beds: [
+        // Rain, recorded (CC0; see THIRD_PARTY_NOTICES.md) and layered the AmbientSounds
+        // way. Out in the open, a patter on leaves and ground that grows with the rain, then
+        // gives way to the roar of a downpour; under a roof, the drumming on it; under trees
+        // while they are wet, drops falling from the leaves.
+        (
+            name: "rain", recording: ["sounds/rain_light_1.mp3", "sounds/rain_light_2.mp3", "sounds/rain_light_3.mp3"], volume: 0.5, fade: 3,
+            when: {"rain": (min: 0.45, max: 0.75, fade: 0.42)},
+        ),
+        (
+            name: "downpour", recording: ["sounds/rain_heavy_1.mp3", "sounds/rain_heavy_2.mp3", "sounds/rain_heavy_3.mp3"], volume: 0.75, fade: 3,
+            when: {"rain": (min: 0.85, fade: 0.4)},
+        ),
+        (
+            name: "rain_on_roof", recording: ["sounds/rain_roof_1.mp3", "sounds/rain_roof_2.mp3", "sounds/rain_roof_3.mp3"], volume: 0.4, fade: 2,
+            when: {"raining": (min: 0.3, fade: 0.25), "sky": (max: 0.15, fade: 0.2), "air": (min: 0.03, fade: 0.05)},
+        ),
+        (
+            name: "dripping_trees", recording: ["sounds/drips_1.mp3", "sounds/drips_2.mp3", "sounds/drips_3.mp3"], volume: 0.35, fade: 8,
+            when: {"wetness": (min: 0.45, fade: 0.3), "leaves": (min: 0.35, fade: 0.3), "air": (min: 0.05, fade: 0.1)},
+            duck: {"downpour": 0.8},
+        ),
         // A soft breeze anywhere outdoors, stronger with the wind.
         (
             name: "breeze", sound: Wind, volume: 0.2,
@@ -90,11 +115,18 @@
             not_biome: ["desert", "frozen"],
             duck: {"rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
         ),
-        // Running water: rivers and streams, not lakes or the sea.
+        // Running water, recorded: a creek's babble, louder the more the place is by the
+        // water (a wide fade on `flowing`, so it grows from the edge of the valley in).
         (
-            name: "stream", sound: Stream, volume: 0.32,
-            when: {"water": (min: 0.35, fade: 0.3), "river": (min: 0.5, fade: 0.3), "continentalness": (min: 0.1, fade: 0.1), "air": (min: 0.05, fade: 0.1)},
-            duck: {"rain": 0.4},
+            name: "stream", recording: ["sounds/brook_1.mp3", "sounds/brook_2.mp3", "sounds/brook_3.mp3"], volume: 0.45,
+            when: {"water": (min: 0.3, fade: 0.25), "flowing": (min: 0.9, fade: 0.6), "air": (min: 0.05, fade: 0.1)},
+            duck: {"rain": 0.4, "downpour": 0.5},
+        ),
+        // Small waves lapping at the shore of a lake.
+        (
+            name: "lake", recording: ["sounds/lake_1.mp3", "sounds/lake_2.mp3", "sounds/lake_3.mp3"], volume: 0.35, fade: 5,
+            when: {"water": (min: 0.4, fade: 0.3), "still": (min: 0.7, fade: 0.45), "air": (min: 0.05, fade: 0.1)},
+            duck: {"rain": 0.5, "high_wind": 0.4},
         ),
         // Surf on the coast.
         (
@@ -183,13 +215,6 @@
             when: {"sun": (max: 0.1, fade: 0.15), "temperature": (min: 12, fade: 5), "water": (min: 0.25, fade: 0.2), "continentalness": (min: 0.05, fade: 0.1)},
             biome: ["wetland", "river"],
             duck: {"rain": 0.3},
-        ),
-        // Water plopping and gurgling near streams.
-        (
-            name: "water", sound: Plop, volume: 0.3, at: Block("water"), per_minute: 3, cooldown: 5,
-            pitch: (0.8, 1.2), reach: 8,
-            when: {"water": (min: 0.25, fade: 0.2), "river": (min: 0.4, fade: 0.3), "continentalness": (min: 0.1, fade: 0.1)},
-            duck: {"rain": 0.6},
         ),
         // Gusts on heights.
         (

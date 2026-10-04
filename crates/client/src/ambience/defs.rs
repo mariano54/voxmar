@@ -47,6 +47,10 @@ pub enum Fixed {
     Continentalness,
     /// 1 in a river or lake, falling to 0 at the edge of its valley.
     River,
+    /// As `River`, but only by running water (creeks and rivers), and only by still water
+    /// (lakes and springs).
+    Flowing,
+    Still,
     /// Tree cover of the climate, 0..1.
     Forest,
     /// The player's height above sea level, in blocks.
@@ -55,8 +59,12 @@ pub enum Fixed {
     Relief,
     /// How far below the ground surface here the player is, in blocks.
     Depth,
-    /// Rain heard falling: 0..1.
+    /// Rain heard falling: 0..1, less under a roof.
     Rain,
+    /// Rain falling at all, roof or not, 0..1: for the sound of it on the roof overhead.
+    Raining,
+    /// How wet the ground is, 0..1: dripping trees after the rain.
+    Wetness,
     /// Snow falling: 0..1.
     Snow,
     /// Thunderstorm: rain from heaped cloud, 0..1.
@@ -77,7 +85,7 @@ pub enum Fixed {
 }
 
 impl Fixed {
-    pub const ALL: [Fixed; 23] = [
+    pub const ALL: [Fixed; 27] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -87,11 +95,15 @@ impl Fixed {
         Fixed::Moisture,
         Fixed::Continentalness,
         Fixed::River,
+        Fixed::Flowing,
+        Fixed::Still,
         Fixed::Forest,
         Fixed::Height,
         Fixed::Relief,
         Fixed::Depth,
         Fixed::Rain,
+        Fixed::Raining,
+        Fixed::Wetness,
         Fixed::Snow,
         Fixed::Storm,
         Fixed::Wind,
@@ -118,7 +130,11 @@ impl Fixed {
             Fixed::Height => "height",
             Fixed::Relief => "relief",
             Fixed::Depth => "depth",
+            Fixed::Flowing => "flowing",
+            Fixed::Still => "still",
             Fixed::Rain => "rain",
+            Fixed::Raining => "raining",
+            Fixed::Wetness => "wetness",
             Fixed::Snow => "snow",
             Fixed::Storm => "storm",
             Fixed::Wind => "wind",
@@ -236,10 +252,21 @@ pub struct Group {
     pub range: (f32, f32),
 }
 
+/// What a bed plays: a synthesized sound, or recorded segments shipped in its package.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BedSound {
+    Synth(Synth),
+    /// Asset paths of [`synth::BED_VARIANTS`](super::synth::BED_VARIANTS) segments, each
+    /// [`synth::SEGMENT`](super::synth::SEGMENT) seconds long and fading in and out with
+    /// equal power over the first and last [`synth::OVERLAP`](super::synth::OVERLAP)
+    /// seconds, as the synthesized ones do.
+    Recorded(Vec<String>),
+}
+
 #[derive(Clone, Debug)]
 pub struct Bed {
     pub name: String,
-    pub synth: Synth,
+    pub sound: BedSound,
     pub volume: f32,
     pub when: Conditions,
     pub duck: Vec<(DuckBy, f32)>,
@@ -311,7 +338,11 @@ struct GroupDef {
 #[serde(deny_unknown_fields)]
 struct BedDef {
     name: String,
-    sound: Synth,
+    /// A synthesized sound, or else `recording`: segment files in the package.
+    #[serde(default)]
+    sound: Option<Synth>,
+    #[serde(default)]
+    recording: Vec<String>,
     volume: f32,
     #[serde(default)]
     when: BTreeMap<String, Range>,
@@ -375,7 +406,8 @@ impl Ambience {
     pub fn load(files: &[ContentFile]) -> Result<Self, String> {
         let mut parsed = Vec::new();
         for file in files.iter().filter(|f| f.name == FILE) {
-            let def: FileDef = ron::from_str(&file.source).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
+            let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+            let def: FileDef = options.from_str(&file.source).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
             parsed.push((file.package.as_str(), def));
         }
         let mut ambience = Ambience::default();
@@ -396,12 +428,20 @@ impl Ambience {
             let context = |name: &str| format!("{package}/{FILE}: {name}");
             for bed in def.beds {
                 let name = format!("{package}:{}", bed.name);
-                if !bed.sound.is_bed() {
-                    return Err(format!("{}: {:?} is a one-shot sound, not a bed", context(&bed.name), bed.sound));
-                }
+                let sound = match (bed.sound, bed.recording.is_empty()) {
+                    (Some(synth), true) if synth.is_bed() => BedSound::Synth(synth),
+                    (Some(synth), true) => return Err(format!("{}: {synth:?} is a one-shot sound, not a bed", context(&bed.name))),
+                    (None, false) if bed.recording.len() == super::synth::BED_VARIANTS => {
+                        BedSound::Recorded(bed.recording.iter().map(|path| format!("content/{package}/{path}")).collect())
+                    }
+                    (None, false) => {
+                        return Err(format!("{}: a recording needs {} segments", context(&bed.name), super::synth::BED_VARIANTS));
+                    }
+                    _ => return Err(format!("{}: give a sound or a recording, not both", context(&bed.name))),
+                };
                 let when = ambience.conditions(bed.when, bed.biome, bed.not_biome).map_err(|e| format!("{}: {e}", context(&bed.name)))?;
                 let duck = ambience.duck(bed.duck, &bed_names, package).map_err(|e| format!("{}: {e}", context(&bed.name)))?;
-                ambience.beds.push(Bed { name, synth: bed.sound, volume: bed.volume, when, duck, fade: bed.fade.max(0.1) });
+                ambience.beds.push(Bed { name, sound, volume: bed.volume, when, duck, fade: bed.fade.max(0.1) });
             }
             for sound in def.sounds {
                 let name = format!("{package}:{}", sound.name);

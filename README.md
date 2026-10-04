@@ -528,24 +528,27 @@ Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain i
 quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
 synthesized cue to `target/sfx_preview.wav`.
 
-Ambience is synthesized the same way and follows where the player is. About once a second a
+Ambience follows where the player is. About once a second a
 flood fill from the eye (on a worker, capped at 16,000 cells) measures how much air is around,
 how much of it is open to the sky or under leaves, and the leaves, wood, water, grass, rock,
 sand and snow it meets, nearer ones counting more. With the climate and biome from the world
 generator, height above the land around, depth underground, the weather and the time of day,
 that makes an environment vector, and `ambience.ron` in any content package lists what plays
 where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
-streams, surf, cave air) as stereo segments that crossfade and never repeat back to back, and
-one-shots at a rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker
-on a trunk, owls, a cricket in the grass, frogs and plops in the water, gusts on heights,
-creaking trees, drips and rumbles in caves). One-shots sound from real blocks the fill found,
+surf, cave air, synthesized; rain by strength and cover, dripping trees, streams and lakes,
+recorded) as stereo segments that crossfade and never repeat back to back, and one-shots at a
+rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker on a trunk,
+owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips and
+rumbles in caves). Recordings are CC0 field recordings in the package
+(`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
+far, swimming strokes and splashes (`sounds.ron`). One-shots sound from real blocks the fill found,
 panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
 range with a fade, and rain ducks layers rather than silencing them. Captures run it silently
 and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
-writes about twenty seconds of each of nine typical places to `target/ambience_preview.wav`, and
+writes about twenty seconds of each of seventeen typical places to `target/ambience_preview.wav`, and
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
-`weather_sound_preview -- --ignored` writes rain at four strengths, thunder near to far, the
-brook, gurgles, swimming and a splash to `target/sound_preview/`, as the game plays them.
+`weather_sound_preview -- --ignored` writes the thunder, swimming and splashes to
+`target/sound_preview/`, as the game plays them.
 
 ## Rendering and performance
 

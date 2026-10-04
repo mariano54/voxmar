@@ -22,7 +22,7 @@ pub mod enclosure;
 pub mod mixer;
 pub mod synth;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::sync::{Arc, OnceLock};
 
@@ -35,9 +35,9 @@ use voxmar_engine::content::Content;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::world::VoxelWorld;
 use voxmar_protocol::TICKS_PER_DAY;
-use voxmar_worldgen::{Overworld, SEA_LEVEL, WorldContent};
+use voxmar_worldgen::{Body, Overworld, SEA_LEVEL, WorldContent};
 
-use self::defs::{Ambience, Environment, Fixed};
+use self::defs::{Ambience, BedSound, Environment, Fixed};
 use self::enclosure::{Enclosure, Kinds};
 use self::mixer::{Cue, Mixer};
 use self::synth::Synth;
@@ -103,6 +103,9 @@ struct Place {
     moisture: f32,
     continentalness: f32,
     river: f32,
+    /// `river` by running water, and by still water.
+    flowing: f32,
+    still: f32,
     forest: f32,
     /// Ground height here, and on average over the land around.
     ground: f32,
@@ -154,7 +157,11 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
         }
     };
     let kinds = Arc::new(kinds(&ambience, &world.registry));
-    let mut synths: Vec<Synth> = ambience.beds.iter().map(|b| b.synth).chain(ambience.sounds.iter().map(|s| s.synth)).collect();
+    let bed_synths = ambience.beds.iter().filter_map(|b| match b.sound {
+        BedSound::Synth(synth) => Some(synth),
+        BedSound::Recorded(_) => None,
+    });
+    let mut synths: Vec<Synth> = bed_synths.chain(ambience.sounds.iter().map(|s| s.synth)).collect();
     synths.sort_by_key(|s| *s as u8);
     synths.dedup();
     let (tx, clips_rx) = unbounded();
@@ -206,7 +213,7 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry) -> Kinds {
     }
 }
 
-fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<AudioSource>>) {
+fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<AudioSource>>, assets: Res<AssetServer>) {
     let Some(mut ambient) = ambient else { return };
     let Ok(synthesized) = ambient.clips_rx.try_recv() else { return };
     let bed_handles: Vec<(Synth, Vec<Handle<AudioSource>>)> = synthesized
@@ -216,7 +223,16 @@ fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<Au
         .collect();
     let find_bed = |synth: Synth| bed_handles.iter().find(|(s, _)| *s == synth).map(|(_, h)| h.clone()).unwrap_or_default();
     let find_sound = |synth: Synth| synthesized.sounds.iter().find(|(s, _)| *s == synth).map(|(_, c)| c.clone()).unwrap_or_default();
-    let beds = ambient.ambience.beds.iter().map(|b| find_bed(b.synth)).collect();
+    // Recorded beds load from their package like any other asset.
+    let beds = ambient
+        .ambience
+        .beds
+        .iter()
+        .map(|b| match &b.sound {
+            BedSound::Synth(synth) => find_bed(*synth),
+            BedSound::Recorded(paths) => paths.iter().map(|path| assets.load(path.clone())).collect(),
+        })
+        .collect();
     let sounds = ambient.ambience.sounds.iter().map(|s| find_sound(s.synth)).collect();
     ambient.clips = Some(Clips { beds, sounds });
 }
@@ -303,6 +319,8 @@ fn place(generator: &Overworld, eye: IVec3) -> Place {
         moisture: site.moisture,
         continentalness: site.continentalness,
         river: site.river,
+        flowing: if matches!(site.body, Body::Creek | Body::River) { site.river } else { 0.0 },
+        still: if matches!(site.body, Body::Lake | Body::Spring) { site.river } else { 0.0 },
         forest: site.forest,
         ground: site.height as f32,
         land,
@@ -341,6 +359,8 @@ fn listen(
         env.set(Fixed::Moisture, place.moisture);
         env.set(Fixed::Continentalness, place.continentalness);
         env.set(Fixed::River, place.river);
+        env.set(Fixed::Flowing, place.flowing);
+        env.set(Fixed::Still, place.still);
         env.set(Fixed::Forest, place.forest);
         env.set(Fixed::Relief, eye - place.land);
         env.set(Fixed::Depth, place.ground - eye);
@@ -351,6 +371,8 @@ fn listen(
     let shown = &weather.current;
     let falling = shown.precipitation * (1.0 - shown.snow);
     env.set(Fixed::Rain, falling * smooth.sky.max(0.3 * smooth.air));
+    env.set(Fixed::Raining, falling);
+    env.set(Fixed::Wetness, shown.wetness);
     env.set(Fixed::Snow, shown.precipitation * shown.snow);
     env.set(Fixed::Storm, shown.precipitation * shown.convection);
     env.set(Fixed::Wind, shown.wind.length());

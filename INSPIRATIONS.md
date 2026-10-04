@@ -25,6 +25,17 @@ copied.
 
 ## Copied code (also in THIRD_PARTY_NOTICES.md)
 
+### Freesound recordists (rain, thunder, water)
+
+- Authors: Garuda1982, Gustavo_C, dflee4, bruno.auzet, TRP, Pingel, cognito perceptu,
+  fran_marenco, kyles and Nox_Sound
+- Link: https://freesound.org (each recording's page is in the notices)
+- Licence: CC0 1.0. **Copied**: field recordings, cut, filtered and levelled (see the
+  notices for which recording became which file).
+- What we took: the sound of rain on leaves, a downpour, rain on a tarp, drops off trees, a
+  babbling creek, a lake lapping, close and distant thunder, swimming and splashes.
+- Where: `assets/content/base/sounds/`, played by `ambience.ron` and `sounds.ron`.
+
 ### RoadWeaver
 
 - Author: shiroha-233
@@ -305,7 +316,9 @@ copied.
 - Licence: LGPL-3.0. Ideas only.
 - What we took: measuring how enclosed the player is with a capped flood fill from the eye,
   which gives openness, sky exposure and what blocks are near; and sound layers whose
-  conditions are soft ranges that fade, ducked rather than muted by rain.
+  conditions are soft ranges that fade, ducked rather than muted by rain; and rain as
+  recorded layers by strength and cover (open ground, a downpour, under a roof, dripping
+  trees), as its rain sounds are.
 - Where: `crates/client/src/ambience/enclosure.rs` and `defs.rs`.
 
 ### Resonance

@@ -3,10 +3,31 @@
 use bevy::math::{IVec2, IVec3, Vec3};
 use voxmar_engine::content::ContentFile;
 
-use super::defs::{Ambience, Environment, FILE, Fixed};
+use super::defs::{Ambience, BedSound, Environment, FILE, Fixed};
 use super::mixer::{Cue, Mixer, place};
 use super::synth::{self, OVERLAP};
 use crate::sfx::{self, RATE, mix};
+
+/// A bed's segment as `[left, right]`: synthesized, or decoded from its recording.
+pub(crate) fn segment(sound: &BedSound, variant: usize) -> [Vec<f32>; 2] {
+    match sound {
+        BedSound::Synth(synth) => synth::bed(*synth, variant),
+        BedSound::Recorded(paths) => decode(&paths[variant]),
+    }
+}
+
+/// A recording under `assets/` as `[left, right]` at the game's sample rate.
+pub(crate) fn decode(path: &str) -> [Vec<f32>; 2] {
+    use bevy::audio::{AudioSource, Decodable, Source};
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets").join(path);
+    let source = AudioSource { bytes: std::fs::read(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display())).into() };
+    let decoder = source.decoder();
+    assert_eq!(decoder.sample_rate().get(), RATE, "{path}");
+    let channels = decoder.channels().get() as usize;
+    let samples: Vec<f32> = decoder.collect();
+    let channel = |c: usize| samples.iter().skip(c.min(channels - 1)).step_by(channels).copied().collect();
+    [channel(0), channel(1)]
+}
 
 fn base() -> Ambience {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base").join(FILE);
@@ -67,7 +88,7 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "forest_rain", &forest_tags, &[&forest[..], &[("rain", 1.0), ("cover", 1.0)]].concat()),
         scene(ambience, "meadow_noon", &["grassland", "temperate", "open"], &[("grass", 1.0), ("temperature", 20.0)]),
         scene(ambience, "meadow_night", &["grassland", "temperate", "open"], &[("grass", 1.0), ("sun", -0.7), ("temperature", 18.0)]),
-        scene(ambience, "river", &["river", "water"], &[("water", 0.7), ("grass", 0.4), ("river", 1.0), ("leaves", 0.3)]),
+        scene(ambience, "river", &["river", "water"], &[("water", 0.7), ("grass", 0.4), ("river", 1.0), ("flowing", 1.0), ("leaves", 0.3)]),
         scene(ambience, "coast", &["ocean"], &[("water", 1.0), ("sand", 0.6), ("continentalness", 0.0), ("height", 3.0), ("wind", 6.0)]),
         scene(ambience, "summit", &["mountain"], &[("rock", 0.8), ("snowpack", 0.5), ("relief", 70.0), ("height", 160.0), ("wind", 12.0), ("temperature", -6.0)]),
         scene(ambience, "cave", &["mountain"], &[("rock", 1.0), ("sky", 0.0), ("air", 0.3), ("reverb", 0.8), ("depth", 40.0)]),
@@ -75,6 +96,10 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "sandstorm", &["desert", "dry", "open"], &[("sand", 1.0), ("dust", 1.0), ("wind", 13.0), ("gusts", 1.0), ("temperature", 30.0), ("moisture", 0.1)]),
         scene(ambience, "blizzard", &["frozen", "cold", "open"], &[("snowpack", 1.0), ("snow", 0.9), ("wind", 13.0), ("gusts", 1.0), ("temperature", -10.0), ("cover", 1.0)]),
         scene(ambience, "sleet", &["grassland", "temperate", "open"], &[("grass", 1.0), ("sleet", 0.5), ("rain", 0.3), ("temperature", 1.0), ("cover", 1.0)]),
+        scene(ambience, "lake", &["lake", "water"], &[("water", 0.8), ("grass", 0.4), ("river", 1.0), ("still", 1.0)]),
+        scene(ambience, "light_rain", &["grassland", "temperate", "open"], &[("grass", 1.0), ("rain", 0.3), ("raining", 0.3), ("cover", 0.9)]),
+        scene(ambience, "porch_in_rain", &["forest", "temperate"], &[("air", 0.6), ("sky", 0.0), ("rain", 0.2), ("raining", 0.7), ("cover", 1.0)]),
+        scene(ambience, "forest_after_rain", &forest_tags, &[&forest[..], &[("wetness", 0.9), ("cover", 0.6)]].concat()),
     ]
 }
 
@@ -110,11 +135,15 @@ fn each_place_has_its_own_sound() {
         let (must, must_not): (&[&str], &[&str]) = match scene.name {
             "forest_dawn" => (&["leaves", "dawn_chorus", "warbler"], &["crickets", "owl"]),
             "forest_noon" => (&["leaves", "breeze", "warbler", "thrush"], &["meadow", "crickets", "owl", "dawn_chorus", "cave", "drip"]),
-            "forest_rain" => (&[], &[]),
+            "forest_rain" => (&["downpour"], &["rain_on_roof"]),
             "meadow_noon" => (&["meadow", "breeze"], &["leaves", "crickets", "warbler"]),
             "meadow_night" => (&["crickets", "cricket"], &["meadow", "warbler", "thrush"]),
-            "river" => (&["stream", "water"], &["surf"]),
-            "coast" => (&["surf"], &["stream", "frog"]),
+            "river" => (&["stream"], &["surf", "lake"]),
+            "coast" => (&["surf"], &["stream", "lake", "frog"]),
+            "lake" => (&["lake"], &["stream", "surf"]),
+            "light_rain" => (&["rain"], &["downpour", "rain_on_roof"]),
+            "porch_in_rain" => (&["rain_on_roof"], &["downpour"]),
+            "forest_after_rain" => (&["dripping_trees"], &["rain", "downpour"]),
             "summit" => (&["high_wind", "gust"], &["leaves", "warbler", "crickets", "meadow"]),
             "cave" => (&["cave", "drip"], &["breeze", "high_wind", "leaves", "warbler"]),
             "hailstorm" => (&["hail", "gusty"], &["sandstorm", "sleet", "meadow"]),
@@ -140,6 +169,30 @@ fn each_place_has_its_own_sound() {
     assert!(wet[leaves] > 0.0 && wet[leaves] < 0.6 * dry[leaves], "{} vs {}", wet[leaves], dry[leaves]);
 }
 
+/// Recorded beds are what the mixer expects: segments of `SEGMENT` seconds that fade in
+/// and out, at the game's sample rate.
+#[test]
+fn recorded_beds_fit_the_mixer() {
+    let ambience = base();
+    let mut recorded = 0;
+    for bed in &ambience.beds {
+        let BedSound::Recorded(paths) = &bed.sound else { continue };
+        for path in paths {
+            let [left, right] = decode(path);
+            let seconds = left.len() as f32 / RATE as f32;
+            assert!((seconds - synth::SEGMENT).abs() < 0.1, "{path}: {seconds} s");
+            let loudest = |s: &[f32]| s.iter().fold(0f32, |m, x| m.max(x.abs()));
+            let edge = RATE as usize / 200;
+            for channel in [&left, &right] {
+                assert!(loudest(&channel[..edge]) < 0.03 && loudest(&channel[channel.len() - edge..]) < 0.03, "{path} starts or ends abruptly");
+                assert!(loudest(channel) > 0.05 && loudest(channel) < 1.0, "{path}");
+            }
+            recorded += 1;
+        }
+    }
+    assert!(recorded >= 18);
+}
+
 /// `cargo test --release -p voxmar_client ambience_preview -- --ignored` writes about
 /// twenty seconds of each scene above, one after another, to
 /// `target/ambience_preview.wav` for listening, mixed as the game mixes them.
@@ -148,7 +201,7 @@ fn each_place_has_its_own_sound() {
 fn ambience_preview() {
     let ambience = base();
     let beds: Vec<Vec<[Vec<f32>; 2]>> =
-        ambience.beds.iter().map(|b| (0..synth::BED_VARIANTS).map(|v| synth::bed(b.synth, v)).collect()).collect();
+        ambience.beds.iter().map(|b| (0..synth::BED_VARIANTS).map(|v| segment(&b.sound, v)).collect()).collect();
     type Variants = Vec<(Vec<f32>, [Vec<f32>; 2])>;
     let sounds: Vec<Variants> =
         ambience.sounds.iter().map(|s| (0..synth::ONE_SHOT_VARIANTS).map(|v| synth::one_shot(s.synth, v)).collect()).collect();
