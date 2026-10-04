@@ -13,6 +13,10 @@ cargo run --release -- --host               # also open singleplayer worlds on t
 cargo run --release -p voxmar_server        # dedicated server on port 25665, world in ./world
 ```
 
+While developing, use `--profile iter` in place of `--release` (for `run`, `build` and `test`):
+it rebuilds in seconds rather than minutes after an edit and runs nearly as fast. Keep
+`--release` for performance measurements.
+
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
 frame rate), `--weather KIND` (show a kind of weather from `weather.ron`, such as `storm`,
@@ -186,7 +190,15 @@ no two worlds share a rarity table. Everything else is a continuous field:
   hot, temperate and cold land always lie in that order) and with altitude.
 - **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
   drier interiors, rain shadows behind mountains, wet tropics and dry subtropics.
-- **Rivers and lakes** are carved into the height function, ending as dry valleys in high country.
+- **Rivers and lakes** (`worldgen/src/water/`) run where water would. Trunk rivers are routed on
+  a 64-block grid over the land's broad shape and cut their valleys (and, rarely, tunnels
+  through a ridge) into it; creeks and streams are routed on an 8-block grid from the hills to a
+  trunk, a lake or the sea, joining as they go. Each river is as big as the rain on its whole
+  catchment. Shallow pits are breached; deeper ones fill as lakes at their own height, lower
+  and without outlet in dry climates, down to salt flats. Water steps down in whole blocks,
+  falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
+  summed region by region through records of where water crosses each 1 km region's border,
+  so rivers can be any length and nothing depends on generation order.
 - **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
   everywhere, more tangled with depth, opening to the surface as entrances in some places;
   cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
@@ -222,8 +234,11 @@ runs high.
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
 `Overworld::locate_biome` serve commands.
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
-`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on) writes a
-shaded 8 km map to `target/map_preview.ppm` and prints each biome's share of it.
+`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on, `X`, `Z`
+and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
+rivers and creeks in their own blues, and prints each biome's share of it. `river_sights` prints
+`--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
+near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections and level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
 arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;

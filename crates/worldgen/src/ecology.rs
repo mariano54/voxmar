@@ -19,7 +19,7 @@ use crate::geology::{noise, smoothstep};
 use crate::rarity::{Rarity, Tier};
 use crate::rng::hash3;
 use crate::trees::TreeId;
-use crate::{SEA_LEVEL, Site};
+use crate::Site;
 
 pub use crate::content::Ground;
 
@@ -150,7 +150,8 @@ fn fit(comfort: &Comfort, temperature: f32, moisture: f32) -> f32 {
 
 /// How much of its habitat a site offers, 0 ..= 1.
 fn habitat(habitat: Habitat, site: &Site) -> f32 {
-    let above = site.height - SEA_LEVEL;
+    // Height over the sea, lake or river over or beside the site.
+    let above = site.height - site.water;
     let coast = site.continentalness < 0.74;
     let yes = |b: bool| if b { 1.0 } else { 0.0 };
     match habitat {
@@ -250,7 +251,8 @@ impl Ecology {
         out.clear();
         let flora = &self.flora[site.biome.0 as usize];
         let (t, m) = (site.temperature, site.soil_moisture());
-        let above = site.height - SEA_LEVEL;
+        // Height over the sea, lake or river over or beside the site: trees need dry ground.
+        let above = site.height - site.water;
         let suits = |tree: TreeId| {
             let spec = &self.trees[tree.0 as usize];
             fit(&spec.comfort, t, m) * habitat(spec.habitat, site)

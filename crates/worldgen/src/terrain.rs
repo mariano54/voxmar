@@ -1,5 +1,6 @@
 //! Stage 4: turns sites and resources into blocks: surface materials, caves (see
-//! [`crate::caves`]), water and ice, then trees and the small plants on the ground.
+//! [`crate::caves`]), water and ice at the level of the sea, lake or river over each
+//! column, then trees and the small plants on the ground.
 //!
 //! Surface materials come from the biome's surface rules (see `surface`), around a few
 //! physical rules every biome shares: bare rock on cliffs and exposed heights, snow where
@@ -27,7 +28,7 @@ use crate::rng::hash3;
 use crate::rocks::Rocks;
 use crate::surface::{Fill, Layers, Palette, Spot};
 use crate::trees::TreeId;
-use crate::{Overworld, SEA_LEVEL, Site};
+use crate::{Body, Overworld, SEA_LEVEL, Site};
 
 /// Stone turns to deepslate below this height, 48 blocks under sea level.
 const DEEPSLATE: i32 = SEA_LEVEL - 48;
@@ -38,6 +39,9 @@ struct Ids {
     grass: BlockId,
     water: BlockId,
     lava: BlockId,
+    /// The crust of a dry salt flat.
+    salt: BlockId,
+    sand: BlockId,
     snow: BlockId,
     powder: BlockId,
     snowy_ground: BlockId,
@@ -92,6 +96,8 @@ impl Terrain {
                 grass: id("grass_block"),
                 water,
                 lava: id("lava"),
+                salt: id("calcite"),
+                sand: id("sand"),
                 snow: registry.expect(&frost.snow),
                 powder: registry.expect(&frost.powder),
                 snowy_ground: registry.expect(&frost.snowy_ground),
@@ -186,8 +192,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let area = world.dense_sampler(corner - features::REACH, corner + CHUNK_SIZE - 1 + features::REACH);
 
     // Geology for the column plus a one-block border (for slopes).
-    let geology = GeoGrid::new(&world.geology, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
-    let top = geology.samples().iter().map(|g| g.height).max().unwrap_or(0).max(SEA_LEVEL);
+    let geology = GeoGrid::new(world, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
+    let top = geology.samples().iter().map(|g| g.height.max(g.water)).max().unwrap_or(0).max(SEA_LEVEL);
 
     let rock = Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0);
     let mut rock_profile = Profile::default();
@@ -254,9 +260,16 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 };
                 blocks.set_local(x, y, z, block);
             }
-            let ice = terrain.ice(&site, wx, wz);
-            for y in height + 1..=SEA_LEVEL {
-                blocks.set_local(x, y, z, if y == SEA_LEVEL { ice.unwrap_or(ids.water) } else { ids.water });
+            // Fast water stays open in the cold.
+            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3));
+            for y in height + 1..=geo.water {
+                blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
+            }
+            // A river running in a tunnel under the ground.
+            if let Some(cavity) = geo.cavity {
+                for y in cavity.floor + 1..=cavity.ceiling.min(height - 3) {
+                    blocks.set_local(x, y, z, if y <= geo.water { ids.water } else { BlockId::AIR });
+                }
             }
             surfaces.push((site, layers.top));
         }
@@ -271,7 +284,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let (site, surface) = &surfaces[(z * CHUNK_SIZE + x) as usize];
             let h = site.height;
             let open = |y: i32| y < WORLD_HEIGHT && blocks.get_local(x, y, z).is_air();
-            if h < SEA_LEVEL || blocks.get_local(x, h, z) != *surface || !open(h + 1) {
+            if h < site.water || blocks.get_local(x, h, z) != *surface || !open(h + 1) {
                 continue;
             }
             match world.ecology.plant(site, terrain.ground(*surface), origin.x + x, origin.z + z) {
@@ -367,9 +380,15 @@ impl Overworld {
         let past = |v: f32, lo: f32, hi: f32| v > lo + (hi - lo) * d;
         let t = site.temperature;
         let above = (site.height - SEA_LEVEL) as f32;
+        // Height over the sea, lake or river over or beside the site.
+        let shore = (site.height - site.water) as f32;
 
-        if above < 0.0 {
+        if shore < 0.0 {
             return rules.underwater(&biome.surface, &spot, stones, strata);
+        }
+        if site.body == Body::Salt {
+            // A dry closed basin crusts over with salt.
+            return Layers { top: if d < 0.75 { ids.salt } else { ids.sand }, filler: Fill::Block(ids.sand), depth: 3 };
         }
         // Bare rock on cliffs, and on high ground exposed to the weather where no snow lies.
         let cliff = || rules.cliff(&biome.surface, &spot, stones, strata);
@@ -386,8 +405,11 @@ impl Overworld {
             return cliff();
         }
         // Beaches along the sea and banks along rivers and lakes.
-        let shore = (site.continentalness < 0.7 || site.river > 0.3) && !past(above, 0.5, 2.5);
-        let ground = rules.ground(&biome.surface, &spot, shore, stones, strata);
+        let beach = match site.body {
+            Body::Sea => site.continentalness < 0.7 && !past(above, 0.5, 2.5),
+            _ => site.river > 0.3 && !past(shore, 0.5, 2.5),
+        };
+        let ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
         if past(-t, -2.5, 1.5) && terrain.ground(ground.top) == Ground::Soil {
             return Layers { top: ids.snowy_ground, ..ground };
         }
@@ -395,10 +417,10 @@ impl Overworld {
     }
 
     /// Top block of dry or submerged ground, and the block (water or ice) above it when
-    /// it lies below sea level.
+    /// it lies under the sea, a lake or a river.
     pub(crate) fn surface_blocks(&self, site: &Site, x: i32, z: i32) -> (BlockId, Option<BlockId>) {
         let top = self.surface_layers(site, x, z).top;
-        let water = (site.height < SEA_LEVEL).then(|| self.terrain.ice(site, x, z).unwrap_or(self.terrain.ids.water));
+        let water = (site.height < site.water).then(|| self.terrain.ice(site, x, z).unwrap_or(self.terrain.ids.water));
         (top, water)
     }
 }

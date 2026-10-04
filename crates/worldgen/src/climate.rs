@@ -72,7 +72,7 @@ pub struct Regional {
 }
 
 impl Regional {
-    fn lerp(self, other: Self, t: f32) -> Self {
+    pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         let mix = |a: f32, b: f32| a + (b - a) * t;
         Self {
             sea_temperature: mix(self.sea_temperature, other.sea_temperature),
@@ -187,7 +187,7 @@ impl Climate {
     }
 
     /// The regional climate at one position. Expensive: it follows the wind upwind.
-    fn regional(&self, geology: &Geology, x: f32, z: f32) -> Regional {
+    pub(crate) fn regional(&self, geology: &Geology, x: f32, z: f32) -> Regional {
         let sea = SEA_LEVEL as f32;
         let [wind_x, wind_z] = self.dials.wind;
         // Air arriving from beyond the walk carries an average amount of water.

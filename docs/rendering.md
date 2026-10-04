@@ -134,6 +134,15 @@ through the block, turned at random, grown 1.45–1.9× and leaning, in their ow
 within that the sprigs shrink back into their block from 56 blocks, so they cost nothing
 in the distance.
 
+Grass blocks open to the air also grow blades, in the spirit of the Grassier Grass mod.
+The mesher records one 4-byte seed per such block (`ChunkMesh::blades`: position in the
+chunk, the climate that picks the grass colour, and the light above it), and all seeds
+share one storage buffer. Chunks within 46 blocks of the camera draw a tuft of 16 blades
+per seed with no vertex buffer: `grass.wgsl` pulls each vertex's seed by its index and
+places, sizes, tints and bends the blade from hashes of the block and blade. Blades thin
+out and shrink into the ground between 24 and 44 blocks, are darker at the root and
+lighter at the tip, receive shadows but cast none, and part around the player's feet.
+
 ## Wind
 
 The wind is part of the weather the server simulates and comes to the client in the
@@ -187,6 +196,15 @@ fn gust(at: vec2<f32>, seconds: f32, mean: vec2<f32>, gusts: f32) -> vec2<f32> {
 Rain, snow and the other falling and drifting particles (`precipitation.rs`) already move
 with `ClientWeather::current.wind`, which is `Wind::now` at the camera; clouds drift with
 the mean wind.
+
+Grass blades, plants and leaves bend with `Wind`'s mean and gustiness (`render::wind`,
+`wind.wgsl`, bound with the terrain so shadows bend alike): a push along the wind from
+lulls to gusts, a flutter across it that quickens as the wind rises, and the player
+parting what they walk through. Their gust fronts are their own noise, carried along by
+an offset integrated from the mean wind each frame, rather than `gust` itself: `gust`
+puts its fronts at `mean * seconds`, so when the mean changes by δ they jump by
+`δ * seconds` (with `seconds` in the hundreds of thousands, a whole meadow would lurch
+as the wind veered).
 
 ## What we took from Voxy
 

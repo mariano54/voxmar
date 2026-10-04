@@ -44,7 +44,10 @@
             ),
         ),
         (
-            // Rivers and lakes: wherever fresh water lies, in every climate.
+            // Rivers and lakes: wherever fresh water lies, in every climate. Creeks run
+            // over gravel and rock between stony, mossy or muddy banks; rivers lay down
+            // gravel in the hills and sand, clay and mud in the lowlands; lakes have
+            // sandy shores. Rules are tried in order.
             name: "river",
             tags: ["river", "water", "fresh_water"],
             role: River,
@@ -52,9 +55,29 @@
             flora: (trees: [Name("willow", 1.0), Name("mangrove", 2.3)], cover: 0.5, flowers: 0.04, plants: [Tag("grass", 1.0), Name("tall_grass", 0.4), Tag("riverbank", 6.0), Tag("wetland", 1.0)]),
             surface: (
                 rules: [
+                    // Creek beds.
+                    (when: [Underwater, Water([Creek]), Warmer(17.0, 19.0), Wetter(1.05, 1.25), Chance(0.45)], place: (top: Block("mud"))),
+                    (when: [Underwater, Water([Creek]), Patch((name: "creek_rock", scale: 7.0), 0.25)], place: (top: Mix([Name("stone", 2.0), Name("cobblestone", 1.0)]), filler: Block("stone"))),
+                    (when: [Underwater, Water([Creek])], place: (top: Mix([Name("gravel", 5.0), Name("cobblestone", 1.0)]), filler: Block("gravel"))),
+                    // River and lake beds.
                     (when: [Underwater, Warmer(17.0, 19.0), Wetter(1.0, 1.2), Chance(0.55)], place: (top: Block("mud"))),
                     (when: [Underwater, Colder(1.0, 4.0)], place: (top: Mix([Name("gravel", 3.0), Name("sand", 1.0)]))),
+                    (when: [Underwater, Water([River]), Altitude(24.0, 36.0)], place: (top: Mix([Name("gravel", 3.0), Name("stone", 1.0)]), filler: Block("gravel"))),
                     (when: [Underwater, Patch((name: "clay_beds", scale: 25.0, octaves: 2), 0.45)], place: (top: Block("clay"))),
+                    (when: [Underwater, Water([River]), Patch((name: "river_gravel", scale: 30.0, octaves: 2), 0.0)], place: (top: Block("gravel"))),
+                    (when: [Underwater, Water([Lake]), Deeper(3.0, 5.0)], place: (top: Mix([Name("gravel", 2.0), Name("clay", 1.0), Name("mud", 1.0)]))),
+                    // Banks: frozen gravel and rock in the cold.
+                    (when: [Water([Creek, River]), Colder(2.0, 4.0)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0)]), filler: Block("gravel"), depth: 2)),
+                    // Rock outcrops along creeks.
+                    (when: [Water([Creek]), Patch((name: "bank_rock", scale: 9.0), 0.15)], place: (top: Mix([Name("stone", 3.0), Name("andesite", 1.0), Name("mossy_cobblestone", 1.0)]), filler: Block("stone"), depth: 2)),
+                    (when: [Water([Creek, River]), Warmer(16.0, 18.0), Wetter(1.15, 1.35), Chance(0.5)], place: (top: Block("mud"), depth: 2)),
+                    (when: [Water([Creek]), Wetter(0.9, 1.1), Patch((name: "bank_moss", scale: 12.0, octaves: 2), 0.05)], place: (top: Block("moss_block"), filler: Block("dirt"))),
+                    // Gravel at the water's edge, grass above it.
+                    (when: [Water([Creek]), River(0.7, 0.9)], place: (top: Mix([Name("gravel", 3.0), Name("cobblestone", 1.0), Name("coarse_dirt", 1.0)]), filler: Block("gravel"), depth: 2)),
+                    (when: [Water([Creek])], place: (top: Block("grass_block"), filler: Block("dirt"))),
+                    (when: [Water([River]), Altitude(24.0, 36.0)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0)]), filler: Block("gravel"), depth: 2)),
+                    (when: [Water([River]), River(0.6, 0.85), Patch((name: "river_gravel", scale: 30.0, octaves: 2), 0.2)], place: (top: Block("gravel"), depth: 2)),
+                    (when: [Water([Lake]), Slope(1.5, 2.5)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0)]), filler: Block("gravel"), depth: 2)),
                 ],
                 ground: (top: Block("grass_block"), filler: Block("dirt")),
                 underwater: (top: Block("sand")),

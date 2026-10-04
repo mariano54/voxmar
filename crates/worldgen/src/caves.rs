@@ -276,10 +276,14 @@ impl Caves {
         1.8 * self.style.tunnels * (1.0 + 0.4 * width) * GRADIENT * TUNNEL_FREQUENCY
     }
 
-    /// Blocks under a river or lake bed kept clear of caves, so they never drain it. Rivers
-    /// whose water stands above sea level will need more (and may carve their own tunnels
-    /// through ranges, as another carver here).
+    /// Blocks under a river or lake bed, and under its banks, kept clear of caves, so they
+    /// never drain it. A river's own tunnel through a range is carved by the rivers.
     fn clearance(geo: &GeoSample) -> i32 {
+        // Under water, and under banks not far above the water beside them, whatever its
+        // height: a river or lake in the hills needs the band as much as the sea does.
+        if geo.submerged() || geo.cavity.is_some() || (geo.river > 0.05 && geo.height - geo.water <= 4) {
+            return 10;
+        }
         (10.0 * smoothstep(0.15, 0.5, geo.river)) as i32
     }
 
@@ -874,7 +878,8 @@ impl CaveColumn<'_> {
 
         for y in FLOOR..=height {
             let depth = height - y;
-            let mut open = ravines.iter().any(|r| r.contains(y)) || sinkholes.iter().any(|s| s.contains(column, y));
+            // Ravines and sinkholes too leave a river or lake its bed: a bridge of rock.
+            let mut open = depth >= clearance && (ravines.iter().any(|r| r.contains(y)) || sinkholes.iter().any(|s| s.contains(column, y)));
             if !open && depth >= clearance {
                 let deep = heights.deep[y as usize];
                 let r = tunnel_scale * heights.growth[y as usize] * tunnel_fade(entrance, depth);
