@@ -522,11 +522,16 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
                         None => (wet.sheet.expect("found wet"), wet.level),
                     };
                     sheet_top = sheet_top.max(level);
-                    let (kind, opacity) =
-                        if palette.is_water(block) { (WATER, 1.0) } else { (ICE, palette.opacity[block.0 as usize]) };
+                    // Water carries the biome's water colour itself, which real water is shaded
+                    // from; ice its own colour and opacity.
+                    let (kind, color, opacity) = if palette.is_water(block) {
+                        (WATER, c.colors.water.map(srgb_to_linear), 1.0)
+                    } else {
+                        (ICE, palette.color(block, true, &c.colors), palette.opacity[block.0 as usize])
+                    };
                     vertices.push([
                         pack_position(x, z, level, c.sky, kind),
-                        pack_color(palette.color(block, true, &c.colors)) | ((opacity * 255.0) as u32) << 24,
+                        pack_color(color) | ((opacity * 255.0) as u32) << 24,
                         encode_normal(Vec3::Y),
                         pack_color(c.top),
                     ]);
