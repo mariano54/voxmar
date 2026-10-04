@@ -4,7 +4,8 @@
 //! `--world NAME` play (or create) the saved world NAME, `--connect HOST[:PORT]` join a
 //! server, `--capture PATH` (screenshot and exit once loaded; plays an unsaved world unless
 //! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
-//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--time
+//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--wait
+//! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--menu` (show the settings menu) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
@@ -66,6 +67,7 @@ struct Options {
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    wait: f32,
     time: Option<f32>,
     menu: bool,
     screen: Option<Screen>,
@@ -87,6 +89,7 @@ fn parse_options() -> Result<Options, String> {
         capture: None,
         pose: None,
         flight: None,
+        wait: 0.0,
         time: None,
         menu: false,
         screen: None,
@@ -112,6 +115,7 @@ fn parse_options() -> Result<Options, String> {
             "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
+            "--wait" => options.wait = value()?.parse().map_err(|e| format!("--wait: {e}"))?,
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
             "--screen" => {
@@ -230,6 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             path,
             pose: options.pose,
             flight: options.flight,
+            wait: options.wait,
             time: options.time,
             menu: options.menu,
         });
@@ -270,6 +275,7 @@ pub struct Actions(pub Arc<ActionRegistry>);
 fn setup(
     mut commands: Commands,
     registry: Res<Registry>,
+    settings: Res<Settings>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
@@ -277,7 +283,7 @@ fn setup(
     terrain: Res<render::terrain::Terrain>,
 ) {
     let registry = &registry.0;
-    let mut source = Source::discover();
+    let mut source = Source::discover(settings.textures);
     let (_, mut block_textures) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];

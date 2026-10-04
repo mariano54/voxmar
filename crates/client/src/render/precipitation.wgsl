@@ -38,11 +38,11 @@ struct Params {
 // As in precipitation.rs.
 const BOX = vec3(40.0, 36.0, 40.0);
 const MAP: i32 = 64;
-const DROPS: u32 = 20000u;
+const DROPS: u32 = 22000u;
 // The last drops splash on the ground instead, within this many blocks of the camera.
 const SPLASHES: u32 = 3000u;
 // Before them, specks of dust, then motes, ride the wind; the rest fall.
-const DUST: u32 = 3200u;
+const DUST: u32 = 5200u;
 const MOTES: u32 = 800u;
 const FALLING: u32 = DROPS - SPLASHES - DUST - MOTES;
 const SPLASH_REACH: f32 = 14.0;
@@ -168,11 +168,21 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
     }
     let distance = length(offset);
     let pixel = distance * 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
-    let radius = select(0.03 + 0.06 * size, 0.025 + 0.035 * size, mote);
+    let radius = select(0.03 + 0.05 * size, 0.025 + 0.035 * size, mote);
     let drawn = max(radius, pixel * 0.8);
-    let right = view.world_from_view[0].xyz;
-    let up = view.world_from_view[1].xyz;
-    let world = offset + (right * corner.x + up * corner.y) * drawn;
+    var world: vec3<f32>;
+    let wind = params.wind.xyz;
+    if mote || length(wind) < 1.0 {
+        let right = view.world_from_view[0].xyz;
+        let up = view.world_from_view[1].xyz;
+        world = offset + (right * corner.x + up * corner.y) * drawn;
+    } else {
+        // Dust streaks along the wind, longer the harder it blows.
+        let along = normalize(wind);
+        let across = normalize(cross(along, offset / max(distance, 1e-3)));
+        let streak = drawn + length(wind) * 0.035;
+        world = offset + across * corner.x * drawn + along * corner.y * streak;
+    }
     var opacity = radius / drawn;
     if mote {
         // Pale gold and sky blue, glowing brighter than daylight so bloom haloes them, and
@@ -183,7 +193,7 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
         out.kind = 7u;
     } else {
         out.color = vec4(params.dust_color.rgb * params.light.rgb * 1.6, 0.0);
-        opacity *= 0.55;
+        opacity *= 0.7;
         out.kind = 6u;
     }
     let reach = length(offset.xz) / (box.x * 0.5);
@@ -228,7 +238,7 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     } else if (rest - params.hail.w - params.sleet.w) / max(1.0 - params.hail.w - params.sleet.w, 1e-4) < params.drizzle.w {
         kind = 5u;
     }
-    let round = kind == 1u || kind == 3u || kind == 4u;
+    let round = kind == 1u || kind == 4u;
     h = pcg(h);
     let x = unit(h);
     h = pcg(h);
@@ -268,17 +278,12 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     // How far the drop reaches above its centre; below the ground it is not drawn at all.
     var top: f32;
     if round {
-        // Snowflakes, and hailstones and sleet pellets: white, icy, small and hard.
+        // Snowflakes, and sleet pellets: small, icy and hard.
         var radius = 0.03 + 0.04 * size;
         var brightness = 1.8;
         var tint = vec3(1.0);
         var strength = 0.9;
-        if kind == 3u {
-            radius = 0.03 + 0.035 * size;
-            brightness = 2.2;
-            tint = vec3(0.92, 0.96, 1.0);
-            strength = 1.0;
-        } else if kind == 4u {
+        if kind == 4u {
             radius = 0.015 + 0.015 * size;
             brightness = 1.6;
             tint = vec3(0.85, 0.92, 1.0);
@@ -293,18 +298,32 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
         out.color = vec4(params.light.rgb * tint * brightness, 0.0);
         out.kind = kind;
     } else {
-        // Raindrops, and drizzle: finer, slower and blown further by the wind.
+        // Raindrops; drizzle, finer, slower and blown further by the wind; and hailstones,
+        // white pellets falling hard, blurred into short streaks.
         let drizzle = kind == 5u;
-        let drizzle_fall = params.wind.xyz * 0.9 - vec3(0.0, 4.0, 0.0);
-        let along = select(params.streak.xyz, normalize(drizzle_fall), drizzle);
-        let length = select(params.streak.w, length(drizzle_fall) * 0.045, drizzle) * (0.7 + 0.6 * size);
-        let width = select(0.012 + 0.008 * size, 0.006 + 0.004 * size, drizzle);
+        let hail = kind == 3u;
+        var fall = params.streak.xyz;
+        var stretch = params.streak.w;
+        var width = 0.012 + 0.008 * size;
+        if drizzle {
+            let velocity = params.wind.xyz * 0.9 - vec3(0.0, 4.0, 0.0);
+            fall = normalize(velocity);
+            stretch = length(velocity) * 0.045;
+            width = 0.006 + 0.004 * size;
+        } else if hail {
+            let velocity = params.wind.xyz * 0.3 - vec3(0.0, 18.0, 0.0);
+            fall = normalize(velocity);
+            stretch = length(velocity) * 0.02;
+            width = 0.04 + 0.03 * size;
+        }
+        let along = fall;
+        stretch *= 0.7 + 0.6 * size;
         let drawn = max(width, pixel * 0.8);
         let across = normalize(cross(along, offset / max(distance, 1e-3)));
-        world = offset + across * corner.x * drawn * 0.5 + along * corner.y * length * 0.5;
-        top = -along.y * length * 0.5;
-        opacity = select(0.45, 0.35, drizzle) * width / drawn;
-        out.color = vec4(params.light.rgb * vec3(1.15, 1.2, 1.3), 0.0);
+        world = offset + across * corner.x * drawn * 0.5 + along * corner.y * stretch * 0.5;
+        top = -along.y * stretch * 0.5;
+        opacity = select(select(0.45, 0.35, drizzle), 0.95, hail) * width / drawn;
+        out.color = vec4(params.light.rgb * select(vec3(1.15, 1.2, 1.3), vec3(2.0, 2.1, 2.3), hail), 0.0);
         out.kind = kind;
     }
     if offset.y + top < below {
@@ -335,10 +354,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         shape = (1.0 - smoothstep(0.0, 0.25, abs(r - rim))) * smoothstep(0.9, 0.2, in.uv.y);
     } else if in.kind == 1u || in.kind == 4u {
         shape = 1.0 - smoothstep(0.2, 1.0, length(in.uv));
-    } else if in.kind == 3u {
-        // A hard-edged pellet with a brighter crown.
-        let r = length(in.uv);
-        shape = (1.0 - smoothstep(0.75, 1.0, r)) * (0.75 + 0.25 * smoothstep(0.2, -0.6, in.uv.y));
     } else if in.kind == 6u {
         // A soft puff.
         let r = 1.0 - smoothstep(0.0, 1.0, length(in.uv));

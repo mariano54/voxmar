@@ -91,6 +91,27 @@ pub struct Settings {
     pub hud_raise: i32,
     /// Name of the shader pack in use (see `render::pack`).
     pub shader_pack: String,
+    /// Which texture pack comes first; takes effect the next time the game starts.
+    pub textures: TextureOrder,
+}
+
+/// Which texture pack the game prefers (see `textures`). `$VOXMAR_TEXTURES` overrides both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextureOrder {
+    /// The player's Minecraft textures where they have them, ours for everything else.
+    #[default]
+    Minecraft,
+    /// Our own pack for everything.
+    Voxmar,
+}
+
+impl TextureOrder {
+    fn label(self) -> &'static str {
+        match self {
+            TextureOrder::Minecraft => "Minecraft first",
+            TextureOrder::Voxmar => "Voxmar",
+        }
+    }
 }
 
 /// The look new players start with.
@@ -143,6 +164,7 @@ impl Default for Settings {
             zoom_in_survival: false,
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
+            textures: TextureOrder::default(),
         }
     }
 }
@@ -344,6 +366,7 @@ impl Toggle {
 enum Choice {
     AntiAliasing,
     ShaderPack,
+    Textures,
 }
 
 impl Choice {
@@ -351,6 +374,7 @@ impl Choice {
         match self {
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
+            Choice::Textures => "Textures (on restart)",
         }
     }
 
@@ -358,6 +382,7 @@ impl Choice {
         match self {
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
+            Choice::Textures => settings.textures.label().into(),
         }
     }
 
@@ -368,6 +393,12 @@ impl Choice {
                 settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
             }
             Choice::ShaderPack => settings.shader_pack = packs.next(&settings.shader_pack).to_owned(),
+            Choice::Textures => {
+                settings.textures = match settings.textures {
+                    TextureOrder::Minecraft => TextureOrder::Voxmar,
+                    TextureOrder::Voxmar => TextureOrder::Minecraft,
+                }
+            }
         }
     }
 }
@@ -417,6 +448,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Slider(Slider::ViewDistance),
             Control::Slider(Slider::Fov),
             Control::Choice(Choice::ShaderPack),
+            Control::Choice(Choice::Textures),
             Control::Choice(Choice::AntiAliasing),
             Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::Vsync),

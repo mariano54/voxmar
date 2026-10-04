@@ -11,6 +11,7 @@
 //! generated alone, in any order, on any thread, and features that cross column borders
 //! (trees, veins) come out identical on both sides.
 
+mod atmosphere;
 mod biome;
 mod caves;
 mod climate;
@@ -36,7 +37,9 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
+pub use atmosphere::{Atmosphere, ParticleId};
 pub use biome::{Biome, BiomeId, Biomes};
+pub use content::{DayTime, Motion, ParticleDef, WeatherWhen};
 pub use caves::{CaveStyle, LAVA_LEVEL};
 pub use climate::LAPSE_RATE;
 pub use content::{ContentError, WorldContent};
@@ -183,6 +186,7 @@ pub struct Overworld {
     rivers: water::Rivers,
     ecology: Ecology,
     biomes: Biomes,
+    atmospheres: atmosphere::Atmospheres,
     rocks: Rocks,
     rules: SurfaceRules,
     caves: caves::Caves,
@@ -221,6 +225,7 @@ impl Overworld {
             ecology: Ecology::new(stream, &dials, content, &registry),
             caves: caves::Caves::new(stream, &dials),
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
+            atmospheres: atmosphere::Atmospheres::new(content, &dials.featured),
             biomes,
             rocks,
             rules,
@@ -239,6 +244,19 @@ impl Overworld {
     /// alchemical properties, dye.
     pub fn plant_properties(&self, name: &str) -> Option<&PlantProperties> {
         self.ecology.plant_properties(name)
+    }
+
+    /// The air at (x, z): haze, sky and colour-grading nudges, and ambient particles,
+    /// blended across biome borders. Cheap enough to call around the player every so often.
+    pub fn atmosphere_at(&self, x: i32, z: i32) -> Atmosphere {
+        let site = self.site(x, z);
+        self.atmospheres.at(&site, Biomes::blend(site.edge, site.fertility))
+    }
+
+    /// The ambient particle sets [`Atmosphere::particles`] refers to, with their looks and
+    /// the time of day and weather they show in.
+    pub fn particle_sets(&self) -> &[ParticleDef] {
+        self.atmospheres.sets()
     }
 
     /// The biome whose rules make the ground at (x, z).
@@ -1404,6 +1422,35 @@ mod tests {
             assert_eq!(world.site(at.x, at.y).home, id, "{name} at {at}");
         }
         assert_eq!(world.locate_biome("base:no_such_biome", IVec2::ZERO, 1000), None);
+    }
+
+    #[test]
+    fn the_air_follows_climate_and_biome() {
+        let world = Overworld::new(3, registry());
+        let set = |name: &str| world.particle_sets().iter().position(|p| p.name == name).map(|i| ParticleId(i as u16)).unwrap();
+        let has = |air: &Atmosphere, name: &str| air.particles.iter().any(|&(p, d)| p == set(name) && d > 0.0);
+        // Deep in a dry desert, away from water.
+        let id = world.biomes().id("base:desert").unwrap();
+        let sampler = world.sampler(IVec2::splat(-4000), IVec2::splat(4000));
+        let desert = (0..200 * 200)
+            .map(|i| IVec2::new(i % 200 * 40 - 4000, i / 200 * 40 - 4000))
+            .find(|p| {
+                let site = sampler.site(p.x, p.y);
+                site.home == id && site.edge > 40.0 && site.soil_moisture() < 0.3
+            })
+            .expect("a desert");
+        let air = world.atmosphere_at(desert.x, desert.y);
+        assert_eq!(air, world.atmosphere_at(desert.x, desert.y));
+        assert!(has(&air, "base:dust") && !has(&air, "base:drifting_snow"), "{air:?}");
+        assert!(air.haze[0] > air.haze[2], "desert haze should be dusty: {air:?}");
+        let tundra = world.locate_biome("snowy_tundra", IVec2::ZERO, 8000).unwrap();
+        assert!(has(&world.atmosphere_at(tundra.x, tundra.y), "base:drifting_snow"));
+        // Smooth along a line: no colour or density jumps between neighbouring blocks.
+        let line: Vec<Atmosphere> = (0..600).map(|i| world.atmosphere_at(-1500 + i, 900)).collect();
+        for pair in line.windows(2) {
+            let step = (0..3).map(|c| (pair[0].haze[c] - pair[1].haze[c]).abs()).fold(0.0, f32::max);
+            assert!(step < 0.05 && (pair[0].haze_density - pair[1].haze_density).abs() < 0.1, "{pair:?}");
+        }
     }
 
     #[test]
