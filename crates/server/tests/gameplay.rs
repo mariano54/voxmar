@@ -438,3 +438,32 @@ fn the_server_console_runs_commands_as_an_admin() {
     guest._server.console("gamemode creative guest");
     guest.pump_until(|c| c.allow_flight);
 }
+
+#[test]
+fn walking_wears_a_path() {
+    let mut client = Client::join();
+    let start = client.position;
+    let feet = start.floor().as_ivec3();
+    let solid = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| c.content.blocks.info(b).solid);
+    // A neighbouring block of ground at the same height to pace to and fro across.
+    let step = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z]
+        .into_iter()
+        .find(|&d| solid(&client, feet + d - IVec3::Y) && !solid(&client, feet + d) && !solid(&client, feet + d + IVec3::Y))
+        .expect("level ground beside spawn");
+    let under = feet - IVec3::Y;
+    let before = client.world.block(under).unwrap();
+    let blocks = client.content.blocks.clone();
+    let id = |name: &str| blocks.expect(&format!("base:{name}"));
+    let worn = [id("worn_grass_block"), id("packed_earth"), id("coarse_dirt")];
+    assert_eq!(before, id("grass_block"), "spawn is on grass");
+    // Each crossing is a step onto the other block: forty steps on each.
+    let (here, there) = (start + step.as_vec3() * 0.3, start + step.as_vec3() * 0.7);
+    for i in 0..80 {
+        client.send_position(if i % 2 == 0 { there } else { here }, false);
+        std::thread::sleep(Duration::from_millis(110));
+    }
+    client.pump_until(|c| c.world.block(under).is_some_and(|b| worn.contains(&b)));
+    // Plants on the path are trampled away.
+    let plant = client.world.block(feet).unwrap();
+    assert!(plant.is_air() || plant == id("short_grass"), "{}", blocks.def(plant).name);
+}

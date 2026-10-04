@@ -12,7 +12,7 @@ use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
 use voxmar_protocol::{ChatKind, MAX_LINE, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
 use crate::save::GameMode;
-use crate::{Server, load_column};
+use crate::{Server, load_column, wear};
 
 /// How deeply aliases may run other aliases.
 const MAX_DEPTH: usize = 8;
@@ -521,7 +521,8 @@ impl Server {
             for x in from.0.x..=to.0.x {
                 let pos = ColumnPos::new(x, z);
                 if !self.world.contains(pos) {
-                    let loaded = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, pos);
+                    let today = wear::day(self.day);
+                    let loaded = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, &self.wear_rules, today, pos);
                     self.insert_column(pos, loaded);
                 }
             }

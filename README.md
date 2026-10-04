@@ -22,10 +22,11 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `storm` or `rain:0.3`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
-time of day (a fraction of the day, 0 at sunrise).
+time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
+the view that far (0..1, cracks and chips showing; 1 breaks it just before the screenshot).
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
@@ -76,7 +77,8 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
+Esc opens the settings menu: render distance, field of view, anti-aliasing, particles (All,
+Fewer or Off: the pieces that fly from broken blocks and the chips while mining), how far the hotbar
 sits above the bottom edge (Raise HUD), VSync, debug overlay, music, sound and ambience volume,
 mouse sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom
 (the view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins,
@@ -192,7 +194,7 @@ How the design primitives map to the code today:
   predict. Mining, placing, moving items and respawning are all actions.
 - **Process**: continuous server rules at a scheduling tier (`High` every tick, `Low` once a
   second): falling damage, regeneration, which heals slower where the temperature field
-  is freezing, and the weather (below).
+  is freezing, the weather (below), and footsteps, which wear paths (below).
 - **Trait**: typed data with declared replication and persistence (`core:health`,
   `core:inventory`, `core:position`); owner-replicated traits are sent when they change.
 - **Field**: coarse grids (16 blocks per cell unless a field chooses otherwise), generated
@@ -332,6 +334,20 @@ edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near 
 `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
 
+## Worn paths
+
+Feet wear the ground (`crates/server/src/wear.rs`, rules in `assets/content/base/wear.ron`).
+Each step onto a block wears it by a step, the blocks to either side by half and the one ahead
+by a quarter, so paths form about three blocks wide. Plants go first: tall grass is trampled to
+short grass, short grass, ferns and flowers to nothing. Then the ground passes through stages,
+grass to worn grass to packed earth to coarse dirt, each block drawing how many steps each stage
+takes from a hash of the seed and its position, so paths fray irregularly at their edges. The
+steps are kept sparsely per surface column in the column (`Column::wear`), so they save and
+load with it; only the changed blocks are sent, and only to players who have the column. Worn
+ground heals a stage every five days nobody walks on it (twice as fast for a lone patch),
+applied when a saved column loads, and grass coming back sometimes sprouts a tuft. Healing only
+undoes what feet did, so generated trails keep their tread.
+
 ## Weather
 
 The server simulates the weather; clients only draw it. What drives it is a pure function of
@@ -425,12 +441,18 @@ each player is sent one `Blocks` message per tick with the changes in columns th
 ## Sound
 
 Music is in `assets/music` (generated offline with `tools/generate_music.py`) and plays now and
-then with long quiet gaps; `M` toggles it. Sound effects are synthesized at startup from each
-block's material (`sound: Wood` in its definition), so new blocks sound right without new audio:
-short, soft and warm, with several variants per cue and a small random pitch change so nothing
-repeats exactly. Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain
-is heavy and quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes
-every cue to `target/sfx_preview.wav`.
+then with long quiet gaps; `M` toggles it. Starting a game fades the menu's music out, so a world
+opens in quiet; returning to the menus brings it back.
+
+Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
+in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps
+while mining and breaking come from the player's own Minecraft install when it has them (the
+official launcher's or Prism Launcher's asset store; nothing from Minecraft is shipped), with
+Minecraft's own volumes and pitches. Otherwise they are synthesized at startup: short, soft and
+warm, with several variants per cue and a small random pitch change so nothing repeats exactly.
+Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain is heavy and
+quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
+synthesized cue to `target/sfx_preview.wav`.
 
 Ambience is synthesized the same way and follows where the player is. About once a second a
 flood fill from the eye (on a worker, capped at 16,000 cells) measures how much air is around,

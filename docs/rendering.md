@@ -143,6 +143,58 @@ places, sizes, tints and bends the blade from hashes of the block and blade. Bla
 out and shrink into the ground between 24 and 44 blocks, are darker at the root and
 lighter at the tip, receive shadows but cast none, and part around the player's feet.
 
+## Particles and breaking blocks
+
+`render/particles.rs` is a general particle renderer: quads facing the camera that show a
+square piece of a block texture (tinted like its face) or a soft speck of colour, lit like
+the terrain (`shade_normal` with the sky and block light they were spawned with) or
+glowing. A particle is 64 bytes, written to a ring of 8,192 on the GPU once, when it is
+spawned; the vertex shader works out where it is from where and when it started, so live
+particles cost nothing on the CPU per frame, and the whole ring is one instanced draw
+(six vertices per slot, the dead collapsing to a point) in the alpha-tested pass, only
+while any particle is alive. Being alpha-tested and depth-writing like leaves, particles
+need no sorting and are hidden by terrain correctly; they fade at the end of their life
+through alpha to coverage under MSAA and a dither otherwise.
+
+How a particle moves is its `Motion`, a case in `particles.wgsl`. The one so far,
+`Ballistic`, is Minecraft's terrain particle worked out in closed form: thrown with a
+velocity, falling at 16 blocks/s² (0.04 per tick²), slowed across by 2% a tick, then
+hopping on its floor three times at 0.35 of its speed and sliding to rest. Walls are not
+collided with: a piece flying into a block is hidden inside it. The floor is found once at
+spawn, below where the piece will come down (`breaking::landing_floor`), so pieces thrown
+off a ledge fall to the ground beneath it.
+
+The ambient particle sets (pollen, fireflies, spores, drifting snow, mist, motes) stay in
+`precipitation.rs`: a fixed field of particles wrapping around a box that follows the
+camera costs no CPU at all and has no spawn rate to manage, which suits a steady haze of
+particles everywhere better than spawning. Particles tied to events or places (splashes,
+falling leaves from a particular tree, sparks) belong here.
+
+Breaking a block (`client/src/breaking.rs`) uses it as Minecraft does:
+
+- **Cracks** (`render/cracks.rs`): ten stages over the block being mined, from the texture
+  packs' `block/destroy_stage_0..9` (a Minecraft install has them) or drawn by us. A cube a
+  hair larger than the block multiplies what is behind it by twice the texel, Minecraft's
+  crumbling blend: mid grey leaves the block's own texture and light alone, and the
+  factor is raised to 2.2 so on our linear image it darkens as much as on Minecraft's
+  gamma-encoded one.
+- **Chips**: a dozen pieces a second pop from the face being hit, at a fifth of a burst's
+  speed, from the hit face's texture.
+- **Burst**: when the block breaks, 4×4×4 pieces (3×3×3 from a narrower box for plants) of
+  a quarter of its side texture, each picked among the mostly opaque quarters
+  (`TexturePieces`), so a flower breaks into petals and leaves rather than empty texels;
+  0.1–0.2 blocks wide, living 0.5–1.5 s. Blocks broken by others (an unpredicted
+  `BlockChanged` to air) burst too, within 32 blocks.
+
+Particles are lit with a sky light estimated once per burst from the columns around the
+block (full where the sky is open straight above, one less per block sideways to the
+nearest open column, none further in) and the block's own glow as block light, since
+the client keeps no light field outside the mesher. A cave lit by torches therefore
+gets dark pieces; a light field kept from meshing would fix it.
+
+The particle setting (All, Fewer, Off) and the shader pack's `particles` scale how many
+are spawned, and the pack's `cracks` how strongly cracks show (0 hides them).
+
 ## Wind
 
 The wind is part of the weather the server simulates and comes to the client in the

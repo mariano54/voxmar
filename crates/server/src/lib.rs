@@ -8,6 +8,7 @@ mod player;
 mod process;
 pub mod save;
 mod weather;
+mod wear;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -99,6 +100,7 @@ pub fn assets_dir() -> PathBuf {
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let content = Content::load(&assets.join("content"))?;
     WorldContent::load(&content)?;
+    wear::WearRules::load(&content.files, &content.blocks, 0)?;
     Ok(content)
 }
 
@@ -186,11 +188,22 @@ pub(crate) struct Loaded {
     saved: bool,
 }
 
-/// A saved column if there is one, otherwise a freshly generated one. Runs on workers.
-pub(crate) fn load_column(save: Option<&WorldSave>, generator: &dyn Generator, registry: &BlockRegistry, pos: ColumnPos) -> Loaded {
+/// A saved column if there is one, with its worn ground healed up to `today`, otherwise a
+/// freshly generated one. Runs on workers.
+pub(crate) fn load_column(
+    save: Option<&WorldSave>,
+    generator: &dyn Generator,
+    registry: &BlockRegistry,
+    wear: &wear::WearRules,
+    today: u32,
+    pos: ColumnPos,
+) -> Loaded {
     if let Some(save) = save {
         match save.read_column(pos, registry) {
-            Ok(Some(column)) => return Loaded { column, saved: true },
+            Ok(Some(mut column)) => {
+                wear.heal(&mut column, pos.origin(), today, registry);
+                return Loaded { column, saved: true };
+            }
             Ok(None) => {}
             Err(e) => tracing::error!("could not load column {pos:?}, generating it again: {e}"),
         }
@@ -210,6 +223,8 @@ pub(crate) struct Server {
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
+    /// How ground wears under feet and heals.
+    wear_rules: Arc<wear::WearRules>,
     /// Humidity, cloud and precipitation, evolved by the weather process, and the weather
     /// admins have forced.
     weather: WeatherState,
@@ -265,9 +280,11 @@ impl Server {
         let mut world = VoxelWorld::default();
         let spawn_block = generator.spawn_point();
         let spawn_column = ColumnPos::of_block(spawn_block);
-        let loaded = load_column(save.as_ref(), &*generator, &content.blocks, spawn_column);
-        world.insert(spawn_column, Arc::new(loaded.column));
         let tick = meta.time.max(FIRST_TICK);
+        let wear_rules = Arc::new(wear::WearRules::load(&content.files, &content.blocks, meta.seed).expect("checked by load_content"));
+        let today = wear::day(meta.day.unwrap_or(tick) as f64);
+        let loaded = load_column(save.as_ref(), &*generator, &content.blocks, &wear_rules, today, spawn_column);
+        world.insert(spawn_column, Arc::new(loaded.column));
         let mut fluids = Fluids::default();
         fluids.column_loaded(&content.blocks, &world, spawn_column, tick, loaded.saved);
         let spawn = find_ground(&world, &content.blocks, spawn_block);
@@ -286,6 +303,7 @@ impl Server {
             executor: Executor::default(),
             processes,
             temperature,
+            wear_rules,
             weather,
             world,
             fluids,
@@ -476,9 +494,10 @@ impl Server {
                     }
                 } else if self.generating.len() < MAX_GENERATING && self.generating.insert(pos) {
                     let (generator, save, registry) = (self.generator.clone(), self.save.clone(), self.content.blocks.clone());
+                    let (wear, today) = (self.wear_rules.clone(), wear::day(self.day));
                     let tx = self.generated_tx.clone();
                     rayon::spawn(move || {
-                        let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, pos)));
+                        let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, &wear, today, pos)));
                     });
                 }
             }
@@ -547,11 +566,15 @@ impl Server {
         }
     }
 
-    /// Changes a block, tells the players, and wakes any fluid it lets flow.
+    /// Changes a block, telling only the players who have its column (the others get the
+    /// change with the column), and wakes any fluid it lets flow.
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
+        let column = ColumnPos::of_block(pos);
         if self.world.set_block(pos, block).is_some() {
-            self.dirty.insert(ColumnPos::of_block(pos));
-            self.broadcast(ServerMessage::BlockChanged { pos, block });
+            self.dirty.insert(column);
+            for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
+                player.connection.send(ServerMessage::BlockChanged { pos, block });
+            }
             self.fluids.changed(&self.content.blocks, &self.world, pos, self.tick);
         }
     }

@@ -75,10 +75,14 @@ pub enum Sound {
     Glass,
     Leaves,
     Water,
+    /// Wet, squelching ground: mud, peat.
+    Mud,
+    /// Soft, springy ground cover.
+    Moss,
 }
 
 impl Sound {
-    pub const ALL: [Sound; 10] = [
+    pub const ALL: [Sound; 12] = [
         Sound::Stone,
         Sound::Wood,
         Sound::Soil,
@@ -89,6 +93,8 @@ impl Sound {
         Sound::Glass,
         Sound::Leaves,
         Sound::Water,
+        Sound::Mud,
+        Sound::Moss,
     ];
 }
 

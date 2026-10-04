@@ -33,7 +33,7 @@ use voxmar_worldgen::Overworld;
 const META_FILE: &str = "world.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
-const COLUMN_MAGIC: &[u8; 4] = b"vxc2";
+const COLUMN_MAGIC: &[u8; 4] = b"vxc3";
 
 /// How a world is played.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
