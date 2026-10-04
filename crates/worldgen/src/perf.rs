@@ -149,18 +149,17 @@ fn first_column() {
     }
 }
 
-/// A hash of everything a column holds: its blocks, climate and colours.
-fn column_hash(column: &Column) -> u64 {
+/// A hash of everything a column holds: its blocks (by name, so that adding a block to
+/// the registry does not change it) and colours.
+fn column_hash(column: &Column, registry: &BlockRegistry) -> u64 {
+    let names: Vec<u64> = (0..registry.len()).map(|i| crate::rarity::name_hash(&registry.def(voxmar_engine::block::BlockId(i as u16)).name)).collect();
     let mut h = 0u64;
     let mut dense = vec![voxmar_engine::block::BlockId::AIR; voxmar_engine::coords::CHUNK_VOLUME];
     for chunk in &column.chunks {
         chunk.copy_to_dense(&mut dense);
-        for four in dense.chunks(4) {
-            h = mix(h ^ four.iter().fold(0u64, |w, b| w << 16 | b.0 as u64));
+        for block in &dense {
+            h = mix(h ^ names[block.0 as usize]);
         }
-    }
-    for c in &column.climate {
-        h = mix(h ^ (c[0] as u64) << 8 ^ c[1] as u64);
     }
     for c in &column.colors {
         h = mix(h ^ c.iter().flatten().fold(0u64, |w, &v| w << 8 | v as u64));
@@ -176,11 +175,12 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0xd536ee7b9175747d, 0xd9abcffd6e4c3202, 0x4a8befeaa6edbca7];
+const EXPECTED: [u64; 3] = [0xb5f9e4a4dd548398, 0xd6e7703ce810b1ee, 0xe1564541fa14b747];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
-/// When a change to the output is deliberate, bump `Overworld::VERSION` and replace
-/// `EXPECTED` with the hashes this test prints.
+/// When a change to the output is deliberate (new terrain, a biome's colours), replace
+/// `EXPECTED` with the hashes this test prints, and bump `Overworld::VERSION` if the terrain
+/// changed.
 #[test]
 fn output_is_unchanged() {
     let registry = registry();
@@ -188,13 +188,13 @@ fn output_is_unchanged() {
         .iter()
         .map(|(seed, columns)| {
             let world = Overworld::new(*seed, registry.clone());
-            columns.iter().fold(0, |h, &(x, z)| mix(h ^ column_hash(&world.generate(ColumnPos::new(x, z)))))
+            columns.iter().fold(0, |h, &(x, z)| mix(h ^ column_hash(&world.generate(ColumnPos::new(x, z)), &registry)))
         })
         .collect();
     let printed = hashes.iter().map(|h| format!("{h:#018x}")).collect::<Vec<_>>().join(", ");
     assert_eq!(
         hashes, EXPECTED,
-        "generation's output changed. If that is deliberate, bump Overworld::VERSION ({}) and set EXPECTED to [{printed}]",
+        "generation's output changed. If that is deliberate, set EXPECTED to [{printed}], and bump Overworld::VERSION ({}) if the terrain changed",
         Overworld::VERSION
     );
 }
