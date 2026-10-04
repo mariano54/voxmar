@@ -25,12 +25,13 @@
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
         (name: "water", materials: [Water], range: (20, 300)),
+        // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
+        // Before grass, as a block counts for the first group that selects it.
+        (name: "flowers", tags: ["flower"], range: (4, 60)),
         (name: "grass", materials: [Grass], range: (150, 1200)),
         (name: "rock", materials: [Stone, Gravel], range: (60, 700)),
         (name: "sand", materials: [Sand], range: (60, 600)),
         (name: "snowpack", materials: [Snow], range: (60, 600)),
-        // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
-        (name: "flowers", tags: ["flower"], range: (8, 120)),
     ],
     beds: [
         // A soft breeze anywhere outdoors, stronger with the wind.

@@ -5,14 +5,14 @@
 // Day, Night or Twilight; `weather` Always, Dry or Wet; `motion` Drift, Hover, Fall, Rise
 // or Blow; `aether` how strongly it follows the aether field (1: only where it is high).
 // Ambient particles are a seasoning, not a default: sets are faint, day and night ones come
-// out only on some days or nights, and blown dust only when the wind blows, over true
-// desert (dust storms and sandstorms are weather, in weather.ron).
+// out only on some days or nights, and blown dust only when the wind blows, over desert
+// (dust storms and sandstorms are weather, in weather.ron).
 (
     particles: [
         (
             // A few faint motes hanging in the sun near flowers.
             name: "pollen", tags: ["meadow", "temperate", "flowers"],
-            density: 0.05, color: (250, 236, 170), size: 0.035, motion: Hover, time: Day, weather: Dry,
+            density: 0.06, color: (250, 236, 170), size: 0.035, motion: Hover, time: Day, weather: Dry,
             comfort: (temperature: (10.0, 26.0), moisture: (0.45, 1.5)),
         ),
         (
@@ -27,8 +27,8 @@
         ),
         (
             name: "dust", tags: ["dry", "desert"],
-            density: 0.25, color: (222, 196, 150), size: 0.07, motion: Blow, time: Day, weather: Dry,
-            comfort: (temperature: (14.0, 45.0), moisture: (0.0, 0.22)),
+            density: 0.2, color: (222, 196, 150), size: 0.07, motion: Blow, time: Day, weather: Dry,
+            comfort: (temperature: (14.0, 45.0), moisture: (0.0, 0.4)),
         ),
         (
             name: "drifting_snow", tags: ["cold", "snow"],
