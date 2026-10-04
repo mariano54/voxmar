@@ -456,7 +456,7 @@ impl UndergroundColumn<'_> {
                     d if d < 0.0 || d >= GEODE_SHELL => continue,
                     d if d < 1.2 => {
                         // Clusters grow on the floor.
-                        if h % 3 == 0 && cave.get(y as usize + 1) == Some(&Cave::Air) && geode.distance(pos + IVec3::Y) < geode.radius {
+                        if h.is_multiple_of(3) && cave.get(y as usize + 1) == Some(&Cave::Air) && geode.distance(pos + IVec3::Y) < geode.radius {
                             blocks.put_if_air(pos + IVec3::Y, ids.cluster);
                         }
                         ids.crystal
