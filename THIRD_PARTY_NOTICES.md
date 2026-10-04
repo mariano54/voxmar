@@ -46,10 +46,10 @@ SOFTWARE.
 - Source: https://github.com/Auburn/FastNoiseLite (the Rust port, crate `fastnoise-lite` 1.1.1)
 - Author: Jordan Peck and contributors
 - Licence: MIT
-- What we adapted: its 3D OpenSimplex2 noise and fractal Brownian motion, with its gradient
-  table and hashing constants, rewritten to evaluate many points in step with selects in place
-  of branches so the compiler can vectorise them. It returns exactly the crate's values, which
-  the rest of generation still takes from the crate itself.
+- What we adapted: its 2D and 3D OpenSimplex2 noise and its fractal sums (Brownian motion and
+  ridged), with its gradient tables and hashing constants, rewritten for NEON to evaluate four
+  points (3D) or four octaves (2D) in step, with selects in place of branches. It returns
+  exactly the crate's values; other noise still comes from the crate itself.
 - Where: `crates/worldgen/src/noise.rs`.
 
 ```
