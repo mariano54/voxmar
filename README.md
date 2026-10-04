@@ -290,9 +290,11 @@ F3 shows the weather.
 Water and lava flow as in Minecraft (`engine/src/fluid.rs`): a source spreads seven blocks over
 flat ground (lava three), heading for the nearest edge within four blocks (lava two), falls as
 far as it can, and dries up once nothing feeds it. Two sources make a third between them, so
-water taken out of a pool comes back. Lava turns to stone where water reaches a lava source
-(basalt once that stone exists), to cobblestone where it reaches flowing lava, and pouring lava
-into water turns the water to stone. Every state is its own block (`water_flow_1` to
+water taken out of a pool comes back, and water that fills a hollow it cannot run out of stays
+there as a pond. Lava cools: where a flow stops, its thin edge crusts over with dark rock after
+twenty seconds, and a flow left without its source hardens where it lay. It turns to stone
+where water reaches a lava source (basalt once that stone exists), to cobblestone where it
+reaches flowing lava, and pouring lava into water turns the water to stone. Every state is its own block (`water_flow_1` to
 `water_flow_7`, `water_falling`; rivers also have pinned water that carries a current), so
 chunks, saves and the network treat them like any block. Flowing water and river currents
 carry swimmers along.
