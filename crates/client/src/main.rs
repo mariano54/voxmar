@@ -6,16 +6,19 @@
 //! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
 //! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--wait
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
-//! FRACTION` (hold the time of day, 0 is sunrise), `--menu` (show the settings menu) or
+//! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
+//! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
+//! screenshot), `--menu` (show the settings menu) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
-//! `--fov DEGREES`, `--weather KIND` (show that instead of the server's weather; the kinds
-//! are in `weather.ron`), `--command LINE` (run a console command once in game, such as
+//! `--fov DEGREES`, `--weather KIND[:INTENSITY]` (show that instead of the server's
+//! weather; the kinds are in `weather.ron`, intensities 0..1 or light|moderate|heavy|max), `--command LINE` (run a console command once in game, such as
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings.
 
 mod ambience;
+mod breaking;
 mod capture;
 mod hud;
 mod interact;
@@ -69,6 +72,7 @@ struct Options {
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
     wait: f32,
+    mine: Option<f32>,
     time: Option<f32>,
     menu: bool,
     screen: Option<Screen>,
@@ -91,6 +95,7 @@ fn parse_options() -> Result<Options, String> {
         pose: None,
         flight: None,
         wait: 0.0,
+        mine: None,
         time: None,
         menu: false,
         screen: None,
@@ -117,6 +122,7 @@ fn parse_options() -> Result<Options, String> {
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
             "--wait" => options.wait = value()?.parse().map_err(|e| format!("--wait: {e}"))?,
+            "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
             "--screen" => {
@@ -188,6 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         world::WorldPlugin,
         player::PlayerPlugin,
         interact::InteractPlugin,
+        breaking::BreakingPlugin,
         net::NetPlugin,
         hud::HudPlugin,
         sfx::SfxPlugin,
@@ -237,6 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             pose: options.pose,
             flight: options.flight,
             wait: options.wait,
+            mine: options.mine,
             time: options.time,
             menu: options.menu,
         });
@@ -286,6 +294,7 @@ fn setup(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
+    mut crack_materials: ResMut<Assets<render::cracks::CrackMaterial>>,
     world: Res<ClientWorld>,
     terrain: Res<render::terrain::Terrain>,
 ) {
@@ -308,7 +317,9 @@ fn setup(
         }
     }
     let colormaps = source.colormaps();
-    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &colormaps);
+    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures);
+    let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
+    render::cracks::setup(&mut commands, &mut images, &mut meshes, &mut crack_materials, crack_stages);
     let palette = LodPalette::new(registry, &block_textures);
     commands.insert_resource(Lod::new(palette, terrain.clone(), world.view_distance));
     commands.insert_resource(WorldGenerator::new(world_content));
@@ -332,29 +343,37 @@ fn setup(
         texture
     };
     let as_image = |t: Rgba| voxmar_texgen::Image { width: t.width, height: t.height, pixels: t.pixels };
-    let icons = (0..registry.len())
-        .map(|id| {
-            let block = voxmar_engine::block::BlockId(id as u16);
-            let (info, def) = (registry.info(block), registry.def(block));
-            let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
-            let icon = own.unwrap_or_else(|| match info.render {
-                RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
-                _ => {
-                    // Leaves would show only their holes' rims: draw them as a solid bush.
-                    let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {
-                        let mut texture = face_texture(info, face);
-                        if info.render == RenderKind::Leaves {
-                            texture.fill_transparent();
-                        }
-                        as_image(texture)
-                    });
-                    let cube = voxmar_texgen::icon::isometric(&top, &left, &right, 32);
-                    Rgba { width: cube.width, height: cube.height, pixels: cube.pixels }
-                }
-            });
-            images.add(ui_image(&icon))
-        })
-        .collect();
+    let mut icons: Vec<Handle<Image>> = Vec::with_capacity(registry.len());
+    for id in 0..registry.len() {
+        let block = voxmar_engine::block::BlockId(id as u16);
+        // A fluid's flowing, falling and river states (hundreds of blocks) show their
+        // source's icon, which comes before them.
+        if let Some(state) = registry.fluid(block) {
+            let fluid_source = registry.fluid_def(state.fluid).source;
+            if fluid_source != block {
+                icons.push(icons[fluid_source.0 as usize].clone());
+                continue;
+            }
+        }
+        let (info, def) = (registry.info(block), registry.def(block));
+        let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
+        let icon = own.unwrap_or_else(|| match info.render {
+            RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
+            _ => {
+                // Leaves would show only their holes' rims: draw them as a solid bush.
+                let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {
+                    let mut texture = face_texture(info, face);
+                    if info.render == RenderKind::Leaves {
+                        texture.fill_transparent();
+                    }
+                    as_image(texture)
+                });
+                let cube = voxmar_texgen::icon::isometric(&top, &left, &right, 32);
+                Rgba { width: cube.width, height: cube.height, pixels: cube.pixels }
+            }
+        });
+        icons.push(images.add(ui_image(&icon)));
+    }
     let mut sprite = |name: &str, size: (u32, u32), color: [u8; 4]| images.add(ui_image(&source.sprite(name, (size.0, size.1, color))));
     commands.insert_resource(HudImages {
         icons,

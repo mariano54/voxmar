@@ -22,6 +22,9 @@ pub struct TreeId(pub u16);
 
 struct Species {
     log: BlockId,
+    /// Bark on every side, for trunks lying on the ground: the wood of the log's family,
+    /// or the log itself.
+    wood: BlockId,
     leaves: BlockId,
     /// Leaves used instead of `leaves` on a fraction of trees (flowering azaleas).
     alternate: Option<(BlockId, f32)>,
@@ -54,8 +57,10 @@ impl Trees {
             .iter()
             .map(|def| {
                 let log = registry.expect(&def.log);
+                let wood = def.log.strip_suffix("_log").and_then(|stem| registry.id(&format!("{stem}_wood"))).unwrap_or(log);
                 Species {
                     log,
+                    wood,
                     // A tree without leaves never places them.
                     leaves: def.leaves.as_deref().map_or(BlockId::AIR, |name| registry.expect(name)),
                     alternate: def.alternate.as_ref().map(|(name, share)| (registry.expect(name), *share)),
@@ -76,9 +81,26 @@ impl Trees {
         self.species[tree.0 as usize].leaves
     }
 
+    /// A species' upright log.
+    pub fn log(&self, tree: TreeId) -> BlockId {
+        self.species[tree.0 as usize].log
+    }
+
+    /// A species' wood with bark on every side, for trunks lying down.
+    pub fn wood(&self, tree: TreeId) -> BlockId {
+        self.species[tree.0 as usize].wood
+    }
+
+    /// Whether a species grows a 2×2 trunk.
+    pub fn thick(&self, tree: TreeId) -> bool {
+        self.species[tree.0 as usize].thick
+    }
+
     /// Grows a tree standing on the ground at `base` (the first block above it), and
-    /// records in `parts` the blocks it put down in the column.
-    pub fn grow(&self, tree: TreeId, base: IVec3, rng: &mut Rng, blocks: &mut Blocks<'_>, parts: &mut TreeParts) {
+    /// records in `parts` the blocks it put down in the column. `vigour` (0 ..= 1, the
+    /// forest's stand) favours the tall end of the species' heights: old-growth trees are
+    /// taller than those at a scrubby edge.
+    pub fn grow(&self, tree: TreeId, base: IVec3, vigour: f32, rng: &mut Rng, blocks: &mut Blocks<'_>, parts: &mut TreeParts) {
         let s = &self.species[tree.0 as usize];
         parts.logs.clear();
         parts.leaves.clear();
@@ -87,7 +109,8 @@ impl Trees {
             Some((alternate, share)) if rng.chance(share) => alternate,
             _ => s.leaves,
         };
-        let height = rng.range(s.height.0, s.height.1 + 1);
+        let size = (0.15 + 0.6 * vigour + 0.5 * rng.unit()).min(0.999);
+        let height = s.height.0 + ((s.height.1 - s.height.0 + 1) as f32 * size) as i32;
         let pick = |rng: &mut Rng, (lo, hi): (f32, f32)| lo + (hi - lo) * rng.unit();
         let count = |rng: &mut Rng, (lo, hi): (i32, i32)| rng.range(lo, hi + 1);
 
@@ -159,6 +182,25 @@ impl Trees {
                 }
                 g.blob(top + Vec3::Y * 1.5, Vec3::new(0.5 + girth, 1.2, 0.5 + girth), leaves);
             }
+            Crown::Spire { radius, start } => {
+                // Radius along the crown: 0 at its foot, widest a third of the way up, 0 at
+                // its tip, which stands a third of the trunk above the trunk's top.
+                let r = pick(rng, radius);
+                let first = (height as f32 * start) as i32;
+                let last = height + height / 3;
+                let span = (last + 1 - first) as f32;
+                for y in first..=last {
+                    let x = (y - first) as f32 / span + 0.5 / span;
+                    let width = r * 6.25 * x * (1.0 - x) * (1.0 - x);
+                    g.disc(trunk((y as f32 / height as f32).min(1.0)), width.max(0.6), leaves);
+                }
+            }
+            Crown::Cap { radius } => {
+                let r = pick(rng, radius);
+                // A flat dome on the stem, and a rim hanging one block below its edge.
+                g.blob(top + Vec3::Y * 0.2, Vec3::new(r, 1.6, r), leaves);
+                g.ring(top - Vec3::Y * 0.8, r - 0.8, r + 0.2, leaves);
+            }
             Crown::Umbrella { branches, reach, radius } => {
                 let n = count(rng, branches);
                 let phase = rng.unit() * std::f32::consts::TAU;
@@ -215,6 +257,19 @@ impl Trees {
             Crown::Bare => {}
         }
     }
+}
+
+/// A bush: a stub of `log` (none if air) on the ground at `base` under a mound of
+/// `leaves` `radius` blocks across, ragged at its edge. Its parts go into `parts`.
+pub fn bush(base: IVec3, radius: f32, leaves: BlockId, log: BlockId, rng: &mut Rng, blocks: &mut Blocks<'_>, parts: &mut TreeParts) {
+    parts.logs.clear();
+    parts.leaves.clear();
+    let mut g = Grower { blocks, seed: rng.next_u64(), base, parts };
+    if !log.is_air() {
+        g.wood(base, log);
+    }
+    let centre = Vec3::new(base.x as f32 + 0.5, base.y as f32 + 0.25, base.z as f32 + 0.5);
+    g.blob(centre, Vec3::new(radius, radius * 0.75 + 0.3, radius), leaves);
 }
 
 /// The cells from `from` (exclusive, unless equal to `to`) to `to`, changing one axis at
@@ -335,6 +390,20 @@ impl Grower<'_, '_> {
                     if d.length_squared() <= 1.0 - 0.35 * self.unit(cell) {
                         self.put_leaf(cell, leaves);
                     }
+                }
+            }
+        }
+    }
+
+    /// A ring of leaves between radii `inner` and `outer` around `center`, one layer thick.
+    fn ring(&mut self, center: Vec3, inner: f32, outer: f32, leaves: BlockId) {
+        let r = outer.ceil() as i32;
+        let (cx, y, cz) = (center.x.floor() as i32, center.y.floor() as i32, center.z.floor() as i32);
+        for z in cz - r..=cz + r {
+            for x in cx - r..=cx + r {
+                let d = Vec3::new(x as f32 + 0.5 - center.x, 0.0, z as f32 + 0.5 - center.z).length();
+                if d >= inner && d <= outer {
+                    self.leaf(IVec3::new(x, y, z), leaves);
                 }
             }
         }

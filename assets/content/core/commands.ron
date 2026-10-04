@@ -18,8 +18,8 @@
         ),
         (
             name: "weather",
-            usage: "[KIND [SECONDS] | natural | list]",
-            help: "Shows the weather here, or brings a kind of weather (/weather list names them) to the land around you for a while, five minutes unless you say, after which the natural weather takes over again. natural ends it now.",
+            usage: "[KIND [light|moderate|heavy|max|0..1] [SECONDS] | natural | list]",
+            help: "Shows the weather here, or brings a kind of weather (/weather list names them) to the land around you, as intense as you say (each kind has its usual intensity; 1 is its fiercest), for five minutes unless you say, after which the natural weather takes over again. natural ends it now.",
             permission: Admin,
             run: Weather,
         ),
@@ -43,6 +43,27 @@
             help: "Switches you, or a player, between survival (on foot) and creative (flight allowed).",
             permission: Admin,
             run: GameMode,
+        ),
+        (
+            name: "setblock",
+            usage: "<x> <y> <z> <block>",
+            help: "Puts a block at a position (~ is where you are, so ~ ~-1 ~ is under your feet), replacing what is there. Water and lava placed this way flow.",
+            permission: Admin,
+            run: SetBlock,
+        ),
+        (
+            name: "fill",
+            usage: "<x1> <y1> <z1> <x2> <y2> <z2> <block>",
+            help: "Fills the box between two corners with a block, up to 32768 of them; air empties it.",
+            permission: Admin,
+            run: Fill,
+        ),
+        (
+            name: "give",
+            usage: "<block> [count]",
+            help: "Gives you blocks, 64 unless you say: /give water to pour some.",
+            permission: Admin,
+            run: Give,
         ),
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (
