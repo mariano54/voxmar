@@ -125,7 +125,8 @@ fn receive(
             }
         };
         match message {
-            ServerMessage::Welcome { position, yaw, flying, allow_flight, admin, seed, .. } => {
+            ServerMessage::Welcome { position, yaw, flying, allow_flight, admin, seed, weather_seed, .. } => {
+                weather.set_seed(weather_seed);
                 lod.start(seed, world.registry.clone());
                 player.position = position;
                 player.yaw = yaw;
@@ -171,8 +172,9 @@ fn receive(
                     keep
                 });
             }
-            ServerMessage::Time { day, day_speed, .. } => {
+            ServerMessage::Time { tick, day, day_speed } => {
                 *clock = Clock { day: day as f64, day_speed, told_at: time.elapsed_secs_f64() };
+                weather.set_tick(tick, time.elapsed_secs_f64());
                 cycle.ticks = day as f64;
             }
             ServerMessage::Abilities { allow_flight, admin } => {
@@ -181,8 +183,10 @@ fn receive(
                 player.admin = admin;
             }
             ServerMessage::Chat { kind, text } => console.push(kind, &text, time.elapsed_secs()),
-            ServerMessage::Weather { weather: report, quick } => weather.receive(report, quick, time.elapsed_secs()),
-            ServerMessage::Lightning { at } => weather.lightning(at.distance(player.position.xz())),
+            ServerMessage::Weather { weather: report, effects, quick } => {
+                weather.receive(report, effects, quick, time.elapsed_secs())
+            }
+            ServerMessage::Lightning { at, seed } => weather.lightning(at, seed, at.distance(player.eye())),
             ServerMessage::Died => player.dead = true,
         }
     }

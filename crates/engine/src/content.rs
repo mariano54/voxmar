@@ -51,6 +51,7 @@ impl Content {
             }
         }
         let blocks = BlockRegistry::expand(blocks)?;
+        weather.validate()?;
         Ok(Self {
             blocks: Arc::new(BlockRegistry::new(blocks)?),
             actions: Arc::new(actions),

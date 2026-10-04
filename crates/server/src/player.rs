@@ -139,6 +139,7 @@ impl Server {
             })
         });
         let local_admin = self.config.local_admin;
+        let weather_seed = self.weather.seed();
         let player = self.players.get_mut(&id).expect("message from unknown player");
         if player.joined {
             return;
@@ -183,6 +184,7 @@ impl Server {
         player.connection.send(ServerMessage::Welcome {
             player: id,
             seed,
+            weather_seed,
             position: player.position,
             yaw: player.yaw,
             flying: player.flying,

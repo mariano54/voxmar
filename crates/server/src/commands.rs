@@ -251,13 +251,21 @@ impl Server {
         let (tick, day) = (self.tick, self.day);
         match args.first().map(String::as_str) {
             None => {
-                let weather = self.weather.local(&mut self.temperature, at, tick, day);
+                let report = self.weather.local(&mut self.temperature, at, tick, day);
+                let weather = report.weather;
+                let effects: Vec<String> = report
+                    .effects
+                    .iter()
+                    .filter(|&&(_, strength)| strength >= 0.05)
+                    .map(|&(i, strength)| format!("{} {:.0}%", self.weather.table().effects()[i].short_name(), strength * 100.0))
+                    .collect();
+                let effects = if effects.is_empty() { String::new() } else { format!("\nEffects: {}.", effects.join(", ")) };
                 let forced = match self.weather.forced_at(at, tick) {
                     Some((preset, 0)) => format!(", easing back from {}", preset.short_name()),
                     Some((preset, left)) => format!(", {} for {}", preset.short_name(), minutes(left)),
                     None => String::new(),
                 };
-                Ok(format!("{}{forced}: {}", weather.describe(), weather.summary()))
+                Ok(format!("{}{forced}: {}.{effects}", weather.describe(), weather.summary()))
             }
             Some("list") => {
                 let names: Vec<&str> = self.content.weather.presets().iter().map(|p| p.short_name()).collect();

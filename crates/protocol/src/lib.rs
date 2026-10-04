@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::glam::{IVec3, Vec2, Vec3};
+use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::traits::Health;
 use voxmar_engine::world::Column;
@@ -20,7 +20,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -65,7 +65,18 @@ pub struct PlayerInput {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     /// Where the player is (as they left it, in a saved world), and what they may do.
-    Welcome { player: PlayerId, seed: u64, position: Vec3, yaw: f32, flying: bool, allow_flight: bool, admin: bool },
+    /// `weather_seed` seeds the gusts of wind (`voxmar_engine::weather::gust`), which
+    /// clients work out themselves.
+    Welcome {
+        player: PlayerId,
+        seed: u64,
+        weather_seed: u64,
+        position: Vec3,
+        yaw: f32,
+        flying: bool,
+        allow_flight: bool,
+        admin: bool,
+    },
     Rejected { reason: String },
     Column { pos: ColumnPos, column: Arc<Column> },
     Unload { pos: ColumnPos },
@@ -83,12 +94,14 @@ pub enum ServerMessage {
     Abilities { allow_flight: bool, admin: bool },
     /// A line for the player's console: a reply to their command, or chat.
     Chat { kind: ChatKind, text: String },
-    /// The weather where the player is, sent when it changes and every few seconds.
-    /// `quick` asks the client to change to it within a second or two rather than ease
-    /// in slowly, after a command changed it.
-    Weather { weather: Weather, quick: bool },
-    /// Lightning over (x, z): a flash, and thunder once the sound has travelled.
-    Lightning { at: Vec2 },
+    /// The weather where the player is, sent when it changes and every few seconds, with
+    /// the names of the effects showing (`valley_fog`, `hail`), strongest first. `quick`
+    /// asks the client to change to it within a second or two rather than ease in slowly,
+    /// after a command changed it.
+    Weather { weather: Weather, effects: Vec<String>, quick: bool },
+    /// Lightning striking the ground at `at`: a flash, and thunder once the sound has
+    /// travelled. `seed` shapes the bolt, so every client draws the same one.
+    Lightning { at: Vec3, seed: u32 },
     Died,
 }
 

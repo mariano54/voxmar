@@ -114,7 +114,7 @@ impl Client {
                 self.health = health.current;
                 self.inventory = inventory;
             }
-            ServerMessage::Weather { weather, quick } => {
+            ServerMessage::Weather { weather, quick, .. } => {
                 self.weather = Some(weather);
                 self.quick = quick;
             }

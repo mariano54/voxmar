@@ -342,7 +342,10 @@ fn update_debug(
         .hit
         .and_then(|hit| world.block(hit.block).map(|b| format!("{} at {}", world.registry.def(b).name, hit.block)))
         .unwrap_or_else(|| "nothing".into());
-    let sky = format!("{}: {}", weather.current.describe(), weather.current.summary());
+    let mut sky = format!("{}: {}", weather.current.describe(), weather.current.summary());
+    if !weather.effects.is_empty() {
+        sky.push_str(&format!("\neffects: {}", weather.effects.join(", ").replace('_', " ")));
+    }
     text.0 = format!(
         "{fps:.0} fps ({frame_ms:.2} ms)\n\
          xyz {:.1} {:.1} {:.1}{}\n\
