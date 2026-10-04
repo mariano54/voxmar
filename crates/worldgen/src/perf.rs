@@ -9,6 +9,8 @@
 //!   spawn column, and to fill the area around it on every core;
 //! - `all_cores`: the wall-clock time per column of generating the same areas on every
 //!   core, cold and warm;
+//! - `land_samples`: the cost of one sample of the land on the rivers' and trails' 8-block
+//!   grids, the work most of a new region's time goes to;
 //!
 //! next to `generation_speed`, `river_speed` and `column_timing` in the crate's tests.
 //! Times are thread CPU time where they can be, so they hold up on a busy machine; stage
@@ -190,6 +192,31 @@ fn all_cores() {
     println!("every core: cold {:.3} ms per column, warm {:.3} ms per column ({columns} columns)", ms(cold), ms(warm));
 }
 
+/// `cargo test --release -p voxmar_worldgen land_samples -- --ignored --nocapture` samples
+/// the land on an 8-block grid in tiles of 32×32, as river tiles ask for it, over 4 km
+/// squares of three worlds, and reports the CPU time per sample. Under
+/// `/usr/bin/time -l`, with `SIDE=0` for the cost of making the worlds alone, it gives
+/// instructions and cycles per sample, which a busy machine does not change.
+#[test]
+#[ignore]
+fn land_samples() {
+    let registry = registry();
+    let side: i32 = std::env::var("SIDE").ok().and_then(|s| s.parse().ok()).unwrap_or(512);
+    let worlds: Vec<Overworld> = SEEDS.iter().map(|&seed| Overworld::new(seed, registry.clone())).collect();
+    let start = thread_time();
+    let mut sum = 0.0;
+    for world in &worlds {
+        for tile in 0..(side / 32) * (side / 32) {
+            let (tx, tz) = (tile % (side / 32), tile / (side / 32));
+            let points: Vec<(i32, i32)> = (0..32 * 32).map(|i| ((tx * 32 + i % 32) * 8 + 4 - side * 4, (tz * 32 + i / 32) * 8 + 4 - side * 4)).collect();
+            sum += world.geology.lands(&points).iter().map(|l| l.height).sum::<f32>();
+        }
+    }
+    std::hint::black_box(sum);
+    let samples = (worlds.len() as i32 * side * side).max(1);
+    println!("{:.0} ns per land sample", (thread_time() - start).as_nanos() as f64 / samples as f64);
+}
+
 /// A hash of everything a column holds: its blocks (by name, so that adding a block to
 /// the registry does not change it) and colours.
 fn column_hash(column: &Column, registry: &BlockRegistry) -> u64 {
@@ -216,7 +243,7 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0x2c72c12721982994, 0x7b9f44ce45df2dca, 0x5868413dea9eb7ed];
+const EXPECTED: [u64; 3] = [0xb03f72bc4d210110, 0x43d7026bf82989f6, 0xc001c79f3dce5ec2];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -241,7 +268,7 @@ fn output_is_unchanged() {
 }
 
 /// The hash of the light over three 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
-const LIGHT: u64 = 0xce525c5d52ff8535;
+const LIGHT: u64 = 0x53bfb6ef6bd0ff95;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
 /// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on

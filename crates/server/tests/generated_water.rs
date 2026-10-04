@@ -24,9 +24,15 @@ fn generated_water_does_not_move() {
     let (mut fluid_cells, mut curtain, mut pinned) = (0, 0, 0);
     // Around every place water makes near spawn on a few seeds (waterfalls, highland
     // lakes, confluences, river mouths, and tunnels, islands and hot springs where there
-    // are any), found afresh so the test follows any reseed, and land with caves.
+    // are any), found afresh so the test follows any reseed, and land with caves; then on
+    // more seeds only while too little of the water has been seen pouring or flowing.
     let mut kinds = std::collections::HashSet::new();
-    for (seed, near_spawn, also) in [(3, true, None), (11, true, None), (2, true, None), (5, true, None), (7, true, Some(IVec2::new(1500, 5200))), (0x5eed, false, Some(IVec2::ZERO))] {
+    let first = [(3, true, None), (11, true, None), (2, true, None), (5, true, None), (7, true, Some(IVec2::new(1500, 5200))), (0x5eed, false, Some(IVec2::ZERO))];
+    let more = [13, 17, 19, 23, 29, 31].map(|seed| (seed, true, None));
+    for (i, (seed, near_spawn, also)) in first.into_iter().chain(more).enumerate() {
+        if i >= first.len() && pinned > 500 && curtain > 20 {
+            break;
+        }
         let generator = Overworld::with_content(seed, registry.clone(), &world_content);
         let mut places: Vec<IVec2> = also.into_iter().collect();
         if near_spawn {

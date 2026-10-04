@@ -775,6 +775,10 @@ impl Decor {
                     }
                 } else {
                     let top = at + IVec3::Y * if log.thick { 3 } else { 1 };
+                    // Only from wood: not where the log was left out over a hole.
+                    if blocks.contains(top - IVec3::Y) && blocks.get(top - IVec3::Y) != wood {
+                        continue;
+                    }
                     for k in 0..length {
                         blocks.put_log(top + IVec3::Y * k, wood);
                     }

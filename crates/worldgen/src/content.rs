@@ -5,7 +5,8 @@
 //! of snow and ice), `rocks.ron` (rock provinces), `biomes.ron`, `cave_biomes.ron` (biomes
 //! of the `Underground` layer, in a file of their own), `surfaces.ron` (surface rule sets
 //! biomes share), `trees.ron`, `plants.ron`, `decorations.ron` (rocks, logs, bushes,
-//! patches and tree ornaments) and `terrain.ron` (terrain shapes). Names are qualified with
+//! patches and tree ornaments), `land.ron` (the land's noise fields and terrain splines) and
+//! `terrain.ron` (terrain shapes). Names are qualified with
 //! the package (`base:taiga`). Loading resolves `inherit` and shared rule sets, then checks
 //! every reference: blocks, provinces, biomes, trees, plants, band names, and that the
 //! biome table has no holes. A broken package fails at load with a message naming the
@@ -1094,6 +1095,115 @@ impl ShapeKind {
 }
 
 // ---------------------------------------------------------------------------------------
+// land.ron
+
+/// The land: the large noise fields every position's parameters come from, and the fields
+/// derived from them, ending in the terrain's height (see `crate::router`). A later
+/// package's replaces an earlier one's, since there is only one land.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LandDef {
+    /// Domain warps, by name: smooth offsets that bend the noises that name them.
+    #[serde(default)]
+    pub warps: Vec<(String, LandWarpDef)>,
+    /// Noise fields, by name, each seeded by its name.
+    pub noises: Vec<(String, LandNoiseDef)>,
+    /// Derived fields, in order: each may read noises, built-in inputs and the fields
+    /// before it. The generator reads some of them by name (see `crate::router::Outputs`).
+    pub fields: Vec<(String, ExprDef)>,
+    /// Heights above the sea are multiplied by this...
+    pub vertical_scale: f32,
+    /// ...and stretched by `1 + boost · (h / 128)²`, so lowlands stay low while ranges rise.
+    pub elevation_boost: f32,
+    /// Heights more than `knee` blocks above the sea ease towards `knee + room` instead of
+    /// rising further, so peaks round off under the top of the world.
+    pub ceiling: (f32, f32),
+}
+
+/// A domain warp: positions are moved by up to `amplitude` blocks by a smooth noise.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LandWarpDef {
+    pub wavelength: f32,
+    pub amplitude: f32,
+    #[serde(default = "three_octaves")]
+    pub octaves: i32,
+}
+
+fn three_octaves() -> i32 {
+    3
+}
+
+/// A 2D noise field: octaves of OpenSimplex2, each twice the frequency and half the
+/// amplitude of the one before, times its weight; normalised to a standard deviation of
+/// `spread`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LandNoiseDef {
+    /// Wavelength of the first octave, in blocks.
+    pub wavelength: f32,
+    /// The weight of each octave, from the first.
+    pub octaves: Vec<f32>,
+    #[serde(default = "unit_spread")]
+    pub spread: f32,
+    /// The warp that bends it, by name.
+    #[serde(default)]
+    pub warp: Option<String>,
+    /// A world dial its wavelength scales with: `continent_size`.
+    #[serde(default)]
+    pub scale_by: Option<String>,
+}
+
+fn unit_spread() -> f32 {
+    1.0
+}
+
+/// An expression over fields: a number, the name of a noise, field or built-in input, or an
+/// operation.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ExprDef {
+    Const(f32),
+    Name(String),
+    Op(OpDef),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub enum OpDef {
+    /// A cubic Hermite spline over `on`: knots `(at, value)` or `(at, value, slope)`, where
+    /// each value may itself be an expression (Minecraft's nested terrain splines). Linear
+    /// past both ends, along the end slopes.
+    Spline { on: Box<ExprDef>, points: Vec<KnotDef> },
+    Add(Vec<ExprDef>),
+    /// Stops at the first factor that is zero, so a gate in front spares what follows.
+    Mul(Vec<ExprDef>),
+    Min(Vec<ExprDef>),
+    Max(Vec<ExprDef>),
+    Abs(Box<ExprDef>),
+    Square(Box<ExprDef>),
+    Clamp(Box<ExprDef>, f32, f32),
+    /// The noise named, sampled at the position moved by (dx, dz) blocks.
+    Shifted(String, Box<ExprDef>, Box<ExprDef>),
+}
+
+/// A knot of a spline: where it is, its value and its slope (0 when left out).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum KnotDef {
+    Flat(f32, ExprDef),
+    Sloped(f32, ExprDef, f32),
+}
+
+impl KnotDef {
+    pub fn parts(&self) -> (f32, &ExprDef, f32) {
+        match self {
+            KnotDef::Flat(at, value) => (*at, value, 0.0),
+            KnotDef::Sloped(at, value, slope) => (*at, value, *slope),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
 // Loading
 
 #[derive(Deserialize)]
@@ -1168,6 +1278,7 @@ pub struct WorldContent {
     /// `weather.ron`: generated snow uses the same table as snow that falls in play.
     pub snow_cover: Vec<(String, String)>,
     pub trails: TrailsDef,
+    pub land: LandDef,
 }
 
 /// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
@@ -1199,12 +1310,13 @@ pub struct TreadDef {
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 12] = [
+pub(crate) const BASE_FILES: [(&str, &str); 13] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
     ("decorations.ron", include_str!("../../../assets/content/base/decorations.ron")),
+    ("land.ron", include_str!("../../../assets/content/base/land.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
     ("rocks.ron", include_str!("../../../assets/content/base/rocks.ron")),
     ("surfaces.ron", include_str!("../../../assets/content/base/surfaces.ron")),
@@ -1233,6 +1345,7 @@ impl WorldContent {
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
         let mut trails = None;
+        let mut land = None;
         let mut tree_density = None;
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -1300,6 +1413,7 @@ impl WorldContent {
                     strata: s.strata.iter().map(|n| q(n)).collect(),
                     ..s
                 })),
+                "land.ron" => land = Some(parse::<LandDef>(&at, &file.source)?),
                 "weather.ron" => weather.extend(&file.package, &file.source).map_err(|e| ContentError(e.0))?,
                 "decorations.ron" => decorations.extend(
                     parse::<DecorationFile>(&at, &file.source)?.decorations.into_iter().map(|d| qualify_decoration(&file.package, d)),
@@ -1327,6 +1441,7 @@ impl WorldContent {
         }
         let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
         let trails = trails.ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
+        let land = land.ok_or_else(|| ContentError("no content package defines land.ron".into()))?;
         let mut biomes = inherit(&raw)?;
         // Shared rule sets come before each biome's own rules.
         for biome in &mut biomes {
@@ -1356,7 +1471,7 @@ impl WorldContent {
         }
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails };
+        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }

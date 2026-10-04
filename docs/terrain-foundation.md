@@ -1,6 +1,7 @@
 # Terrain foundation: one parameter space, one density field
 
-Oct 4, 2026. Status: **proposal, waiting for Mariano's go-ahead.** Read with
+Oct 4, 2026. Status: **accepted** (Mariano confirmed the five decisions in section 9 on
+5 October); being built in the steps of section 8. Read with
 [world-plan.md](world-plan.md) (decisions 4, 7 and 8) and
 [design-philosophy.md](design-philosophy.md) ("Causal, layered generation").
 
@@ -339,11 +340,13 @@ surface rules.
 
 ### 6.2 Splines as data
 
-`terrain.ron` gains a router section: the parameter fields (scale, octaves, warp) and the
-splines, as nested cubic Hermite splines in the vanilla form (location, value or spline,
-derivative; linear beyond the ends). Values are in blocks above sea level, so they read
-plainly. Knot locations can name the breakpoints in `climate.ron`, so moving a band edge
-moves the biome and its landform together:
+A new content file, `land.ron`, holds the router: the parameter noises (wavelength, the
+weight of each octave, spread, warp) and the derived fields as small expressions, mostly
+nested cubic Hermite splines in the vanilla form (location, value or spline, derivative;
+linear beyond the ends). A later package's `land.ron` replaces an earlier one's. Knot
+locations can name the breakpoints in `climate.ron`, so moving a band edge moves the biome
+and its landform together. A sketch (the built file keeps Tectonic's units, 128 blocks per
+unit, so its values carry over):
 
 ```ron
 offset: (on: C, points: [
@@ -520,19 +523,54 @@ the climate lattice all sample the cheaper preliminary surface. No step lands wi
 regression in warm or cold generation, measured on a quiet machine (QUIET flag, nothing
 else running, no playtest) and reported before and after.
 
+**Measured at step 1** (release, Low Power Mode, instructions from `/usr/bin/time -l`, which
+load does not change; main at ee09ba4 against the branch, back to back):
+
+| | main | step 1 |
+| --- | --- | --- |
+| A land sample on the rivers' 8-block grid (`land_samples`) | 4675 instructions, 940 cycles | 5457, 1040 (+11% cycles) |
+| `first_column` (three new worlds) | 141.9 G instructions | 138.4 G (−2.5%) |
+| `generation_stages` (960 columns, cold then warm) | 350.9 G | 368.2 G (+4.9%) |
+| Warm generation per column (CPU, loaded machine) | 4.6–4.9 ms | 4.2–5.5 ms |
+
+A land sample costs more because the router interprets its splines four lanes at a time
+(about 45% of a sample, against 24% for the noise and 21% for the terrain shapes); the
+first column is cheaper anyway, because the climate's lattice and the rivers' sealing now
+share the lattice points they read. Most of the remaining cold difference is trail
+planning, whose grids sample the land the most. The next
+savings belong to step 3 (fields and splines worked out once per lattice point for both
+the 2D surface and the density) and step 4 (the shapes' 21% moves into the router).
+
 ## 8. Migration plan
 
 Each step builds, passes the tests, looks right in captures and previews, bumps
 `Overworld::VERSION`, updates the golden hashes, and lands on `main`.
 
-1. **Router and splines.** `router.rs`: parameter fields, cached in byte-bounded tiles,
-   nested Hermite splines loaded from `terrain.ron`, and `FIELD=` previews for C, E, W, Q.
+1. **Router and splines.** `router.rs`: parameter fields and nested Hermite splines loaded
+   from `land.ron`, evaluated four positions at a time on a 4-block lattice and
+   interpolated. The climate's decoupling from local relief moved into this step, since the
+   land's regions read the climate: a coarse base lattice (sea-level temperature,
+   precipitation from continents and ranges) that the land reads, with climate zones about
+   10 km from pole to equator.
    `Geology::relief`, `reliefs`, `land` and `lands` are rewritten as the preliminary surface
    from the splines, starting from Tectonic's (credited), keeping the 4-wide batched calls.
    Still 2D, so rivers, climate, shapes and the fill are untouched. *Done when:* fractal
    coasts at the 2 km preview, ranges as chains with valleys, plateaus with natural
    outlines, land heights comparable to today, the first chunk and river regions no slower
    (faster expected); captures of coasts, ranges and plains.
+
+   *As built:* `land.ron` holds Tectonic 3.0.25's fields and splines (credited) with these
+   changes: continents 10.4 km (seas about 1.5× the old size), the coast at the quantile of
+   the world's own continents noise for its ocean fraction (so the dial means what it says
+   with a noise that is not quite normal), ranges about 8 km apart with an erosion spread of
+   1.3 (Tectonic's is about 0.64; Mariano asked for slightly fewer, slightly lower
+   mountains), no channels below the sea (our rivers cut the valleys), lowland lifted a few
+   blocks with rolling hills up to about 25 blocks high where Tectonic's 3D noise would
+   roughen it, and a fine texture until step 3. Over 20 km squares of six worlds
+   (`land_heights`): land 54% of the world (the dials ask for 57%), its median 16 blocks
+   above the sea (17 before), 5.0% of it above 100 blocks (5.4%), 0.8% above 160 (1.1%),
+   the highest 227. Biome regions grew from a median of about 0.96 km across to 1.24 km on
+   seeds 1, 3, 7 and 42, before step 2 touches the biomes.
 2. **Biomes on the same parameters.** Regional T and H without altitude coupling, the rain
    shadow at regional scale, roles from the router, `climate.ron` and biome claims
    re-authored on shared breakpoints, variants by Q or R. *Done when:* the section 6.6

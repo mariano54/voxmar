@@ -2,6 +2,9 @@
 // Terrain shapes: landforms that rise where the climate calls for them, on top of the
 // continents, ranges, plateaus and valleys every world has.
 //
+// The land itself (continents, ranges, valleys, plateaus, rolling hills, terraces) comes
+// from land.ron; these shapes stand on it.
+//
 // A shape claims boxes on the bands of climate.ron, as biomes do (an axis left out claims
 // all its bands), so dunes rise where deserts lie and mesas where badlands do, with the same
 // edges; the terrain never asks which biome won. Each fades in over a short ramp inside its
@@ -14,12 +17,6 @@
 // Mountain, Arches, SeaCliffs and Fjords (see `ShapeKind` in crates/worldgen/src/content.rs).
 (
     shapes: [
-        (
-            // Rounded hills with creased valleys, across mild, moist lowlands.
-            name: "rolling_hills",
-            kind: Hills(height: 7.0, spacing: 110.0),
-            climate: [(temperature: ("cool", "warm"), moisture: ("dry", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
-        ),
         (
             name: "dunes",
             kind: Dunes(height: 10.0, spacing: 46.0),
@@ -99,14 +96,6 @@
                 shore: (top: Mix([Name("gravel", 2.0), Name("deepslate", 1.0)])),
                 cliff: Mix([Name("deepslate", 2.0), Name("tuff", 2.0), Name("andesite", 1.0)]),
             ),
-        ),
-        (
-            // Now and then a massif far taller than anything around it, alone on the plain,
-            // seen from far away.
-            name: "lone_mountain",
-            kind: Mountain(height: 200.0, radius: 480.0),
-            rarity: VeryRare,
-            climate: [(continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
         ),
         (
             // Rock bridges over the open ground of dry country.

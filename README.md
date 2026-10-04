@@ -239,26 +239,33 @@ volcanism, cave density, mountain height, biodiversity), with sensible correlati
 featured set: a few rare biomes and other things it boosts and common ones it suppresses, so
 no two worlds share a rarity table. Everything else is a continuous field:
 
-- **Land** (`worldgen/src/geology.rs`) follows Tectonic: coasts, mountain ranges and broad
-  valleys each lie along the zero line of a noise folded with `abs()`, so the sea runs in a web
-  of channels and straits between landmasses, ranges run in long chains that rise and fall
-  along their length (ridged peaks, crags and gullies on their spines where the land is young)
-  and a network of valleys cuts passes through them. Plateaus stand behind escarpments. Heights
-  over the sea are stretched by their square and eased under a ceiling, so lowlands stay low
-  while the highest peaks of active worlds reach about 230 blocks over the sea; seas deepen to
-  basins along their middles, with ridges on the deep floor.
+- **Land** (`land.ron`, `worldgen/src/router.rs` and `geology.rs`) is built the way
+  Minecraft's noise router and Tectonic build it (`docs/terrain-foundation.md`): a few large
+  noise fields (continentalness, erosion, ridges, a region selector, and the base climate)
+  define a point at every position, and nested cubic splines, adapted from Tectonic's and
+  written as data, turn it into the height of the land. Continents about 10 km across are
+  separated by a connected web of seaways, with shores fractal down to a few dozen blocks;
+  ranges run in long chains along the erosion noise's zero lines, with crests whose detail is
+  dragged down their slopes; valleys follow the ridge noise's zero lines, and the lowlands
+  between take the style their region and climate call for: plateaus and valleys, rolling
+  hills, two-tier terraces, badlands ridges, wetland, with gentle hills a few hundred blocks
+  apart over most of them. Heights over the sea are scaled with the
+  world's mountains, stretched by their square and eased under a ceiling; the deep sea floor
+  has trench and ridge lines. The relief is worked out on a 4-block lattice and interpolated.
 - **Terrain shapes** (`terrain.ron`, `worldgen/src/shapes.rs`) rise where the climate calls
-  for them, on the same bands as the biome table and never by asking which biome won: rolling
-  hills, wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
+  for them, on the same bands as the biome table and never by asking which biome won:
+  wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
   stepped canyons, karst towers on limestone, clusters of spires (some leaning, built in 3D),
-  volcanoes with craters where the world is volcanic, rare lone mountains seen from far away,
-  very rare natural arches, sea cliffs notched at the waterline with stacks offshore, and fjords
+  volcanoes with craters where the world is volcanic, very rare natural arches, sea cliffs notched at the waterline with stacks offshore, and fjords
   where valleys meet cold coasts. Rarer shapes take only some regions of their climate. Towers and
   spires do not cool the climate on their tops.
-- **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
-  hot, temperate and cold land always lie in that order) and with altitude.
-- **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
-  drier interiors, rain shadows behind mountains, wet tropics and dry subtropics.
+- **Temperature** falls towards the poles (latitude repeats along z every 9–11 km from pole
+  to equator, colder to the north, so hot, temperate and cold land always lie in that order,
+  with anomalies kilometres wide) and with altitude.
+- **Precipitation** follows moisture the prevailing wind carries in from the sea, worked out
+  over continents and ranges alone so climate zones are regions kilometres wide rather than
+  stripes along every slope: wet coasts, drier interiors, rain shadows behind ranges, wet
+  tropics and dry subtropics.
 - **Rivers and lakes** (`worldgen/src/water/`) run where water would. Trunk rivers are routed on
   a 64-block grid over the land's broad shape and cut their valleys (and, rarely, tunnels
   through a ridge) into it; creeks and streams are routed on an 8-block grid from the hills to a
@@ -396,7 +403,10 @@ region's rivers apart from the columns generated after (all `-- --ignored --noca
 and their region builds, trails and their planning, surface, caves, cave biomes, fill, ores,
 trees, decoration, packing), cold and warm, and reports lighting and meshing per column;
 `first_column` times a new world's spawn point, spawn column and first 9×9 columns, building
-regions on one core and on all. `output_is_unchanged` and `light_is_unchanged` (ordinary tests)
+regions on one core and on all, and `land_samples` the cost of one sample of the land on the
+rivers' grids. `land_heights` (with `SEED=1,2,3`) prints how high the land is, its share above
+a few heights, and `climate_bands` how temperature and moisture spread over it, for tuning
+`land.ron` and `climate.ron`. `output_is_unchanged` and `light_is_unchanged` (ordinary tests)
 hash generated columns and their light on three seeds, so performance work cannot change a
 block; when a change is meant, they print the hashes to put in `crates/worldgen/src/perf.rs`.
 

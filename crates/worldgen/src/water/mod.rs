@@ -36,7 +36,7 @@ use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
 use fastnoise_lite::FractalType;
 
-use crate::geology::{GeoSample, Geology, Landform, noise, smoothstep};
+use crate::geology::{Corners, GeoSample, Geology, Landform, noise, smoothstep};
 use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
 
@@ -474,20 +474,24 @@ impl Rivers {
     /// The geology of one column, with its rivers and lakes.
     pub fn sample(&self, land: Stages, x: i32, z: i32) -> GeoSample {
         let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-        self.sealed(land, &tiers, x, z, land.geology.land(x, z))
+        let mut corners = Corners::default();
+        let ground = land.geology.lands_with(&[(x, z)], &mut corners)[0];
+        self.sealed(land, &tiers, x, z, ground, &mut corners)
     }
 
     /// One column with both tiers carved in and sealed: the same whatever the columns
     /// `tiers` were found for, as long as they include it and its neighbours. (A region
     /// whose index does not reach a column adds nothing to it, and `near` keeps regions
     /// in the same order however many it finds.)
-    fn sealed(&self, land: Stages, tiers: &(Near, Near), x: i32, z: i32, ground: Landform) -> GeoSample {
+    /// The land's lattice points already worked out are shared through `corners`, as
+    /// neighbouring columns read the same ones.
+    fn sealed(&self, land: Stages, tiers: &(Near, Near), x: i32, z: i32, ground: Landform, corners: &mut Corners) -> GeoSample {
         let column = self.unsealed(tiers, x, z, ground);
         if !column.near {
             return column.sample;
         }
         let around = [(x + 1, z), (x - 1, z), (x, z + 1), (x, z - 1)];
-        let grounds = land.geology.lands(&around);
+        let grounds = land.geology.lands_with(&around, corners);
         let neighbours = std::array::from_fn(|k| self.unsealed(tiers, around[k].0, around[k].1, grounds[k]).sample);
         settle(column.sample, &neighbours)
     }
@@ -498,17 +502,18 @@ impl Rivers {
         let (min, max) = (origin - 1, origin + (size - 1) * step + 1);
         let regions = ((max + TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) - (min - TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) + 1).element_product();
         let at = |i: i32| origin + IVec2::new(i % size, i / size) * step;
-        let grounds = land.geology.lands(&(0..size * size).map(|i| (at(i).x, at(i).y)).collect::<Vec<_>>());
+        let mut corners = Corners::default();
+        let grounds = land.geology.lands_with(&(0..size * size).map(|i| (at(i).x, at(i).y)).collect::<Vec<_>>(), &mut corners);
         if regions > 4 {
             return (0..size * size)
                 .map(|i| {
                     let tiers = self.tiers(land, at(i) - 1, at(i) + 1);
-                    self.sealed(land, &tiers, at(i).x, at(i).y, grounds[i as usize])
+                    self.sealed(land, &tiers, at(i).x, at(i).y, grounds[i as usize], &mut corners)
                 })
                 .collect();
         }
         let tiers = self.tiers(land, min, max);
-        (0..size * size).map(|i| self.sealed(land, &tiers, at(i).x, at(i).y, grounds[i as usize])).collect()
+        (0..size * size).map(|i| self.sealed(land, &tiers, at(i).x, at(i).y, grounds[i as usize], &mut corners)).collect()
     }
 
     /// The geology of every column of a `size`×`size` square from `min`, with rivers and
