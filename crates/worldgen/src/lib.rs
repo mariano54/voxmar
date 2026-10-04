@@ -947,6 +947,32 @@ mod tests {
     /// Logs, stumps, rocks and trees rest on the ground: every solid block above the ground
     /// joins it through other solid blocks (leaves aside, which hang from branches), and
     /// every small plant stands on something solid.
+    /// Wherever a forest biome has tree cover, some tree suits the climate: no forest is
+    /// left bare because the climate there lies outside every species' comfort.
+    #[test]
+    fn forests_have_trees() {
+        for seed in [42, 7] {
+            let world = Overworld::new(seed, registry());
+            let sampler = world.sampler(IVec2::splat(-2048), IVec2::splat(2048));
+            let (mut forested, mut bare) = (0, Vec::new());
+            let mut chances = Vec::new();
+            for i in 0..64 * 64 {
+                let (x, z) = (i % 64 * 64 - 2048, i / 64 * 64 - 2048);
+                let site = sampler.site(x, z);
+                if !world.biomes.get(site.home).has_tag("forest") || site.forest < 0.3 || site.height <= site.water {
+                    continue;
+                }
+                forested += 1;
+                world.ecology.tree_chances(&site, None, x, z, &mut chances);
+                if chances.is_empty() {
+                    bare.push((x, z, site.temperature, site.soil_moisture()));
+                }
+            }
+            assert!(forested > 50, "seed {seed}: only {forested} forest samples");
+            assert!(bare.len() * 50 <= forested, "seed {seed}: {} of {forested} forest samples grow no tree: {:?}", bare.len(), &bare[..bare.len().min(5)]);
+        }
+    }
+
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
