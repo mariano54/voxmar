@@ -6,11 +6,12 @@
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use voxmar_engine::action::{ActionContext, ActionTarget, placement_cell, supported_by};
-use voxmar_engine::block::{BlockId, BlockInfo, RenderKind};
+use voxmar_engine::block::{BlockId, BlockInfo};
 use voxmar_engine::inventory::HOTBAR_SLOTS;
 use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
 
 use crate::Actions;
+use crate::breaking::{BlockBroken, shows_breaking};
 use crate::net::Net;
 use crate::player::{self, LocalPlayer, UiState, Zoom};
 use crate::sfx::{Cue, SoundCue};
@@ -25,10 +26,15 @@ impl Plugin for InteractPlugin {
                 Update,
                 (select_slot.after(player::zoom), find_target, break_and_place, draw_target)
                     .chain()
+                    .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),
             );
     }
 }
+
+/// Targeting, mining and placing, which effects of them run after.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InteractSystems;
 
 #[derive(Resource, Default)]
 pub struct Target {
@@ -71,12 +77,9 @@ fn select_slot(
 }
 
 fn find_target(world: Res<ClientWorld>, player: Res<LocalPlayer>, mut target: ResMut<Target>) {
+    // Water is looked through; ice and other solid see-through blocks can be mined.
     target.hit = raycast(player.eye(), player.look_direction(), dims::REACH, |p| {
-        // Water is looked through; ice and other solid see-through blocks can be mined.
-        world.block(p).is_some_and(|b| {
-            let info = world.registry.info(b);
-            info.render != RenderKind::Invisible && (info.solid || info.render != RenderKind::Translucent)
-        })
+        world.block(p).is_some_and(|b| shows_breaking(world.registry.info(b)))
     });
 }
 
@@ -127,6 +130,7 @@ fn break_and_place(
     mut player: ResMut<LocalPlayer>,
     mut target: ResMut<Target>,
     mut cues: MessageWriter<SoundCue>,
+    mut broken: MessageWriter<BlockBroken>,
 ) {
     target.place_cooldown -= time.delta_secs();
     let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
@@ -161,6 +165,9 @@ fn break_and_place(
                     cues.write(SoundCue::for_block(&world, block, Cue::Break));
                     let plants = supported_by(&ClientContext { world: &world, player: &player }, hit.block);
                     for pos in std::iter::once(hit.block).chain(plants) {
+                        if let Some(block) = world.block(pos) {
+                            broken.write(BlockBroken { pos, block });
+                        }
                         world.set_block(pos, BlockId::AIR);
                     }
                     target.breaking = None;

@@ -9,6 +9,7 @@ use voxmar_protocol::{
 use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_server::ServerHandle;
 
+use crate::breaking::{BlockBroken, SHOWN_WITHIN, shows_breaking};
 use crate::hud::console::Console;
 use crate::menu::{Notice, Screen};
 use crate::player::LocalPlayer;
@@ -111,7 +112,13 @@ fn receive(
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
-    (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
+    (time, mut clock, mut console, mut air, mut broken): (
+        Res<Time>,
+        ResMut<Clock>,
+        ResMut<Console>,
+        ResMut<ClientAtmosphere>,
+        MessageWriter<BlockBroken>,
+    ),
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
@@ -146,7 +153,16 @@ fn receive(
             ServerMessage::Column { pos, column } => world.insert_column(pos, column),
             ServerMessage::Unload { pos } => world.remove_column(pos),
             ServerMessage::BlockChanged { pos, block } => {
-                if world.block(pos) != Some(block) {
+                let old = world.block(pos);
+                if old != Some(block) {
+                    // A break the player did not predict: someone else's, shown nearby.
+                    if let Some(old) = old
+                        && block.is_air()
+                        && shows_breaking(world.registry.info(old))
+                        && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                    {
+                        broken.write(BlockBroken { pos, block: old });
+                    }
                     world.set_block(pos, block);
                 }
             }

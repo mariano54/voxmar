@@ -1,6 +1,8 @@
 //! Background music, played now and then like Minecraft's: a track starts soon on the title
-//! screen or some time after joining, then long quiet gaps separate tracks. `M` mutes or
-//! unmutes.
+//! screen, then long quiet gaps separate tracks. Starting a game fades the menu's music out,
+//! so a world opens in quiet and its first track comes after a gap like any other;
+//! returning to the menus fades the game's music out and the menu's starts again soon. `M`
+//! mutes or unmutes.
 //!
 //! Tracks are the files in `assets/music` (generated offline by `tools/generate_music.py`).
 
@@ -9,23 +11,26 @@ use std::time::Duration;
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume};
 use bevy::prelude::*;
 
-use crate::menu::InMenu;
+use crate::menu::{InMenu, Screen};
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
 
 /// Volume at 100% in the settings.
 const VOLUME: f32 = 0.35;
-const FIRST_TRACK_DELAY: (f32, f32) = (20.0, 60.0);
 /// The title screen sets the mood straight away.
 const FIRST_MENU_TRACK_DELAY: (f32, f32) = (2.0, 6.0);
 const GAP_BETWEEN_TRACKS: (f32, f32) = (180.0, 420.0);
+/// Seconds a track takes to fade out when the player starts or leaves a game.
+const FADE_OUT: f32 = 1.5;
 
 pub struct MusicPlugin;
 
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_tracks)
-            .add_systems(Update, (toggle_music, schedule_music, set_volume.run_if(resource_changed::<Settings>)));
+            .add_systems(OnEnter(Screen::InGame), start_game)
+            .add_systems(OnExit(Screen::InGame), leave_game)
+            .add_systems(Update, (toggle_music, schedule_music, fade_out, set_volume.run_if(resource_changed::<Settings>)));
     }
 }
 
@@ -38,8 +43,21 @@ struct Music {
     enabled: bool,
 }
 
+impl Music {
+    /// Fades the playing track out, if there is one.
+    fn fade_out(&mut self, commands: &mut Commands) {
+        if let Some(entity) = self.playing.take() {
+            commands.entity(entity).try_insert(FadingOut(FADE_OUT));
+        }
+    }
+}
+
 #[derive(Component)]
 struct MusicTrack;
+
+/// A track on its way out, with the seconds it has left.
+#[derive(Component)]
+struct FadingOut(f32);
 
 fn load_tracks(mut commands: Commands, assets: Res<AssetServer>) {
     let directory = voxmar_server::assets_dir().join("music");
@@ -63,8 +81,13 @@ fn random_in(time: &Time, (low, high): (f32, f32)) -> f32 {
     low + (high - low) * (mixed as f32 / (1u64 << 24) as f32)
 }
 
+/// Linear gain of a track playing in full.
+fn level(settings: &Settings) -> f32 {
+    VOLUME * settings.music_volume as f32 / 100.0
+}
+
 fn volume(settings: &Settings) -> Volume {
-    Volume::Linear(VOLUME * settings.music_volume as f32 / 100.0)
+    Volume::Linear(level(settings))
 }
 
 fn schedule_music(
@@ -90,8 +113,8 @@ fn schedule_music(
     if music.playing.is_some() {
         return;
     }
-    let first_delay = if in_menu { FIRST_MENU_TRACK_DELAY } else { FIRST_TRACK_DELAY };
-    let next_at = *music.next_at.get_or_insert(time.elapsed() + Duration::from_secs_f32(random_in(&time, first_delay)));
+    let next_at =
+        *music.next_at.get_or_insert(time.elapsed() + Duration::from_secs_f32(random_in(&time, FIRST_MENU_TRACK_DELAY)));
     if time.elapsed() < next_at {
         return;
     }
@@ -112,7 +135,39 @@ fn schedule_music(
     music.playing = Some(entity);
 }
 
-fn set_volume(settings: Res<Settings>, mut playing: Query<&mut AudioSink, With<MusicTrack>>) {
+/// Starting a game fades out the menu's music; the game's first track comes after a quiet
+/// gap, as between tracks.
+fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Music>>) {
+    let Some(mut music) = music else { return };
+    music.fade_out(&mut commands);
+    music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, GAP_BETWEEN_TRACKS)));
+}
+
+/// Back in the menus, the game's music fades out and the menu's starts again soon.
+fn leave_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Music>>) {
+    let Some(mut music) = music else { return };
+    music.fade_out(&mut commands);
+    music.next_at = Some(time.elapsed() + Duration::from_secs_f32(random_in(&time, FIRST_MENU_TRACK_DELAY)));
+}
+
+fn fade_out(
+    mut commands: Commands,
+    time: Res<Time>,
+    settings: Res<Settings>,
+    mut fading: Query<(Entity, &mut FadingOut, Option<&mut AudioSink>)>,
+) {
+    for (entity, mut fade, sink) in &mut fading {
+        fade.0 -= time.delta_secs();
+        // A track that has not started playing yet has nothing to fade.
+        let Some(mut sink) = sink.filter(|_| fade.0 > 0.0) else {
+            commands.entity(entity).despawn();
+            continue;
+        };
+        sink.set_volume(Volume::Linear(level(&settings) * fade.0 / FADE_OUT));
+    }
+}
+
+fn set_volume(settings: Res<Settings>, mut playing: Query<&mut AudioSink, (With<MusicTrack>, Without<FadingOut>)>) {
     for mut sink in &mut playing {
         sink.set_volume(volume(&settings));
     }
