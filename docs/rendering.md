@@ -45,9 +45,12 @@ driver turned into milliseconds of CPU time. Instead:
   finds its chunk's origin through the table, so any set of chunks in a page can be drawn
   with one draw call.
 - Culling writes, per view, where each surviving chunk's indices go in that view's own
-  index buffer, and a compute pass (`terrain/compact.wgsl`) copies them there, in pieces
-  of at most 2,048 indices so the copy spreads over the GPU. Translucent chunks are
-  gathered back to front.
+  index buffer, and a compute pass (`terrain/compact.wgsl`) writes them there, a thread
+  per quad. Pages keep no indices at all: a quad's four vertices are consecutive, and
+  the pass splits it along its darker diagonal from the ambient occlusion of its corners,
+  exactly as the mesher does, which saves 24 of every 56 bytes of chunk geometry.
+  Translucent chunks are gathered back to front. When neither a view's chunks nor their
+  meshes changed since the last frame, the pass is skipped.
 - Each view then draws once per page and stream: about 100 draws for the camera and 5–10
   per shadow cascade at view distance 32.
 
