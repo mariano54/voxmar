@@ -153,9 +153,9 @@ fn break_and_place(
             Some((pos, progress)) if pos == hit.block => {
                 let step = time.delta_secs() / target.mining_seconds.max(0.05);
                 let block = world.block(pos).unwrap_or(BlockId::AIR);
-                // A tap sound four times a second while mining.
+                // A tap sound four times a second while mining; the last one is the break.
                 let taps = (target.mining_seconds * 4.0).max(1.0);
-                if ((progress + step) * taps).floor() > (progress * taps).floor() {
+                if progress + step < 1.0 && ((progress + step) * taps).floor() > (progress * taps).floor() {
                     cues.write(SoundCue::for_block(&world, block, Cue::Hit));
                 }
                 let progress = progress + step;

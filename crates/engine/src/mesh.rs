@@ -10,7 +10,7 @@
 //!
 //! ```text
 //! word 0: x:6 | y:6 | z:6 | face:3 | ao:2 | flags:2
-//! word 1: layer:12 | tint:2 | temperature:5 | humidity:5 | block:4 | sky:4
+//! word 1: layer:12 | tint:2 | free:10 | block:4 | sky:4
 //! ```
 //!
 //! `face` is a `Face` (0..=5) for cube faces, or `PLANT_DIAGONAL` (6, the plane through
@@ -191,7 +191,7 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
 
     join_leaves(&leaves, &occ, &mut joins);
 
-    let mut mesher = Mesher { registry, region, column, cells: &cells, chunk_y: cy * CHUNK_SIZE, planes: [[0; S]; S], keys: [[0; S]; S] };
+    let mut mesher = Mesher { registry, region, cells: &cells, chunk_y: cy * CHUNK_SIZE, planes: [[0; S]; S], keys: [[0; S]; S] };
     let mut mesh = ChunkMesh { connectivity: Connectivity::compute(|x, y, z| cells[pidx(x + 1, y + 1, z + 1)].occludes), ..Default::default() };
     for face in Face::ALL {
         mesher.mesh_faces(face, &occ, &opaque, &joins, &mut mesh.opaque);
@@ -203,14 +203,14 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
         emit_plant(&mut mesh.cutout, registry, column, &cells[i], local, cy * CHUNK_SIZE);
     }
-    mesh.blades = grass_tops(registry, column, &cells);
+    mesh.blades = grass_tops(registry, &cells);
     for (y, plane) in leaves.iter().enumerate().take(S + 1).skip(1) {
         for (z, &bits) in plane.iter().enumerate().take(S + 1).skip(1) {
             let mut row = bits & !1 & !(1 << (S + 1));
             while row != 0 {
                 let x = row.trailing_zeros() as usize;
                 row &= row - 1;
-                emit_fringe(&mut mesh.fringe, registry, column, &cells, IVec3::new(x as i32, y as i32, z as i32));
+                emit_fringe(&mut mesh.fringe, registry, &cells, IVec3::new(x as i32, y as i32, z as i32));
             }
         }
     }
@@ -361,7 +361,6 @@ struct Mesher<'a> {
     /// Blocks around the column too, for fluids, whose surface and flow depend on cells
     /// a few blocks away.
     region: &'a LitRegion,
-    column: &'a Column,
     cells: &'a [Cell],
     /// Height of the chunk's bottom in the column.
     chunk_y: i32,
@@ -441,7 +440,8 @@ impl Mesher<'_> {
     }
 
     /// Everything that must match for two faces to merge:
-    /// layer:12 tint:2 temperature:5 humidity:5 | ao 4×2 | light 4×8 | flags:2.
+    /// layer:12 tint:2 | ao 4×2 | light 4×8 | flags:2. Biome colours are looked up per
+    /// block by the renderer, so they never split a face.
     fn face_key(&self, face: Face, fa: &FaceAxes, slice: usize, row: usize, col: usize) -> u128 {
         let pos = Self::cell(fa, slice, row, col);
         let info = self.registry.info(self.padded(pos).block);
@@ -458,11 +458,7 @@ impl Mesher<'_> {
             _ => (false, false),
         };
         let tint = info.tints[face as usize];
-        let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { self.column.climate_at(pos.x, pos.z) };
-        let surface = info.layers[face as usize] as u64
-            | (tint as u64) << 12
-            | ((temperature >> 3) as u64) << 14
-            | ((humidity >> 3) as u64) << 19;
+        let surface = info.layers[face as usize] as u64 | (tint as u64) << 12;
 
         let front = pos + face.normal();
         let (du, dv) = (unit(fa.col), unit(fa.row));
@@ -669,12 +665,7 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
     let is_plant = |y: i32| y >= 0 && registry.info(column.block(IVec3::new(pos.x, y, pos.z))).render == RenderKind::Plant;
     let stack = (1..=3).take_while(|&d| is_plant(chunk_y + pos.y - d)).count() as u32;
     let tint = info.tints[Face::PosX as usize];
-    let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { column.climate_at(pos.x, pos.z) };
-    let w1 = info.layers[Face::PosX as usize] as u32
-        | (tint as u32) << 12
-        | ((temperature >> 3) as u32) << 14
-        | ((humidity >> 3) as u32) << 19
-        | (cell.light as u32) << 24;
+    let w1 = info.layers[Face::PosX as usize] as u32 | (tint as u32) << 12 | (cell.light as u32) << 24;
     for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
         let base = out.vertices.len() as u32;
         for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
@@ -694,7 +685,7 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
 }
 
 /// A blade seed for every grass block whose top is open to the air (or a plant).
-fn grass_tops(registry: &BlockRegistry, column: &Column, cells: &[Cell]) -> Vec<u32> {
+fn grass_tops(registry: &BlockRegistry, cells: &[Cell]) -> Vec<u32> {
     let mut seeds = Vec::new();
     for y in 1..=S {
         for z in 1..=S {
@@ -708,25 +699,18 @@ fn grass_tops(registry: &BlockRegistry, column: &Column, cells: &[Cell]) -> Vec<
                     continue;
                 }
                 let local = UVec3::new(x as u32 - 1, y as u32 - 1, z as u32 - 1);
-                let climate = column.climate_at(local.x as i32, local.z as i32);
-                seeds.push(blade_seed(local, climate, above.light));
+                seeds.push(blade_seed(local, above.light));
             }
         }
     }
     seeds
 }
 
-/// Packs a grass block's chunk-local position, the climate that picks its colour and the
-/// light above it into one word: x:5 | y:5 | z:5 | temperature:5 | humidity:5 | block
-/// light:3 | sky light:4. Block light keeps its top three bits.
-fn blade_seed(local: UVec3, [temperature, humidity]: [u8; 2], light: u8) -> u32 {
-    local.x
-        | local.y << 5
-        | local.z << 10
-        | ((temperature >> 3) as u32) << 15
-        | ((humidity >> 3) as u32) << 20
-        | ((light & 0xF) as u32 >> 1) << 25
-        | ((light >> 4) as u32) << 28
+/// Packs a grass block's chunk-local position and the light above it into one word:
+/// x:5 | y:5 | z:5 | block light:4 | sky light:4. The renderer looks its colour up by
+/// position.
+fn blade_seed(local: UVec3, light: u8) -> u32 {
+    local.x | local.y << 5 | local.z << 10 | ((light & 0xF) as u32) << 15 | ((light >> 4) as u32) << 19
 }
 
 /// A flow rounded to the vertex format: a speed level (an index into `FLOW_SPEEDS`) and a
@@ -745,7 +729,7 @@ fn quantise_flow(flow: Vec2) -> (u8, u8) {
 /// A sprig of leaves out of a leaf block on the outside of a crown: two crossed quads
 /// through the block, which the shader turns and grows beyond it (`voxel.wgsl`), lit by the
 /// open side. `padded` is the block's position in the padded cells.
-fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, cells: &[Cell], padded: IVec3) {
+fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], padded: IVec3) {
     let cell = |p: IVec3| &cells[pidx(p.x as usize, p.y as usize, p.z as usize)];
     let open: Vec<&Cell> = Face::ALL
         .iter()
@@ -761,12 +745,7 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column,
     let leaf = cell(padded).block;
     let info = registry.info(leaf);
     let tint = info.tints[Face::PosY as usize];
-    let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { column.climate_at(pos.x, pos.z) };
-    let w1 = info.layers[Face::PosY as usize] as u32
-        | (tint as u32) << 12
-        | ((temperature >> 3) as u32) << 14
-        | ((humidity >> 3) as u32) << 19
-        | ((sky << 4 | block) as u32) << 24;
+    let w1 = info.layers[Face::PosY as usize] as u32 | (tint as u32) << 12 | ((sky << 4 | block) as u32) << 24;
     for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
         let base = out.vertices.len() as u32;
         for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {

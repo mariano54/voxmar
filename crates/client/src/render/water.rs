@@ -239,7 +239,7 @@ fn update_params(
     params.uniform = uniform;
 }
 
-/// The water bind group's layout (group 3 of the translucent terrain pipeline): the scene's
+/// The water bind group's layout (group 4 of the translucent terrain pipeline): the scene's
 /// depth and colour, a sampler and the uniform.
 pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
     let entries = if multisampled {
@@ -378,7 +378,7 @@ impl CachedRenderPipelinePhaseItem for WaterItem {
     }
 }
 
-/// The translucent terrain's draw commands; `water_pass` binds group 3 itself.
+/// The translucent terrain's draw commands; `water_pass` binds group 4 itself.
 type DrawWater = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>, DrawTerrain);
 
 /// What the water pass needs of a camera.
@@ -450,7 +450,7 @@ fn water_pass(
     if let Some(viewport) = camera.viewport.as_ref() {
         pass.set_camera_viewport(viewport);
     }
-    pass.set_bind_group(3, &bind_group, &[]);
+    pass.set_bind_group(4, &bind_group, &[]);
     let functions = world.resource::<DrawFunctions<WaterItem>>();
     let mut functions = functions.write();
     functions.prepare(world);

@@ -39,7 +39,6 @@ use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderStartup,
 use bevy::asset::embedded_asset;
 use bytemuck::{Pod, Zeroable};
 use rustc_hash::FxHashMap;
-use voxmar_engine::block::Tint;
 
 use super::terrain::{TerrainTextures, mesh_like};
 use crate::textures::Rgba;
@@ -86,8 +85,8 @@ pub enum Motion {
 #[derive(Clone, Copy, Debug)]
 pub enum Look {
     /// A square piece of a block texture, `corner` and `span` in texture widths (0..1),
-    /// tinted like the block's face.
-    Texture { layer: u16, corner: Vec2, span: f32, tint: Tint, climate: [u8; 2] },
+    /// multiplied by the particle's colour (a tinted block's biome colour).
+    Texture { layer: u16, corner: Vec2, span: f32 },
     /// A soft round speck of the particle's colour.
     Speck,
 }
@@ -150,8 +149,7 @@ struct GpuParticle {
     life: f32,
     gravity: f32,
     drag: f32,
-    /// layer:12 | tint:2 | temperature:5 | humidity:5 | block light:4 | sky light:4, as
-    /// the second word of a terrain vertex.
+    /// layer:12 | free:12 | block light:4 | sky light:4.
     surface: u32,
     /// corner u:8 | corner v:8 | span:8 (in 256ths of the texture) | motion:4 | flags:4
     sprite: u32,
@@ -168,17 +166,8 @@ impl GpuParticle {
     fn new(particle: &Particle, born: f32, seed: u32) -> Self {
         let [sky, block] = particle.light.map(|l| l.min(15) as u32);
         let (surface, sprite, flags) = match particle.look {
-            Look::Texture { layer, corner, span, tint, climate: [temperature, humidity] } => {
-                let tint = match tint {
-                    Tint::None => 0,
-                    Tint::Grass => 1,
-                    Tint::Foliage => 2,
-                    Tint::Water => 3,
-                };
-                let surface = (layer as u32 & 0xFFF)
-                    | tint << 12
-                    | (temperature as u32 >> 3) << 14
-                    | (humidity as u32 >> 3) << 19;
+            Look::Texture { layer, corner, span } => {
+                let surface = layer as u32 & 0xFFF;
                 let unit = |x: f32| (x * 256.0).round().clamp(0.0, 255.0) as u32;
                 (surface, unit(corner.x) | unit(corner.y) << 8 | unit(span) << 16, FLAG_TEXTURED)
             }
@@ -331,8 +320,6 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
             (
                 texture_2d_array(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
-                texture_2d_array(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
                 storage_buffer_read_only_sized(false, None),
             ),
         ),
@@ -385,8 +372,7 @@ fn prepare_bind_group(
     if gpu.bind_group.is_some() {
         return;
     }
-    let Some((blocks, colormaps)) = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.colormaps)?)))
-    else {
+    let Some(blocks) = textures.as_ref().and_then(|t| images.get(&t.textures)) else {
         return;
     };
     let bind_group = device.create_bind_group(
@@ -395,8 +381,6 @@ fn prepare_bind_group(
         &BindGroupEntries::sequential((
             &blocks.texture_view,
             &blocks.sampler,
-            &colormaps.texture_view,
-            &colormaps.sampler,
             gpu.buffer.as_entire_binding(),
         )),
     );
@@ -494,7 +478,7 @@ mod tests {
     fn particles_pack_like_the_shader_reads_them() {
         assert_eq!(size_of::<GpuParticle>(), 64);
         let particle = Particle {
-            look: Look::Texture { layer: 300, corner: Vec2::new(0.25, 0.75), span: 0.25, tint: Tint::Foliage, climate: [255, 8] },
+            look: Look::Texture { layer: 300, corner: Vec2::new(0.25, 0.75), span: 0.25 },
             light: [14, 3],
             glow: true,
             color: [10, 20, 30, 40],
@@ -502,9 +486,6 @@ mod tests {
         };
         let gpu = GpuParticle::new(&particle, 5.0, 0);
         assert_eq!(gpu.surface & 0xFFF, 300);
-        assert_eq!(gpu.surface >> 12 & 3, 2);
-        assert_eq!(gpu.surface >> 14 & 31, 31);
-        assert_eq!(gpu.surface >> 19 & 31, 1);
         assert_eq!((gpu.surface >> 24 & 15, gpu.surface >> 28), (3, 14));
         assert_eq!((gpu.sprite & 255, gpu.sprite >> 8 & 255, gpu.sprite >> 16 & 255), (64, 192, 64));
         assert_eq!(gpu.sprite >> 24 & 15, Motion::Ballistic as u32);

@@ -44,13 +44,13 @@ struct Water {
 };
 
 #ifdef MULTISAMPLED
-@group(3) @binding(0) var scene_depth: texture_depth_multisampled_2d;
+@group(4) @binding(0) var scene_depth: texture_depth_multisampled_2d;
 #else
-@group(3) @binding(0) var scene_depth: texture_depth_2d;
+@group(4) @binding(0) var scene_depth: texture_depth_2d;
 #endif
-@group(3) @binding(1) var scene_color: texture_2d<f32>;
-@group(3) @binding(2) var scene_sampler: sampler;
-@group(3) @binding(3) var<uniform> water: Water;
+@group(4) @binding(1) var scene_color: texture_2d<f32>;
+@group(4) @binding(2) var scene_sampler: sampler;
+@group(4) @binding(3) var<uniform> water: Water;
 
 // How far each wave drags the next along its slope (afl_ext's 0.2 to 0.38 for weights that
 // start at one; ours sum to one).

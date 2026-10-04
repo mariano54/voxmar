@@ -9,8 +9,9 @@
 // depth and hidden surface removal), CUTOUT for leaves, glass and plants, plus INNER for the
 // double-sided faces between two leaves, TRANSLUCENT for water and ice.
 
-// Chunks are drawn from shared buffers (see terrain.rs): the instance index picks the
-// chunk's origin from a table.
+// Chunks are drawn from shared pages (see terrain.rs), several chunks to a draw: vertices
+// are handed out to chunks in blocks of 64, and a page's table says which chunk (an index
+// into the origin table) owns each block.
 
 #import bevy_render::globals::Globals
 #import voxmar::wind::{sway, parting, leaf_flutter}
@@ -29,10 +30,12 @@
 
 @group(2) @binding(0) var block_textures: texture_2d_array<f32>;
 @group(2) @binding(1) var block_sampler: sampler;
-@group(2) @binding(2) var colormaps: texture_2d_array<f32>;
-@group(2) @binding(3) var colormap_sampler: sampler;
-@group(2) @binding(4) var<storage, read> chunk_origins: array<vec4<i32>>;
-// Bindings 5 and 6 are grass blade seeds (grass.wgsl) and the wind (wind.wgsl).
+@group(2) @binding(2) var<storage, read> chunk_origins: array<vec4<i32>>;
+// Bindings 3 and 4 are grass blade seeds (grass.wgsl) and the wind (wind.wgsl).
+// Biome colours of every column: grass, foliage and water for each block (sRGB, a word
+// each), from the offset a chunk's origin keeps in w.
+@group(2) @binding(5) var<storage, read> column_colours: array<u32>;
+@group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
 const TINT_NONE: u32 = 0u;
 const TINT_FOLIAGE: u32 = 2u;
@@ -53,11 +56,12 @@ const FLAG_FRINGE: u32 = 1u << 27u;
 // renderer stops drawing them a little beyond).
 const FRINGE_FADE = vec2(56.0, 88.0);
 const AO_CURVE = array<f32, 4>(0.45, 0.65, 0.84, 1.0);
-// Plants shrink away between these distances, in blocks.
+// Plants sink away between these distances, in blocks; terrain.rs stops drawing them
+// beyond (PLANT_DISTANCE).
 const PLANT_FADE = vec2(192.0, 320.0);
 
 struct Vertex {
-    @builtin(instance_index) instance_index: u32,
+    @builtin(vertex_index) index: u32,
     @location(0) packed: vec2<u32>,
 };
 
@@ -160,8 +164,12 @@ fn fringe_position(w0: u32, origin: vec3<f32>, across: vec2<f32>) -> vec3<f32> {
 
 // World position, with leaves fluttering and plants bending in the wind. Shared by every
 // pass so depth matches.
+fn chunk_of(in: Vertex) -> vec4<i32> {
+    return chunk_origins[vertex_chunks[in.index >> 6u]];
+}
+
 fn world_position(in: Vertex) -> vec3<f32> {
-    let origin = vec3<f32>(chunk_origins[in.instance_index].xyz);
+    let origin = vec3<f32>(chunk_of(in).xyz);
     if face_of(in.packed.x) >= FACE_PLANT {
         return plant_position(in.packed.x, origin);
     }
@@ -250,10 +258,12 @@ struct VertexOutput {
     @location(3) @interpolate(flat) surface: u32,
     @location(4) @interpolate(flat) face: u32,
     @location(5) @interpolate(flat) covered: u32,
+    // Where the chunk's column colours start in `column_colours`.
+    @location(6) @interpolate(flat) colours: u32,
 #ifdef TRANSLUCENT
     // Water's flow, blocks per second along x and z, and whether it is falling.
-    @location(6) flow: vec2<f32>,
-    @location(7) @interpolate(flat) falling: u32,
+    @location(7) flow: vec2<f32>,
+    @location(8) @interpolate(flat) falling: u32,
 #endif
 };
 
@@ -278,6 +288,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
+    out.colours = u32(chunk_of(in).w);
 #ifdef TRANSLUCENT
     if water {
         let turn = f32(w0 >> FLOW_DIRECTION_SHIFT) / 16.0 * 6.2831853;
@@ -288,21 +299,24 @@ fn vertex(in: Vertex) -> VertexOutput {
     return out;
 }
 
-fn biome_tint(surface: u32) -> vec3<f32> {
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    return select(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), c > vec3(0.04045));
+}
+
+// The biome colour a surface is tinted with, from the colours of the block column its face
+// belongs to: half a block back from a cube face, where the plant stands for a plant.
+fn biome_tint(surface: u32, colours: u32, world: vec3<f32>, face: u32) -> vec3<f32> {
     let kind = tint_kind(surface);
     if kind == TINT_NONE {
         return vec3(1.0);
     }
-    let temperature = f32((surface >> 14u) & 31u) / 31.0;
-    let humidity = f32((surface >> 19u) & 31u) / 31.0 * temperature;
-    if kind == TINT_WATER {
-        // Teal in warm climates, deep blue in cold ones.
-        return mix(vec3(0.16, 0.30, 0.78), vec3(0.14, 0.50, 0.66), temperature);
+    var inside = world;
+    if face < FACE_PLANT {
+        inside -= NORMALS[face] * 0.5;
     }
-    // Stay a texel inside the colour map's valid triangle: the texels past its diagonal
-    // (humidity above temperature) are blank and would wash the colour out when filtered.
-    let uv = vec2(1.0 - temperature, max(1.0 - humidity, 1.0 - temperature + 1.5 / 256.0));
-    return textureSampleLevel(colormaps, colormap_sampler, uv, i32(kind - 1u), 0.0).rgb;
+    let cell = vec2<u32>(vec2<i32>(floor(inside.xz)) & vec2(31));
+    let word = column_colours[colours + (cell.y * 32u + cell.x) * 3u + kind - 1u];
+    return srgb_to_linear(unpack4x8unorm(word).rgb);
 }
 
 @fragment
@@ -334,7 +348,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     albedo.a = 1.0;
 #endif
 #endif
-    let base = albedo.rgb * biome_tint(in.surface);
+    let base = albedo.rgb * biome_tint(in.surface, in.colours, in.world_position, in.face);
     let plant = in.face >= FACE_PLANT;
     // Plants look up their shadow just above their own cell: trees and terrain still shade
     // them, but the blades of a dense tuft do not darken each other.
@@ -363,7 +377,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
                 let sloped = normalize(tilt) * sign(tilt.y);
                 normal = select(normal, sloped, sloped.y > 0.7);
             }
-            let water = shade_water(in.world_position, normal, biome_tint(in.surface), in.light.y, in.clip_position, footprint, in.flow, in.falling != 0u);
+            let water = shade_water(in.world_position, normal, biome_tint(in.surface, in.colours, in.world_position, in.face), in.light.y, in.clip_position, footprint, in.flow, in.falling != 0u);
             return vec4(water, 1.0);
         }
     } else {

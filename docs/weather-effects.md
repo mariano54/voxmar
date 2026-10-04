@@ -31,8 +31,10 @@ captures log the weather and air they show. Every kind: `/weather list`.
   fireflies that blink, spores, drifting snow, marsh mist, aether motes): all in the
   existing precipitation particles (`render/precipitation.rs` and `.wgsl`, contained
   additions; a group of drops per kind, the same box around the camera and height map).
-  When the graphics thread's reusable particle system lands, these move to it; the data
-  that drives them (`Weather` channels, `ClientAtmosphere::particles`) stays.
+  They stay there now that the spawned particle system (`render/particles.rs`) exists: a
+  steady field wrapping around the camera costs no CPU and has no spawn rate to manage,
+  which suits air full of particles better (see docs/rendering.md, "Particles and breaking
+  blocks"); particles tied to events or places use the spawned system.
 - Rain is tinted half towards the sky's haze, so it matches the sky it falls from, and
   its streaks lie along its motion as seen from the moving camera, so running into rain
   tilts it towards you (Particle Rain's trick). A sparser layer of faint streaks in a box
