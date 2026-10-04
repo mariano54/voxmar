@@ -157,7 +157,10 @@ the top of `blocks.ron`: what a block is, where it grows, what it is good for, s
 `edible`, `alchemy:calming`, `dye:blue`, `wonder`), a rarity and an optional inventory icon, so
 biomes, food and alchemy select blocks without naming them. A plant's `variants` are other looks
 of it, each its own block that drops the plant itself, as many as its size;
-`BlockRegistry::looks` lists them for generators. The inventory shows plants as their sprite and
+`BlockRegistry::looks` lists them for generators. A block's `support` says what it rests on:
+plants stand on solid ground (the default for plants), hanging ones (`support: Above`: glow
+berries, hanging roots, stalactites) need a solid block above; either can only be placed with
+that support, and goes, with the column resting on it, when the support is broken. The inventory shows plants as their sprite and
 full blocks as a shaded cube. Templates
 make whole families from one line (a wood's log, stripped log, wood, planks, leaves and sapling;
 a rock's raw, cobbled, polished and brick blocks), and templates are shared across packages, so
@@ -292,7 +295,8 @@ writes an x-ray map, sections, level cuts and a cave biome map of the caves over
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
 labyrinths, ravines, sinkholes, entrances and the best view of each cave biome near spawn,
 with each cave biome's share of the caves there;
-`column_timing` reports generation time per column (all `-- --ignored --nocapture`).
+`column_timing` reports generation time per column, and `river_speed` the cost of building a
+region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
 
 ## Weather
 

@@ -805,8 +805,9 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen river_sights -- --ignored --nocapture`
-    /// finds a highland lake, a waterfall, a confluence and a river mouth near spawn and
-    /// prints `--pose` arguments that look at each, for in-game captures.
+    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth, a river
+    /// tunnel, an island in a river and a hot spring near spawn and prints `--pose` arguments that look at each, for in-game
+    /// captures.
     #[test]
     #[ignore]
     fn river_sights() {
@@ -820,7 +821,7 @@ mod tests {
         let geos: Vec<GeoSample> = (0..n * n).map(|i| world.geo(spawn.x - range + i % n * step, spawn.z - range + i / n * step)).collect();
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         // (score, x, z, y)
-        let mut best: [(f32, i32, i32, i32); 4] = [(0.0, 0, 0, 0); 4];
+        let mut best: [(f32, i32, i32, i32); 7] = [(0.0, 0, 0, 0); 7];
         for j in 1..n - 1 {
             for i in 1..n - 1 {
                 let g = at(i, j);
@@ -831,15 +832,26 @@ mod tests {
                         best[k] = (score * near, x, z, g.water);
                     }
                 };
+                if g.cavity.is_some() {
+                    consider(4, 1.0);
+                }
+                let river = |o: GeoSample| o.submerged() && o.body == Body::River;
+                if g.submerged() && g.body == Body::Spring {
+                    consider(6, 1.0);
+                }
+                if !g.submerged() && g.body == Body::River && (river(at(i - 2, j)) && river(at(i + 2, j)) || river(at(i, j - 2)) && river(at(i, j + 2))) {
+                    consider(5, 1.0);
+                }
                 if !g.submerged() {
                     continue;
                 }
                 if g.body == Body::Lake && g.water > SEA_LEVEL + 20 {
                     consider(0, (g.water - SEA_LEVEL) as f32);
                 }
+                // Steps of two samples, so a fall is found from its top.
                 let drop = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|&(di, dj)| at(i + di, j + dj)).filter(|o| o.submerged()).map(|o| g.water - o.water).max().unwrap_or(0);
                 if drop >= 3 && g.body != Body::Lake {
-                    consider(1, drop as f32);
+                    consider(1, (drop * drop) as f32);
                 }
                 let channel = |o: GeoSample| o.submerged() && matches!(o.body, Body::Creek | Body::River);
                 if channel(g) {
@@ -862,7 +874,7 @@ mod tests {
             }
         }
         println!("seed {seed}, spawn {spawn}");
-        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth"].into_iter().zip(best) {
+        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel", "river island", "hot spring"].into_iter().zip(best) {
             if score == 0.0 {
                 println!("{name}: none within {range}");
                 continue;
@@ -1281,7 +1293,7 @@ mod tests {
     ///
     /// The sea is deep blue, lakes above the sea turquoise, rivers bright blue and creeks
     /// light blue (found by sampling inside each pixel, since they are narrower than one),
-    /// and dry salt flats white.
+    /// hot springs orange and dry salt flats white.
     #[test]
     #[ignore]
     fn map_preview() {
@@ -1429,6 +1441,7 @@ mod tests {
                         _ if ice => [0.75, 0.85, 0.95],
                         Body::Creek => [0.45, 0.75, 1.0],
                         Body::River => [0.2, 0.55, 1.0],
+                        Body::Spring => [0.95, 0.6, 0.2],
                         Body::Lake if surface.water_level > SEA_LEVEL => [0.1, 0.6 - 0.2 * depth, 0.75 - 0.2 * depth],
                         _ => [0.15, 0.35 - 0.15 * depth, 0.7 - 0.25 * depth],
                     };
@@ -1516,6 +1529,30 @@ mod tests {
         // SAFETY: `t` is a valid timespec for the call to fill.
         unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
         std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+    }
+
+    /// `cargo test --release -p voxmar_worldgen river_speed -- --ignored --nocapture`
+    /// separates the two costs rivers add, in CPU time on one thread: building a region's
+    /// rivers (once, for its 32×32 columns) and generating columns once it is built.
+    #[test]
+    #[ignore]
+    fn river_speed() {
+        let registry = registry();
+        let (mut first, mut warm, mut columns) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
+        for seed in [1, 3, 0x5eed] {
+            let world = Overworld::new(seed, registry.clone());
+            let start = ColumnPos::of_block(world.spawn_point());
+            let t = thread_time();
+            std::hint::black_box(world.generate(start));
+            first += thread_time() - t;
+            let t = thread_time();
+            for i in 0..100 {
+                std::hint::black_box(world.generate(start.offset(i % 10, i / 10)));
+            }
+            warm += thread_time() - t;
+            columns += 100;
+        }
+        println!("first column (cold caches) {:.0} ms, then {:.3} ms per column", first.as_secs_f64() * 1e3 / 3.0, warm.as_secs_f64() * 1e3 / columns as f64);
     }
 
     /// `cargo test --release -p voxmar_worldgen generation_speed -- --ignored --nocapture`
