@@ -740,6 +740,19 @@ fragments). The volumetric pass reads the 2D and 3D value-noise lattices from tw
 textures too (`NOISE_TEXTURES`), the same lattices the hashes give elsewhere. The map
 itself measured 0.2 ms on a busy machine.
 
+**The shade map** (cloud_map.rs): the cloud's density through the middle of its layer,
+512² texels over 2 km, drawn from the body map right after it. Shadows and reflections
+only ever look the cloud up there, and the map spares each fragment the rest of that
+look-up: the two octaves of billows at the cloud's edge and the layer's profile. Taking
+each part of the terrain's shading out in turn (a `VOXMAR_ABLATE` shader def in a scratch
+build, timed by Metal System Trace and divided by the display pass's time to cancel the
+GPU's clock changes) found cloud shadows the costliest part, more than the shadow filter
+or the fog. At 2268×1473 under broken cloud the shade map took 0.22 ms off the terrain's
+pass and 0.19 ms off the water's, and costs 0.025 ms. Its texels are 4 blocks, a quarter
+of the cloud's finest detail, and it holds the density unclamped so the bilinear filter
+keeps edges sharp. It is centred where the ground around the eye takes its shadows from,
+towards the light; past it shaders work the density out as before.
+
 **Night** (Mariano: too bright). The sky gradient was already a dark navy; what lit the
 night sky grey was cloud, which the dome lit at 7% of daylight. Cloud is now lit by the
 moon and the night sky's ambient light like everything else, and the Milky Way is dimmer:

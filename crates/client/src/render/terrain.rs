@@ -978,6 +978,7 @@ fn prepare_bind_group(
             (6, atmosphere.0.as_entire_binding()),
             (8, &cloud_map.view),
             (9, &cloud_map.sampler),
+            (10, &cloud_map.shade),
         )),
     );
     let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.layers)?)));
@@ -1001,6 +1002,7 @@ fn prepare_bind_group(
             &layers.texture_view,
             &cloud_map.view,
             &cloud_map.sampler,
+            &cloud_map.shade,
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -1346,9 +1348,10 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 // The air and light (lighting.wgsl), and each texture layer's overlay and glow.
                 uniform_buffer::<Atmosphere>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
-                // The cloud map (cloud_map.rs).
+                // The cloud maps (cloud_map.rs).
                 texture_2d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
+                texture_2d(TextureSampleType::Float { filterable: true }),
             ),
         ),
     );
@@ -1378,10 +1381,11 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 (0, storage_buffer_read_only_sized(false, None)),
                 (1, uniform_buffer::<DistantView>(false)),
                 (2, storage_buffer_read_only_sized(false, None)),
-                // The air and light, at the binding lighting.wgsl expects, and the cloud map.
+                // The air and light, at the binding lighting.wgsl expects, and the cloud maps.
                 (6, uniform_buffer::<Atmosphere>(false)),
                 (8, texture_2d(TextureSampleType::Float { filterable: true })),
                 (9, sampler(SamplerBindingType::Filtering)),
+                (10, texture_2d(TextureSampleType::Float { filterable: true })),
             ),
         ),
     );
