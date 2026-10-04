@@ -292,12 +292,17 @@ F3 shows the weather.
 
 Music is in `assets/music` (generated offline with `tools/generate_music.py`) and plays now and
 then with long quiet gaps; `M` toggles it. Starting a game fades the menu's music out, so a world
-opens in quiet; returning to the menus brings it back. Sound effects are synthesized at startup from each
-block's material (`sound: Wood` in its definition), so new blocks sound right without new audio:
-short, soft and warm, with several variants per cue and a small random pitch change so nothing
-repeats exactly. Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain
-is heavy and quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes
-every cue to `target/sfx_preview.wav`.
+opens in quiet; returning to the menus brings it back.
+
+Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
+in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps
+while mining and breaking come from the player's own Minecraft install when it has them (the
+official launcher's or Prism Launcher's asset store; nothing from Minecraft is shipped), with
+Minecraft's own volumes and pitches. Otherwise they are synthesized at startup: short, soft and
+warm, with several variants per cue and a small random pitch change so nothing repeats exactly.
+Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain is heavy and
+quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
+synthesized cue to `target/sfx_preview.wav`.
 
 ## Rendering and performance
 

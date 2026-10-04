@@ -1,6 +1,13 @@
-//! Sound effects, synthesized at startup from block materials.
+//! Sound effects for block materials, and rain and thunder.
 //!
-//! Sound philosophy:
+//! A block declares what it is made of (`sound: Wood`); every cue for that material (a
+//! step, landing, placing, a tap while mining, breaking) comes from the player's own
+//! Minecraft install when they have one (see `minecraft`), played with the volume and pitch
+//! Minecraft gives that use of it, so grass, flowers, dirt and stone sound exactly as they
+//! do there. Without an install, or for a cue it lacks, the cue is synthesized at startup
+//! from the material.
+//!
+//! Sound philosophy, for the synthesized cues:
 //! - Sounds come from materials, not from individual blocks. A block only declares what it
 //!   is made of (`sound: Wood`), so a mod's new block sounds right without new audio.
 //! - Quiet, short and warm. The world is calm; effects confirm what the player did and never
@@ -24,11 +31,14 @@ use rustc_hash::FxHashMap;
 use voxmar_engine::block::{BlockId, Sound};
 use voxmar_engine::physics::player as dims;
 
+use self::minecraft::SoundStore;
 use crate::player::LocalPlayer;
 use crate::render::precipitation::SkyMap;
 use crate::settings::Settings;
 use crate::weather::{ClientWeather, Thunder};
 use crate::world::ClientWorld;
+
+mod minecraft;
 
 const RATE: u32 = 44_100;
 const VARIANTS: u64 = 4;
@@ -41,6 +51,9 @@ const RAIN_GAIN: f32 = 0.45;
 const THUNDER_GAIN: f32 = 0.9;
 /// Lightning closer than this many blocks cracks before it rumbles.
 const NEAR_LIGHTNING: f32 = 300.0;
+/// Minecraft's clips are mastered quieter than ours; this brings its break sounds to the
+/// loudness of our own.
+const MINECRAFT_GAIN: f32 = 1.4;
 
 pub struct SfxPlugin;
 
@@ -90,9 +103,16 @@ impl SoundCue {
     }
 }
 
+/// One clip a cue may play, and how loud and fast.
+struct Clip {
+    source: Handle<AudioSource>,
+    gain: f32,
+    speed: f32,
+}
+
 #[derive(Resource)]
 struct Sfx {
-    clips: FxHashMap<(Sound, Cue), Vec<Handle<AudioSource>>>,
+    clips: FxHashMap<(Sound, Cue), Vec<Clip>>,
     /// Thunder from near and far lightning, a few variants each.
     thunder: [Vec<Handle<AudioSource>>; 2],
     counter: u64,
@@ -105,19 +125,69 @@ impl Sfx {
     }
 }
 
+/// The Minecraft sound event a cue plays for a material, with the volume and pitch
+/// Minecraft gives that use of a block's sounds.
+fn minecraft_event(sound: Sound, cue: Cue) -> Option<(String, f32, f32)> {
+    let kind = match sound {
+        Sound::Stone => "stone",
+        Sound::Wood => "wood",
+        // Minecraft's dirt, clay and podzol sound like its gravel.
+        Sound::Soil | Sound::Gravel => "gravel",
+        // Its leaves, plants and flowers like its grass block.
+        Sound::Grass | Sound::Leaves => "grass",
+        Sound::Sand => "sand",
+        Sound::Snow => "snow",
+        Sound::Glass => "glass",
+        Sound::Mud => "mud",
+        Sound::Moss => "moss",
+        Sound::Water => return (cue == Cue::Step).then(|| ("entity.player.swim".to_owned(), 0.2, 1.0)),
+    };
+    let (event, volume, pitch) = match cue {
+        Cue::Step => ("step", 0.15, 1.0),
+        Cue::Land => ("fall", 0.5, 0.75),
+        Cue::Place => ("place", 1.0, 0.8),
+        Cue::Break => ("break", 1.0, 0.8),
+        Cue::Hit => ("hit", 0.25, 0.5),
+    };
+    Some((format!("block.{kind}.{event}"), volume, pitch))
+}
+
+/// Loads each cue's clips from the player's Minecraft install where it has them, and
+/// synthesizes the rest.
 fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
+    let store = SoundStore::discover();
+    // Hits, steps and falls share files; each is read once.
+    let mut loaded: FxHashMap<String, Option<Handle<AudioSource>>> = FxHashMap::default();
     let mut clips = FxHashMap::default();
+    let mut borrowed = 0;
     for sound in Sound::ALL {
         for cue in Cue::ALL {
-            let variants = (0..VARIANTS)
-                .map(|v| {
-                    let samples = render(sound, cue, mix(sound as u64 * 131 + cue as u64 * 17 + v));
-                    sources.add(AudioSource { bytes: Arc::from(wav(&samples)) })
-                })
-                .collect();
+            let mut variants = Vec::new();
+            if let (Some(store), Some((event, volume, pitch))) = (&store, minecraft_event(sound, cue)) {
+                for clip in store.event(&event) {
+                    let source = loaded
+                        .entry(clip.name.clone())
+                        .or_insert_with(|| store.read(&clip).map(|bytes| sources.add(AudioSource { bytes: Arc::from(bytes) })));
+                    if let Some(source) = source {
+                        let gain = volume * clip.volume * MINECRAFT_GAIN;
+                        variants.push(Clip { source: source.clone(), gain, speed: pitch * clip.pitch });
+                    }
+                }
+            }
+            if variants.is_empty() {
+                variants = (0..VARIANTS)
+                    .map(|v| {
+                        let samples = render(sound, cue, mix(sound as u64 * 131 + cue as u64 * 17 + v));
+                        Clip { source: sources.add(AudioSource { bytes: Arc::from(wav(&samples)) }), gain: cue.gain(), speed: 1.0 }
+                    })
+                    .collect();
+            } else {
+                borrowed += 1;
+            }
             clips.insert((sound, cue), variants);
         }
     }
+    info!("block sounds: {borrowed} of {} cues from Minecraft's assets, the rest synthesized", clips.len());
     let thunder = [true, false].map(|near| {
         let clip = |v: u64| AudioSource { bytes: Arc::from(wav(&thunder_clip(mix(v * 7 + near as u64), near))) };
         (0..VARIANTS).map(|v| sources.add(clip(v))).collect()
@@ -176,11 +246,14 @@ fn play_cues(mut commands: Commands, mut cues: MessageReader<SoundCue>, sfx: Opt
     let Some(mut sfx) = sfx else { return };
     let master = MASTER * settings.sound_volume as f32 / 100.0;
     for cue in cues.read() {
-        let variant = (sfx.random() * VARIANTS as f32) as usize % VARIANTS as usize;
-        let speed = 0.92 + sfx.random() * 0.16;
-        let Some(clip) = sfx.clips.get(&(cue.sound, cue.cue)).map(|v| v[variant].clone()) else { continue };
-        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(cue.cue.gain() * master)) };
-        commands.spawn((AudioPlayer(clip), playback));
+        let (pick, jitter) = (sfx.random(), sfx.random());
+        let Some(clip) = sfx.clips.get(&(cue.sound, cue.cue)).and_then(|clips| clips.get((pick * clips.len() as f32) as usize))
+        else {
+            continue;
+        };
+        let speed = clip.speed * (0.94 + 0.12 * jitter);
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * master)) };
+        commands.spawn((AudioPlayer(clip.source.clone()), playback));
     }
 }
 
@@ -293,6 +366,17 @@ fn recipe(sound: Sound) -> Recipe {
         },
         Sound::Leaves => Recipe { length: 0.2, center: 4200.0, q: 0.7, grains: 900.0, grain_length: 0.002, attack: 0.03, ..base },
         Sound::Water => Recipe { length: 0.32, center: 800.0, q: 0.7, attack: 0.01, tones: &[], ..base },
+        Sound::Mud => Recipe {
+            length: 0.16,
+            center: 420.0,
+            q: 1.6,
+            grains: 120.0,
+            grain_length: 0.012,
+            attack: 0.012,
+            tones: &[(110.0, 22.0)],
+            tone_gain: 0.3,
+        },
+        Sound::Moss => Recipe { length: 0.15, center: 950.0, q: 0.7, grains: 280.0, grain_length: 0.006, attack: 0.025, ..base },
     }
 }
 
@@ -534,6 +618,29 @@ mod tests {
         assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
         let steepest = samples.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
         assert!((samples[0] - samples[samples.len() - 1]).abs() <= steepest);
+    }
+
+    /// `cargo test -p voxmar_client minecraft_sounds_decode -- --ignored` checks that every
+    /// cue borrowed from the Minecraft install on this machine decodes.
+    #[test]
+    #[ignore]
+    fn minecraft_sounds_decode() {
+        use bevy::audio::Decodable;
+        let store = SoundStore::discover().expect("a Minecraft install with an asset index");
+        let mut decoded = 0;
+        for sound in Sound::ALL {
+            for cue in Cue::ALL {
+                let Some((event, ..)) = minecraft_event(sound, cue) else { continue };
+                let clips = store.event(&event);
+                assert!(!clips.is_empty() || matches!(sound, Sound::Mud | Sound::Moss), "{event} has no clips");
+                for clip in clips {
+                    let source = AudioSource { bytes: Arc::from(store.read(&clip).expect("clip file")) };
+                    assert!(source.decoder().take(1000).count() == 1000, "{} does not decode", clip.name);
+                    decoded += 1;
+                }
+            }
+        }
+        println!("{decoded} clips decoded");
     }
 
     /// `cargo test -p voxmar_client sfx_preview -- --ignored` writes every cue, one after
