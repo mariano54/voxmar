@@ -114,7 +114,8 @@ fn fog_amount(offset: vec3<f32>) -> f32 {
     let end = max(view.world_position.y + offset.y - HAZE_BASE, 0.0) / HAZE_HEIGHT;
     let rise = end - start;
     let density = select((exp(-start) - exp(-end)) / rise, exp(-start), abs(rise) < 1e-3);
-    let haze = 1.0 - exp(-HAZE_DENSITY * distance * density);
+    // fog.directional_light_exponent carries the shader pack's haze multiplier.
+    let haze = 1.0 - exp(-HAZE_DENSITY * fog.directional_light_exponent * distance * density);
     let edge = smoothstep(fog.be.x, fog.be.y, distance);
     return 1.0 - (1.0 - haze) * (1.0 - edge);
 }

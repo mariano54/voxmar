@@ -21,6 +21,7 @@ use crate::menu::widgets::{
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::DayCycle;
+use crate::render::pack::{ActivePack, ShaderPacks};
 use crate::render::lod::{self, Lod};
 use crate::world::ClientWorld;
 
@@ -41,7 +42,7 @@ impl Plugin for SettingsPlugin {
                     show_menu,
                 )
                     .chain(),
-                apply.run_if(resource_changed::<Settings>),
+                (apply, select_pack).run_if(resource_changed::<Settings>),
                 fit_lod_hole,
                 sync_server.run_if(in_state(Screen::InGame)),
             ),
@@ -68,7 +69,12 @@ pub struct Settings {
     /// Flight speed, in percent. Only admins may fly faster than normal.
     pub fly_speed: i32,
     pub anti_aliasing: AntiAliasing,
+    /// Name of the shader pack in use (see `render::pack`).
+    pub shader_pack: String,
 }
+
+/// The look new players start with.
+const DEFAULT_PACK: &str = "Verdant";
 
 /// How edges are smoothed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +115,7 @@ impl Default for Settings {
             debug_overlay: false,
             fly_speed: 100,
             anti_aliasing: AntiAliasing::default(),
+            shader_pack: DEFAULT_PACK.into(),
         }
     }
 }
@@ -275,27 +282,31 @@ impl Toggle {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Choice {
     AntiAliasing,
+    ShaderPack,
 }
 
 impl Choice {
     fn label(self) -> &'static str {
         match self {
             Choice::AntiAliasing => "Anti-aliasing",
+            Choice::ShaderPack => "Shader pack",
         }
     }
 
-    fn text(self, settings: &Settings) -> &'static str {
+    fn text(self, settings: &Settings, packs: &ShaderPacks) -> String {
         match self {
-            Choice::AntiAliasing => settings.anti_aliasing.label(),
+            Choice::AntiAliasing => settings.anti_aliasing.label().into(),
+            Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
         }
     }
 
-    fn step(self, settings: &mut Settings) {
+    fn step(self, settings: &mut Settings, packs: &ShaderPacks) {
         match self {
             Choice::AntiAliasing => {
                 let i = AntiAliasing::ALL.iter().position(|&a| a == settings.anti_aliasing).unwrap_or(0);
                 settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
             }
+            Choice::ShaderPack => settings.shader_pack = packs.next(&settings.shader_pack).to_owned(),
         }
     }
 }
@@ -313,6 +324,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
         &[
             Control::Slider(Slider::ViewDistance),
             Control::Slider(Slider::Fov),
+            Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::AntiAliasing),
             Control::Switch(Toggle::Vsync),
             Control::Switch(Toggle::DebugOverlay),
@@ -495,10 +507,14 @@ fn click_switches(mut settings: ResMut<Settings>, switches: Query<(&Switch, &Int
     }
 }
 
-fn click_choices(mut settings: ResMut<Settings>, choices: Query<(&ChoiceButton, &Interaction), Changed<Interaction>>) {
+fn click_choices(
+    mut settings: ResMut<Settings>,
+    packs: Res<ShaderPacks>,
+    choices: Query<(&ChoiceButton, &Interaction), Changed<Interaction>>,
+) {
     for (choice, interaction) in &choices {
         if *interaction == Interaction::Pressed {
-            choice.0.step(&mut settings);
+            choice.0.step(&mut settings, &packs);
         }
     }
 }
@@ -534,11 +550,12 @@ fn sync_controls(
     mut values: Query<(&SliderValue, &mut Text)>,
     mut switches: Query<(&Switch, &mut Node, &mut BackgroundColor)>,
     mut choices: Query<(&ChoiceValue, &mut Text), Without<SliderValue>>,
+    packs: Res<ShaderPacks>,
 ) {
     for (choice, mut text) in &mut choices {
-        let value = choice.0.text(&settings);
+        let value = choice.0.text(&settings, &packs);
         if text.0 != value {
-            value.clone_into(&mut text.0);
+            text.0 = value;
         }
     }
     for (fill, mut node) in &mut fills {
@@ -603,6 +620,14 @@ fn show_menu(
         {
             label.clone_into(&mut text.0);
         }
+    }
+}
+
+/// Switches to the chosen shader pack.
+fn select_pack(settings: Res<Settings>, packs: Res<ShaderPacks>, mut active: ResMut<ActivePack>) {
+    let pack = packs.get(&settings.shader_pack);
+    if active.0 != *pack {
+        active.0 = pack.clone();
     }
 }
 
