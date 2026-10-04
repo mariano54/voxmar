@@ -14,11 +14,14 @@ use voxmar_protocol::{TICKS_PER_SECOND, Weather};
 
 use crate::menu::Screen;
 
+pub mod atmosphere;
+
 pub struct WeatherPlugin;
 
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ClientWeather>()
+        app.add_plugins(atmosphere::AtmospherePlugin)
+            .init_resource::<ClientWeather>()
             .init_resource::<Wind>()
             .add_message::<Thunder>()
             .add_systems(Update, (ease, draw_bolts).chain())
