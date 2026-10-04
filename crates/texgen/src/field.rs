@@ -62,6 +62,14 @@ fn add(term: &Term, size: Size, seed: u32, field: &mut [f32]) {
         Term::Noise(n) => noise(n, size, seed, field),
         Term::Ridge(r) => ridge(r, size, seed, field),
         Term::Speckle(s) => speckle(s, size, seed, field),
+        Term::Grain(amount, salt) => {
+            let seed = hash(seed, *salt as i32, 12);
+            for y in 0..size.h {
+                for x in 0..size.w {
+                    field[(y * size.w + x) as usize] += (unit(seed, x as i32, y as i32) - 0.5) * amount;
+                }
+            }
+        }
         Term::Cells(c) => cells(c, size, seed, field),
         Term::Bricks(b) => bricks(b, size, seed, field),
         Term::Boards(b) => boards(b, size, seed, field),
