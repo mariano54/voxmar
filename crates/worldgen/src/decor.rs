@@ -142,10 +142,11 @@ pub struct Probe<'a> {
 }
 
 impl Area<'_> {
-    /// Whether nothing may stand on the ground at (x, z): water over it or a cave mouth.
+    /// Whether nothing may stand on the ground at (x, z): water over it, a trail, or a
+    /// cave mouth.
     fn unfit(&self, x: i32, z: i32) -> bool {
         let geo = self.geology.get(x, z);
-        geo.submerged() || self.caves.surface_open(x, z, &geo)
+        geo.submerged() || geo.trail.is_some_and(|t| t.clear) || self.caves.surface_open(x, z, &geo)
     }
 
     fn height(&self, x: i32, z: i32) -> i32 {

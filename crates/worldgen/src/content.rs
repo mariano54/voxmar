@@ -993,11 +993,39 @@ pub struct WorldContent {
     /// Ground blocks and the snowy blocks snow lying on them turns them into, from
     /// `weather.ron`: generated snow uses the same table as snow that falls in play.
     pub snow_cover: Vec<(String, String)>,
+    pub trails: TrailsDef,
+}
+
+/// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
+/// one's.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TrailsDef {
+    /// The first rule whose tags the biome has picks the tread.
+    pub tread: Vec<TreadDef>,
+    /// What grass at the edge of the tread is worn to.
+    pub edge: String,
+    /// The deck of a bridge, of a short bridge over a creek, and the stones of a ford.
+    pub bridge: String,
+    pub log: String,
+    pub stepping_stone: String,
+    /// The stones of cairns and of waymarkers.
+    pub cairn: Vec<Select>,
+    pub waymarker: Vec<Select>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TreadDef {
+    /// Any of these biome tags; none matches every biome.
+    #[serde(default)]
+    pub biome: Vec<String>,
+    pub blocks: Vec<Select>,
 }
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 10] = [
+pub(crate) const BASE_FILES: [(&str, &str); 11] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
@@ -1006,6 +1034,7 @@ pub(crate) const BASE_FILES: [(&str, &str); 10] = [
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
     ("rocks.ron", include_str!("../../../assets/content/base/rocks.ron")),
     ("surfaces.ron", include_str!("../../../assets/content/base/surfaces.ron")),
+    ("trails.ron", include_str!("../../../assets/content/base/trails.ron")),
     ("trees.ron", include_str!("../../../assets/content/base/trees.ron")),
     ("weather.ron", include_str!("../../../assets/content/base/weather.ron")),
 ];
@@ -1028,6 +1057,7 @@ impl WorldContent {
     /// replaces an earlier one's; other definitions accumulate.
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
+        let mut trails = None;
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles) = (Vec::new(), Vec::new(), Vec::new());
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
@@ -1087,10 +1117,25 @@ impl WorldContent {
                     name: qualify(&file.package, &set.name),
                     rules: set.rules.into_iter().map(|r| RuleDef { when: r.when, place: qualify_layers(&file.package, r.place) }).collect(),
                 })),
+                "trails.ron" => {
+                    let def = parse::<TrailsDef>(&at, &file.source)?;
+                    let tread = def.tread.iter().map(|t| TreadDef { blocks: t.blocks.iter().map(|s| qualify_select(&file.package, s)).collect(), ..t.clone() }).collect();
+                    let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect();
+                    trails = Some(TrailsDef {
+                        tread,
+                        edge: q(&def.edge),
+                        bridge: q(&def.bridge),
+                        log: q(&def.log),
+                        stepping_stone: q(&def.stepping_stone),
+                        cairn: stones(&def.cairn),
+                        waymarker: stones(&def.waymarker),
+                    });
+                }
                 _ => {}
             }
         }
         let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
+        let trails = trails.ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
         let mut biomes = inherit(&raw)?;
         // Shared rule sets come before each biome's own rules.
         for biome in &mut biomes {
@@ -1106,7 +1151,7 @@ impl WorldContent {
             biome.surface.rules = rules;
         }
         let snow_cover = weather.snow_cover().to_vec();
-        let content = Self { climate, provinces, biomes, trees, plants, particles, decorations, rule_sets, snow_cover };
+        let content = Self { climate, provinces, biomes, trees, plants, particles, decorations, rule_sets, snow_cover, trails };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }
@@ -1151,6 +1196,21 @@ impl WorldContent {
             }
             Ok(())
         };
+
+        // Trails.
+        let trails_at = || "trails.ron".to_owned();
+        if !self.trails.tread.last().is_some_and(|t| t.biome.is_empty()) {
+            return Err(ContentError(format!("{}: the last tread rule must match every biome (no tags)", trails_at())));
+        }
+        for tread in &self.trails.tread {
+            blocks(&trails_at, &tread.blocks)?;
+        }
+        block(&trails_at, &self.trails.edge)?;
+        block(&trails_at, &self.trails.bridge)?;
+        block(&trails_at, &self.trails.log)?;
+        blocks(&trails_at, &self.trails.cairn)?;
+        blocks(&trails_at, &self.trails.waymarker)?;
+        block(&trails_at, &self.trails.stepping_stone)?;
 
         // Climate.
         let climate_at = || "climate.ron".to_owned();

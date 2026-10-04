@@ -28,6 +28,7 @@ mod rng;
 mod rocks;
 mod surface;
 mod terrain;
+mod trails;
 mod trees;
 mod underground;
 mod water;
@@ -50,6 +51,7 @@ pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current};
 pub use rarity::{Featured, Rarity, Tier};
 pub use rocks::ProvinceId;
+pub use trails::{Kind as PlaceKind, Poi, TrailMark};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
@@ -59,6 +61,7 @@ use crate::ecology::Ecology;
 use crate::geology::{GeoSample, Geology, smoothstep};
 use crate::rocks::Rocks;
 use crate::surface::SurfaceRules;
+use crate::trails::Land;
 
 /// Something that produces world columns. Generators are identified by a stable id that
 /// is mixed into their random streams.
@@ -140,6 +143,8 @@ pub struct Site {
     pub edge: f32,
     /// 0 at the centre of the home biome's climate ..= 1 at its edge.
     pub from_centre: f32,
+    /// How much of a trail's tread lies here, 0 (none) ..= 1 (the middle of the path).
+    pub trail: f32,
 }
 
 impl Site {
@@ -201,6 +206,7 @@ pub struct Overworld {
     geology: Geology,
     climate: Climate,
     rivers: water::Rivers,
+    trails: trails::Trails,
     ecology: Ecology,
     decor: decor::Decor,
     biomes: Biomes,
@@ -246,6 +252,7 @@ impl Overworld {
             rivers: water::Rivers::new(stream, &dials),
             ecology,
             decor,
+            trails: trails::Trails::new(stream),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
@@ -349,23 +356,46 @@ impl Overworld {
         self.caves.style()
     }
 
-    /// Surface height only; cheap enough to sample on coarse grids.
+    /// Surface height only; cheap enough to sample on coarse grids. Trails, which change
+    /// it by a few blocks along a narrow line, are left out (see [`Overworld::site`]).
     pub fn height(&self, x: i32, z: i32) -> i32 {
-        self.geo(x, z).height
+        self.land().sample(x, z).height
     }
 
     fn stages(&self) -> water::Stages<'_> {
         water::Stages { geology: &self.geology, climate: &self.climate }
     }
 
-    /// The ground at one position, with its rivers and lakes.
+    /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
-        self.rivers.sample(self.stages(), x, z)
+        let land = self.land();
+        self.trails.apply(&land, land.sample(x, z), x, z)
     }
 
     /// The ground over the `size`×`size` positions from (x, z), row by row.
     pub(crate) fn geo_area(&self, x: i32, z: i32, size: i32) -> Vec<GeoSample> {
-        self.rivers.area(self.stages(), IVec2::new(x, z), size)
+        let land = self.land();
+        let mut area = self.rivers.area(self.stages(), IVec2::new(x, z), size);
+        for (i, sample) in area.iter_mut().enumerate() {
+            *sample = self.trails.apply(&land, *sample, x + i as i32 % size, z + i as i32 / size);
+        }
+        area
+    }
+
+    /// The land trails are planned over: the ground with its rivers and lakes.
+    fn land(&self) -> RiverLand<'_> {
+        RiverLand { rivers: &self.rivers, stages: self.stages() }
+    }
+
+    /// What is built beside trails within the blocks from `min` to `max`.
+    pub(crate) fn trail_markers(&self, min: IVec2, max: IVec2) -> Vec<(IVec2, trails::Marker)> {
+        self.trails.markers(&self.land(), min, max)
+    }
+
+    /// The trails through the blocks from `min` to `max`, as centrelines (each point with
+    /// 0 on the ground, 1 on a ford and 2 on a bridge), and the places they join.
+    pub fn trails_in(&self, min: IVec2, max: IVec2) -> (Vec<Vec<(voxmar_engine::glam::Vec2, u8)>>, Vec<Poi>) {
+        self.trails.sketch(&self.land(), min, max)
     }
 
     /// Steepest height step from (x, z), whose height is `height`, to its four neighbours.
@@ -396,7 +426,10 @@ impl Overworld {
         ClimateGrid::new(&self.climate, &self.geology, min - margin, max + margin)
     }
 
-    /// The parameters of the surface at one position.
+    /// The parameters of the surface at one position. Like the other sampling for maps,
+    /// distant terrain and coarse decisions, it leaves trails out: planning them costs far
+    /// more than one position is worth, and they are only a few blocks wide. Generated
+    /// columns have them.
     pub fn site(&self, x: i32, z: i32) -> Site {
         self.sampler(IVec2::new(x, z), IVec2::new(x, z)).site(x, z)
     }
@@ -405,6 +438,18 @@ impl Overworld {
     /// Matches full generation except for caves and individual trees and plants.
     pub fn surface_sample(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
         self.sampler(IVec2::new(x, z), IVec2::new(x, z)).surface(x, z, height, slope)
+    }
+}
+
+/// The ground with rivers and lakes, as trails see it.
+struct RiverLand<'a> {
+    rivers: &'a water::Rivers,
+    stages: water::Stages<'a>,
+}
+
+impl trails::Land for RiverLand<'_> {
+    fn sample(&self, x: i32, z: i32) -> GeoSample {
+        self.rivers.sample(self.stages, x, z)
     }
 }
 
@@ -426,13 +471,13 @@ struct Picks {
 impl Sampler<'_> {
     /// The parameters of the surface at a position inside the sampler's area.
     pub fn site(&self, x: i32, z: i32) -> Site {
-        let geo = self.world.geo(x, z);
+        let geo = self.world.land().sample(x, z);
         self.site_on(&geo, x, z, self.world.slope(x, z, geo.height))
     }
 
     /// What the surface looks like from far away; see [`Overworld::surface_sample`].
     pub fn surface(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
-        let geo = GeoSample { height, ..self.world.geo(x, z) };
+        let geo = GeoSample { height, ..self.world.land().sample(x, z) };
         let site = self.site_on(&geo, x, z, slope);
         let (ground, water) = self.world.surface_blocks(&site, x, z);
         let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
@@ -560,6 +605,7 @@ impl Sampler<'_> {
             neighbour: BiomeId(0),
             edge: 0.0,
             from_centre: 0.0,
+            trail: geo.trail.map_or(0.0, |t| t.tread),
         };
         let pick = self.pick(x, z);
         let share = Biomes::blend(pick.edge, regional.fertility);
@@ -1647,6 +1693,40 @@ mod tests {
                 }
                 pixels.extend(rgb.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8));
             }
+        }
+        // Trails over everything: brown on the ground, cyan on fords, red on bridges, and
+        // the places they join (summits white, lake shores turquoise, waterfalls blue,
+        // viewpoints yellow, trailheads green). `TRAILS=0` leaves them out.
+        if std::env::var("TRAILS").map_or(true, |v| v != "0") {
+            let started = std::time::Instant::now();
+            let (lines, places) = world.trails_in(centre - half, centre + half);
+            let mut paint = |at: voxmar_engine::glam::Vec2, rgb: [u8; 3], r: i32| {
+                let (px, pz) = (((at.x - (centre.x - half) as f32) / scale as f32) as i32, ((at.y - (centre.y - half) as f32) / scale as f32) as i32);
+                for (dx, dz) in (-r..=r).flat_map(|j| (-r..=r).map(move |i| (i, j))) {
+                    let (x, z) = (px + dx, pz + dz);
+                    if (0..SIZE).contains(&x) && (0..SIZE).contains(&z) {
+                        let i = ((z * SIZE + x) * 3) as usize;
+                        pixels[i..i + 3].copy_from_slice(&rgb);
+                    }
+                }
+            };
+            let length: usize = lines.iter().map(|l| l.len()).sum();
+            for line in &lines {
+                for &(at, kind) in line {
+                    paint(at, [[110, 60, 20], [40, 230, 230], [230, 30, 30]][kind as usize], if scale <= 2 { 1 } else { 0 });
+                }
+            }
+            for place in &places {
+                let rgb = match place.kind {
+                    PlaceKind::Summit => [255, 255, 255],
+                    PlaceKind::Lake => [40, 220, 200],
+                    PlaceKind::Waterfall => [30, 90, 255],
+                    PlaceKind::Viewpoint => [255, 230, 40],
+                    PlaceKind::Trailhead => [60, 220, 60],
+                };
+                paint(place.at().as_vec2(), rgb, 2);
+            }
+            println!("{} trails, {} km of them, {} places, in {:.1?}", lines.len(), length / 1000, places.len(), started.elapsed());
         }
         let mut file = format!("P6 {SIZE} {SIZE} 255\n").into_bytes();
         file.extend(pixels);

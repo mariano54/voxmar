@@ -74,7 +74,8 @@ impl Features {
             return None;
         }
         let geo = area.geology.get(x, z);
-        if geo.water - geo.height > 2 {
+        // Nothing grows under deep water or on a trail.
+        if geo.water - geo.height > 2 || geo.trail.is_some_and(|t| t.clear) {
             return None;
         }
         let site = area.sampler.site_on(&geo, x, z, 0);

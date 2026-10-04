@@ -137,6 +137,9 @@ cargo run --release -p voxmar_texgen -- export --out DIR       # write every rec
 texel, optionally beside the same name from another pack (`--pack DIR` picks the pack,
 `--columns`, `--zoom` and `--out` the layout).
 
+Code and assets adapted from other open source projects are listed, with their licences, in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Layout
 
 | crate | role |
@@ -216,6 +219,22 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
+- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`) join the places worth walking
+  to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
+  of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
+  are joined into a sparse network (a Gabriel graph, with no two trails setting off side by
+  side), each trail routed by A* over the land with costs adapted from RoadWeaver: walking
+  along the contour is cheaper, grades past soft and hard limits cost more, and so does the
+  fall line, so trails traverse slopes and switch back up them. Trails that run within 18
+  blocks of a longer one join it, making junctions. Each is drawn as a smooth curve cut into
+  hillsides and raised on low banks, its tread worn to packed earth, gravel or mud by biome
+  with trodden grass at its edges, across shallow water on stepping stones, across creeks on
+  logs and across rivers on plank bridges with piers (crossings over 100 blocks are not built).
+  Cairns mark trails above the treeline and stand on summits, old waymarkers stand at
+  trailheads, and summits and viewpoints keep a clearing. Everything is a pure function of the
+  seed and the land, planned region by region in caches bounded by bytes, so nothing depends
+  on generation order. Coarse sampling (`Overworld::height`, `site`, `surface_sample`, used by
+  distant terrain and the weather) leaves trails out; generated columns have them.
 - **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
   everywhere, more tangled with depth, opening to the surface as entrances in some places;
   cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
@@ -285,7 +304,12 @@ its biome, the biome next door and the distance to their border; `Overworld::bio
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
 `SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on, `X`, `Z`
 and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
-rivers and creeks in their own blues, and prints each biome's share of it. `river_sights` prints
+rivers and creeks in their own blues, trails over them (brown, with fords cyan, bridges red,
+and the places they join marked; `TRAILS=0` leaves them out), and prints each biome's share of
+it. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
+generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
+arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
+and routes that failed. `river_sights` prints
 `--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
 near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)

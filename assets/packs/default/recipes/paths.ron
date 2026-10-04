@@ -1,0 +1,21 @@
+// Ground worn by feet: grass trodden thin, showing the earth beneath, and the packed,
+// pale earth of a well-used path. The worn grass top is grey like the grass top, since
+// the game tints it with the climate's grass colour; its bare patches are pale so they
+// tint to a dull olive brown.
+(
+    palettes: {
+        "bare": ["#9a8a74", "#a8977f", "#b5a38b", "#c2b097", "#cebca3"],
+        "packed": ["#7d5c3e", "#8a6745", "#97724d", "#a37e57", "#ae8a62", "#b9966e"],
+        "path_pebble": ["#6f6760", "#8f8780", "#aea6a0"],
+    },
+    textures: {
+        "block/worn_grass_block_top": (base: "block/grass_block_top", palettes: {"bare": "bare"}, layers: [
+            Paint(palette: "bare", base: 0.5, shade: [Noise(cells: (8, 8), amount: 0.5), Speckle(chance: 0.15, amount: -0.25)], mask: [Noise(cells: (4, 4), octaves: 2, amount: 1.0), Speckle(chance: 0.25, amount: 0.35)], above: 0.4),
+        ]),
+        "block/packed_earth": (palettes: {"main": "packed", "pebble": "path_pebble"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.3), Noise(cells: (16, 16), amount: 0.2)], clean: true),
+            Paint(palette: "main", base: 0.15, mask: [Ridge(cells: (3, 3), width: 0.07, amount: 1.0)], above: 0.7),
+            Clusters(palette: "pebble", count: 3, size: (1, 1), spacing: 5.0, shade: 1, seed: 5),
+        ]),
+    },
+)

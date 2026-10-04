@@ -29,9 +29,10 @@ use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
 use crate::surface::{Fill, Layers, Palette, Spot};
+use crate::trails::Marker;
 use crate::trees::TreeId;
 use crate::underground::Rock;
-use crate::{Body, Overworld, SEA_LEVEL, Site};
+use crate::{Body, Overworld, SEA_LEVEL, Sampler, Site};
 
 /// Stone turns to deepslate below this height, 48 blocks under sea level.
 const DEEPSLATE: i32 = SEA_LEVEL - 48;
@@ -78,6 +79,15 @@ pub struct Terrain {
     seed: u64,
     resources: Resources,
     pub(crate) features: Features,
+    /// Trail treads, by the biome tags they suit (none: everywhere); bridge decks and
+    /// stepping stones.
+    treads: Vec<(Vec<String>, Palette)>,
+    worn_edge: BlockId,
+    deck: BlockId,
+    log_deck: BlockId,
+    stepping_stone: BlockId,
+    cairn: Palette,
+    waymarker: Palette,
 }
 
 impl Terrain {
@@ -145,6 +155,13 @@ impl Terrain {
             seed,
             resources: Resources::new(registry),
             features: Features::new(content, registry),
+            treads: content.trails.tread.iter().map(|t| (t.biome.clone(), Palette::new(&t.blocks, registry))).collect(),
+            worn_edge: registry.expect(&content.trails.edge),
+            deck: registry.expect(&content.trails.bridge),
+            log_deck: registry.expect(&content.trails.log),
+            stepping_stone: registry.expect(&content.trails.stepping_stone),
+            cairn: Palette::new(&content.trails.cairn, registry),
+            waymarker: Palette::new(&content.trails.waymarker, registry),
         }
     }
 }
@@ -324,6 +341,20 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     blocks.set_local(x, y, z, rock);
                 }
             }
+            // Trails cross water on decks and stepping stones.
+            if let Some(trail) = geo.trail {
+                if trail.stone && height == geo.water && !geo.submerged() {
+                    blocks.set_local(x, height, z, terrain.stepping_stone);
+                }
+                if let Some(deck) = trail.deck.filter(|&d| d > height && d < WORLD_HEIGHT) {
+                    blocks.set_local(x, deck, z, if trail.log { terrain.log_deck } else { terrain.deck });
+                    if trail.pier {
+                        for y in height + 1..deck {
+                            blocks.set_local(x, y, z, terrain.log_deck);
+                        }
+                    }
+                }
+            }
             // A river running in a tunnel under the ground.
             if let Some(cavity) = geo.cavity {
                 for y in cavity.floor + 1..=cavity.ceiling.min(height - 3) {
@@ -336,6 +367,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
 
     terrain.resources.place(world.seed, pos, &mut blocks);
     terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
+    terrain.markers(world, &area, &geology, pos, &mut blocks);
 
     // Ground plants, wherever trees, decorations, caves and water left the ground open.
     for z in 0..CHUNK_SIZE {
@@ -343,7 +375,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let (site, _) = &surfaces[(z * CHUNK_SIZE + x) as usize];
             let h = site.height;
             let open = |y: i32| y < WORLD_HEIGHT && blocks.get_local(x, y, z).is_air();
-            if h < site.water || !open(h + 1) {
+            if h < site.water || !open(h + 1) || site.trail > 0.2 {
                 continue;
             }
             let (wx, wz) = (origin.x + x, origin.z + z);
@@ -399,6 +431,63 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
 }
 
 impl Terrain {
+    /// Builds what stands beside trails in and around a column: cairns where trees do not
+    /// grow, larger cairns on summits, and old waymarkers at trailheads. Each stone stands
+    /// on its own column's ground, so they settle onto uneven ground.
+    fn markers(&self, world: &Overworld, area: &Sampler, geology: &GeoGrid, pos: ColumnPos, blocks: &mut Blocks) {
+        let origin = pos.origin();
+        let corner = IVec2::new(origin.x, origin.z);
+        for (at, marker) in world.trail_markers(corner - 2, corner + CHUNK_SIZE + 1) {
+            let geo = geology.get(at.x, at.y);
+            if geo.submerged() {
+                continue;
+            }
+            let roll = |salt: u64| hash3(self.seed ^ salt, at.x, 0, at.y);
+            let mut stone = |dx: i32, dz: i32, up: i32| {
+                let ground = geology.get(at.x + dx, at.y + dz);
+                if ground.submerged() {
+                    return;
+                }
+                let palette = if marker == Marker::Waymarker { &self.waymarker } else { &self.cairn };
+                let u = (hash3(self.seed ^ 0xca1, at.x + dx, up, at.y + dz) >> 40) as f32 / (1u64 << 24) as f32;
+                blocks.put_if_air(IVec3::new(at.x + dx, ground.height + up, at.y + dz), palette.pick(u * 0.9999));
+            };
+            match marker {
+                Marker::Cairn => {
+                    // Where trees grow, the forest marks the way well enough.
+                    let site = area.site_on(&geo, at.x, at.y, 0);
+                    let bare = site.forest < 0.05 && (site.height - SEA_LEVEL > 60 || site.temperature < 2.0 || site.vegetation < 0.2);
+                    if !bare {
+                        continue;
+                    }
+                    for up in 1..=2 + (roll(1) % 2) as i32 {
+                        stone(0, 0, up);
+                    }
+                    let (dx, dz) = [(1, 0), (-1, 0), (0, 1), (0, -1)][(roll(2) % 4) as usize];
+                    stone(dx, dz, 1);
+                }
+                Marker::Summit => {
+                    for up in 1..=3 + (roll(3) % 2) as i32 {
+                        stone(0, 0, up);
+                    }
+                    for (i, (dx, dz)) in [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().enumerate() {
+                        for up in 1..=1 + ((roll(4 + i as u64) % 3) as i32).min(1) {
+                            stone(dx, dz, up);
+                        }
+                    }
+                }
+                Marker::Waymarker => {
+                    // Weathered down to one to three stones, with one fallen beside it.
+                    for up in 1..=1 + (roll(5) % 3) as i32 {
+                        stone(0, 0, up);
+                    }
+                    let (dx, dz) = [(2, 0), (-2, 1), (1, 2), (-1, -2)][(roll(6) % 4) as usize];
+                    stone(dx, dz, 1);
+                }
+            }
+        }
+    }
+
     /// A uniform-ish 0..1 value for dithering thresholds: smooth patches plus per-block
     /// speckle, so materials interleave in clumps and scattered blocks across a band.
     pub(crate) fn dither(&self, x: i32, z: i32) -> f32 {
@@ -436,6 +525,12 @@ impl Terrain {
             t if -t > 7.0 + 4.0 * d => Some(if d > 0.97 { self.ids.rare_ice } else { self.ids.thick_ice }),
             _ => Some(self.ids.ice),
         }
+    }
+
+    /// The worn ground of a trail through a biome with these tags, in patches.
+    fn tread(&self, tags: &[String], x: i32, z: i32) -> BlockId {
+        let (_, palette) = self.treads.iter().find(|(want, _)| want.is_empty() || want.iter().any(|t| tags.contains(t))).expect("the last tread suits every biome");
+        palette.pick(self.mix(x, z))
     }
 
     pub fn leaves(&self, tree: TreeId) -> BlockId {
@@ -509,7 +604,13 @@ impl Overworld {
         // Beaches along the sea. Banks of rivers and lakes are the river biome's own
         // (`Site::biome` takes it near fresh water).
         let beach = site.body == Body::Sea && site.continentalness < 0.7 && !past(above, 0.5, 2.5);
-        let ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
+        let mut ground = rules.ground(&biome.surface, &spot, beach, stones, strata);
+        // A trail's worn tread, thinning out at its edges into trodden grass.
+        if site.trail * 0.95 > d {
+            ground.top = terrain.tread(&biome.tags, x, z);
+        } else if site.trail > 0.0 && site.trail + 0.4 > d && ground.top == ids.grass {
+            ground.top = terrain.worn_edge;
+        }
         // Thin snow: the same snowy blocks snow that falls in play makes, else snowy soil.
         if past(-t, -2.5, 1.5) {
             if let Some(snowy) = terrain.snow_cover[ground.top.0 as usize] {
