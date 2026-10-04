@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use bevy::anti_alias::fxaa::Fxaa;
 use bevy::anti_alias::smaa::Smaa;
+use bevy::input::InputSystems;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use bevy::window::{PresentMode, PrimaryWindow};
@@ -13,14 +14,16 @@ use serde::{Deserialize, Serialize};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_protocol::MAX_FLY_SPEED;
 
+use crate::keys::Key;
 use crate::menu::Screen;
 use crate::menu::widgets::{
     ACCENT, ButtonStyle, MUTED, Pressed, SCRIM, SOFT, TEXT, TRACK, UiFont, button_row, heading, panel, screen, spawn_button,
     text,
 };
 use crate::net::Net;
-use crate::player::{LocalPlayer, UiState};
+use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::DayCycle;
+use crate::render::pack::{ActivePack, ShaderPacks};
 use crate::render::lod::{self, Lod};
 use crate::world::ClientWorld;
 
@@ -28,7 +31,10 @@ pub struct SettingsPlugin;
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostStartup, spawn_menu).add_systems(
+        app.init_resource::<Rebinding>()
+            .add_systems(PostStartup, spawn_menu)
+            .add_systems(PreUpdate, rebind.after(InputSystems))
+            .add_systems(
             Update,
             (
                 toggle_debug,
@@ -36,12 +42,13 @@ impl Plugin for SettingsPlugin {
                     drag_sliders,
                     click_switches,
                     click_choices,
+                    click_bindings,
                     click_buttons,
-                    sync_controls.run_if(resource_changed::<Settings>),
+                    sync_controls.run_if(resource_changed::<Settings>.or_eager(resource_changed::<Rebinding>)),
                     show_menu,
                 )
                     .chain(),
-                apply.run_if(resource_changed::<Settings>),
+                (apply, select_pack).run_if(resource_changed::<Settings>),
                 fit_lod_hole,
                 sync_server.run_if(in_state(Screen::InGame)),
             ),
@@ -68,7 +75,24 @@ pub struct Settings {
     /// Flight speed, in percent. Only admins may fly faster than normal.
     pub fly_speed: i32,
     pub anti_aliasing: AntiAliasing,
+    /// Key held to zoom in.
+    pub zoom_key: Key,
+    /// Key that opens the console to chat (`/` always opens it for a command).
+    pub chat_key: Key,
+    /// Magnification when zooming in, in percent.
+    pub zoom: i32,
+    /// Whether the view follows the mouse smoothly while zoomed.
+    pub cinematic_zoom: bool,
+    /// Whether zooming works in survival too, not only in creative.
+    pub zoom_in_survival: bool,
+    /// How far the hotbar and hearts sit above the bottom edge, in HUD pixels.
+    pub hud_raise: i32,
+    /// Name of the shader pack in use (see `render::pack`).
+    pub shader_pack: String,
 }
+
+/// The look new players start with.
+const DEFAULT_PACK: &str = "Verdant";
 
 /// How edges are smoothed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +133,13 @@ impl Default for Settings {
             debug_overlay: false,
             fly_speed: 100,
             anti_aliasing: AntiAliasing::default(),
+            zoom_key: Key(KeyCode::KeyC),
+            chat_key: Key(KeyCode::KeyT),
+            zoom: 400,
+            cinematic_zoom: true,
+            zoom_in_survival: false,
+            hud_raise: 3,
+            shader_pack: DEFAULT_PACK.into(),
         }
     }
 }
@@ -181,10 +212,21 @@ enum Slider {
     Music,
     Sounds,
     FlySpeed,
+    Zoom,
+    HudRaise,
 }
 
 impl Slider {
-    const ALL: [Slider; 6] = [Slider::ViewDistance, Slider::Fov, Slider::Sensitivity, Slider::Music, Slider::Sounds, Slider::FlySpeed];
+    const ALL: [Slider; 8] = [
+        Slider::ViewDistance,
+        Slider::Fov,
+        Slider::HudRaise,
+        Slider::Sensitivity,
+        Slider::Music,
+        Slider::Sounds,
+        Slider::FlySpeed,
+        Slider::Zoom,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -194,6 +236,8 @@ impl Slider {
             Slider::Music => "Music",
             Slider::Sounds => "Sound effects",
             Slider::FlySpeed => "Fly speed",
+            Slider::Zoom => "Zoom",
+            Slider::HudRaise => "Raise HUD",
         }
     }
 
@@ -205,6 +249,8 @@ impl Slider {
             Slider::Sensitivity => (25, 300, 5),
             Slider::Music | Slider::Sounds => (0, 100, 10),
             Slider::FlySpeed => (100, (MAX_FLY_SPEED * 100.0) as i32, 25),
+            Slider::Zoom => ((Zoom::MIN * 100.0) as i32, 1000, 50),
+            Slider::HudRaise => (0, 40, 1),
         }
     }
 
@@ -216,6 +262,8 @@ impl Slider {
             Slider::Music => settings.music_volume,
             Slider::Sounds => settings.sound_volume,
             Slider::FlySpeed => settings.fly_speed,
+            Slider::Zoom => settings.zoom,
+            Slider::HudRaise => settings.hud_raise,
         }
     }
 
@@ -227,6 +275,8 @@ impl Slider {
             Slider::Music => &mut settings.music_volume,
             Slider::Sounds => &mut settings.sound_volume,
             Slider::FlySpeed => &mut settings.fly_speed,
+            Slider::Zoom => &mut settings.zoom,
+            Slider::HudRaise => &mut settings.hud_raise,
         } = value;
     }
 
@@ -236,7 +286,9 @@ impl Slider {
             Slider::Fov => format!("{value}°"),
             Slider::Music | Slider::Sounds if value == 0 => "Off".into(),
             Slider::Sensitivity | Slider::Music | Slider::Sounds => format!("{value}%"),
-            Slider::FlySpeed => format!("{}×", value as f32 / 100.0),
+            Slider::FlySpeed | Slider::Zoom => format!("{}×", value as f32 / 100.0),
+            Slider::HudRaise if value == 0 => "Off".into(),
+            Slider::HudRaise => format!("{value} px"),
         }
     }
 }
@@ -246,6 +298,8 @@ impl Slider {
 enum Toggle {
     Vsync,
     DebugOverlay,
+    CinematicZoom,
+    ZoomInSurvival,
 }
 
 impl Toggle {
@@ -253,6 +307,8 @@ impl Toggle {
         match self {
             Toggle::Vsync => "VSync",
             Toggle::DebugOverlay => "Debug overlay",
+            Toggle::CinematicZoom => "Cinematic zoom",
+            Toggle::ZoomInSurvival => "Zoom in survival",
         }
     }
 
@@ -260,6 +316,8 @@ impl Toggle {
         match self {
             Toggle::Vsync => settings.vsync,
             Toggle::DebugOverlay => settings.debug_overlay,
+            Toggle::CinematicZoom => settings.cinematic_zoom,
+            Toggle::ZoomInSurvival => settings.zoom_in_survival,
         }
     }
 
@@ -267,6 +325,8 @@ impl Toggle {
         *match self {
             Toggle::Vsync => &mut settings.vsync,
             Toggle::DebugOverlay => &mut settings.debug_overlay,
+            Toggle::CinematicZoom => &mut settings.cinematic_zoom,
+            Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
         } = on;
     }
 }
@@ -275,28 +335,62 @@ impl Toggle {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Choice {
     AntiAliasing,
+    ShaderPack,
 }
 
 impl Choice {
     fn label(self) -> &'static str {
         match self {
             Choice::AntiAliasing => "Anti-aliasing",
+            Choice::ShaderPack => "Shader pack",
         }
     }
 
-    fn text(self, settings: &Settings) -> &'static str {
+    fn text(self, settings: &Settings, packs: &ShaderPacks) -> String {
         match self {
-            Choice::AntiAliasing => settings.anti_aliasing.label(),
+            Choice::AntiAliasing => settings.anti_aliasing.label().into(),
+            Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
         }
     }
 
-    fn step(self, settings: &mut Settings) {
+    fn step(self, settings: &mut Settings, packs: &ShaderPacks) {
         match self {
             Choice::AntiAliasing => {
                 let i = AntiAliasing::ALL.iter().position(|&a| a == settings.anti_aliasing).unwrap_or(0);
                 settings.anti_aliasing = AntiAliasing::ALL[(i + 1) % AntiAliasing::ALL.len()];
             }
+            Choice::ShaderPack => settings.shader_pack = packs.next(&settings.shader_pack).to_owned(),
         }
+    }
+}
+
+/// A key the player can rebind.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Binding {
+    Zoom,
+    Chat,
+}
+
+impl Binding {
+    fn label(self) -> &'static str {
+        match self {
+            Binding::Zoom => "Zoom key",
+            Binding::Chat => "Chat key",
+        }
+    }
+
+    fn get(self, settings: &Settings) -> Key {
+        match self {
+            Binding::Zoom => settings.zoom_key,
+            Binding::Chat => settings.chat_key,
+        }
+    }
+
+    fn set(self, settings: &mut Settings, key: Key) {
+        *match self {
+            Binding::Zoom => &mut settings.zoom_key,
+            Binding::Chat => &mut settings.chat_key,
+        } = key;
     }
 }
 
@@ -305,6 +399,7 @@ enum Control {
     Slider(Slider),
     Switch(Toggle),
     Choice(Choice),
+    Key(Binding),
 }
 
 const SECTIONS: [(&str, &[Control]); 3] = [
@@ -313,13 +408,26 @@ const SECTIONS: [(&str, &[Control]); 3] = [
         &[
             Control::Slider(Slider::ViewDistance),
             Control::Slider(Slider::Fov),
+            Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::AntiAliasing),
+            Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::Vsync),
             Control::Switch(Toggle::DebugOverlay),
         ],
     ),
     ("Audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds)]),
-    ("Controls", &[Control::Slider(Slider::Sensitivity), Control::Slider(Slider::FlySpeed)]),
+    (
+        "Controls",
+        &[
+            Control::Slider(Slider::Sensitivity),
+            Control::Key(Binding::Chat),
+            Control::Key(Binding::Zoom),
+            Control::Slider(Slider::Zoom),
+            Control::Switch(Toggle::CinematicZoom),
+            Control::Switch(Toggle::ZoomInSurvival),
+            Control::Slider(Slider::FlySpeed),
+        ],
+    ),
 ];
 
 #[derive(Component, Clone, Copy)]
@@ -356,6 +464,14 @@ struct Switch(Toggle);
 struct ChoiceButton(Choice);
 #[derive(Component)]
 struct ChoiceValue(Choice);
+#[derive(Component)]
+struct KeyButton(Binding);
+#[derive(Component)]
+struct KeyValue(Binding);
+
+/// The binding waiting for its new key, after its button was clicked.
+#[derive(Resource, Default)]
+struct Rebinding(Option<Binding>);
 
 const PANEL_WIDTH: f32 = 520.0;
 const SLIDER_WIDTH: f32 = 200.0;
@@ -392,6 +508,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
         Control::Slider(slider) => slider.label(),
         Control::Switch(toggle) => toggle.label(),
         Control::Choice(choice) => choice.label(),
+        Control::Key(binding) => binding.label(),
     };
     let node = Node {
         height: Val::Px(38.0),
@@ -409,6 +526,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
             Control::Slider(slider) => spawn_slider(row, font, slider),
             Control::Switch(toggle) => spawn_switch(row, toggle),
             Control::Choice(choice) => spawn_choice(row, font, choice),
+            Control::Key(binding) => spawn_key(row, font, binding),
         }
     });
 }
@@ -466,6 +584,20 @@ fn spawn_choice(row: &mut ChildSpawnerCommands, font: &Handle<Font>, choice: Cho
         .with_child((ChoiceValue(choice), text(font, "", 14.0, TEXT)));
 }
 
+/// A pill showing the bound key; clicked, it waits for the next key pressed.
+fn spawn_key(row: &mut ChildSpawnerCommands, font: &Handle<Font>, binding: Binding) {
+    let pill = Node {
+        width: Val::Px(120.0),
+        height: Val::Px(26.0),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        border_radius: BorderRadius::MAX,
+        ..default()
+    };
+    row.spawn((Button, KeyButton(binding), pill, BackgroundColor(TRACK)))
+        .with_child((KeyValue(binding), text(font, "", 14.0, TEXT)));
+}
+
 /// F3 toggles the debug overlay, menu or not.
 fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
     if keys.just_pressed(KeyCode::F3) {
@@ -495,11 +627,37 @@ fn click_switches(mut settings: ResMut<Settings>, switches: Query<(&Switch, &Int
     }
 }
 
-fn click_choices(mut settings: ResMut<Settings>, choices: Query<(&ChoiceButton, &Interaction), Changed<Interaction>>) {
+fn click_choices(
+    mut settings: ResMut<Settings>,
+    packs: Res<ShaderPacks>,
+    choices: Query<(&ChoiceButton, &Interaction), Changed<Interaction>>,
+) {
     for (choice, interaction) in &choices {
         if *interaction == Interaction::Pressed {
-            choice.0.step(&mut settings);
+            choice.0.step(&mut settings, &packs);
         }
+    }
+}
+
+/// Clicking a key's pill waits for a new key; clicking it again stops waiting.
+fn click_bindings(mut rebinding: ResMut<Rebinding>, buttons: Query<(&KeyButton, &Interaction), Changed<Interaction>>) {
+    for (button, interaction) in &buttons {
+        if *interaction == Interaction::Pressed {
+            rebinding.0 = if rebinding.0 == Some(button.0) { None } else { Some(button.0) };
+        }
+    }
+}
+
+/// Binds the first key pressed while waiting for one; Esc stops waiting. Runs before the
+/// game sees the key, and hides it from the game, so binding E or Esc does not also open
+/// the inventory or close the menu.
+fn rebind(mut keys: ResMut<ButtonInput<KeyCode>>, mut rebinding: ResMut<Rebinding>, mut settings: ResMut<Settings>) {
+    let Some(binding) = rebinding.0 else { return };
+    let Some(&key) = keys.get_just_pressed().find(|&&key| key == KeyCode::Escape || Key::bindable(key)) else { return };
+    keys.clear_just_pressed(key);
+    rebinding.0 = None;
+    if key != KeyCode::Escape && binding.get(&settings) != Key(key) {
+        binding.set(&mut settings, Key(key));
     }
 }
 
@@ -534,11 +692,20 @@ fn sync_controls(
     mut values: Query<(&SliderValue, &mut Text)>,
     mut switches: Query<(&Switch, &mut Node, &mut BackgroundColor)>,
     mut choices: Query<(&ChoiceValue, &mut Text), Without<SliderValue>>,
+    mut keys: Query<(&KeyValue, &mut Text), (Without<SliderValue>, Without<ChoiceValue>)>,
+    rebinding: Res<Rebinding>,
+    packs: Res<ShaderPacks>,
 ) {
-    for (choice, mut text) in &mut choices {
-        let value = choice.0.text(&settings);
+    for (key, mut text) in &mut keys {
+        let value = if rebinding.0 == Some(key.0) { "Press a key" } else { key.0.get(&settings).label() };
         if text.0 != value {
             value.clone_into(&mut text.0);
+        }
+    }
+    for (choice, mut text) in &mut choices {
+        let value = choice.0.text(&settings, &packs);
+        if text.0 != value {
+            text.0 = value;
         }
     }
     for (fill, mut node) in &mut fills {
@@ -570,11 +737,13 @@ fn show_menu(
     mut nodes: Query<(&mut Node, &ShownWhen)>,
     quit_to_title: Query<(&MenuButton, &Children)>,
     mut texts: Query<&mut Text>,
+    mut rebinding: ResMut<Rebinding>,
 ) {
     let in_game = *screen.get() == Screen::InGame;
     let open = (in_game && ui.menu_open) || *screen.get() == Screen::Settings;
     if *was_open && !open {
         settings.save();
+        rebinding.0 = None;
     }
     *was_open = open;
     if let Ok(mut visibility) = root.single_mut() {
@@ -606,13 +775,22 @@ fn show_menu(
     }
 }
 
-/// Applies the settings other modules do not read for themselves.
+/// Switches to the chosen shader pack.
+fn select_pack(settings: Res<Settings>, packs: Res<ShaderPacks>, mut active: ResMut<ActivePack>) {
+    let pack = packs.get(&settings.shader_pack);
+    if active.0 != *pack {
+        active.0 = pack.clone();
+    }
+}
+
+/// Applies the settings other modules do not read for themselves. The field of view is
+/// the player's camera's, which narrows while zooming.
 fn apply(
     settings: Res<Settings>,
     mut world: ResMut<ClientWorld>,
     mut cycle: ResMut<DayCycle>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
-    mut camera: Query<(Entity, &mut Projection, &mut Msaa), With<Camera3d>>,
+    mut camera: Query<(Entity, &mut Msaa), With<Camera3d>>,
     mut commands: Commands,
 ) {
     if world.view_distance != settings.view_distance {
@@ -625,10 +803,7 @@ fn apply(
     {
         window.present_mode = present_mode;
     }
-    let Ok((entity, mut projection, mut msaa)) = camera.single_mut() else { return };
-    if let Projection::Perspective(perspective) = &mut *projection {
-        perspective.fov = (settings.fov as f32).to_radians();
-    }
+    let Ok((entity, mut msaa)) = camera.single_mut() else { return };
     msaa.set_if_neq(if settings.anti_aliasing == AntiAliasing::Msaa4 { Msaa::Sample4 } else { Msaa::Off });
     let mut camera = commands.entity(entity);
     match settings.anti_aliasing {

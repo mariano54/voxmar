@@ -1,4 +1,5 @@
-// Rain streaks and snowflakes in a box that follows the camera (see precipitation.rs).
+// Rain streaks, drizzle, snowflakes, sleet and hail, and dust and glowing motes on the
+// wind, in a box that follows the camera (see precipitation.rs).
 // Each vertex is a drop number times four plus a corner; everything else is derived here.
 
 #import bevy_pbr::mesh_view_bindings::view
@@ -16,6 +17,18 @@ struct Params {
     streak: vec4<f32>,
     // rgb: light falling on the drops
     light: vec4<f32>,
+    // Of the rain that is not snow: xyz how far drizzle, sleet and hail have fallen, w the
+    // fraction that is each
+    drizzle: vec4<f32>,
+    sleet: vec4<f32>,
+    hail: vec4<f32>,
+    // xyz: how far dust and motes have drifted, w: how much of each the air holds
+    dust: vec4<f32>,
+    motes: vec4<f32>,
+    // rgb: the dust's colour
+    dust_color: vec4<f32>,
+    // xyz: the wind, in blocks per second
+    wind: vec4<f32>,
     // Top of the highest block plus one in each column around the camera, 16 bits each.
     heights: array<vec4<u32>, 512>,
 };
@@ -25,9 +38,13 @@ struct Params {
 // As in precipitation.rs.
 const BOX = vec3(40.0, 36.0, 40.0);
 const MAP: i32 = 64;
-const DROPS: u32 = 16000u;
+const DROPS: u32 = 20000u;
 // The last drops splash on the ground instead, within this many blocks of the camera.
 const SPLASHES: u32 = 3000u;
+// Before them, specks of dust, then motes, ride the wind; the rest fall.
+const DUST: u32 = 3200u;
+const MOTES: u32 = 800u;
+const FALLING: u32 = DROPS - SPLASHES - DUST - MOTES;
 const SPLASH_REACH: f32 = 14.0;
 const TAU: f32 = 6.28318531;
 // Off-screen, for drops not drawn: all four corners collapse there.
@@ -40,7 +57,8 @@ struct VertexOutput {
     // Height above the highest block below, in blocks; drops end where they land.
     @location(1) above: f32,
     @location(2) @interpolate(flat) color: vec4<f32>,
-    // 0: raindrop, 1: snowflake, 2: splash
+    // 0: raindrop, 1: snowflake, 2: splash, 3: hailstone, 4: sleet, 5: drizzle, 6: dust,
+    // 7: mote
     @location(3) @interpolate(flat) kind: u32,
     // How far a splash has spread, 0..1.
     @location(4) @interpolate(flat) spread: f32,
@@ -114,6 +132,70 @@ fn splash(n: u32, corner: vec2<f32>) -> VertexOutput {
     return out;
 }
 
+// A speck of dust or a glowing mote, carried on the wind with a little turbulence, in a
+// box half as wide as the falling drops'.
+fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip = HIDDEN;
+    let mote = n >= FALLING + DUST;
+    let amount = select(params.dust.w, params.motes.w, mote);
+    var h = pcg(n * 3266489917u + 99u);
+    if unit(h) >= amount {
+        return out;
+    }
+    h = pcg(h);
+    let x = unit(h);
+    h = pcg(h);
+    let y = unit(h);
+    h = pcg(h);
+    let z = unit(h);
+    h = pcg(h);
+    let size = unit(h);
+    h = pcg(h);
+    let phase = unit(h) * TAU;
+    let box = BOX * 0.5;
+    let drifted = select(params.dust.xyz, params.motes.xyz, mote);
+    let p = vec3(x, y, z) * box + drifted - params.camera.xyz;
+    var offset = p - box * floor(p / box) - box * 0.5;
+    let t = params.camera.w;
+    // Dust tumbles in the gusts; motes wander slowly.
+    let swirl = select(0.6, 0.9, mote);
+    let rate = select(1.3 + size, 0.25 + 0.2 * size, mote);
+    offset += vec3(sin(t * rate + phase), 0.5 * sin(t * rate * 1.3 + phase * 2.1), cos(t * rate * 0.8 + phase * 1.7)) * swirl;
+    let below = ground(offset);
+    if offset.y < below + 0.1 {
+        return out;
+    }
+    let distance = length(offset);
+    let pixel = distance * 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
+    let radius = select(0.03 + 0.06 * size, 0.025 + 0.035 * size, mote);
+    let drawn = max(radius, pixel * 0.8);
+    let right = view.world_from_view[0].xyz;
+    let up = view.world_from_view[1].xyz;
+    let world = offset + (right * corner.x + up * corner.y) * drawn;
+    var opacity = radius / drawn;
+    if mote {
+        // Pale gold and sky blue, glowing brighter than daylight so bloom haloes them, and
+        // twinkling.
+        let hue = mix(vec3(1.0, 0.85, 0.45), vec3(0.55, 0.85, 1.0), fract(size * 7.0));
+        let twinkle = 0.6 + 0.4 * sin(t * (1.5 + 2.0 * size) + phase);
+        out.color = vec4(hue * 4.0 * twinkle, 0.0);
+        out.kind = 7u;
+    } else {
+        out.color = vec4(params.dust_color.rgb * params.light.rgb * 1.6, 0.0);
+        opacity *= 0.55;
+        out.kind = 6u;
+    }
+    let reach = length(offset.xz) / (box.x * 0.5);
+    opacity *= (1.0 - smoothstep(0.6, 1.0, reach)) * (1.0 - smoothstep(0.8, 1.0, abs(offset.y) / (box.y * 0.5)));
+    opacity *= smoothstep(0.6, 2.0, distance);
+    out.color.a = opacity;
+    out.clip = project(world);
+    out.uv = corner;
+    out.above = world.y - below;
+    return out;
+}
+
 @vertex
 fn vertex(@location(0) id: u32) -> VertexOutput {
     var out: VertexOutput;
@@ -123,13 +205,30 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     if drop >= DROPS - SPLASHES {
         return splash(drop, corner);
     }
+    if drop >= FALLING {
+        return airborne(drop, corner);
+    }
     var h = pcg(drop * 2654435769u + 12345u);
     // Lighter rain shows fewer of the drops.
     if unit(h) >= params.rain.w {
         return out;
     }
     h = pcg(h);
-    let snowflake = unit(h) < params.snow.w;
+    // Snow, or of the rest hail, sleet, drizzle or rain, in the fractions asked for.
+    let choice = unit(h);
+    let snowflake = choice < params.snow.w;
+    let rest = (choice - params.snow.w) / max(1.0 - params.snow.w, 1e-4);
+    var kind = 0u;
+    if snowflake {
+        kind = 1u;
+    } else if rest < params.hail.w {
+        kind = 3u;
+    } else if rest < params.hail.w + params.sleet.w {
+        kind = 4u;
+    } else if (rest - params.hail.w - params.sleet.w) / max(1.0 - params.hail.w - params.sleet.w, 1e-4) < params.drizzle.w {
+        kind = 5u;
+    }
+    let round = kind == 1u || kind == 3u || kind == 4u;
     h = pcg(h);
     let x = unit(h);
     h = pcg(h);
@@ -142,10 +241,17 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     let phase = unit(h) * TAU;
 
     // Where the drop is relative to the camera, wrapped into the box around it. Slow
-    // snowflakes crowd into a box half as wide, which divides the full one, so they stay
-    // put in the world too.
-    let fallen = select(params.rain.xyz, params.snow.xyz, snowflake);
-    let box = select(BOX, BOX * 0.5, snowflake);
+    // snowflakes and fine drizzle crowd into a box half as wide, which divides the full
+    // one, so they stay put in the world too.
+    var fallen = params.rain.xyz;
+    switch kind {
+        case 1u: { fallen = params.snow.xyz; }
+        case 3u: { fallen = params.hail.xyz; }
+        case 4u: { fallen = params.sleet.xyz; }
+        case 5u: { fallen = params.drizzle.xyz; }
+        default: {}
+    }
+    let box = select(BOX, BOX * 0.5, kind == 1u || kind == 5u);
     let p = vec3(x, y, z) * box + fallen - params.camera.xyz;
     var offset = p - box * floor(p / box) - box * 0.5;
     let t = params.camera.w;
@@ -161,26 +267,45 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     var opacity: f32;
     // How far the drop reaches above its centre; below the ground it is not drawn at all.
     var top: f32;
-    if snowflake {
-        let radius = 0.03 + 0.04 * size;
+    if round {
+        // Snowflakes, and hailstones and sleet pellets: white, icy, small and hard.
+        var radius = 0.03 + 0.04 * size;
+        var brightness = 1.8;
+        var tint = vec3(1.0);
+        var strength = 0.9;
+        if kind == 3u {
+            radius = 0.03 + 0.035 * size;
+            brightness = 2.2;
+            tint = vec3(0.92, 0.96, 1.0);
+            strength = 1.0;
+        } else if kind == 4u {
+            radius = 0.015 + 0.015 * size;
+            brightness = 1.6;
+            tint = vec3(0.85, 0.92, 1.0);
+            strength = 0.6;
+        }
         let drawn = max(radius, pixel * 0.7);
         let right = view.world_from_view[0].xyz;
         let up = view.world_from_view[1].xyz;
         world = offset + (right * corner.x + up * corner.y) * drawn;
         top = drawn;
-        opacity = 0.9 * radius / drawn;
-        out.color = vec4(params.light.rgb * 1.8, 0.0);
-        out.kind = 1u;
+        opacity = strength * radius / drawn;
+        out.color = vec4(params.light.rgb * tint * brightness, 0.0);
+        out.kind = kind;
     } else {
-        let along = params.streak.xyz;
-        let length = params.streak.w * (0.7 + 0.6 * size);
-        let width = 0.012 + 0.008 * size;
+        // Raindrops, and drizzle: finer, slower and blown further by the wind.
+        let drizzle = kind == 5u;
+        let drizzle_fall = params.wind.xyz * 0.9 - vec3(0.0, 4.0, 0.0);
+        let along = select(params.streak.xyz, normalize(drizzle_fall), drizzle);
+        let length = select(params.streak.w, length(drizzle_fall) * 0.045, drizzle) * (0.7 + 0.6 * size);
+        let width = select(0.012 + 0.008 * size, 0.006 + 0.004 * size, drizzle);
         let drawn = max(width, pixel * 0.8);
         let across = normalize(cross(along, offset / max(distance, 1e-3)));
         world = offset + across * corner.x * drawn * 0.5 + along * corner.y * length * 0.5;
         top = -along.y * length * 0.5;
-        opacity = 0.45 * width / drawn;
+        opacity = select(0.45, 0.35, drizzle) * width / drawn;
         out.color = vec4(params.light.rgb * vec3(1.15, 1.2, 1.3), 0.0);
+        out.kind = kind;
     }
     if offset.y + top < below {
         return out;
@@ -208,8 +333,20 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let r = length(in.uv);
         let rim = in.spread * 0.6 + 0.3;
         shape = (1.0 - smoothstep(0.0, 0.25, abs(r - rim))) * smoothstep(0.9, 0.2, in.uv.y);
-    } else if in.kind == 1u {
+    } else if in.kind == 1u || in.kind == 4u {
         shape = 1.0 - smoothstep(0.2, 1.0, length(in.uv));
+    } else if in.kind == 3u {
+        // A hard-edged pellet with a brighter crown.
+        let r = length(in.uv);
+        shape = (1.0 - smoothstep(0.75, 1.0, r)) * (0.75 + 0.25 * smoothstep(0.2, -0.6, in.uv.y));
+    } else if in.kind == 6u {
+        // A soft puff.
+        let r = 1.0 - smoothstep(0.0, 1.0, length(in.uv));
+        shape = r * r;
+    } else if in.kind == 7u {
+        // A bright core in a soft glow.
+        let r = length(in.uv);
+        shape = (1.0 - smoothstep(0.0, 1.0, r)) * 0.5 + (1.0 - smoothstep(0.0, 0.35, r)) * 0.5;
     } else {
         // Soft across, tapering towards both ends.
         shape = (1.0 - in.uv.x * in.uv.x) * (1.0 - in.uv.y * in.uv.y * in.uv.y * in.uv.y);

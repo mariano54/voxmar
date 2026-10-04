@@ -2,11 +2,11 @@
 //!
 //! A world is a directory:
 //! - `world.ron`: name, seed, game mode, creation and last-played times, the generator
-//!   that made it and the time of day.
+//!   that made it, the world's age and the time of day and how fast it runs.
 //! - `columns/<x>.<z>.bin`: each column players have edited, as zlib-compressed postcard
 //!   together with the names of the blocks it uses, so saves survive content changes that
 //!   renumber blocks. Untouched columns are not stored: generation recreates them exactly.
-//! - `players/<name>.ron`: each player's position, health and inventory.
+//! - `players/<name>.ron`: each player's position, game mode, health and inventory.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
 //! never leaves a half-written file behind.
@@ -41,7 +41,7 @@ pub enum GameMode {
     /// No flight.
     #[default]
     Survival,
-    /// Flight is allowed and the singleplayer player is an admin.
+    /// Flight is allowed.
     Creative,
 }
 
@@ -58,9 +58,21 @@ pub struct WorldMeta {
     /// generated again, so a different generator would leave seams.
     pub generator: String,
     pub generator_version: u32,
-    /// Server ticks since the world began, which set the time of day.
+    /// Server ticks since the world began: the clock the simulation (and the weather)
+    /// runs on.
     #[serde(default)]
     pub time: u64,
+    /// The time of day in ticks since the first sunrise, which commands can set; `None`
+    /// in older worlds, whose time of day was `time`.
+    #[serde(default)]
+    pub day: Option<u64>,
+    /// How fast the time of day runs, 0 when frozen.
+    #[serde(default = "normal_speed")]
+    pub day_speed: f32,
+}
+
+fn normal_speed() -> f32 {
+    1.0
 }
 
 impl WorldMeta {
@@ -75,6 +87,8 @@ impl WorldMeta {
             generator: Overworld::ID.into(),
             generator_version: Overworld::VERSION,
             time: 0,
+            day: None,
+            day_speed: 1.0,
         }
     }
 }
@@ -89,6 +103,8 @@ pub fn unix_time() -> u64 {
 pub struct SavedPlayer {
     pub position: Vec3,
     pub yaw: f32,
+    /// The player's own game mode, once an admin has changed it; otherwise the world's.
+    pub mode: Option<GameMode>,
     pub flying: bool,
     pub health: Health,
     pub inventory: Inventory,
@@ -99,6 +115,8 @@ pub struct SavedPlayer {
 struct PlayerFile {
     position: [f32; 3],
     yaw: f32,
+    #[serde(default)]
+    mode: Option<GameMode>,
     flying: bool,
     health: Health,
     inventory: Vec<Option<(String, u8)>>,
@@ -237,7 +255,7 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, flying: file.flying, health, inventory }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -250,6 +268,7 @@ impl WorldSave {
         let file = PlayerFile {
             position: player.position.to_array(),
             yaw: player.yaw,
+            mode: player.mode,
             flying: player.flying,
             health: player.health,
             inventory,
@@ -378,6 +397,7 @@ mod tests {
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,
+            mode: Some(GameMode::Creative),
             flying: true,
             health: Health { current: 13, max: 20 },
             inventory,

@@ -9,13 +9,15 @@
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
-//! `--fov DEGREES`, `--weather clear|cirrus|cumulus|cloudy|overcast|rain|storm|snow` (show
-//! that instead of the server's weather), `--no-vsync`, `--no-music`. `--view-distance`,
+//! `--fov DEGREES`, `--weather KIND` (show that instead of the server's weather; the kinds
+//! are in `weather.ron`), `--command LINE` (run a console command once in game, such as
+//! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings.
 
 mod capture;
 mod hud;
 mod interact;
+mod keys;
 mod menu;
 mod music;
 mod net;
@@ -59,6 +61,7 @@ struct Options {
     fov: Option<i32>,
     vsync: Option<bool>,
     weather: Option<voxmar_protocol::Weather>,
+    commands: Vec<String>,
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
@@ -79,6 +82,7 @@ fn parse_options() -> Result<Options, String> {
         fov: None,
         vsync: None,
         weather: None,
+        commands: Vec::new(),
         capture: None,
         pose: None,
         flight: None,
@@ -103,6 +107,7 @@ fn parse_options() -> Result<Options, String> {
                 let name = value()?;
                 options.weather = Some(weather::preset(&name).ok_or_else(|| format!("--weather: unknown weather {name}"))?);
             }
+            "--command" => options.commands.push(value()?),
             "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
@@ -135,10 +140,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
-    // Captures are benchmarks and visual checks, so they ignore the player's saved settings.
-    let mut settings = if options.capture.is_some() { Settings::default() } else { Settings::load() };
+    // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
+    // unless a configuration directory is given explicitly.
+    let reproducible = options.capture.is_some() && std::env::var_os("VOXMAR_CONFIG").is_none();
+    let mut settings = if reproducible { Settings::default() } else { Settings::load() };
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
@@ -181,12 +189,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
     .insert_resource(Actions(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
+    .insert_resource(shader_packs)
     .insert_resource(settings)
     .insert_resource(Registry(registry))
     .add_systems(Startup, setup);
     if let Some(forced) = options.weather {
         app.world_mut().resource_mut::<weather::ClientWeather>().force(forced);
     }
+    app.world_mut().resource_mut::<hud::console::Console>().run_when_joined(options.commands);
 
     // Go straight into a game when asked to, otherwise to the title screen.
     let first = if let Some(screen) = options.screen {
