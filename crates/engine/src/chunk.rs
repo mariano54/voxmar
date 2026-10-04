@@ -45,6 +45,11 @@ impl Chunk {
 
     pub fn from_dense(blocks: &[BlockId]) -> Self {
         assert_eq!(blocks.len(), CHUNK_VOLUME);
+        // Many chunks are all air or all stone. Compared in runs, which vectorise.
+        let first = blocks[0];
+        if blocks.as_chunks::<64>().0.iter().all(|run| run.iter().fold(0, |any, b| any | (b.0 ^ first.0)) == 0) {
+            return Self::uniform(first);
+        }
         let mut palette: Vec<BlockId> = Vec::new();
         // Indices are resolved through a small direct-mapped cache because neighbouring
         // blocks are usually identical.
@@ -64,13 +69,12 @@ impl Chunk {
             *dst = last.1;
         }
         let bits = bits_for(palette.len());
-        let mut chunk = Self { palette, bits, data: vec![0; words_for(bits)] };
-        if bits > 0 {
-            for (i, &index) in indices.iter().enumerate() {
-                chunk.write_index(i, index);
-            }
-        }
-        chunk
+        // Whole words at a time: each holds `64 / bits` indices, lowest first.
+        let data = indices
+            .chunks(64 / bits as usize)
+            .map(|word| word.iter().rev().fold(0u64, |packed, &index| packed << bits | index as u64))
+            .collect();
+        Self { palette, bits, data }
     }
 
     /// Returns the block if the chunk contains only one kind of block.
@@ -196,6 +200,22 @@ mod tests {
             c.compact();
             c
         });
+    }
+
+    #[test]
+    fn from_dense_packs_like_set() {
+        for kinds in [1u16, 2, 3, 5, 17, 300] {
+            let dense: Vec<BlockId> = (0..CHUNK_VOLUME).map(|i| BlockId((i * 7919 % 1009) as u16 % kinds)).collect();
+            let mut chunk = Chunk::uniform(dense[0]);
+            for (i, &block) in dense.iter().enumerate() {
+                chunk.set(i, block);
+            }
+            let packed = Chunk::from_dense(&dense);
+            assert_eq!(packed.palette.len(), chunk.palette.len());
+            assert!((0..CHUNK_VOLUME).all(|i| packed.get(i) == dense[i]), "{kinds} kinds");
+            assert!(packed.is_valid());
+        }
+        assert_eq!(Chunk::from_dense(&vec![BlockId(4); CHUNK_VOLUME]), Chunk::uniform(BlockId(4)));
     }
 
     #[test]

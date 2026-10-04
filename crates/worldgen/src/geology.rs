@@ -1,7 +1,10 @@
 //! Stage 1: continents and mountain ranges (the relief the climate sees), and hills on
 //! top, reduced to a surface height. Rivers and lakes cut into it later (`water`).
 
+use std::cell::RefCell;
+
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType};
+use rustc_hash::FxHashMap;
 
 use crate::dials::WorldDials;
 use crate::water::{Body, Cavity, Current};
@@ -169,19 +172,21 @@ impl Geology {
 }
 
 /// Geology already sampled over a square of positions, which falls back to sampling
-/// anywhere else.
+/// anywhere else (and keeps those samples, since decorations reaching out of the column
+/// ask for the same few positions over and over).
 pub struct GeoGrid<'a> {
     world: &'a Overworld,
     min: (i32, i32),
     size: i32,
     samples: Vec<GeoSample>,
+    beyond: RefCell<FxHashMap<(i32, i32), GeoSample>>,
 }
 
 impl<'a> GeoGrid<'a> {
     /// Samples the `size`×`size` positions from `min`.
     pub fn new(world: &'a Overworld, min: (i32, i32), size: i32) -> Self {
         let samples = world.geo_area(min.0, min.1, size);
-        Self { world, min, size, samples }
+        Self { world, min, size, samples, beyond: RefCell::default() }
     }
 
     pub fn samples(&self) -> &[GeoSample] {
@@ -193,7 +198,7 @@ impl<'a> GeoGrid<'a> {
         if (0..self.size).contains(&i) && (0..self.size).contains(&j) {
             self.samples[(j * self.size + i) as usize]
         } else {
-            self.world.geo(x, z)
+            *self.beyond.borrow_mut().entry((x, z)).or_insert_with(|| self.world.geo(x, z))
         }
     }
 
