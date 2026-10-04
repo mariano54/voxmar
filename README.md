@@ -13,6 +13,10 @@ cargo run --release -- --host               # also open singleplayer worlds on t
 cargo run --release -p voxmar_server        # dedicated server on port 25665, world in ./world
 ```
 
+While developing, use `--profile iter` in place of `--release` (for `run`, `build` and `test`):
+it rebuilds in seconds rather than minutes after an edit and runs nearly as fast. Keep
+`--release` for performance measurements.
+
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
 frame rate), `--weather clear|cirrus|cumulus|cloudy|overcast|rain|storm|snow` (show that instead
