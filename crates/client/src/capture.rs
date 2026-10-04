@@ -135,7 +135,7 @@ fn capture(
     mut exit: MessageWriter<AppExit>,
     lod: Res<Lod>,
     screen: Res<State<Screen>>,
-    weather: Res<crate::weather::ClientWeather>,
+    (weather, air): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>),
 ) {
     let now = time.elapsed_secs();
     if let Some(taken) = state.taken_at {
@@ -201,6 +201,8 @@ fn capture(
     );
     let shown = &weather.current;
     info!("weather: {}: {}; effects: {}", shown.describe(), shown.summary(), weather.effects.join(", "));
+    let particles: Vec<String> = air.particles.iter().map(|p| format!("{} {:.0}%", p.name, p.density * 100.0)).collect();
+    info!("air: haze {:.2} ×{:.2}, warmth {:.2}, saturation {:.2}; particles: {}", air.haze, air.haze_density, air.warmth, air.saturation, particles.join(", "));
     commands.spawn(Screenshot::image(state.target.clone())).observe(save_to_disk(state.path.clone()));
     state.taken_at = Some(now);
 }

@@ -364,9 +364,12 @@ mod tests {
     /// first, and on whichever thread.
     #[test]
     fn trails_never_depend_on_order() {
-        // Seed 7 has a trail fording a creek near (100, 15).
         let (a, b) = (world(7), world(7));
-        let area: Vec<(i32, i32)> = (0..48 * 48).map(|i| (76 + i % 48, -9 + i / 48)).collect();
+        // Around a point on the trail nearest the origin, found in a third world.
+        let (lines, _) = world(7).trails_in(IVec2::splat(-400), IVec2::splat(400));
+        let near = lines.iter().flatten().map(|p| p.0).min_by(|p, q| p.length().total_cmp(&q.length())).expect("a trail near the origin");
+        let corner = near.as_ivec2() - 24;
+        let area: Vec<(i32, i32)> = (0..48 * 48).map(|i| (corner.x + i % 48, corner.y + i / 48)).collect();
         let forward: Vec<GeoSample> = area.iter().map(|&(x, z)| a.geo(x, z)).collect();
         // The other world plans from the far side first, on several threads.
         let _ = std::thread::scope(|s| {

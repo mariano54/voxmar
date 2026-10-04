@@ -3,7 +3,8 @@
 // Texture names refer to `textures/block/<name>` in the texture packs (our default pack in
 // assets/packs/default draws them all); `color` is the placeholder used when no pack has
 // the texture. `sound` is the material it sounds like (Stone when omitted). Plants are not
-// solid, break instantly and need ground beneath; `drops: "core:air"` drops nothing.
+// solid, break instantly and need ground beneath; `support: Above` makes a plant hang from
+// the block above instead, and go with it. `drops: "core:air"` drops nothing.
 //
 // `templates` make whole families of blocks: each family below is one line that fills in
 // `{name}` (see engine/src/block.rs). `variants` are other looks of a plant: each becomes
@@ -19,6 +20,8 @@
 //   log, stripped, wood, planks, leaves, sapling, fuel
 //   plant, flower, herb, grass, fern, reed, bush, fungus, groundcover
 //   natural, cobbled, polished, bricks, building, light (gives light), glass
+//   mossy, ruined (weathered building blocks), volcanic, dripstone, stalagmite,
+//   stalactite, hanging (grows down from a ceiling)
 // Rock: igneous, sedimentary, metamorphic; where it shows: cliff (bare rock faces), cave
 //   (cave walls), deep (well below the surface), surface (topsoil or ground cover)
 // Soil: fertile, wet, dry, acidic, sandy
@@ -67,6 +70,8 @@
             (name: "cobbled_{name}", textures: All("cobbled_{name}"), hardness: 2.0, color: (110, 110, 110), tags: ["stone", "cobbled", "building"]),
             (name: "polished_{name}", textures: All("polished_{name}"), hardness: 1.5, color: (135, 135, 135), tags: ["stone", "polished", "building"]),
             (name: "{name}_bricks", textures: All("{name}_bricks"), hardness: 1.5, color: (120, 120, 120), tags: ["stone", "bricks", "building"]),
+            (name: "mossy_cobbled_{name}", textures: All("mossy_cobbled_{name}"), hardness: 2.0, drops: "cobbled_{name}", color: (100, 118, 90), tags: ["stone", "cobbled", "building", "mossy", "wet"]),
+            (name: "cracked_{name}_bricks", textures: All("cracked_{name}_bricks"), hardness: 1.5, color: (115, 115, 115), tags: ["stone", "bricks", "building", "ruined"]),
         ],
         // A flower or herb, with two more looks: a pair of blooms and a clump of three,
         // which give that many when picked.
@@ -91,7 +96,13 @@
         (name: "bedrock", textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
         (name: "stone", textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
-        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural"]),
+        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet"]),
+        (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building"]),
+        (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building"]),
+        (name: "mossy_stone_bricks", textures: All("mossy_stone_bricks"), hardness: 1.5, color: (105, 118, 95), family: "stone", tags: ["stone", "bricks", "building", "mossy", "wet"]),
+        (name: "cracked_stone_bricks", textures: All("cracked_stone_bricks"), hardness: 1.5, color: (115, 115, 115), family: "stone", tags: ["stone", "bricks", "building", "ruined"]),
+        // Volcanic glass, where lava meets water.
+        (name: "obsidian", sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep"]),
         // Soil
         (name: "dirt", sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"]),
         (name: "coarse_dirt", sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"]),
@@ -185,6 +196,26 @@
             color: (74, 59, 38),
             tags: ["wood", "natural", "wetland"],
         ),
+        // Caves: dripstone, glowing growth, crystals, magma, the deep dark's gloomvein,
+        // giant mushroom blocks and roots hanging from the roof.
+        (name: "dripstone_block", textures: All("dripstone_block"), hardness: 1.5, color: (130, 104, 88), tags: ["stone", "sedimentary", "natural", "cave", "dripstone"]),
+        (name: "pointed_dripstone", render: Plant, solid: false, textures: All("pointed_dripstone_up_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalagmite"]),
+        (name: "hanging_dripstone", render: Plant, solid: false, support: Above, textures: All("pointed_dripstone_down_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalactite", "hanging"]),
+        (name: "glow_berries", render: Plant, solid: false, support: Above, sound: Leaves, textures: All("cave_vines_lit"), light: 10, hardness: 0.0, color: (90, 120, 40), rarity: Uncommon, tags: ["plant", "cave", "hanging", "berry", "edible", "flavour:sweet", "glowing", "alchemy:night_sight"]),
+        (name: "glow_lichen", render: Plant, solid: false, sound: Grass, textures: All("glow_lichen"), light: 7, hardness: 0.0, drops: "core:air", color: (110, 160, 140), tags: ["plant", "cave", "groundcover", "glowing", "alchemy:luminous"]),
+        (name: "moss_carpet", render: Plant, solid: false, sound: Grass, textures: All("moss_carpet"), hardness: 0.0, color: (89, 110, 45), tags: ["plant", "groundcover", "cave", "forest_floor", "shade", "wet"]),
+        (name: "hanging_roots", render: Plant, solid: false, support: Above, sound: Grass, textures: All("hanging_roots"), hardness: 0.0, color: (160, 120, 90), tags: ["plant", "cave", "hanging", "root", "fibre"]),
+        (name: "crystal_block", sound: Glass, textures: All("crystal_block"), light: 2, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity"]),
+        (name: "crystal_cluster", render: Plant, solid: false, sound: Glass, textures: All("crystal_cluster"), light: 5, hardness: 1.0, color: (170, 150, 220), rarity: Uncommon, tags: ["gem", "cave", "glowing", "alchemy:clarity", "alchemy:aether"]),
+        (name: "magma_block", textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
+        (name: "gloomvein", sound: Soil, textures: All("gloomvein"), light: 1, hardness: 0.6, color: (20, 40, 46), rarity: Rare, tags: ["natural", "cave", "deep", "wonder", "glowing", "alchemy:night_sight", "alchemy:aether"]),
+        (name: "brown_mushroom_block", sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "brown_mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "red_mushroom_block", sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "mushroom_stem", sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        // Leaves turned for autumn, for groves that biomes want in colour.
+        (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow"]),
+        (name: "russet_oak_leaves", sound: Leaves, textures: All("russet_oak_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (170, 90, 40), family: "oak", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
+        (name: "amber_maple_leaves", sound: Leaves, textures: All("amber_maple_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (230, 150, 40), family: "maple", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
         (name: "azalea_leaves", sound: Leaves, textures: All("azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (90, 115, 45), tags: ["leaves", "natural", "broadleaf"]),
         (name: "flowering_azalea_leaves", sound: Leaves, textures: All("flowering_azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (110, 110, 70), tags: ["leaves", "natural", "broadleaf", "flower"]),
         // Glowcaps: giant glowing mushrooms of fungal caves and forests.

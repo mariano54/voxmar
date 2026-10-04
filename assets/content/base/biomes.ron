@@ -51,7 +51,7 @@
             // Rivers and lakes: wherever fresh water lies, in every climate. Creeks run
             // over gravel and rock between stony, mossy or muddy banks; rivers lay down
             // gravel in the hills and sand, clay and mud in the lowlands; lakes have
-            // sandy shores. Rules are tried in order.
+            // sandy shores; hot springs build travertine. Rules are tried in order.
             name: "river",
             tags: ["river", "water", "fresh_water"],
             role: River,
@@ -59,6 +59,9 @@
             flora: (trees: [Name("willow", 1.0), Name("mangrove", 2.3)], cover: 0.5, flowers: 0.04, plants: [Tag("grass", 1.0), Name("tall_grass", 0.4), Tag("riverbank", 6.0), Tag("wetland", 1.0)]),
             surface: (
                 rules: [
+                    // Hot springs: travertine terraces stained by minerals.
+                    (when: [Underwater, Water([Spring])], place: (top: Mix([Name("travertine", 3.0), Name("orange_terracotta", 1.0), Name("yellow_terracotta", 1.0)]), filler: Block("travertine"))),
+                    (when: [Water([Spring])], place: (top: Mix([Name("travertine", 4.0), Name("calcite", 1.0), Name("white_terracotta", 1.0)]), filler: Block("travertine"), depth: 2)),
                     // Creek beds.
                     (when: [Underwater, Water([Creek]), Warmer(17.0, 19.0), Wetter(1.05, 1.25), Chance(0.45)], place: (top: Block("mud"))),
                     (when: [Underwater, Water([Creek]), Patch((name: "creek_rock", scale: 7.0), 0.25)], place: (top: Mix([Name("stone", 2.0), Name("cobblestone", 1.0)]), filler: Block("stone"))),

@@ -2,13 +2,13 @@
 // `wood` (the inside: planks, stripped logs, log ends), `leaves` and `sapling`. Leaves are
 // grey for woods whose leaves the game tints with the climate's foliage colour, and in
 // colour for woods whose leaves keep their own (maple, cherry, the fantasy woods).
-// `{name}_leaves_bushy` is a round leaf cluster with clear margins, for drawing leaves as
-// tilted cards around a crown.
+// `{name}_leaves_bushy` is a round 32×32 leaf cluster with clear margins, for drawing
+// leaves as tilted cards around a crown (the renderer does not use it yet).
 (
     palettes: {
-        "leaf_grey": ["#555555", "#6d6d6d", "#858585", "#9d9d9d", "#b5b5b5", "#cdcdcd"],
+        "leaf_grey": ["#5c5c5c", "#757575", "#8e8e8e", "#a7a7a7", "#c0c0c0", "#d8d8d8"],
         "sapling_green": ["#2d4a1c", "#3a5e22", "#4a742a", "#5c8a33", "#70a03f"],
-        "oak_bark": ["#3b2c1b", "#4a3722", "#59432a", "#685033", "#775d3d"],
+        "oak_bark": ["#3e2e1b", "#523e25", "#675030", "#7d623c", "#93754a", "#a8895a"],
         "oak_wood": ["#6f5532", "#83643c", "#967447", "#a88452", "#b8935e", "#c6a26b"],
         "birch_bark": ["#a9a49a", "#c0bcb1", "#d4d0c6", "#e4e1d8", "#f2efe8"],
         "birch_wood": ["#9a8256", "#ad9563", "#bea771", "#ceb781", "#dbc591", "#e6d2a1"],
@@ -16,7 +16,7 @@
         "birch_sapling": ["#3f5a22", "#4f6e29", "#628432", "#769a3c", "#8bb047"],
         "spruce_bark": ["#25190d", "#2f2011", "#3a2816", "#45301b", "#503921"],
         "spruce_wood": ["#4a341d", "#583f24", "#664a2b", "#745533", "#82613b", "#906d44"],
-        "spruce_leaves": ["#3c3c3c", "#4f4f4f", "#636363", "#787878", "#8d8d8d", "#a2a2a2"],
+        "spruce_leaves": ["#4c4c4c", "#616161", "#777777", "#8d8d8d", "#a3a3a3", "#b9b9b9"],
         "spruce_sapling": ["#1d3a26", "#264a2f", "#305b38", "#3c6d43", "#4a7f4f"],
         "jungle_bark": ["#352b0e", "#443814", "#53451a", "#625320", "#716127"],
         "jungle_wood": ["#74503a", "#855d42", "#966b4b", "#a67955", "#b48760", "#c1966c"],
@@ -24,7 +24,7 @@
         "acacia_wood": ["#843f1f", "#9a4b26", "#ad572e", "#bd6437", "#ca7141", "#d67f4d"],
         "dark_oak_bark": ["#22180c", "#2b1f10", "#352614", "#3f2e19", "#49361e"],
         "dark_oak_wood": ["#382512", "#432d18", "#4e361e", "#5a3f24", "#66492b", "#725333"],
-        "dark_oak_leaves": ["#3c3c3c", "#4f4f4f", "#636363", "#787878", "#8d8d8d", "#a2a2a2"],
+        "dark_oak_leaves": ["#505050", "#666666", "#7c7c7c", "#929292", "#a8a8a8", "#bebebe"],
         "cherry_bark": ["#2a1a20", "#36222a", "#432b34", "#50353e", "#5d3f48"],
         "cherry_wood": ["#a87470", "#b9837e", "#c9928c", "#d6a29b", "#e1b2aa", "#eac1b9"],
         "cherry_leaves": ["#b0577f", "#c76a93", "#da82a8", "#e99cbc", "#f4b6cf", "#fbcfe0"],
@@ -63,10 +63,10 @@
     templates: {
         "wood": {
             "block/{name}_log": (layers: [
-                Paint(palette: "bark", base: 0.52, shade: [
-                    Noise(cells: (8, 2), octaves: 2, amount: 0.6),
-                    Stripes(vertical: true, period: 4.0, width: 0.25, amount: -0.35, warp: 1.0),
-                    Noise(cells: (16, 16), amount: 0.2),
+                Paint(palette: "bark", base: 0.55, shade: [
+                    Noise(cells: (16, 2), octaves: 2, amount: 0.55),
+                    Stripes(vertical: true, period: 4.0, width: 0.25, amount: -0.45, warp: 0.6),
+                    Grain(0.3),
                 ], clean: true),
             ]),
             "block/{name}_log_top": (layers: [
@@ -90,12 +90,17 @@
             ]),
             "block/{name}_leaves": (palettes: {"leaves": "leaf_grey"}, layers: [
                 // A dark mass, lit clumps of leaves on it, then gaps.
-                Paint(palette: "leaves", base: 0.35, shade: [Noise(cells: (8, 8), amount: 0.3)]),
-                Clusters(palette: "leaves", count: 40, size: (3, 5), spacing: 2.2, shade: 2, shadow: -1),
-                Cut(mask: [Noise(cells: (5, 5), amount: 1.0), Speckle(chance: 0.15, amount: 0.4)], above: 0.12),
+                Paint(palette: "leaves", base: 0.4, shade: [Noise(cells: (8, 8), amount: 0.3), Grain(0.2)]),
+                Clusters(palette: "leaves", count: 40, size: (3, 5), spacing: 2.2, shade: 3, shadow: -1),
+                Shift(by: [Grain(0.45)]),
+                Cut(mask: [Noise(cells: (8, 8), amount: 0.9), Grain(0.9)], above: 0.13),
             ]),
-            "block/{name}_leaves_bushy": (base: "block/{name}_leaves", layers: [
-                Cut(mask: [Circle(radius: 7.2, rough: 1.6)], below: 0.5),
+            // As Better Leaves Lite bakes them (MIT; the technique, not its images): the
+            // leaf tile 3×3 on a canvas twice its size, so the pattern runs on past every
+            // edge, cut to a ragged round cluster whose middle is the tile itself.
+            "block/{name}_leaves_bushy": (size: (32, 32), layers: [
+                Stamp(texture: "block/{name}_leaves", at: [(-8, -8), (8, -8), (24, -8), (-8, 8), (8, 8), (24, 8), (-8, 24), (8, 24), (24, 24)]),
+                Cut(mask: [Circle(radius: 14.0, rough: 2.5)], below: 0.5),
             ]),
             "block/{name}_sapling": (palettes: {"sapling": "sapling_green"}, layers: [
                 Grid(
@@ -181,6 +186,10 @@
         "block/emberwood_log_top": (base: "block/stripped_emberwood_log_top", palettes: {"bark": "emberwood_bark"}, layers: [
             Paint(palette: "bark", base: 0.45, shade: [Noise(cells: (16, 16), amount: 0.6)], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
         ]),
+        // Autumn leaves, untinted.
+        "block/golden_birch_leaves": (base: "block/birch_leaves", palettes: {"leaves": ["#6e4c12", "#90681a", "#b28a24", "#ccaa34", "#e0c44c", "#eed878"]}),
+        "block/russet_oak_leaves": (base: "block/oak_leaves", palettes: {"leaves": ["#5a240e", "#7c3414", "#9c4a1a", "#b86224", "#cc7e34", "#dc9a4a"]}),
+        "block/amber_maple_leaves": (base: "block/maple_leaves", palettes: {"leaves": ["#8a3a0c", "#b45410", "#d67418", "#ee9824", "#f8b83a", "#ffd468"]}),
         // Glowcaps: giant mushrooms with pale fibrous stems and glowing teal caps.
         "block/glowcap_stem": (palettes: {"main": ["#8e8676", "#a89f8e", "#c0b8a6", "#d6cfbd", "#e8e2d2"]}, layers: [
             Paint(palette: "main", base: 0.55, shade: [Noise(cells: (16, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.2, warp: 0.6)], clean: true),
