@@ -58,6 +58,8 @@ pub struct CapturePlugin {
     pub flicker: Option<FlickerKind>,
     /// Seconds of game time to record frame by frame (see the module docs).
     pub clip: Option<f32>,
+    /// Width and height of the shot, in pixels.
+    pub size: UVec2,
 }
 
 /// What changes between the two shots of a flicker measurement.
@@ -98,6 +100,7 @@ impl Plugin for CapturePlugin {
             frame_times: Vec::new(),
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
             clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
+            size: self.size,
         })
         .add_systems(PostStartup, render_offscreen)
         .add_systems(Update, (target_ui, capture, measure_flicker.after(capture), record_clip.after(capture)))
@@ -131,6 +134,7 @@ struct Capture {
     frame_times: Vec<f32>,
     flicker: Option<Flicker>,
     clip: Option<Clip>,
+    size: UVec2,
 }
 
 /// Progress of a `--clip`, which starts once the world has settled.
@@ -169,7 +173,7 @@ fn render_offscreen(
     mut images: ResMut<Assets<Image>>,
     camera: Query<Entity, With<Camera3d>>,
 ) {
-    let mut image = Image::new_target_texture(1920, 1080, TextureFormat::Rgba8UnormSrgb, None);
+    let mut image = Image::new_target_texture(state.size.x, state.size.y, TextureFormat::Rgba8UnormSrgb, None);
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     state.target = images.add(image);
     for entity in &camera {
