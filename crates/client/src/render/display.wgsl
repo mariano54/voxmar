@@ -1,4 +1,5 @@
-// Display transform, run after bloom in place of a tonemapper. Colours up to KNEE pass
+// Display transform, run in place of a tonemapper, after adding the bloom (bloom.wgsl, see
+// post.rs) to the image. Colours up to KNEE pass
 // through unchanged, so sunlit blocks show their texture colours as Minecraft does; brighter
 // ones (the sun, glints, light sources) roll off smoothly towards white. This is the
 // highlight compression of Khronos PBR Neutral, without its toe, which would crush night
@@ -13,11 +14,14 @@ struct DisplayTransform {
     saturation: f32,
     vibrance: f32,
     warmth: f32,
+    // How much of the bloom chain's top level replaces the image.
+    bloom: f32,
 };
 
 @group(0) @binding(0) var screen: texture_2d<f32>;
 @group(0) @binding(1) var screen_sampler: sampler;
 @group(0) @binding(2) var<uniform> settings: DisplayTransform;
+@group(0) @binding(3) var bloom: texture_2d<f32>;
 
 const KNEE: f32 = 0.8;
 const DESATURATION: f32 = 0.15;
@@ -51,10 +55,25 @@ fn grade(display: vec3<f32>) -> vec3<f32> {
     return max(mix(vec3(luma), color, boost), vec3(0.0));
 }
 
+// The bloom chain's top level, upsampled with a 3x3 tent (as bloom.wgsl's `tent`).
+fn bloom_at(uv: vec2<f32>) -> vec3<f32> {
+    let t = 1.0 / vec2<f32>(textureDimensions(bloom));
+    var sum = textureSample(bloom, screen_sampler, uv).rgb * 0.25;
+    sum += (textureSample(bloom, screen_sampler, uv + vec2(0.0, t.y)).rgb + textureSample(bloom, screen_sampler, uv - vec2(t.x, 0.0)).rgb
+        + textureSample(bloom, screen_sampler, uv + vec2(t.x, 0.0)).rgb + textureSample(bloom, screen_sampler, uv - vec2(0.0, t.y)).rgb) * 0.125;
+    sum += (textureSample(bloom, screen_sampler, uv + vec2(-t.x, t.y)).rgb + textureSample(bloom, screen_sampler, uv + t).rgb
+        + textureSample(bloom, screen_sampler, uv - t).rgb + textureSample(bloom, screen_sampler, uv + vec2(t.x, -t.y)).rgb) * 0.0625;
+    return sum;
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let source = textureSample(screen, screen_sampler, in.uv);
-    var color = max(source.rgb * settings.exposure, vec3(0.0));
+    var hdr = source.rgb;
+    if settings.bloom > 0.0 {
+        hdr = mix(hdr, bloom_at(in.uv), settings.bloom);
+    }
+    var color = max(hdr * settings.exposure, vec3(0.0));
     let peak = max(color.r, max(color.g, color.b));
     if peak > KNEE {
         let d = 1.0 - KNEE;

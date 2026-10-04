@@ -4,7 +4,6 @@
 
 use std::path::Path;
 
-use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use serde::Deserialize;
 
@@ -185,7 +184,7 @@ pub struct ActivePack(pub ShaderPack);
 
 /// Applies the active pack's grading and bloom to the camera, with the place's grading
 /// nudges (warmth and saturation of the local air) as far as the pack lets them show.
-pub fn apply_pack(pack: Res<ActivePack>, air: Res<ClientAtmosphere>, mut camera: Query<(&mut DisplayTransform, &mut Bloom), With<Camera3d>>) {
+pub fn apply_pack(pack: Res<ActivePack>, air: Res<ClientAtmosphere>, mut camera: Query<(&mut DisplayTransform, &mut super::post::Glow), With<Camera3d>>) {
     let share = pack.local_air.clamp(0.0, 1.0);
     let mut grading = DisplayTransform::from(&pack.0);
     grading.warmth += air.warmth * LOCAL_WARMTH * share;
