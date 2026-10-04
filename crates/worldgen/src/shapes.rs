@@ -338,7 +338,7 @@ impl Shapes {
             }
         };
         let fields: [[f32; 4]; 4] = std::array::from_fn(|k| {
-            let r = &regionals[k.min(n - 1)];
+            let Some(r) = regionals.get(k) else { return [0.0; 4] };
             [r.temperature(), r.moisture(), r.continentalness, r.erosion]
         });
         let mut out = [Shaped::default(); 4];
@@ -365,7 +365,7 @@ impl Shapes {
             let rise: [(f32, f32, f32); 4] = match shape.kind {
                 ShapeKind::Hills { height, spacing } => {
                     let folded = sample(&shape.noises[0], &active, x.map(|x| x / spacing), z.map(|z| z / spacing));
-                    std::array::from_fn(|k| hills(weight[k], height, folded[k]))
+                    std::array::from_fn(|k| if active[k] { hills(weight[k], height, folded[k]) } else { (0.0, 0.0, 0.0) })
                 }
                 _ => std::array::from_fn(|k| if k < n && active[k] { self.rise(shape, x[k], z[k], weight[k], &grounds[k]) } else { (0.0, 0.0, 0.0) }),
             };

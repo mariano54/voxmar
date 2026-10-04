@@ -342,7 +342,8 @@ impl Geology {
             let fold = folded[k].abs() - self.coast_fold;
             COAST + if fold > 0.0 { 1.4 * fold } else { 0.75 * fold / self.coast_fold }
         });
-        let mut above = continental.map(|c| spline(&BASE, c));
+        // Lanes past the positions are left at zero wherever work is per lane.
+        let mut above: [f32; 4] = std::array::from_fn(|k| if k < n { spline(&BASE, continental[k]) } else { 0.0 });
         if any(&|k| continental[k] < -0.2) {
             let seabed = sample(&self.seabed, x, z);
             for k in (0..n).filter(|&k| continental[k] < -0.2) {
@@ -417,6 +418,9 @@ impl Geology {
         // Broad valleys, and passes where they cross the ranges.
         let valleys = sample(&self.valleys, wx, wz);
         std::array::from_fn(|k| {
+            if k >= n {
+                return Relief::default();
+            }
             let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, valleys[k].abs());
             let land = above[k].max(0.0) + shelf[k] + rise[k];
             // Valleys cut into what rises above the lowest land, so they never sink low
