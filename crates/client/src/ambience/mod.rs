@@ -60,9 +60,19 @@ const AMBIENCE_GAIN: f32 = 0.65;
 
 pub struct AmbiencePlugin;
 
+/// What the ambience's scan finds around the player, for the rest of the client: how many
+/// flowers are near, 0..1 (the `flowers` group of `ambience.ron`).
+#[derive(Resource, Default)]
+pub struct Surroundings {
+    pub flowers: f32,
+}
+
 impl Plugin for AmbiencePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, start)
+        app.init_resource::<Surroundings>()
+            .add_systems(Startup, start)
+            // Playing runs muted too (it starts nothing then, as its level is zero), so
+            // captures still log which beds would play.
             .add_systems(Update, (receive_clips, (survey, listen, play).chain().run_if(in_state(Screen::InGame))))
             .add_systems(OnExit(Screen::InGame), leave);
     }
@@ -308,6 +318,7 @@ fn listen(
     weather: Res<ClientWeather>,
     cycle: Res<DayCycle>,
     mut ambient: ResMut<Ambient>,
+    mut surroundings: ResMut<Surroundings>,
 ) {
     let ambient = &mut *ambient;
     let (env, smooth) = (&mut ambient.env, &ambient.smooth);
@@ -317,7 +328,11 @@ fn listen(
     let enclosed = (1.0 - smooth.sky) * ((smooth.air - 0.02) / 0.28).clamp(0.0, 1.0);
     env.set(Fixed::Reverb, enclosed);
     for (group, &count) in smooth.groups.iter().enumerate() {
-        env.set_group(group, ambient.ambience.presence(group, count));
+        let presence = ambient.ambience.presence(group, count);
+        env.set_group(group, presence);
+        if short(&ambient.ambience.groups[group].name) == "flowers" {
+            surroundings.flowers = presence;
+        }
     }
     let eye = player.eye().y;
     env.set(Fixed::Height, eye - SEA_LEVEL as f32);

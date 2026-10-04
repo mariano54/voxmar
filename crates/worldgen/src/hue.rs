@@ -5,9 +5,11 @@
 //! colour for its canopy (its foliage colour, from its climate or set in data) and for its
 //! flowers where data sets one; candidates are weighed by how near their colour lies to the
 //! anchor, in Oklab, where distance follows what the eye sees. Hue and saturation count
-//! fully and lightness little, so many kinds of green tree grow together while a pink
-//! cherry, a blue silverwood or a red maple in a green wood falls to almost nothing, unless
-//! the palette is built around it. A mod's new tree joins any biome its colour and climate
+//! fully and lightness little. Tinted leaves take the place's foliage colour, so any number
+//! of green trees grow together; a crown of its own colour (a pink cherry, a blue
+//! silverwood, a red maple) grows only where the biome's palette is built around a colour
+//! like it, and never as a speck among other colours. Flowers and lone plants much brighter
+//! than the grass are rarer accents. A mod's new tree joins any biome its colour and climate
 //! suit. The ground keeps to its colours the same way: the blocks of a mixed material are
 //! weighed against its main block, and patches unlike the ground's colour grow fewer and
 //! smaller (`crate::surface`).
@@ -23,8 +25,15 @@ pub(crate) const CANOPY_SPREAD: f32 = 0.07;
 pub(crate) const FLOWER_SPREAD: f32 = 0.08;
 /// Likewise for the blocks mixed in a ground material, against its main block.
 pub(crate) const GROUND_SPREAD: f32 = 0.09;
-/// Likewise for carpeting plants against the grass.
-pub(crate) const CARPET_SPREAD: f32 = 0.09;
+/// Likewise for carpeting plants against the grass: tight, so the carpet reads as one
+/// surface and straw-coloured tufts keep to straw-coloured grass.
+pub(crate) const CARPET_SPREAD: f32 = 0.05;
+/// Below this harmony with its palette, a crown of its own colour does not grow at all.
+pub(crate) const CLASH: f32 = 0.2;
+/// Flowers and lone plants unlike the grass's colour grow this much rarer at the most,
+/// judged over a wide spread so only the brightest contrasts count fully.
+pub(crate) const ACCENT_RARITY: f32 = 0.75;
+pub(crate) const CONTRAST_SPREAD: f32 = 0.2;
 
 /// sRGB (0 ..= 255) to Oklab (Björn Ottosson's colour space, as in `voxmar_texgen`).
 pub(crate) fn oklab(rgb: [f32; 3]) -> [f32; 3] {

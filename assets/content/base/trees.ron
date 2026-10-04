@@ -66,7 +66,7 @@
             name: "cherry", tags: ["broadleaf", "blossom", "temperate"], rarity: Uncommon,
             log: "cherry_log", leaves: "cherry_leaves", height: (4, 7), lean: 0.8,
             crown: Umbrella(branches: (2, 4), reach: (2.5, 4.0), radius: (2.5, 3.2)),
-            comfort: (temperature: (5.0, 15.0), moisture: (0.7, 8.0)),
+            comfort: (temperature: (4.0, 22.0), moisture: (0.7, 8.0)),
         ),
         (
             name: "jungle", tags: ["tropical", "broadleaf"],
