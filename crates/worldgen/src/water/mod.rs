@@ -381,22 +381,48 @@ impl Rivers {
         channels
     }
 
+    /// Whether a tier's channels of a region are made or being made.
+    fn known(&self, level: Level, region: IVec2) -> bool {
+        RECENT.with(|recent| recent.borrow().iter().any(|(id, l, r, _)| *id == self.id && *l == level && *r == region))
+            || match level {
+                Level::Trunk => self.trunk_channels.has(region),
+                Level::Stream => self.stream_channels.has(region),
+            }
+    }
+
+    /// The regions within `margin` of the columns from `min` to `max` (inclusive), row by
+    /// row.
+    fn regions(margin: i32, min: IVec2, max: IVec2) -> impl Iterator<Item = IVec2> {
+        let first = (min - margin).div_euclid(IVec2::splat(REGION));
+        let last = (max + margin).div_euclid(IVec2::splat(REGION));
+        (first.y..=last.y).flat_map(move |z| (first.x..=last.x).map(move |x| IVec2::new(x, z)))
+    }
+
     /// The channels of a tier that may reach any column from `min` to `max` (inclusive):
     /// those of every region within `margin` of them.
     fn near(&self, land: Stages, level: Level, margin: i32, min: IVec2, max: IVec2) -> Near {
-        let first = (min - margin).div_euclid(IVec2::splat(REGION));
-        let last = (max + margin).div_euclid(IVec2::splat(REGION));
         let mut near = Near::new();
-        for z in first.y..=last.y {
-            for x in first.x..=last.x {
-                near.push(self.channels(land, level, IVec2::new(x, z)));
-            }
+        for region in Self::regions(margin, min, max) {
+            near.push(self.channels(land, level, region));
         }
         near
     }
 
-    /// Both tiers' channels near the columns from `min` to `max`.
+    /// Both tiers' channels near the columns from `min` to `max`. Those not made yet are
+    /// made first, side by side on every core (see `crate::parallel`), rather than one
+    /// after another with only their tiles shared out: a new world's first columns need
+    /// several of each.
     fn tiers(&self, land: Stages, min: IVec2, max: IVec2) -> (Near, Near) {
+        let missing: Vec<(Level, IVec2)> = [(Level::Trunk, TRUNK_MARGIN), (Level::Stream, STREAM_MARGIN)]
+            .into_iter()
+            .flat_map(|(level, margin)| Self::regions(margin, min, max).map(move |region| (level, region)))
+            .filter(|&(level, region)| !self.known(level, region))
+            .collect();
+        if missing.len() > 1 {
+            crate::parallel::for_each(&missing, |&(level, region)| {
+                self.channels(land, level, region);
+            });
+        }
         (self.near(land, Level::Trunk, TRUNK_MARGIN, min, max), self.near(land, Level::Stream, STREAM_MARGIN, min, max))
     }
 
