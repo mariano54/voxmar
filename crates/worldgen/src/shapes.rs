@@ -317,6 +317,9 @@ impl Shapes {
         let mut out = Shaped::default();
         let mut most = 0.5;
         for (i, shape) in self.list.iter().enumerate() {
+            if !shape.reaches(ground) {
+                continue;
+            }
             // Shapes that stand alone weigh their climate at their centre instead.
             let weight = if shape.alone { 1.0 } else { shape.weight(fx, fz, &fields, regional) };
             if weight <= 0.0 {
@@ -491,18 +494,24 @@ impl Shapes {
         best
     }
 
-    /// The standalone shape of the grid cell holding (x, z), if the cell holds one: each
-    /// sits well inside its cell, so no other cell can reach the position. Gives its centre,
-    /// eight uniform values of its own, and its weight in the climate at its centre.
-    fn standalone(&self, shape: &Shape, x: f32, z: f32, cell: f32, ground: &Ground) -> Option<Standalone> {
+    /// The standalone shape of the grid cell holding (x, z), if the cell holds one and it
+    /// may reach `reach` blocks from its centre to the position: each sits well inside its
+    /// cell, so no other cell can reach the position. Gives its centre, eight uniform values
+    /// of its own, and its weight in the climate at its centre.
+    fn standalone(&self, shape: &Shape, x: f32, z: f32, cell: f32, reach: f32, ground: &Ground) -> Option<Standalone> {
         let (cx, cz) = ((x / cell).floor() as i32, (z / cell).floor() as i32);
-        let (a, b) = (hash3(shape.seed, cx, 0, cz), hash3(shape.seed ^ 0xa1, cx, 0, cz));
-        let unit = |k: usize| (([a, b][k / 4] >> (k % 4 * 16)) & 0xffff) as f32 / 65536.0;
-        if unit(0) >= shape.chance {
+        let a = hash3(shape.seed, cx, 0, cz);
+        if (a & 0xffff) as f32 / 65536.0 >= shape.chance {
             return None;
         }
+        let b = hash3(shape.seed ^ 0xa1, cx, 0, cz);
+        let unit = |k: usize| (([a, b][k / 4] >> (k % 4 * 16)) & 0xffff) as f32 / 65536.0;
         let units = std::array::from_fn(|k| unit(k));
         let centre = [(cx as f32 + 0.3 + 0.4 * unit(1)) * cell, (cz as f32 + 0.3 + 0.4 * unit(2)) * cell];
+        // Out of its reach, the climate at its centre need not be weighed.
+        if (x - centre[0]).hypot(z - centre[1]) >= reach {
+            return None;
+        }
         let regional = (ground.regional)(centre[0] as i32, centre[1] as i32);
         let fields = [regional.temperature(), regional.moisture(), regional.continentalness, regional.erosion];
         let weight = shape.weight(centre[0], centre[1], &fields, &regional);
@@ -512,7 +521,7 @@ impl Shapes {
     /// A volcano's cone at (x, z), if one stands there: the height it adds and how near its
     /// summit the position is, 0 ..= 1.
     fn volcano(&self, shape: &Shape, x: f32, z: f32, height: f32, radius: f32, ground: &Ground) -> (f32, f32) {
-        let Some(cone) = self.standalone(shape, x, z, radius * 6.0, ground) else { return (0.0, 0.0) };
+        let Some(cone) = self.standalone(shape, x, z, radius * 6.0, radius * 1.25 * 1.22, ground) else { return (0.0, 0.0) };
         let height = height * cone.weight * (0.75 + 0.4 * self.volcanism);
         let u = cone.units;
         let r = radius * (0.75 + 0.5 * u[3]);
@@ -533,7 +542,7 @@ impl Shapes {
     /// A lone mountain at (x, z), if one stands there: a massif rising alone from the land
     /// around it, with spurs radiating from its summit.
     fn mountain(&self, shape: &Shape, x: f32, z: f32, height: f32, radius: f32, ground: &Ground) -> (f32, f32) {
-        let Some(peak) = self.standalone(shape, x, z, radius * 6.0, ground) else { return (0.0, 0.0) };
+        let Some(peak) = self.standalone(shape, x, z, radius * 6.0, radius * 1.2 * 1.3, ground) else { return (0.0, 0.0) };
         let height = height * peak.weight;
         let u = peak.units;
         let r = radius * (0.8 + 0.4 * u[3]);
@@ -577,6 +586,19 @@ impl Standalone {
 }
 
 impl Shape {
+    /// Whether the shape can change ground like this at all, whatever its climate: a cheap
+    /// test that spares weighing it.
+    fn reaches(&self, ground: &Ground) -> bool {
+        let c = ground.relief.continental;
+        match self.kind {
+            ShapeKind::SeaCliffs { .. } => c > COAST - 0.035 && c < COAST + 0.12,
+            ShapeKind::Fjords { .. } => ground.relief.valley > 0.55,
+            // Built in 3D, by `pieces`.
+            ShapeKind::Arches { .. } => false,
+            _ => true,
+        }
+    }
+
     /// How strongly the shape rises at a position, 0 ..= 1, from its climate gates, rock
     /// province and rarity.
     fn weight(&self, x: f32, z: f32, fields: &[f32; 4], regional: &Regional) -> f32 {
@@ -584,7 +606,7 @@ impl Shape {
         if weight > 0.0
             && let Some(province) = &self.province
         {
-            weight *= smoothstep(0.0, PROVINCE_RAMP, province.depth(x, z, regional.warp));
+            weight *= if province.contains(x, z, regional.warp) { smoothstep(0.0, PROVINCE_RAMP, province.depth(x, z, regional.warp)) } else { 0.0 };
         }
         if weight > 0.0
             && let Some((noise, share)) = &self.region
@@ -676,5 +698,48 @@ mod tests {
         assert!(0.0 < warm && warm < 1.0 && 0.0 < dry && dry < 1.0, "{warm} {dry}");
         assert!(at(18.0, 0.1) > warm);
         assert_eq!(gate.weight(&[25.0, 0.1, 0.3, 0.5]), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+
+    /// `cargo test --release -p voxmar_worldgen shape_timing -- --ignored --nocapture`
+    /// prints the time each terrain shape takes per position, weighing and rising.
+    #[test]
+    #[ignore]
+    fn shape_timing() {
+        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let world = crate::Overworld::new(7, std::sync::Arc::new(registry));
+        let geology = &world.geology;
+        let shapes = geology.shapes();
+        let points: Vec<(i32, i32, Relief, Regional)> = (0..40_000)
+            .map(|i| {
+                let (x, z) = (i % 200 * 13 - 1300, i / 200 * 13 - 1300);
+                (x, z, geology.relief(x as f32, z as f32), geology.regional(x, z))
+            })
+            .collect();
+        let anywhere = |x: i32, z: i32| geology.regional(x, z);
+        for (i, shape) in shapes.list.iter().enumerate() {
+            let start = std::time::Instant::now();
+            let mut sum = 0.0;
+            let mut active = 0;
+            for (x, z, relief, regional) in &points {
+                let ground = Ground { regional: &anywhere, height: relief.elevation, hills: 0.0, relief };
+                if !shape.reaches(&ground) {
+                    continue;
+                }
+                let fields = [regional.temperature(), regional.moisture(), regional.continentalness, regional.erosion];
+                let weight = if shape.alone { 1.0 } else { shape.weight(*x as f32, *z as f32, &fields, regional) };
+                if weight > 0.0 {
+                    active += 1;
+                    let (t, f, _) = shapes.rise(shape, *x as f32, *z as f32, weight, &ground);
+                    sum += t + f;
+                }
+            }
+            std::hint::black_box(sum);
+            println!("{:24} {:6.1} ns, active at {:.0}%", shapes.names[i], start.elapsed().as_nanos() as f64 / points.len() as f64, 100.0 * active as f64 / points.len() as f64);
+        }
     }
 }

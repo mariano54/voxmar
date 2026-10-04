@@ -321,12 +321,17 @@ impl Geology {
         // Ranges and plateaus rise over a few hundred blocks inland of the coast.
         let inland = smoothstep(-0.03, 0.3, continental);
 
-        // Ranges along the folded range noise, rising and falling along their length.
-        let strength = smoothstep(self.range_threshold - 0.12, self.range_threshold + 0.12, self.range_strength.get_noise_2d(x, z));
-        let half = RANGE_HALF_WIDTH * (0.7 + 0.6 * strength);
-        let e = self.ranges.get_noise_2d(wx, wz);
-        let across = spline(&ACROSS, e.abs() / half);
-        let mountain = across * strength * inland;
+        // Ranges along the folded range noise, rising and falling along their length. Out at
+        // sea and far from a range's line, nothing rises, so the noises are left unsampled.
+        let (mut mountain, mut e) = (0.0, 0.0);
+        if inland > 0.0 {
+            e = self.ranges.get_noise_2d(wx, wz);
+            if e.abs() < RANGE_HALF_WIDTH * 1.3 * ACROSS[ACROSS.len() - 1].0 {
+                let strength = smoothstep(self.range_threshold - 0.12, self.range_threshold + 0.12, self.range_strength.get_noise_2d(x, z));
+                let half = RANGE_HALF_WIDTH * (0.7 + 0.6 * strength);
+                mountain = spline(&ACROSS, e.abs() / half) * strength * inland;
+            }
+        }
         let mut rise = 0.0;
         let mut peak = 0.0;
         if mountain > 0.005 {
@@ -353,10 +358,14 @@ impl Geology {
         // Plateaus where their noise is high, off the ranges, in two tiers. Each edge is an
         // escarpment: a talus slope under a cliff band, where rivers fall.
         let hilliness = self.hilliness.get_noise_2d(x, z);
-        let p = self.plateaus.get_noise_2d(wx, wz) + 0.04 * hilliness;
-        let escarpment = |edge: f32| 0.3 * smoothstep(edge - 0.07, edge, p) + 0.7 * smoothstep(edge - 0.012, edge + 0.004, p);
         let off_ranges = inland * (1.0 - smoothstep(0.1, 0.4, mountain));
-        let shelf = off_ranges * (26.0 * escarpment(0.26) + 24.0 * escarpment(0.46));
+        let shelf = if off_ranges > 0.0 {
+            let p = self.plateaus.get_noise_2d(wx, wz) + 0.04 * hilliness;
+            let escarpment = |edge: f32| 0.3 * smoothstep(edge - 0.07, edge, p) + 0.7 * smoothstep(edge - 0.012, edge + 0.004, p);
+            off_ranges * (26.0 * escarpment(0.26) + 24.0 * escarpment(0.46))
+        } else {
+            0.0
+        };
 
         // Broad valleys, and passes where they cross the ranges.
         let valley = 1.0 - smoothstep(VALLEY_FLOOR, VALLEY_SIDES, self.valleys.get_noise_2d(wx, wz).abs());
@@ -378,34 +387,7 @@ impl Geology {
     }
 
     /// The land at (x, z), before rivers and lakes.
-    ///
-    /// Rivers, trails and every column ask for the same positions many times (a column's
-    /// neighbours, the sealing of its water, the slopes around it), so each thread keeps the
-    /// positions it computed last in a small direct-mapped memo.
     pub fn land(&self, x: i32, z: i32) -> Landform {
-        const SLOTS: usize = 1 << 12;
-        thread_local! {
-            static MEMO: RefCell<Vec<(u64, i32, i32, Landform)>> = const { RefCell::new(Vec::new()) };
-        }
-        let slot = ((x as u32).wrapping_mul(0x9e37_79b1) ^ (z as u32).wrapping_mul(0x85eb_ca77)).rotate_left(13) as usize % SLOTS;
-        if let Some(land) = MEMO.with(|memo| {
-            let memo = memo.borrow();
-            memo.get(slot).filter(|e| e.0 == self.id && e.1 == x && e.2 == z).map(|e| e.3)
-        }) {
-            return land;
-        }
-        let land = self.compute_land(x, z);
-        MEMO.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            if memo.is_empty() {
-                memo.resize(SLOTS, (u64::MAX, 0, 0, land));
-            }
-            memo[slot] = (self.id, x, z, land);
-        });
-        land
-    }
-
-    fn compute_land(&self, x: i32, z: i32) -> Landform {
         let relief = self.relief(x as f32, z as f32);
         let hills = self.hills.get_noise_2d(x as f32, z as f32);
         let inland = smoothstep(-0.06, 0.1, relief.continental);
@@ -548,7 +530,18 @@ mod tests {
         };
         time("relief", &|x, z| geology.relief(x as f32, z as f32).elevation);
         time("regional", &|x, z| geology.regional(x, z).rainfall);
+        time("shapes", &|x, z| {
+            let relief = geology.relief(x as f32, z as f32);
+            let anywhere = |x: i32, z: i32| geology.regional(x, z);
+            let ground = Ground { regional: &anywhere, height: relief.elevation, hills: 0.0, relief: &relief };
+            geology.shapes.shape(x, z, &ground, &geology.regional(x, z)).terrain
+        });
         time("land", &|x, z| geology.land(x, z).height);
+        let start = std::time::Instant::now();
+        for &(x, z) in points.iter().step_by(10) {
+            std::hint::black_box(geology.climate.regional(geology, x as f32, z as f32));
+        }
+        println!("climate    {:.0} ns per regional point", start.elapsed().as_nanos() as f64 / (points.len() / 10) as f64);
         let start = std::time::Instant::now();
         let mut pieces = 0;
         for i in 0..400 {
