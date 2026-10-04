@@ -346,9 +346,10 @@ impl Shapes {
                 // Sampled upwind as well, the lee side of each crest falls away steeply.
                 let here = crest(along);
                 let dune = (here + 0.6 * (here - crest(along - 0.35))).clamp(0.0, 1.3);
-                // Fields of tall dunes with calm margins, and some flattened crests.
+                // Fields of tall dunes with calm margins, and some flattened crests; none on
+                // the flanks of ranges.
                 let amount = n1.get_noise_2d(x / (spacing * 14.0), z / (spacing * 14.0));
-                let size = (1.0 - (amount / 0.6).powi(2)).clamp(0.2, 1.0);
+                let size = (1.0 - (amount / 0.6).powi(2)).clamp(0.2, 1.0) * (1.0 - smoothstep(0.1, 0.35, ground.relief.mountain));
                 let cap = 0.8 + 0.35 * n2.get_noise_2d(x / (spacing * 4.0), z / (spacing * 4.0));
                 let h = dune.min(cap).max(0.0).powf(1.4);
                 (weight * size * height * h, 0.0, weight * size)
@@ -535,7 +536,7 @@ impl Shapes {
         let k = r / 70.0;
         let spur = 1.0 - shape.noises[1].get_noise_3d(cos * k, sin * k, d / 90.0).abs();
         let crags = shape.noises[2].get_noise_2d(x / 45.0, z / 45.0) * 0.5 + 0.5;
-        let body = (1.0 - t).powf(1.5) * smootherstep(0.0, 0.4, 1.0 - t);
+        let body = (1.0 - t).powf(1.25) * smootherstep(0.0, 0.3, 1.0 - t);
         let h = body * (0.82 + 0.18 * spur * smoothstep(0.05, 0.3, t)) + 0.04 * crags * (1.0 - t);
         (height * (0.8 + 0.2 * u[5]) * h, 1.0 - t)
     }

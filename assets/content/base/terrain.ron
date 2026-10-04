@@ -104,7 +104,7 @@
             // Now and then a massif far taller than anything around it, alone on the plain,
             // seen from far away.
             name: "lone_mountain",
-            kind: Mountain(height: 190.0, radius: 650.0),
+            kind: Mountain(height: 200.0, radius: 480.0),
             rarity: VeryRare,
             climate: [(continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
         ),

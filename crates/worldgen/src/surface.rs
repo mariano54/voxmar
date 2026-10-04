@@ -338,7 +338,9 @@ impl SurfaceRules {
 
     /// Bare rock of steep slopes and exposed heights.
     pub(crate) fn cliff(&self, surface: &Surface, spot: &Spot, stones: &Palette, strata: &[BlockId]) -> Layers {
-        let rock = LayersRule { top: surface.cliff.clone(), filler: Mat::Stones, depth: 0 };
+        // Banded cliffs show their bands all the way down a riser, not just along its rim.
+        let (filler, depth) = if matches!(surface.cliff, Mat::Strata) { (Mat::Strata, 24) } else { (Mat::Stones, 0) };
+        let rock = LayersRule { top: surface.cliff.clone(), filler, depth };
         resolve(&rock, spot, stones, strata)
     }
 }

@@ -815,8 +815,9 @@ mod tests {
         for (i, &(score, x, z, height)) in best.iter().enumerate().filter(|(_, b)| b.0 > 0.0) {
             let name = shapes.name(ShapeId(i as u8));
             print!("score {score:.2}: ");
-            if name.contains("volcano") || name.contains("lone") {
-                afar(name, x, z, height, if name.contains("lone") { 1300.0 } else { 700.0 });
+            if name.contains("volcano") || name.contains("lone") || name.contains("cliff") || name.contains("fjord") {
+                let distance = if name.contains("lone") { 1300.0 } else if name.contains("volcano") { 700.0 } else { 150.0 };
+                afar(name, x, z, height, distance);
                 continue;
             }
             let back = if name.contains("mesa") || name.contains("canyon") { 160.0 } else { 70.0 };
