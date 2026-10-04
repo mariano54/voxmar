@@ -247,6 +247,19 @@ colour-grading nudges, and ambient particle sets from `ambient.ron` such as poll
 fireflies, spores, dust, drifting snow and aether motes), taken from the climate unless a
 biome sets parts of it, and blended across borders.
 
+**Cave biomes** (`cave_biomes.ron`) are biomes of the `Underground` layer, placed by the same
+picker in 3D: the climate above, plus a depth, height and rock province a claim may ask for,
+and a weirdness field that also varies with depth, so cave biomes are wide regions stacked in
+layers. Plain caves fill most of the underground; dripstone caves lie under dry land and in
+karst, lush and fungal caves under wet land, frozen caves under cold land, molten caves near
+the lava and under volcanic land, deep dark caves far down; painted (bands of fired clay) and
+crystal caves are rare, and two fantasy caves, glowroot hollows and the starlit grotto, grow
+only where aether runs high. Each lines its floors and ceilings through its surface rules,
+replaces the rock around it with its own stones or strata, and grows decorations from floors
+and ceilings (`cave_decoration`): plants and mushrooms, stalagmites and stalactites, icicles,
+hanging roots and vines, crystals, some with glowing tips. Lava burns (4 health every half
+second). `Overworld::cave_biome_at` gives the cave biome at a block.
+
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
 `Overworld::locate_biome` serve commands.
@@ -257,8 +270,10 @@ rivers and creeks in their own blues, and prints each biome's share of it. `rive
 `--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
 near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
-writes an x-ray map, sections and level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
-arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;
+writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
+`target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
+labyrinths, ravines, sinkholes, entrances and the best view of each cave biome near spawn,
+with each cave biome's share of the caves there;
 `column_timing` reports generation time per column (all `-- --ignored --nocapture`).
 
 ## Weather
