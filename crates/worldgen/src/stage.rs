@@ -17,9 +17,7 @@ pub(crate) enum Stage {
     Climate,
     /// Biome picks and borders.
     Biomes,
-    /// The land's height before rivers: continents, ranges and hills.
-    Land,
-    /// Rivers and lakes carved into each block column, and sealing.
+    /// The land with its rivers and lakes carved into each block column, and sealing.
     Rivers,
     /// Building a region's river network (routing, lakes, flow), on a cache miss.
     RiverRegions,
@@ -45,11 +43,10 @@ pub(crate) enum Stage {
 
 impl Stage {
     #[cfg(test)]
-    pub const ALL: [Stage; 16] = [
+    pub const ALL: [Stage; 15] = [
         Stage::Other,
         Stage::Climate,
         Stage::Biomes,
-        Stage::Land,
         Stage::Rivers,
         Stage::RiverRegions,
         Stage::Trails,

@@ -47,21 +47,29 @@ const SEEDS: [u64; 3] = [1, 3, 0x5eed];
 
 /// `cargo test --release -p voxmar_worldgen generation_stages -- --ignored --nocapture`
 /// generates the same columns as `generation_speed`, on fresh worlds, and reports the
-/// time per column of each stage, then lights and meshes the inner 6×6 columns of each
-/// area and reports those per column too.
+/// time per column of each stage: cold, the first time, which includes building the
+/// rivers and trails of each area's regions (shared by only 64 columns here, against
+/// about a thousand in play), and warm, generating the same columns again. Then it lights
+/// and meshes the inner 6×6 columns of each area and reports those per column too.
 #[test]
 #[ignore]
 fn generation_stages() {
     let registry = registry();
-    let (mut times, mut cpu, mut columns) = (Times::default(), Duration::ZERO, 0);
+    // Cold and warm: stage times, CPU time, columns.
+    let mut passes = [(Times::default(), Duration::ZERO); 2];
+    let mut columns = 0;
     let (mut light, mut mesh, mut lit) = (Duration::ZERO, Duration::ZERO, 0);
     for seed in SEEDS {
         let world = Overworld::new(seed, registry.clone());
         for (cx, cz) in AREAS {
-            let start = thread_time();
-            let (area, t) = stage::measure(|| (0..64).map(|i| Arc::new(world.generate(ColumnPos::new(cx + i % 8, cz + i / 8)))).collect::<Vec<_>>());
-            cpu += thread_time() - start;
-            times += t;
+            let mut area = Vec::new();
+            for (times, cpu) in &mut passes {
+                let start = thread_time();
+                let (columns, t) = stage::measure(|| (0..64).map(|i| Arc::new(world.generate(ColumnPos::new(cx + i % 8, cz + i / 8)))).collect::<Vec<_>>());
+                *cpu += thread_time() - start;
+                *times += t;
+                area = columns;
+            }
             columns += area.len();
             for j in 1..7 {
                 for i in 1..7 {
@@ -79,18 +87,25 @@ fn generation_stages() {
             }
         }
     }
-    // Shares from the wall clock, scaled to the CPU time the whole pass took.
-    let per_column = |d: Duration| d.as_secs_f64() * 1e3 / columns as f64;
-    let scale = cpu.as_secs_f64() / times.total().as_secs_f64();
-    println!("{:>14} {:>9} {:>6}", "stage", "ms/column", "share");
+    // Shares from the wall clock, scaled to the CPU time each pass took.
+    let ms = |d: Duration, n: usize| d.as_secs_f64() * 1e3 / n as f64;
+    let scale = passes.map(|(times, cpu)| cpu.as_secs_f64() / times.total().as_secs_f64());
+    println!("{:>14} {:>9} {:>6} {:>9} {:>6}   (ms per column, {columns} columns)", "stage", "cold", "share", "warm", "share");
     for stage in Stage::ALL {
-        let d = times.get(stage);
-        println!("{:>14} {:9.3} {:5.1}%", format!("{stage:?}"), per_column(d) * scale, 100.0 * d.as_secs_f64() / times.total().as_secs_f64());
+        let [cold, warm] = passes.map(|(times, _)| times);
+        let share = |times: &Times| 100.0 * times.get(stage).as_secs_f64() / times.total().as_secs_f64();
+        println!(
+            "{:>14} {:9.3} {:5.1}% {:9.3} {:5.1}%",
+            format!("{stage:?}"),
+            ms(cold.get(stage), columns) * scale[0],
+            share(&cold),
+            ms(warm.get(stage), columns) * scale[1],
+            share(&warm),
+        );
     }
-    println!("{:>14} {:9.3} ({columns} columns, CPU time; wall clock {:.3})", "generation", per_column(cpu), per_column(times.total()));
-    let per_lit = |d: Duration| d.as_secs_f64() * 1e3 / lit as f64;
-    println!("{:>14} {:9.3} ({lit} columns)", "light", per_lit(light));
-    println!("{:>14} {:9.3} (all {COLUMN_CHUNKS} chunks of each)", "mesh", per_lit(mesh));
+    println!("{:>14} {:9.3} {:>6} {:9.3}   (CPU time)", "generation", ms(passes[0].1, columns), "", ms(passes[1].1, columns));
+    println!("{:>14} {:9.3}   ({lit} columns)", "light", ms(light, lit));
+    println!("{:>14} {:9.3}   (all {COLUMN_CHUNKS} chunks of each)", "mesh", ms(mesh, lit));
 }
 
 /// `cargo test --release -p voxmar_worldgen first_column -- --ignored --nocapture`
@@ -175,4 +190,28 @@ fn output_is_unchanged() {
         "generation's output changed. If that is deliberate, bump Overworld::VERSION ({}) and set EXPECTED to [{printed}]",
         Overworld::VERSION
     );
+}
+
+/// The hash of the light over three 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
+const LIGHT: u64 = 0xb728b064b6de1c23;
+
+/// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
+/// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on
+/// purpose this changes with it; set `LIGHT` to the hash this test prints.
+#[test]
+fn light_is_unchanged() {
+    let registry = registry();
+    let mut hash = 0;
+    for (seed, columns) in GOLDEN {
+        let world = Overworld::new(seed, registry.clone());
+        let centre = ColumnPos::new(columns[0].0, columns[0].1);
+        let around: [Arc<Column>; 9] = std::array::from_fn(|k| Arc::new(world.generate(centre.offset(k as i32 % 3 - 1, k as i32 / 3 - 1))));
+        let region = LitRegion::compute(&registry, &around);
+        for y in 0..voxmar_engine::coords::WORLD_HEIGHT {
+            for z in -1..33 {
+                hash = mix(hash ^ (-1..33).fold(0u64, |h, x| mix(h ^ region.light(voxmar_engine::glam::IVec3::new(x, y, z)) as u64)));
+            }
+        }
+    }
+    assert_eq!(hash, LIGHT, "lighting changed. If that is deliberate, set LIGHT to {hash:#018x}");
 }

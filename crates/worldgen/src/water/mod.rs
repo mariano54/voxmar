@@ -399,10 +399,7 @@ impl Rivers {
 
     /// A column with both tiers carved in, before sealing.
     fn unsealed(&self, land: Stages, (trunks, streams): &(Near, Near), x: i32, z: i32) -> Column {
-        let ground = {
-            let _stage = stage::enter(Stage::Land);
-            land.geology.land(x, z)
-        };
+        let ground = land.geology.land(x, z);
         let trunks = carve(&self.trunk_style, trunks.list(), x, z, Carved::land(ground.height));
         let carved = carve(&self.stream_style, streams.list(), x, z, trunks);
         let height = (carved.ground.floor() as i32).max(4);
