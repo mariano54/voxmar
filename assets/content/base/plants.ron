@@ -1,16 +1,19 @@
 // Base game plants: a shared pool biomes draw from by tag or name. Each names its block (a
-// plant's other looks, its variants, are chosen by position), and says where it grows:
-// the ground (Soil, Snow, Sand), its habitat (Anywhere, Open, Shade, Water, Shore), the
-// climate it is comfortable in, and how it spreads: Cover carpets the ground, Drifts grow
-// in patches of one kind, Alone here and there. A plant's tags are its block's plus its
-// own, and its properties (nutrition, alchemy, dye) default to what the block's tags say.
+// plant's other looks, its variants such as pairs and clumps, are chosen by position), and
+// says where it grows: the ground (Soil, Snow, Sand), its habitat (Anywhere, Open, Shade,
+// Understory: thickest in shade, Water, Shore), the climate it is comfortable in, and how
+// it spreads: Cover carpets the ground (grasses, ferns), Drifts grow in patches of one kind
+// (flowers, herbs; kept sparse), Alone here and there (bushes, fungi, reeds; a biome's weight
+// for these is their chance in a hundred per block). `snowy` names its look under snow. A
+// plant's tags are its block's plus its own, and its properties (nutrition, alchemy, dye)
+// default to what the block's tags say.
 (
     plants: [
         // Grasses and ferns.
         (name: "short_grass", block: "short_grass", habitat: Open),
         (name: "tall_grass", block: "tall_grass", top: "tall_grass_top", habitat: Open, comfort: (moisture: (0.75, 3.0))),
-        (name: "fern", block: "fern", comfort: (moisture: (0.8, 3.0))),
-        (name: "large_fern", block: "large_fern", top: "large_fern_top", comfort: (moisture: (0.9, 3.0))),
+        (name: "fern", block: "fern", habitat: Understory, comfort: (moisture: (0.8, 3.0))),
+        (name: "large_fern", block: "large_fern", top: "large_fern_top", habitat: Shade, comfort: (moisture: (0.9, 3.0))),
 
         // Bushes, fungi and reeds.
         (name: "dead_bush", block: "dead_bush", spread: Alone, ground: [Sand, Soil], comfort: (temperature: (10.0, 45.0), moisture: (0.0, 0.55))),
@@ -36,5 +39,94 @@
         (name: "orange_tulip", block: "orange_tulip", spread: Drifts, habitat: Open, comfort: (temperature: (9.0, 18.0), moisture: (0.5, 1.0))),
         (name: "white_tulip", block: "white_tulip", spread: Drifts, habitat: Open, comfort: (temperature: (9.0, 18.0), moisture: (0.5, 1.0))),
         (name: "pink_tulip", block: "pink_tulip", spread: Drifts, habitat: Open, comfort: (temperature: (9.0, 18.0), moisture: (0.5, 1.0))),
+
+        // Wild flowers.
+        (name: "buttercup", block: "buttercup", spread: Drifts, habitat: Open, comfort: (temperature: (5.0, 22.0), moisture: (0.7, 2.0))),
+        (name: "bluebell", block: "bluebell", spread: Drifts, habitat: Shade, comfort: (temperature: (5.0, 18.0), moisture: (0.8, 2.5))),
+        (name: "foxglove", block: "foxglove", spread: Drifts, comfort: (temperature: (6.0, 20.0), moisture: (0.7, 2.0))),
+        (name: "lavender", block: "lavender", spread: Drifts, habitat: Open, comfort: (temperature: (12.0, 30.0), moisture: (0.25, 0.9))),
+        (name: "marigold", block: "marigold", spread: Drifts, habitat: Open, comfort: (temperature: (14.0, 32.0), moisture: (0.4, 1.4))),
+        (name: "sunflower", block: "sunflower", spread: Drifts, habitat: Open, comfort: (temperature: (14.0, 30.0), moisture: (0.35, 1.1))),
+        (name: "heather", block: "heather", spread: Drifts, habitat: Open, comfort: (temperature: (-3.0, 12.0), moisture: (0.5, 2.0))),
+        (name: "edelweiss", block: "edelweiss", spread: Drifts, habitat: Open, comfort: (temperature: (-6.0, 8.0), moisture: (0.3, 1.5))),
+        (name: "gentian", block: "gentian", spread: Drifts, habitat: Open, comfort: (temperature: (-4.0, 10.0), moisture: (0.5, 1.8))),
+        (name: "lupine", block: "lupine", spread: Drifts, habitat: Open, comfort: (temperature: (2.0, 18.0), moisture: (0.5, 1.6))),
+        (name: "clover", block: "clover", spread: Drifts, habitat: Open, comfort: (temperature: (4.0, 24.0), moisture: (0.5, 1.6))),
+        (name: "chamomile", block: "chamomile", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 24.0), moisture: (0.4, 1.4))),
+        (name: "yarrow", block: "yarrow", spread: Drifts, habitat: Open, comfort: (temperature: (2.0, 24.0), moisture: (0.3, 1.3))),
+        (name: "thistle", block: "thistle", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 26.0), moisture: (0.25, 1.1))),
+        (name: "iris", block: "iris", spread: Drifts, habitat: Water, comfort: (temperature: (8.0, 24.0))),
+        (name: "marsh_marigold", block: "marsh_marigold", spread: Drifts, habitat: Water, comfort: (temperature: (0.0, 18.0))),
+        (name: "desert_bloom", block: "desert_bloom", spread: Drifts, habitat: Open, comfort: (temperature: (18.0, 45.0), moisture: (0.0, 0.5)), ground: [Sand, Soil]),
+        (name: "hibiscus", block: "hibiscus", spread: Drifts, comfort: (temperature: (20.0, 40.0), moisture: (0.9, 3.0))),
+        (name: "bird_of_paradise", block: "bird_of_paradise", spread: Drifts, habitat: Open, comfort: (temperature: (20.0, 40.0), moisture: (0.8, 3.0))),
+        (name: "moth_orchid", block: "moth_orchid", spread: Drifts, habitat: Shade, comfort: (temperature: (19.0, 40.0), moisture: (1.1, 3.0))),
+        (name: "snowdrop", block: "snowdrop", spread: Drifts, comfort: (temperature: (-4.0, 10.0), moisture: (0.6, 2.0))),
+        (name: "crocus", block: "crocus", spread: Drifts, habitat: Open, comfort: (temperature: (-3.0, 12.0), moisture: (0.5, 1.6))),
+        (name: "primrose", block: "primrose", spread: Drifts, comfort: (temperature: (4.0, 18.0), moisture: (0.7, 2.0))),
+        (name: "aster", block: "aster", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 20.0), moisture: (0.5, 1.5))),
+        (name: "goldenrod", block: "goldenrod", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 24.0), moisture: (0.35, 1.3))),
+        (name: "fireweed", block: "fireweed", spread: Drifts, habitat: Open, comfort: (temperature: (-2.0, 14.0), moisture: (0.5, 1.8))),
+
+        // Herbs.
+        (name: "mint", block: "mint", spread: Drifts, habitat: Water, comfort: (temperature: (6.0, 24.0))),
+        (name: "sage", block: "sage", spread: Drifts, habitat: Open, comfort: (temperature: (10.0, 30.0), moisture: (0.2, 0.8))),
+        (name: "thyme", block: "thyme", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 28.0), moisture: (0.2, 0.9))),
+        (name: "basil", block: "basil", spread: Drifts, habitat: Open, comfort: (temperature: (16.0, 32.0), moisture: (0.6, 1.5))),
+        (name: "wild_garlic", block: "wild_garlic", spread: Drifts, habitat: Shade, comfort: (temperature: (4.0, 18.0), moisture: (0.9, 2.5))),
+        (name: "nettle", block: "nettle", spread: Drifts, comfort: (temperature: (4.0, 22.0), moisture: (0.6, 2.0))),
+        (name: "sorrel", block: "sorrel", spread: Drifts, habitat: Open, comfort: (temperature: (4.0, 22.0), moisture: (0.5, 1.6))),
+        (name: "ginseng", block: "ginseng", spread: Alone, habitat: Shade, comfort: (temperature: (0.0, 14.0), moisture: (0.9, 2.5))),
+        (name: "mandrake", block: "mandrake", spread: Alone, habitat: Shade, comfort: (temperature: (6.0, 20.0), moisture: (0.8, 2.5))),
+        (name: "wild_carrot", block: "wild_carrot", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 24.0), moisture: (0.4, 1.4))),
+        (name: "chili", block: "chili", spread: Alone, habitat: Open, comfort: (temperature: (20.0, 40.0), moisture: (0.4, 1.5))),
+
+        // Bushes.
+        (name: "blueberry_bush", block: "blueberry_bush", spread: Alone, comfort: (temperature: (-4.0, 14.0), moisture: (0.6, 2.0)), properties: (nutrition: 2.0)),
+        (name: "raspberry_bush", block: "raspberry_bush", spread: Alone, comfort: (temperature: (4.0, 20.0), moisture: (0.6, 2.0)), properties: (nutrition: 2.0)),
+        (name: "elderberry_bush", block: "elderberry_bush", spread: Alone, comfort: (temperature: (6.0, 22.0), moisture: (0.7, 2.0))),
+        (name: "juniper_bush", block: "juniper_bush", spread: Alone, comfort: (temperature: (-8.0, 14.0), moisture: (0.25, 1.6)), ground: [Soil, Snow]),
+        (name: "wild_rose_bush", block: "wild_rose_bush", spread: Alone, habitat: Open, comfort: (temperature: (6.0, 24.0), moisture: (0.4, 1.6))),
+        (name: "holly_bush", block: "holly_bush", spread: Alone, habitat: Shade, comfort: (temperature: (2.0, 18.0), moisture: (0.8, 2.5))),
+        (name: "tea_bush", block: "tea_bush", spread: Alone, comfort: (temperature: (16.0, 32.0), moisture: (0.9, 3.0))),
+        (name: "sagebrush", block: "sagebrush", spread: Alone, habitat: Open, comfort: (temperature: (4.0, 30.0), moisture: (0.05, 0.6)), ground: [Soil, Sand]),
+
+        // Grasses and reeds.
+        (name: "dune_grass", block: "dune_grass", habitat: Shore, comfort: (temperature: (2.0, 40.0)), ground: [Sand]),
+        (name: "bunchgrass", block: "bunchgrass", habitat: Open, comfort: (temperature: (4.0, 40.0), moisture: (0.1, 0.7)), ground: [Soil, Sand]),
+        (name: "pampas_grass", block: "pampas_grass", habitat: Open, comfort: (temperature: (14.0, 36.0), moisture: (0.3, 1.2))),
+        (name: "cotton_grass", block: "cotton_grass", habitat: Open, comfort: (temperature: (-10.0, 10.0), moisture: (1.25, 3.0))),
+        (name: "wild_wheat", block: "wild_wheat", spread: Drifts, habitat: Open, comfort: (temperature: (4.0, 26.0), moisture: (0.25, 1.0))),
+        (name: "cattail", block: "cattail", spread: Alone, habitat: Water, comfort: (temperature: (4.0, 30.0)), ground: [Soil, Sand]),
+        (name: "papyrus", block: "papyrus", spread: Alone, habitat: Water, comfort: (temperature: (20.0, 40.0)), ground: [Soil, Sand]),
+        (name: "rush", block: "rush", spread: Alone, habitat: Water, comfort: (temperature: (0.0, 30.0)), ground: [Soil, Sand]),
+
+        // Ferns.
+        (name: "maidenhair_fern", block: "maidenhair_fern", habitat: Understory, comfort: (temperature: (8.0, 30.0), moisture: (1.0, 3.0))),
+        (name: "bracken", block: "bracken", spread: Drifts, comfort: (temperature: (0.0, 22.0), moisture: (0.5, 2.0))),
+        (name: "horsetail", block: "horsetail", spread: Alone, habitat: Water, comfort: (temperature: (0.0, 26.0))),
+
+        // Fungi.
+        (name: "chanterelle", block: "chanterelle", spread: Alone, habitat: Shade, comfort: (temperature: (4.0, 22.0), moisture: (0.9, 2.5))),
+        (name: "porcini", block: "porcini", spread: Alone, habitat: Shade, comfort: (temperature: (2.0, 20.0), moisture: (0.8, 2.5))),
+        (name: "puffball", block: "puffball", spread: Alone, habitat: Open, comfort: (temperature: (4.0, 24.0), moisture: (0.6, 2.0))),
+        (name: "inkcap", block: "inkcap", spread: Alone, comfort: (temperature: (4.0, 22.0), moisture: (0.7, 2.5))),
+        (name: "morel", block: "morel", spread: Alone, comfort: (temperature: (4.0, 20.0), moisture: (0.7, 2.0))),
+        (name: "deathcap", block: "deathcap", spread: Alone, habitat: Shade, comfort: (temperature: (4.0, 22.0), moisture: (0.8, 2.5))),
+
+        // Wonders: rare everywhere, more common where the aether is high (see `wonders` in
+        // biomes.ron), each where its climate makes sense of it.
+        (name: "moonbloom", block: "moonbloom", spread: Alone, habitat: Open, comfort: (temperature: (2.0, 24.0), moisture: (0.5, 2.0))),
+        (name: "glowcap", block: "glowcap", spread: Alone, habitat: Shade, comfort: (temperature: (-2.0, 26.0), moisture: (0.8, 3.0))),
+        (name: "emberbloom", block: "emberbloom", spread: Alone, habitat: Open, comfort: (temperature: (20.0, 45.0), moisture: (0.0, 0.8)), ground: [Sand, Soil]),
+        (name: "frostpetal", block: "frostpetal", spread: Alone, habitat: Open, comfort: (temperature: (-20.0, 4.0)), ground: [Soil, Snow]),
+        (name: "starlily", block: "starlily", spread: Alone, habitat: Open, comfort: (temperature: (-6.0, 20.0))),
+        (name: "aether_orchid", block: "aether_orchid", spread: Alone, habitat: Shade, comfort: (temperature: (18.0, 40.0), moisture: (1.0, 3.0))),
+        (name: "whisperfern", block: "whisperfern", spread: Alone, habitat: Shade, comfort: (temperature: (0.0, 24.0), moisture: (0.8, 3.0))),
+        (name: "sunspire", block: "sunspire", spread: Alone, habitat: Open, comfort: (temperature: (12.0, 34.0), moisture: (0.2, 1.4))),
+        (name: "crystal_bloom", block: "crystal_bloom", spread: Alone, habitat: Open, comfort: (temperature: (-30.0, 0.0)), ground: [Snow, Soil]),
+        (name: "dreamshade", block: "dreamshade", spread: Alone, habitat: Shade, comfort: (temperature: (4.0, 24.0), moisture: (0.9, 3.0))),
+        (name: "heartbloom", block: "heartbloom", spread: Alone, habitat: Open, comfort: (temperature: (6.0, 24.0), moisture: (0.6, 1.6))),
     ],
 )
+

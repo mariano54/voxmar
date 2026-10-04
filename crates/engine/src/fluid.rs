@@ -61,7 +61,7 @@ use glam::{IVec3, Vec2};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockDef, BlockId, BlockRegistry, RegistryError};
+use crate::block::{BlockDef, BlockId, BlockRegistry, RegistryError, Support};
 use crate::coords::{CHUNK_BITS, CHUNK_SIZE, CHUNK_VOLUME, ColumnPos, WORLD_HEIGHT};
 use crate::schedule::Tick;
 use crate::world::{Column, VoxelWorld};
@@ -747,15 +747,18 @@ impl<'a> Planner<'a> {
         }
     }
 
-    /// Plans a write, taking any plant standing on a plant the fluid washes away with it.
+    /// Plans a write. A plant the fluid washes away takes with it what rests on it: the
+    /// plants standing on it and whatever hangs from it.
     fn write(&mut self, pos: IVec3, block: BlockId) {
-        let washed = self.block(pos).is_some_and(|b| self.registry.info(b).needs_support);
+        let washed = self.block(pos).is_some_and(|b| !b.is_air() && self.registry.info(b).fluid.is_none());
         self.writes.push((pos, block));
         if washed {
-            let mut above = pos + IVec3::Y;
-            while self.block(above).is_some_and(|b| self.registry.info(b).needs_support) {
-                self.writes.push((above, BlockId::AIR));
-                above += IVec3::Y;
+            for (step, support) in [(IVec3::Y, Support::Below), (IVec3::NEG_Y, Support::Above)] {
+                let mut next = pos + step;
+                while self.block(next).is_some_and(|b| self.registry.info(b).support == support) {
+                    self.writes.push((next, BlockId::AIR));
+                    next += step;
+                }
             }
         }
     }

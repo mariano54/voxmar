@@ -16,13 +16,14 @@
 // open air: `on` a side, with a `chance` per block, `length` blocks long, optionally with a
 // different `tip`, only `on_tags` blocks and `when` the conditions hold.
 //
-// Stand-ins until our own blocks exist: terracotta for dripstone, tuff and andesite for
-// basalt and blackstone, blue ice and sea lanterns for crystals, glowstone for glow berries,
-// glowing fungi and lichen, mangrove roots for hanging roots, azalea leaves for vines.
+// Hanging growth (glow berries, hanging roots, hanging dripstone) grows from ceilings; other
+// plants from floors. Glowing things (lichen, berries, crystals, magma, gloomvein) are what
+// light caves, so most cave biomes have some.
 (
     biomes: [
         (
-            // Bare rock, with gravel in hollows and sediment under water.
+            // Bare rock, with gravel in hollows, sediment under water and the odd glow of
+            // lichen.
             name: "cave",
             tags: ["cave"],
             layer: Underground,
@@ -40,6 +41,7 @@
             cave_decoration: [
                 (on: Ceiling, chance: 0.006, block: Stones, length: (1, 2)),
                 (on: Floor, chance: 0.004, block: Mix([Name("brown_mushroom", 2.0), Name("red_mushroom", 1.0)])),
+                (on: Floor, chance: 0.006, block: Block("glow_lichen"), when: [Patch((name: "lichen", scale: 30.0), 0.3)]),
             ],
         ),
         (
@@ -52,60 +54,67 @@
                 (temperature: ("cold", "hot"), moisture: ("arid", "moderate"), depth: (8.0, 400.0)),
                 (provinces: ["karst"], depth: (8.0, 400.0)),
             ],
-            stones: Blocks([Name("stone", 3.0), Name("terracotta", 1.2), Name("calcite", 0.8)]),
+            stones: Blocks([Name("dripstone_block", 3.0), Name("limestone", 1.5), Name("stone", 1.0)]),
             surface: (
-                ground: (top: Mix([Name("terracotta", 3.0), Name("calcite", 1.0)]), depth: 2),
-                underwater: (top: Mix([Name("clay", 1.0), Name("terracotta", 1.0)]), depth: 1),
-                cliff: Block("terracotta"),
+                ground: (top: Block("dripstone_block"), depth: 2),
+                underwater: (top: Mix([Name("clay", 1.0), Name("dripstone_block", 1.0)]), depth: 1),
+                cliff: Block("dripstone_block"),
             ),
             cave_decoration: [
-                (on: Ceiling, chance: 0.08, block: Block("terracotta"), length: (1, 6), tip: (Block("calcite"), 0.3)),
-                (on: Floor, chance: 0.05, block: Block("terracotta"), length: (1, 4), tip: (Block("calcite"), 0.3)),
+                (on: Ceiling, chance: 0.1, block: Block("dripstone_block"), length: (1, 6), tip: (Block("hanging_dripstone"), 1.0)),
+                (on: Ceiling, chance: 0.08, block: Block("hanging_dripstone")),
+                (on: Floor, chance: 0.06, block: Block("dripstone_block"), length: (1, 4), tip: (Block("pointed_dripstone"), 1.0)),
+                (on: Floor, chance: 0.06, block: Block("pointed_dripstone")),
             ],
         ),
         (
-            // Mossy, green and dripping with vines, glowing berries in them.
+            // Mossy, green and dripping with vines of glowing berries, over pools that glow
+            // from below.
             name: "lush_caves",
             tags: ["cave", "lush", "wet"],
             layer: Underground,
             rarity: Uncommon,
             climate: [(temperature: ("temperate", "hot"), moisture: ("humid", "wet"), depth: (4.0, 90.0))],
             surface: (
-                rules: [(when: [Underwater], place: (top: Block("clay"), depth: 1))],
+                rules: [(when: [Underwater, Patch((name: "glow_pools", scale: 6.0), 0.55)], place: (top: Block("sea_lantern"), depth: 0))],
                 ground: (top: Block("moss_block"), filler: Block("dirt"), depth: 2),
                 underwater: (top: Block("clay"), depth: 1),
                 cliff: Mix([Name("moss_block", 3.0), Name("rooted_dirt", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.3, on_tags: ["soil"], block: Block("short_grass")),
+                (on: Floor, chance: 0.25, on_tags: ["soil"], block: Block("moss_carpet")),
+                (on: Floor, chance: 0.2, on_tags: ["soil"], block: Block("short_grass")),
                 (on: Floor, chance: 0.08, on_tags: ["soil"], block: Block("fern")),
                 (on: Floor, chance: 0.04, on_tags: ["soil"], block: Block("azalea_leaves"), length: (1, 2)),
                 (on: Floor, chance: 0.015, on_tags: ["soil"], block: Block("flowering_azalea_leaves"), length: (1, 2)),
-                (on: Ceiling, chance: 0.08, block: Block("azalea_leaves"), length: (1, 6), tip: (Block("glowstone"), 0.15)),
-                (on: Ceiling, chance: 0.03, block: Block("mangrove_roots"), length: (1, 3)),
+                (on: Ceiling, chance: 0.1, block: Block("glow_berries"), length: (1, 6)),
+                (on: Ceiling, chance: 0.04, block: Block("hanging_roots"), length: (1, 2)),
             ],
         ),
         (
-            // Damp, dark earth and mushrooms, a few of them glowing.
+            // Damp, dark earth, mushrooms of every size and shelves of fungus overhead.
             name: "fungal_caves",
             tags: ["cave", "fungal"],
             layer: Underground,
             rarity: Uncommon,
             climate: [(temperature: ("cool", "temperate"), moisture: ("humid", "wet"), depth: (10.0, 120.0))],
             surface: (
+                rules: [(when: [Patch((name: "fungal_shelves", scale: 9.0), 0.25)], place: (top: Mix([Name("brown_mushroom_block", 2.0), Name("red_mushroom_block", 1.0)]), depth: 1))],
                 ground: (top: Mix([Name("podzol", 2.0), Name("mud", 1.0), Name("rooted_dirt", 1.0)]), filler: Block("dirt"), depth: 2),
                 underwater: (top: Block("mud"), depth: 1),
-                cliff: Mix([Name("rooted_dirt", 1.0), Name("dirt", 1.0)]),
+                cliff: Mix([Name("rooted_dirt", 2.0), Name("brown_mushroom_block", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.15, block: Block("brown_mushroom")),
-                (on: Floor, chance: 0.08, block: Block("red_mushroom")),
-                (on: Floor, chance: 0.005, block: Block("glowstone")),
-                (on: Ceiling, chance: 0.03, block: Block("mangrove_roots"), length: (1, 2)),
+                (on: Floor, chance: 0.14, block: Block("brown_mushroom")),
+                (on: Floor, chance: 0.07, block: Block("red_mushroom")),
+                // Toadstools: a stem and a cap.
+                (on: Floor, chance: 0.025, block: Block("mushroom_stem"), length: (2, 4), tip: (Mix([Name("red_mushroom_block", 1.0), Name("brown_mushroom_block", 1.0)]), 1.0)),
+                (on: Floor, chance: 0.01, block: Block("glow_lichen")),
+                (on: Ceiling, chance: 0.03, block: Block("hanging_roots"), length: (1, 2)),
             ],
         ),
         (
-            // Under cold land: walls veined with ice, floors of snow, icicles.
+            // Under cold land: walls veined with ice, floors of snow, icicles, frozen pools.
             name: "frozen_caves",
             tags: ["cave", "frozen", "cold"],
             layer: Underground,
@@ -124,21 +133,23 @@
             ],
         ),
         (
-            // Near the lava at the bottom of the world, and higher under volcanic land.
+            // Near the lava at the bottom of the world, and higher under volcanic land: basalt
+            // and glowing magma.
             name: "molten_caves",
             tags: ["cave", "molten", "hot", "deep"],
             layer: Underground,
             rarity: Uncommon,
             climate: [(height: (-200.0, -96.0)), (provinces: ["volcanic"], height: (-200.0, -60.0))],
-            stones: Blocks([Name("tuff", 2.0), Name("deepslate", 1.0), Name("andesite", 1.0)]),
+            stones: Blocks([Name("basalt", 3.0), Name("tuff", 1.0), Name("obsidian", 0.15)]),
             surface: (
-                ground: (top: Mix([Name("tuff", 2.0), Name("andesite", 1.0)]), depth: 1),
-                underwater: (top: Block("gravel"), depth: 1),
-                cliff: Block("deepslate"),
+                rules: [(when: [Patch((name: "magma_veins", scale: 7.0), 0.3)], place: (top: Block("magma_block"), depth: 1))],
+                ground: (top: Mix([Name("basalt", 3.0), Name("magma_block", 0.4)]), depth: 1),
+                underwater: (top: Block("obsidian"), depth: 1),
+                cliff: Mix([Name("basalt", 4.0), Name("magma_block", 1.0)]),
             ),
             cave_decoration: [
-                (on: Ceiling, chance: 0.04, block: Block("tuff"), length: (1, 3)),
-                (on: Floor, chance: 0.03, block: Block("tuff"), length: (1, 2)),
+                (on: Ceiling, chance: 0.04, block: Block("basalt"), length: (1, 3), tip: (Block("magma_block"), 0.3)),
+                (on: Floor, chance: 0.03, block: Block("basalt"), length: (1, 3)),
             ],
         ),
         (
@@ -164,25 +175,27 @@
             cave_decoration: [
                 (on: Ceiling, chance: 0.05, block: Strata, length: (1, 4)),
                 (on: Floor, chance: 0.03, block: Strata, length: (1, 3)),
+                (on: Floor, chance: 0.01, block: Block("dead_bush")),
             ],
         ),
         (
-            // A pale shell of calcite set with glowing crystals, in hard old rock.
+            // Dark rock set with glowing crystal, in hard old rock.
             name: "crystal_caves",
             tags: ["cave", "crystal", "light"],
             layer: Underground,
             rarity: Rare,
             climate: [(provinces: ["igneous", "metamorphic"], depth: (24.0, 400.0))],
-            stones: Blocks([Name("calcite", 2.0), Name("diorite", 1.0), Name("stone", 1.0)]),
+            stones: Blocks([Name("basalt", 2.0), Name("calcite", 1.0), Name("crystal_block", 0.3)]),
             surface: (
-                ground: (top: Mix([Name("calcite", 2.0), Name("diorite", 1.0)]), depth: 1),
+                rules: [(when: [Patch((name: "crystal_beds", scale: 6.0), 0.2)], place: (top: Block("crystal_block"), depth: 1))],
+                ground: (top: Block("calcite"), depth: 1),
                 underwater: (top: Block("calcite"), depth: 1),
-                cliff: Block("calcite"),
+                cliff: Mix([Name("calcite", 2.0), Name("crystal_block", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.06, block: Block("blue_ice"), length: (1, 4), tip: (Block("sea_lantern"), 0.15)),
-                (on: Ceiling, chance: 0.06, block: Block("blue_ice"), length: (1, 3), tip: (Block("sea_lantern"), 0.15)),
-                (on: Floor, chance: 0.02, block: Block("packed_ice"), length: (1, 2)),
+                (on: Floor, chance: 0.12, block: Block("crystal_cluster")),
+                (on: Floor, chance: 0.05, block: Block("crystal_block"), length: (1, 4), tip: (Block("crystal_cluster"), 1.0)),
+                (on: Ceiling, chance: 0.06, block: Block("crystal_block"), length: (1, 3)),
             ],
         ),
         (
@@ -202,42 +215,46 @@
                 underwater: (top: Mix([Name("sand", 2.0), Name("gravel", 1.0)]), depth: 2),
                 cliff: Mix([Name("mossy_cobblestone", 1.0), Name("stone", 2.0)]),
             ),
+            cave_decoration: [(on: Ceiling, chance: 0.02, block: Block("hanging_roots"))],
         ),
         (
-            // The deepest caves: dark slate, still and lightless.
+            // The deepest caves: dark slate, still, lit only by threads of gloomvein.
             name: "deep_dark",
             tags: ["cave", "deep_dark", "deep"],
             layer: Underground,
             rarity: Uncommon,
             climate: [(depth: (80.0, 400.0), height: (-200.0, -40.0))],
-            stones: Blocks([Name("deepslate", 4.0), Name("tuff", 1.0)]),
+            stones: Blocks([Name("deepslate", 4.0), Name("slate", 1.5)]),
             surface: (
+                rules: [(when: [Band((name: "gloom_threads", scale: 22.0, octaves: 2), 0.05)], place: (top: Block("gloomvein"), depth: 1))],
                 ground: (top: Mix([Name("deepslate", 2.0), Name("mud", 1.0)]), depth: 1),
                 underwater: (top: Block("mud"), depth: 1),
                 cliff: Block("deepslate"),
             ),
             cave_decoration: [
                 (on: Floor, chance: 0.02, block: Block("deepslate"), length: (1, 2)),
-                (on: Floor, chance: 0.0015, block: Block("sea_lantern")),
+                (on: Ceiling, chance: 0.01, block: Block("gloomvein")),
             ],
         ),
         (
-            // Fantasy: hollows hung with glowing roots, where the land is strange.
+            // Fantasy: hollows hung with roots that end in glowing berries, where the land is
+            // strange.
             name: "glowroot_hollows",
             tags: ["cave", "fantasy", "wonder", "lush", "light"],
             layer: Underground,
             rarity: Rare,
             climate: [(temperature: ("cool", "hot"), moisture: ("moderate", "wet"), aether: (0.6, 1.0), depth: (6.0, 100.0))],
             surface: (
+                rules: [(when: [Underwater, Patch((name: "glow_pools", scale: 6.0), 0.35)], place: (top: Block("sea_lantern"), depth: 0))],
                 ground: (top: Block("moss_block"), filler: Block("rooted_dirt"), depth: 2),
                 underwater: (top: Block("clay"), depth: 1),
                 cliff: Block("rooted_dirt"),
             ),
             cave_decoration: [
-                (on: Ceiling, chance: 0.14, block: Block("mangrove_roots"), length: (2, 7), tip: (Block("glowstone"), 0.25)),
-                (on: Floor, chance: 0.2, on_tags: ["soil"], block: Block("fern")),
+                (on: Ceiling, chance: 0.16, block: Block("hanging_roots"), length: (2, 7), tip: (Block("glow_berries"), 0.5)),
+                (on: Floor, chance: 0.2, on_tags: ["soil"], block: Block("glow_lichen")),
+                (on: Floor, chance: 0.15, on_tags: ["soil"], block: Block("fern")),
                 (on: Floor, chance: 0.04, on_tags: ["soil"], block: Block("flowering_azalea_leaves"), length: (1, 2)),
-                (on: Floor, chance: 0.006, block: Block("glowstone")),
             ],
         ),
         (
@@ -247,16 +264,16 @@
             layer: Underground,
             rarity: VeryRare,
             climate: [(aether: (0.7, 1.0), depth: (12.0, 200.0))],
-            stones: Blocks([Name("calcite", 3.0), Name("diorite", 1.0)]),
+            stones: Blocks([Name("marble", 3.0), Name("calcite", 1.0)]),
             surface: (
-                ground: (top: Mix([Name("calcite", 2.0), Name("diorite", 1.0)]), depth: 1),
+                ground: (top: Mix([Name("marble", 2.0), Name("snow_block", 1.0)]), depth: 1),
                 underwater: (top: Block("calcite"), depth: 1),
-                cliff: Block("calcite"),
+                cliff: Block("marble"),
             ),
             cave_decoration: [
-                (on: Ceiling, chance: 0.025, block: Block("sea_lantern")),
-                (on: Ceiling, chance: 0.03, block: Block("blue_ice"), length: (1, 3)),
-                (on: Floor, chance: 0.03, block: Block("blue_ice"), length: (1, 3), tip: (Block("sea_lantern"), 0.2)),
+                (on: Ceiling, chance: 0.03, block: Block("sea_lantern")),
+                (on: Ceiling, chance: 0.02, block: Block("crystal_block"), length: (1, 3)),
+                (on: Floor, chance: 0.04, block: Block("crystal_cluster")),
             ],
         ),
     ],

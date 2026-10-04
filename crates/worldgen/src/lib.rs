@@ -16,6 +16,7 @@ mod biome;
 mod caves;
 mod climate;
 mod content;
+mod decor;
 mod dials;
 mod ecology;
 mod features;
@@ -27,6 +28,7 @@ mod rng;
 mod rocks;
 mod surface;
 mod terrain;
+mod trails;
 mod trees;
 mod underground;
 mod water;
@@ -49,6 +51,7 @@ pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current};
 pub use rarity::{Featured, Rarity, Tier};
 pub use rocks::ProvinceId;
+pub use trails::{Kind as PlaceKind, Poi, TrailMark};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
@@ -58,6 +61,7 @@ use crate::ecology::Ecology;
 use crate::geology::{GeoSample, Geology, smoothstep};
 use crate::rocks::Rocks;
 use crate::surface::SurfaceRules;
+use crate::trails::Land;
 
 /// Something that produces world columns. Generators are identified by a stable id that
 /// is mixed into their random streams.
@@ -120,6 +124,12 @@ pub struct Site {
     pub vegetation: f32,
     /// Tree cover, 0 (open) ..= 1 (dense forest).
     pub forest: f32,
+    /// The forest's structure, evenly spread over 0 ..= 1: gaps and scrubby edges low,
+    /// ordinary woodland in the middle, old-growth cores (dense, tall, the giants) high.
+    pub stand: f32,
+    /// How deep into a clearing the position lies: 0 outside, rising across its soft edge
+    /// to 1. Clearings open in every biome; trees stay out of them.
+    pub clearing: f32,
     /// The rock province beneath.
     pub province: ProvinceId,
     /// The biome whose rules make this block: near a border, the home biome or its
@@ -133,6 +143,8 @@ pub struct Site {
     pub edge: f32,
     /// 0 at the centre of the home biome's climate ..= 1 at its edge.
     pub from_centre: f32,
+    /// How much of a trail's tread lies here, 0 (none) ..= 1 (the middle of the path).
+    pub trail: f32,
 }
 
 impl Site {
@@ -194,7 +206,9 @@ pub struct Overworld {
     geology: Geology,
     climate: Climate,
     rivers: water::Rivers,
+    trails: trails::Trails,
     ecology: Ecology,
+    decor: decor::Decor,
     biomes: Biomes,
     atmospheres: atmosphere::Atmospheres,
     rocks: Rocks,
@@ -212,7 +226,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 9;
+    pub const VERSION: u32 = 11;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -228,13 +242,17 @@ impl Overworld {
         let rocks = Rocks::new(stream, content, &registry, &dials.featured);
         let mut rules = SurfaceRules::new(stream, content, &registry);
         let biomes = Biomes::new(content, &registry, &mut rules, &rocks, &dials.featured);
+        let ecology = Ecology::new(stream, &dials, content, &registry);
+        let decor = decor::Decor::new(content, &registry, &mut rules, &ecology, &dials.featured, features::CELL, stream);
         let underground = underground::Underground::new(stream, content, &registry, &biomes, &mut rules, &rocks);
         Self {
             dials,
             geology: Geology::new(stream, &dials),
             climate: Climate::new(stream, &dials),
             rivers: water::Rivers::new(stream, &dials),
-            ecology: Ecology::new(stream, &dials, content, &registry),
+            ecology,
+            decor,
+            trails: trails::Trails::new(stream),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
@@ -338,23 +356,46 @@ impl Overworld {
         self.caves.style()
     }
 
-    /// Surface height only; cheap enough to sample on coarse grids.
+    /// Surface height only; cheap enough to sample on coarse grids. Trails, which change
+    /// it by a few blocks along a narrow line, are left out (see [`Overworld::site`]).
     pub fn height(&self, x: i32, z: i32) -> i32 {
-        self.geo(x, z).height
+        self.land().sample(x, z).height
     }
 
     fn stages(&self) -> water::Stages<'_> {
         water::Stages { geology: &self.geology, climate: &self.climate }
     }
 
-    /// The ground at one position, with its rivers and lakes.
+    /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
-        self.rivers.sample(self.stages(), x, z)
+        let land = self.land();
+        self.trails.apply(&land, land.sample(x, z), x, z)
     }
 
     /// The ground over the `size`×`size` positions from (x, z), row by row.
     pub(crate) fn geo_area(&self, x: i32, z: i32, size: i32) -> Vec<GeoSample> {
-        self.rivers.area(self.stages(), IVec2::new(x, z), size)
+        let land = self.land();
+        let mut area = self.rivers.area(self.stages(), IVec2::new(x, z), size);
+        for (i, sample) in area.iter_mut().enumerate() {
+            *sample = self.trails.apply(&land, *sample, x + i as i32 % size, z + i as i32 / size);
+        }
+        area
+    }
+
+    /// The land trails are planned over: the ground with its rivers and lakes.
+    fn land(&self) -> RiverLand<'_> {
+        RiverLand { rivers: &self.rivers, stages: self.stages() }
+    }
+
+    /// What is built beside trails within the blocks from `min` to `max`.
+    pub(crate) fn trail_markers(&self, min: IVec2, max: IVec2) -> Vec<(IVec2, trails::Marker)> {
+        self.trails.markers(&self.land(), min, max)
+    }
+
+    /// The trails through the blocks from `min` to `max`, as centrelines (each point with
+    /// 0 on the ground, 1 on a ford and 2 on a bridge), and the places they join.
+    pub fn trails_in(&self, min: IVec2, max: IVec2) -> (Vec<Vec<(voxmar_engine::glam::Vec2, u8)>>, Vec<Poi>) {
+        self.trails.sketch(&self.land(), min, max)
     }
 
     /// Steepest height step from (x, z), whose height is `height`, to its four neighbours.
@@ -385,7 +426,10 @@ impl Overworld {
         ClimateGrid::new(&self.climate, &self.geology, min - margin, max + margin)
     }
 
-    /// The parameters of the surface at one position.
+    /// The parameters of the surface at one position. Like the other sampling for maps,
+    /// distant terrain and coarse decisions, it leaves trails out: planning them costs far
+    /// more than one position is worth, and they are only a few blocks wide. Generated
+    /// columns have them.
     pub fn site(&self, x: i32, z: i32) -> Site {
         self.sampler(IVec2::new(x, z), IVec2::new(x, z)).site(x, z)
     }
@@ -394,6 +438,18 @@ impl Overworld {
     /// Matches full generation except for caves and individual trees and plants.
     pub fn surface_sample(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
         self.sampler(IVec2::new(x, z), IVec2::new(x, z)).surface(x, z, height, slope)
+    }
+}
+
+/// The ground with rivers and lakes, as trails see it.
+struct RiverLand<'a> {
+    rivers: &'a water::Rivers,
+    stages: water::Stages<'a>,
+}
+
+impl trails::Land for RiverLand<'_> {
+    fn sample(&self, x: i32, z: i32) -> GeoSample {
+        self.rivers.sample(self.stages, x, z)
     }
 }
 
@@ -415,13 +471,13 @@ struct Picks {
 impl Sampler<'_> {
     /// The parameters of the surface at a position inside the sampler's area.
     pub fn site(&self, x: i32, z: i32) -> Site {
-        let geo = self.world.geo(x, z);
+        let geo = self.world.land().sample(x, z);
         self.site_on(&geo, x, z, self.world.slope(x, z, geo.height))
     }
 
     /// What the surface looks like from far away; see [`Overworld::surface_sample`].
     pub fn surface(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
-        let geo = GeoSample { height, ..self.world.geo(x, z) };
+        let geo = GeoSample { height, ..self.world.land().sample(x, z) };
         let site = self.site_on(&geo, x, z, slope);
         let (ground, water) = self.world.surface_blocks(&site, x, z);
         let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
@@ -541,18 +597,21 @@ impl Sampler<'_> {
             body: geo.body,
             vegetation: 0.0,
             forest: 0.0,
+            stand: self.world.ecology.stand(x, z),
+            clearing: self.world.ecology.clearing(x, z),
             province: self.world.rocks.at(x, z, regional.warp),
             biome: BiomeId(0),
             home: BiomeId(0),
             neighbour: BiomeId(0),
             edge: 0.0,
             from_centre: 0.0,
+            trail: geo.trail.map_or(0.0, |t| t.tread),
         };
         let pick = self.pick(x, z);
         let share = Biomes::blend(pick.edge, regional.fertility);
         if !geo.submerged() {
             site.vegetation = ecology::ground_cover(temperature, site.soil_moisture());
-            site.forest = self.world.ecology.forest(x, z, pick.home, pick.neighbour, share, regional.fertility);
+            site.forest = self.world.ecology.forest(site.stand, site.clearing, pick.home, pick.neighbour, share, regional.fertility);
         }
         let dither = if share > 0.0 || geo.river > 0.0 { self.world.blend_dither(x, z) } else { 1.0 };
         site.biome = if dither < share { pick.neighbour } else { pick.home };
@@ -722,8 +781,8 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen river_sights -- --ignored --nocapture`
-    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth and a river
-    /// tunnel near spawn and prints `--pose` arguments that look at each, for in-game
+    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth, a river
+    /// tunnel, an island in a river and a hot spring near spawn and prints `--pose` arguments that look at each, for in-game
     /// captures.
     #[test]
     #[ignore]
@@ -738,7 +797,7 @@ mod tests {
         let geos: Vec<GeoSample> = (0..n * n).map(|i| world.geo(spawn.x - range + i % n * step, spawn.z - range + i / n * step)).collect();
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         // (score, x, z, y)
-        let mut best: [(f32, i32, i32, i32); 5] = [(0.0, 0, 0, 0); 5];
+        let mut best: [(f32, i32, i32, i32); 7] = [(0.0, 0, 0, 0); 7];
         for j in 1..n - 1 {
             for i in 1..n - 1 {
                 let g = at(i, j);
@@ -751,6 +810,13 @@ mod tests {
                 };
                 if g.cavity.is_some() {
                     consider(4, 1.0);
+                }
+                let river = |o: GeoSample| o.submerged() && o.body == Body::River;
+                if g.submerged() && g.body == Body::Spring {
+                    consider(6, 1.0);
+                }
+                if !g.submerged() && g.body == Body::River && (river(at(i - 2, j)) && river(at(i + 2, j)) || river(at(i, j - 2)) && river(at(i, j + 2))) {
+                    consider(5, 1.0);
                 }
                 if !g.submerged() {
                     continue;
@@ -784,7 +850,7 @@ mod tests {
             }
         }
         println!("seed {seed}, spawn {spawn}");
-        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel"].into_iter().zip(best) {
+        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel", "river island", "hot spring"].into_iter().zip(best) {
             if score == 0.0 {
                 println!("{name}: none within {range}");
                 continue;
@@ -799,6 +865,177 @@ mod tests {
             let pitch = d.y.atan2(d.x.hypot(d.z)).to_degrees();
             let o = camera - eye;
             println!("{name} at {x},{y},{z}: --pose {:.0},{:.0},{:.0},{yaw:.0},{pitch:.0}", o.x, o.y, o.z);
+        }
+    }
+
+    /// Logs, stumps, rocks and trees rest on the ground: every solid block above the ground
+    /// joins it through other solid blocks (leaves aside, which hang from branches), and
+    /// every small plant stands on something solid.
+    #[test]
+    fn decorations_rest_on_the_ground() {
+        let registry = registry();
+        for (seed, biome) in [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest")] {
+            let world = Overworld::new(seed, registry.clone());
+            let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {biome}"));
+            let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+            let columns = generate_area(&world, first, 3);
+            let origin = first.origin();
+            let size = 3 * voxmar_engine::coords::CHUNK_SIZE;
+            let inside = |p: IVec3| (0..size).contains(&(p.x - origin.x)) && (0..size).contains(&(p.z - origin.z));
+            let block = |p: IVec3| {
+                let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+                columns[(cz * 3 + cx) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31))
+            };
+            let info = |b: BlockId| registry.info(b);
+            let leafy = |b: BlockId| registry.def(b).name.ends_with("leaves");
+            // Solid blocks above the ground that are not leaves.
+            let lifted = |p: IVec3| inside(p) && p.y > world.height(p.x, p.z) && p.y < WORLD_HEIGHT_FOR_TESTS && {
+                let b = block(p);
+                info(b).solid && !leafy(b) && b != registry.expect("base:water")
+            };
+            let mut seen = rustc_hash::FxHashSet::default();
+            let (mut pieces, mut plants) = (0, 0);
+            for z in origin.z..origin.z + size {
+                for x in origin.x..origin.x + size {
+                    let h = world.height(x, z);
+                    for y in h + 1..(h + 48).min(WORLD_HEIGHT_FOR_TESTS) {
+                        let p = IVec3::new(x, y, z);
+                        let b = block(p);
+                        if info(b).render == voxmar_engine::block::RenderKind::Plant {
+                            plants += 1;
+                            let below = block(p - IVec3::Y);
+                            assert!(info(below).solid || info(below).render == voxmar_engine::block::RenderKind::Plant, "seed {seed}: {} at {p} on {}", registry.def(b).name, registry.def(below).name);
+                        }
+                        if !lifted(p) || seen.contains(&p) {
+                            continue;
+                        }
+                        // The piece this block belongs to must touch the ground or leave the area.
+                        pieces += 1;
+                        let (mut stack, mut grounded) = (vec![p], false);
+                        seen.insert(p);
+                        while let Some(q) = stack.pop() {
+                            for d in [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z] {
+                                let n = q + d;
+                                if !inside(n) || (n.y <= world.height(n.x, n.z) && info(block(n)).solid) {
+                                    grounded = true;
+                                } else if lifted(n) && seen.insert(n) {
+                                    stack.push(n);
+                                }
+                            }
+                        }
+                        assert!(grounded, "seed {seed}: {} at {p} floats", registry.def(b).name);
+                    }
+                }
+            }
+            assert!(pieces > 20 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome}");
+        }
+    }
+
+    /// Features reaching across column borders (trees, logs, rocks) come out the same
+    /// whichever column is generated first, on whichever thread.
+    #[test]
+    fn decorations_never_depend_on_generation_order() {
+        let world = Overworld::new(42, registry());
+        let at = world.locate_biome("forest", IVec2::ZERO, 6000).unwrap();
+        let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+        let together = generate_area(&world, first, 3);
+        for i in (0..9).rev() {
+            assert!(world.generate(first.offset(i % 3, i / 3)) == together[i as usize], "column {i} differs");
+        }
+    }
+
+    /// Most open grass in a meadow carries a plant, but few of them are flowers.
+    #[test]
+    fn meadows_are_carpeted_and_flowers_stay_sparse() {
+        let registry = registry();
+        let (grass, air) = (registry.expect("base:grass_block"), BlockId::AIR);
+        let (mut open, mut planted, mut flowers) = (0, 0, 0);
+        for seed in [1, 42] {
+            let world = Overworld::new(seed, registry.clone());
+            let at = world.locate_biome("plains", IVec2::ZERO, 6000).unwrap();
+            let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+            for (i, column) in generate_area(&world, first, 3).iter().enumerate() {
+                let origin = first.offset(i as i32 % 3, i as i32 / 3).origin();
+                for z in 0..32 {
+                    for x in 0..32 {
+                        let (wx, wz) = (origin.x + x, origin.z + z);
+                        let site = world.site(wx, wz);
+                        let h = site.height;
+                        if column.block(IVec3::new(x, h, z)) != grass || world.biomes.get(site.biome).name != "base:plains" {
+                            continue;
+                        }
+                        let above = column.block(IVec3::new(x, h + 1, z));
+                        if above != air && registry.info(above).render != voxmar_engine::block::RenderKind::Plant {
+                            continue;
+                        }
+                        open += 1;
+                        if above != air {
+                            planted += 1;
+                            flowers += registry.def(above).has_tag("flower") as i32;
+                        }
+                    }
+                }
+            }
+        }
+        let (planted, flowers) = (planted as f32 / open as f32, flowers as f32 / open as f32);
+        println!("{open} open grass blocks, {planted:.2} planted, {flowers:.3} flowers");
+        assert!(open > 1000 && planted > 0.6 && flowers < 0.08, "{open} open, {planted} planted, {flowers} flowers");
+    }
+
+    /// `cargo test --release -p voxmar_worldgen decor_sights -- --ignored --nocapture`
+    /// (optionally `SEED=n`, `RANGE=blocks`) prints `--pose` arguments for in-game captures
+    /// of ground decoration near spawn: deep in an old-growth forest, at a scrubby forest
+    /// edge, in a clearing, in a meadow, on a slope, in a cold forest and in a dry
+    /// grassland, each standing on the ground and from a little above.
+    #[test]
+    #[ignore]
+    fn decor_sights() {
+        let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(42);
+        let range: i32 = std::env::var("RANGE").ok().and_then(|s| s.parse().ok()).unwrap_or(700);
+        let world = Overworld::new(seed, registry());
+        let spawn = world.spawn_point();
+        let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.62, 0.5);
+        let sampler = world.sampler(IVec2::new(spawn.x, spawn.z) - range, IVec2::new(spawn.x, spawn.z) + range);
+        type Test = fn(&Site, &Biome) -> bool;
+        let dry = |s: &Site| s.height > s.water && s.river < 0.2 && s.height < SEA_LEVEL + 70;
+        let sights: [(&str, Test); 8] = [
+            ("old-growth forest", |s, b| b.has_tag("forest") && s.stand > 0.75 && s.forest > 0.55 && s.clearing == 0.0 && s.slope <= 1),
+            ("forest edge", |s, b| b.has_tag("forest") && s.stand < 0.2 && s.clearing == 0.0 && s.slope <= 1),
+            ("clearing", |s, b| b.has_tag("forest") && s.clearing > 0.95),
+            ("meadow", |s, b| b.has_tag("grassland") && !b.has_tag("dry") && s.edge > 40.0 && s.slope <= 1),
+            ("slope", |s, b| !b.has_tag("mountain") && !b.has_tag("desert") && s.slope >= 2 && s.slope <= 3 && s.temperature > 4.0),
+            ("cold forest", |s, b| b.has_tag("forest") && b.has_tag("cold") && s.forest > 0.4),
+            ("dry grassland", |s, b| b.has_tag("grassland") && b.has_tag("dry") && s.edge > 30.0),
+            ("snowy", |s, _| s.temperature < -3.0 && s.forest > 0.2),
+        ];
+        println!("seed {seed}, spawn {spawn}");
+        for (name, test) in sights {
+            let mut best: Option<(i32, Site, i32, i32)> = None;
+            for dz in (-range..=range).step_by(6) {
+                for dx in (-range..=range).step_by(6) {
+                    let d = dx * dx + dz * dz;
+                    if best.as_ref().is_some_and(|b| d >= b.0) {
+                        continue;
+                    }
+                    let (x, z) = (spawn.x + dx, spawn.z + dz);
+                    let site = sampler.site(x, z);
+                    if dry(&site) && test(&site, world.biomes.get(site.biome)) {
+                        best = Some((d, site, x, z));
+                    }
+                }
+            }
+            let Some((_, site, x, z)) = best else {
+                println!("{name}: none within {range}");
+                continue;
+            };
+            let biome = &world.biomes.get(site.biome).name;
+            let ground = voxmar_engine::glam::Vec3::new(x as f32 + 0.5, site.height as f32 + 1.0, z as f32 + 0.5);
+            let stand = ground + voxmar_engine::glam::Vec3::Y * 1.7 - eye;
+            let above = ground + voxmar_engine::glam::Vec3::new(12.0, 10.0, 12.0) - eye;
+            println!(
+                "{name} ({biome}, stand {:.2}, forest {:.2}, slope {}) at {x},{z}: --pose {:.1},{:.1},{:.1},45,-12  above: --pose {:.1},{:.1},{:.1},45,-35",
+                site.stand, site.forest, site.slope, stand.x, stand.y, stand.z, above.x, above.y, above.z
+            );
         }
     }
 
@@ -873,7 +1110,9 @@ mod tests {
     fn caves_are_decorated() {
         let registry = registry();
         let decorations: Vec<BlockId> =
-            ["glowstone", "sea_lantern", "mangrove_roots", "azalea_leaves", "brown_mushroom", "moss_block", "blue_ice"].map(|n| registry.expect(&format!("base:{n}"))).to_vec();
+            ["glow_berries", "hanging_roots", "hanging_dripstone", "pointed_dripstone", "crystal_cluster", "moss_carpet", "brown_mushroom", "moss_block", "dripstone_block"]
+                .map(|n| registry.expect(&format!("base:{n}")))
+                .to_vec();
         // The last two also line caves or make up their rock.
         let decoration_only = decorations.len() - 2;
         let mut found = vec![0; decorations.len()];
@@ -904,6 +1143,75 @@ mod tests {
             }
         }
         assert!(found.iter().filter(|&&n| n > 0).count() >= 5, "{found:?}");
+    }
+
+    /// Everything hanging (glow berries, roots, stalactite tips) hangs under solid rock or
+    /// under more of its own column, as the game requires of blocks with `support: Above`.
+    #[test]
+    fn hanging_blocks_hang_from_rock() {
+        use voxmar_engine::block::Support;
+        let registry = registry();
+        let mut hanging = 0;
+        // Lush caves, glowroot hollows and dripstone caves near spawn (see `cave_sights`).
+        for (seed, place) in [(1, (-271, 38)), (7, (261, 150)), (1, (-47, -126)), (42, (-43, -354))] {
+            let world = Overworld::new(seed, registry.clone());
+            let first = ColumnPos::of_block(IVec3::new(place.0, 0, place.1)).offset(-3, -3);
+            let columns = generate_area(&world, first, 6);
+            let origin = first.origin();
+            let block = |p: IVec3| {
+                let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+                columns[(cz * 6 + cx) as usize].block(IVec3::new(p.x & 31, p.y, p.z & 31))
+            };
+            for z in origin.z..origin.z + 192 {
+                for x in origin.x..origin.x + 192 {
+                    for y in 1..voxmar_engine::coords::WORLD_HEIGHT - 1 {
+                        let p = IVec3::new(x, y, z);
+                        if registry.info(block(p)).support != Support::Above {
+                            continue;
+                        }
+                        hanging += 1;
+                        let mut up = p + IVec3::Y;
+                        while registry.info(block(up)).support == Support::Above {
+                            up += IVec3::Y;
+                        }
+                        assert!(registry.info(block(up)).solid, "seed {seed}: {} at {p} hangs from {} at {up}", registry.def(block(p)).name, registry.def(block(up)).name);
+                    }
+                }
+            }
+        }
+        assert!(hanging > 100, "only {hanging} hanging blocks");
+    }
+
+    /// Geodes are hollow and lined with crystal, in calcite and dark rock.
+    #[test]
+    fn geodes_are_hollow_and_lined() {
+        let registry = registry();
+        let world = Overworld::new(5, registry.clone());
+        let crystal = [registry.expect("base:crystal_block")];
+        let mut checked = 0;
+        for i in 0..400 {
+            let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
+            let origin = pos.origin();
+            let geology = geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
+            let column = world.generate(pos);
+            for geode in world.caves.geodes_near(&geology, origin) {
+                let centre = geode.centre.floor().as_ivec3();
+                if ColumnPos::of_block(centre) != pos {
+                    continue;
+                }
+                let local = |p: IVec3| IVec3::new(p.x & 31, p.y, p.z & 31);
+                let middle = column.block(local(centre));
+                assert!(!registry.info(middle).solid, "a geode at {centre} is not hollow");
+                // Straight up and down from the centre, through the lining, unless a cave cut it.
+                for dir in [IVec3::Y, IVec3::NEG_Y] {
+                    let p = centre + dir * (geode.radius + 0.6).floor() as i32;
+                    let block = column.block(local(p));
+                    assert!(crystal.contains(&block) || !registry.info(block).solid, "{} at {p} lines the geode at {centre}", registry.def(block).name);
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2, "only {checked} geodes");
     }
 
     /// `cargo test --release -p voxmar_worldgen cave_preview -- --ignored --nocapture`
@@ -1036,7 +1344,8 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen cave_sights -- --ignored --nocapture`
-    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`) prints `--pose` arguments for
+    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
+    /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
     /// in-game captures of caves near spawn: inside the largest open space under each sight.
     #[test]
     #[ignore]
@@ -1046,7 +1355,21 @@ mod tests {
         let (water, lava) = (registry.expect("base:water"), registry.expect("base:lava"));
         for seed in seeds.split(',').map(|s| s.parse::<u64>().unwrap()) {
             let world = Overworld::new(seed, registry.clone());
-            let spawn = world.spawn_point();
+            // Around spawn, or around `X`, `Z`, which a capture reaches with
+            // `--command "/tp X Z"` (the poses are from the eye of a player standing there).
+            // `NEAR=biome` finds the nearest of that surface biome to spawn instead.
+            let near = std::env::var("NEAR").ok().and_then(|name| {
+                let spawn = world.spawn_point();
+                world.locate_biome(&name, IVec2::new(spawn.x, spawn.z), 8000).map(|p| (p.x, p.y))
+            });
+            let place = near.or_else(|| std::env::var("X").ok().zip(std::env::var("Z").ok()).and_then(|(x, z)| Some((x.parse::<i32>().ok()?, z.parse::<i32>().ok()?))));
+            let spawn = match place {
+                Some((x, z)) => {
+                    println!("  capture with --command \"/tp {x} {z}\"");
+                    IVec3::new(x, world.height(x, z) + 1, z)
+                }
+                None => world.spawn_point(),
+            };
             let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.62, 0.5);
             println!("seed {seed}: spawn {spawn}, {:?}", world.cave_style());
             for (kind, x, z) in world.caves.sights((spawn.x, spawn.z), 420) {
@@ -1177,6 +1500,42 @@ mod tests {
                     }
                 }
             }
+            // Geodes, from inside, and fossils where a cave lays them bare.
+            let air_around = |p: IVec3| [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y].into_iter().find(|&d| air(p + d));
+            let mut fossils: Vec<IVec3> = Vec::new();
+            for i in 0..19 * 19 {
+                let corner = first.offset(i % 19, i / 19).origin();
+                let geology = geology::GeoGrid::new(&world, (corner.x - 1, corner.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
+                for geode in world.caves.geodes_near(&geology, corner) {
+                    let c = geode.centre.floor().as_ivec3();
+                    if ColumnPos::of_block(c) == ColumnPos::of_block(corner) && air(c) {
+                        let d = c.as_vec3() + 0.5 - eye;
+                        println!("  geode, {:.0} across at {c}: --pose {:.1},{:.1},{:.1},0,-30", 2.0 * geode.radius, d.x, d.y, d.z);
+                    }
+                }
+                for fossil in world.underground.fossils_near(&world, corner) {
+                    if fossils.contains(&fossil.min) {
+                        continue;
+                    }
+                    fossils.push(fossil.min);
+                    let bare: Vec<(IVec3, IVec3)> = (fossil.min.y..=fossil.max.y)
+                        .flat_map(|y| (fossil.min.z..=fossil.max.z).flat_map(move |z| (fossil.min.x..=fossil.max.x).map(move |x| IVec3::new(x, y, z))))
+                        .filter(|&p| fossil.contains(p) && block(p).is_some_and(|b| !b.is_air()))
+                        .filter_map(|p| air_around(p).map(|d| (p, d)))
+                        .collect();
+                    // From as far back as the cave allows, at the barest part.
+                    let view = |&(p, d): &(IVec3, IVec3)| (1..9).map(|k| p + d * k).take_while(|&c| air(c)).count();
+                    if let Some(&(p, d)) = bare.iter().max_by_key(|b| (view(b), bare.iter().filter(|o| o.0.distance_squared(b.0) < 16).count())) {
+                        println!("  ({} bones bare)", bare.len());
+                        let camera = p + d * view(&(p, d)) as i32;
+                        let look = (p - camera).as_vec3();
+                        let yaw = (-look.x).atan2(-look.z).to_degrees();
+                        let e = camera.as_vec3() + 0.5 - eye;
+                        println!("  fossil laid bare at {p}: --pose {:.1},{:.1},{:.1},{yaw:.0},-20", e.x, e.y, e.z);
+                    }
+                }
+            }
+
             biomes.sort_by_key(|b| std::cmp::Reverse(b.1));
             for (name, count, (score, camera, yaw)) in biomes {
                 let d = camera.as_vec3() + 0.5 - eye;
@@ -1201,7 +1560,7 @@ mod tests {
     ///
     /// The sea is deep blue, lakes above the sea turquoise, rivers bright blue and creeks
     /// light blue (found by sampling inside each pixel, since they are narrower than one),
-    /// and dry salt flats white.
+    /// hot springs orange and dry salt flats white.
     #[test]
     #[ignore]
     fn map_preview() {
@@ -1314,6 +1673,7 @@ mod tests {
                         _ if ice => [0.75, 0.85, 0.95],
                         Body::Creek => [0.45, 0.75, 1.0],
                         Body::River => [0.2, 0.55, 1.0],
+                        Body::Spring => [0.95, 0.6, 0.2],
                         Body::Lake if surface.water_level > SEA_LEVEL => [0.1, 0.6 - 0.2 * depth, 0.75 - 0.2 * depth],
                         _ => [0.15, 0.35 - 0.15 * depth, 0.7 - 0.25 * depth],
                     };
@@ -1333,6 +1693,40 @@ mod tests {
                 }
                 pixels.extend(rgb.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8));
             }
+        }
+        // Trails over everything: brown on the ground, cyan on fords, red on bridges, and
+        // the places they join (summits white, lake shores turquoise, waterfalls blue,
+        // viewpoints yellow, trailheads green). `TRAILS=0` leaves them out.
+        if std::env::var("TRAILS").map_or(true, |v| v != "0") {
+            let started = std::time::Instant::now();
+            let (lines, places) = world.trails_in(centre - half, centre + half);
+            let mut paint = |at: voxmar_engine::glam::Vec2, rgb: [u8; 3], r: i32| {
+                let (px, pz) = (((at.x - (centre.x - half) as f32) / scale as f32) as i32, ((at.y - (centre.y - half) as f32) / scale as f32) as i32);
+                for (dx, dz) in (-r..=r).flat_map(|j| (-r..=r).map(move |i| (i, j))) {
+                    let (x, z) = (px + dx, pz + dz);
+                    if (0..SIZE).contains(&x) && (0..SIZE).contains(&z) {
+                        let i = ((z * SIZE + x) * 3) as usize;
+                        pixels[i..i + 3].copy_from_slice(&rgb);
+                    }
+                }
+            };
+            let length: usize = lines.iter().map(|l| l.len()).sum();
+            for line in &lines {
+                for &(at, kind) in line {
+                    paint(at, [[110, 60, 20], [40, 230, 230], [230, 30, 30]][kind as usize], if scale <= 2 { 1 } else { 0 });
+                }
+            }
+            for place in &places {
+                let rgb = match place.kind {
+                    PlaceKind::Summit => [255, 255, 255],
+                    PlaceKind::Lake => [40, 220, 200],
+                    PlaceKind::Waterfall => [30, 90, 255],
+                    PlaceKind::Viewpoint => [255, 230, 40],
+                    PlaceKind::Trailhead => [60, 220, 60],
+                };
+                paint(place.at().as_vec2(), rgb, 2);
+            }
+            println!("{} trails, {} km of them, {} places, in {:.1?}", lines.len(), length / 1000, places.len(), started.elapsed());
         }
         let mut file = format!("P6 {SIZE} {SIZE} 255\n").into_bytes();
         file.extend(pixels);

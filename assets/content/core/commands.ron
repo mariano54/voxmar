@@ -18,8 +18,8 @@
         ),
         (
             name: "weather",
-            usage: "[KIND [SECONDS] | natural | list]",
-            help: "Shows the weather here, or brings a kind of weather (/weather list names them) to the land around you for a while, five minutes unless you say, after which the natural weather takes over again. natural ends it now.",
+            usage: "[KIND [light|moderate|heavy|max|0..1] [SECONDS] | natural | list]",
+            help: "Shows the weather here, or brings a kind of weather (/weather list names them) to the land around you, as intense as you say (each kind has its usual intensity; 1 is its fiercest), for five minutes unless you say, after which the natural weather takes over again. natural ends it now.",
             permission: Admin,
             run: Weather,
         ),

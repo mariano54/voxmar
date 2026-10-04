@@ -5,9 +5,10 @@
 //! cells and falls along each edge: gently, which with whole water blocks gives a
 //! staircase of small steps that reads as flowing water and rapids, or, where it drops
 //! three blocks or more, as a waterfall onto a plunge pool. Every column then takes the
-//! nearest river: inside the channel the bed lies under the surface, deeper in the middle;
-//! outside, the valley rises from the bank to the land, and a low berm keeps the water in
-//! where the land between cells dips below it.
+//! nearest river: inside the channel the bed lies under the surface, deeper in the middle
+//! (where wide, calm rivers sometimes part around an island); outside, the valley rises
+//! from the bank to the land, and a low berm keeps the water in where the land between
+//! cells dips below it.
 //!
 //! Lakes are drawn on a grid of 8-block cells: every column in the lake's cells whose
 //! ground lies under the lake's surface holds water, so the shore follows the real land.
@@ -16,6 +17,7 @@
 
 use std::sync::Arc;
 
+use fastnoise_lite::FastNoiseLite;
 use voxmar_engine::glam::{IVec2, Vec2};
 
 use super::cache::Weigh;
@@ -39,6 +41,8 @@ pub enum Body {
     Lake,
     /// A closed basin dried to a salt flat.
     Salt,
+    /// A hot spring's warm pool.
+    Spring,
     Sea,
 }
 
@@ -58,6 +62,8 @@ pub struct Style {
     pub shore: i32,
     /// Ground this far over a tunnel's water stays as a roof.
     pub roof: f32,
+    /// Where islands rise in the middle of wide, calm rivers: above 0.35 or so.
+    pub islands: FastNoiseLite,
 }
 
 /// One edge of a river, from a cell to the one it drains into.
@@ -118,6 +124,8 @@ struct LakeCell {
     /// Surface of the lake whose shore the cell is (0: none).
     shore: i32,
     salt: bool,
+    /// Whether the lake is a hot spring.
+    spring: bool,
 }
 
 /// The rivers one tier draws from one region's cells, and the lakes over the region.
@@ -293,8 +301,10 @@ impl Channels {
                     let k = (j * lake_size + i) as usize;
                     if footprint[e] {
                         map[k].water = map[k].water.max(lake.level);
+                        map[k].spring |= lake.spring;
                     } else if ring[e] {
                         map[k].shore = map[k].shore.max(lake.level);
+                        map[k].spring |= lake.spring;
                     }
                 }
             }
@@ -432,9 +442,12 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
         }
         // The bank holds the water a few blocks upstream too, which around a waterfall
         // leaves a ridge either side of the drop.
+        // At sea level the sea itself fills any dip, so no bank is needed there.
         if d < edge.half + 2.0 {
-            let upstream = edge.surface(t - 3.0 / edge.length().max(1.0));
-            berm = berm.max(top_block(upstream) as f32);
+            let upstream = top_block(edge.surface(t - 3.0 / edge.length().max(1.0)));
+            if upstream > crate::SEA_LEVEL {
+                berm = berm.max(upstream as f32);
+            }
         }
         let shore = edge.half + 3.0 + edge.half.min(6.0);
         wet = wet.max(1.0 - smoothstep(edge.half, shore.max(edge.half + 4.0), d));
@@ -451,11 +464,21 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
         if edge.fall >= 0.0 && t >= edge.fall && t < edge.fall + 0.35 {
             depth = depth.max((edge.depth / 2.0).clamp(3.0, edge.depth.max(3.0)));
         }
-        out.ground = out.ground.min(top - depth.round());
-        out.water = Some(out.water.map_or(surface, |w| w.max(surface)));
         out.channel = true;
         out.body = Some(edge.body);
-        out.current = Some(current(edge, along, n, t));
+        // Islands of gravel and grass split wide, calm rivers, never near the banks.
+        let island = edge.half >= 4.0 && edge.fall < 0.0 && edge.slope < 0.05 && {
+            let v = style.islands.get_noise_2d(x as f32, z as f32);
+            v > 0.35 + 0.8 * n * n
+        };
+        if island {
+            out.ground = top + 1.0;
+            out.water = before.water;
+        } else {
+            out.ground = out.ground.min(top - depth.round());
+            out.water = Some(out.water.map_or(surface, |w| w.max(surface)));
+            out.current = Some(current(edge, along, n, t));
+        }
     } else if !before.channel && before.water.is_none() {
         out.ground = out.ground.max(berm);
     }
@@ -473,18 +496,19 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
 
     // Lakes.
     let lake = own.expect("the column's own region").lake(x, z);
+    let lake_body = if lake.spring { Body::Spring } else { Body::Lake };
     if lake.water > 0 && out.cavity.is_none() {
         let top = top_block(lake.water);
         if (out.ground.floor() as i32) < top {
             out.water = Some(out.water.map_or(lake.water, |w| w.max(lake.water)));
-            out.body = Some(Body::Lake);
+            out.body = Some(lake_body);
             if !out.channel {
                 out.current = None;
             }
         }
         out.near = Some(out.near.map_or(lake.water, |n| n.max(lake.water)));
         if out.body.is_none() || !out.channel {
-            out.body = Some(Body::Lake);
+            out.body = Some(lake_body);
         }
         out.wet = out.wet.max(1.0 - smoothstep(0.0, 5.0, out.ground - top as f32));
     } else if lake.shore > 0 {
@@ -492,7 +516,7 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
         // beside it, sealing raises it (see `water::seal`).
         let top = top_block(lake.shore) as f32;
         out.near = Some(out.near.map_or(lake.shore, |n| n.max(lake.shore)));
-        out.body = out.body.or(Some(Body::Lake));
+        out.body = out.body.or(Some(lake_body));
         out.wet = out.wet.max(1.0 - smoothstep(0.0, 5.0, out.ground - top));
     }
     if lake.salt && out.water.is_none() {

@@ -325,7 +325,7 @@ fn commands_set_the_time_and_the_weather() {
     assert_eq!(client.command("/time speed -1")[0].0, ChatKind::Error);
 
     // Forced weather arrives quickly, and stays.
-    assert!(client.ok("/weather storm 60").contains("storm"));
+    assert_eq!(client.ok("/weather storm max 60"), "Bringing max storm (100%) to the land around you for 60 seconds.");
     client.pump_until(|c| c.quick && c.weather.is_some_and(|w| w.precipitation == 1.0));
     let report = client.ok("/weather");
     assert!(report.starts_with("thunderstorm, storm for 5"), "{report}");
@@ -336,7 +336,8 @@ fn commands_set_the_time_and_the_weather() {
     // Wind on its own, and on top of forced weather.
     assert!(client.ok("/wind gale sw 30").contains("gale from the south-west"));
     client.pump_until(|c| c.weather.is_some_and(|w| (w.wind.length() - 18.0).abs() < 0.01 && w.wind.x > 0.0 && w.wind.y < 0.0));
-    client.ok("/weather rain");
+    assert!(client.ok("/weather rain 0.5").starts_with("Bringing moderate rain (50%)"));
+    assert_eq!(client.command("/weather rain 2.5")[0].0, ChatKind::Error);
     client.ok("/wind calm");
     client.pump_until(|c| c.weather.is_some_and(|w| w.precipitation == 0.5 && w.wind.length() < 0.5));
     assert!(client.ok("/wind").starts_with("Wind 0.3 blocks/s"));
@@ -421,4 +422,19 @@ fn water_flows_for_everyone_to_see() {
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == water && s.count == 3));
     let errors = client.command("/setblock ~ ~ ~ no_such_block");
     assert_eq!(errors[0].0, ChatKind::Error);
+}
+
+#[test]
+fn the_server_console_runs_commands_as_an_admin() {
+    let server = spawn(ServerConfig { view_distance: 2, ..Default::default() }, content()).unwrap();
+    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let mut guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
+    guest.pump_until(|c| c.day.is_some());
+    // The console speaks for the server, and needs no admin rights.
+    guest._server.console("/time set midnight");
+    guest.pump_until(|c| c.day.is_some_and(|(day, _)| day % TICKS_PER_DAY == 18_000));
+    guest._server.console("say hello");
+    guest.pump_until(|c| c.chat.iter().any(|(_, text)| text == "[Server] hello"));
+    guest._server.console("gamemode creative guest");
+    guest.pump_until(|c| c.allow_flight);
 }
