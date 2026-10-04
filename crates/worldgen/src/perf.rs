@@ -139,22 +139,24 @@ fn first_column() {
         for parallel in [false, true] {
             crate::parallel::set_enabled(parallel);
             let world = Overworld::new(seed, registry.clone());
-            let start = Instant::now();
+            let (start, cpu) = (Instant::now(), thread_time());
             let spawn = ColumnPos::of_block(world.spawn_point());
-            let found = start.elapsed();
-            let start = Instant::now();
+            let found = (start.elapsed(), thread_time() - cpu);
+            let (start, cpu) = (Instant::now(), thread_time());
             let (_, times) = stage::measure(|| world.generate(spawn));
-            let generated = start.elapsed();
+            let generated = (start.elapsed(), thread_time() - cpu);
             let start = Instant::now();
             std::hint::black_box(crate::tests::generate_area(&world, spawn.offset(-4, -4), 9));
             let area = start.elapsed();
             let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
             stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
+            // On one core all the work is this thread's, so its CPU time counts it all.
+            let both = |(wall, cpu): (Duration, Duration)| if parallel { format!("{:.0} ms", ms(wall)) } else { format!("{:.0} ms ({:.0} CPU)", ms(wall), ms(cpu)) };
             println!(
-                "seed {seed}, {}: spawn point {:.0} ms, spawn column {:.0} ms ({}), then 9×9 columns {:.0} ms",
+                "seed {seed}, {}: spawn point {}, spawn column {} ({}), then 9×9 columns {:.0} ms",
                 if parallel { "every core" } else { "one core" },
-                ms(found),
-                ms(generated),
+                both(found),
+                both(generated),
                 stages.iter().map(|(s, d)| format!("{s:?} {:.0}", ms(*d))).collect::<Vec<_>>().join(", "),
                 ms(area),
             );
