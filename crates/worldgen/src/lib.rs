@@ -796,24 +796,30 @@ mod tests {
             let pitch = d.y.atan2(d.x.hypot(d.z)).to_degrees();
             println!("{name} at {x},{top:.0},{z}: --command \"/tp {cx} {cz}\" --pose 0,{:.0},0,{yaw:.0},{pitch:.0}", camera_y - eye);
         };
-        // The range from afar: from the dry lowland, about a kilometre off, that sees most
-        // of it.
-        let lowland = (0..16)
-            .map(|k| k as f32 * std::f32::consts::TAU / 16.0)
-            .filter_map(|a| {
-                let (cx, cz) = ((peak.1 as f32 + 900.0 * a.cos()) as i32, (peak.2 as f32 + 900.0 * a.sin()) as i32);
-                let geo = world.geo(cx, cz);
-                (!geo.submerged() && geo.height > SEA_LEVEL).then_some((geo.height, a))
-            })
-            .min_by_key(|&(h, _)| h);
-        if let Some((ground, a)) = lowland {
-            view("range from afar", peak.1, peak.2, peak.0, 900.0, a, ground as f32 + 40.0 - peak.0);
-        }
+        // From the dry lowland `distance` off that sees most of a mountain, low over it.
+        let afar = |name: &str, x: i32, z: i32, top: f32, distance: f32| {
+            let lowland = (0..16)
+                .map(|k| k as f32 * std::f32::consts::TAU / 16.0)
+                .filter_map(|a| {
+                    let (cx, cz) = ((x as f32 + distance * a.cos()) as i32, (z as f32 + distance * a.sin()) as i32);
+                    let geo = world.geo(cx, cz);
+                    (!geo.submerged() && geo.height > SEA_LEVEL).then_some((geo.height, a))
+                })
+                .min_by_key(|&(h, _)| h);
+            if let Some((ground, a)) = lowland {
+                view(name, x, z, top, distance, a, ground as f32 + 40.0 - top);
+            }
+        };
+        afar("range from afar", peak.1, peak.2, peak.0, 900.0);
         view("highest peak", peak.1, peak.2, peak.0, 600.0, std::f32::consts::FRAC_PI_4, 150.0);
         for (i, &(score, x, z, height)) in best.iter().enumerate().filter(|(_, b)| b.0 > 0.0) {
             let name = shapes.name(ShapeId(i as u8));
-            let back = if name.contains("volcano") { 420.0 } else if name.contains("mesa") || name.contains("canyon") { 160.0 } else { 70.0 };
             print!("score {score:.2}: ");
+            if name.contains("volcano") || name.contains("lone") {
+                afar(name, x, z, height, if name.contains("lone") { 1300.0 } else { 700.0 });
+                continue;
+            }
+            let back = if name.contains("mesa") || name.contains("canyon") { 160.0 } else { 70.0 };
             view(name, x, z, height, back, std::f32::consts::FRAC_PI_4, back * 0.25);
         }
     }
