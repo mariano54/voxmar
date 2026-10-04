@@ -24,6 +24,13 @@
 //!   source: water taken out of a pool comes back. Two pinned river cells beside it
 //!   make it pinned river water with their mean current, so a breach in a river bank
 //!   carries the river's current.
+//! - With `pools`, flowing water that has filled a hollow it cannot run out of (nothing
+//!   open beside it, nothing beside it lower, ground beneath, not fed from above) becomes a
+//!   source, and the hollow fills back towards the inflow: streams leave ponds in dips and
+//!   ditches, and the pool under a waterfall stays when the fall stops.
+//! - With `crust`, a flowing cell on the ground that dries up hardens instead (lava leaves
+//!   its course as rock), and the thin edge of a flow that has rested for a while hardens too, so a lava
+//!   flow ends in a rim of crust.
 //! - Where a fluid touches another it `meets` (lava beside or under water), it turns
 //!   solid: a source into one block, a flowing cell into another, and the fluid it flows
 //!   down into into a third.
@@ -72,6 +79,10 @@ pub struct FluidDef {
     pub slope: u8,
     /// A cell between two sources, over ground or a source, becomes a source too.
     pub infinite: bool,
+    /// Flowing water that fills a hollow it cannot drain from stays there as a pool.
+    pub pools: bool,
+    /// What the fluid hardens into where it stops: lava's crust.
+    pub crust: Option<CrustDef>,
     /// Makes the river states: still sources with a partial surface, and pinned water
     /// with a current.
     pub currents: bool,
@@ -81,8 +92,17 @@ pub struct FluidDef {
 
 impl Default for FluidDef {
     fn default() -> Self {
-        Self { tick: 5, drop: 1, slope: 4, infinite: false, currents: false, meets: Vec::new() }
+        Self { tick: 5, drop: 1, slope: 4, infinite: false, pools: false, crust: None, currents: false, meets: Vec::new() }
     }
+}
+
+/// How a fluid crusts over: a flowing cell that dries up hardens at once, and the thin
+/// edge of a flow that stays put hardens after `after` ticks, leaving a rim of rock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrustDef {
+    pub block: String,
+    pub after: u16,
 }
 
 /// Where a fluid touches another, by block names.
@@ -187,6 +207,8 @@ pub struct Fluid {
     pub def: FluidDef,
     pub source: BlockId,
     pub meets: Vec<Meeting>,
+    /// The block it crusts into, and after how many ticks at rest.
+    pub crust: Option<(BlockId, Tick)>,
 }
 
 /// A [`MeetingDef`] with its blocks looked up.
@@ -257,7 +279,11 @@ impl Fluid {
                 below: block(&meeting.below)?,
             });
         }
-        Ok(Self { id, name: def.name.clone(), def: fluid, source, meets })
+        let crust = match &fluid.crust {
+            Some(crust) => Some((block(&crust.block)?, crust.after.max(1) as Tick)),
+            None => None,
+        };
+        Ok(Self { id, name: def.name.clone(), def: fluid, source, meets, crust })
     }
 
     /// Every state's block with its state.
@@ -316,6 +342,8 @@ impl Fluid {
 const SIDES: [IVec3; 4] = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z];
 /// Farthest `slope` a fluid may have.
 const MAX_SLOPE: u8 = 7;
+/// Most flowing cells a hollow may hold and still fill into a pool.
+const MAX_HOLLOW: usize = 256;
 
 // ---------------------------------------------------------------------------------------
 // The shape of the surface, for meshing, and the flow, for meshing and physics.
@@ -420,6 +448,8 @@ pub struct Fluids {
     ready: VecDeque<IVec3>,
     /// Cells whose update needs an unloaded column, by that column.
     waiting: FxHashMap<ColumnPos, Vec<IVec3>>,
+    /// When the resting edges of crusting flows (lava) harden.
+    cooling: FxHashMap<IVec3, Tick>,
     writes: Vec<(IVec3, BlockId)>,
 }
 
@@ -479,6 +509,12 @@ impl Fluids {
         scheduled
     }
 
+    /// A column was unloaded: forgets the timers of its cooling lava. Its scheduled cells
+    /// wait for it to load again.
+    pub fn column_unloaded(&mut self, pos: ColumnPos) {
+        self.cooling.retain(|&cell, _| ColumnPos::of_block(cell) != pos);
+    }
+
     /// Runs up to `budget` cell updates due by tick `now`, writing their changes into the
     /// world and appending them to `changes`.
     pub fn step(&mut self, registry: &BlockRegistry, world: &mut VoxelWorld, now: Tick, budget: usize, changes: &mut Vec<(IVec3, BlockId)>) -> StepStats {
@@ -517,6 +553,11 @@ impl Fluids {
         if let Some(column) = missing {
             self.waiting.entry(column).or_default().push(cell);
         } else {
+            if writes.is_empty() {
+                self.cool(registry, world, cell, now, &mut writes);
+            } else {
+                self.cooling.remove(&cell);
+            }
             for &(pos, block) in &writes {
                 if world.set_block(pos, block).is_some() {
                     changes.push((pos, block));
@@ -528,6 +569,33 @@ impl Fluids {
         }
         writes.clear();
         self.writes = writes;
+    }
+
+    /// A cell that changed nothing: if it is the resting edge of a crusting flow (too thin
+    /// to spread further), it hardens once it has rested long enough.
+    fn cool(&mut self, registry: &BlockRegistry, world: &VoxelWorld, cell: IVec3, now: Tick, writes: &mut Vec<(IVec3, BlockId)>) {
+        let state = world.block(cell).and_then(|b| registry.fluid(b));
+        let crust = state.and_then(|s| {
+            let fluid = registry.fluid_def(s.fluid);
+            fluid.crust.filter(|_| !s.source && !s.falling && s.amount <= fluid.def.drop)
+        });
+        let Some((block, after)) = crust else {
+            self.cooling.remove(&cell);
+            return;
+        };
+        match self.cooling.get(&cell) {
+            Some(&at) if now >= at => {
+                self.cooling.remove(&cell);
+                writes.push((cell, block));
+            }
+            Some(&at) => {
+                self.schedule(cell, at);
+            }
+            None => {
+                self.cooling.insert(cell, now + after);
+                self.schedule(cell, now + after);
+            }
+        }
     }
 
     /// Schedules the fluid at `pos` and beside it.
@@ -705,9 +773,11 @@ impl<'a> Planner<'a> {
             }
         }
         if !state.source {
-            match self.new_state(fluid, pos) {
+            match self.new_state(fluid, pos, Some(state)) {
                 None => {
-                    self.write(pos, BlockId::AIR);
+                    // Dried up; a crusting fluid leaves its crust where it lay on ground.
+                    let crust = fluid.crust.filter(|_| matches!(self.kind(pos - IVec3::Y), Kind::Solid));
+                    self.write(pos, crust.map_or(BlockId::AIR, |(crust, _)| crust));
                     return;
                 }
                 Some(new) if new != state => {
@@ -721,14 +791,23 @@ impl<'a> Planner<'a> {
     }
 
     /// What a cell that is not a source would hold, judged by its neighbours, or `None` if
-    /// nothing feeds it.
-    fn new_state(&self, fluid: &Fluid, pos: IVec3) -> Option<FluidState> {
+    /// nothing feeds it. `own` is what it holds now, if anything.
+    fn new_state(&self, fluid: &Fluid, pos: IVec3, own: Option<FluidState>) -> Option<FluidState> {
         let id = fluid.id;
         let (mut most, mut sources, mut pinned, mut pinned_amount) = (0, 0, 0u32, 0u32);
+        let (mut open, mut lowest) = (false, u8::MAX);
         let mut current = Vec2::ZERO;
         for side in SIDES {
-            let Some(state) = self.fluid(pos + side, id) else { continue };
+            let state = match self.kind(pos + side) {
+                Kind::Fluid(state) if state.fluid == id => state,
+                Kind::Open => {
+                    open = true;
+                    continue;
+                }
+                _ => continue,
+            };
             most = most.max(state.amount);
+            lowest = lowest.min(state.amount);
             if state.source {
                 sources += 1;
                 if let Some(c) = state.current {
@@ -749,15 +828,55 @@ impl<'a> Planner<'a> {
         if self.fluid(pos + IVec3::Y, id).is_some() {
             return Some(FluidState::falling(id));
         }
+        // Water that has filled a hollow it cannot run out of stays as a pool. Only a cell
+        // that nothing beside it is lower than can be the last to fill, so only that looks.
+        if fluid.def.pools
+            && let Some(own) = own
+            && !open
+            && lowest >= own.amount
+            && grounded()
+            && self.enclosed(id, pos)
+        {
+            return Some(FluidState::source(id));
+        }
         let amount = most.saturating_sub(fluid.def.drop);
         (amount > 0).then(|| FluidState::flowing(id, amount))
+    }
+
+    /// Whether the flowing water connected to `pos` at its height has filled a hollow: none
+    /// of it can run anywhere, as nothing beside it is open and it all rests on ground or
+    /// on sources. Gives up (not enclosed) past `MAX_HOLLOW` cells.
+    fn enclosed(&self, id: FluidId, pos: IVec3) -> bool {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut queue = vec![pos];
+        seen.insert(pos);
+        while let Some(cell) = queue.pop() {
+            let resting = matches!(self.kind(cell - IVec3::Y), Kind::Solid) || self.fluid(cell - IVec3::Y, id).is_some_and(|s| s.source);
+            if !resting {
+                return false;
+            }
+            for side in SIDES {
+                let next = cell + side;
+                match self.kind(next) {
+                    Kind::Open => return false,
+                    Kind::Fluid(s) if s.fluid == id && !s.source && seen.insert(next) => {
+                        if seen.len() > MAX_HOLLOW {
+                            return false;
+                        }
+                        queue.push(next);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        true
     }
 
     fn spread(&mut self, fluid: &Fluid, pos: IVec3, state: FluidState) {
         let below = pos - IVec3::Y;
         match self.kind(below) {
             Kind::Open => {
-                if let Some(new) = self.new_state(fluid, below) {
+                if let Some(new) = self.new_state(fluid, below, None) {
                     self.write(below, fluid.block(new));
                 }
                 // A source over a hole also feeds the pool around it.
@@ -791,7 +910,7 @@ impl<'a> Planner<'a> {
             let next = pos + side;
             if ways & (1 << i) != 0
                 && matches!(self.kind(next), Kind::Open)
-                && let Some(new) = self.new_state(fluid, next)
+                && let Some(new) = self.new_state(fluid, next, None)
             {
                 self.write(next, fluid.block(new));
             }

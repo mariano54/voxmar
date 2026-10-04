@@ -235,10 +235,13 @@ impl BlockDef {
         self.drops.iter_mut().for_each(qualify);
         self.family.iter_mut().for_each(qualify);
         self.variant_of.iter_mut().for_each(qualify);
-        for meeting in self.fluid.iter_mut().flat_map(|f| &mut f.meets) {
-            for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
-                qualify(name);
+        if let Some(fluid) = &mut self.fluid {
+            for meeting in &mut fluid.meets {
+                for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
+                    qualify(name);
+                }
             }
+            fluid.crust.iter_mut().for_each(|crust| qualify(&mut crust.block));
         }
     }
 }

@@ -127,8 +127,9 @@
         // `water_flow_7`, `water_falling`), and water the river states that carry a current
         // (see engine/src/fluid.rs). `tick`: ticks per step of a flow; `drop`: eighths of
         // depth lost per block, so how far it runs; `slope`: how far it looks for a way down;
-        // `infinite`: two sources make a third between them; `meets`: what it turns into
-        // where it touches another fluid.
+        // `infinite`: two sources make a third between them; `pools`: water that fills a
+        // hollow stays there; `crust`: what it hardens into where it stops, and after how
+        // many ticks at rest; `meets`: what it turns into where it touches another fluid.
         (
             name: "water", sound: Water,
             textures: All("water_still"),
@@ -138,10 +139,11 @@
             light_filter: 2,
             hardness: -1.0,
             color: (63, 118, 228),
-            fluid: (tick: 5, drop: 1, slope: 4, infinite: true, currents: true),
+            fluid: (tick: 5, drop: 1, slope: 4, infinite: true, pools: true, currents: true),
         ),
-        // Glowing and slow. Quenched by water: a source turns to stone (basalt once the
-        // stones arrive), flowing lava to cobblestone, and water it pours into to stone.
+        // Glowing and slow. Its flows crust over with dark rock where they stop, and it is
+        // quenched by water: a source turns to stone, flowing lava to cobblestone, and water
+        // it pours into to stone (the crust and the stone become basalt once that arrives).
         (
             name: "lava", sound: Water,
             textures: All("lava_still"),
@@ -153,6 +155,7 @@
             tags: ["natural", "light", "hot", "deep"],
             fluid: (
                 tick: 30, drop: 2, slope: 2,
+                crust: (block: "deepslate", after: 400),
                 meets: [(fluid: "water", source: "stone", flowing: "cobblestone", below: "stone")],
             ),
         ),

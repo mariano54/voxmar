@@ -11,15 +11,19 @@ const BLOCKS: &str = r#"(
     blocks: [
         (name: "stone"),
         (name: "cobblestone"),
+        (name: "basalt"),
         (name: "grass", render: Plant, solid: false, hardness: 0.0),
         (name: "tall_grass", render: Plant, solid: false, hardness: 0.0),
         (
             name: "water", render: Translucent, solid: false, hardness: -1.0, tags: ["natural"],
-            fluid: (tick: 5, drop: 1, slope: 4, infinite: true, currents: true),
+            fluid: (tick: 5, drop: 1, slope: 4, infinite: true, pools: true, currents: true),
         ),
         (
             name: "lava", solid: false, hardness: -1.0, light: 15,
-            fluid: (tick: 30, drop: 2, slope: 2, meets: [(fluid: "water", source: "stone", flowing: "cobblestone", below: "stone")]),
+            fluid: (
+                tick: 30, drop: 2, slope: 2, crust: (block: "basalt", after: 100),
+                meets: [(fluid: "water", source: "stone", flowing: "cobblestone", below: "stone")],
+            ),
         ),
     ],
 )"#;
@@ -178,6 +182,7 @@ fn states_are_blocks_after_their_source() {
     // Lava can be built into, like water.
     assert!(registry.info(lava.source).replaceable && registry.info(lava.falling()).replaceable);
     assert_eq!(lava.meets, [Meeting { fluid: water.id, source: sim.id("stone"), flowing: sim.id("cobblestone"), below: sim.id("stone") }]);
+    assert_eq!((lava.crust, water.crust), (Some((sim.id("basalt"), 100)), None));
 }
 
 #[test]
@@ -282,6 +287,59 @@ fn water_washes_plants_away() {
 }
 
 #[test]
+fn water_pools_in_hollows() {
+    // A stream fills a dead-end ditch, which becomes a pond.
+    let mut sim = Sim::new(1);
+    let stone = sim.id("stone");
+    sim.fill(at(-1, 1, -1), at(8, 1, 1), stone);
+    sim.fill(at(0, 1, 0), at(6, 1, 0), BlockId::AIR);
+    sim.set(at(0, 1, 0), sim.water().source);
+    sim.settle(400);
+    assert!((0..=6).all(|x| sim.state(at(x, 1, 0)) == Some(FluidState::source(FluidId(0)))));
+    // A hollow a stream pours into keeps its water when the stream stops.
+    let mut sim = Sim::new(1);
+    sim.fill(at(4, 0, -1), at(6, 0, 1), BlockId::AIR);
+    let source = at(0, 1, 0);
+    sim.set(source, sim.water().source);
+    sim.set(at(4, 0, 0), BlockId::AIR);
+    sim.settle(400);
+    assert!(sim.state(at(5, 0, 0)).is_some(), "the stream reached the hollow");
+    sim.set(source, BlockId::AIR);
+    sim.settle(400);
+    assert!((-1..=1).all(|z| (4..=6).all(|x| sim.state(at(x, 0, z)) == Some(FluidState::source(FluidId(0))))));
+    assert!((-8..=8).all(|z| (-8..=8).all(|x| sim.state(at(x, 1, z)).is_none())), "the stream is gone");
+}
+
+#[test]
+fn lava_crusts_over() {
+    let mut sim = Sim::new(1);
+    let (lava, basalt) = (sim.registry.fluids()[1].clone(), sim.id("basalt"));
+    let source = at(0, 1, 0);
+    sim.set(source, lava.source);
+    sim.settle(1000);
+    // The thin edge of the flow hardens; the rest stays molten.
+    assert_eq!(sim.get(at(3, 1, 0)), basalt);
+    assert_eq!(sim.get(at(2, 1, 1)), basalt);
+    assert_eq!(sim.state(at(1, 1, 0)), Some(FluidState::flowing(lava.id, 6)));
+    assert_eq!(sim.state(at(2, 1, 0)), Some(FluidState::flowing(lava.id, 4)));
+    // Without its source the flow dries into rock where it ran.
+    sim.set(source, BlockId::AIR);
+    sim.settle(1000);
+    assert!(sim.get(source).is_air());
+    for (x, z) in [(1, 0), (2, 0), (0, -2), (1, 1)] {
+        assert_eq!(sim.get(at(x, 1, z)), basalt, "{x},{z}");
+    }
+    // Lava poured from the air leaves no column of rock behind, only what lay on ground.
+    let mut sim = Sim::new(1);
+    sim.set(at(0, 6, 0), lava.source);
+    sim.settle(1000);
+    sim.set(at(0, 6, 0), BlockId::AIR);
+    sim.settle(1000);
+    assert!((2..6).all(|y| sim.get(at(0, y, 0)).is_air()));
+    assert_eq!(sim.get(at(0, 1, 0)), basalt);
+}
+
+#[test]
 fn lava_and_water_turn_to_stone() {
     let pool = || {
         let mut sim = Sim::new(1);
@@ -293,12 +351,12 @@ fn lava_and_water_turn_to_stone() {
     // A lava source poured into water turns to stone.
     let (mut sim, lava) = pool();
     sim.set(at(3, 1, 0), lava);
-    sim.settle(400);
+    sim.settle(1000);
     assert_eq!(sim.get(at(3, 1, 0)), sim.id("stone"));
     // Lava flowing up to water turns to cobblestone.
     let (mut sim, lava) = pool();
     sim.set(at(9, 1, 0), lava);
-    sim.settle(400);
+    sim.settle(1000);
     assert_eq!(sim.get(at(8, 1, 0)), sim.id("cobblestone"));
     assert_eq!(sim.get(at(9, 1, 0)), lava);
     for z in -10..=10 {
@@ -314,7 +372,7 @@ fn lava_and_water_turn_to_stone() {
     let lava = sim.registry.fluids()[1].source;
     sim.fill(at(-2, 1, -2), at(2, 1, 2), sim.water().source);
     sim.set(at(0, 4, 0), lava);
-    sim.settle(400);
+    sim.settle(1000);
     assert_eq!(sim.get(at(0, 1, 0)), sim.id("stone"));
 }
 
