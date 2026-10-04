@@ -4,6 +4,7 @@
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
+#import voxmar::atmosphere::{Atmosphere, edge_fog}
 
 struct SkyParams {
     zenith: vec4<f32>,
@@ -23,6 +24,8 @@ struct SkyParams {
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> sky: SkyParams;
+// The terrain's air (atmosphere.wgsl): fog and ground fog hide the sky as they hide the land.
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> atmosphere: Atmosphere;
 
 const PI: f32 = 3.14159265;
 const TAU: f32 = 6.28318531;
@@ -584,5 +587,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         color = mix(color, vec3(1.5, 1.55, 1.7) * limb * (1.0 - 0.22 * seas), moon.z * night);
     }
 
-    return vec4(color * (1.0 - cloud.a) + cloud.rgb, 1.0);
+    // Fog and ground fog hide the sky exactly as they hide the far edge of the land.
+    color = color * (1.0 - cloud.a) + cloud.rgb;
+    return vec4(mix(color, atmosphere.fog.rgb, edge_fog(atmosphere, view.world_position, dir)), 1.0);
 }

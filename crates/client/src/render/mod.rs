@@ -1,7 +1,8 @@
 //! GPU side of the voxel world: terrain material, texture arrays, camera, sun and sky.
 //!
 //! Time of day drives a real directional light (with cascaded shadow maps), the camera's
-//! ambient light and distance fog. Shaders read those from the view bind group, so the
+//! ambient light and the atmosphere uniform (haze and fog; see `atmosphere`). Shaders read
+//! those from the view bind group and that one buffer, so the
 //! day/night cycle never modifies material assets (which would respecialise every chunk).
 
 use bevy::asset::{RenderAssetUsages, embedded_asset};
@@ -28,8 +29,10 @@ use bevy::shader::{ShaderRef, load_shader_library};
 use voxmar_protocol::{TICKS_PER_DAY, Weather};
 
 use crate::textures::Rgba;
+use crate::weather::atmosphere::ClientAtmosphere;
 use crate::weather::{ClientWeather, DRIFT_WRAP};
 
+pub mod atmosphere;
 pub mod cracks;
 pub mod lod;
 pub mod pack;
@@ -59,6 +62,7 @@ impl Plugin for RenderPlugin {
         embedded_asset!(app, "sky.wgsl");
         embedded_asset!(app, "display.wgsl");
         app.add_plugins((
+            atmosphere::AtmospherePlugin,
             terrain::TerrainPlugin,
             water::WaterPlugin,
             wind::WindPlugin,
@@ -95,7 +99,7 @@ pub enum TerrainPass {
 /// up to 0.8 pass through unchanged, so blocks keep their texture colours in daylight as in
 /// Minecraft, and brighter ones (the sun, glints, light sources) roll off to white. The
 /// shader pack's colour grading is applied first.
-#[derive(Component, ExtractComponent, ShaderType, Clone, Copy)]
+#[derive(Component, ExtractComponent, ShaderType, Clone, Copy, PartialEq)]
 pub struct DisplayTransform {
     /// Scales the image before the curve.
     pub exposure: f32,
@@ -158,6 +162,9 @@ const CLOUD_UNIT: f64 = DRIFT_WRAP as f64 / 4096.0;
 pub struct SkyMaterial {
     #[uniform(0)]
     pub params: SkyParams,
+    /// The terrain's air, so fog hides the sky as it hides the land.
+    #[uniform(1)]
+    pub atmosphere: atmosphere::Atmosphere,
 }
 
 impl Material for SkyMaterial {
@@ -214,7 +221,7 @@ pub fn setup(
     commands.insert_resource(particles::TexturePieces::new(block_textures));
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat));
     commands.insert_resource(terrain::TerrainTextures { textures });
-    let sky = sky_materials.add(SkyMaterial { params: SkyParams::default() });
+    let sky = sky_materials.add(SkyMaterial { params: SkyParams::default(), atmosphere: default() });
     commands.insert_resource(SkyHandle(sky.clone()));
     commands.spawn((
         SkyDome,
@@ -462,7 +469,7 @@ fn tint(color: Vec3, hue: Vec3, amount: f32) -> Vec3 {
 /// Colour of the glow around the sun in sky.wgsl, which the haze shares.
 const SUN_GLOW: Vec3 = Vec3::new(1.0, 0.8, 0.55);
 
-/// Advances time of day and moves the sun, light colours, fog and sky to match.
+/// Advances time of day and moves the sun, light colours, the air and sky to match.
 #[allow(clippy::too_many_arguments)]
 fn update_environment(
     time: Res<Time>,
@@ -474,7 +481,7 @@ fn update_environment(
     mut sun: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>)>,
     mut clear: ResMut<ClearColor>,
-    pack: Res<pack::ActivePack>,
+    (pack, air, mut atmosphere): (Res<pack::ActivePack>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
 ) {
     let Some(sky_handle) = sky_handle else { return };
     let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
@@ -485,7 +492,10 @@ fn update_environment(
     let mut env = Environment::at(days.fract() as f32).under(shown, flash);
     env.light_color *= pack.sun;
     env.ambient *= pack.ambient * pack.shade_tint;
-    env.horizon *= pack.haze_tint;
+    // The place's sky tint, as far as the pack lets it show.
+    let tint = Vec3::ONE.lerp(air.sky, pack.local_air.clamp(0.0, 1.0));
+    env.zenith *= tint;
+    env.horizon *= pack.haze_tint * tint;
 
     if let Ok((mut transform, mut light)) = sun.single_mut() {
         *transform = Transform::default().looking_to(-env.light_direction, Vec3::Y);
@@ -496,19 +506,10 @@ fn update_environment(
     }
 
     let mut horizon = env.horizon;
-    // Haze in the shaders (see lighting.wgsl) does the gradual fading; the linear falloff
-    // only fades out the edge of the distant terrain.
-    let (fog_start, fog_end) = if cycle.underwater {
+    if cycle.underwater {
         let water = Vec3::new(0.04, 0.13, 0.32);
         horizon = fade(water * 0.03, water, env.daylight);
-        (0.0, 40.0)
-    } else {
-        // Rain and, more so, snow close in the view, and humid air brings the haze nearer.
-        // Every surface fades through these, so the weather thickens fog everywhere alike.
-        let murk = (shown.precipitation * (0.7 + 0.6 * shown.snow)).min(1.0);
-        let end = cycle.view_distance * (1.0 - 0.9 * murk.sqrt());
-        (end * (0.6 - 0.57 * murk) * (1.0 - 0.4 * smoothstep(0.5, 1.0, shown.humidity)), end)
-    };
+    }
     // Haze glows around the sun like the sky does, while the sun is the light, and as
     // dully as the sky's glow under thick cloud.
     let overcast = smoothstep(0.4, 1.0, shown.cover);
@@ -517,15 +518,19 @@ fn update_environment(
     } else {
         SUN_GLOW * (env.daylight * 2.0).min(1.0) * (1.0 - 0.7 * overcast)
     };
+    let light = atmosphere::Light { horizon, ambient: env.ambient, sun: env.light_color, glow };
+    let air = atmosphere::Air { haze: Some(air.haze), density: air.haze_density };
+    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation().y, underwater: cycle.underwater };
+    let air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, view);
+    atmosphere.set_if_neq(air);
+
     let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
     clear.0 = horizon_color;
     ambient.color = Color::linear_rgb(env.ambient.x, env.ambient.y, env.ambient.z);
+    // Water reflects the horizon's colour from here (`fog.base_color`); the air itself is
+    // the atmosphere uniform's.
     fog.color = horizon_color;
-    // The alpha, unused by Bevy, carries the pack's ground bounce to lighting.wgsl.
-    fog.directional_light_color = Color::linear_rgba(glow.x, glow.y, glow.z, pack.bounce);
-    fog.falloff = FogFalloff::Linear { start: fog_start, end: fog_end };
-    // Unused by our shaders as Bevy means it; lighting.wgsl reads it as the haze density.
-    fog.directional_light_exponent = pack.haze;
+    fog.falloff = FogFalloff::Linear { start: air.haze_shape.z, end: air.haze_shape.w };
 
     // The sky dome is the only entity using its material, so updating it is cheap.
     if let Some(mut sky) = sky_materials.get_mut(&sky_handle.0) {
@@ -541,6 +546,7 @@ fn update_environment(
             weather: layer.rem_euclid(DVec2::splat(4096.0)).as_vec2().extend(shown.precipitation).extend(flash),
             wind: shown.wind.normalize_or(Vec2::X).extend(0.0).extend(0.0),
         };
+        sky.atmosphere = air;
     }
 }
 
