@@ -21,6 +21,8 @@
 //! the one that sways in the wind. Plants carry no ambient occlusion: their `ao` bits hold the
 //! vertex's corner (0..=3, in the order the quad is built), and bits 25..27 how many plant
 //! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`).
+//! Bit 27 marks the same crossed quads used as a leaf fringe (`ChunkMesh::fringe`). On water
+//! surfaces, bits 25..27 hold the depth of water below the vertex (0..=7 blocks).
 
 use glam::IVec3;
 
@@ -42,6 +44,11 @@ pub const PLANT_DIAGONAL: u32 = 6;
 pub const PLANT_ANTIDIAGONAL: u32 = 7;
 /// Vertex flag 1 (see the module docs).
 const FLAG_INNER: u32 = 1 << 23;
+/// Marks the crossed quads of a leaf fringe, which the shader grows out of the leaf block.
+const FLAG_FRINGE: u32 = 1 << 27;
+/// On water surfaces, bits 25..27 hold the water's depth below the vertex, in blocks.
+const WATER_DEPTH_SHIFT: u32 = 25;
+const MAX_WATER_DEPTH: u8 = 7;
 /// On plant vertices, bits 25..27 hold how many plant cells lie below in the same stack.
 const PLANT_STACK_SHIFT: u32 = 25;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
@@ -70,6 +77,8 @@ pub struct ChunkMesh {
     /// crown's shell already does.
     pub inner: MeshBuffers,
     pub translucent: MeshBuffers,
+    /// Leafy sprigs sticking out of crowns (bushy leaves), only worth drawing nearby.
+    pub fringe: MeshBuffers,
     pub connectivity: Connectivity,
 }
 
@@ -150,7 +159,8 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
 
     join_leaves(&leaves, &occ, &mut joins);
 
-    let mut mesher = Mesher { registry, column, cells: &cells, planes: [[0; S]; S], keys: [[0; S]; S] };
+    let water_depth = water_depths(registry, column, &cells, origin);
+    let mut mesher = Mesher { registry, column, cells: &cells, water_depth, planes: [[0; S]; S], keys: [[0; S]; S] };
     let mut mesh = ChunkMesh { connectivity: Connectivity::compute(|x, y, z| cells[pidx(x + 1, y + 1, z + 1)].occludes), ..Default::default() };
     for face in Face::ALL {
         mesher.mesh_faces(face, &occ, &opaque, &joins, &mut mesh.opaque);
@@ -161,6 +171,16 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
     for i in plants {
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
         emit_plant(&mut mesh.cutout, registry, column, &cells[i], local, cy * CHUNK_SIZE);
+    }
+    for (y, plane) in leaves.iter().enumerate().take(S + 1).skip(1) {
+        for (z, &bits) in plane.iter().enumerate().take(S + 1).skip(1) {
+            let mut row = bits & !1 & !(1 << (S + 1));
+            while row != 0 {
+                let x = row.trailing_zeros() as usize;
+                row &= row - 1;
+                emit_fringe(&mut mesh.fringe, registry, column, &cells, IVec3::new(x as i32, y as i32, z as i32));
+            }
+        }
     }
     mesh
 }
@@ -308,6 +328,9 @@ struct Mesher<'a> {
     registry: &'a BlockRegistry,
     column: &'a Column,
     cells: &'a [Cell],
+    /// Water cells in a column counting down from each padded cell (0 for other blocks),
+    /// capped at `MAX_WATER_DEPTH`; empty when the chunk has no water.
+    water_depth: Vec<u8>,
     /// `planes[slice][row]`: bit `col` set where a face is visible.
     planes: [[u32; S]; S],
     keys: [[u128; S]; S],
@@ -437,6 +460,16 @@ impl Mesher<'_> {
             let packed = (((sky + count / 2) / count) << 4) | ((block + count / 2) / count);
             light |= (packed as u64) << (corner * 8);
         }
+        // Water surfaces carry how deep the water is at each corner, so shallows can show
+        // their bed: the mean over the four columns meeting there.
+        let mut depth = 0u128;
+        if face == Face::PosY && tint == Tint::Water && !self.water_depth.is_empty() {
+            for (corner, (su, sv)) in [(-1, -1), (1, -1), (1, 1), (-1, 1)].into_iter().enumerate() {
+                let at = |p: IVec3| self.water_depth[pidx((p.x + 1) as usize, (p.y + 1) as usize, (p.z + 1) as usize)] as u32;
+                let sum = at(pos) + at(pos + du * su) + at(pos + dv * sv) + at(pos + du * su + dv * sv);
+                depth |= (sum.div_ceil(4) as u128) << (corner * 3);
+            }
+        }
         if inner && info.render == RenderKind::Leaves {
             // One double-sided face serves both leaves: lit evenly by both, and shaded as
             // the inside of a crown. Even light also lets these faces merge widely.
@@ -445,7 +478,7 @@ impl Mesher<'_> {
             light = (average(4) | average(0)) * 0x0101_0101;
             ao = INNER_LEAF_AO * 0b0101_0101;
         }
-        (surface | ao << 24 | light << 32) as u128 | (inner as u128) << 64 | (backed as u128) << 65
+        (surface | ao << 24 | light << 32) as u128 | (inner as u128) << 64 | (backed as u128) << 65 | depth << 66
     }
 
     fn greedy(&mut self, face: Face, fa: &FaceAxes, slice: usize, out: &mut MeshBuffers) {
@@ -509,7 +542,14 @@ fn emit_quad(
         p[fa.col] = c as i32;
         ao[i] = ((key >> (24 + i * 2)) & 3) as u32;
         let light = ((key >> (32 + i * 8)) & 0xFF) as u32;
-        let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | (face as u32) << 18 | ao[i] << 21 | flags << 23;
+        let depth = ((key >> (66 + i * 3)) & 7) as u32;
+        let w0 = p.x as u32
+            | (p.y as u32) << 6
+            | (p.z as u32) << 12
+            | (face as u32) << 18
+            | ao[i] << 21
+            | flags << 23
+            | depth << WATER_DEPTH_SHIFT;
         out.vertices.push([w0, surface | light << 24]);
     }
 
@@ -553,6 +593,73 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
             out.vertices.push([w0, w1]);
         }
         // Both windings, so back-face culling keeps one of them from either side.
+        out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
+    }
+}
+
+/// Depth of water at and below each padded cell, counting cells below the chunk too, or
+/// nothing when the chunk holds no water.
+fn water_depths(registry: &BlockRegistry, column: &Column, cells: &[Cell], origin: IVec3) -> Vec<u8> {
+    let is_water = |block: BlockId| registry.info(block).tints[Face::PosY as usize] == Tint::Water;
+    if !cells.iter().any(|c| is_water(c.block)) {
+        return Vec::new();
+    }
+    let mut depth = vec![0u8; P * P * P];
+    for z in 0..P {
+        for x in 0..P {
+            // Water reaching up from below the chunk counts too.
+            let (wx, wz) = (origin.x + x as i32, origin.z + z as i32);
+            let inside = (0..CHUNK_SIZE).contains(&wx) && (0..CHUNK_SIZE).contains(&wz);
+            let mut below = 0u8;
+            if inside {
+                let mut y = origin.y - 1;
+                while y >= 0 && below < MAX_WATER_DEPTH && is_water(column.block(IVec3::new(wx, y, wz))) {
+                    below += 1;
+                    y -= 1;
+                }
+            }
+            for y in 0..P {
+                let i = pidx(x, y, z);
+                below = if is_water(cells[i].block) { (below + 1).min(MAX_WATER_DEPTH) } else { 0 };
+                depth[i] = below;
+            }
+        }
+    }
+    depth
+}
+
+/// A sprig of leaves out of a leaf block on the outside of a crown: two crossed quads
+/// through the block, which the shader turns and grows beyond it (`voxel.wgsl`), lit by the
+/// open side. `padded` is the block's position in the padded cells.
+fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, cells: &[Cell], padded: IVec3) {
+    let cell = |p: IVec3| &cells[pidx(p.x as usize, p.y as usize, p.z as usize)];
+    let open: Vec<&Cell> = Face::ALL
+        .iter()
+        .map(|face| cell(padded + face.normal()))
+        .filter(|c| !c.occludes && registry.info(c.block).render != RenderKind::Leaves)
+        .collect();
+    if open.is_empty() {
+        return;
+    }
+    let sky = open.iter().map(|c| c.light >> 4).max().unwrap_or(0);
+    let block = open.iter().map(|c| c.light & 15).max().unwrap_or(0);
+    let pos = padded - 1;
+    let leaf = cell(padded).block;
+    let info = registry.info(leaf);
+    let tint = info.tints[Face::PosY as usize];
+    let [temperature, humidity] = if tint == Tint::None { [0, 0] } else { column.climate_at(pos.x, pos.z) };
+    let w1 = info.layers[Face::PosY as usize] as u32
+        | (tint as u32) << 12
+        | ((temperature >> 3) as u32) << 14
+        | ((humidity >> 3) as u32) << 19
+        | ((sky << 4 | block) as u32) << 24;
+    for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
+        let base = out.vertices.len() as u32;
+        for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
+            let p = pos + IVec3::new(dx, top, dz);
+            let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | face << 18 | (corner as u32) << 21 | (top as u32) << 23;
+            out.vertices.push([w0 | FLAG_FRINGE, w1]);
+        }
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
     }
 }
