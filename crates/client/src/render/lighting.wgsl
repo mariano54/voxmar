@@ -43,10 +43,10 @@ fn sun_color() -> vec3<f32> {
 }
 
 // Fraction of direct sun reaching `world` on a face with `normal`, from the cascaded
-// shadow maps (see shadows.wgsl). Filtering depends on the world position alone, so
-// `_frag_xy` (the pixel) is not needed.
-fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, _frag_xy: vec2<f32>) -> f32 {
-    return soft_shadow(atmosphere, world, normal);
+// shadow maps (see shadows.wgsl): with soft edges as wide as the caster is far, or, not
+// `soft`, the maps' own edges, a quarter of the cost.
+fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, soft: bool) -> f32 {
+    return soft_shadow(atmosphere, world, normal, soft);
 }
 
 // Lit colour of a voxel face. `sky` and `block` are 0..1 light levels, `ao` the occlusion
@@ -59,12 +59,12 @@ fn shade(
     block: f32,
     ao: f32,
     foliage: bool,
-    frag_xy: vec2<f32>,
 ) -> vec3<f32> {
-    return shade_normal(albedo, world, NORMALS[face], FACE_SHADE[face], sky, block, ao, foliage, frag_xy);
+    return shade_normal(albedo, world, NORMALS[face], FACE_SHADE[face], sky, block, ao, foliage, true);
 }
 
-// Lit colour of any surface with a normal and an ambient shading factor.
+// Lit colour of any surface with a normal and an ambient shading factor, its shadows
+// `soft` or not (see `sun_shadow`).
 fn shade_normal(
     albedo: vec3<f32>,
     world: vec3<f32>,
@@ -74,7 +74,7 @@ fn shade_normal(
     block: f32,
     ao: f32,
     foliage: bool,
-    frag_xy: vec2<f32>,
+    soft: bool,
 ) -> vec3<f32> {
     let to_sun = sun_direction();
     var facing = dot(normal, to_sun);
@@ -86,7 +86,7 @@ fn shade_normal(
     let open = smoothstep(0.35, 0.75, sky);
     var sunlit = 0.0;
     if facing > 0.0 && open > 0.0 {
-        sunlit = open * sun_shadow(world, normal, frag_xy);
+        sunlit = open * sun_shadow(world, normal, soft);
         if sunlit > 0.0 {
             sunlit *= cloud_light(atmosphere, view.world_position, world, to_sun);
         }

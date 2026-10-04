@@ -118,6 +118,6 @@ fn vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: 
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = shade_normal(in.albedo, in.shadow_at, normalize(in.normal), 0.92, in.light.x, in.light.y, 1.0, true, in.clip_position.xy);
+    let color = shade_normal(in.albedo, in.shadow_at, normalize(in.normal), 0.92, in.light.x, in.light.y, 1.0, true, true);
     return vec4(apply_fog(color, in.world_position), 1.0);
 }

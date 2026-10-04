@@ -181,7 +181,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let sky = f32(in.surface >> 28u) / 15.0;
         let block = f32((in.surface >> 24u) & 15u) / 15.0;
         // Lit like a plant: no face is turned away from the sun.
-        color = shade_normal(albedo, in.world_position, vec3(0.0, 1.0, 0.0), 0.85, sky, block, 1.0, true, in.clip_position.xy);
+        // Hard-edged shadows: a particle is too small to show a penumbra.
+        color = shade_normal(albedo, in.world_position, vec3(0.0, 1.0, 0.0), 0.85, sky, block, 1.0, true, false);
     }
     return vec4(apply_fog(color, in.world_position), alpha);
 }
