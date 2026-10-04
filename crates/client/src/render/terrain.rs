@@ -53,6 +53,7 @@ mod compact;
 
 use compact::Compaction;
 
+use super::atmosphere::{Atmosphere, AtmosphereBuffer};
 use super::lod::{LodVertex, TileKey, TileMesh};
 use super::water::{self, WaterParams};
 use super::wind::Breeze;
@@ -940,6 +941,7 @@ fn prepare_bind_group(
     images: Res<RenderAssets<GpuImage>>,
     device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
+    atmosphere: Res<AtmosphereBuffer>,
 ) {
     if gpu.bind_group.is_some() && gpu.distant_bind_group.is_some() && !gpu.bind_group_dirty {
         return;
@@ -948,7 +950,12 @@ fn prepare_bind_group(
     let distant = device.create_bind_group(
         "distant_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipelines.distant_layout),
-        &BindGroupEntries::sequential((origins.as_entire_binding(), view.as_entire_binding(), coverage.as_entire_binding())),
+        &BindGroupEntries::with_indices((
+            (0, origins.as_entire_binding()),
+            (1, view.as_entire_binding()),
+            (2, coverage.as_entire_binding()),
+            (6, atmosphere.0.as_entire_binding()),
+        )),
     );
     let blocks = textures.as_ref().and_then(|t| images.get(&t.textures));
     let (Some(blocks), Some(seeds), Some(wind), Some(colours)) =
@@ -967,6 +974,7 @@ fn prepare_bind_group(
             seeds.as_entire_binding(),
             wind.as_entire_binding(),
             colours.as_entire_binding(),
+            atmosphere.0.as_entire_binding(),
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -1217,6 +1225,8 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 uniform_buffer::<WindUniform>(false),
                 // Biome colours of columns, by block.
                 storage_buffer_read_only_sized(false, None),
+                // The air and light (lighting.wgsl).
+                uniform_buffer::<Atmosphere>(false),
             ),
         ),
     );
@@ -1240,12 +1250,14 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
     let items = PASSES.map(|pass| commands.spawn(TerrainPassItem(pass)).id());
     let distant_layout = BindGroupLayoutDescriptor::new(
         "distant_layout",
-        &BindGroupLayoutEntries::sequential(
+        &BindGroupLayoutEntries::with_indices(
             ShaderStages::VERTEX_FRAGMENT,
             (
-                storage_buffer_read_only_sized(false, None),
-                uniform_buffer::<DistantView>(false),
-                storage_buffer_read_only_sized(false, None),
+                (0, storage_buffer_read_only_sized(false, None)),
+                (1, uniform_buffer::<DistantView>(false)),
+                (2, storage_buffer_read_only_sized(false, None)),
+                // The air and light, at the binding lighting.wgsl expects.
+                (6, uniform_buffer::<Atmosphere>(false)),
             ),
         ),
     );

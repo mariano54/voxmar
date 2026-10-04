@@ -484,6 +484,24 @@ weather, are already filtered; hovering ones settle out of a strong wind; night-
 (fireflies) come out on six nights in ten. The precipitation particles draw the four
 densest sets. docs/weather-effects.md has the rest of the weather's handover.
 
+## The air
+
+Mariano's playtest (2026-10-04): shadows flickered, the look still did not read like
+Complementary Reimagined, and there was no atmospheric light, mist or fog. What changed,
+and why:
+
+The air (atmosphere.wgsl, render/atmosphere.rs) is clear-air haze densest at sea level
+and thinning with height, a layer of ground fog under the weather's `fog_top` (valley fog,
+dawn mist, sea fog), and the weather's fog, dust and falling rain and snow, each
+integrated analytically along the view ray (the ground fog's density profile is a
+logistic step whose integral is a softplus), so fog costs a few exponentials per pixel and
+never bands. Weather fog is an extinction set from `Weather::visibility` (2% shows at that
+distance, so a blizzard closes the view to ~60 blocks); fog is lit by the sky and sun and
+takes the colour of blowing dust; the haze takes the place's colour and density from
+`ClientAtmosphere` as far as the pack's `local_air` lets it. The sky is fogged by the same
+functions as the far edge of the land, so they always meet. Everything shares one uniform
+(`Atmosphere`), bound with the terrain and the sky.
+
 ## Fluid state
 
 Water and lava flow (`engine/src/fluid.rs`). Each state of a fluid is its own block, made

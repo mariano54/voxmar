@@ -29,7 +29,7 @@ use bevy::render::render_phase::{
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages,
     CachedRenderPipelineId, PipelineCache, SamplerBindingType, ShaderStages, TextureSampleType, VertexStepMode,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d_array},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -40,6 +40,7 @@ use bevy::asset::embedded_asset;
 use bytemuck::{Pod, Zeroable};
 use rustc_hash::FxHashMap;
 
+use super::atmosphere::{Atmosphere, AtmosphereBuffer};
 use super::terrain::{TerrainTextures, mesh_like};
 use crate::textures::Rgba;
 
@@ -315,12 +316,14 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
     });
     let layout = BindGroupLayoutDescriptor::new(
         "particle_layout",
-        &BindGroupLayoutEntries::sequential(
+        &BindGroupLayoutEntries::with_indices(
             ShaderStages::VERTEX_FRAGMENT,
             (
-                texture_2d_array(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
-                storage_buffer_read_only_sized(false, None),
+                (0, texture_2d_array(TextureSampleType::Float { filterable: true })),
+                (1, sampler(SamplerBindingType::Filtering)),
+                (2, storage_buffer_read_only_sized(false, None)),
+                // The air and light, at the binding lighting.wgsl expects.
+                (6, uniform_buffer::<Atmosphere>(false)),
             ),
         ),
     );
@@ -368,6 +371,7 @@ fn prepare_bind_group(
     images: Res<RenderAssets<GpuImage>>,
     device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
+    atmosphere: Res<AtmosphereBuffer>,
 ) {
     if gpu.bind_group.is_some() {
         return;
@@ -378,10 +382,11 @@ fn prepare_bind_group(
     let bind_group = device.create_bind_group(
         "particle_bind_group",
         &pipeline_cache.get_bind_group_layout(&gpu.layout),
-        &BindGroupEntries::sequential((
-            &blocks.texture_view,
-            &blocks.sampler,
-            gpu.buffer.as_entire_binding(),
+        &BindGroupEntries::with_indices((
+            (0, &blocks.texture_view),
+            (1, &blocks.sampler),
+            (2, gpu.buffer.as_entire_binding()),
+            (6, atmosphere.0.as_entire_binding()),
         )),
     );
     gpu.bind_group = Some(bind_group);

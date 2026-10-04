@@ -416,10 +416,12 @@ fall or drift through a box around the camera, slanted by the gusting wind and s
 of the highest block around the camera, so nothing falls indoors, under trees or in caves.
 Ambient particles from the land's air (pollen by day, fireflies on some warm nights, spores in
 damp forests, drifting snow in the cold) come from `ClientAtmosphere`, which samples
-`Overworld::atmosphere_at` around the player and applies the weather and time of day. Fog,
-ground fog, rainbows, halos, aurora, shooting stars, heat haze, frost and wet ground are in the
-weather the client receives and wait on the renderer (docs/weather-effects.md). F3 shows the
-weather and the effects showing.
+`Overworld::atmosphere_at` around the player and applies the weather and time of day, and
+also tints the haze, sky and grading. Fog, mist, whiteout, rain and dust close in the view;
+valley fog, dawn mist and sea fog lie in a layer under the weather's fog top. Rainbows,
+halos, aurora, shooting stars, heat haze, frost and wet ground are in the weather the client
+receives and wait on the renderer (docs/weather-effects.md). F3 shows the weather and the
+effects showing.
 
 An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
 (kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`
@@ -511,7 +513,8 @@ writes about twenty seconds of each of nine typical places to `target/ambience_p
   the sky elsewhere; sun glints and foam along shores. The Water setting (Low, Medium, High)
   trades waves and reflections for speed, and shader packs scale each part.
 - Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
-  aerial perspective (haze that thins with height and glows around the sun), HDR with bloom.
+  aerial perspective (haze that thins with height and glows around the sun), ground fog and
+  weather fog, HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
   of view. Nights are dark, lit by a faint blue moon.
 - A sunlit top face gets about as much light as Minecraft's full brightness, and the display
