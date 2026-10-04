@@ -369,6 +369,10 @@ impl UndergroundColumn<'_> {
     /// Lines the floors and ceilings of the caves in the block column at (x, z) (relative
     /// to the column origin), whose open blocks `cave` gives, and grows their decorations.
     pub(crate) fn decorate(&self, x: i32, z: i32, site: &Site, cave: &[Cave], blocks: &mut Blocks) {
+        // Most block columns have no cave at all.
+        if cave.iter().all(|&c| c == Cave::Rock) {
+            return;
+        }
         let world = self.world;
         let open = |y: i32| y >= 0 && (y as usize) < cave.len() && cave[y as usize] != Cave::Rock;
         let (wx, wz) = (self.origin.x + x, self.origin.z + z);

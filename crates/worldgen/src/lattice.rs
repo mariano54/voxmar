@@ -33,13 +33,16 @@ pub struct Lattice {
     /// Index of the lowest layer (its height over `step_y`).
     first: i32,
     layers: usize,
-    step_y: i32,
+    /// `step_y` is `1 << shift_y`.
+    shift_y: u32,
 }
 
 impl Lattice {
     /// Samples `f` at every lattice point of the column at `origin` whose layer is needed to
-    /// interpolate heights `low..=high`, with layers `step_y` blocks apart.
+    /// interpolate heights `low..=high`, with layers `step_y` blocks apart (a power of two,
+    /// so that interpolating in y needs no division).
     pub fn new(origin: IVec3, low: i32, high: i32, step_y: i32, mut f: impl FnMut(IVec3) -> f32) -> Self {
+        assert!(step_y > 0 && step_y.count_ones() == 1, "lattice layers {step_y} apart");
         let first = low.div_euclid(step_y);
         let layers = (high.div_euclid(step_y) - first + 2).max(2) as usize;
         debug_assert!(layers <= MAX_LAYERS);
@@ -51,7 +54,7 @@ impl Lattice {
                 }
             }
         }
-        Self { values, first, layers, step_y }
+        Self { values, first, layers, shift_y: step_y.trailing_zeros() }
     }
 
     /// A noise field, with heights multiplied by `scale_y` (above 1 flattens its shapes).
@@ -71,7 +74,7 @@ impl Lattice {
         }
         out.first = self.first;
         out.layers = self.layers;
-        out.step_y = self.step_y;
+        out.shift_y = self.shift_y;
     }
 }
 
@@ -80,12 +83,12 @@ pub struct Profile {
     values: [f32; MAX_LAYERS],
     first: i32,
     layers: usize,
-    step_y: i32,
+    shift_y: u32,
 }
 
 impl Default for Profile {
     fn default() -> Self {
-        Self { values: [0.0; MAX_LAYERS], first: 0, layers: 0, step_y: STEP }
+        Self { values: [0.0; MAX_LAYERS], first: 0, layers: 0, shift_y: STEP.trailing_zeros() }
     }
 }
 
@@ -93,9 +96,10 @@ impl Profile {
     /// The value at height `y`, which must lie in the range the lattice was built for.
     #[inline]
     pub fn at(&self, y: i32) -> f32 {
-        let layer = (y.div_euclid(self.step_y) - self.first) as usize;
+        let layer = ((y >> self.shift_y) - self.first) as usize;
         debug_assert!(layer + 1 < self.layers, "height {y} outside the lattice");
-        let t = y.rem_euclid(self.step_y) as f32 / self.step_y as f32;
+        // The same as dividing by the step, which is a power of two.
+        let t = (y & ((1 << self.shift_y) - 1)) as f32 * (1.0 / (1 << self.shift_y) as f32);
         lerp(self.values[layer], self.values[layer + 1], t)
     }
 }

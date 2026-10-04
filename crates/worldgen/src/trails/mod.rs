@@ -33,6 +33,7 @@ use self::path::{Path, Paths, Stamp};
 use self::sites::{CELL, CELLS, Cell, Grid, REGION};
 use crate::geology::GeoSample;
 use crate::rng;
+use crate::stage::{self, Stage};
 use crate::water::cache::{Cache, Weigh};
 
 /// What a trail does to a column, as the rest of generation sees it.
@@ -65,6 +66,12 @@ pub enum Marker {
 /// The land trails are planned over: the ground with rivers and lakes, before trails.
 pub trait Land: Sync {
     fn sample(&self, x: i32, z: i32) -> GeoSample;
+
+    /// The `size`×`size` samples `step` blocks apart from `origin`, row by row: the same
+    /// as sampling each, but free to share the work.
+    fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        (0..size * size).map(|i| self.sample(origin.x + i % size * step, origin.y + i / size * step)).collect()
+    }
 }
 
 /// Blocks along a side of a tile of stamps.
@@ -288,6 +295,27 @@ impl Trails {
         })
     }
 
+    /// Makes on every core what the trails of the regions around `region` are planned
+    /// from and not made yet: in turn the grids of the regions four around, the places of
+    /// those three around, the routes two around and the paths next door, which is what
+    /// a tile in `region` reads (see `paths`, `routes` and `sites::places`).
+    fn prepare(&self, land: &dyn Land, region: IVec2) {
+        let around = |reach: i32| (-reach..=reach).flat_map(move |dz| (-reach..=reach).map(move |dx| region + IVec2::new(dx, dz)));
+        let missing = |reach: i32, has: &dyn Fn(IVec2) -> bool| around(reach).filter(|&r| !has(r)).collect::<Vec<IVec2>>();
+        crate::parallel::for_each(&missing(4, &|r| self.grids.has(r)), |&r| {
+            self.grid(land, r);
+        });
+        crate::parallel::for_each(&missing(3, &|r| self.places.has(r)), |&r| {
+            self.places(land, r);
+        });
+        crate::parallel::for_each(&missing(2, &|r| self.routes.has(r)), |&r| {
+            self.routes(land, r);
+        });
+        crate::parallel::for_each(&missing(1, &|r| self.paths.has(r)), |&r| {
+            self.paths(land, r);
+        });
+    }
+
     fn tile(&self, land: &dyn Land, key: IVec2) -> Arc<Tile> {
         let found = RECENT.with(|recent| {
             let mut recent = recent.borrow_mut();
@@ -301,7 +329,9 @@ impl Trails {
             return tile;
         }
         let tile = self.tiles.get(key, || {
+            let _stage = stage::enter(Stage::TrailPlans);
             let region = (key * TILE).div_euclid(IVec2::splat(REGION));
+            self.prepare(land, region);
             let owners: Vec<Arc<Paths>> =
                 (-1..=1).flat_map(|dz| (-1..=1).map(move |dx| IVec2::new(dx, dz))).map(|d| self.paths(land, region + d)).collect();
             let paths: Vec<&Path> = owners.iter().flat_map(|p| p.0.iter()).collect();
