@@ -11,25 +11,22 @@
 //! the seed, the kind of thing and its name, so any system (biomes, plants, weather
 //! effects) can ask for its own list without a central registry.
 
-use serde::Deserialize;
+pub use voxmar_engine::block::Rarity;
 
 use crate::rng::{hash3, mix};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-pub enum Rarity {
-    #[default]
-    Common,
-    Uncommon,
-    Rare,
-    VeryRare,
-    Legendary,
+/// What the rarity tiers mean in numbers, for the world generator.
+pub trait Tier {
+    /// How often something of this rarity occurs relative to a common one.
+    fn multiplier(self) -> f32;
+    /// The tier `steps` more common than this one, stopping at common.
+    fn commoner(self, steps: usize) -> Rarity;
 }
 
-impl Rarity {
-    pub const ALL: [Rarity; 5] = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::VeryRare, Rarity::Legendary];
+const TIERS: [Rarity; 5] = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::VeryRare, Rarity::Legendary];
 
-    /// How often something of this rarity occurs relative to a common one.
-    pub fn multiplier(self) -> f32 {
+impl Tier for Rarity {
+    fn multiplier(self) -> f32 {
         match self {
             Rarity::Common => 1.0,
             Rarity::Uncommon => 0.3,
@@ -39,9 +36,8 @@ impl Rarity {
         }
     }
 
-    /// The tier `steps` more common than this one, stopping at common.
     fn commoner(self, steps: usize) -> Rarity {
-        Self::ALL[(self as usize).saturating_sub(steps)]
+        TIERS[(self as usize).saturating_sub(steps)]
     }
 }
 
@@ -66,17 +62,19 @@ impl Featured {
     /// The multiplier this world applies to each of `items` (name and rarity) of one
     /// `kind` ("biome", "plant", "weather" and so on), in the order given.
     ///
-    /// About a tenth to a quarter of the uncommon-or-rarer items (at least one) are
-    /// boosted one or two tiers, and about a tenth of the common ones (at least one, given
-    /// four or more) are suppressed. Which ones depends only on the seed, the kind and the
-    /// names, not on the order of `items`.
+    /// About a tenth to a quarter of the uncommon-or-rarer items are boosted one or two
+    /// tiers (when that rounds to none, one is boosted with the matching chance), and about
+    /// a tenth of the common ones (at least one, given four or more) are suppressed. Which
+    /// ones depends only on the seed, the kind and the names, not on the order of `items`.
     pub fn multipliers(&self, kind: &str, items: &[(&str, Rarity)]) -> Vec<f32> {
         let rank = |salt: u64, name: &str| hash3(self.seed ^ salt ^ name_hash(kind), name_hash(name) as i32, 0, (name_hash(name) >> 32) as i32);
         let mut out = vec![1.0; items.len()];
 
         let mut rare: Vec<usize> = (0..items.len()).filter(|&i| items[i].1 != Rarity::Common).collect();
         rare.sort_by_key(|&i| (rank(1, items[i].0), i));
-        let boosted = ((rare.len() as f32 * (0.1 + 0.15 * self.biodiversity)).round() as usize).max(1).min(rare.len());
+        let expected = rare.len() as f32 * (0.1 + 0.15 * self.biodiversity);
+        let roll = (mix(self.seed ^ name_hash(kind)) >> 40) as f32 / (1u64 << 24) as f32;
+        let boosted = (expected.floor() as usize + usize::from(roll < expected.fract())).min(rare.len());
         for &i in &rare[..boosted] {
             let rarity = items[i].1;
             let steps = 1 + (rank(2, items[i].0) % 2) as usize;
@@ -103,7 +101,7 @@ mod tests {
     use super::*;
 
     fn items() -> Vec<(String, Rarity)> {
-        (0..40).map(|i| (format!("base:thing_{i}"), Rarity::ALL[i % 5])).collect()
+        (0..40).map(|i| (format!("base:thing_{i}"), TIERS[i % 5])).collect()
     }
 
     fn featured(seed: u64) -> Vec<f32> {

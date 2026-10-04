@@ -5040,6 +5040,7 @@ dependencies = [
  "fastnoise-lite",
  "libc",
  "ron",
+ "rustc-hash 2.1.3",
  "serde",
  "tracing",
  "voxmar_engine",

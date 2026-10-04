@@ -71,7 +71,7 @@ impl Features {
                 let ground = if site.height < SEA_LEVEL {
                     Ground::Shallows
                 } else {
-                    world.terrain.ground(world.terrain.surface_layers(&site, x, z).top)
+                    world.terrain.ground(world.surface_layers(&site, x, z).top)
                 };
                 let mut left = roll;
                 for (tree, chance) in Tree::ALL.into_iter().zip(ecology.tree_chances(&site, Some(ground), x, z)) {
