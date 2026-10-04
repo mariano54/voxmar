@@ -34,6 +34,10 @@ pub struct ShaderPack {
     /// Shifts the image towards warm (positive) or cool (negative).
     pub warmth: f32,
     pub bloom: f32,
+    /// Multiplies how many particles effects spawn (0 turns them off).
+    pub particles: f32,
+    /// How strongly cracks show over a block being mined, 0..1.
+    pub cracks: f32,
     pub water: WaterLook,
 }
 
@@ -79,6 +83,8 @@ impl Default for ShaderPack {
             vibrance: 0.0,
             warmth: 0.0,
             bloom: 0.1,
+            particles: 1.0,
+            cracks: 1.0,
             water: WaterLook::default(),
         }
     }

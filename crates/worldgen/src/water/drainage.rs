@@ -84,6 +84,8 @@ pub struct Tier {
     /// Whether wet basins may fill as lakes. Without, a river breaches or tunnels out of
     /// any basin it can, and a basin it cannot leave stays dry.
     pub lakes: bool,
+    /// The chance that a small pit, which would be breached, fills as a hot spring.
+    pub springs: f32,
     pub tunnel: Option<TunnelRule>,
     pub seed: u64,
 }
@@ -341,6 +343,8 @@ pub struct Lake {
     pub path: Vec<IVec2>,
     /// Cells, along and beyond the way out, whose river may not rise above `level`.
     pub clamp: Vec<IVec2>,
+    /// A hot spring: a small, warm pool that never freezes, rimmed with travertine.
+    pub spring: bool,
 }
 
 impl Lake {
@@ -658,7 +662,7 @@ impl Drainage {
         }
         let spill = level;
         cells.sort_unstable_by_key(|c| (c.x, c.y));
-        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new() };
+        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new(), spring: false };
         let way_out = |outlet: IVec2| {
             // Parents form a tree rooted at the pit, so this ends there; the bound is a
             // second guard that keeps any mistake from growing without limit.
@@ -698,6 +702,14 @@ impl Drainage {
             return lake;
         }
         let outlet = outlet.expect("checked above");
+        // Now and then, where the ground is volcanic, a small pit is a hot spring.
+        if !big && depth >= 1.5 && unit(3) < tier.springs {
+            lake.kind = Kind::Lake;
+            lake.spring = true;
+            lake.path = way_out(outlet);
+            lake.level = ((spill - 1.0) * 8.0).floor() as i32;
+            return lake;
+        }
         if let Some(rule) = &tier.tunnel
             && depth >= rule.depth
             && unit(1) < rule.chance

@@ -62,6 +62,13 @@ const RIPPLE_HEIGHT: f32 = 0.05;
 const RIPPLE_SCALE: f32 = 2.5;
 // Texels per block of the block textures.
 const TEXELS: f32 = 16.0;
+// Flowing water: seconds its waves are carried along before a layer starts again, octaves
+// per layer (it draws two), how much choppier it is per block per second of speed, and the
+// speed from which it froths.
+const FLOW_CYCLE: f32 = 1.6;
+const FLOWING_OCTAVES: u32 = 10u;
+const FLOW_CHOP: f32 = 0.35;
+const RAPIDS = vec2(1.6, 2.8);
 // How far the waves bend the view through the surface.
 const BEND: f32 = 0.6;
 // Furthest the bent view reaches beyond the surface, in blocks, so a far bed does not
@@ -153,16 +160,12 @@ fn ripple_slope(p: vec2<f32>, footprint: f32) -> vec2<f32> {
     return (first + second * 0.5) * fade;
 }
 
-// The waves' normal at `xz`. `footprint` is the blocks a pixel spans there: octaves shorter
-// than about three pixels fade out, and the loop stops at the first that has. Pixelated
-// water (a shader pack's choice, after Complementary's Reimagined style) takes one normal
-// per texel of the block textures, so the surface glitters in little squares, until texels
-// are smaller than pixels.
-fn wave_normal(xz: vec2<f32>, footprint: f32, strength: f32) -> vec3<f32> {
-    let octaves = water.budget.x;
-    if octaves == 0u {
-        return water_normal(vec3(xz.x, 0.0, xz.y));
-    }
+// The slope of the waves at `xz` (d height / d xz), from the first `octaves` octaves.
+// `footprint` is the blocks a pixel spans there: octaves shorter than about three pixels
+// fade out, and the loop stops at the first that has. Pixelated water (a shader pack's
+// choice, after Complementary's Reimagined style) takes one slope per texel of the block
+// textures, so the surface glitters in little squares, until texels are smaller than pixels.
+fn wave_slope(xz: vec2<f32>, footprint: f32, octaves: u32) -> vec2<f32> {
     var at = xz;
     if water.strengths.z > 0.5 && footprint < 1.0 / TEXELS {
         at = (floor(xz * TEXELS) + 0.5) / TEXELS;
@@ -182,7 +185,34 @@ fn wave_normal(xz: vec2<f32>, footprint: f32, strength: f32) -> vec3<f32> {
         p -= wave.xy * (dx * weight * DRAG);
         slope += wave.xy * (dx * wave.z * weight * fade);
     }
-    let s = (slope * WAVE_HEIGHT + ripple_slope(at, footprint) * RIPPLE_HEIGHT) * (water.origin.w * strength);
+    return slope * WAVE_HEIGHT + ripple_slope(at, footprint) * RIPPLE_HEIGHT;
+}
+
+// The normal of the waves on a top face at `xz`, flowing at `flow` blocks per second.
+// Flowing water carries its waves along in two layers half a cycle apart, each fading out
+// as it starts again, so the pattern moves with the water without ever stretching; it is
+// choppier the faster it runs.
+fn wave_normal(xz: vec2<f32>, footprint: f32, strength: f32, flow: vec2<f32>) -> vec3<f32> {
+    let octaves = water.budget.x;
+    if octaves == 0u {
+        return water_normal(vec3(xz.x, 0.0, xz.y));
+    }
+    let speed = length(flow);
+    var slope: vec2<f32>;
+    if speed < 0.05 {
+        slope = wave_slope(xz, footprint, octaves);
+    } else {
+        let cycle = fract(globals.time / FLOW_CYCLE);
+        let later = fract(cycle + 0.5);
+        let weight = 1.0 - abs(2.0 * cycle - 1.0);
+        let fewer = min(octaves, FLOWING_OCTAVES);
+        let a = wave_slope(xz - flow * (cycle * FLOW_CYCLE), footprint, fewer);
+        let b = wave_slope(xz - flow * (later * FLOW_CYCLE), footprint, fewer);
+        // Two independent layers mixed lose contrast in the middle; this keeps it.
+        slope = (a * weight + b * (1.0 - weight)) / sqrt(weight * weight + (1.0 - weight) * (1.0 - weight));
+        slope *= 1.0 + speed * FLOW_CHOP;
+    }
+    let s = slope * (water.origin.w * strength);
     return normalize(vec3(-s.x, 1.0, -s.y));
 }
 
@@ -269,8 +299,9 @@ fn foam_noise(p: vec2<f32>) -> f32 {
 // The colour of water at `world`, fog included: the scene behind seen through it, the
 // reflection, a sun glint and foam. `normal` is the face's, `tint` the biome's water
 // colour, `sky` the sky light at the surface (0..1), `frag` the fragment's position and
-// `footprint` how many blocks its pixel spans.
-fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: f32, frag: vec4<f32>, footprint: f32) -> vec3<f32> {
+// `footprint` how many blocks its pixel spans, `flow` the water's flow (blocks per second
+// along x and z) and `falling` whether it falls.
+fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: f32, frag: vec4<f32>, footprint: f32, flow: vec2<f32>, falling: bool) -> vec3<f32> {
     // Saturated: seen edge-on, a face interpolates at pixel centres outside it.
     let sky = saturate(sky_light);
     let eye = view.world_position;
@@ -282,14 +313,20 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
     let distance_to_eye = distance(eye, world);
     let air = air_to(world);
 
-    // Waves on top, calmer where little sky reaches (in caves). Sides of water open to the
-    // air are where it falls, generated water being sealed everywhere else: streaks run
-    // down them, partly white.
+    // Waves on top, calmer where little sky reaches (in caves), frothing where it runs fast.
+    // Where it falls, or pours over an edge, streaks run down the sides, partly white.
     var waves = normal;
     var aerated = 0.0;
     if normal.y > 0.5 {
-        waves = wave_normal(world.xz, footprint, 0.3 + 0.7 * open);
-    } else if abs(normal.y) < 0.5 {
+        // Tilted with the surface where flowing water slopes.
+        waves = normalize(wave_normal(world.xz, footprint, 0.3 + 0.7 * open, flow) + normal - vec3(0.0, 1.0, 0.0));
+        let froth = smoothstep(RAPIDS.x, RAPIDS.y, length(flow));
+        if froth > 0.0 {
+            let t = globals.time;
+            let along = world.xz - flow * t;
+            aerated = froth * smoothstep(0.45, 0.8, foam_noise(along * 2.0) * 0.6 + foam_noise(along * 6.0 + 9.0) * 0.4);
+        }
+    } else if abs(normal.y) < 0.5 && (falling || dot(flow, normal.xz) > 0.5) {
         let across = vec2(-normal.z, normal.x);
         let streak = vec2(dot(world.xz, across) * STREAKS.x, (world.y + globals.time * FALL_SPEED) * STREAKS.y);
         let slope = noise_slope(streak) * STREAKS * STREAK_HEIGHT;
@@ -359,20 +396,24 @@ fn shade_water(world: vec3<f32>, normal: vec3<f32>, tint: vec3<f32>, sky_light: 
         }
     }
 
-    // The sun's glint off the waves, as far as the sun reaches the surface.
+    // The sun's glint off the waves, as far as the sun reaches the surface (looked up only
+    // near the glint, where it can show).
     let toward_sun = max(dot(reflect(-to_eye, waves), sun_direction()), 0.0);
-    let glint = (pow(toward_sun, GLINT.x) * GLINT_STRENGTH.x + pow(toward_sun, GLINT.y) * GLINT_STRENGTH.y)
-        * open * sun_shadow(world, normal, frag.xy) * water.strengths.x;
+    var glint = 0.0;
+    if toward_sun > 0.95 && open > 0.0 {
+        glint = (pow(toward_sun, GLINT.x) * GLINT_STRENGTH.x + pow(toward_sun, GLINT.y) * GLINT_STRENGTH.y)
+            * open * sun_shadow(world, normal, frag.xy) * water.strengths.x;
+    }
     var color = mix(seen, reflected, reflectance) + sun_color() * glint * air.through;
 
     // Foam along the shore, where the bed comes up to the surface: broken patches that
-    // drift and change slowly, thickest right at the edge. Falling water is white in streaks.
+    // drift and change slowly, thickest right at the edge. Falling and fast water froths.
     var foam = aerated;
-    if normal.y > 0.5 {
-        let shore = 1.0 - saturate((world.y - straight.y) / FOAM_DEPTH);
+    let shore = 1.0 - saturate((world.y - straight.y) / FOAM_DEPTH);
+    if normal.y > 0.5 && shore > 0.0 {
         let t = globals.time * 0.25;
         let bubbles = foam_noise(world.xz * 2.5 + vec2(t, -t * 0.7)) * 0.65 + foam_noise(world.xz * 9.0 - vec2(t * 1.6, t)) * 0.35;
-        foam = smoothstep(0.45, 0.75, bubbles) * shore * shore * 0.5;
+        foam = max(foam, smoothstep(0.45, 0.75, bubbles) * shore * shore * 0.5);
     }
     foam = saturate(foam * water.strengths.y);
     if foam > 0.0 {

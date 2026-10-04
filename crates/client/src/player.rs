@@ -4,6 +4,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseSc
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::fluid;
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::physics::{Aabb, move_and_slide, player as dims};
 
@@ -307,10 +308,42 @@ fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, 
     }
 }
 
+/// Water shallower than this over the feet is waded through: walked and jumped in, though
+/// slowly and carried by its flow, rather than swum in.
+const WADE_DEPTH: f32 = 0.4;
+
+/// How deep the water a body stands in is over its feet (0 out of water), and the mean
+/// flow of that water (blocks per second along x, z): flowing water and river currents
+/// carry swimmers along.
+fn water_around(world: &ClientWorld, aabb: &Aabb) -> (f32, Vec2) {
+    let registry = &world.registry;
+    let water = registry.id("base:water").and_then(|b| registry.fluid(b)).map(|f| f.fluid);
+    let (lo, hi) = (aabb.min.floor().as_ivec3(), (aabb.max - 1e-4).floor().as_ivec3());
+    let (mut cells, mut depth, mut flow) = (0, 0.0f32, Vec2::ZERO);
+    for y in lo.y..=hi.y {
+        for z in lo.z..=hi.z {
+            for x in lo.x..=hi.x {
+                let cell = IVec3::new(x, y, z);
+                let Some(state) = world.block(cell).and_then(|b| registry.fluid(b)).filter(|s| Some(s.fluid) == water) else { continue };
+                // Shallow flowing water only counts up to its surface.
+                let covered = world.block(cell + IVec3::Y).and_then(|b| registry.fluid(b)).is_some_and(|s| s.fluid == state.fluid);
+                let surface = y as f32 + if covered { 1.0 } else { state.height() };
+                if aabb.min.y < surface {
+                    cells += 1;
+                    depth = depth.max(surface - aabb.min.y);
+                    flow += fluid::flow(registry, |p| world.block(p), cell);
+                }
+            }
+        }
+    }
+    (depth, if cells > 0 { flow / cells as f32 } else { Vec2::ZERO })
+}
+
 fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool, jump: bool, sneak: bool, dt: f32) {
-    let water = world.registry.id("base:water");
     let aabb = Aabb::standing(player.position, dims::WIDTH, dims::HEIGHT);
-    player.in_water = aabb.intersects(|p| world.block(p).is_some() && world.block(p) == water);
+    let (depth, current) = water_around(world, &aabb);
+    player.in_water = depth > 0.0;
+    let swimming = player.in_water && !(player.on_ground && depth < WADE_DEPTH);
 
     if player.flying {
         let vertical = (jump as i32 - sneak as i32) as f32;
@@ -320,10 +353,12 @@ fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool,
     } else {
         let speed = if sprint { dims::SPRINT_SPEED } else { dims::WALK_SPEED } * if player.in_water { 0.5 } else { 1.0 };
         let control = if player.on_ground { 16.0 } else { 3.0 };
-        let horizontal = player.velocity.with_y(0.0).lerp(wish * speed, (control * dt).min(1.0));
+        // In water you move relative to the water, so a current carries you along.
+        let target = wish * speed + Vec3::new(current.x, 0.0, current.y);
+        let horizontal = player.velocity.with_y(0.0).lerp(target, (control * dt).min(1.0));
         player.velocity = horizontal.with_y(player.velocity.y);
 
-        if player.in_water {
+        if swimming {
             player.velocity.y -= dims::GRAVITY * 0.15 * dt;
             player.velocity.y *= 1.0 - (2.5 * dt).min(1.0);
             if jump {
@@ -361,8 +396,13 @@ fn follow_camera(
         transform.translation = player.eye();
         transform.rotation = player.rotation();
     }
-    let underwater = world.block(player.eye().floor().as_ivec3()) == world.registry.id("base:water");
-    cycle.underwater = underwater;
+    // Under water when the eye is below the surface of the water around it.
+    let eye = player.eye();
+    let registry = &world.registry;
+    let water = registry.id("base:water").and_then(|b| registry.fluid(b)).map(|f| f.fluid);
+    let cell = eye.floor().as_ivec3();
+    let in_water = |p: IVec3| world.block(p).and_then(|b| registry.fluid(b)).filter(|s| Some(s.fluid) == water);
+    cycle.underwater = in_water(cell).is_some_and(|s| in_water(cell + IVec3::Y).is_some() || eye.y - cell.y as f32 <= s.height());
 }
 
 #[cfg(test)]

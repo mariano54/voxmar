@@ -162,6 +162,18 @@ impl Weather {
         3000.0 * (1.0 - murk) * (1.0 - murk) + 30.0
     }
 
+    /// How cold it feels, °C, for comfort and later warmth buffs: wind chills cool air,
+    /// rain and wet ground chill further, and heat is felt more in humid air.
+    pub fn feels_like(&self) -> f32 {
+        let t = self.temperature;
+        let wind = self.wind.length();
+        // About 1 °C colder per block/s of wind at 0 °C, less as it warms, none above 20 °C.
+        let chill = wind.sqrt() * 2.5 * ramp(20.0, 0.0, t).max(0.0);
+        let wet = 3.0 * self.precipitation * (1.0 - self.snow) + 1.5 * self.wetness;
+        let muggy = 6.0 * ramp(24.0, 34.0, t) * ramp(0.5, 0.9, self.humidity);
+        t - chill - wet * ramp(25.0, 10.0, t) + muggy
+    }
+
     /// A short name for the weather: `heavy rain`, `cumulus`.
     pub fn describe(&self) -> &'static str {
         let falling = self.precipitation > 0.05;
@@ -418,7 +430,12 @@ impl Effect {
 
 /// A kind of weather, as `/weather` and `--weather` ask for it. Values left out are the
 /// natural ones where it is forced (rain falls as snow where it is freezing).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+///
+/// A preset describes its weather at its fullest; `intensity` (0..1) scales it, so
+/// `/weather rain 0.2` is a light shower and `/weather rain 1` the heaviest downpour. What
+/// falls and the effects held scale with it, the wind partly, and the sky not at all (any
+/// rain comes from a grey sky).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Preset {
     /// Namespaced once loaded (`base:rain`); asked for without the namespace.
@@ -438,14 +455,61 @@ pub struct Preset {
     pub direction: Option<Vec2>,
     /// Air temperature, °C: a cold snap lets snow lie, a heat wave dries the land.
     pub temperature: Option<f32>,
-    /// Effects held at full strength, by name, whatever their conditions and rarity.
+    /// Effects held, by name, whatever their conditions and rarity, as strong as the
+    /// intensity.
     pub effects: Vec<String>,
+    /// How intense it is when asked for without saying, 0..1; once scaled (`at`), how
+    /// intense it is.
+    pub intensity: f32,
+}
+
+impl Default for Preset {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            cover: None,
+            convection: None,
+            cirrus: None,
+            humidity: None,
+            precipitation: None,
+            snow: None,
+            wind: None,
+            gusts: None,
+            direction: None,
+            temperature: None,
+            effects: Vec::new(),
+            intensity: 1.0,
+        }
+    }
+}
+
+/// Names for intensities, as `/weather` accepts them.
+pub const INTENSITIES: [(&str, f32); 5] = [("light", 0.25), ("moderate", 0.5), ("heavy", 0.75), ("max", 1.0), ("full", 1.0)];
+
+/// An intensity typed as a number from 0 to 1 or a name (`light`, `moderate`, `heavy`,
+/// `max`).
+pub fn parse_intensity(word: &str) -> Option<f32> {
+    let named = INTENSITIES.iter().find(|(name, _)| name.eq_ignore_ascii_case(word)).map(|&(_, v)| v);
+    named.or_else(|| word.parse::<f32>().ok().filter(|v| (0.0..=1.0).contains(v)))
 }
 
 impl Preset {
     /// The short name, without the namespace.
     pub fn short_name(&self) -> &str {
         self.name.rsplit(':').next().unwrap_or(&self.name)
+    }
+
+    /// This preset at `intensity` (0..1): what falls and how hard the wind blows scaled,
+    /// and its effects held that strongly.
+    pub fn at(&self, intensity: f32) -> Preset {
+        let intensity = intensity.clamp(0.0, 1.0);
+        Preset {
+            precipitation: self.precipitation.map(|p| p * intensity),
+            wind: self.wind.map(|w| w * (0.35 + 0.65 * intensity)),
+            gusts: self.gusts.map(|g| g * (0.5 + 0.5 * intensity)),
+            intensity,
+            ..self.clone()
+        }
     }
 
     /// `natural` with this preset's values blended in by `weight` (0..1). Its effects are
@@ -546,6 +610,7 @@ impl WeatherTable {
                 || preset.wind.is_some_and(|w| !(0.0..=40.0).contains(&w))
                 || preset.gusts.is_some_and(|g| !(0.0..=1.0).contains(&g))
                 || preset.temperature.is_some_and(|t| !(-60.0..=60.0).contains(&t))
+                || !(0.0..=1.0).contains(&preset.intensity)
             {
                 return Err(error(format!("weather `{}` has a value out of range", preset.name)));
             }
@@ -620,7 +685,7 @@ impl WeatherTable {
         let mut weather = preset.blend(natural, 1.0);
         let mut strengths = vec![0.0; self.effects.len()];
         for index in preset.effects.iter().filter_map(|name| self.effect(name)) {
-            strengths[index] = 1.0;
+            strengths[index] = preset.intensity;
         }
         self.apply(&mut weather, &strengths, floor);
         weather
@@ -655,9 +720,9 @@ pub fn gust(seed: u64, at: Vec2, seconds: f64, offset: Vec2, mean: Vec2, gusts: 
     let seed = (seed ^ (seed >> 32)) as u32 ^ 0x6775_7374; // "gust"
     let strength = value_noise(seed, p, t);
     let veer = value_noise(seed ^ 0x9e37_79b9, p, t * 0.7) - 0.5;
-    // Lulls a little below the mean, gusts well above it.
-    let speed = 1.0 + gusts * (1.8 * strength * strength - 0.45);
-    mean * speed + mean.perp() * (veer * 0.6 * gusts)
+    // Lulls a little below the mean, gusts up to about half again above it at the gustiest.
+    let speed = 1.0 + gusts * (strength * strength - 0.25);
+    mean * speed + mean.perp() * (veer * 0.4 * gusts)
 }
 
 /// `offset` carried `dt` seconds further by `mean`, wrapped every `GUST_WRAP` blocks.
@@ -722,8 +787,17 @@ mod tests {
         assert_eq!(forced.wind, Vec2::new(0.0, -6.0));
         assert!((rain.blend(&natural, 0.5).cover - 0.6).abs() < 1e-6);
 
+        let light = rain.at(0.2);
+        assert_eq!((light.precipitation, light.cover, light.intensity), (Some(0.1), Some(1.0), 0.2));
+        assert!((light.wind.unwrap() - 6.0 * 0.48).abs() < 1e-5);
+        assert_eq!(parse_intensity("heavy"), Some(0.75));
+        assert_eq!(parse_intensity("0.3"), Some(0.3));
+        assert_eq!(parse_intensity("3"), None);
+
         let fog = table.force(table.preset("fog").unwrap(), &natural, 70.0);
         assert_eq!((fog.ground_fog, fog.fog_top, fog.fog, fog.humidity), (0.9, 82.0, 0.4, 1.0));
+        let thin = table.force(&table.preset("fog").unwrap().at(0.5), &natural, 70.0);
+        assert_eq!((thin.ground_fog, thin.fog), (0.45, 0.2));
         assert_eq!(table.snow_cover().len(), 1);
 
         assert!(WeatherTable::from_ron("base", r#"(presets: [(name: "bad", cover: 2.0)])"#).is_err());
@@ -753,6 +827,18 @@ mod tests {
     }
 
     #[test]
+    fn wind_and_rain_feel_colder_and_humid_heat_hotter() {
+        let calm = Weather { temperature: 2.0, ..Weather::NONE };
+        assert_eq!(calm.feels_like(), 2.0);
+        let windy = Weather { wind: Vec2::new(9.0, 0.0), ..calm };
+        assert!(windy.feels_like() < -4.0, "{}", windy.feels_like());
+        let wet = Weather { precipitation: 1.0, wetness: 1.0, ..calm };
+        assert!(wet.feels_like() < -1.5);
+        let muggy = Weather { temperature: 33.0, humidity: 0.9, ..Weather::NONE };
+        assert!(muggy.feels_like() > 37.0);
+    }
+
+    #[test]
     fn gusts_are_deterministic_and_bounded() {
         let mean = Vec2::new(6.0, -2.0);
         let at = Vec2::new(1234.5, -987.25);
@@ -767,10 +853,10 @@ mod tests {
         assert_ne!(gust(7, at, 1e7 + 3.0, offset, mean, 1.0), gust(8, at, 1e7 + 3.0, offset, mean, 1.0));
         let (low, high) = speeds.iter().fold((f32::MAX, 0.0f32), |(lo, hi), &s| (lo.min(s), hi.max(s)));
         let base = mean.length();
-        assert!(low > base * 0.4 && high < base * 2.6 && high > base * 1.5, "{low}..{high} around {base}");
+        assert!(low > base * 0.7 && high < base * 1.85 && high > base * 1.4, "{low}..{high} around {base}");
         // Gusts change within seconds, not every frame, even as the offset wraps round.
         let step = speeds.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
-        assert!(step < base * 0.2, "jumps {step}");
+        assert!(step < base * 0.12, "jumps {step}");
         // The pattern repeats exactly where the offset wraps.
         let (a, b) = (Vec2::new(5.0, 7.0), Vec2::new(5.0 + GUST_WRAP, 7.0 - GUST_WRAP));
         assert_eq!(gust(3, a, 100.0, Vec2::ZERO, mean, 1.0), gust(3, b, 100.0, Vec2::ZERO, mean, 1.0));

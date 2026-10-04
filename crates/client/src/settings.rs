@@ -96,6 +96,8 @@ pub struct Settings {
     pub water_quality: WaterQuality,
     /// Which texture pack comes first; takes effect the next time the game starts.
     pub textures: TextureOrder,
+    /// How many particles effects show (breaking blocks).
+    pub particles: ParticleAmount,
 }
 
 /// Which texture pack the game prefers (see `textures`). `$VOXMAR_TEXTURES` overrides both.
@@ -147,6 +149,36 @@ impl AntiAliasing {
     }
 }
 
+/// How many particles effects show, like Minecraft's particle setting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ParticleAmount {
+    #[default]
+    All,
+    Fewer,
+    Off,
+}
+
+impl ParticleAmount {
+    const ALL: [ParticleAmount; 3] = [ParticleAmount::All, ParticleAmount::Fewer, ParticleAmount::Off];
+
+    fn label(self) -> &'static str {
+        match self {
+            ParticleAmount::All => "All",
+            ParticleAmount::Fewer => "Fewer",
+            ParticleAmount::Off => "Off",
+        }
+    }
+
+    /// The share of each effect's particles shown.
+    pub fn share(self) -> f32 {
+        match self {
+            ParticleAmount::All => 1.0,
+            ParticleAmount::Fewer => 0.35,
+            ParticleAmount::Off => 0.0,
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -169,6 +201,7 @@ impl Default for Settings {
             shader_pack: DEFAULT_PACK.into(),
             water_quality: WaterQuality::default(),
             textures: TextureOrder::default(),
+            particles: ParticleAmount::default(),
         }
     }
 }
@@ -372,6 +405,7 @@ enum Choice {
     ShaderPack,
     Water,
     Textures,
+    Particles,
 }
 
 impl Choice {
@@ -381,6 +415,7 @@ impl Choice {
             Choice::ShaderPack => "Shader pack",
             Choice::Water => "Water",
             Choice::Textures => "Textures (on restart)",
+            Choice::Particles => "Particles",
         }
     }
 
@@ -390,6 +425,7 @@ impl Choice {
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
             Choice::Water => settings.water_quality.label().into(),
             Choice::Textures => settings.textures.label().into(),
+            Choice::Particles => settings.particles.label().into(),
         }
     }
 
@@ -409,6 +445,10 @@ impl Choice {
                     TextureOrder::Minecraft => TextureOrder::Voxmar,
                     TextureOrder::Voxmar => TextureOrder::Minecraft,
                 }
+            }
+            Choice::Particles => {
+                let i = ParticleAmount::ALL.iter().position(|&a| a == settings.particles).unwrap_or(0);
+                settings.particles = ParticleAmount::ALL[(i + 1) % ParticleAmount::ALL.len()];
             }
         }
     }
@@ -462,6 +502,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Choice(Choice::Textures),
             Control::Choice(Choice::AntiAliasing),
             Control::Choice(Choice::Water),
+            Control::Choice(Choice::Particles),
             Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::Vsync),
             Control::Switch(Toggle::DebugOverlay),

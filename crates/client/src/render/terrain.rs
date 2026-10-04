@@ -979,7 +979,7 @@ fn pass_setup(pass: TerrainPass) -> (&'static [&'static str], Option<Face>) {
 
 /// The mesh pipeline's descriptor for a view, with our own shader, vertex buffer and bind
 /// group 2 in place of a mesh's: the view setup, shader defs and targets stay Bevy's.
-fn mesh_like(
+pub(super) fn mesh_like(
     mesh_pipeline: &MeshPipeline,
     layouts: &mut MeshVertexBufferLayouts,
     key: MeshPipelineKey,
@@ -1039,6 +1039,8 @@ impl TerrainPipelines {
         let alpha_to_coverage =
             key.msaa_samples() > 1 && matches!(pass, TerrainPass::Cutout | TerrainPass::Inner | TerrainPass::Fringe);
         descriptor.multisample.alpha_to_coverage_enabled = alpha_to_coverage;
+        // The vertex stage too: what it passes on differs by pass (water's flow).
+        descriptor.vertex.shader_defs.extend(defs.iter().map(|&def| ShaderDefVal::from(def)));
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.extend(defs.iter().map(|&def| ShaderDefVal::from(def)));
             if alpha_to_coverage {

@@ -30,8 +30,10 @@ use voxmar_protocol::{TICKS_PER_DAY, Weather};
 use crate::textures::Rgba;
 use crate::weather::{ClientWeather, DRIFT_WRAP};
 
+pub mod cracks;
 pub mod lod;
 pub mod pack;
+pub mod particles;
 pub mod precipitation;
 pub mod terrain;
 pub mod water;
@@ -63,6 +65,8 @@ impl Plugin for RenderPlugin {
             FullscreenMaterialPlugin::<DisplayTransform>::default(),
             lod::LodPlugin,
             precipitation::PrecipitationPlugin,
+            particles::ParticlePlugin,
+            cracks::CrackPlugin,
         ))
             .insert_resource(DirectionalLightShadowMap { size: 2048 })
             .init_resource::<DayCycle>()
@@ -207,6 +211,7 @@ pub fn setup(
     block_textures: &[Rgba],
     colormaps: &[Rgba],
 ) {
+    commands.insert_resource(particles::TexturePieces::new(block_textures));
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat));
     let colormaps = images.add(array_image(colormaps, false, ImageAddressMode::ClampToEdge));
     commands.insert_resource(terrain::TerrainTextures { textures, colormaps });

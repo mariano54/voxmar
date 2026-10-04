@@ -6,16 +6,19 @@
 //! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
 //! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--wait
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
-//! FRACTION` (hold the time of day, 0 is sunrise), `--menu` (show the settings menu) or
+//! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
+//! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
+//! screenshot), `--menu` (show the settings menu) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
-//! `--fov DEGREES`, `--weather KIND` (show that instead of the server's weather; the kinds
-//! are in `weather.ron`), `--command LINE` (run a console command once in game, such as
+//! `--fov DEGREES`, `--weather KIND[:INTENSITY]` (show that instead of the server's
+//! weather; the kinds are in `weather.ron`, intensities 0..1 or light|moderate|heavy|max), `--command LINE` (run a console command once in game, such as
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings.
 
 mod ambience;
+mod breaking;
 mod capture;
 mod hud;
 mod interact;
@@ -68,6 +71,7 @@ struct Options {
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
     wait: f32,
+    mine: Option<f32>,
     time: Option<f32>,
     menu: bool,
     screen: Option<Screen>,
@@ -90,6 +94,7 @@ fn parse_options() -> Result<Options, String> {
         pose: None,
         flight: None,
         wait: 0.0,
+        mine: None,
         time: None,
         menu: false,
         screen: None,
@@ -116,6 +121,7 @@ fn parse_options() -> Result<Options, String> {
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
             "--wait" => options.wait = value()?.parse().map_err(|e| format!("--wait: {e}"))?,
+            "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
             "--screen" => {
@@ -186,6 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         world::WorldPlugin,
         player::PlayerPlugin,
         interact::InteractPlugin,
+        breaking::BreakingPlugin,
         net::NetPlugin,
         hud::HudPlugin,
         sfx::SfxPlugin,
@@ -235,6 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             pose: options.pose,
             flight: options.flight,
             wait: options.wait,
+            mine: options.mine,
             time: options.time,
             menu: options.menu,
         });
@@ -279,6 +287,7 @@ fn setup(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
+    mut crack_materials: ResMut<Assets<render::cracks::CrackMaterial>>,
     world: Res<ClientWorld>,
     terrain: Res<render::terrain::Terrain>,
 ) {
@@ -302,6 +311,8 @@ fn setup(
     }
     let colormaps = source.colormaps();
     render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &colormaps);
+    let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
+    render::cracks::setup(&mut commands, &mut images, &mut meshes, &mut crack_materials, crack_stages);
     let palette = LodPalette::new(registry, &block_textures, &colormaps);
     commands.insert_resource(Lod::new(palette, terrain.clone(), world.view_distance));
 
