@@ -10,6 +10,7 @@
 pub mod action;
 pub mod block;
 pub mod chunk;
+pub mod command;
 pub mod content;
 pub mod coords;
 pub mod field;
@@ -20,6 +21,7 @@ pub mod physics;
 pub mod schedule;
 pub mod traits;
 pub mod visibility;
+pub mod weather;
 pub mod world;
 
 pub use glam;

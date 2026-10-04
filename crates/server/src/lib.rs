@@ -2,6 +2,7 @@
 //! the client for singleplayer.
 
 mod actions;
+mod commands;
 mod player;
 mod process;
 pub mod save;
@@ -28,7 +29,7 @@ use crate::actions::Executor;
 use crate::player::Player;
 use crate::process::Process;
 use crate::save::{GameMode, WorldMeta, WorldSave};
-use crate::weather::WeatherFields;
+use crate::weather::WeatherState;
 
 pub struct ServerConfig {
     /// Seed of a new world. A saved world keeps its own.
@@ -43,8 +44,8 @@ pub struct ServerConfig {
     /// Names are not authenticated, so this only suits servers among friends.
     pub admins: Vec<String>,
     /// Directory the world is saved in; a new world is created there if it holds none. A
-    /// saved world's game mode replaces `allow_flight` and `local_admin`. `None` keeps the
-    /// world in memory only.
+    /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
+    /// only.
     pub world: Option<PathBuf>,
 }
 
@@ -55,18 +56,20 @@ impl Default for ServerConfig {
 }
 
 impl GameMode {
-    /// Creative allows flight and makes the singleplayer player an admin; survival does
-    /// neither.
+    /// Creative allows flight; survival does not. Either way the singleplayer host is an
+    /// admin, who may change a player's mode with `/gamemode`.
     fn apply(self, config: &mut ServerConfig) {
-        let creative = self == GameMode::Creative;
-        config.allow_flight = creative;
-        config.local_admin = creative;
+        config.allow_flight = self == GameMode::Creative;
+    }
+
+    fn allows_flight(self) -> bool {
+        self == GameMode::Creative
     }
 }
 
 /// How often edited columns, players and the time of day are saved.
 const SAVE_INTERVAL: u64 = 30 * TICKS_PER_SECOND as u64;
-/// Time of day a new world starts at: early morning.
+/// Time a new world starts at: early morning.
 const FIRST_TICK: u64 = 2000;
 
 /// Finds the `assets` directory: `$VOXMAR_ASSETS`, then next to the working directory or
@@ -185,8 +188,9 @@ pub(crate) struct Server {
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
-    /// Humidity, cloud and precipitation, evolved by the weather process.
-    weather: WeatherFields,
+    /// Humidity, cloud and precipitation, evolved by the weather process, and the weather
+    /// admins have forced.
+    weather: WeatherState,
     world: VoxelWorld,
     /// Columns edited since they were last saved. They stay loaded until saved; without a
     /// save, that is forever.
@@ -198,7 +202,12 @@ pub(crate) struct Server {
     players: FxHashMap<PlayerId, Player>,
     next_player: PlayerId,
     spawn: Vec3,
+    /// Simulation ticks since the world began.
     tick: u64,
+    /// The time of day, in ticks since the first sunrise; it runs `day_speed` ticks per
+    /// tick, and commands may set it.
+    day: f64,
+    day_speed: f32,
 }
 
 const MAX_GENERATING: usize = 64;
@@ -216,8 +225,8 @@ impl Server {
         let climate = overworld.clone();
         let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let climate = overworld.clone();
-        let weather = WeatherFields::new(move |x, z| climate.site(x, z).precipitation);
-        let processes = process::core_processes(meta.seed, overworld.dials().wind.into());
+        let weather = WeatherState::new(meta.seed, overworld.dials().wind.into(), move |x, z| climate.site(x, z).precipitation);
+        let processes = process::core_processes();
         let generator: Arc<dyn Generator> = overworld;
         // Load the spawn column up front and stand on its highest solid block, so
         // features like trees never bury the player.
@@ -228,9 +237,12 @@ impl Server {
         let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", meta.seed);
+        let tick = meta.time.max(FIRST_TICK);
         Self {
             config,
-            tick: meta.time.max(FIRST_TICK),
+            tick,
+            day: meta.day.unwrap_or(tick) as f64,
+            day_speed: meta.day_speed,
             meta,
             save,
             content,
@@ -309,6 +321,7 @@ impl Server {
     fn tick(&mut self) {
         let _span = tracing::info_span!("server_tick").entered();
         self.tick += 1;
+        self.day += self.day_speed as f64;
         self.complete_actions();
         self.run_processes();
         self.replicate_owned_traits();
@@ -319,7 +332,7 @@ impl Server {
         self.unload_columns();
         self.broadcast_players();
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
-            self.broadcast(ServerMessage::Time { ticks: self.tick });
+            self.broadcast(self.time_message());
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
@@ -346,6 +359,8 @@ impl Server {
             self.save_player(player);
         }
         self.meta.time = self.tick;
+        self.meta.day = Some(self.day as u64);
+        self.meta.day_speed = self.day_speed;
         self.meta.last_played = save::unix_time();
         if let Err(e) = save.write_meta(&self.meta) {
             tracing::error!("could not save {}: {e}", save.dir().display());
@@ -360,6 +375,11 @@ impl Server {
         {
             tracing::error!("could not save player {}: {e}", player.name);
         }
+    }
+
+    /// The clocks, as players are told them.
+    pub(crate) fn time_message(&self) -> ServerMessage {
+        ServerMessage::Time { tick: self.tick, day: self.day as u64, day_speed: self.day_speed }
     }
 
     pub(crate) fn broadcast(&self, message: ServerMessage) {

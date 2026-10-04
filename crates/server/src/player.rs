@@ -14,7 +14,7 @@ use voxmar_protocol::{
 };
 
 use crate::Server;
-use crate::save::SavedPlayer;
+use crate::save::{GameMode, SavedPlayer};
 
 pub const MAX_HEALTH: u8 = 20;
 
@@ -24,6 +24,8 @@ pub struct Player {
     pub connection: ServerConnection,
     pub joined: bool,
     pub admin: bool,
+    /// Creative mode: the player may fly.
+    pub allow_flight: bool,
     /// Radius, in columns, streamed around the player.
     pub view_distance: i32,
     /// Flight speed multiplier; above 1 only for admins.
@@ -50,6 +52,7 @@ impl Player {
             connection,
             joined: false,
             admin: false,
+            allow_flight: false,
             view_distance,
             fly_speed: 1.0,
             position: spawn,
@@ -87,11 +90,16 @@ impl Player {
         }
     }
 
+    pub fn mode(&self) -> GameMode {
+        if self.allow_flight { GameMode::Creative } else { GameMode::Survival }
+    }
+
     /// The persistent traits, for saving.
     pub fn saved(&self) -> SavedPlayer {
         SavedPlayer {
             position: self.position,
             yaw: self.yaw,
+            mode: Some(self.mode()),
             flying: self.flying,
             health: self.health,
             inventory: self.inventory.clone(),
@@ -108,6 +116,8 @@ impl Server {
             ClientMessage::Propose { action, target } => self.propose(id, action, target),
             ClientMessage::Cancel => self.cancel_action(id),
             ClientMessage::Settings { view_distance, fly_speed } => self.settings(id, view_distance, fly_speed),
+            ClientMessage::Command { line } => self.command(id, &line),
+            ClientMessage::Chat { text } => self.chat(id, &text),
         }
     }
 
@@ -149,12 +159,13 @@ impl Server {
         player.joined = true;
         // Only the integrated server's own player can connect in-process.
         player.admin = (player.connection.is_local() && local_admin) || self.config.admins.contains(&player.name);
+        player.allow_flight = saved.as_ref().and_then(|saved| saved.mode).map_or(allow_flight, GameMode::allows_flight);
         // Returning players carry on where they left; new ones start at spawn with a kit.
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
                 player.yaw = saved.yaw;
-                player.flying = saved.flying && allow_flight;
+                player.flying = saved.flying && player.allow_flight;
                 player.health = saved.health;
                 player.inventory = saved.inventory;
             }
@@ -175,22 +186,24 @@ impl Server {
             position: player.position,
             yaw: player.yaw,
             flying: player.flying,
-            allow_flight,
+            allow_flight: player.allow_flight,
             admin,
         });
         player.last_input_tick = tick;
         tracing::info!("{} joined", player.name);
+        let time = self.time_message();
+        self.players[&id].connection.send(time);
     }
 
     /// Accepts the client's predicted movement if it is physically plausible, otherwise
     /// snaps the client back.
     fn input(&mut self, id: PlayerId, input: PlayerInput) {
         let tick = self.tick;
-        let allow_flight = self.config.allow_flight;
         let player = &self.players[&id];
         if !player.health.alive() || !input.position.is_finite() {
             return;
         }
+        let allow_flight = player.allow_flight;
         let elapsed = ((tick - player.last_input_tick) as f32 / TICKS_PER_SECOND as f32).clamp(0.05, 1.0);
         let delta = input.position - player.position;
         let flying = input.flying && allow_flight;

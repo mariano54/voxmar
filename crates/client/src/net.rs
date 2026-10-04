@@ -9,6 +9,7 @@ use voxmar_protocol::{
 use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_server::ServerHandle;
 
+use crate::hud::console::Console;
 use crate::menu::{Notice, Screen};
 use crate::player::LocalPlayer;
 use crate::render::DayCycle;
@@ -22,7 +23,9 @@ impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
         let in_game = in_state(Screen::InGame);
         app.init_resource::<RemotePlayers>()
+            .init_resource::<Clock>()
             .add_systems(PreUpdate, receive.run_if(in_game.clone()))
+            .add_systems(Update, advance_day.run_if(in_game.clone()))
             .add_systems(PostUpdate, (send_input, sync_remote_players).run_if(in_game));
     }
 }
@@ -59,6 +62,33 @@ impl Net {
     pub fn send_settings(&self, view_distance: u8, fly_speed: f32) {
         self.connection.send(ClientMessage::Settings { view_distance, fly_speed });
     }
+
+    /// Asks the server to run a command (`time set noon`).
+    pub fn command(&self, line: &str) {
+        self.connection.send(ClientMessage::Command { line: line.into() });
+    }
+
+    /// Says something to everyone.
+    pub fn chat(&self, text: &str) {
+        self.connection.send(ClientMessage::Chat { text: text.into() });
+    }
+}
+
+/// The server's time of day, as last told and advanced locally since.
+#[derive(Resource, Default)]
+pub struct Clock {
+    /// The time of day (in ticks) when last told, and how fast it runs.
+    day: f64,
+    day_speed: f32,
+    /// When that was, in seconds since startup.
+    told_at: f64,
+}
+
+impl Clock {
+    /// The time of day now, in ticks (`now` is seconds since startup).
+    pub fn day(&self, now: f64) -> f64 {
+        self.day + (now - self.told_at) * TICKS_PER_SECOND as f64 * self.day_speed as f64
+    }
 }
 
 #[derive(Resource, Default)]
@@ -80,6 +110,7 @@ fn receive(
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
+    (time, mut clock, mut console): (Res<Time>, ResMut<Clock>, ResMut<Console>),
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
@@ -140,11 +171,28 @@ fn receive(
                     keep
                 });
             }
-            ServerMessage::Time { ticks } => cycle.ticks = ticks as f64,
-            ServerMessage::Weather(report) => weather.receive(report),
+            ServerMessage::Time { day, day_speed, .. } => {
+                *clock = Clock { day: day as f64, day_speed, told_at: time.elapsed_secs_f64() };
+                cycle.ticks = day as f64;
+            }
+            ServerMessage::Abilities { allow_flight, admin } => {
+                player.allow_flight = allow_flight;
+                player.flying &= allow_flight;
+                player.admin = admin;
+            }
+            ServerMessage::Chat { kind, text } => console.push(kind, &text, time.elapsed_secs()),
+            ServerMessage::Weather { weather: report, quick } => weather.receive(report, quick, time.elapsed_secs()),
             ServerMessage::Lightning { at } => weather.lightning(at.distance(player.position.xz())),
             ServerMessage::Died => player.dead = true,
         }
+    }
+}
+
+/// Moves the sun with the server's time of day, which may run faster than usual or not at
+/// all.
+fn advance_day(time: Res<Time>, clock: Res<Clock>, mut cycle: ResMut<DayCycle>) {
+    if clock.told_at > 0.0 {
+        cycle.ticks = clock.day(time.elapsed_secs_f64());
     }
 }
 

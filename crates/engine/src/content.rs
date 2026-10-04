@@ -8,11 +8,15 @@ use std::sync::Arc;
 
 use crate::action::ActionRegistry;
 use crate::block::{BlockDef, BlockRegistry, RegistryError};
+use crate::command::CommandRegistry;
+use crate::weather::WeatherTable;
 
 #[derive(Clone)]
 pub struct Content {
     pub blocks: Arc<BlockRegistry>,
     pub actions: Arc<ActionRegistry>,
+    pub commands: Arc<CommandRegistry>,
+    pub weather: Arc<WeatherTable>,
 }
 
 impl Content {
@@ -29,6 +33,8 @@ impl Content {
 
         let mut blocks: Vec<BlockDef> = Vec::new();
         let mut actions = ActionRegistry::default();
+        let mut commands = CommandRegistry::default();
+        let mut weather = WeatherTable::default();
         for package in &packages {
             let path = dir.join(package);
             if let Ok(source) = std::fs::read_to_string(path.join("blocks.ron")) {
@@ -37,8 +43,19 @@ impl Content {
             if let Ok(source) = std::fs::read_to_string(path.join("actions.ron")) {
                 actions.extend(package, &source)?;
             }
+            if let Ok(source) = std::fs::read_to_string(path.join("commands.ron")) {
+                commands.extend(package, &source)?;
+            }
+            if let Ok(source) = std::fs::read_to_string(path.join("weather.ron")) {
+                weather.extend(package, &source)?;
+            }
         }
-        Ok(Self { blocks: Arc::new(BlockRegistry::new(blocks)?), actions: Arc::new(actions) })
+        Ok(Self {
+            blocks: Arc::new(BlockRegistry::new(blocks)?),
+            actions: Arc::new(actions),
+            commands: Arc::new(commands),
+            weather: Arc::new(weather),
+        })
     }
 
     /// Fingerprint used to check that client and server load the same content.

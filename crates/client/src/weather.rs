@@ -25,6 +25,9 @@ pub struct ClientWeather {
     /// Whether the server has reported the weather yet in this game.
     reported: bool,
     forced: bool,
+    /// Until when (seconds since startup) the shown weather changes over quickly, after a
+    /// command changed it.
+    quick_until: f32,
     /// What is shown now.
     pub current: Weather,
     /// How far the wind has carried the clouds, in blocks, wrapped every `DRIFT_WRAP`.
@@ -36,6 +39,19 @@ pub struct ClientWeather {
 pub const DRIFT_WRAP: f32 = 1_048_576.0;
 /// Blocks sound travels per second.
 const SOUND_SPEED: f32 = 343.0;
+/// Seconds a quick change takes to show, roughly.
+const QUICK_EASE: f32 = 0.7;
+const QUICK_FOR: f32 = 4.0;
+/// The menus' sky, and what the game shows until the server reports: a fair day.
+const FAIR: Weather = Weather {
+    cover: 0.35,
+    convection: 1.0,
+    cirrus: 0.1,
+    humidity: 0.5,
+    precipitation: 0.0,
+    snow: 0.0,
+    wind: Vec2::new(3.0, 1.5),
+};
 
 /// A lightning flash, seen at once and heard later.
 struct Strike {
@@ -55,13 +71,23 @@ pub struct Thunder {
 /// Until a server reports the weather, and in the menus: a fair day.
 impl Default for ClientWeather {
     fn default() -> Self {
-        let fair = preset("cumulus").expect("cumulus is a preset");
-        Self { target: Some(fair), reported: false, forced: false, current: fair, drift: Vec2::ZERO, strikes: Vec::new() }
+        Self {
+            target: Some(FAIR),
+            reported: false,
+            forced: false,
+            quick_until: 0.0,
+            current: FAIR,
+            drift: Vec2::ZERO,
+            strikes: Vec::new(),
+        }
     }
 }
 
 impl ClientWeather {
-    pub fn receive(&mut self, weather: Weather) {
+    /// The server's report for where the player is. `quick` (after a command changed the
+    /// weather) changes over within a second or two rather than easing in; `now` is
+    /// seconds since startup.
+    pub fn receive(&mut self, weather: Weather, quick: bool, now: f32) {
         if self.forced {
             return;
         }
@@ -69,6 +95,9 @@ impl ClientWeather {
         if !self.reported {
             self.reported = true;
             self.current = weather;
+        }
+        if quick {
+            self.quick_until = now + QUICK_FOR;
         }
         self.target = Some(weather);
     }
@@ -109,6 +138,7 @@ impl ClientWeather {
 fn ease(time: Res<Time>, mut weather: ResMut<ClientWeather>, mut thunder: MessageWriter<Thunder>) {
     let dt = time.delta_secs();
     let weather = &mut *weather;
+    let quick = time.elapsed_secs() < weather.quick_until;
     for strike in &mut weather.strikes {
         strike.age += dt;
         if !strike.heard && strike.age >= strike.distance / SOUND_SPEED {
@@ -119,52 +149,24 @@ fn ease(time: Res<Time>, mut weather: ResMut<ClientWeather>, mut thunder: Messag
     weather.strikes.retain(|s| !s.heard || s.age < 1.0);
     if let Some(target) = weather.target {
         let current = &mut weather.current;
-        let approach = |value: &mut f32, target: f32, seconds: f32| *value += (target - *value) * (dt / seconds).min(1.0);
+        let approach = |value: &mut f32, target: f32, seconds: f32| {
+            let seconds = if quick { seconds.min(QUICK_EASE) } else { seconds };
+            *value += (target - *value) * (dt / seconds).min(1.0)
+        };
         approach(&mut current.cover, target.cover, 25.0);
         approach(&mut current.convection, target.convection, 25.0);
         approach(&mut current.cirrus, target.cirrus, 30.0);
         approach(&mut current.humidity, target.humidity, 20.0);
         approach(&mut current.precipitation, target.precipitation, 6.0);
         approach(&mut current.snow, target.snow, 10.0);
-        current.wind += (target.wind - current.wind) * (dt / 10.0).min(1.0);
+        current.wind += (target.wind - current.wind) * (dt / if quick { QUICK_EASE } else { 10.0 }).min(1.0);
     }
     weather.drift = (weather.drift + weather.current.wind * dt).rem_euclid(Vec2::splat(DRIFT_WRAP));
 }
 
-/// A short description of the weather, for the debug overlay.
-pub fn describe(weather: &Weather) -> &'static str {
-    let falling = weather.precipitation > 0.05;
-    match () {
-        _ if falling && weather.snow > 0.5 => if weather.precipitation > 0.5 { "heavy snow" } else { "snow" },
-        _ if falling && weather.convection > 0.5 && weather.precipitation > 0.4 => "thunderstorm",
-        _ if falling => if weather.precipitation > 0.5 { "heavy rain" } else { "rain" },
-        _ if weather.cover > 0.8 => "overcast",
-        _ if weather.cover > 0.2 => if weather.convection > 0.5 { "cumulus" } else { "cloudy" },
-        _ if weather.cirrus > 0.3 => "cirrus",
-        _ => "clear",
-    }
-}
-
-/// Named weather for captures and checks.
+/// A kind of weather by name (`clear`, `storm`, …), as the content packages define it, for
+/// `--weather`.
 pub fn preset(name: &str) -> Option<Weather> {
-    let weather = |cover, convection, cirrus, humidity, precipitation, snow, wind: [f32; 2]| Weather {
-        cover,
-        convection,
-        cirrus,
-        humidity,
-        precipitation,
-        snow,
-        wind: Vec2::from(wind),
-    };
-    Some(match name {
-        "clear" => weather(0.0, 0.5, 0.0, 0.3, 0.0, 0.0, [2.0, 1.0]),
-        "cirrus" => weather(0.05, 0.3, 0.9, 0.35, 0.0, 0.0, [4.0, 1.0]),
-        "cumulus" => weather(0.35, 1.0, 0.1, 0.5, 0.0, 0.0, [3.0, 1.5]),
-        "cloudy" => weather(0.6, 0.3, 0.0, 0.6, 0.0, 0.0, [4.0, 2.0]),
-        "overcast" => weather(0.95, 0.0, 0.0, 0.75, 0.0, 0.0, [5.0, 2.0]),
-        "rain" => weather(0.98, 0.1, 0.0, 0.85, 0.5, 0.0, [5.0, 2.0]),
-        "storm" => weather(1.0, 1.0, 0.0, 0.9, 1.0, 0.0, [10.0, 4.0]),
-        "snow" => weather(0.95, 0.0, 0.0, 0.8, 0.6, 1.0, [3.0, 1.0]),
-        _ => return None,
-    })
+    let content = voxmar_server::load_content(&voxmar_server::assets_dir()).ok()?;
+    content.weather.preset(name).map(|preset| preset.blend(&FAIR, 1.0))
 }

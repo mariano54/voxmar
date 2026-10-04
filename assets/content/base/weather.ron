@@ -1,0 +1,16 @@
+// Kinds of weather `/weather KIND` brings and `--weather KIND` shows. Each sets some of
+// what the sky does; what it leaves out stays natural where it is forced, so rain falls as
+// snow where it is freezing. Fractions are 0..1 and wind is in blocks per second.
+(
+    presets: [
+        (name: "clear", cover: 0.0, convection: 0.5, cirrus: 0.0, humidity: 0.3, precipitation: 0.0, wind: 2.2),
+        (name: "cirrus", cover: 0.05, convection: 0.3, cirrus: 0.9, humidity: 0.35, precipitation: 0.0, wind: 4.1),
+        (name: "cumulus", cover: 0.35, convection: 1.0, cirrus: 0.1, humidity: 0.5, precipitation: 0.0, wind: 3.4),
+        (name: "cloudy", cover: 0.6, convection: 0.3, cirrus: 0.0, humidity: 0.6, precipitation: 0.0, wind: 4.5),
+        (name: "overcast", cover: 0.95, convection: 0.0, cirrus: 0.0, humidity: 0.75, precipitation: 0.0, wind: 5.4),
+        (name: "drizzle", cover: 0.97, convection: 0.0, cirrus: 0.0, humidity: 0.95, precipitation: 0.15, wind: 3.0),
+        (name: "rain", cover: 0.98, convection: 0.1, cirrus: 0.0, humidity: 0.85, precipitation: 0.5, wind: 5.4),
+        (name: "storm", cover: 1.0, convection: 1.0, cirrus: 0.0, humidity: 0.9, precipitation: 1.0, wind: 10.8),
+        (name: "snow", cover: 0.95, convection: 0.0, cirrus: 0.0, humidity: 0.8, precipitation: 0.6, snow: 1.0, wind: 3.2),
+    ],
+)
