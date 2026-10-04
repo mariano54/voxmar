@@ -104,7 +104,8 @@ impl Size {
         // Where a mature tree falls in its species' range: the middle more often than the ends.
         let mature = lo + (hi - lo) * 0.5 * (rng.unit() + rng.unit());
         let (roll, spread) = (rng.unit(), rng.unit());
-        let young = 0.1 + 0.25 * (1.0 - vigour);
+        // Snags are what is left of grown trees.
+        let young = if matches!(s.crown, Crown::Dead { .. }) { 0.04 } else { 0.1 + 0.25 * (1.0 - vigour) };
         let giant = 0.015 + 0.045 * vigour;
         let age = if roll < young {
             lerp((0.45, 0.8), spread)
@@ -211,6 +212,15 @@ impl Trees {
         };
         let size = Size::draw(s, vigour, rng);
         let (height, k) = (size.height, size.crown);
+        let dead = matches!(s.crown, Crown::Dead { .. });
+        // A snag often stands broken off, the rest of its trunk lying beside it.
+        let (height, fallen) = match s.crown {
+            Crown::Dead { broken, .. } if height >= 4 && rng.chance(broken) => {
+                let standing = ((height as f32 * pick(rng, (0.55, 0.85))).round() as i32).max(3);
+                (standing, height - standing)
+            }
+            _ => (height, 0),
+        };
         if let Crown::Bush { radius } = s.crown {
             let r = pick(rng, radius) * k.sqrt();
             g.mound(r, leaves, s.log, rng);
@@ -223,7 +233,9 @@ impl Trees {
         let girth = if size.thick { 0.5 } else { 0.0 };
         let root = Vec3::new(base.x as f32 + 0.5 + girth, base.y as f32, base.z as f32 + 0.5 + girth);
         let angle = rng.unit() * TAU;
-        let lean = heading(angle) * s.lean * rng.unit();
+        // Snags mostly stand straight, and now and then lean hard.
+        let tilt = if dead && rng.chance(0.3) { pick(rng, (0.7, 1.0)) } else if dead { 0.3 * rng.unit() } else { rng.unit() };
+        let lean = heading(angle) * s.lean * tilt;
         let (fork, jog) = match s.crown {
             Crown::Weeping { .. } => (pick(rng, (0.35, 0.55)), [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z][rng.below(4) as usize].as_vec3()),
             _ => (1.0, Vec3::ZERO),
@@ -248,7 +260,12 @@ impl Trees {
 
         match s.roots {
             // Thick trunks always flare a little.
-            Roots::None => g.flare(&feet, if size.thick { size.flare.max(0.4) } else { size.flare }, s.wood),
+            // Thick trunks always flare a little, and so do grown snags, whose roots the
+            // weather has bared.
+            Roots::None => {
+                let flare = if size.thick || (dead && k > 0.9) { size.flare.max(0.45) } else { size.flare };
+                g.flare(&feet, flare, s.wood);
+            }
             Roots::Buttress => {
                 let near = g.blocks.near(base.x, base.z, 5);
                 let n = rng.range(4, 7);
@@ -356,37 +373,33 @@ impl Trees {
                 }
             }
             Crown::Pine { radius, start } => {
-                // A rounded, clumpy cone of needle pads on short upswept limbs over the upper
-                // trunk, narrowing upwards to a flattish top; stubs of dead limbs below,
-                // where the lower crown died off.
+                // A Scots pine: a tall clean trunk under a high crown of a few flat pads of
+                // needles, each on a limb of its own that sweeps up and out from the upper
+                // trunk, at levels a couple of blocks apart so sky shows between them; the
+                // leader carries a wide, flat pad on top. Stubs of dead limbs stay on the
+                // trunk below, where the lower crown died off.
                 let widest = pick(rng, radius) * k;
-                let first = start * pick(rng, (0.9, 1.1));
-                let tiers = (((1.0 - first) * height as f32 / 1.4).round() as i32).max(2);
-                for i in 0..tiers {
-                    let f = (i as f32 + 0.5 * rng.unit()) / tiers as f32;
-                    let from = on_trunk(lerp((first, 0.95), f));
-                    let reach = widest * (1.0 - 0.7 * f);
-                    for j in 0..rng.range(1, 4) {
-                        let out = heading(phase + (3 * i + j) as f32 * GOLDEN + 0.4 * (rng.unit() - 0.5));
-                        let r = (reach * 0.6).clamp(1.2, 2.6) * pick(rng, (0.85, 1.15));
-                        let length = (reach * pick(rng, (0.45, 0.8))).min((g.room(from) - 0.6 * r).max(0.5));
-                        let end = from + out * length + Vec3::Y * pick(rng, (0.5, 1.2));
-                        g.line(from, end, s.wood);
-                        g.clump(end + Vec3::Y * 0.2, r, 1.1, 0.6, leaves);
-                    }
+                let first = (start * pick(rng, (0.95, 1.1))).min(0.85);
+                let n = count(rng, (3, 4)) + i32::from(k > 1.1);
+                for i in 0..n {
+                    let f = (i as f32 + 0.2 + 0.3 * rng.unit()) / n as f32;
+                    let from = on_trunk(lerp((first, 0.85), f));
+                    let out = heading(phase + i as f32 * GOLDEN + 0.4 * (rng.unit() - 0.5));
+                    let r = pick(rng, (1.2, 1.9)) * k.sqrt();
+                    let length = (widest * pick(rng, (0.7, 1.0)) * (1.0 - 0.3 * f)).min((g.room(from) - 0.6 * r).max(0.5));
+                    let rise = pick(rng, (0.8, 1.6));
+                    let elbow = from + out * length * 0.5 + Vec3::Y * rise * 0.3;
+                    let end = from + out * length + Vec3::Y * rise;
+                    g.line(from, elbow, s.wood);
+                    g.line(elbow, end, s.wood);
+                    g.clump(end + Vec3::Y * 0.2, r, 0.5, 0.3, leaves);
                 }
-                // The core: needles all along the crown's trunk, binding the pads into one
-                // dark mass, and a flattish dome on top.
-                let low = trunk(lerp((first, 1.0), 0.25));
-                let r = (widest * 0.3).clamp(1.0, 1.6);
-                let span = top.y - low.y;
-                g.clump(low.lerp(top, 0.5), r, span * 0.5, span * 0.5, leaves);
-                let r = (widest * 0.45).clamp(1.3, 2.2);
-                g.clump(top + Vec3::Y * 0.4, r, 1.2, 0.7, leaves);
-                for _ in 0..rng.range(0, 3) {
+                let r = pick(rng, (1.5, 2.2)) * k.sqrt();
+                g.clump(top + Vec3::Y * 0.3, r, 0.6, 0.4, leaves);
+                for _ in 0..rng.range(2, 5) {
                     let from = on_trunk(pick(rng, (0.3, first)));
                     let out = heading(rng.unit() * TAU);
-                    g.line(from, from + out * pick(rng, (0.8, 1.6)) + Vec3::Y * 0.4, s.wood);
+                    g.line(from, from + out * pick(rng, (0.8, 1.6)) + Vec3::Y * 0.3, s.wood);
                 }
             }
             Crown::Spire { radius, start } => {
@@ -476,18 +489,48 @@ impl Trees {
                 g.clump(top + Vec3::Y * 0.5, 1.2, 0.7, 0.4, leaves);
             }
             Crown::Bush { .. } => unreachable!("bushes grow as mounds"),
-            Crown::Dead { branches, reach } => {
-                // A snag: a few limbs stepping up and out at angles of their own, never
-                // across the trunk from each other at one height.
-                let n = count(rng, branches);
+            Crown::Dead { branches, reach, fork, .. } => {
+                // Limbs climb the trunk at the golden angle, longer lower down, reaching
+                // out more than up to an elbow, where most split into two twigs that
+                // spread and climb in irregular stairs (after Wilder Wild's junipers), so
+                // the snag keeps the spreading outline of the tree it was. Below them,
+                // stubs of limbs long since snapped off.
+                // Fewer on young snags, and on broken ones, whose top took its limbs down.
+                let kept = height as f32 / (height + fallen) as f32;
+                let n = (count(rng, branches) as f32 * k.powf(1.5) * kept).round() as i32;
                 for i in 0..n {
                     let f = (i as f32 + rng.unit()) / n as f32;
-                    let from = on_trunk(lerp((0.35, 0.9), f)).floor().as_ivec3();
-                    let out = heading(phase + i as f32 * GOLDEN + 0.4 * (rng.unit() - 0.5));
-                    let length = pick(rng, reach) * k.sqrt() * (1.1 - 0.4 * f);
-                    let rise = (length * pick(rng, (0.7, 1.4))).round().max(1.0) as i32;
-                    let to = from + IVec3::new((out.x * length).round() as i32, rise, (out.z * length).round() as i32);
-                    g.walk(from, to, s.wood);
+                    let from = on_trunk(lerp((0.45, 0.95), f));
+                    let angle = phase + i as f32 * GOLDEN + 0.4 * (rng.unit() - 0.5);
+                    let length = pick(rng, reach) * k * (1.15 - 0.4 * f);
+                    // The elbow stands clear of the trunk, so twigs rising from it never run
+                    // up beside the trunk like a candelabrum's arms.
+                    let elbow = from + heading(angle) * (length * 0.6).max(1.6) + Vec3::Y * length * pick(rng, (0.25, 0.5));
+                    g.line(from, elbow, s.wood);
+                    let at = elbow.floor().as_ivec3();
+                    let twig = |angle: f32, length: f32, rise: f32| {
+                        let up = (length * rise).round().max(1.0) as i32;
+                        at + IVec3::new((angle.cos() * length).round() as i32, up, (angle.sin() * length).round() as i32)
+                    };
+                    if rng.chance(fork) {
+                        for side in [-1.0, 1.0] {
+                            let (turn, long, rise) = (pick(rng, (0.45, 0.9)), pick(rng, (0.4, 0.7)), pick(rng, (0.3, 0.7)));
+                            g.walk(at, twig(angle + side * turn, (length * long).max(2.0), rise), s.wood);
+                        }
+                    } else {
+                        let (turn, rise) = (0.5 * (rng.unit() - 0.5), pick(rng, (0.3, 0.7)));
+                        g.walk(at, twig(angle + turn, (length * 0.5).max(2.0), rise), s.wood);
+                    }
+                }
+                for _ in 0..rng.range(0, 4) {
+                    let from = on_trunk(pick(rng, (0.2, 0.6)));
+                    g.line(from, from + heading(rng.unit() * TAU) * pick(rng, (1.0, 1.8)), s.wood);
+                }
+                // What broke off lies along the ground beside the trunk, a block or two
+                // out from it.
+                if fallen >= 2 {
+                    let along = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z][rng.below(4) as usize];
+                    g.fallen(base + along * 2, along, fallen.min(6), s.wood);
                 }
             }
             Crown::Bare => {}
@@ -624,6 +667,28 @@ impl Grower<'_, '_> {
                 return;
             }
             self.parts.logs.push(at);
+        }
+    }
+
+    /// A trunk `length` blocks long lying on the ground from `start` along `along`,
+    /// following the ground a block up or down at a time, and stopping where it would have
+    /// to climb or drop further. A block goes down only on firm ground in its own column,
+    /// so a block over a hole is left out rather than hung over it.
+    fn fallen(&mut self, start: IVec3, along: IVec3, length: i32, wood: BlockId) {
+        if !self.blocks.near(start.x, start.z, length + 1) {
+            return;
+        }
+        let mut last = None;
+        for j in 0..length {
+            let at = start + along * j;
+            let cell = at.with_y((self.ground)(at.x, at.z) + 1);
+            if last.is_some_and(|y: i32| (y - cell.y).abs() > 1) {
+                return;
+            }
+            last = Some(cell.y);
+            if self.reachable(cell) && self.blocks.earth(cell - IVec3::Y) && self.blocks.put_log(cell, wood) {
+                self.parts.logs.push(cell);
+            }
         }
     }
 
@@ -1032,7 +1097,7 @@ mod tests {
     }
 
     /// `cargo test -p voxmar_worldgen tree_preview -- --ignored --nocapture` (optionally
-    /// `TREES=oak,birch`, `VIGOUR=0..1`, `SAMPLES=n`) draws every species `SAMPLES` times
+    /// `TREES=oak,birch`, `VIGOUR=0..1`, `SAMPLES=n`, `SCALE` pixels a block) draws every species `SAMPLES` times
     /// (four by default), young to old as their ages fall, in isometric views on a patch
     /// of grass, three species to an image, to `target/trees_N.ppm`, and prints the
     /// heights each grew to.
@@ -1059,9 +1124,9 @@ mod tests {
 
         // Isometric: the viewer looks down along -(1, 1, 1), so +x, +y and +z faces show,
         // and nearer voxels (larger x + y + z) are drawn later.
-        const A: f32 = 6.0;
+        let a: f32 = env("SCALE").and_then(|v| v.parse().ok()).unwrap_or(6.0);
         const SPAN: i32 = 20;
-        let project = |p: Vec3| Vec2::new((p.x - p.z) * A, (p.x + p.z) * A * 0.5 - p.y * A);
+        let project = |p: Vec3| Vec2::new((p.x - p.z) * a, (p.x + p.z) * a * 0.5 - p.y * a);
         let faces = [
             [Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 1.0, 1.0)],
             [Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(1.0, 0.0, 1.0)],
@@ -1072,16 +1137,17 @@ mod tests {
             sides.iter().all(|&s| s >= 0.0) || sides.iter().all(|&s| s <= 0.0)
         };
         let mut sprite: Vec<(i32, i32, usize)> = Vec::new();
-        for py in -16..16 {
-            for px in -16..16 {
+        let half = (2.0 * a) as i32 + 2;
+        for py in -half..half {
+            for px in -half..half {
                 let p = Vec2::new(px as f32 + 0.5, py as f32 + 0.5);
                 if let Some(face) = (0..3).find(|&f| inside(&faces[f].map(project), p)) {
                     sprite.push((px, py, face));
                 }
             }
         }
-        let width = (2.0 * SPAN as f32 * A) as i32 + 8;
-        let floor = (SPAN as f32 * A * 0.5) as i32 + 8;
+        let width = (2.0 * SPAN as f32 * a) as i32 + 8;
+        let floor = (SPAN as f32 * a * 0.5) as i32 + 8;
         for (page, chunk) in species.chunks(3).enumerate() {
             // Each species' samples, as voxels sorted far to near, and the tallest.
             let rows: Vec<(Vec<(IVec3, BlockId)>, i32)> = chunk
@@ -1108,16 +1174,16 @@ mod tests {
             let heights: Vec<i32> = chunk.iter().enumerate().map(|(r, _)| rows[r * samples as usize..(r + 1) * samples as usize].iter().map(|t| t.1).max().unwrap()).collect();
             let tops: Vec<i32> = heights.iter().scan(0, |y, &h| {
                 let top = *y;
-                *y += floor + (h + 2) * A as i32;
+                *y += floor + (h + 2) * a as i32;
                 Some(top)
             }).collect();
-            let (w, h) = (width * samples, tops.last().unwrap() + floor + (heights.last().unwrap() + 2) * A as i32);
+            let (w, h) = (width * samples, tops.last().unwrap() + floor + (heights.last().unwrap() + 2) * a as i32);
             let mut image = vec![[200u8, 214, 230]; (w * h) as usize];
             for (row, &(_, name)) in chunk.iter().enumerate() {
                 let samples_here = &rows[row * samples as usize..(row + 1) * samples as usize];
                 println!("{name}: heights {:?}", samples_here.iter().map(|t| t.1).collect::<Vec<_>>());
                 for (sample, (cells, _)) in samples_here.iter().enumerate() {
-                    let origin = Vec2::new((sample as i32 * width + width / 2) as f32, (tops[row] + (heights[row] + 2) * A as i32) as f32);
+                    let origin = Vec2::new((sample as i32 * width + width / 2) as f32, (tops[row] + (heights[row] + 2) * a as i32) as f32);
                     for &(at, b) in cells {
                         let def = registry.def(b);
                         let leafy = def.name.ends_with("leaves");

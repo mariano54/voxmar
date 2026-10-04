@@ -449,7 +449,7 @@
             rarity: VeryRare,
             flora: (
                 forest: 0.55,
-                trees: [Name("ghost_snag", 3.0), Name("dead_tree", 1.0), Name("spruce", 0.25), Name("birch", 0.2)],
+                trees: [Name("ghost_snag", 4.0), Name("dead_tree", 1.0), Name("spruce", 0.25), Name("birch", 0.2)],
                 cover: 0.6, flowers: 0.25,
                 plants: [Name("fireweed", 6.0), Name("short_grass", 1.0), Name("bracken", 0.6)],
                 decorations: [Tag("forest", 1.0), Name("windthrow", 3.0), Name("snag", 3.0)],
@@ -549,7 +549,7 @@
             climate: [(temperature: ("frozen", "frozen"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
                 forest: 0.65,
-                trees: [Name("spruce", 2.0), Name("pine", 0.6), Name("giant_spruce", 0.4), Name("dead_tree", 0.2)],
+                trees: [Name("spruce", 2.0), Name("pine", 0.6), Name("giant_spruce", 0.4), Name("dead_tree", 0.07)],
                 cover: 0.5, flowers: 0.0,
                 plants: [Tag("grass", 1.0), Tag("fern", 0.5)],
             ),

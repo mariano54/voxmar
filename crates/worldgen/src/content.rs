@@ -540,8 +540,17 @@ pub enum Crown {
     Palm { fronds: (i32, i32), length: (f32, f32) },
     /// A low, lumpy mound of leaves on a stub of wood, draped over the ground.
     Bush { radius: (f32, f32) },
-    /// Bare limbs stepping up and out from a snag.
-    Dead { branches: (i32, i32), reach: (f32, f32) },
+    /// Bare limbs stepping up and out from a snag, a share `fork` of them splitting into
+    /// two twigs (a half when left out). A share `broken` of snags (a half when left out)
+    /// stand broken off, the rest of the trunk lying beside them.
+    Dead {
+        branches: (i32, i32),
+        reach: (f32, f32),
+        #[serde(default = "half")]
+        broken: f32,
+        #[serde(default = "half")]
+        fork: f32,
+    },
     /// No crown at all (cacti).
     Bare,
 }
@@ -573,7 +582,8 @@ impl Crown {
             Crown::Weeping { radius, .. } => radius.1 + 2.5,
             Crown::Cap { radius } => radius.1 + 0.5,
             Crown::Palm { length, .. } => length.1,
-            Crown::Dead { reach, .. } => reach.1,
+            // Twigs reach past the limbs' elbows.
+            Crown::Dead { reach, .. } => reach.1 * 1.3,
             Crown::Bare => 0.0,
         }
     }
@@ -1653,6 +1663,11 @@ impl WorldContent {
             let reach = tree.lean + tree.crown.reach();
             if reach > crate::trees::REACH as f32 {
                 return Err(ContentError(format!("{}: reaches {reach} blocks from its trunk, more than {}", at(), crate::trees::REACH)));
+            }
+            if let Crown::Dead { broken, fork, .. } = tree.crown
+                && !((0.0..=1.0).contains(&broken) && (0.0..=1.0).contains(&fork))
+            {
+                return Err(ContentError(format!("{}: `broken` and `fork` are shares, within 0..=1", at())));
             }
             if tree.ground.is_empty() {
                 return Err(ContentError(format!("{}: grows on no ground", at())));

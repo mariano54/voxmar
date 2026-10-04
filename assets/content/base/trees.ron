@@ -8,9 +8,10 @@
 // Crowns: Round(branches, reach, radius, squash, start), Conical(radius, start, ragged),
 // Pine(radius, start), Spire(radius, start), Umbrella(branches, reach, radius, squash),
 // Weeping(radius, drape), Palm(fronds, length), Cap(radius), Bush(radius), Dead(branches,
-// reach), Bare. Ranges are (least, most). Heights and crowns are a mature tree's: each tree
-// draws an age, so a stand mixes young trees (about half to four fifths the size), mature
-// ones and now and then a giant half again as tall, more of them in old-growth cores.
+// reach, broken, fork), Bare. Ranges are (least, most). Heights and crowns are a mature
+// tree's: each tree draws an age, so a stand mixes young trees (about half to four fifths
+// the size), mature ones and now and then a giant half again as tall, more of them in
+// old-growth cores.
 //
 // `stand` is where in the forest's structure a tree grows, 0 in gaps and scrubby edges ..= 1
 // in old-growth cores: giants keep to the cores, shrubs to the edges. Trees grow taller
@@ -57,8 +58,8 @@
         ),
         (
             name: "pine", tags: ["conifer", "cold", "dry", "evergreen"],
-            log: "spruce_log", leaves: "spruce_leaves", height: (10, 16), lean: 0.5,
-            crown: Pine(radius: (2.8, 4.0), start: 0.45),
+            log: "spruce_log", leaves: "spruce_leaves", height: (11, 17), lean: 0.8,
+            crown: Pine(radius: (3.0, 4.2), start: 0.5),
             ground: [Soil, Snow],
             comfort: (temperature: (-10.0, 9.0), moisture: (0.2, 1.0)),
         ),
@@ -126,8 +127,8 @@
         ),
         (
             name: "dead_tree", tags: ["snag", "dry"],
-            log: "oak_log", height: (3, 7), lean: 1.0,
-            crown: Dead(branches: (1, 3), reach: (1.5, 3.0)),
+            log: "acacia_log", height: (6, 10), lean: 1.6,
+            crown: Dead(branches: (2, 4), reach: (2.0, 3.2), broken: 0.2, fork: 0.65),
             ground: [Soil, Snow, Sand],
         ),
         (
@@ -193,8 +194,8 @@
         (
             // A dead pale snag: what fire or blight leaves of a wood.
             name: "ghost_snag", tags: ["snag", "cold"],
-            log: "stripped_birch_log", height: (5, 10), lean: 0.4,
-            crown: Dead(branches: (1, 3), reach: (1.0, 2.5)),
+            log: "birch_log", height: (8, 14), lean: 1.2,
+            crown: Dead(branches: (0, 2), reach: (1.2, 2.4), broken: 0.65, fork: 0.3),
             ground: [Soil, Snow],
         ),
 
