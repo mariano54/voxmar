@@ -99,17 +99,17 @@
         // --- Landmarks and wonders ----------------------------------------------------
         (
             // A ring of old standing stones on open high ground, commoner where the aether
-            // runs strong.
+            // runs strong: a landmark, a few hundred blocks apart at the most.
             name: "standing_stones", tags: ["grassland", "heath", "highland", "tundra"], rarity: VeryRare,
             shape: StandingStones(radius: (3.5, 6.0), count: (5, 11), height: (2, 4), stones: Stones),
-            spacing: 6.0,
+            spacing: 90.0,
             follows: [(Slope, 2.0, 0.5), (Aether, 0.1, 0.7)],
         ),
         (
             // A fairy ring of glowing mushrooms in a damp wood, where aether runs high.
             name: "fairy_ring", tags: ["forest", "wetland", "fantastical"], rarity: Rare,
             shape: FairyRing(radius: (2.5, 5.0), plants: [Name("glowcap", 3.0), Name("dreamshade", 1.0), Name("brown_mushroom", 1.0)]),
-            spacing: 14.0,
+            spacing: 50.0,
             follows: [(Aether, 0.4, 0.9), (Moisture, 0.8, 1.1), (Slope, 2.0, 1.0)],
         ),
 

@@ -299,8 +299,11 @@ no two worlds share a rarity table. Everything else is a continuous field:
 **Biomes** are data in content packages (`assets/content/base/biomes.ron`, with the climate
 bands in `climate.ron` and rock provinces in `rocks.ron`), loaded like blocks, so a mod adds
 one the same way. The temperature, moisture, continentalness and landform bands form a table
-in which every cell belongs to some biome (checked at load); rarer biomes take the extremes of
-the weirdness field, so they appear in whole regions of some worlds and not in others;
+in which every cell belongs to some biome (checked at load); the picker sees temperature and
+landform averaged over a few hundred blocks, so a range, hill country or plain is one place
+rather than a scatter of hills and summits; commons share a cell along the slow weirdness
+field in the same slices wherever they meet, and rarer biomes take its extremes, so they
+appear in whole regions of some worlds and not in others;
 variants take shares of their parent; ecotones sit on borders; fantastical biomes claim cells
 where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
@@ -313,7 +316,17 @@ each says what climate, ground and habitat it likes, biomes select from the pool
 name, and the climate at each spot weighs the candidates, so a new plant with the right
 tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
 tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
-runs high. Forests have structure: one field grades them from dense old-growth cores with the
+runs high: wonder plants scattered, wonder trees as a find (a lone tree or a tiny grove every
+few kilometres) except in the fantasy biomes that name them. Each biome keeps to a palette
+(`crates/worldgen/src/hue.rs`): every candidate's colour is worked out at load (its block's
+colour, or the grass or foliage colour where tinted) and weighed by how near it lies to the
+biome's foliage, grass or ground colour (or a `palette` colour the biome sets, as maple woods
+and cherry groves do), so many kinds of similar colour grow together while a clashing one is
+a rare accent; flowers grow a few neighbouring hues per place, mixed ground blocks keep to
+their main block's colour, and ground patches unlike the ground grow fewer and smaller.
+Forests grow in stands: a slow noise picks each stand's kind, with a few of the others among
+it, and stands of different biomes meet along the border rather than mixing across it.
+Forests have structure: one field grades them from dense old-growth cores with the
 giant trees through ordinary woodland to scrubby edges and gaps, and a global field opens
 clearings with a soft edge. Ground decoration (`decorations.ron`, another shared pool biomes
 select by tag) is placed in a fixed order of stages: patches of dirt, gravel and moss; boulders
@@ -355,8 +368,9 @@ tinted by terrain shape, `FIELD=erosion` and so on, `X`, `Z`
 and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
 rivers and creeks in their own blues, trails over them (brown, with fords cyan, bridges red,
 and the places they join marked; `TRAILS=0` leaves them out), and prints each biome's share of
-it, how large biome regions are (variants counted with their parent) and which picker axis
-draws the borders. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
+it, how large biome regions are (variants counted with their parent, the shore the sea's
+biome reaches left out) and which picker axis draws the borders, with the pairs of biomes
+along each. `trail_patch` (with `SEED`, `X`, `Z`, and `LINES=1` for trail centrelines) draws 160×160
 generated blocks from above to `target/trail_patch.ppm`; `trail_sights` prints `--pose`
 arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts places, trails
 and routes that failed. `river_sights` prints

@@ -37,7 +37,7 @@ pub const LAPSE_RATE: f32 = 0.11;
 const UPWIND: [f32; 9] = [2600.0, 1800.0, 1250.0, 850.0, 560.0, 360.0, 220.0, 120.0, 50.0];
 /// Distance over land in which the air loses all but a third of its moisture.
 const RAIN_OUT: f32 = 3000.0;
-/// How far around a position its elevation is averaged for the climate biomes see, in
+/// How far around a position its elevation and landform are averaged for the climate biomes see, in
 /// blocks.
 const UPLAND: f32 = 160.0;
 /// Rise in blocks over which lifted air loses all but a third of its moisture.
@@ -113,9 +113,12 @@ impl Regional {
 pub fn landform(relief: &Relief) -> f32 {
     let inland = smoothstep(-0.06, 0.1, relief.continental);
     let hills = smoothstep(0.42, 0.58, relief.roughness * inland) / 3.0;
-    let slopes = smoothstep(0.3, 0.42, relief.mountain) * 2.0 / 3.0;
-    let peaks = smoothstep(0.22, 0.34, relief.peak);
-    hills.max(slopes).max(peaks)
+    hills.max(range(relief)).max(smoothstep(0.22, 0.34, relief.peak))
+}
+
+/// The slopes of a range: 2/3 on them, 0 off them.
+fn range(relief: &Relief) -> f32 {
+    smoothstep(0.3, 0.42, relief.mountain) * 2.0 / 3.0
 }
 
 /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland, from the continental noise.
@@ -196,7 +199,7 @@ impl Climate {
             anomaly: noise(seed, 11, 1.0 / 1600.0, FractalType::FBm, 2),
             wetness: noise(seed, 12, 1.0 / 1200.0, FractalType::FBm, 2),
             // Slow, so that biomes sharing a climate split it into regions kilometres across.
-            weirdness: noise(seed, 13, 1.0 / 7000.0, FractalType::FBm, 2),
+            weirdness: noise(seed, 13, 1.0 / 11000.0, FractalType::FBm, 2),
             aether: noise(seed, 14, 1.0 / 2200.0, FractalType::FBm, 2),
             aether_exponent: dials.fantasy.clamp(0.01, 0.99).ln() / 0.5f32.ln(),
             fertility: noise(seed, 15, 1.0 / 700.0, FractalType::FBm, 2),
@@ -302,13 +305,13 @@ impl Climate {
                 rainfall: precipitation / orographic,
                 continentalness: continentalness(relief.continental),
                 latitude,
-                elevation: {
-                    // Averaged over a few hundred blocks, so a range's flanks share one
-                    // climate rather than banding with every few dozen blocks of height.
-                    let around: f32 = reliefs[walk.len()..].iter().map(|r| r.elevation.max(sea)).sum();
-                    0.4 * relief.elevation.max(sea) + 0.15 * around
-                },
-                erosion: landform(&relief),
+                // Averaged over a few hundred blocks, so a range's flanks share one climate
+                // rather than banding with every few dozen blocks of height, and the
+                // landform follows hill country, plains and broad summits rather than every
+                // hill and peak; a range's slopes stay slopes, so lowland biomes never climb
+                // them.
+                elevation: 0.4 * relief.elevation.max(sea) + 0.15 * reliefs[walk.len()..].iter().map(|r| r.elevation.max(sea)).sum::<f32>(),
+                erosion: (0.4 * landform(&relief) + 0.15 * reliefs[walk.len()..].iter().map(landform).sum::<f32>()).max(range(&relief)),
                 weirdness: uniform(weirdness[k]),
                 aether: uniform(aether[k]).powf(self.aether_exponent),
                 fertility: uniform(fertility[k]),

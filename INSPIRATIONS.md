@@ -124,10 +124,10 @@ copied.
 - Licence: FrozenBlock Modding Oasis License, which restricts reuse. Ideas only.
 - What we took: ecotones (thin biomes along the border of two others, such as birch taiga
   between taiga and forest); clearings opened by a global noise with a soft edge, where trees
-  fade out first and meadow plants fill in; and a snow blanket laid on every level open to
-  the sky, down through the canopy.
-- Where: `crates/worldgen/src/content.rs` (`EcotoneDef`), `biome.rs`, `ecology.rs` and
-  `terrain.rs`.
+  fade out first and meadow plants fill in; a snow blanket laid on every level open to the
+  sky, down through the canopy; and hollowed fallen logs.
+- Where: `crates/worldgen/src/content.rs` (`EcotoneDef`), `biome.rs`, `ecology.rs`,
+  `terrain.rs` and `decor.rs` (the logs).
 
 ### Geophilic
 
@@ -410,6 +410,9 @@ General techniques we use under their usual names, credited where they appear in
 - Percentage-closer soft shadows: `crates/client/src/render/shadows.wgsl`.
 - The Gabriel graph for which places trails join: `crates/worldgen/src/trails/network.rs`.
 - Catmull-Rom curves for trails and river channels: `trails/path.rs` and `water/channel.rs`.
+- The Oklab colour space, after Björn Ottosson (2020), for shading texture palettes and for
+  how well colours sit together when biomes choose their trees, plants and ground blocks:
+  `crates/texgen/src/colour.rs` and `crates/worldgen/src/hue.rs`.
 
 ## Read, but not used yet
 
