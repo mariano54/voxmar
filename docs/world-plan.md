@@ -26,6 +26,19 @@ Also asked for: many more weather effects, commands to trigger weather and set t
 merging work to main frequently, and the hiking-mod ideas (research in the project files,
 `research/hiking-simulator-mods.md`).
 
+Two requirements that shape every content format:
+
+- **A shared pool, not one set per biome.** Blocks, trees and plants are a pool that many
+  biomes draw from. A biome lists selectors (by tag, or by name for a few signature or unique
+  species), each with a weight. A candidate's final weight is the selector weight times how
+  well its own climate preference fits the spot. New blocks and plants, including a mod's,
+  appear in every fitting biome without editing any biome.
+- **Diverse rarity.** Biomes, variants, trees, plants, wonders, cave features and weather
+  effects carry a rarity: common, uncommon, rare, very rare or legendary, with well-spread
+  multipliers. Rare biomes are gated by a low-frequency mask, so they appear in some regions
+  and not others. Each world also boosts a few rare things and suppresses a few common ones
+  from its seed, so no two worlds share a rarity table. All of it stays deterministic.
+
 My defaults where the answers left a fork (say if any is wrong):
 
 - **World height 256 → 384, sea level 64 → 128.** Matches Minecraft's 128 blocks of
@@ -348,10 +361,10 @@ coordinate first.
 | W8 | Terrain shape: Tectonic-lite geology and biome shapers | W1 | worldgen `geology`, `terrain` | 2 |
 | W9 | Biome content: ~30 base biomes, variants, 5–6 fantasy biomes, wonders | W1, W2, W7 | content | 2 |
 | W10 | Cave biomes and cave decoration | W1, W3 | worldgen, content | 2 |
-| W11 | Water physics: fluid kernel, settled generation, sloped water meshing | W4 (meshing: renderer) | engine, server, mesh, shaders | 2 |
-| W12 | Shader pack loader and Complementary-style pack, puddles | renderer thread's current work | client render | 3 |
-| W13 | Bushy leaves and better grass | renderer | mesh, shaders | 3 |
-| W14 | Half-height terrain and smooth steps | W8 (meshing: renderer) | engine, worldgen, client | 3 |
+| W11 | Water physics: fluid kernel, settled generation; sloped water meshing by the graphics thread | W4 | engine, server, mesh, shaders | 2 |
+| W12 | Shader pack loader and Complementary-style pack, puddles (graphics thread) | its LOD rewrite | client render | 3 |
+| W13 | Bushy leaves and better grass (graphics thread) | its LOD rewrite | mesh, shaders | 3 |
+| W14 | Half-height terrain and smooth steps (meshing by the graphics thread) | W8 | engine, worldgen, client | 3 |
 | W15 | Trails | W4 | worldgen | 3 |
 | W16 | Ambience: particles and layered sound | W5 | client | 3 |
 | W17 | Ground wear | | server, engine chunk data | 3 |
