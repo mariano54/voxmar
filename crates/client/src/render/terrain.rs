@@ -584,6 +584,8 @@ pub(super) struct TerrainGpu {
     bind_group_dirty: bool,
     /// Counts clears, which replace every page.
     generation: u32,
+    /// Counts changes to the chunks' index data, which views' gathered indices copy.
+    revision: u64,
 }
 
 impl Default for TerrainGpu {
@@ -615,6 +617,7 @@ impl Default for TerrainGpu {
             distant_bind_group: None,
             bind_group_dirty: false,
             generation: 0,
+            revision: 0,
         }
     }
 }
@@ -664,6 +667,7 @@ impl TerrainGpu {
         for stream in streams(pass) {
             if let Some(allocation) = record.streams[stream].take() {
                 self.streams[stream].free(allocation);
+                self.revision += 1;
             }
         }
         self.forget_if_empty(chunk);
@@ -689,6 +693,7 @@ impl TerrainGpu {
             let owner = Owner { slot, layout };
             let allocation = self.streams[stream].allocate(device, queue, vertices, indices, quads.start as u32 * 4, Some(owner));
             self.record(chunk).streams[stream] = Some(allocation);
+            self.revision += 1;
         }
     }
 
@@ -768,6 +773,7 @@ impl TerrainGpu {
             wind: self.wind.take(),
             bind_group_dirty: true,
             generation: self.generation + 1,
+            revision: self.revision + 1,
             ..Self::default()
         };
     }

@@ -37,5 +37,16 @@
                 (when: [Not(Slope(1.0, 2.0)), Band((name: "game_trails", scale: 140.0), 0.017), Chance(0.35)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
             ],
         ),
+        (
+            // Dry washes: the beds of streams that run only after rain, gravel and sand along
+            // a contour, wide in some stretches, thread-thin in others, gone in between.
+            name: "washes",
+            rules: [
+                (
+                    when: [Not(Slope(1.0, 2.0)), Tapered((name: "dry_washes", scale: 320.0, octaves: 2), (name: "dry_wash_width", scale: 500.0, octaves: 2), [(0.3, 0.014), (0.0, 0.008), (-0.25, 0.004)])],
+                    place: (top: Mix([Name("gravel", 3.0), Name("sand", 2.0), Name("coarse_dirt", 1.0)]), filler: Block("gravel"), depth: 2),
+                ),
+            ],
+        ),
     ],
 )

@@ -196,10 +196,9 @@ impl Trees {
                 }
             }
             Crown::Cap { radius } => {
-                let r = pick(rng, radius);
-                // A flat dome on the stem, and a rim hanging one block below its edge.
-                g.blob(top + Vec3::Y * 0.2, Vec3::new(r, 1.6, r), leaves);
-                g.ring(top - Vec3::Y * 0.8, r - 0.8, r + 0.2, leaves);
+                // On the stem's last block, wherever its lean took it.
+                let stem = trunk((height - 1) as f32 / height as f32).floor();
+                g.cap(stem + Vec3::new(0.5, 1.0, 0.5), pick(rng, radius), leaves);
             }
             Crown::Umbrella { branches, reach, radius } => {
                 let n = count(rng, branches);
@@ -264,6 +263,9 @@ impl Trees {
 pub fn bush(base: IVec3, radius: f32, leaves: BlockId, log: BlockId, rng: &mut Rng, blocks: &mut Blocks<'_>, parts: &mut TreeParts) {
     parts.logs.clear();
     parts.leaves.clear();
+    if blocks.contains(base) && blocks.get(base - IVec3::Y).is_air() {
+        return;
+    }
     let mut g = Grower { blocks, seed: rng.next_u64(), base, parts };
     if !log.is_air() {
         g.wood(base, log);
@@ -395,15 +397,25 @@ impl Grower<'_, '_> {
         }
     }
 
-    /// A ring of leaves between radii `inner` and `outer` around `center`, one layer thick.
-    fn ring(&mut self, center: Vec3, inner: f32, outer: f32, leaves: BlockId) {
-        let r = outer.ceil() as i32;
-        let (cx, y, cz) = (center.x.floor() as i32, center.y.floor() as i32, center.z.floor() as i32);
+    /// A mushroom's cap on a stem whose top is `top`: a solid, flattened dome `radius`
+    /// across, and a rim hanging one block under its outer edge, every block of it joined
+    /// to the rest. It grows like wood, through other trees' leaves.
+    fn cap(&mut self, top: Vec3, radius: f32, cap: BlockId) {
+        let r = radius.ceil() as i32;
+        let (cx, y0, cz) = (top.x.floor() as i32, top.y.floor() as i32 - 1, top.z.floor() as i32);
         for z in cz - r..=cz + r {
             for x in cx - r..=cx + r {
-                let d = Vec3::new(x as f32 + 0.5 - center.x, 0.0, z as f32 + 0.5 - center.z).length();
-                if d >= inner && d <= outer {
-                    self.leaf(IVec3::new(x, y, z), leaves);
+                let d = Vec3::new(x as f32 + 0.5 - top.x, 0.0, z as f32 + 0.5 - top.z).length() / radius;
+                if d > 1.0 {
+                    continue;
+                }
+                // Thickest over the stem, thinning to one block at the edge.
+                let thickness = 1 + ((1.0 - d * d) * 2.2) as i32;
+                for y in y0..y0 + thickness {
+                    self.wood(IVec3::new(x, y, z), cap);
+                }
+                if d > 0.72 {
+                    self.wood(IVec3::new(x, y0 - 1, z), cap);
                 }
             }
         }

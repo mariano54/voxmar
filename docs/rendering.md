@@ -96,6 +96,34 @@ nearest-texel when minified, and sub-pixel grass. Now:
 Measured as pixels that change by more than 60 levels when the camera moves 4 cm: 0.33%
 before, 0.12% now.
 
+A far waterline under MSAA showed a row of black dashes with bright blue glints that
+crawled as the camera moved. With MSAA the fragment shader runs once per pixel, at the
+pixel's centre even where a triangle covers only a corner of it, so its inputs are
+extrapolated past the triangle. Far water and terrain are slivers seen edge on, and
+values extrapolated that far run wild: sky light past full (which `light_curve` turns
+into infinity), negative colours and water depths, a position off the surface that lights
+a glint. The resolve turned them into black pixels and bloom into blue blobs, all along
+the edge of the real water where it meets the distant sheet. The lighting inputs of
+terrain, water and distant terrain are now interpolated at the centroid of the covered
+samples (`@interpolate(perspective, centroid)`), which always lies inside the triangle.
+Texture coordinates stay at the pixel centre, where the derivatives that pick the mip
+level are exact. With the clock stopped and a 4 cm step at
+render distance 32, looking over the sea at a far shore (seed 3), 0.17% of pixels
+flickered before and 0.025% after, and none of those left are on the waterline; a high
+view over land stayed at 0.045%.
+
+## Dark teeth on terraced ground
+
+Beaches and grass ledges are staircases of one-block steps with jagged edges. Where an
+edge jogs, a one-block riser faces along the step; seen from above, the tread in front
+hides its lower half, so it shows as a triangle standing out of the ground (the mesher
+was checked: every face is where it should be). Facing away from the sun, it was lit by
+the sky alone, with Verdant's deep shade several times darker than the sunlit sand
+beside it, so these triangles looked like dark teeth. Walls and undersides now also get
+the sunlight the open ground around bounces onto them (`GROUND_ALBEDO`, 0.3, half of it
+for a wall), which lifts shaded sides next to sunlit ground as real ones are lifted; the
+shader pack's `bounce` scales it.
+
 ## Next steps, in order of payoff
 
 1. **Quad pulling.** Store each quad once (8 bytes) and expand it to vertices in the
@@ -136,7 +164,11 @@ What voxmar takes from it, and where it differs (`render/lod.rs`, `render/lod.wg
 
 - Distant terrain uses the real terrain's lighting inputs: the shared `shade_normal`, the
   same face shade table, sky light that fades under water two levels per block. Colours
-  are texture averages times climate tint, as before.
+  are texture averages times the biome's grass, foliage and water colours, which the
+  generator's surface samples carry (`SurfaceSample::colors`), so they match real terrain
+  once its chunks take the same colours. The generator is the one the world was made with,
+  content packages included (`render::lod::WorldGenerator`, shared with anything else on
+  the client that samples the world far away).
 - Tiles stay smooth heightfields rather than boxes: a quarter of the triangles of
   4-block columns, no cracks, and 4-block columns would be a coarser staircase than the
   real one beside them anyway. Instead the shader renders what the one-block staircase
@@ -145,7 +177,15 @@ What voxmar takes from it, and where it differs (`render/lod.rs`, `render/lod.wg
   sides, hiding the ground at low angles). Near the real chunks the risers resolve into
   the same contour lines real terrain shows; further out they average out. This is
   analytic, so it does not shimmer, and it costs no geometry.
-- Water and ice are a sheet over the true sea floor, shaded like real water: same
+- Up to where a tree spans about two pixels, forests resolve into single crowns: blobs of
+  smooth noise five blocks across, as many as the canopy's cover, domed so they are lit
+  on the sun's side, over ground darkened by their shade. Open ground gets patches a few
+  blocks across, a little lighter and darker, as real ground is with its mix of blocks.
+  Both fade by the pixel's area (so a crown shows where it spans several pixels across
+  even if only one deep) and soften their edges by the pixel's longer side, so they blur
+  rather than shimmer: flicker over distant forest and hills stayed at 0.27% and 0.20%.
+- Water and ice are a sheet over the true floor at the level of their own water (the sea,
+  or a lake's or river's), shaded like real water: same
   ripples near the real chunks fading into their average (a broader glint, fresnel facing
   the eye by the ripples' slope variance), sky reflection, the floor dimmed by depth.
 - No fade pass is needed: tiles come from the same generator functions as the chunks,

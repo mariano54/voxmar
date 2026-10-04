@@ -51,12 +51,13 @@ impl Chunk {
             return Self::uniform(first);
         }
         let mut palette: Vec<BlockId> = Vec::new();
-        // Indices are resolved through a small direct-mapped cache because neighbouring
-        // blocks are usually identical.
-        let mut last = (BlockId(u16::MAX), 0u16);
+        // Indices are resolved through a small direct-mapped table of blocks and their
+        // indices, by the block's low byte: chunks rarely hold two blocks that share one.
+        let mut slots = [(BlockId(u16::MAX), 0u16); 256];
         let mut indices = vec![0u16; CHUNK_VOLUME];
         for (dst, &block) in indices.iter_mut().zip(blocks) {
-            if block != last.0 {
+            let slot = &mut slots[block.0 as usize & 255];
+            if slot.0 != block {
                 let index = match palette.iter().position(|&p| p == block) {
                     Some(i) => i,
                     None => {
@@ -64,9 +65,9 @@ impl Chunk {
                         palette.len() - 1
                     }
                 };
-                last = (block, index as u16);
+                *slot = (block, index as u16);
             }
-            *dst = last.1;
+            *dst = slot.1;
         }
         let bits = bits_for(palette.len());
         // Whole words at a time: each holds `64 / bits` indices, lowest first.
@@ -108,6 +109,17 @@ impl Chunk {
         };
         if self.bits > 0 {
             self.write_index(index, palette_index as u16);
+        }
+    }
+
+    /// The palette indices of the `out.len()` blocks from `start`, in storage order.
+    pub fn indices(&self, start: usize, out: &mut [u16]) {
+        if self.bits == 0 {
+            out.fill(0);
+            return;
+        }
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = self.read_index(start + i);
         }
     }
 

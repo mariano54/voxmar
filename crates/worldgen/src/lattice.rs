@@ -41,25 +41,38 @@ impl Lattice {
     /// Samples `f` at every lattice point of the column at `origin` whose layer is needed to
     /// interpolate heights `low..=high`, with layers `step_y` blocks apart (a power of two,
     /// so that interpolating in y needs no division).
-    pub fn new(origin: IVec3, low: i32, high: i32, step_y: i32, mut f: impl FnMut(IVec3) -> f32) -> Self {
+    pub fn new(origin: IVec3, low: i32, high: i32, step_y: i32, f: impl FnMut(IVec3) -> f32) -> Self {
+        let mut lattice = Self::empty(low, high, step_y);
+        lattice.values = lattice.points(origin).map(f).collect();
+        lattice
+    }
+
+    /// A noise field, with heights multiplied by `scale_y` (above 1 flattens its shapes),
+    /// sampled many points at a time.
+    pub fn noise(noise: &FastNoiseLite, origin: IVec3, low: i32, high: i32, step_y: i32, scale_y: f32) -> Self {
+        let mut lattice = Self::empty(low, high, step_y);
+        let points: Vec<[f32; 3]> = lattice.points(origin).map(|p| [p.x as f32, p.y as f32 * scale_y, p.z as f32]).collect();
+        lattice.values = vec![0.0; points.len()];
+        crate::noise::noise_3d(noise, &points, &mut lattice.values);
+        lattice
+    }
+
+    /// A lattice with no values yet, for heights `low..=high` with layers `step_y` blocks
+    /// apart (a power of two, so that interpolating in y needs no division).
+    fn empty(low: i32, high: i32, step_y: i32) -> Self {
         assert!(step_y > 0 && step_y.count_ones() == 1, "lattice layers {step_y} apart");
         let first = low.div_euclid(step_y);
         let layers = (high.div_euclid(step_y) - first + 2).max(2) as usize;
         debug_assert!(layers <= MAX_LAYERS);
-        let mut values = Vec::with_capacity(SIDE * SIDE * layers);
-        for layer in 0..layers as i32 {
-            for lz in 0..SIDE as i32 {
-                for lx in 0..SIDE as i32 {
-                    values.push(f(origin + IVec3::new(lx * STEP, (first + layer) * step_y, lz * STEP)));
-                }
-            }
-        }
-        Self { values, first, layers, shift_y: step_y.trailing_zeros() }
+        Self { values: Vec::new(), first, layers, shift_y: step_y.trailing_zeros() }
     }
 
-    /// A noise field, with heights multiplied by `scale_y` (above 1 flattens its shapes).
-    pub fn noise(noise: &FastNoiseLite, origin: IVec3, low: i32, high: i32, step_y: i32, scale_y: f32) -> Self {
-        Self::new(origin, low, high, step_y, |p| noise.get_noise_3d(p.x as f32, p.y as f32 * scale_y, p.z as f32))
+    /// The lattice's points, in the order of `values`: layer by layer, rows along x.
+    fn points(&self, origin: IVec3) -> impl Iterator<Item = IVec3> + use<> {
+        let (first, step_y) = (self.first, 1 << self.shift_y);
+        (0..self.layers as i32).flat_map(move |layer| {
+            (0..SIDE as i32).flat_map(move |lz| (0..SIDE as i32).map(move |lx| origin + IVec3::new(lx * STEP, (first + layer) * step_y, lz * STEP)))
+        })
     }
 
     /// The values above the block column at (x, z), relative to the column origin.
@@ -101,6 +114,24 @@ impl Profile {
         // The same as dividing by the step, which is a power of two.
         let t = (y & ((1 << self.shift_y) - 1)) as f32 * (1.0 / (1 << self.shift_y) as f32);
         lerp(self.values[layer], self.values[layer + 1], t)
+    }
+
+    /// The values at heights `from..from + out.len()`, into `out`: the same as `at`, a layer
+    /// at a time.
+    pub fn fill(&self, from: i32, out: &mut [f32]) {
+        let (step, scale) = (1 << self.shift_y, 1.0 / (1 << self.shift_y) as f32);
+        let end = from + out.len() as i32;
+        let mut y = from;
+        while y < end {
+            let layer = ((y >> self.shift_y) - self.first) as usize;
+            debug_assert!(layer + 1 < self.layers, "height {y} outside the lattice");
+            let (a, b) = (self.values[layer], self.values[layer + 1]);
+            let next = (((y >> self.shift_y) + 1) << self.shift_y).min(end);
+            for (v, y) in out[(y - from) as usize..(next - from) as usize].iter_mut().zip(y..) {
+                *v = lerp(a, b, (y & (step - 1)) as f32 * scale);
+            }
+            y = next;
+        }
     }
 }
 
@@ -150,6 +181,9 @@ mod tests {
                 for y in [13, 64, 99, 200] {
                     assert!((profile.at(y) - field(origin + IVec3::new(x, y, z))).abs() < 1e-3);
                 }
+                let mut filled = vec![0.0; 150];
+                profile.fill(37, &mut filled);
+                assert!(filled.iter().zip(37..).all(|(&v, y)| v == profile.at(y)));
             }
         }
         let grid = Grid::new(origin, |x, z| (x - 3 * z) as f32);

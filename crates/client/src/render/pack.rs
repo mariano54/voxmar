@@ -21,6 +21,9 @@ pub struct ShaderPack {
     pub ambient: f32,
     /// Tints the ambient light, usually towards blue so shade reads cool against warm sun.
     pub shade_tint: Vec3,
+    /// Multiplies the sunlight the ground bounces onto walls and undersides (0 turns it
+    /// off), which keeps shaded sides from going black beside sunlit ground.
+    pub bounce: f32,
     /// Multiplies how quickly distant terrain fades into haze.
     pub haze: f32,
     /// Tints the horizon and haze.
@@ -75,6 +78,7 @@ impl Default for ShaderPack {
             sun: 1.0,
             ambient: 1.0,
             shade_tint: Vec3::ONE,
+            bounce: 1.0,
             haze: 1.0,
             haze_tint: Vec3::ONE,
             exposure: 1.0,

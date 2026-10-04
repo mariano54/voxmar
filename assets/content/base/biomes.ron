@@ -99,7 +99,7 @@
             ),
         ),
 
-        // --- Temperate -----------------------------------------------------------------
+        // --- Cool and temperate -------------------------------------------------------
         (
             name: "plains",
             tags: ["grassland", "temperate", "open"],
@@ -140,7 +140,39 @@
             ),
         ),
         (
-            // Oak and birch.
+            // Where steppe meets plains: grassland with groves of oak and birch.
+            name: "forest_steppe",
+            inherit: "plains",
+            tags: ["grassland", "temperate", "open", "groves"],
+            flora: (
+                forest: 0.2,
+                trees: [Name("oak", 1.0), Name("birch", 1.0), Name("pine", 0.4), Name("shrub", 0.8)],
+                cover: 0.8, flowers: 0.04,
+                plants: [Tag("meadow", 0.6), Tag("steppe", 0.6), Name("short_grass", 2.0), Name("tall_grass", 0.4)],
+            ),
+            ecotone: (between: ("steppe", "plains"), axis: Moisture, width: 0.08),
+        ),
+        (
+            // Lush lowland grass, tall and deep, with old oaks standing alone.
+            name: "meadow",
+            tags: ["grassland", "temperate", "open", "lush"],
+            weight: 0.5,
+            climate: [(temperature: ("temperate", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
+            flora: (
+                forest: 0.06,
+                trees: [Name("big_oak", 1.0), Name("oak", 0.6), Name("maple", 0.2), Name("willow", 1.0)],
+                cover: 0.95, flowers: 0.05,
+                plants: [Name("tall_grass", 1.5), Name("short_grass", 1.0), Tag("meadow", 0.6), Name("raspberry_bush", 0.4), Name("wild_rose_bush", 0.6)],
+            ),
+            surface: (
+                include: ["soil_slopes", "trails"],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Mix([Name("clay", 1.0), Name("sand", 1.0), Name("silt", 1.0)])),
+                shore: (top: Mix([Name("silt", 2.0), Name("sand", 1.0)])),
+            ),
+        ),
+        (
+            // Oak and birch, a maple here and there.
             name: "forest",
             tags: ["forest", "temperate", "broadleaf"],
             climate: [
@@ -151,7 +183,7 @@
             ],
             flora: (
                 forest: 0.8,
-                trees: [Tag("broadleaf", 1.0), Name("birch", 0.6), Name("big_oak", 0.4), Name("shrub", 0.12)],
+                trees: [Tag("broadleaf", 1.0), Name("birch", 0.6), Name("big_oak", 0.4), Name("maple", 0.25), Name("shrub", 0.12)],
                 exclude: ["blossom"],
                 cover: 0.75, flowers: 0.03,
                 plants: [Tag("meadow", 1.0), Tag("forest_floor", 0.8), Tag("forest_edge", 0.5), Name("tall_grass", 0.25), Name("large_fern", 0.3)],
@@ -166,7 +198,7 @@
                 underwater: (top: Mix([Name("sand", 2.0), Name("clay", 1.0), Name("gravel", 1.0)])),
                 shore: (top: Block("sand")),
             ),
-            variants: [("birch_forest", 0.25), ("cherry_grove", 0.4)],
+            variants: [("birch_forest", 0.25), ("cherry_grove", 0.3), ("old_growth_forest", 0.4)],
         ),
         (
             name: "birch_forest",
@@ -192,6 +224,90 @@
             rarity: Rare,
         ),
         (
+            // The oldest woods: giant oaks, an ancient one now and then, deep litter and
+            // fallen trunks.
+            name: "old_growth_forest",
+            inherit: "forest",
+            tags: ["forest", "temperate", "broadleaf", "dense", "ancient"],
+            rarity: Rare,
+            flora: (
+                forest: 0.95,
+                trees: [Name("big_oak", 1.5), Name("oak", 1.0), Name("ancient_oak", 15.0), Name("maple", 0.3), Name("dark_oak", 0.3)],
+                exclude: ["blossom"],
+                cover: 0.65, flowers: 0.02,
+                plants: [Tag("forest_floor", 1.0), Tag("fern", 1.0), Name("short_grass", 0.6)],
+            ),
+        ),
+        (
+            // Maples in autumn colour among birch and the odd spruce, on hills and slopes.
+            name: "maple_forest",
+            tags: ["forest", "temperate", "broadleaf", "autumn"],
+            weight: 0.6,
+            climate: [(temperature: ("cool", "temperate"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
+            flora: (
+                forest: 0.75,
+                trees: [Name("maple", 2.0), Name("birch", 0.8), Name("oak", 0.5), Name("spruce", 0.3), Name("big_oak", 0.2)],
+                cover: 0.75, flowers: 0.03,
+                plants: [Tag("forest_floor", 0.8), Tag("meadow", 0.6), Name("bracken", 0.6), Tag("autumn", 0.6)],
+            ),
+            surface: (
+                include: ["soil_slopes", "trails"],
+                rules: [
+                    (when: [Forest(0.35, 0.7), Patch((name: "moss", scale: 25.0, octaves: 2), 0.2)], place: (top: Block("moss_block"), filler: Block("dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Mix([Name("gravel", 1.0), Name("sand", 1.0)])),
+                shore: (top: Mix([Name("gravel", 1.0), Name("sand", 1.0)])),
+            ),
+            colors: (grass: (168, 160, 82), foliage: (206, 150, 58)),
+        ),
+        (
+            // Spruce, oak, birch and maple together, in cool hill country.
+            name: "mixed_forest",
+            tags: ["forest", "temperate", "broadleaf", "conifer", "cool"],
+            weight: 0.6,
+            climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
+            flora: (
+                forest: 0.7,
+                trees: [Name("spruce", 1.0), Name("oak", 0.8), Name("birch", 0.8), Name("maple", 0.5), Name("pine", 0.3), Name("giant_spruce", 0.3)],
+                cover: 0.75, flowers: 0.03,
+                plants: [Tag("forest_floor", 0.8), Tag("fern", 1.0), Tag("meadow", 0.5), Name("blueberry_bush", 0.6)],
+            ),
+            surface: (
+                include: ["soil_slopes", "trails"],
+                rules: [
+                    (when: [Forest(0.45, 0.8), Patch((name: "needle_beds", scale: 20.0, octaves: 2), -0.1)], place: (top: Block("podzol"), filler: Block("dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Mix([Name("gravel", 2.0), Name("sand", 1.0)])),
+                shore: (top: Mix([Name("gravel", 2.0), Name("sand", 1.0)])),
+            ),
+        ),
+        (
+            // Heather and bracken over the hills, granite breaking through, a few junipers.
+            name: "heath",
+            tags: ["heath", "highland", "cool", "open", "rocky"],
+            weight: 0.5,
+            climate: [(temperature: ("cool", "cool"), moisture: ("moderate", "humid"), continentalness: ("coast", "inland"), erosion: ("hills", "slopes"))],
+            flora: (
+                forest: 0.05,
+                trees: [Name("pine", 1.0), Name("birch", 0.6), Name("shrub", 0.6)],
+                cover: 0.85, flowers: 0.05,
+                plants: [Name("short_grass", 1.0), Name("heather", 1.2), Name("bracken", 0.5), Name("juniper_bush", 1.5), Name("blueberry_bush", 0.8), Tag("heath", 0.4)],
+            ),
+            surface: (
+                include: ["rocky_slopes"],
+                rules: [
+                    (when: [Patch((name: "heath_peat", scale: 26.0, octaves: 2), 0.45), Wetter(0.9, 1.1)], place: (top: Block("peat"), filler: Block("dirt"))),
+                    (when: [Patch((name: "heath_bare", scale: 14.0, octaves: 2), 0.5)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Mix([Name("gravel", 2.0), Name("peat", 1.0)])),
+                shore: (top: Block("gravel")),
+            ),
+            colors: (grass: (140, 150, 90)),
+        ),
+        (
             name: "dark_forest",
             tags: ["forest", "temperate", "broadleaf", "dense"],
             climate: [(temperature: ("temperate", "warm"), moisture: ("wet", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
@@ -214,13 +330,37 @@
             ),
         ),
         (
+            // Redwoods on wet coastal hills: giant trunks over ferns and moss, in the fog.
+            name: "redwood_forest",
+            tags: ["forest", "temperate", "conifer", "giant", "wet"],
+            weight: 0.8,
+            climate: [(temperature: ("temperate", "temperate"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "slopes"))],
+            flora: (
+                forest: 0.85,
+                trees: [Name("redwood", 3.0), Name("spruce", 0.6), Name("maple", 0.2)],
+                cover: 0.8, flowers: 0.02,
+                plants: [Tag("fern", 2.0), Tag("forest_floor", 1.0), Name("short_grass", 0.5), Name("wild_garlic", 0.6)],
+            ),
+            surface: (
+                include: ["soil_slopes", "trails"],
+                rules: [
+                    (when: [Forest(0.4, 0.7), Patch((name: "moss", scale: 25.0, octaves: 2), -0.2)], place: (top: Block("moss_block"), filler: Block("rooted_dirt"))),
+                    (when: [Forest(0.45, 0.75)], place: (top: Mix([Name("podzol", 2.0), Name("rooted_dirt", 1.0)]), filler: Block("dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Mix([Name("gravel", 2.0), Name("sand", 1.0)])),
+                shore: (top: Mix([Name("gravel", 2.0), Name("sand", 1.0)])),
+            ),
+            atmosphere: (haze_density: 1.6, particles: [Tag("forest", 1.0), Tag("damp", 1.0)]),
+        ),
+        (
             name: "swamp",
-            tags: ["wetland", "temperate", "warm"],
+            tags: ["wetland", "temperate"],
             weight: 3.0,
-            climate: [(temperature: ("temperate", "hot"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "flat"))],
+            climate: [(temperature: ("temperate", "temperate"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "flat"))],
             flora: (
                 forest: 0.3,
-                trees: [Name("oak", 1.0), Name("dark_oak", 0.3), Name("willow", 2.0), Name("mangrove", 2.3)],
+                trees: [Name("oak", 1.0), Name("dark_oak", 0.3), Name("willow", 2.0)],
                 cover: 0.8, flowers: 0.04,
                 plants: [Tag("grass", 1.0), Tag("fern", 0.4), Tag("wetland", 1.0), Tag("riverbank", 3.0), Tag("fungus", 0.5)],
             ),
@@ -239,7 +379,7 @@
             // Cool, dry grassland with stony ground and worn game trails.
             name: "steppe",
             tags: ["grassland", "dry", "open"],
-            climate: [(temperature: ("cold", "temperate"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
+            climate: [(temperature: ("cool", "temperate"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
                 forest: 0.05,
                 trees: [Name("pine", 1.0), Name("shrub", 1.0), Name("dead_tree", 0.3)],
@@ -247,7 +387,7 @@
                 plants: [Name("short_grass", 2.0), Name("tall_grass", 0.5), Tag("grass", 0.6), Tag("steppe", 0.6), Tag("meadow", 0.3), Name("dead_bush", 1.0)],
             ),
             surface: (
-                include: ["soil_slopes"],
+                include: ["soil_slopes", "washes"],
                 rules: [
                     (when: [Band((name: "game_trails", scale: 140.0), 0.012)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
                     (when: [Patch((name: "steppe_stones", scale: 22.0, octaves: 2), 0.55)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0), Name("coarse_dirt", 1.0)]))),
@@ -268,7 +408,7 @@
                 forest: 0.8,
                 trees: [Tag("conifer", 1.0), Name("birch", 0.08)],
                 cover: 0.75, flowers: 0.02,
-                plants: [Tag("grass", 1.0), Tag("fern", 1.0), Tag("forest_floor", 0.5), Name("sweet_berry_bush", 1.0)],
+                plants: [Tag("grass", 1.0), Tag("fern", 1.0), Tag("forest_floor", 0.5), Name("sweet_berry_bush", 1.0), Name("blueberry_bush", 0.6)],
             ),
             surface: (
                 include: ["soil_slopes", "trails"],
@@ -279,6 +419,44 @@
                 underwater: (top: Mix([Name("gravel", 2.0), Name("sand", 1.0)])),
                 shore: (top: Mix([Name("gravel", 2.0), Name("sand", 1.0)])),
             ),
+            variants: [("old_growth_taiga", 0.35), ("ghost_forest", 0.4)],
+        ),
+        (
+            // Spruce giants, deep moss and needle beds.
+            name: "old_growth_taiga",
+            inherit: "taiga",
+            tags: ["forest", "cold", "conifer", "giant", "dense"],
+            rarity: Uncommon,
+            flora: (
+                forest: 0.9,
+                trees: [Name("giant_spruce", 2.0), Name("spruce", 1.0), Name("pine", 0.2)],
+                cover: 0.7, flowers: 0.01,
+                plants: [Tag("fern", 1.5), Tag("forest_floor", 0.8), Name("short_grass", 0.6), Name("blueberry_bush", 0.8)],
+            ),
+        ),
+        (
+            // A burnt or blighted wood: pale dead snags, fireweed coming back in the open.
+            name: "ghost_forest",
+            inherit: "taiga",
+            tags: ["forest", "cold", "snag", "burnt"],
+            rarity: VeryRare,
+            flora: (
+                forest: 0.55,
+                trees: [Name("ghost_snag", 3.0), Name("dead_tree", 1.0), Name("spruce", 0.25), Name("birch", 0.2)],
+                cover: 0.6, flowers: 0.25,
+                plants: [Name("fireweed", 6.0), Name("short_grass", 1.0), Name("bracken", 0.6)],
+                decorations: [Tag("forest", 1.0), Name("windthrow", 3.0), Name("snag", 3.0)],
+            ),
+            surface: (
+                include: ["soil_slopes"],
+                rules: [
+                    (when: [Patch((name: "ash_ground", scale: 12.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 3.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Block("gravel")),
+                shore: (top: Block("gravel")),
+            ),
+            colors: (grass: (150, 150, 110)),
         ),
         (
             // Between taiga and forest, birch among the spruce.
@@ -292,6 +470,83 @@
                 plants: [Tag("grass", 1.0), Tag("fern", 0.6), Tag("forest_floor", 0.5), Tag("meadow", 0.3)],
             ),
             ecotone: (between: ("taiga", "forest"), width: 2.0),
+            variants: [],
+        ),
+        (
+            // Open, wind-scoured cold land: short grass, heather, cotton grass, junipers,
+            // gravel.
+            name: "tundra",
+            tags: ["tundra", "cold", "open", "rocky"],
+            climate: [(temperature: ("cold", "cold"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
+            flora: (
+                forest: 0.03,
+                trees: [Name("spruce", 0.6), Name("dead_tree", 1.0), Name("pine", 0.4)],
+                cover: 0.7, flowers: 0.03,
+                plants: [Name("short_grass", 2.0), Tag("tundra", 1.0), Name("juniper_bush", 1.0), Name("heather", 0.8)],
+            ),
+            surface: (
+                include: ["rocky_slopes"],
+                rules: [
+                    (when: [Patch((name: "tundra_gravel", scale: 30.0, octaves: 2), 0.35)], place: (top: Mix([Name("gravel", 2.0), Name("coarse_dirt", 1.0)]))),
+                    (when: [Patch((name: "tundra_moss", scale: 18.0, octaves: 2), 0.5), Wetter(0.5, 0.7)], place: (top: Block("moss_block"), filler: Block("dirt"))),
+                ],
+                ground: (top: Mix([Name("grass_block", 4.0), Name("coarse_dirt", 1.0)]), filler: Block("dirt")),
+                underwater: (top: Block("gravel")),
+                shore: (top: Block("gravel")),
+            ),
+            colors: (grass: (150, 160, 110)),
+            variants: [("erratic_field", 0.4)],
+        ),
+        (
+            // Boulders left by a glacier long gone, of rock from far away.
+            name: "erratic_field",
+            inherit: "tundra",
+            tags: ["tundra", "cold", "open", "rocky", "erratics"],
+            rarity: Rare,
+            flora: (
+                forest: 0.02,
+                trees: [Name("dead_tree", 1.0)],
+                cover: 0.7, flowers: 0.02,
+                plants: [Name("short_grass", 2.0), Tag("tundra", 1.0), Name("juniper_bush", 1.0)],
+                decorations: [Tag("tundra", 1.0), Name("erratic", 1.0)],
+            ),
+            variants: [],
+        ),
+        (
+            // Wet cold flats: moss, peat and pools, sparse black spruce.
+            name: "bog",
+            tags: ["wetland", "cold", "open"],
+            weight: 0.6,
+            climate: [(temperature: ("cold", "cool"), moisture: ("wet", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "flat"))],
+            flora: (
+                forest: 0.18,
+                trees: [Name("spruce", 1.0), Name("dead_tree", 0.6), Name("birch", 0.3)],
+                cover: 0.85, flowers: 0.03,
+                plants: [Name("cotton_grass", 0.5), Name("short_grass", 2.0), Name("rush", 1.5), Name("cattail", 1.0), Name("marsh_marigold", 1.0), Name("blueberry_bush", 0.5)],
+            ),
+            surface: (
+                rules: [
+                    (when: [Not(Altitude(0.0, 2.0))], place: (top: Mix([Name("peat", 2.0), Name("moss_block", 2.0), Name("mud", 1.0)]), filler: Block("peat"))),
+                    (when: [Patch((name: "bog_moss", scale: 10.0, octaves: 2), 0.0)], place: (top: Block("moss_block"), filler: Block("peat"))),
+                ],
+                ground: (top: Mix([Name("grass_block", 3.0), Name("peat", 1.0)]), filler: Block("peat")),
+                underwater: (top: Mix([Name("peat", 2.0), Name("mud", 1.0)])),
+                shore: (top: Block("peat")),
+            ),
+            colors: (grass: (140, 150, 95)),
+        ),
+        (
+            name: "snowy_taiga",
+            inherit: "taiga",
+            tags: ["forest", "frozen", "conifer", "snow"],
+            climate: [(temperature: ("frozen", "frozen"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
+            flora: (
+                forest: 0.65,
+                trees: [Name("spruce", 2.0), Name("pine", 0.6), Name("giant_spruce", 0.4), Name("dead_tree", 0.2)],
+                cover: 0.5, flowers: 0.0,
+                plants: [Tag("grass", 1.0), Tag("fern", 0.5)],
+            ),
+            variants: [],
         ),
         (
             name: "snowy_tundra",
@@ -330,19 +585,18 @@
                 cliff: Mix([Name("packed_ice", 2.0), Name("stone", 1.0)]),
             ),
         ),
+
+        // --- Mountains -----------------------------------------------------------------
         (
-            // High country: grass giving way to scree and rock with height and slope.
+            // The slopes of the ranges: grass giving way to scree and rock with height.
             name: "mountains",
             tags: ["mountain", "highland"],
-            climate: [
-                (temperature: ("frozen", "cold"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "peaks")),
-                (temperature: ("cool", "temperate"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks")),
-            ],
+            climate: [(temperature: ("frozen", "cool"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "slopes"))],
             flora: (
                 forest: 0.25,
                 trees: [Tag("conifer", 1.0), Name("birch", 0.15), Name("shrub", 0.2)],
-                cover: 0.6, flowers: 0.04,
-                plants: [Tag("grass", 1.0), Tag("alpine", 1.0), Tag("meadow", 0.4), Name("allium", 1.0)],
+                cover: 0.6, flowers: 0.03,
+                plants: [Tag("grass", 1.0), Tag("alpine", 1.0), Tag("meadow", 0.3), Name("allium", 1.0)],
             ),
             surface: (
                 include: ["rocky_slopes"],
@@ -354,9 +608,169 @@
                 underwater: (top: Block("gravel")),
                 shore: (top: Block("gravel")),
             ),
+            variants: [("alpine_meadow", 0.35)],
+        ),
+        (
+            // High pasture between the rocks: gentian, crocus, edelweiss and junipers.
+            name: "alpine_meadow",
+            inherit: "mountains",
+            tags: ["mountain", "highland", "alpine", "open"],
+            flora: (
+                forest: 0.06,
+                trees: [Name("pine", 1.0), Name("spruce", 0.5)],
+                cover: 0.85, flowers: 0.12,
+                plants: [Name("short_grass", 2.0), Tag("alpine", 1.5), Name("juniper_bush", 1.0), Name("crocus", 1.0)],
+            ),
+        ),
+        (
+            // Jagged peaks of rock and snow.
+            name: "snowy_peaks",
+            tags: ["mountain", "peaks", "frozen", "rocky"],
+            climate: [(temperature: ("frozen", "cool"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks"))],
+            flora: (
+                forest: 0.03,
+                trees: [Name("pine", 1.0), Name("spruce", 0.5)],
+                cover: 0.3, flowers: 0.01,
+                plants: [Tag("alpine", 1.0), Name("short_grass", 1.0)],
+            ),
+            surface: (
+                include: ["rocky_slopes"],
+                rules: [
+                    (when: [Patch((name: "peak_scree", scale: 10.0, octaves: 2), -0.2)], place: (top: Mix([Name("gravel", 2.0), Name("coarse_dirt", 1.0)]), filler: Stones)),
+                ],
+                ground: (top: Stones, filler: Stones),
+                underwater: (top: Block("gravel")),
+                shore: (top: Block("gravel")),
+            ),
+        ),
+        (
+            // Bare, sunbaked peaks of warmer ranges.
+            name: "rocky_peaks",
+            tags: ["mountain", "peaks", "rocky", "dry"],
+            climate: [(temperature: ("temperate", "warm"), moisture: ("arid", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks"))],
+            flora: (
+                forest: 0.08,
+                trees: [Name("pine", 1.0), Name("cypress", 0.5), Name("shrub", 1.0)],
+                cover: 0.45, flowers: 0.02,
+                plants: [Name("short_grass", 2.0), Tag("steppe", 0.6), Name("thyme", 1.0), Name("juniper_bush", 0.6)],
+            ),
+            surface: (
+                include: ["rocky_slopes"],
+                rules: [
+                    (when: [Patch((name: "peak_soil", scale: 14.0, octaves: 2), 0.25)], place: (top: Mix([Name("grass_block", 2.0), Name("coarse_dirt", 1.0)]), filler: Block("dirt"))),
+                ],
+                ground: (top: Mix([Name("coarse_dirt", 2.0), Name("gravel", 1.0)]), filler: Stones),
+                underwater: (top: Block("gravel")),
+                shore: (top: Block("gravel")),
+            ),
+        ),
+        (
+            // Mist-wrapped mountain forest, every branch and stone furred with moss.
+            name: "cloud_forest",
+            tags: ["forest", "mountain", "wet", "mossy"],
+            climate: [(temperature: ("temperate", "warm"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("peaks", "peaks"))],
+            flora: (
+                forest: 0.7,
+                trees: [Name("oak", 1.0), Name("dark_oak", 0.5), Name("spruce", 0.5), Name("jungle_bush", 0.6)],
+                cover: 0.85, flowers: 0.03,
+                plants: [Tag("fern", 2.0), Name("maidenhair_fern", 1.0), Tag("forest_floor", 0.6), Name("moth_orchid", 3.0)],
+            ),
+            surface: (
+                include: ["rocky_slopes"],
+                rules: [
+                    (when: [Patch((name: "cloud_moss", scale: 12.0, octaves: 2), -0.3)], place: (top: Block("moss_block"), filler: Block("dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Block("gravel")),
+                shore: (top: Block("gravel")),
+            ),
+            atmosphere: (haze_density: 2.2, haze: (214, 222, 226), saturation: 0.9, particles: [Tag("damp", 1.0), Tag("forest", 0.5)]),
         ),
 
-        // --- Hot -----------------------------------------------------------------------
+        // --- Warm and hot --------------------------------------------------------------
+        (
+            // Sunny scrub hills: cypress spires, sage, thyme and lavender, pale stone.
+            name: "mediterranean",
+            tags: ["scrubland", "warm", "dry", "open"],
+            weight: 0.7,
+            climate: [(temperature: ("warm", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
+            flora: (
+                forest: 0.18,
+                trees: [Name("cypress", 2.0), Name("oak", 0.4), Name("shrub", 1.5), Name("pine", 0.4)],
+                cover: 0.7, flowers: 0.08,
+                plants: [Name("short_grass", 2.0), Name("bunchgrass", 0.5), Name("sage", 1.0), Name("thyme", 1.0), Name("lavender", 0.6), Name("sagebrush", 0.6), Name("wild_rose_bush", 0.3)],
+            ),
+            surface: (
+                include: ["soil_slopes", "trails", "washes"],
+                rules: [
+                    (when: [Patch((name: "scrub_rock", scale: 16.0, octaves: 2), 0.4)], place: (top: Stones, filler: Stones)),
+                    (when: [Patch((name: "scrub_soil", scale: 22.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("red_earth", 1.0)]), filler: Block("dirt"))),
+                ],
+                ground: (top: Mix([Name("grass_block", 3.0), Name("coarse_dirt", 1.0)]), filler: Block("dirt")),
+                underwater: (top: Block("sand")),
+                shore: (top: Mix([Name("sand", 2.0), Name("gravel", 1.0)])),
+            ),
+            colors: (grass: (160, 165, 80)),
+            variants: [("lavender_fields", 0.4)],
+        ),
+        (
+            // A hillside purple with lavender.
+            name: "lavender_fields",
+            inherit: "mediterranean",
+            tags: ["scrubland", "warm", "dry", "open", "flowers"],
+            rarity: Rare,
+            flora: (
+                forest: 0.05,
+                trees: [Name("cypress", 1.0), Name("shrub", 0.5)],
+                cover: 0.6, flowers: 0.6,
+                plants: [Name("short_grass", 1.0), Name("lavender", 8.0), Name("sage", 1.0), Name("thyme", 1.0)],
+            ),
+            variants: [],
+        ),
+        (
+            name: "bayou",
+            tags: ["wetland", "warm"],
+            weight: 3.0,
+            climate: [(temperature: ("warm", "warm"), moisture: ("wet", "wet"), continentalness: ("coast", "inland"), erosion: ("flat", "flat"))],
+            flora: (
+                forest: 0.45,
+                trees: [Name("cypress", 2.5), Name("willow", 1.5), Name("oak", 0.4)],
+                cover: 0.8, flowers: 0.03,
+                plants: [Tag("grass", 1.0), Tag("wetland", 1.0), Tag("riverbank", 3.0), Name("horsetail", 1.0)],
+            ),
+            surface: (
+                rules: [
+                    (when: [Not(Altitude(0.0, 3.0))], place: (top: Block("mud"), filler: Block("mud"), depth: 2)),
+                    (when: [Patch((name: "swamp_mud", scale: 12.0, octaves: 2), 0.25)], place: (top: Block("mud"), filler: Block("dirt"))),
+                    (when: [Forest(0.3, 0.6), Patch((name: "moss", scale: 25.0, octaves: 2), 0.0)], place: (top: Block("moss_block"), filler: Block("rooted_dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Mix([Name("mud", 3.0), Name("silt", 1.0)])),
+                shore: (top: Block("mud"), filler: Block("mud")),
+            ),
+            colors: (water: (82, 110, 70)),
+            atmosphere: (haze_density: 1.4, particles: [Tag("wetland", 2.0), Tag("warm", 1.0)]),
+        ),
+        (
+            name: "mangrove_swamp",
+            tags: ["wetland", "hot", "tropical"],
+            weight: 2.0,
+            climate: [(temperature: ("hot", "hot"), moisture: ("humid", "wet"), continentalness: ("coast", "coast"), erosion: ("flat", "flat"))],
+            flora: (
+                forest: 0.5,
+                trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5)],
+                cover: 0.7, flowers: 0.03,
+                plants: [Tag("grass", 1.0), Tag("wetland", 1.0), Name("papyrus", 3.0)],
+            ),
+            surface: (
+                rules: [
+                    (when: [Not(Altitude(0.0, 3.0))], place: (top: Block("mud"), filler: Block("mud"), depth: 3)),
+                ],
+                ground: (top: Mix([Name("grass_block", 2.0), Name("mud", 1.0)]), filler: Block("mud")),
+                underwater: (top: Block("mud")),
+                shore: (top: Block("mud"), filler: Block("mud")),
+            ),
+        ),
         (
             name: "desert",
             tags: ["desert", "hot", "dry", "open"],
@@ -364,9 +778,11 @@
             flora: (
                 forest: 0.12,
                 trees: [Name("cactus", 1.0), Name("dead_tree", 0.12)],
-                plants: [Name("dead_bush", 3.0)],
+                cover: 0.05,
+                plants: [Name("dead_bush", 3.0), Name("dune_grass", 0.5), Name("desert_bloom", 1.0)],
             ),
             surface: (
+                include: ["washes"],
                 rules: [
                     // Wind streaks of red sand, thick in some fields and thread-thin elsewhere.
                     (
@@ -379,6 +795,40 @@
                 shore: (top: Block("sand")),
                 cliff: Mix([Name("sandstone", 3.0), Name("red_sandstone", 1.0)]),
             ),
+            variants: [("dune_sea", 0.35), ("red_desert", 0.3)],
+        ),
+        (
+            // Nothing but sand, rippled by the wind.
+            name: "dune_sea",
+            inherit: "desert",
+            tags: ["desert", "hot", "dry", "open", "dunes"],
+            flora: (forest: 0.0, cover: 0.0, plants: [Name("dead_bush", 0.5)]),
+            surface: (
+                rules: [
+                    (when: [Band((name: "sand_ripples", scale: 9.0), 0.04)], place: (top: Block("sandstone"), filler: Block("sand"), depth: 6)),
+                ],
+                ground: (top: Block("sand"), filler: Block("sand"), depth: 8),
+                underwater: (top: Block("sand")),
+                shore: (top: Block("sand")),
+                cliff: Block("sandstone"),
+            ),
+            variants: [],
+        ),
+        (
+            // Rust-red sand and rock.
+            name: "red_desert",
+            inherit: "desert",
+            tags: ["desert", "hot", "dry", "open"],
+            surface: (
+                rules: [
+                    (when: [Patch((name: "red_desert_earth", scale: 30.0, octaves: 2), 0.35)], place: (top: Block("red_earth"), filler: Block("red_sandstone"))),
+                ],
+                ground: (top: Block("red_sand"), filler: Block("red_sandstone"), depth: 6),
+                underwater: (top: Block("red_sand")),
+                shore: (top: Block("red_sand")),
+                cliff: Block("red_sandstone"),
+            ),
+            variants: [],
         ),
         (
             // Hot, dry uplands of red sand and banded clay.
@@ -405,34 +855,98 @@
                 shore: (top: Block("red_sand")),
                 cliff: Strata,
             ),
+            variants: [("wooded_badlands", 0.35)],
+        ),
+        (
+            // Badlands whose plateaus hold soil, grass and scrubby trees.
+            name: "wooded_badlands",
+            inherit: "badlands",
+            tags: ["desert", "hot", "dry", "mesa", "groves"],
+            flora: (
+                forest: 0.2,
+                trees: [Name("acacia", 1.0), Name("dead_tree", 0.5), Name("shrub", 0.8)],
+                cover: 0.5, flowers: 0.02,
+                plants: [Name("bunchgrass", 1.0), Name("short_grass", 0.6), Name("dead_bush", 1.0), Name("sagebrush", 0.6)],
+            ),
+            surface: (
+                rules: [
+                    (when: [Slope(1.5, 3.0)], place: (top: Strata, filler: Strata, depth: 14)),
+                    (when: [Patch((name: "mesa_soil", scale: 20.0, octaves: 2), -0.1)], place: (top: Mix([Name("grass_block", 2.0), Name("coarse_dirt", 2.0)]), filler: Strata, depth: 14)),
+                ],
+                ground: (top: Block("red_sand"), filler: Strata, depth: 14),
+                underwater: (top: Block("red_sand")),
+                shore: (top: Block("red_sand")),
+                cliff: Strata,
+            ),
+            variants: [],
         ),
         (
             name: "savanna",
-            tags: ["grassland", "hot", "dry", "open"],
+            tags: ["grassland", "hot", "dry", "open", "savanna"],
             climate: [
                 (temperature: ("warm", "hot"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills")),
                 (temperature: ("warm", "hot"), moisture: ("moderate", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "peaks")),
             ],
             flora: (
                 forest: 0.14,
-                trees: [Name("acacia", 1.0), Name("shrub", 0.4), Name("palm", 1.0)],
+                trees: [Name("acacia", 1.0), Name("shrub", 0.4), Name("palm", 1.0), Name("baobab", 0.5)],
                 cover: 0.75, flowers: 0.02,
                 plants: [Tag("grass", 1.0), Tag("savanna", 1.0), Name("tall_grass", 0.6), Name("dead_bush", 1.0)],
             ),
             surface: (
-                include: ["soil_slopes"],
+                include: ["soil_slopes", "washes"],
                 rules: [
                     (when: [Band((name: "game_trails", scale: 140.0), 0.012)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
-                    (when: [Patch((name: "savanna_soil", scale: 30.0, octaves: 2), 0.4)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
+                    (when: [Patch((name: "savanna_soil", scale: 30.0, octaves: 2), 0.4)], place: (top: Mix([Name("coarse_dirt", 3.0), Name("red_earth", 1.0)]), filler: Block("dirt"))),
                 ],
                 ground: (top: Block("grass_block"), filler: Block("dirt")),
                 underwater: (top: Block("sand")),
                 shore: (top: Block("sand")),
             ),
+            variants: [("baobab_savanna", 0.3)],
+        ),
+        (
+            name: "baobab_savanna",
+            inherit: "savanna",
+            tags: ["grassland", "hot", "dry", "open", "savanna", "giant"],
+            rarity: Uncommon,
+            flora: (
+                forest: 0.12,
+                trees: [Name("baobab", 2.0), Name("acacia", 0.4), Name("shrub", 0.3)],
+                cover: 0.75, flowers: 0.02,
+                plants: [Tag("grass", 1.0), Tag("savanna", 1.0), Name("tall_grass", 0.4), Name("dead_bush", 1.0)],
+            ),
+            variants: [],
+        ),
+        (
+            // Red earth and spinifex, far from the sea: a hot, dry outback.
+            name: "outback",
+            tags: ["grassland", "hot", "dry", "open", "savanna"],
+            weight: 0.7,
+            climate: [(temperature: ("hot", "hot"), moisture: ("arid", "dry"), continentalness: ("inland", "far_inland"), erosion: ("flat", "hills"))],
+            flora: (
+                forest: 0.06,
+                trees: [Name("acacia", 1.0), Name("dead_tree", 1.0), Name("baobab", 0.2), Name("shrub", 0.6)],
+                cover: 0.45, flowers: 0.02,
+                plants: [Name("bunchgrass", 2.0), Name("dead_bush", 1.5), Name("sagebrush", 0.8), Name("desert_bloom", 1.0)],
+            ),
+            surface: (
+                include: ["soil_slopes", "washes"],
+                rules: [
+                    (when: [Patch((name: "outback_sand", scale: 24.0, octaves: 2), 0.3)], place: (top: Block("red_sand"), filler: Block("red_earth"))),
+                    (when: [Patch((name: "outback_stones", scale: 12.0, octaves: 2), 0.55)], place: (top: Mix([Name("gravel", 1.0), Name("red_sandstone", 1.0)]))),
+                ],
+                ground: (top: Mix([Name("red_earth", 3.0), Name("coarse_dirt", 1.0)]), filler: Block("red_earth")),
+                underwater: (top: Block("red_sand")),
+                shore: (top: Block("red_sand")),
+                cliff: Mix([Name("red_sandstone", 2.0), Name("sandstone", 1.0)]),
+            ),
+            colors: (grass: (190, 170, 90)),
+            atmosphere: (warmth: 0.25, particles: [Tag("dry", 1.0)]),
         ),
         (
             name: "jungle",
-            tags: ["forest", "hot", "wet", "dense"],
+            tags: ["forest", "hot", "wet", "dense", "jungle"],
             climate: [(temperature: ("hot", "hot"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"))],
             flora: (
                 forest: 0.95,
@@ -452,7 +966,7 @@
             ),
         ),
 
-        // --- Fantastical ---------------------------------------------------------------
+        // --- Fantastical: where aether runs high, rare and strange ----------------------
         (
             // Where aether runs high in mild country: pale stone breaks through the turf in
             // patches and veins.
@@ -468,9 +982,10 @@
             )],
             flora: (
                 forest: 0.05,
-                trees: [Name("birch", 1.0), Name("shrub", 0.5)],
+                trees: [Name("birch", 1.0), Name("shrub", 0.5), Name("silverwood", 4.0)],
                 cover: 0.7, flowers: 0.3,
-                plants: [Tag("meadow", 1.0), Name("azure_bluet", 3.0), Name("oxeye_daisy", 2.0), Name("lily_of_the_valley", 2.0), Name("moonbloom", 2.0)],
+                plants: [Tag("meadow", 1.0), Name("azure_bluet", 3.0), Name("oxeye_daisy", 2.0), Name("lily_of_the_valley", 2.0), Name("moonbloom", 20.0)],
+                wonders: [Name("starlily", 1.0), Name("heartbloom", 1.0)],
             ),
             surface: (
                 include: ["soil_slopes"],
@@ -487,6 +1002,133 @@
                 haze: (196, 204, 240), sky: (236, 236, 255), saturation: 1.15,
                 particles: [Tag("fantastical", 4.0), Tag("meadow", 1.0)],
             ),
+        ),
+        (
+            // A cold wood of silver-barked trees whose leaves glow faintly at dusk.
+            name: "silverwood_glade",
+            tags: ["forest", "cold", "fantastical"],
+            rarity: Rare,
+            climate: [(temperature: ("frozen", "cool"), moisture: ("moderate", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.78, 1.0))],
+            flora: (
+                forest: 0.6,
+                trees: [Name("silverwood", 14.0), Name("birch", 0.6), Name("spruce", 0.4)],
+                cover: 0.7, flowers: 0.05,
+                plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0)],
+                wonders: [Name("starlily", 1.0), Name("crystal_bloom", 1.0)],
+            ),
+            surface: (
+                include: ["soil_slopes"],
+                rules: [
+                    (when: [Patch((name: "silver_stone", scale: 16.0, octaves: 2), 0.45)], place: (top: Mix([Name("calcite", 2.0), Name("marble", 1.0)]))),
+                    (when: [Forest(0.4, 0.7)], place: (top: Mix([Name("moss_block", 1.0), Name("podzol", 1.0)]), filler: Block("dirt"))),
+                ],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Mix([Name("gravel", 1.0), Name("calcite", 1.0)])),
+                shore: (top: Block("gravel")),
+            ),
+            colors: (grass: (150, 175, 175), foliage: (175, 205, 220)),
+            atmosphere: (haze: (200, 214, 236), sky: (232, 238, 255), saturation: 1.1, particles: [Tag("fantastical", 4.0), Tag("cold", 1.0)]),
+        ),
+        (
+            // A damp wood of giant glowing mushrooms under a dark canopy.
+            name: "glowcap_forest",
+            tags: ["forest", "fungal", "fantastical", "dense"],
+            rarity: Rare,
+            climate: [(temperature: ("cool", "warm"), moisture: ("humid", "wet"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.8, 1.0))],
+            flora: (
+                forest: 0.85,
+                trees: [Name("giant_glowcap", 14.0), Name("dark_oak", 1.0), Name("oak", 0.4)],
+                cover: 0.6, flowers: 0.02,
+                plants: [Tag("fungus", 2.0), Name("glowcap", 30.0), Name("dreamshade", 15.0), Name("whisperfern", 10.0), Tag("fern", 1.0), Name("short_grass", 0.6)],
+                wonders: [Name("aether_orchid", 1.0)],
+            ),
+            surface: (
+                include: ["soil_slopes"],
+                rules: [
+                    (when: [Patch((name: "fungal_moss", scale: 14.0, octaves: 2), -0.3)], place: (top: Block("moss_block"), filler: Block("rooted_dirt"))),
+                ],
+                ground: (top: Mix([Name("podzol", 2.0), Name("rooted_dirt", 1.0)]), filler: Block("dirt")),
+                underwater: (top: Block("mud")),
+                shore: (top: Block("mud")),
+            ),
+            colors: (grass: (90, 130, 120), foliage: (70, 110, 105)),
+            atmosphere: (haze: (120, 150, 170), haze_density: 1.5, saturation: 1.2, particles: [Tag("fantastical", 3.0), Tag("damp", 2.0)]),
+        ),
+        (
+            // Hot barrens where emberwoods smoulder and the ground is ash and red earth.
+            name: "ember_wastes",
+            tags: ["desert", "hot", "dry", "fantastical"],
+            rarity: Rare,
+            climate: [(temperature: ("warm", "hot"), moisture: ("arid", "dry"), continentalness: ("coast", "far_inland"), aether: (0.78, 1.0))],
+            flora: (
+                forest: 0.18,
+                trees: [Name("emberwood", 14.0), Name("dead_tree", 1.0)],
+                cover: 0.15, flowers: 0.02,
+                plants: [Name("emberbloom", 25.0), Name("dead_bush", 2.0), Name("bunchgrass", 0.5)],
+                wonders: [Name("sunspire", 1.0)],
+            ),
+            surface: (
+                rules: [
+                    (when: [Band((name: "ember_veins", scale: 50.0), 0.025)], place: (top: Block("basalt"), filler: Block("basalt"))),
+                    (when: [Patch((name: "ember_ash", scale: 18.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 1.0), Name("gravel", 1.0)]), filler: Block("red_earth"))),
+                ],
+                ground: (top: Block("red_earth"), filler: Block("red_earth"), depth: 4),
+                underwater: (top: Block("red_sand")),
+                shore: (top: Block("red_sand")),
+                cliff: Mix([Name("basalt", 2.0), Name("red_sandstone", 1.0)]),
+            ),
+            colors: (grass: (170, 110, 60)),
+            atmosphere: (haze: (226, 160, 110), warmth: 0.5, saturation: 1.1, particles: [Tag("fantastical", 3.0), Tag("dry", 1.0)]),
+        ),
+        (
+            // Frozen ground set with crystals of ice and pale stone, where blooms of crystal
+            // grow.
+            name: "crystal_expanse",
+            tags: ["frozen", "ice", "open", "fantastical"],
+            rarity: VeryRare,
+            climate: [(temperature: ("frozen", "cold"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"), aether: (0.82, 1.0))],
+            flora: (
+                forest: 0.03,
+                trees: [Name("silverwood", 10.0)],
+                cover: 0.2, flowers: 0.0,
+                plants: [Name("crystal_bloom", 60.0), Name("frostpetal", 15.0)],
+                decorations: [Name("ice_crystals", 1.0), Tag("tundra", 0.3)],
+            ),
+            surface: (
+                rules: [
+                    (when: [Band((name: "crystal_veins", scale: 40.0), 0.03)], place: (top: Block("blue_ice"), filler: Block("packed_ice"))),
+                    (when: [Patch((name: "crystal_stone", scale: 15.0, octaves: 2), 0.3)], place: (top: Mix([Name("calcite", 2.0), Name("packed_ice", 1.0)]))),
+                ],
+                ground: (top: Mix([Name("snow_block", 3.0), Name("packed_ice", 1.0)]), filler: Block("packed_ice"), depth: 4),
+                underwater: (top: Block("gravel")),
+                shore: (top: Block("gravel")),
+                cliff: Mix([Name("packed_ice", 2.0), Name("calcite", 1.0)]),
+            ),
+            colors: (grass: (170, 210, 230)),
+            atmosphere: (haze: (200, 230, 250), sky: (226, 240, 255), saturation: 1.15, particles: [Tag("fantastical", 4.0), Tag("cold", 1.0)]),
+        ),
+        (
+            // Golden downs where the legendary sunspire grows: a place told of more often
+            // than found.
+            name: "sunspire_downs",
+            tags: ["grassland", "warm", "open", "fantastical"],
+            rarity: Legendary,
+            climate: [(temperature: ("temperate", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.85, 1.0))],
+            flora: (
+                forest: 0.04,
+                trees: [Name("oak", 1.0), Name("shrub", 0.5)],
+                cover: 0.8, flowers: 0.25,
+                plants: [Name("short_grass", 2.0), Name("wild_wheat", 1.0), Name("sunspire", 300.0), Name("starlily", 200.0), Name("marigold", 1.0), Name("goldenrod", 1.0)],
+                wonders: [Name("heartbloom", 1.0)],
+            ),
+            surface: (
+                include: ["soil_slopes"],
+                ground: (top: Block("grass_block"), filler: Block("dirt")),
+                underwater: (top: Block("sand")),
+                shore: (top: Block("sand")),
+            ),
+            colors: (grass: (214, 196, 96), foliage: (220, 190, 80)),
+            atmosphere: (haze: (250, 230, 170), warmth: 0.4, saturation: 1.15, particles: [Tag("fantastical", 4.0), Tag("meadow", 1.0)]),
         ),
     ],
 )
