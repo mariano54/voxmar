@@ -164,7 +164,8 @@ impl Terrain {
             patches: noise(seed, 24, 0.04, FractalType::FBm, 2),
             mixes: noise(seed, 25, 1.0 / 9.0, FractalType::FBm, 2),
             soft,
-            stone: by_id(&|block| stones.contains(&block)),
+            // Ores replace plain stone, never gems: a crystal cave's walls, a geode's lining.
+            stone: by_id(&|block| stones.contains(&block) && !registry.def(block).has_tag("gem")),
             grounds,
             plants,
             firm,
@@ -807,6 +808,12 @@ impl Overworld {
         self.biomes.get(site.biome).stones.as_ref().unwrap_or(&self.rocks.get(site.province).stones)
     }
 
+    /// The stones where the rock shows at the surface: the biome's own, or its rock
+    /// province's outcrop stones.
+    pub(crate) fn outcrop(&self, site: &Site) -> &Palette {
+        self.biomes.get(site.biome).stones.as_ref().unwrap_or(&self.rocks.get(site.province).outcrop)
+    }
+
     /// The surface at a site, from the top down.
     pub(crate) fn surface_layers(&self, site: &Site, x: i32, z: i32) -> Layers {
         let terrain = &self.terrain;
@@ -816,7 +823,7 @@ impl Overworld {
         let spot = Spot { site, x, z, dither: d, mix: &mix, chance: terrain.chance(x, z), sampled: Default::default() };
         let biome = self.biomes.get(site.biome);
         let (surface, strata) = self.surface_of(site, x, z);
-        let stones = self.stones(site);
+        let stones = self.outcrop(site);
         let rules = &self.rules;
         // Whether `v` lies past a threshold that is dithered across `lo..hi`.
         let past = |v: f32, lo: f32, hi: f32| v > lo + (hi - lo) * d;

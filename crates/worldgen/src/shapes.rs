@@ -310,29 +310,76 @@ impl Shapes {
     }
 
     /// What the shapes make of (x, z), on ground of the given height whose regional climate
-    /// is `regional`.
+    /// is `regional`. The land asks through `shape_lanes`; this is for tests and benchmarks.
+    #[cfg(test)]
     pub fn shape(&self, x: i32, z: i32, ground: &Ground, regional: &Regional) -> Shaped {
-        let fields = [regional.temperature(), regional.moisture(), regional.continentalness, regional.erosion];
-        let (fx, fz) = (x as f32, z as f32);
-        let mut out = Shaped::default();
-        let mut most = 0.5;
+        self.shape_lanes(&[(x, z)], std::slice::from_ref(ground), std::slice::from_ref(regional))[0]
+    }
+
+    /// What the shapes make of one to four positions, each on its ground and in its
+    /// regional climate, exactly as `shape` at each. The noises most positions sample
+    /// (the masks that keep rarer shapes to some regions, and the rolling hills) are worked
+    /// out side by side, one position per lane (see `crate::noise`); lanes past the
+    /// positions mean nothing.
+    pub fn shape_lanes(&self, at: &[(i32, i32)], grounds: &[Ground], regionals: &[Regional]) -> [Shaped; 4] {
+        let n = at.len();
+        let x: [f32; 4] = std::array::from_fn(|k| at[k.min(n - 1)].0 as f32);
+        let z: [f32; 4] = std::array::from_fn(|k| at[k.min(n - 1)].1 as f32);
+        // A noise at the lanes that need it: alone if one does, side by side if more.
+        let sample = |noise: &FastNoiseLite, need: &[bool; 4], x: [f32; 4], z: [f32; 4]| -> [f32; 4] {
+            let mut lanes = (0..n).filter(|&k| need[k]);
+            match (lanes.next(), lanes.next()) {
+                (None, _) => [0.0; 4],
+                (Some(k), None) => {
+                    let mut v = [0.0; 4];
+                    v[k] = noise.get_noise_2d(x[k], z[k]);
+                    v
+                }
+                _ => crate::noise::get_2d_x4(noise, x, z),
+            }
+        };
+        let fields: [[f32; 4]; 4] = std::array::from_fn(|k| {
+            let Some(r) = regionals.get(k) else { return [0.0; 4] };
+            [r.temperature(), r.moisture(), r.continentalness, r.erosion]
+        });
+        let mut out = [Shaped::default(); 4];
+        let mut most = [0.5f32; 4];
         for (i, shape) in self.list.iter().enumerate() {
-            if !shape.reaches(ground) {
-                continue;
+            let mut weight = [0.0f32; 4];
+            for k in 0..n {
+                if shape.reaches(&grounds[k]) {
+                    // Shapes that stand alone weigh their climate at their centre instead.
+                    weight[k] = if shape.alone { 1.0 } else { shape.climate_weight(x[k], z[k], &fields[k], &regionals[k]) };
+                }
             }
-            // Shapes that stand alone weigh their climate at their centre instead.
-            let weight = if shape.alone { 1.0 } else { shape.weight(fx, fz, &fields, regional) };
-            if weight <= 0.0 {
-                continue;
+            // Risen only where its weight is not zero (a NaN weight would rise, as it always
+            // has).
+            let active = weight.map(|w| w > 0.0 || w.is_nan());
+            if let Some((noise, share)) = &shape.region {
+                let need = active;
+                let mask = sample(noise, &need, x, z);
+                for k in (0..n).filter(|&k| need[k]) {
+                    weight[k] *= shape.region_share(*share, mask[k]);
+                }
             }
-            let (terrain, features, strength) = self.rise(shape, fx, fz, weight, ground);
-            out.terrain += terrain;
-            out.features += features;
-            let change = terrain.abs() + features;
-            if change > most {
-                most = change;
-                out.shape = Some(ShapeId(i as u8));
-                out.strength = strength;
+            let active = weight.map(|w| w > 0.0 || w.is_nan());
+            let rise: [(f32, f32, f32); 4] = match shape.kind {
+                ShapeKind::Hills { height, spacing } => {
+                    let folded = sample(&shape.noises[0], &active, x.map(|x| x / spacing), z.map(|z| z / spacing));
+                    std::array::from_fn(|k| if active[k] { hills(weight[k], height, folded[k]) } else { (0.0, 0.0, 0.0) })
+                }
+                _ => std::array::from_fn(|k| if k < n && active[k] { self.rise(shape, x[k], z[k], weight[k], &grounds[k]) } else { (0.0, 0.0, 0.0) }),
+            };
+            for k in (0..n).filter(|&k| active[k]) {
+                let (terrain, features, strength) = rise[k];
+                out[k].terrain += terrain;
+                out[k].features += features;
+                let change = terrain.abs() + features;
+                if change > most[k] {
+                    most[k] = change;
+                    out[k].shape = Some(ShapeId(i as u8));
+                    out[k].strength = strength;
+                }
             }
         }
         out
@@ -343,11 +390,7 @@ impl Shapes {
     fn rise(&self, shape: &Shape, x: f32, z: f32, weight: f32, ground: &Ground) -> (f32, f32, f32) {
         let [n0, n1, n2] = &shape.noises;
         match shape.kind {
-            ShapeKind::Hills { height, spacing } => {
-                // Folded noise: round tops, creased hollows between them.
-                let n = n0.get_noise_2d(x / spacing, z / spacing);
-                (weight * height * (2.0 * n.abs()).min(1.5), 0.0, weight)
-            }
+            ShapeKind::Hills { height, spacing } => hills(weight, height, n0.get_noise_2d(x / spacing, z / spacing)),
             ShapeKind::Dunes { height, spacing } => {
                 let [wx, wz] = self.wind;
                 let (along, across) = ((x * wx + z * wz) / spacing, (z * wx - x * wz) / (spacing * 2.6));
@@ -482,7 +525,12 @@ impl Shapes {
         for dz in -1..=1 {
             for dx in -1..=1 {
                 let (centre, units) = cell(shape.seed, cx + dx, cz + dz);
-                let t = (centre[0] - px).hypot(centre[1] - pz);
+                let (ox, oz) = (centre[0] - px, centre[1] - pz);
+                // A distance is at least its larger part, which spares most cells the root.
+                if ox.abs() >= 1.0 || oz.abs() >= 1.0 {
+                    continue;
+                }
+                let t = ox.hypot(oz);
                 if t < 1.0 {
                     let v = f(units, t);
                     if v > best.0 {
@@ -508,8 +556,10 @@ impl Shapes {
         let unit = |k: usize| (([a, b][k / 4] >> (k % 4 * 16)) & 0xffff) as f32 / 65536.0;
         let units = std::array::from_fn(|k| unit(k));
         let centre = [(cx as f32 + 0.3 + 0.4 * unit(1)) * cell, (cz as f32 + 0.3 + 0.4 * unit(2)) * cell];
-        // Out of its reach, the climate at its centre need not be weighed.
-        if (x - centre[0]).hypot(z - centre[1]) >= reach {
+        // Out of its reach, the climate at its centre need not be weighed. (A distance is at
+        // least its larger part, which spares most positions the root.)
+        let (dx, dz) = (x - centre[0], z - centre[1]);
+        if dx.abs() >= reach || dz.abs() >= reach || dx.hypot(dz) >= reach {
             return None;
         }
         let regional = (ground.regional)(centre[0] as i32, centre[1] as i32);
@@ -572,8 +622,12 @@ impl Standalone {
     /// direction from the centre, and the distance. `None` outside it.
     fn reach(&self, shape: &Shape, x: f32, z: f32, r: f32, wander: f32) -> Option<(f32, f32, f32, f32)> {
         let (dx, dz) = (x - self.centre[0], z - self.centre[1]);
+        let outside = r * (1.0 + wander);
+        if dx.abs() >= outside || dz.abs() >= outside {
+            return None;
+        }
         let d = dx.hypot(dz);
-        if d >= r * (1.0 + wander) {
+        if d >= outside {
             return None;
         }
         // Noise sampled around a circle, so it wanders with the angle and closes up.
@@ -602,21 +656,38 @@ impl Shape {
     /// How strongly the shape rises at a position, 0 ..= 1, from its climate gates, rock
     /// province and rarity.
     fn weight(&self, x: f32, z: f32, fields: &[f32; 4], regional: &Regional) -> f32 {
+        let weight = self.climate_weight(x, z, fields, regional);
+        match &self.region {
+            Some((noise, share)) if weight > 0.0 => weight * self.region_share(*share, noise.get_noise_2d(x, z)),
+            _ => weight,
+        }
+    }
+
+    /// How strongly the shape's climate gates and rock province let it rise at a position,
+    /// 0 ..= 1: its weight before its rarity takes some regions away (`region_share`).
+    fn climate_weight(&self, x: f32, z: f32, fields: &[f32; 4], regional: &Regional) -> f32 {
         let mut weight = if self.gates.is_empty() { 1.0 } else { self.gates.iter().map(|g| g.weight(fields)).fold(0.0, f32::max) };
         if weight > 0.0
             && let Some(province) = &self.province
         {
             weight *= if province.contains(x, z, regional.warp) { smoothstep(0.0, PROVINCE_RAMP, province.depth(x, z, regional.warp)) } else { 0.0 };
         }
-        if weight > 0.0
-            && let Some((noise, share)) = &self.region
-        {
-            let u = climate::uniform(noise.get_noise_2d(x, z));
-            let fade = (share / 2.0).min(0.03);
-            weight *= smoothstep(1.0 - share, 1.0 - share + fade, u);
-        }
         weight
     }
+
+    /// How much of the shape a region whose mask noise is `mask` takes, 0 ..= 1, for a
+    /// shape that takes `share` of its climate's regions.
+    fn region_share(&self, share: f32, mask: f32) -> f32 {
+        let u = climate::uniform(mask);
+        let fade = (share / 2.0).min(0.03);
+        smoothstep(1.0 - share, 1.0 - share + fade, u)
+    }
+}
+
+/// What rolling hills of the given height make of a position where their weight is
+/// `weight` and their noise `n`: folded noise, round tops with creased hollows between them.
+fn hills(weight: f32, height: f32, n: f32) -> (f32, f32, f32) {
+    (weight * height * (2.0 * n.abs()).min(1.5), 0.0, weight)
 }
 
 /// The centre of a cell of a jittered grid, in cells, and four uniform values for it.

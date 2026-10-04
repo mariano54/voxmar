@@ -54,6 +54,9 @@ use crate::world::ClientWorld;
 const SURVEY_INTERVAL: f32 = 1.0;
 /// Seconds over which the environment follows a new scan.
 const SETTLE: f32 = 2.0;
+/// Ambience sits under everything else: every bed and one-shot is this much quieter than
+/// its `volume` in the data says, relative to the sound effects.
+const AMBIENCE_GAIN: f32 = 0.65;
 
 pub struct AmbiencePlugin;
 
@@ -362,7 +365,7 @@ fn play(
 ) {
     let ambient = &mut *ambient;
     let (Some(clips), Ok(camera), true) = (&ambient.clips, camera.single(), player.joined) else { return };
-    let master = sfx::MASTER * settings.sound_volume as f32 / 100.0 * settings.ambience_volume as f32 / 100.0;
+    let master = AMBIENCE_GAIN * sfx::MASTER * settings.sound_volume as f32 / 100.0 * settings.ambience_volume as f32 / 100.0;
     let ears = camera.translation();
     let mut cues = std::mem::take(&mut ambient.cues);
     let length = |sound: usize, variant: usize| clips.sounds[sound].get(variant).map_or(1.0, |c| c.dry.len() as f32 / sfx::RATE as f32);

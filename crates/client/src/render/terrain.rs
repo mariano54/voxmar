@@ -548,6 +548,8 @@ struct WindUniform {
     /// xyz: the player's feet, w: whether there is a player.
     player: Vec4,
     gustiness: f32,
+    /// The flutter's phase, radians.
+    flutter: f32,
 }
 
 #[derive(ShaderType, Clone, Copy, Default)]
@@ -824,6 +826,7 @@ impl TerrainGpu {
             flow: breeze.velocity.extend(breeze.offset.x).extend(breeze.offset.y),
             player: breeze.player.map_or(Vec4::ZERO, |feet| feet.extend(1.0)),
             gustiness: breeze.gustiness,
+            flutter: breeze.flutter,
         };
         let mut uniform = encase::UniformBuffer::new(Vec::<u8>::new());
         uniform.write(&wind).expect("the wind fits a uniform");

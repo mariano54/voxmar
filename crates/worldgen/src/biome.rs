@@ -177,7 +177,8 @@ impl Biomes {
                 role: def.role,
                 rarity: def.rarity,
                 colors: def.colors.clone(),
-                surface: rules.compile(&def.surface, registry, rocks),
+                // Overworld ground keeps to its colours; caves keep their contrasts.
+                surface: rules.compile(&def.surface, registry, rocks, (def.layer == Layer::Surface).then(|| crate::hue::biome_tints(content, def)[0])),
                 stones: match &def.stones {
                     Stones::Province => None,
                     Stones::Blocks(selects) => Some(Palette::new(selects, registry)),
@@ -351,14 +352,17 @@ impl Biomes {
         if let Some(filler) = filler {
             return Some((filler, bottom, top));
         }
-        let mut lo = bottom;
+        // The commons share the whole range, the rarer claims laid over its ends, so a
+        // common's slice is the same in every cell with the same commons whatever rarer
+        // claims (and aether) let in: their borders carry on across the cells.
+        let mut lo = 0.0;
         let mut last = None;
         for claim in claims.iter().filter(|c| common(c)) {
-            let hi = lo + (top - bottom) * claim.share / weight;
+            let hi = lo + claim.share / weight;
             if weirdness < hi {
-                return Some((claim.biome, lo, hi));
+                return Some((claim.biome, lo.max(bottom), hi.min(top)));
             }
-            last = Some((claim.biome, lo, top));
+            last = Some((claim.biome, lo.max(bottom), top));
             lo = hi;
         }
         last
@@ -559,7 +563,7 @@ impl Biomes {
 
 /// The value of band edge `i` along an axis, extending the outermost bands by the width of
 /// their neighbours.
-fn band_edge(edges: &[f32], i: isize) -> f32 {
+pub(crate) fn band_edge(edges: &[f32], i: isize) -> f32 {
     let n = edges.len() as isize;
     let width = |a: isize, b: isize| if n >= 2 { edges[b as usize] - edges[a as usize] } else { 1.0 };
     match i {

@@ -12,8 +12,12 @@
 //! other kind: the camera stands still while the game runs on by exactly one 60 fps frame
 //! between the shots (the sun moving, the wind blowing), which is how shadows and leaves
 //! flicker as time passes.
+//!
+//! `--clip SECONDS` records motion instead: every frame of that much game time at 30 fps,
+//! as `OUT-000.png` on, for checking how things move (wind, water, weather).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -52,6 +56,8 @@ pub struct CapturePlugin {
     pub menu: bool,
     /// Measure flicker for a small camera step or as time passes (see the module docs).
     pub flicker: Option<FlickerKind>,
+    /// Seconds of game time to record frame by frame (see the module docs).
+    pub clip: Option<f32>,
 }
 
 /// What changes between the two shots of a flicker measurement.
@@ -71,6 +77,8 @@ const FLICKER_LEVELS: u8 = 60;
 const FLICKER_FRAMES: u32 = 3;
 /// Game time between the shots of `--flicker-still`: one frame at 60 fps.
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
+/// Frames per second of game time in a `--clip`.
+const CLIP_RATE: u32 = 30;
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
@@ -89,9 +97,10 @@ impl Plugin for CapturePlugin {
             saved: false,
             frame_times: Vec::new(),
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
+            clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
         })
         .add_systems(PostStartup, render_offscreen)
-        .add_systems(Update, (target_ui, capture, measure_flicker.after(capture)))
+        .add_systems(Update, (target_ui, capture, measure_flicker.after(capture), record_clip.after(capture)))
         .add_systems(
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
@@ -121,6 +130,17 @@ struct Capture {
     saved: bool,
     frame_times: Vec<f32>,
     flicker: Option<Flicker>,
+    clip: Option<Clip>,
+}
+
+/// Progress of a `--clip`, which starts once the world has settled.
+#[derive(Default)]
+struct Clip {
+    frames: u32,
+    started: bool,
+    /// Shots asked for, and shots written.
+    taken: u32,
+    saved: Arc<AtomicU32>,
 }
 
 /// Progress of a `--flicker` measurement, which starts once the world has settled.
@@ -256,12 +276,12 @@ fn capture(
     // Real time while `--flicker` stops the game's clock.
     let now = if state.flicker.is_some() { real.elapsed_secs() } else { time.elapsed_secs() };
     if let Some(taken) = state.taken_at {
-        if state.saved || state.flicker.is_some() || now - taken > 30.0 {
+        if state.saved || state.flicker.is_some() || state.clip.is_some() || now - taken > 30.0 {
             exit.write(AppExit::Success);
         }
         return;
     }
-    if state.flicker.as_ref().is_some_and(|f| f.started) {
+    if state.flicker.as_ref().is_some_and(|f| f.started) || state.clip.as_ref().is_some_and(|c| c.started) {
         return;
     }
     let stats = world.stats;
@@ -329,6 +349,12 @@ fn capture(
     if let Some(flicker) = &mut state.flicker {
         // `measure_flicker` takes over.
         flicker.started = true;
+        return;
+    }
+    if let Some(clip) = &mut state.clip {
+        // `record_clip` takes over, and every frame from now on advances the game alike.
+        clip.started = true;
+        commands.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1) / CLIP_RATE));
         return;
     }
     commands
@@ -408,6 +434,26 @@ fn measure_flicker(
     }
     drop(shots);
     state.taken_at = Some(real.elapsed_secs());
+}
+
+/// Records a `--clip` once `capture` has started it: a shot every frame, each one
+/// `CLIP_RATE`th of a second of game time after the last.
+fn record_clip(mut commands: Commands, mut state: ResMut<Capture>, real: Res<Time<Real>>) {
+    let state = &mut *state;
+    let Some(clip) = state.clip.as_mut().filter(|c| c.started) else { return };
+    if clip.taken < clip.frames {
+        let saved = clip.saved.clone();
+        commands
+            .spawn(Screenshot::image(state.target.clone()))
+            .observe(save_to_disk(sibling(&state.path, &format!("{:03}", clip.taken))))
+            .observe(move |_: On<ScreenshotCaptured>| {
+                saved.fetch_add(1, Ordering::Relaxed);
+            });
+        clip.taken += 1;
+    } else if clip.saved.load(Ordering::Relaxed) >= clip.frames && state.taken_at.is_none() {
+        info!("clip: {} frames saved", clip.frames);
+        state.taken_at = Some(real.elapsed_secs());
+    }
 }
 
 /// Compares two RGBA8 images: how many pixels changed by more than `FLICKER_LEVELS` in any

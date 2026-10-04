@@ -7,6 +7,8 @@
 //!   [`crate::stage`]), and what lighting and meshing the columns costs;
 //! - `first_column`: how long a new world takes to find its spawn point and generate the
 //!   spawn column, and to fill the area around it on every core;
+//! - `all_cores`: the wall-clock time per column of generating the same areas on every
+//!   core, cold and warm;
 //!
 //! next to `generation_speed`, `river_speed` and `column_timing` in the crate's tests.
 //! Times are thread CPU time where they can be, so they hold up on a busy machine; stage
@@ -164,6 +166,30 @@ fn first_column() {
     }
 }
 
+/// `cargo test --release -p voxmar_worldgen all_cores -- --ignored --nocapture` generates
+/// the areas of `generation_stages` on every core, the way the game loads land, and reports
+/// the wall-clock time per column: cold, on fresh worlds (building rivers and trails on
+/// the way), and warm, generating the same columns again.
+#[test]
+#[ignore]
+fn all_cores() {
+    let registry = registry();
+    let (mut cold, mut warm, mut columns) = (Duration::ZERO, Duration::ZERO, 0);
+    for seed in SEEDS {
+        let world = Overworld::new(seed, registry.clone());
+        for (cx, cz) in AREAS {
+            for pass in [&mut cold, &mut warm] {
+                let start = Instant::now();
+                std::hint::black_box(crate::tests::generate_area(&world, ColumnPos::new(cx, cz), 8));
+                *pass += start.elapsed();
+            }
+            columns += 64;
+        }
+    }
+    let ms = |d: Duration| d.as_secs_f64() * 1e3 / columns as f64;
+    println!("every core: cold {:.3} ms per column, warm {:.3} ms per column ({columns} columns)", ms(cold), ms(warm));
+}
+
 /// A hash of everything a column holds: its blocks (by name, so that adding a block to
 /// the registry does not change it) and colours.
 fn column_hash(column: &Column, registry: &BlockRegistry) -> u64 {
@@ -190,7 +216,7 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0xc4a2259252bd18d5, 0xdf3eb9ba26a89b9d, 0xf299737c5df82079];
+const EXPECTED: [u64; 3] = [0xf98e4e2dd894a212, 0x039d704ab435faa6, 0x432c2c39dacd67bc];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -215,7 +241,7 @@ fn output_is_unchanged() {
 }
 
 /// The hash of the light over three 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
-const LIGHT: u64 = 0x49b639018a76aeaf;
+const LIGHT: u64 = 0x127bd267373ea260;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
 /// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on

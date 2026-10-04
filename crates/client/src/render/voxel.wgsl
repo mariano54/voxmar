@@ -122,7 +122,7 @@ fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
     }
     if (w0 & FLAG_FRINGE) != 0u {
         let world = fringe_position(w0, origin, across);
-        return world + leaf_flutter(world, globals.time);
+        return world + leaf_flutter(world);
     }
     let up = f32((w0 >> 23u) & 1u) + f32((w0 >> PLANT_STACK_SHIFT) & 3u);
     // The corner of the cell the whole plant stands in.
@@ -139,9 +139,11 @@ fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
     // Bent along a curve from the base, and lower for it; the whole plant leans alike, so
     // a tall plant's two blocks stay joined.
     let centre = base + vec3(0.5, 0.0, 0.5);
-    let lean = (sway(centre.xz, globals.time) + parting(centre)) * 0.4;
+    // Plants sway slower than grass blades, each a little out of step, and tall ones are
+    // stiffer: above its first block a plant bends only with the root of its height.
+    let lean = (sway(centre.xz, 1.25, b.z * 2.0).lean + parting(centre)) * 0.4;
     let rise = up * height;
-    let bend = lean * rise * min(rise, 1.0);
+    let bend = lean * select(sqrt(rise), rise * rise, rise < 1.0);
     let lowered = rise / sqrt(1.0 + dot(lean, lean) * up * up);
     return vec3(centre.x + turned.x + shift.x + bend.x, base.y + lowered - sink, centre.z + turned.y + shift.y + bend.y);
 }
@@ -182,7 +184,7 @@ fn world_position(in: Vertex) -> vec3<f32> {
     var world = origin + local_position(in.packed.x);
     let tint = tint_kind(in.packed.y);
     if tint == TINT_FOLIAGE {
-        return world + leaf_flutter(world, globals.time);
+        return world + leaf_flutter(world);
     }
     if tint == TINT_WATER {
         // Flowing water slopes down from its source.
