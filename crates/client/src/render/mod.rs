@@ -34,24 +34,29 @@ pub mod lod;
 pub mod pack;
 pub mod precipitation;
 pub mod terrain;
+pub mod wind;
 
 pub const ATTRIBUTE_VOXEL: MeshVertexAttribute = MeshVertexAttribute::new("Voxel", 0x766f_786d, VertexFormat::Uint32x2);
 pub const ATTRIBUTE_LOD: MeshVertexAttribute = MeshVertexAttribute::new("Lod", 0x6c6f_6433, VertexFormat::Uint32x4);
 
 const VOXEL_SHADER: &str = "embedded://voxmar/render/voxel.wgsl";
 const DISTANT_SHADER: &str = "embedded://voxmar/render/lod.wgsl";
+const GRASS_SHADER: &str = "embedded://voxmar/render/grass.wgsl";
 
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "lighting.wgsl");
+        load_shader_library!(app, "wind.wgsl");
         embedded_asset!(app, "voxel.wgsl");
         embedded_asset!(app, "lod.wgsl");
+        embedded_asset!(app, "grass.wgsl");
         embedded_asset!(app, "sky.wgsl");
         embedded_asset!(app, "display.wgsl");
         app.add_plugins((
             terrain::TerrainPlugin,
+            wind::WindPlugin,
             MaterialPlugin::<SkyMaterial>::default(),
             FullscreenMaterialPlugin::<DisplayTransform>::default(),
             lod::LodPlugin,
