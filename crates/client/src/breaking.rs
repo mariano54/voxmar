@@ -9,7 +9,8 @@
 //! tick), worked out on the GPU (see `render::particles`).
 
 use bevy::prelude::*;
-use voxmar_engine::block::{BlockId, BlockInfo, RenderKind};
+use voxmar_engine::block::{BlockId, BlockInfo, RenderKind, Tint};
+use voxmar_engine::world::DEFAULT_COLORS;
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, Face};
 
 use crate::interact::{InteractSystems, Target};
@@ -203,11 +204,17 @@ fn piece(
     size: f32,
 ) -> Particle {
     let layer = info.layers[face as usize];
-    let tint = info.tints[face as usize];
-    let climate = world
+    // Tinted faces take the block's biome colour, as the terrain does.
+    let colors = world
         .voxels
         .column(ColumnPos::of_block(pos))
-        .map_or([128, 128], |column| column.climate_at(pos.x & (CHUNK_SIZE - 1), pos.z & (CHUNK_SIZE - 1)));
+        .map_or(DEFAULT_COLORS, |column| column.colors_at(pos.x & (CHUNK_SIZE - 1), pos.z & (CHUNK_SIZE - 1)));
+    let [r, g, b] = match info.tints[face as usize] {
+        Tint::None => [255; 3],
+        Tint::Grass => colors[0],
+        Tint::Foliage => colors[1],
+        Tint::Water => colors[2],
+    };
     Particle {
         position,
         velocity,
@@ -217,7 +224,8 @@ fn piece(
         // Resting mostly above the ground, as a flat piece would.
         floor: landing_floor(world, position, velocity) + size * 0.35,
         size,
-        look: Look::Texture { layer, corner: pieces.corner(layer, dice.roll()), span: 0.25, tint, climate },
+        look: Look::Texture { layer, corner: pieces.corner(layer, dice.roll()), span: 0.25 },
+        color: [r, g, b, 255],
         light: [sky, info.emission],
         ..default()
     }
@@ -248,21 +256,38 @@ fn ground_below(world: &ClientWorld, position: Vec3) -> f32 {
         .map_or(position.y - FLOOR_SCAN as f32 * 2.0, |below| below.y as f32 + 1.0)
 }
 
-/// Sky light at a cell, 0..=15, judged from the columns around it: full where nothing
-/// blocks the sky straight above, one less for each block sideways to the nearest open
-/// column, and none further in. Close enough to light a few particles like the terrain
-/// around them.
+/// Sky light at a cell, 0..=15, judged from the columns around it as the engine lights
+/// them: sky light falls straight down, losing what water and leaves take and stopping at
+/// solid blocks, then spreads sideways one level a block. Close enough to light a few
+/// particles like the terrain around them.
 fn sky_light(world: &ClientWorld, cell: IVec3) -> u8 {
-    let open = |x: i32, z: i32| {
-        (0..SKY_SCAN).all(|dy| !world.block(IVec3::new(x, cell.y + dy, z)).is_some_and(|b| world.registry.info(b).occludes))
+    let column = |x: i32, z: i32| {
+        let mut level = 15u8;
+        for dy in 0..SKY_SCAN {
+            // Unloaded space above is open sky.
+            let Some(block) = world.block(IVec3::new(x, cell.y + dy, z)) else { break };
+            let attenuation = world.registry.info(block).attenuation;
+            if attenuation >= 15 {
+                return 0;
+            }
+            level = level.saturating_sub(attenuation - 1);
+        }
+        level
     };
-    for reach in 0..=3i32 {
-        for dx in -reach..=reach {
-            let dz = reach - dx.abs();
-            if open(cell.x + dx, cell.z + dz) || (dz != 0 && open(cell.x + dx, cell.z - dz)) {
-                return 15 - reach as u8;
+    let mut best = 0u8;
+    for reach in 0..=3u8 {
+        let r = reach as i32;
+        for dx in -r..=r {
+            let dz = r - dx.abs();
+            best = best.max(column(cell.x + dx, cell.z + dz).saturating_sub(reach));
+            if dz != 0 {
+                best = best.max(column(cell.x + dx, cell.z - dz).saturating_sub(reach));
             }
         }
+        // Columns further away give at most one level less.
+        if best >= 15 - (reach + 1) {
+            break;
+        }
     }
-    0
+    best
 }

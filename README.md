@@ -435,8 +435,9 @@ so fronts do not move in lockstep), and water that has settled costs nothing. Ge
 already settled, so loading the world wakes nothing. A tick runs at most a budget of updates
 that adapts to what they cost and how busy the server is (aiming at 4 ms), and the rest wait;
 each player is sent one `Blocks` message per tick with the changes in columns they have. A lake
-48 blocks across pouring 60 blocks into a cave (150 thousand cells changing) runs in about
-0.3 µs per update.
+48 blocks across pouring 60 blocks into a cave (`a_large_flood_is_fast`: 312 thousand updates
+and 154 thousand changed cells over 413 ticks) takes about 0.1 s of work in all, 0.3 µs per
+update, and never more than 2 ms in one tick.
 
 ## Sound
 
