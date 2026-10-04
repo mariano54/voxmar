@@ -76,6 +76,24 @@ each pack provided. A pack keeps images at `textures/<path>.png` (`textures/bloc
 or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No
 Minecraft assets are shipped.
 
+A pack can also describe textures as text, in recipe books (`recipes/*.ron`), which the game
+renders as it loads, so a pack or mod can ship its art with no image files and no build step.
+A recipe is a texture program (palettes, noise, patterns such as cells, bricks, boards and
+rings, edge shading, highlights and cut-outs) or a text sprite (a grid of characters, each a
+colour or palette shade); recipes derive from each other, and templates make a whole family
+(a wood's log, planks, leaves and sapling) from one entry. See the `voxmar_texgen` crate docs.
+A PNG beats a recipe of the same name. The `texgen` tool helps author them:
+
+```bash
+cargo run --release -p voxmar_texgen -- check                  # render every recipe, report errors
+cargo run --release -p voxmar_texgen -- sheet --only stone,ore --compare PACK_OR_JAR
+cargo run --release -p voxmar_texgen -- export --out DIR       # write every recipe as a PNG
+```
+
+`sheet` writes `target/texgen/sheet.png`: each texture large, tiled 3×3 and at one pixel per
+texel, optionally beside the same name from another pack (`--pack DIR` picks the pack,
+`--columns`, `--zoom` and `--out` the layout).
+
 ## Layout
 
 | crate | role |
@@ -85,6 +103,7 @@ Minecraft assets are shipped.
 | `protocol` | client/server messages and transports (in-process channels, TCP) |
 | `server` | authoritative simulation (fixed 20 Hz tick), validation, streaming, world saves; `voxmar-server` binary |
 | `client` | Bevy app: rendering, input, prediction, HUD, menus; the only crate that depends on Bevy |
+| `texgen` | texture recipes and text sprites rendered to pixel art, and the `texgen` review tool |
 
 Content is data: blocks are defined in `assets/content/base/blocks.ron` and loaded through the
 same registry a mod will use. Client and server compare a content fingerprint on join.
