@@ -75,12 +75,37 @@ impl Palette {
     }
 }
 
+/// A material compiled from data.
 #[derive(Clone, Debug)]
-enum Mat {
+pub(crate) enum Mat {
     Mix(Palette),
     Stones,
     Strata,
 }
+
+impl Mat {
+    pub(crate) fn new(material: &Material, registry: &BlockRegistry) -> Self {
+        match material {
+            Material::Block(name) => Mat::Mix(Palette::one(registry.expect(name))),
+            Material::Mix(selects) => Mat::Mix(Palette::new(selects, registry)),
+            Material::Stones => Mat::Stones,
+            Material::Strata => Mat::Strata,
+        }
+    }
+
+    /// The block for a uniform value `u` in 0..1, at height `y` for strata.
+    pub(crate) fn pick(&self, u: f32, stones: &Palette, strata: &[BlockId], y: i32) -> BlockId {
+        match self {
+            Mat::Mix(p) => p.pick(u),
+            Mat::Stones => stones.pick(u),
+            Mat::Strata => strata[y.rem_euclid(strata.len() as i32) as usize],
+        }
+    }
+}
+
+/// Conditions compiled from data, for other rules that test columns the way surfaces do.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Conditions(Vec<Cond>);
 
 #[derive(Clone, Debug)]
 struct LayersRule {
@@ -186,12 +211,7 @@ impl SurfaceRules {
     }
 
     pub fn compile(&mut self, def: &SurfaceDef, registry: &BlockRegistry, rocks: &Rocks) -> Surface {
-        let material = |m: &Material| match m {
-            Material::Block(name) => Mat::Mix(Palette::one(registry.expect(name))),
-            Material::Mix(selects) => Mat::Mix(Palette::new(selects, registry)),
-            Material::Stones => Mat::Stones,
-            Material::Strata => Mat::Strata,
-        };
+        let material = |m: &Material| Mat::new(m, registry);
         let layers = |l: &LayersDef| LayersRule {
             top: material(&l.top),
             filler: l.filler.as_ref().map_or_else(|| material(&l.top), material),
@@ -213,6 +233,15 @@ impl SurfaceRules {
             shore: def.shore.as_ref().map(layers),
             cliff: def.cliff.as_ref().map_or(Mat::Stones, material),
         }
+    }
+
+    pub(crate) fn conditions(&mut self, when: &[Condition], rocks: &Rocks) -> Conditions {
+        Conditions(when.iter().map(|c| self.condition(c, rocks)).collect())
+    }
+
+    /// Whether all of `conditions` hold at a spot.
+    pub(crate) fn hold(&self, conditions: &Conditions, spot: &Spot) -> bool {
+        conditions.0.iter().all(|c| self.holds(c, spot))
     }
 
     fn condition(&mut self, c: &Condition, rocks: &Rocks) -> Cond {
@@ -291,6 +320,20 @@ impl SurfaceRules {
             _ => &surface.ground,
         };
         resolve(self.first(surface, spot, false, fallback), spot, stones, strata)
+    }
+
+    /// The lining of a cave floor (`ground`, or `underwater` when `underwater`) for an
+    /// underground biome's surface; `None` where it is the stones beneath, which stay as
+    /// they are.
+    pub(crate) fn cave_floor(&self, surface: &Surface, spot: &Spot, underwater: bool, stones: &Palette, strata: &[BlockId]) -> Option<Layers> {
+        let rule = self.first(surface, spot, underwater, if underwater { &surface.underwater } else { &surface.ground });
+        (!matches!(rule.top, Mat::Stones)).then(|| resolve(rule, spot, stones, strata))
+    }
+
+    /// The lining of a cave ceiling (an underground biome's `cliff`), if it is not the
+    /// stones beneath.
+    pub(crate) fn cave_ceiling(&self, surface: &Surface, spot: &Spot, stones: &Palette, strata: &[BlockId]) -> Option<BlockId> {
+        (!matches!(surface.cliff, Mat::Stones)).then(|| surface.cliff.pick((spot.mix)(), stones, strata, spot.site.height))
     }
 
     /// Bare rock of steep slopes and exposed heights.

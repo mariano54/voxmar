@@ -27,6 +27,7 @@ mod rocks;
 mod surface;
 mod terrain;
 mod trees;
+mod underground;
 mod water;
 
 use std::sync::Arc;
@@ -186,6 +187,7 @@ pub struct Overworld {
     rocks: Rocks,
     rules: SurfaceRules,
     caves: caves::Caves,
+    underground: underground::Underground,
     terrain: terrain::Terrain,
     /// Clumps for dithering between biomes near their borders.
     blend: FastNoiseLite,
@@ -213,6 +215,7 @@ impl Overworld {
         let rocks = Rocks::new(stream, content, &registry, &dials.featured);
         let mut rules = SurfaceRules::new(stream, content, &registry);
         let biomes = Biomes::new(content, &registry, &mut rules, &rocks, &dials.featured);
+        let underground = underground::Underground::new(stream, content, &registry, &biomes, &mut rules, &rocks);
         Self {
             dials,
             geology: Geology::new(stream, &dials),
@@ -220,6 +223,7 @@ impl Overworld {
             rivers: water::Rivers::new(stream, &dials),
             ecology: Ecology::new(stream, &dials, content, &registry),
             caves: caves::Caves::new(stream, &dials),
+            underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
             biomes,
             rocks,
@@ -244,6 +248,20 @@ impl Overworld {
     /// The biome whose rules make the ground at (x, z).
     pub fn biome_at(&self, x: i32, z: i32) -> &Biome {
         self.biomes.get(self.site(x, z).biome)
+    }
+
+    /// The cave biome at `pos`, if one claims it and `pos` is underground. Taken from the
+    /// nearest point of the lattice generation picks on; near a border, generation dithers
+    /// between it and its neighbours.
+    pub fn cave_biome_at(&self, pos: IVec3) -> Option<&Biome> {
+        if pos.y > self.height(pos.x, pos.z) {
+            return None;
+        }
+        let at = underground::Underground::nearest(pos);
+        let sampler = self.sampler(IVec2::new(at.x, at.z), IVec2::new(at.x, at.z));
+        let (surface, province) = sampler.underground_point(at.x, at.z);
+        let id = self.underground.pick(&self.biomes, at, self.height(at.x, at.z), &surface, province)?;
+        Some(self.biomes.get(id))
     }
 
     /// The nearest place within `radius` blocks of `from` that belongs to the biome
@@ -439,6 +457,12 @@ impl Sampler<'_> {
         };
         let (home, neighbour) = (own(pick.home), own(pick.neighbour));
         std::array::from_fn(|i| mix(home[i], neighbour[i], share))
+    }
+
+    /// The biome picker's fields and the rock province at (x, z), for cave biomes.
+    pub(crate) fn underground_point(&self, x: i32, z: i32) -> (Point, ProvinceId) {
+        let regional = self.grid.at(x, z);
+        (self.world.point(&regional), self.world.rocks.at(x, z, regional.warp))
     }
 
     /// The biome pick of the cell holding (x, z).
@@ -804,6 +828,46 @@ mod tests {
         assert!(fluids > 0 && caves > 0);
     }
 
+    /// Cave biomes line and decorate their caves: their blocks turn up underground, and no
+    /// decoration floats with air on every side. (Linings may: the caves leave the odd
+    /// lone block of rock.)
+    #[test]
+    fn caves_are_decorated() {
+        let registry = registry();
+        let decorations: Vec<BlockId> =
+            ["glowstone", "sea_lantern", "mangrove_roots", "azalea_leaves", "brown_mushroom", "moss_block", "blue_ice"].map(|n| registry.expect(&format!("base:{n}"))).to_vec();
+        // The last two also line caves or make up their rock.
+        let decoration_only = decorations.len() - 2;
+        let mut found = vec![0; decorations.len()];
+        for (seed, place) in [(1, (0, 0)), (7, (200, 150)), (42, (-300, -100))] {
+            let world = Overworld::new(seed, registry.clone());
+            let first = ColumnPos::of_block(IVec3::new(place.0, 0, place.1)).offset(-4, -4);
+            let columns = generate_area(&world, first, 8);
+            let origin = first.origin();
+            let block = |p: IVec3| {
+                let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+                columns[(cz * 8 + cx) as usize].block(IVec3::new(p.x & 31, p.y, p.z & 31))
+            };
+            // Inside the area, leaving a block's margin for the neighbours read.
+            for z in origin.z + 1..origin.z + 255 {
+                for x in origin.x + 1..origin.x + 255 {
+                    let height = world.height(x, z);
+                    for y in 6..height - 3 {
+                        let p = IVec3::new(x, y, z);
+                        let Some(i) = decorations.iter().position(|&d| d == block(p)) else { continue };
+                        found[i] += 1;
+                        if i >= decoration_only {
+                            continue;
+                        }
+                        let sides = [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z];
+                        assert!(sides.iter().any(|&d| !block(p + d).is_air()), "seed {seed}: {} floats at {p}", registry.def(block(p)).name);
+                    }
+                }
+            }
+        }
+        assert!(found.iter().filter(|&&n| n > 0).count() >= 5, "{found:?}");
+    }
+
     /// `cargo test --release -p voxmar_worldgen cave_preview -- --ignored --nocapture`
     /// (optionally with `SEED=n` and a centre `X=x Z=z`, by default spawn) writes views of
     /// the caves over 1.5 km to `target/`: `caves_xray.ppm`, a top-down view where brighter
@@ -900,6 +964,36 @@ mod tests {
             }
         }
         write("caves_levels.ppm", 2 * SIZE, SIZE, &cuts);
+
+        // The cave biomes of the same cuts, a pixel every 8 blocks, a colour per biome.
+        const STEP: i32 = 8;
+        const PALETTE: [[f32; 3]; 14] = [
+            [0.45, 0.45, 0.45], [0.85, 0.55, 0.25], [0.35, 0.8, 0.25], [0.6, 0.4, 0.2], [0.75, 0.9, 1.0], [0.95, 0.25, 0.1], [0.95, 0.4, 0.7],
+            [0.3, 0.5, 1.0], [0.1, 0.75, 0.75], [0.1, 0.1, 0.3], [0.9, 0.9, 0.2], [1.0, 1.0, 1.0], [0.6, 0.2, 0.8], [0.2, 0.4, 0.2],
+        ];
+        let underground: Vec<&str> = world.biomes().iter().filter(|(_, b)| b.layer == content::Layer::Underground).map(|(_, b)| b.name.as_str()).collect();
+        let colour = |name: &str| PALETTE[underground.iter().position(|n| *n == name).unwrap_or(0) % PALETTE.len()];
+        let mut seen: Vec<String> = Vec::new();
+        let mut map = Vec::new();
+        for z in (origin.z..origin.z + SIZE).step_by(STEP as usize) {
+            for y in levels {
+                for x in (origin.x..origin.x + SIZE).step_by(STEP as usize) {
+                    map.push(match world.cave_biome_at(IVec3::new(x, y, z)) {
+                        Some(biome) => {
+                            if !seen.contains(&biome.name) {
+                                seen.push(biome.name.clone());
+                            }
+                            colour(&biome.name)
+                        }
+                        None => [0.0, 0.0, 0.0],
+                    });
+                }
+            }
+        }
+        write("caves_biomes.ppm", 2 * SIZE / STEP, SIZE / STEP, &map);
+        for name in seen {
+            println!("{name}: {:?}", colour(&name).map(|c| (c * 255.0) as u8));
+        }
         println!("{:#?}\ncentre {centre}, spawn {spawn}", world.cave_style());
     }
 
@@ -986,6 +1080,70 @@ mod tests {
                 let camera = at.as_vec3() + voxmar_engine::glam::Vec3::new(10.0, 9.0, 10.0);
                 let d = camera - eye;
                 println!("  opening: {count} blocks, {depth} deep at {at}: --pose {:.1},{:.1},{:.1},45,-35", d.x, d.y, d.z);
+            }
+
+            // Cave biomes: the share of open cave each takes, and the best view of each:
+            // the most open space around, with light near it, every 4 blocks across the area.
+            let origin = first.origin();
+            let block = |p: IVec3| {
+                let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+                let inside = (0..19).contains(&cx) && (0..19).contains(&cz) && (0..voxmar_engine::coords::WORLD_HEIGHT).contains(&p.y);
+                inside.then(|| columns[(cz * 19 + cx) as usize].block(IVec3::new(p.x & 31, p.y, p.z & 31)))
+            };
+            let lights: Vec<BlockId> = ["base:glowstone", "base:sea_lantern", "base:lava"].iter().filter_map(|n| registry.id(n)).collect();
+            let air = |p: IVec3| block(p).is_some_and(|b| b.is_air());
+            let mut biomes: Vec<(String, u64, (i32, IVec3, f32))> = Vec::new();
+            let mut total = 0;
+            for (i, column) in columns.iter().enumerate() {
+                let corner = first.offset(i as i32 % 19, i as i32 / 19).origin();
+                for (x, z) in (0..8).flat_map(|a| (0..8).map(move |b| (a * 4 + 1, b * 4 + 2))) {
+                    let height = world.height(corner.x + x, corner.z + z);
+                    let mut run = 0;
+                    for y in (4..height).rev() {
+                        if column.block(IVec3::new(x, y, z)).is_air() {
+                            run += 1;
+                            continue;
+                        }
+                        if run >= 4 {
+                            let camera = corner + IVec3::new(x, y + 3, z);
+                            let name = world.cave_biome_at(camera).map_or("none".to_owned(), |b| b.name.clone());
+                            total += run as u64;
+                            let i = biomes.iter().position(|b| b.0 == name).unwrap_or_else(|| {
+                                biomes.push((name, 0, (i32::MIN, IVec3::ZERO, 0.0)));
+                                biomes.len() - 1
+                            });
+                            biomes[i].1 += run as u64;
+                            // The longest view along eight directions, and light within it.
+                            let (mut view, mut yaw) = (0, 0.0f32);
+                            for d in 0..8 {
+                                let a = d as f32 * std::f32::consts::FRAC_PI_4;
+                                let dir = voxmar_engine::glam::Vec2::new(a.cos(), a.sin());
+                                let length = (1..32).take_while(|&k| {
+                                    let step = (dir * k as f32).round().as_ivec2();
+                                    air(camera + IVec3::new(step.x, 0, step.y))
+                                }).count() as i32;
+                                if length > view {
+                                    (view, yaw) = (length, (-dir.x).atan2(-dir.y).to_degrees());
+                                }
+                            }
+                            let lit = (-8..=8)
+                                .flat_map(|dz| (-6..=6).flat_map(move |dy| (-8..=8).map(move |dx| IVec3::new(dx, dy, dz))))
+                                .filter(|&d| block(camera + d).is_some_and(|b| lights.contains(&b)))
+                                .count() as i32;
+                            let score = view + run.min(20) + 12 * lit.min(4);
+                            if score > biomes[i].2.0 {
+                                biomes[i].2 = (score, camera, yaw);
+                            }
+                        }
+                        run = 0;
+                    }
+                }
+            }
+            biomes.sort_by_key(|b| std::cmp::Reverse(b.1));
+            for (name, count, (score, camera, yaw)) in biomes {
+                let d = camera.as_vec3() + 0.5 - eye;
+                let share = 100.0 * count as f64 / total.max(1) as f64;
+                println!("  {name}: {share:.1}% of caves; view {score} at {camera}: --pose {:.1},{:.1},{:.1},{yaw:.0},-12", d.x, d.y, d.z);
             }
         }
     }
