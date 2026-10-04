@@ -46,9 +46,12 @@ const HAZE_HEIGHT: f32 = 90.0;
 /// Distant terrain fades completely into the sky over its last 40%.
 const EDGE_FADE: f32 = 0.6;
 /// Ground fog at full density takes this much light out per block (about 65 blocks of
-/// visibility inside it), and thins over a few blocks above its top.
+/// visibility inside it), and thins by e every `GROUND_FOG_THINNING` blocks above its top,
+/// so it has no hard top and reaches thinly up the slopes. The volumetric pass draws it as
+/// far as `GROUND_FOG_REACH`, uneven and drifting; beyond, it is smooth.
 const GROUND_FOG: f32 = 0.06;
-const GROUND_FOG_SOFTNESS: f32 = 2.5;
+const GROUND_FOG_THINNING: f32 = 9.0;
+const GROUND_FOG_REACH: f32 = 160.0;
 /// The weather's fog is thick up to this far below the eye, whose weather it is, and thins
 /// by e every `FOG_HEIGHT` blocks above that.
 const FOG_BELOW_EYE: f32 = 16.0;
@@ -64,6 +67,13 @@ const RAY_REACH: f32 = 96.0;
 const RAY_STEPS: f32 = 12.0;
 const RAY_ISOTROPIC: f32 = 0.015;
 const RAY_CLEAR_AIR: f32 = 10.0;
+/// The low cloud: its base over sea level in fair and in wet weather, its depth as flat
+/// layers and as heaped cloud, steps through it in the volumetric pass, and how far it is
+/// drawn. High peaks stand in it; in rain it comes down onto the hills.
+const CLOUD_BASE: [f32; 2] = [170.0, 95.0];
+const CLOUD_DEPTH: [f32; 2] = [28.0, 100.0];
+const CLOUD_STEPS: f32 = 16.0;
+const CLOUD_FAR: f32 = 6000.0;
 /// The widest shadow penumbra, in blocks, and how far shadow lookups step off a surface,
 /// in shadow texels.
 const MAX_PENUMBRA: f32 = 0.6;
@@ -84,7 +94,9 @@ pub struct Atmosphere {
     pub mist: Vec4,
     pub rays: Vec4,
     pub clouds: Vec4,
-    pub cloud_shadow: Vec4,
+    pub cloud_shape: Vec4,
+    pub cloud_look: Vec4,
+    pub cloud_map: Vec4,
     pub ground: Vec4,
 }
 
@@ -170,7 +182,9 @@ impl Atmosphere {
                 mist: Vec4::new(0.0, 0.0, 1.0, 0.0),
                 rays: Vec4::ZERO,
                 clouds: Vec4::ZERO,
-                cloud_shadow: Vec4::new(0.0, 0.0, CLOUD_HEIGHT, 0.0),
+                cloud_shape: Vec4::new(1.0, 2.0, 0.0, 0.0),
+                cloud_look: Vec4::ZERO,
+                cloud_map: Vec4::ZERO,
                 ground: Vec4::new(0.0, 0.0, 0.0, pack.bounce),
             };
         }
@@ -208,11 +222,13 @@ impl Atmosphere {
             haze_shape: Vec4::new(HAZE_BASE, HAZE_HEIGHT, view_distance * EDGE_FADE, view_distance),
             glow: light.glow.extend(if rays { RAY_REACH } else { 0.0 }),
             fog: fog_color.extend(weather_fog),
-            fog_shape: Vec4::new(eye_height - FOG_BELOW_EYE, FOG_HEIGHT, 0.0, 0.0),
-            mist: Vec4::new(ground_fog, weather.fog_top, GROUND_FOG_SOFTNESS, 0.0),
+            fog_shape: Vec4::new(eye_height - FOG_BELOW_EYE, FOG_HEIGHT, SEA_LEVEL, 0.0),
+            mist: Vec4::new(ground_fog, weather.fog_top, GROUND_FOG_THINNING, if ground_fog > 0.0 { GROUND_FOG_REACH } else { 0.0 }),
             rays: Vec4::new(if rays { pack.rays } else { 0.0 }, RAY_STEPS, RAY_ISOTROPIC, clear_air),
             clouds: Vec4::ZERO,
-            cloud_shadow: Vec4::new(0.0, 0.0, CLOUD_HEIGHT, 0.0),
+            cloud_shape: Vec4::new(1.0, 2.0, 0.0, 0.0),
+            cloud_look: Vec4::ZERO,
+            cloud_map: Vec4::ZERO,
             ground: Vec4::new(
                 weather.wetness.clamp(0.0, 1.0) * pack.wet_ground,
                 weather.frost.clamp(0.0, 1.0) * pack.frost,
@@ -222,23 +238,30 @@ impl Atmosphere {
         }
     }
 
-    /// Adds the shadows of the low cloud the sky draws: its layer's coordinates over the
-    /// eye (`SkyParams::weather.xy`) and how long it has been forming (`SkyParams::clouds.x`).
-    /// They fade as the sky closes over, when the cloud's dimming of the whole sky (in the
-    /// sun's colour) takes over.
-    pub fn with_clouds(mut self, weather: &Weather, layer: Vec2, seconds: f32, pack: &ShaderPack) -> Self {
-        // As the sky draws it, rain only falls from a well covered sky.
+    /// Adds the low cloud: a layer in the world whose base comes down in wet weather and
+    /// which heaps up with convection, its noise coordinates over the eye (`layer`, as
+    /// `SkyParams::weather.xy`), the cloud map's corner from the eye (`map`,
+    /// `cloud_map::corner`), how long it has been forming and a lightning flash in it.
+    /// Its shadows on the land fade as the sky closes over, when the cloud's dimming of the
+    /// whole sky (in the sun's colour) takes over.
+    pub fn with_clouds(mut self, weather: &Weather, layer: Vec2, map: Vec2, seconds: f32, flash: f32, pack: &ShaderPack) -> Self {
+        // Rain only falls from a well covered sky.
         let cover = (weather.cover + 0.25 * weather.precipitation).min(1.0);
         let strength = pack.cloud_shadows * (1.0 - smoothstep(0.6, 0.95, cover));
+        let wet = smoothstep(0.5, 1.0, cover) * (0.4 + 0.6 * weather.precipitation.min(1.0));
+        let base = SEA_LEVEL + CLOUD_BASE[0] + (CLOUD_BASE[1] - CLOUD_BASE[0]) * wet;
+        let depth = (CLOUD_DEPTH[0] + (CLOUD_DEPTH[1] - CLOUD_DEPTH[0]) * weather.convection) * (0.7 + 0.3 * cover);
+        let storm = weather.precipitation.min(1.0) * (0.4 + 0.6 * weather.convection);
         self.clouds = Vec4::new(layer.x, layer.y, cover, weather.convection);
-        self.cloud_shadow = Vec4::new(seconds, strength, CLOUD_HEIGHT, 0.0);
+        self.cloud_shape = Vec4::new(base, base + depth, seconds, storm);
+        self.cloud_look = Vec4::new(strength, flash, if cover > 0.005 { CLOUD_STEPS } else { 0.0 }, CLOUD_FAR);
+        self.cloud_map = Vec4::new(map.x, map.y, super::cloud_map::EXTENT, if cover > 0.005 { 1.0 } else { 0.0 });
         self
     }
 }
 
-/// The low cloud's height above the eye, in blocks, as the sky draws it: two of its
-/// coordinate units (see clouds.wgsl).
-const CLOUD_HEIGHT: f32 = 2.0 * super::CLOUD_UNIT as f32;
+/// Sea level (`voxmar_worldgen::SEA_LEVEL`), which the cloud base is measured from.
+const SEA_LEVEL: f32 = voxmar_worldgen::SEA_LEVEL as f32;
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -313,8 +336,25 @@ mod tests {
         let valley = Weather { ground_fog: 0.9, fog_top: 82.0, ..Weather::NONE };
         let foggy = Atmosphere::new(&light, &valley, &Air::default(), &pack, quality, View::new(2000.0));
         assert!(foggy.mist.x > 0.04 && foggy.mist.y == 82.0);
+        // The volumetric pass shapes it only when there is some.
+        assert_eq!(clear.mist.w, 0.0);
+        assert!(foggy.mist.w > 0.0);
         let none = ShaderPack { mist: 0.0, ..ShaderPack::default() };
         assert_eq!(Atmosphere::new(&light, &valley, &Air::default(), &none, quality, View::new(2000.0)).mist.x, 0.0);
+    }
+
+    #[test]
+    fn the_low_cloud_comes_down_in_rain() {
+        let pack = ShaderPack::default();
+        let air = Atmosphere::new(&Light::default(), &Weather::NONE, &Air::default(), &pack, Quality::default(), View::new(2000.0));
+        let cloud = |weather: Weather| air.with_clouds(&weather, Vec2::ZERO, Vec2::ZERO, 0.0, 0.0, &pack);
+        assert_eq!(cloud(Weather::NONE).cloud_look.z, 0.0, "a clear sky has no cloud to march");
+        let fair = cloud(Weather { cover: 0.4, ..Weather::NONE });
+        let rain = cloud(Weather { cover: 1.0, precipitation: 1.0, ..Weather::NONE });
+        assert!(fair.cloud_look.z > 0.0);
+        assert!(fair.cloud_shape.x > SEA_LEVEL + 150.0, "fair-weather cloud lies above the hills: {}", fair.cloud_shape.x);
+        assert!(rain.cloud_shape.x < fair.cloud_shape.x - 50.0, "rain cloud comes down onto them");
+        assert!(rain.cloud_shape.y > rain.cloud_shape.x && rain.cloud_shape.w > fair.cloud_shape.w);
     }
 
     #[test]

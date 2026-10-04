@@ -53,6 +53,7 @@ mod compact;
 
 use compact::Compaction;
 
+use super::cloud_map::CloudMap;
 use super::atmosphere::{Atmosphere, AtmosphereBuffer};
 use super::lod::{LodVertex, TileKey, TileMesh};
 use super::water::{self, WaterParams};
@@ -126,11 +127,11 @@ impl Plugin for TerrainPlugin {
     }
 }
 
-/// The block texture array, and how brightly each texture layer glows by itself.
+/// The block texture array, and each texture layer's overlay and glow (`LayerInfo`).
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TerrainTextures {
     pub textures: Handle<Image>,
-    pub glow: Handle<Image>,
+    pub layers: Handle<Image>,
 }
 
 /// The main world's handle on terrain rendering.
@@ -946,10 +947,12 @@ fn prepare_bind_group(
     device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
     atmosphere: Res<AtmosphereBuffer>,
+    cloud_map: Option<Res<CloudMap>>,
 ) {
     if gpu.bind_group.is_some() && gpu.distant_bind_group.is_some() && !gpu.bind_group_dirty {
         return;
     }
+    let Some(cloud_map) = cloud_map else { return };
     let (Some(origins), Some(view), Some(coverage)) = (&gpu.origins_buffer, &gpu.distant_view, &gpu.coverage) else { return };
     let distant = device.create_bind_group(
         "distant_bind_group",
@@ -959,10 +962,12 @@ fn prepare_bind_group(
             (1, view.as_entire_binding()),
             (2, coverage.as_entire_binding()),
             (6, atmosphere.0.as_entire_binding()),
+            (8, &cloud_map.view),
+            (9, &cloud_map.sampler),
         )),
     );
-    let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.glow)?)));
-    let (Some((blocks, glow)), Some(seeds), Some(wind), Some(colours)) =
+    let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.layers)?)));
+    let (Some((blocks, layers)), Some(seeds), Some(wind), Some(colours)) =
         (textures, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer)
     else {
         gpu.distant_bind_group = Some(distant);
@@ -979,7 +984,9 @@ fn prepare_bind_group(
             wind.as_entire_binding(),
             colours.as_entire_binding(),
             atmosphere.0.as_entire_binding(),
-            &glow.texture_view,
+            &layers.texture_view,
+            &cloud_map.view,
+            &cloud_map.sampler,
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -1230,9 +1237,12 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 uniform_buffer::<WindUniform>(false),
                 // Biome colours of columns, by block.
                 storage_buffer_read_only_sized(false, None),
-                // The air and light (lighting.wgsl), and each texture layer's glow.
+                // The air and light (lighting.wgsl), and each texture layer's overlay and glow.
                 uniform_buffer::<Atmosphere>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
+                // The cloud map (cloud_map.rs).
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
             ),
         ),
     );
@@ -1262,8 +1272,10 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 (0, storage_buffer_read_only_sized(false, None)),
                 (1, uniform_buffer::<DistantView>(false)),
                 (2, storage_buffer_read_only_sized(false, None)),
-                // The air and light, at the binding lighting.wgsl expects.
+                // The air and light, at the binding lighting.wgsl expects, and the cloud map.
                 (6, uniform_buffer::<Atmosphere>(false)),
+                (8, texture_2d(TextureSampleType::Float { filterable: true })),
+                (9, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
@@ -1338,8 +1350,11 @@ pub(super) fn mesh_like(
     descriptor.layout.push(group.clone());
     descriptor.vertex.shader = shader.clone();
     descriptor.vertex.buffers = vec![vertex_layout.layout().clone()];
+    // Every such pipeline binds the cloud map (bindings 8 and 9).
+    descriptor.vertex.shader_defs.push("CLOUD_MAP".into());
     if let Some(fragment) = descriptor.fragment.as_mut() {
         fragment.shader = shader.clone();
+        fragment.shader_defs.push("CLOUD_MAP".into());
     }
     Some(descriptor)
 }

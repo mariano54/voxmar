@@ -1,11 +1,11 @@
 // Soils, sand, gravel, snow, ice and fired clay. Grass tops are grey: the game tints them
-// with the climate's grass colour. Grass sides are drawn in a typical grass green, since
-// only the top is tinted.
+// with the climate's grass colour. So is the fringe of grass on a grass block's side, its
+// overlay, which the game draws tinted over the side as Minecraft does; the side itself
+// is that fringe stamped on dirt.
 (
     palettes: {
         "dirt": ["#5b3d27", "#6c4a31", "#7d583b", "#8c6546", "#9b7352", "#aa8260"],
         "grass_grey": ["#6c6c6c", "#7c7c7c", "#8c8c8c", "#9b9b9b", "#a9a9a9", "#b9b9b9"],
-        "grass_side": ["#3f6e27", "#4c7f2e", "#5a9036", "#68a03f", "#77ae49"],
         "snow": ["#cfd9e2", "#dce5ec", "#e7eef3", "#f0f5f8", "#f8fbfc", "#ffffff"],
         "sand": ["#c4b080", "#cfbb8b", "#d8c596", "#e0cea0", "#e7d6aa", "#eedeb4"],
         "red_sand": ["#9c4e1c", "#a95922", "#b5632a", "#c06e33", "#ca7a3e", "#d3864a"],
@@ -75,8 +75,11 @@
         "block/grass_block_top": (palettes: {"main": "grass_grey"}, layers: [
             Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.3), Grain(0.75)]),
         ]),
-        "block/grass_block_side": (base: "block/dirt", palettes: {"grass": "grass_side"}, layers: [
-            Paint(palette: "grass", base: 0.5, shade: [Grain(0.7), Gradient(from: 0.2, to: -0.35)], mask: [Fringe(depth: (2, 5), smooth: 0.1)], above: 0.5, shadow: -1),
+        "block/grass_block_side_overlay": (palettes: {"grass": "grass_grey"}, layers: [
+            Paint(palette: "grass", base: 0.5, shade: [Grain(0.7), Gradient(from: 0.2, to: -0.35)], mask: [Fringe(depth: (2, 5), smooth: 0.1)], above: 0.5),
+        ]),
+        "block/grass_block_side": (base: "block/dirt", layers: [
+            Stamp(texture: "block/grass_block_side_overlay", shadow: -1),
         ]),
         "block/grass_block_snow": (base: "block/dirt", palettes: {"snow": "snow"}, layers: [
             Paint(palette: "snow", base: 0.6, shade: [Noise(cells: (8, 8), amount: 0.4), Gradient(from: 0.2, to: -0.3)], mask: [Fringe(depth: (3, 6), smooth: 0.5)], above: 0.5, shadow: -1),

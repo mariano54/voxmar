@@ -569,43 +569,109 @@ steeply with the sky light level (`sky_falloff`, an exponent), so forest floors,
 and the inside of crowns are far darker than open ground, and only sunflecks are bright
 there; voxel ambient occlusion grounds corners and wall bases (`ambient_occlusion`);
 sunlit leaves and plants glow, most when seen against the sun (`subsurface`); passing
-clouds shade the land (`cloud_shadows`): the sky's low cloud is a plane two cloud units
-above the eye, so a point's cloud is where its ray to the sun meets that plane, and the
-same noise (clouds.wgsl) draws the cloud and its shadow. Rain darkens and wets open
+clouds shade the land (`cloud_shadows`): a point's cloud is where its ray to the sun
+crosses the middle of the low cloud's layer, and the same density (atmosphere.wgsl,
+`cloud_density`) draws the cloud and its shadow. Rain darkens and wets open
 surfaces, fills puddles on level ground that mirror the sky, and frost whitens what lies
 under the open sky (`wet_ground`, `frost`).
 
 **Glowing blocks** glow by themselves, not only light their surroundings: every texture
-layer of a block that gives off light gets a glow strength from its light level (a table of
-one texel per layer, built in main.rs, `glow_table` in render/mod.rs), and the terrain
-shader adds the tinted texel times that strength to its bright texels only (a lantern's
-flame, magma's cracks, lichen's spots; dark texels stay dark), up to three times the lit
-texture at full light, so the brightest bloom. The table's colour channels are white for
-now, room for coloured block light later; a per-texel mask texture can replace the
-brightness test when a pack ships one. Strength: the pack's `glow`.
+layer of a block that gives off light gets a glow strength from its light level (in the
+layer table, one texel per layer, built in main.rs, `layer_table` in render/mod.rs), and
+the terrain shader adds the tinted texel times that strength to its bright texels only (a
+lantern's flame, magma's cracks, lichen's spots; dark texels stay dark), up to three times
+the lit texture at full light, so the brightest bloom. A per-texel mask texture can
+replace the brightness test when a pack ships one. Strength: the pack's `glow`.
+
+**Grass block sides** match their tops: the side of an opaque block with a tinted top
+takes the pack's `<side>_overlay` texture (Minecraft's `grass_block_side_overlay`, our
+pack's recipe of the same name), from the same pack as the side so the two line up, and
+the terrain shader draws it over the side by its alpha, tinted with the biome colour the
+top has; before, the side showed the pack's fixed green fringe whatever the biome. The
+layer table holds each layer's overlay and its tint; break particles, inventory icons and
+the distant terrain's colours take the overlay too.
 
 **The air** (atmosphere.wgsl, render/atmosphere.rs): clear-air haze densest at sea level
-and thinning with height, a layer of ground fog under the weather's `fog_top` (valley fog,
-dawn mist, sea fog), and the weather's fog, dust and falling rain and snow, each
-integrated analytically along the view ray (the ground fog's density profile is a
-logistic step whose integral is a softplus), so fog costs a few exponentials per pixel and
-never bands. Weather fog is an extinction set from `Weather::visibility` (2% shows at that
-distance, so a blizzard closes the view to ~60 blocks); fog is lit by the sky and sun and
-takes the colour of blowing dust; the haze takes the place's colour and density from
-`ClientAtmosphere` as far as the pack's `local_air` lets it. The sky is fogged by the same
-functions as the far edge of the land, so they always meet. Everything shares one uniform
-(`Atmosphere`), bound with the terrain and the sky.
+and thinning with height, ground fog (valley fog, dawn mist, sea fog) densest below the
+weather's `fog_top` and thinning by e every 9 blocks above it, so it fills valleys, has no
+hard top and reaches thinly up the slopes, and the weather's fog, dust and falling rain
+and snow. Beyond the volumetric pass's reach each is integrated analytically along the
+view ray (exponential height profiles integrate exactly), so it costs a few exponentials
+per pixel and never bands. Weather fog is an extinction set from `Weather::visibility`
+(2% shows at that distance, so a blizzard closes the view to ~60 blocks); fog is lit by
+the sky and sun and takes the colour of blowing dust; the haze takes the place's colour
+and density from `ClientAtmosphere` as far as the pack's `local_air` lets it. The sky is
+fogged by the same functions as the far edge of the land, so they always meet.
+Everything shares one uniform (`Atmosphere`), bound with the terrain, the sky, particles
+and the volumetric pass.
 
-**Volumetric light** (volumetric.wgsl, after the main passes, before bloom): marches each
-view ray through the cascaded shadow maps out to 96 blocks in 12 steps spaced more closely
-near the eye, adding the sunlight the air scatters towards the eye where the sun reaches it:
-shafts through gaps in canopies, mist and fog glowing in the sun, the sun's glow in haze.
-Rays are marched at half resolution (the light is soft) with each ray's length kept beside
-its light, and added at full resolution from the nearby rays that ended about as far away
-as the pixel's own surface, so shafts keep sharp edges against trunks and ridges in front
-of them. Clear air scatters it more than it dims the view (an artistic
-boost, as shader packs do), so shafts show in clear weather too. Forward fog leaves the
-sunlight within the pass's reach to it, so nothing is counted twice. Setting: Light shafts.
+**The volumetric pass** (volumetric.wgsl, render/volumetric.rs) draws the air in front of
+the view over the opaque scene and the water, before Bevy's transparent pass, so rain and
+snow fall in front of it. Each view ray is marched at half resolution (all of this is
+soft) for the light the air adds and how much of the scene shows through, then blended
+over the image at full resolution from the nearby rays whose surfaces lie about as far
+away as the pixel's own, so nothing bleeds across a trunk or a ridge. It draws:
+
+- *The low cloud*, a layer in the world (Mariano's playtest of 8e6c104: clouds were a
+  picture on the sky, and on a mountain they should pass you). Its base lies 170 blocks
+  above sea level in fair weather and comes down to 95 in rain, onto the hills; it is 28
+  blocks deep as a flat layer and up to 100 as heaped cumulus. The same 2D noise as before
+  sets where cloud is, and within the layer heaped cloud rises in domes over flat bases,
+  its thickest cores tallest; within 800 blocks 3D puffs about 20 blocks across bite into
+  its edges and tops. 16 steps cross the layer, up to 32 where it is seen at a slant so no
+  step is much longer than 12 blocks, closer together near the eye from inside it; inside,
+  you see about 20 blocks. Each step looks twice towards the sun for the cloud in the way
+  (12 and 48 blocks off), so sunlit faces and tops are bright, the far side and the bases
+  grey, and puffs shade each other; light scattered many times inside softens that, edges
+  towards the sun glow silver, storms darken the bases and lightning lights the layer. The
+  haze between the eye and the cloud is the same aerial perspective as the land's, and
+  cloud thins into the sky beyond 3000 blocks. Steps start at white noise per ray (the
+  interleaved gradient noise used before left diagonal streaks without temporal filtering). From a peak in rain the cloud
+  drifts past and around you, hides the valley below and the summit above. The sky dome
+  keeps only the high sheet and the cirrus, which lie far above any mountain.
+- *Ground fog* near the eye (within 160 blocks), as an uneven, drifting volume rather than
+  a smooth layer (Mariano: fog sat in one layer low down): its top swells and sinks by up
+  to 6 blocks across the land and its body billows in two octaves of 3D noise, drifting
+  with the wind at a third of the clouds' pace, so from inside it thickens and thins as it
+  passes and from above it lies as an uneven sea with a soft top. Beyond 160 blocks it is
+  the smooth analytic layer, of the same mean density. It glows towards the sun only where
+  the sun reaches it, and it stops at sea level (water and caves lie below).
+- *Light shafts*: sunlight scattered by haze, fog and ground fog where the cascaded shadow
+  maps say the sun reaches, out to 96 blocks in 12 steps spaced more closely near the eye:
+  shafts through gaps in canopies, mist glowing in the sun, the sun's glow in haze. Clear
+  air scatters it more than it dims the view (an artistic boost, as shader packs do), so
+  shafts show in clear weather too. Forward fog leaves the sunlight within the pass's reach
+  to it, so nothing is counted twice. Setting: Light shafts.
+
+Water reflects the low cloud where its reflection of the sky crosses the layer (one look
+at the layer's middle). The fast white streaks Mariano saw were the cirrus: they were
+streaked along the wind at the camera, so every gust swung them across the sky; they now
+run along a fixed high wind and only drift.
+
+**The cloud map** (cloud_map.rs): the cloud's 2D body around the eye, 1024² texels over
+12.8 km, drawn once a frame before the main passes. Terrain, grass, water and particles
+look up their cloud shadow there and the volumetric pass its cloud, with one filtered read
+instead of several octaves of hashed noise; its texels are fixed in the world, so shadows
+do not swim. That noise had been the most expensive part of shading under cloud: a Metal
+trace of a cumulus view over a fjord took about 5 ms more GPU time a frame with cloud
+shadows than without (most of it in the opaque pass, where grass blades multiply the
+fragments). The volumetric pass reads the 2D and 3D value-noise lattices from two small
+textures too (`NOISE_TEXTURES`), the same lattices the hashes give elsewhere. The map
+itself measured 0.2 ms on a busy machine.
+
+**Night** (Mariano: too bright). The sky gradient was already a dark navy; what lit the
+night sky grey was cloud, which the dome lit at 7% of daylight. Cloud is now lit by the
+moon and the night sky's ambient light like everything else, and the Milky Way is dimmer:
+a clear night sky reads about (7, 9, 13) of 255 in captures, against about (19, 20, 24) in
+his screenshot; moonlit cumulus stays visible as dim grey shapes.
+
+**Compared with Complementary** (item 29). Minecraft could not be started for matched
+shots (NeoForge found no monitor while the display slept), so the comparison is against the
+hiking video's Complementary frames. Light levels on sunlit grass match closely (about
+(77, 94, 29) against (72, 95, 41)); voxmar's greens were more saturated, so Verdant's
+saturation goes from 1.15 to 1.05 and vibrance from 0.25 to 0.15. Shade under trees and the
+cloud bases now read as in the frames; a matched Minecraft session is still worth doing when
+Mariano is at the machine.
 
 **Grading** (display.wgsl): contrast is now an S-curve on the display image (below mid
 grey exactly the old power curve, above it rolling into white instead of past it), warmth

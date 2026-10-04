@@ -223,7 +223,13 @@ fn piece(
         .voxels
         .column(ColumnPos::of_block(pos))
         .map_or(DEFAULT_COLORS, |column| column.colors_at(pos.x & (CHUNK_SIZE - 1), pos.z & (CHUNK_SIZE - 1)));
-    let [r, g, b] = match info.tints[face as usize] {
+    // An untinted face with a tinted overlay (a grass block's side) gives its colour to the
+    // overlay, which the particle shader draws over the piece.
+    let tint = match info.tints[face as usize] {
+        Tint::None => pieces.overlay_tint(layer),
+        tint => tint,
+    };
+    let [r, g, b] = match tint {
         Tint::None => [255; 3],
         Tint::Grass => colors[0],
         Tint::Foliage => colors[1],

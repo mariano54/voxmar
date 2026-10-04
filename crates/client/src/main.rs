@@ -53,7 +53,7 @@ use voxmar_worldgen::WorldContent;
 use crate::hud::HudImages;
 use crate::menu::{FirstScreen, Screen};
 use crate::render::lod::{Lod, LodPalette, WorldGenerator};
-use crate::render::{SkyMaterial, ui_image};
+use crate::render::{LayerInfo, SkyMaterial, ui_image};
 use crate::session::Launch;
 use crate::settings::Settings;
 use crate::textures::{Rgba, Source};
@@ -328,7 +328,7 @@ fn setup(
 ) {
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures);
-    let (_, mut block_textures) = source.block_textures(registry.textures());
+    let (size, mut block_textures) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
     for id in 0..registry.len() {
@@ -345,19 +345,40 @@ fn setup(
         }
     }
     // Blocks that give off light glow by themselves, as brightly as the light they give.
-    let mut glow = vec![0.0f32; block_textures.len()];
+    let mut layers = vec![LayerInfo::default(); block_textures.len()];
     for id in 0..registry.len() {
         let info = registry.info(voxmar_engine::block::BlockId(id as u16));
         for layer in info.layers {
-            glow[layer as usize] = glow[layer as usize].max(info.emission as f32 / 15.0);
+            let glow = &mut layers[layer as usize].glow;
+            *glow = glow.max(info.emission as f32 / 15.0);
+        }
+    }
+    // The untinted sides of an opaque block with a tinted top (a grass block) take the
+    // pack's overlay for them, tinted as the top is, after the textures themselves.
+    let mut overlay_tint = vec![Tint::None; block_textures.len()];
+    for id in 0..registry.len() {
+        let info = registry.info(voxmar_engine::block::BlockId(id as u16));
+        let top = info.tints[Face::PosY as usize];
+        if info.render == RenderKind::Opaque && top != Tint::None {
+            for face in Face::ALL.into_iter().filter(|&f| f != Face::PosY && info.tints[f as usize] == Tint::None) {
+                overlay_tint[info.layers[face as usize] as usize] = top;
+            }
+        }
+    }
+    let overlays = source.overlays(registry.textures(), size, |i| overlay_tint[i] != Tint::None);
+    for (layer, overlay) in overlays.into_iter().enumerate() {
+        if let Some(overlay) = overlay {
+            layers[layer].overlay = Some((block_textures.len() as u16, overlay_tint[layer]));
+            block_textures.push(overlay);
+            layers.push(LayerInfo::default());
         }
     }
     ui::skin::load(&mut source, &mut images, &mut fonts);
     let colormaps = source.colormaps();
-    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &glow);
+    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &layers);
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
     render::cracks::setup(&mut commands, &mut images, &mut meshes, &mut crack_materials, crack_stages);
-    let palette = LodPalette::new(registry, &block_textures);
+    let palette = LodPalette::new(registry, &block_textures, &layers);
     commands.insert_resource(Lod::new(palette, terrain.clone(), world.view_distance));
     commands.insert_resource(WorldGenerator::new(world_content));
 
@@ -369,13 +390,20 @@ fn setup(
         [0, 1, 2].map(|c| map.pixels[i + c] as f32 / 255.0)
     };
     let tints = [temperate(&colormaps[0]), temperate(&colormaps[1])];
+    let colour = |kind: Tint| match kind {
+        Tint::None => [1.0; 3],
+        Tint::Grass => tints[0],
+        Tint::Foliage => tints[1],
+        Tint::Water => [0.25, 0.45, 0.85],
+    };
     let face_texture = |info: &voxmar_engine::block::BlockInfo, face: Face| {
-        let mut texture = block_textures[info.layers[face as usize] as usize].clone();
-        match info.tints[face as usize] {
-            Tint::None => {}
-            Tint::Grass => tint(&mut texture, tints[0]),
-            Tint::Foliage => tint(&mut texture, tints[1]),
-            Tint::Water => tint(&mut texture, [0.25, 0.45, 0.85]),
+        let layer = info.layers[face as usize] as usize;
+        let mut texture = block_textures[layer].clone();
+        tint(&mut texture, colour(info.tints[face as usize]));
+        if let Some((overlay, kind)) = layers[layer].overlay {
+            let mut overlay = block_textures[overlay as usize].clone();
+            tint(&mut overlay, colour(kind));
+            blend_over(&mut texture, &overlay);
         }
         texture
     };
@@ -419,6 +447,16 @@ fn tint(texture: &mut Rgba, color: [f32; 3]) {
     for pixel in texture.pixels.as_chunks_mut::<4>().0 {
         for c in 0..3 {
             pixel[c] = (pixel[c] as f32 * color[c]) as u8;
+        }
+    }
+}
+
+/// Draws `overlay` over `texture` (the same size) by its alpha.
+fn blend_over(texture: &mut Rgba, overlay: &Rgba) {
+    for (pixel, over) in texture.pixels.as_chunks_mut::<4>().0.iter_mut().zip(overlay.pixels.as_chunks::<4>().0) {
+        let a = over[3] as f32 / 255.0;
+        for c in 0..3 {
+            pixel[c] = (pixel[c] as f32 * (1.0 - a) + over[c] as f32 * a).round() as u8;
         }
     }
 }

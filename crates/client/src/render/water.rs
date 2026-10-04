@@ -86,6 +86,7 @@ impl Plugin for WaterPlugin {
             .add_systems(
                 Core3d,
                 water_pass
+                    .in_set(WaterPass)
                     .after(main_opaque_pass_3d)
                     .after(main_transmissive_pass_3d)
                     .before(main_transparent_pass_3d)
@@ -93,6 +94,10 @@ impl Plugin for WaterPlugin {
             );
     }
 }
+
+/// The water's pass in the `Core3d` schedule, which the volumetric pass draws over.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WaterPass;
 
 /// How much work water does, a setting.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

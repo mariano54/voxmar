@@ -26,6 +26,8 @@ struct Particle {
 @group(2) @binding(0) var block_textures: texture_2d_array<f32>;
 @group(2) @binding(1) var block_sampler: sampler;
 @group(2) @binding(2) var<storage, read> particles: array<Particle>;
+// Each texture layer's overlay (render/mod.rs, `layer_table`; voxel.wgsl draws it alike).
+@group(2) @binding(7) var block_layers: texture_2d<f32>;
 
 // globals.time wraps every hour.
 const TIME_WRAP: f32 = 3600.0;
@@ -143,13 +145,24 @@ fn dither(xy: vec2<f32>) -> f32 {
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let textured = (in.flags & FLAG_TEXTURED) != 0u;
-    let texel = textureSample(block_textures, block_sampler, in.uv, i32(in.surface & 0xFFFu));
+    let layer = i32(in.surface & 0xFFFu);
+    let texel = textureSample(block_textures, block_sampler, in.uv, layer);
+    let uv_dx = dpdx(in.uv);
+    let uv_dy = dpdy(in.uv);
     // A texture piece is cut out where its texels are; a speck is a soft disc.
     var coverage = 1.0 - smoothstep(0.55, 1.0, length(in.corner));
     var albedo = in.color.rgb;
     if textured {
         coverage = texel.a;
-        albedo *= texel.rgb;
+        let entry = textureLoad(block_layers, vec2(layer, 0), 0);
+        let overlay = u32(entry.r * 255.0 + 0.5) | (u32(entry.g * 255.0 + 0.5) << 8u);
+        if overlay != 0u {
+            // The colour is the overlay's: a grass block's side keeps its dirt.
+            let over = textureSampleGrad(block_textures, block_sampler, in.uv, i32(overlay - 1u), uv_dx, uv_dy);
+            albedo = mix(texel.rgb, over.rgb * albedo, over.a);
+        } else {
+            albedo *= texel.rgb;
+        }
     }
 #ifdef ALPHA_TO_COVERAGE
     // Sharpened so texel edges stay crisp; the fade spreads over the samples.

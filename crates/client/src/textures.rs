@@ -87,6 +87,13 @@ impl Files {
         }
     }
 
+    fn contains(&self, name: &str) -> bool {
+        match self {
+            Files::Zip(archive) => archive.index_for_name(name).is_some(),
+            Files::Folder(root) => root.join(name).is_file(),
+        }
+    }
+
     /// The pack's recipe books, `recipes/*.ron`, as (path, source) in name order.
     fn recipe_books(&mut self) -> Vec<(String, String)> {
         let mut names: Vec<String> = match self {
@@ -132,6 +139,12 @@ impl Pack {
             Library::default()
         });
         Ok(Self { name, files, recipes, served: 0 })
+    }
+
+    /// Whether the pack has `<path>.png`, as an image or a recipe.
+    fn contains(&self, path: &str) -> bool {
+        ["textures", "assets/minecraft/textures"].iter().any(|root| self.files.contains(&format!("{root}/{path}.png")))
+            || self.recipes.contains(path)
     }
 
     fn read(&mut self, path: &str) -> Option<Rgba> {
@@ -228,6 +241,20 @@ impl Source {
             })
             .collect();
         (size, textures)
+    }
+
+    /// For each texture reference `wanted`, its overlay, `block/<name>_overlay`, drawn over
+    /// it tinted (a grass block side's fringe of grass, which Minecraft colours like the
+    /// top), from the same pack as the texture so the two match; `size`×`size`.
+    pub fn overlays(&mut self, refs: &[TextureRef], size: u32, wanted: impl Fn(usize) -> bool) -> Vec<Option<Rgba>> {
+        refs.iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let path = format!("block/{}", r.name);
+                let pack = self.packs.iter_mut().find(|pack| wanted(i) && pack.contains(&path))?;
+                pack.read(&format!("{path}_overlay")).map(|overlay| overlay.square(size))
+            })
+            .collect()
     }
 
     /// Grass and foliage colormaps (256×256), indexed by temperature and humidity.

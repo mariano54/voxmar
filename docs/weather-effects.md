@@ -56,7 +56,10 @@ captures log the weather and air they show. Every kind: `/weather list`.
   bloom (`draw_bolts` in weather.rs); replace with real geometry, below.
 - Snow lying on the ground: the server turns grass blocks snowy as the snow cover deepens
   and back as it melts (`snow_cover` in weather.rs; data in `weather.ron`).
-- Cloud cover, heaped and layered cloud, cirrus, storm gloom (existing sky).
+- Cloud cover, heaped and layered cloud, cirrus, storm gloom. The low cloud is a layer in
+  the world (graphics thread, volumetric.wgsl): its base comes down from 170 blocks over sea
+  level in fair weather to 95 in rain, it heaps up with convection, darkens in storms and is
+  lit by lightning; the sky dome keeps the high sheet and cirrus.
 - Fog, mist, whiteout, rain murk and dust haze (graphics thread, render/atmosphere.rs and
   atmosphere.wgsl): the weather's `fog`, `dust` and falling rain and snow are an extinction
   set from `Weather::visibility` (2% shows at that distance), thick around and below the
@@ -65,10 +68,12 @@ captures log the weather and air they show. Every kind: `/weather list`.
   takes the colour of blowing dust. `ClientAtmosphere`'s haze colour and density tint and
   thicken the clear-air haze, and `sky`, `warmth` and `saturation` nudge the sky and the
   grading, as far as the shader pack's `local_air` lets them.
-- Ground fog (`ground_fog`, `fog_top`: valley fog, dawn mist, sea fog): a layer, full below
-  the top and thinning over a few blocks above it, integrated in closed form along each
-  view ray, so from a hill it lies as a white sea between ridges and from inside it is fog.
-  Volumetric light scatters sunlight in it, so it glows where the sun reaches.
+- Ground fog (`ground_fog`, `fog_top`: valley fog, dawn mist, sea fog): densest below the
+  top and thinning by e every 9 blocks above it, so it reaches thinly up the slopes. Within
+  160 blocks the volumetric pass marches it as an uneven, drifting volume (its top swells by
+  up to 6 blocks, its body billows), so from a hill it lies as an uneven sea between ridges
+  and from inside it thickens and thins as it passes; beyond, it is integrated in closed form
+  along each view ray. It glows where the sun reaches it.
 - Wet ground and puddles (`wetness`), frost (`frost`) and a snow dusting on top faces
   (`snow_cover` over 0.3), on surfaces open to the sky (render/lighting.wgsl, `weathered`
   and `wet_sheen`): wet surfaces darken and mirror the sky at glancing angles, puddles

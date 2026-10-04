@@ -37,8 +37,10 @@
 // each), from the offset a chunk's origin keeps in w.
 @group(2) @binding(5) var<storage, read> column_colours: array<u32>;
 #ifndef PREPASS_PIPELINE
-// How brightly each texture layer glows by itself, in alpha (render/mod.rs, glow_table).
-@group(2) @binding(7) var block_glow: texture_2d<f32>;
+// Each texture layer's overlay and glow (render/mod.rs, `layer_table`): r and g the layer
+// of an overlay drawn over it, tinted (a grass block side's fringe), plus one (0 for
+// none), b the overlay's tint, a how brightly the layer glows by itself.
+@group(2) @binding(7) var block_layers: texture_2d<f32>;
 #endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
@@ -340,7 +342,11 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 // The biome colour a surface is tinted with, from the colours of the block column its face
 // belongs to: half a block back from a cube face, where the plant stands for a plant.
 fn biome_tint(surface: u32, colours: u32, world: vec3<f32>, face: u32) -> vec3<f32> {
-    let kind = tint_kind(surface);
+    return biome_colour(tint_kind(surface), colours, world, face);
+}
+
+// The biome colour of tint `kind` (white for none) for the face at `world`.
+fn biome_colour(kind: u32, colours: u32, world: vec3<f32>, face: u32) -> vec3<f32> {
     if kind == TINT_NONE {
         return vec3(1.0);
     }
@@ -364,6 +370,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
     let layer = i32(in.surface & 0xFFFu);
     var albedo = textureSample(block_textures, block_sampler, in.uv, layer);
+#ifndef TRANSLUCENT
+    // For an overlay, sampled only where there is one.
+    let uv_dx = dpdx(in.uv);
+    let uv_dy = dpdy(in.uv);
+#endif
     let kind = tint_kind(in.surface);
 #ifdef ALPHA_TO_COVERAGE
     // Sharpened so a texel edge stays crisp up close; once the texture is minified the
@@ -382,7 +393,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     albedo.a = 1.0;
 #endif
 #endif
-    let base = albedo.rgb * biome_tint(in.surface, in.colours, in.world_position, in.face);
+    var base = albedo.rgb * biome_tint(in.surface, in.colours, in.world_position, in.face);
+    let entry = textureLoad(block_layers, vec2(layer, 0), 0);
+#ifndef TRANSLUCENT
+    // A tinted overlay, as the fringe of grass on a grass block's side has, takes the
+    // biome colour the top has.
+    let overlay = u32(entry.r * 255.0 + 0.5) | (u32(entry.g * 255.0 + 0.5) << 8u);
+    if overlay != 0u {
+        let over = textureSampleGrad(block_textures, block_sampler, in.uv, i32(overlay - 1u), uv_dx, uv_dy);
+        let tint = biome_colour(u32(entry.b * 255.0 + 0.5), in.colours, in.world_position, in.face);
+        base = mix(base, over.rgb * tint, over.a);
+    }
+#endif
     let plant = in.face >= FACE_PLANT;
     // Plants look up their shadow just above their own cell: trees and terrain still shade
     // them, but the blades of a dense tuft do not darken each other.
@@ -406,7 +428,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #ifndef TRANSLUCENT
     color = wet_sheen(color, in.world_position, NORMALS[face], surface.a, in.light.y);
 #endif
-    let glow = textureLoad(block_glow, vec2(layer, 0), 0).a;
+    let glow = entry.a;
     if glow > 0.0 {
         color += self_glow(base, albedo.rgb, glow);
     }

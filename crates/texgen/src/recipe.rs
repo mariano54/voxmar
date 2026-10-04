@@ -161,6 +161,10 @@ pub struct Stamp {
     pub at: Vec<(i32, i32)>,
     /// Mirror it left to right.
     pub mirror: bool,
+    /// Shift the texels just below and right of what it drew by this many shades, as
+    /// `Paint` does: a grass block's side is its overlay's fringe stamped on dirt, with
+    /// the dirt darkened under it.
+    pub shadow: i32,
 }
 
 /// Small blobs of a palette scattered over the texture (ore, pebbles, lichen, petals).

@@ -29,6 +29,7 @@ use voxmar_engine::block::{BlockId, BlockRegistry, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, Face};
 use voxmar_worldgen::{BiomeColors, Overworld, WorldContent};
 
+use super::LayerInfo;
 use super::terrain::Terrain;
 use crate::textures::Rgba;
 
@@ -62,13 +63,16 @@ pub fn view_distance(real_columns: i32) -> f32 {
 pub struct LodPalette {
     top: Vec<[f32; 3]>,
     side: Vec<[f32; 3]>,
+    /// The side's tinted overlay (a grass block's fringe of grass): its average colour
+    /// where it covers the side, how much of the side it covers, and its tint.
+    overlay: Vec<Option<([f32; 3], f32, Tint)>>,
     /// Average opacity of top faces, for seeing through ice.
     opacity: Vec<f32>,
     tints: Vec<(Tint, Tint)>,
 }
 
 impl LodPalette {
-    pub fn new(registry: &BlockRegistry, textures: &[Rgba]) -> Self {
+    pub fn new(registry: &BlockRegistry, textures: &[Rgba], layers: &[LayerInfo]) -> Self {
         let average = |layer: u16| {
             let texture = &textures[layer as usize];
             // Average in sRGB space, as the texture mipmaps do, so distant terrain has the
@@ -85,28 +89,40 @@ impl LodPalette {
             (sum.map(|s| srgb_to_linear((s / weight.max(1e-3)).round() as u8)), weight / pixels.len().max(1) as f32)
         };
         let ids = (0..registry.len()).map(|i| registry.info(BlockId(i as u16)));
-        let (mut top, mut side, mut opacity, mut tints) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut top, mut side, mut overlay, mut opacity, mut tints) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for info in ids {
             let (color, alpha) = average(info.layers[Face::PosY as usize]);
             top.push(color);
             opacity.push(alpha);
-            side.push(average(info.layers[Face::PosX as usize]).0);
+            let layer = info.layers[Face::PosX as usize];
+            side.push(average(layer).0);
+            overlay.push(layers.get(layer as usize).and_then(|l| l.overlay).map(|(over, tint)| {
+                let (color, cover) = average(over);
+                (color, cover, tint)
+            }));
             tints.push((info.tints[Face::PosY as usize], info.tints[Face::PosX as usize]));
         }
-        Self { top, side, opacity, tints }
+        Self { top, side, overlay, opacity, tints }
     }
 
     /// The colour of a block's top or side faces where the biome colours are `colors`.
     fn color(&self, block: BlockId, top: bool, colors: &BiomeColors) -> [f32; 3] {
         let i = block.0 as usize;
-        let (base, tint) = if top { (self.top[i], self.tints[i].0) } else { (self.side[i], self.tints[i].1) };
-        let tint = match tint {
-            Tint::None => return base,
-            Tint::Grass => colors.grass,
-            Tint::Foliage => colors.foliage,
-            Tint::Water => colors.water,
+        let colour = |tint| match tint {
+            Tint::None => [1.0; 3],
+            Tint::Grass => colors.grass.map(srgb_to_linear),
+            Tint::Foliage => colors.foliage.map(srgb_to_linear),
+            Tint::Water => colors.water.map(srgb_to_linear),
         };
-        std::array::from_fn(|c| base[c] * srgb_to_linear(tint[c]))
+        let (base, tint) = if top { (self.top[i], self.tints[i].0) } else { (self.side[i], self.tints[i].1) };
+        let tint = colour(tint);
+        let mut color: [f32; 3] = std::array::from_fn(|c| base[c] * tint[c]);
+        // An overlay covers part of the side: its colour, tinted, takes that part's place.
+        if !top && let Some((over, cover, over_tint)) = self.overlay[i] {
+            let tint = colour(over_tint);
+            color = std::array::from_fn(|c| color[c] * (1.0 - cover) + over[c] * tint[c] * cover);
+        }
+        color
     }
 
     /// Top and side colours of a block.

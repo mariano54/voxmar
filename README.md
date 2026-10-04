@@ -461,15 +461,17 @@ cloudy, rains or snows at each intensity and how hard the wind blows.
 
 Each player is sent `ServerMessage::Weather` for where they stand when it changes or every five
 seconds, with the effects showing, and the client eases towards it: cloud builds and clears
-over tens of seconds, rain sets in over a few, fog gathers slowly. The sky's cloud layer drifts
-with the wind; its shape follows the weather. Rain, drizzle, snow, sleet, hail, dust and motes
+over tens of seconds, rain sets in over a few, fog gathers slowly. The low cloud is a layer in
+the world that drifts with the wind; its shape follows the weather, its base comes down onto the
+hills in rain, and from a mountain it passes around and below you. Rain, drizzle, snow, sleet, hail, dust and motes
 fall or drift through a box around the camera, slanted by the gusting wind and stopped by a map
 of the highest block around the camera, so nothing falls indoors, under trees or in caves.
 Ambient particles from the land's air (pollen by day, fireflies on some warm nights, spores in
 damp forests, drifting snow in the cold) come from `ClientAtmosphere`, which samples
 `Overworld::atmosphere_at` around the player and applies the weather and time of day, and
 also tints the haze, sky and grading. Fog, mist, whiteout and dust close in the view; valley
-fog, dawn mist and sea fog lie in a layer under the weather's fog top; rain wets the ground
+fog, dawn mist and sea fog fill the land under the weather's fog top and thin above it, uneven
+and drifting near the eye, so they look like volumes from inside and above; rain wets the ground
 and fills puddles; frost whitens it; clouds cast moving shadows. Rainbows, halos, aurora,
 shooting stars and heat haze are in the weather the client receives and wait on the renderer
 (docs/weather-effects.md). F3 shows the weather and the effects showing.
@@ -570,16 +572,19 @@ brook, gurgles, swimming and a splash to `target/sound_preview/`, as the game pl
   by wind-driven waves; reflections of the terrain marched through the depth buffer, and of
   the sky elsewhere; sun glints and foam along shores. The Water setting (Low, Medium, High)
   trades waves and reflections for speed, and shader packs scale each part.
-- Day/night cycle, sky dome with sun, moon, stars and weather-driven clouds, rain and snow,
-  aerial perspective (haze that thins with height and glows around the sun), ground fog and
-  weather fog, volumetric light (shafts through canopies, the sun's glow in haze and mist),
-  HDR with bloom.
+- Day/night cycle, sky dome with sun, moon, stars and high cloud, volumetric low cloud in the
+  world (lit by the sun through itself, shading the land, reflected in water), rain and snow,
+  aerial perspective (haze that thins with height and glows around the sun), ground fog as
+  drifting volumes and weather fog, volumetric light (shafts through canopies, the sun's glow
+  in haze and mist), HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
   of view. Nights are dark, lit by a faint blue moon.
 - Soft cascaded sun shadows whose penumbra widens with distance from the caster, and which
   stand still (the sun's light moves in tenth-of-a-degree steps); sky light that falls off
   steeply into forests and overhangs, ambient occlusion, leaves glowing against the sun,
-  moving cloud shadows, and blocks that give off light glowing by themselves. Shader packs
+  moving cloud shadows, grass block sides whose fringe takes the top's biome colour (the pack's
+  side overlay, as Minecraft draws it), and blocks that give off light glowing by themselves.
+  Shader packs
   (`assets/shaderpacks/*.ron`; Verdant by default, Classic the plain look) scale all of it.
 - A sunlit top face gets about as much light as Minecraft's full brightness, and the display
   transform passes colours up to 0.8 through unchanged (rolling off only brighter ones), so

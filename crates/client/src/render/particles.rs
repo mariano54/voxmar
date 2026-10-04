@@ -29,7 +29,7 @@ use bevy::render::render_phase::{
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages,
     CachedRenderPipelineId, PipelineCache, SamplerBindingType, ShaderStages, TextureSampleType, VertexStepMode,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -41,8 +41,11 @@ use bytemuck::{Pod, Zeroable};
 use rustc_hash::FxHashMap;
 
 use super::atmosphere::{Atmosphere, AtmosphereBuffer};
+use super::LayerInfo;
+use super::cloud_map::CloudMap;
 use super::terrain::{TerrainTextures, mesh_like};
 use crate::textures::Rgba;
+use voxmar_engine::block::Tint;
 
 /// Particles alive at once at most.
 pub const CAPACITY: u32 = 8192;
@@ -223,15 +226,17 @@ impl Particles {
 }
 
 /// Square pieces of block textures that are mostly opaque, so a piece of a flower or a
-/// leaf shows its petals and leaves rather than empty texels.
+/// leaf shows its petals and leaves rather than empty texels, and the tint of each layer's
+/// overlay (the shader draws it over a piece as the terrain does).
 #[derive(Resource)]
 pub struct TexturePieces {
     /// Per texture layer, one bit per piece of a 4×4 grid (bit `y * 4 + x`).
     solid: Vec<u16>,
+    overlays: Vec<Tint>,
 }
 
 impl TexturePieces {
-    pub fn new(textures: &[Rgba]) -> Self {
+    pub fn new(textures: &[Rgba], layers: &[LayerInfo]) -> Self {
         let solid = textures
             .iter()
             .map(|texture| {
@@ -254,7 +259,13 @@ impl TexturePieces {
                 mask
             })
             .collect();
-        Self { solid }
+        let overlays = layers.iter().map(|layer| layer.overlay.map_or(Tint::None, |(_, tint)| tint)).collect();
+        Self { solid, overlays }
+    }
+
+    /// The tint of the overlay drawn over `layer`, which a piece's colour is then for.
+    pub fn overlay_tint(&self, layer: u16) -> Tint {
+        self.overlays.get(layer as usize).copied().unwrap_or(Tint::None)
     }
 
     /// The corner of a quarter-width piece of `layer`, picked by `random` (0..1) among its
@@ -324,6 +335,10 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
                 (2, storage_buffer_read_only_sized(false, None)),
                 // The air and light, at the binding lighting.wgsl expects.
                 (6, uniform_buffer::<Atmosphere>(false)),
+                // Each texture layer's overlay, at the terrain's binding, and the cloud map.
+                (7, texture_2d(TextureSampleType::Float { filterable: false })),
+                (8, texture_2d(TextureSampleType::Float { filterable: true })),
+                (9, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
@@ -372,11 +387,13 @@ fn prepare_bind_group(
     device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
     atmosphere: Res<AtmosphereBuffer>,
+    cloud_map: Option<Res<CloudMap>>,
 ) {
     if gpu.bind_group.is_some() {
         return;
     }
-    let Some(blocks) = textures.as_ref().and_then(|t| images.get(&t.textures)) else {
+    let Some(cloud_map) = cloud_map else { return };
+    let Some((blocks, layers)) = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.layers)?))) else {
         return;
     };
     let bind_group = device.create_bind_group(
@@ -387,6 +404,9 @@ fn prepare_bind_group(
             (1, &blocks.sampler),
             (2, gpu.buffer.as_entire_binding()),
             (6, atmosphere.0.as_entire_binding()),
+            (7, &layers.texture_view),
+            (8, &cloud_map.view),
+            (9, &cloud_map.sampler),
         )),
     );
     gpu.bind_group = Some(bind_group);
@@ -508,13 +528,13 @@ mod tests {
                 pixels[(y * size + x) * 4 + 3] = 255;
             }
         }
-        let pieces = TexturePieces::new(&[Rgba { width: 16, height: 16, pixels }]);
+        let pieces = TexturePieces::new(&[Rgba { width: 16, height: 16, pixels }], &[]);
         for i in 0..20 {
             let corner = pieces.corner(0, i as f32 / 20.0);
             assert!(corner.x >= 0.5 && corner.y >= 0.5, "{corner}");
         }
         // A fully transparent texture still gives pieces.
-        let empty = TexturePieces::new(&[Rgba { width: 16, height: 16, pixels: vec![0; 1024] }]);
+        let empty = TexturePieces::new(&[Rgba { width: 16, height: 16, pixels: vec![0; 1024] }], &[]);
         assert!(empty.corner(0, 0.99).max_element() <= 0.75);
     }
 }

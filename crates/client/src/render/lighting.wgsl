@@ -7,7 +7,7 @@
 #define_import_path voxmar::lighting
 
 #import bevy_pbr::mesh_view_bindings::{view, lights, globals}
-#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_light, far_color}
+#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_light, cloud_seen, far_color}
 #import voxmar::clouds::value_noise
 #import voxmar::shadows::soft_shadow
 
@@ -180,6 +180,12 @@ fn water_normal(world: vec3<f32>) -> vec3<f32> {
 // adds on the way.
 fn air_between(world: vec3<f32>) -> Aerial {
     return aerial(atmosphere, view.world_position, world - view.world_position, sun_direction());
+}
+
+// The low cloud seen from `world` along `direction`, for the sky in reflections, in
+// premultiplied colour and opacity.
+fn reflected_cloud(world: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
+    return cloud_seen(atmosphere, view.world_position, world, direction, sun_direction(), sun_color(), lights.ambient_color.rgb);
 }
 
 // `color` at `world` seen through the air. Real chunks, distant terrain, water and the

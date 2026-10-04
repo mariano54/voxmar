@@ -16,7 +16,7 @@
 #define_import_path voxmar::water_surface
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, air_between}
+#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, air_between, reflected_cloud}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct Water {
@@ -466,7 +466,8 @@ fn shade_water(
         r = normalize(r + normal * (0.02 - rise));
     }
     let reflectance = fresnel(facing) * water.strengths.x * edge;
-    let sky_color = sky_gradient(r, water.zenith.rgb, water.horizon.rgb);
+    let cloud = reflected_cloud(world, r);
+    let sky_color = sky_gradient(r, water.zenith.rgb, water.horizon.rgb) * (1.0 - cloud.a) + cloud.rgb;
     var reflected = mix(seen, sky_color * air.through + air.light, open);
     if reflectance > MIN_REFLECTION {
         let hit = trace(world + normal * 0.02, r);

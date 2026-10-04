@@ -27,6 +27,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::{ShaderRef, load_shader_library};
 use serde::{Deserialize, Serialize};
+use voxmar_engine::block::Tint;
 use voxmar_protocol::{TICKS_PER_DAY, Weather};
 
 use crate::textures::Rgba;
@@ -34,6 +35,7 @@ use crate::weather::atmosphere::ClientAtmosphere;
 use crate::weather::{ClientWeather, DRIFT_WRAP};
 
 pub mod atmosphere;
+pub mod cloud_map;
 pub mod cracks;
 pub mod lod;
 pub mod pack;
@@ -75,6 +77,7 @@ impl Plugin for RenderPlugin {
             particles::ParticlePlugin,
             cracks::CrackPlugin,
             volumetric::VolumetricPlugin,
+            cloud_map::CloudMapPlugin,
         ))
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
@@ -228,8 +231,6 @@ pub struct SkyParams {
     /// xy: the cloud layer's offset over the camera in cloud units, z: precipitation,
     /// w: lightning flash.
     pub weather: Vec4,
-    /// xy: wind direction.
-    pub wind: Vec4,
 }
 
 /// Blocks per unit of the sky shader's cloud noise. The cloud layer's offset wraps every
@@ -296,12 +297,17 @@ pub fn setup(
     meshes: &mut Assets<Mesh>,
     sky_materials: &mut Assets<SkyMaterial>,
     block_textures: &[Rgba],
-    glow: &[f32],
+    layers: &[LayerInfo],
 ) {
-    commands.insert_resource(particles::TexturePieces::new(block_textures));
-    let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat));
-    let glow = images.add(glow_table(glow));
-    commands.insert_resource(terrain::TerrainTextures { textures, glow });
+    commands.insert_resource(particles::TexturePieces::new(block_textures, layers));
+    // Overlays are blended by their alpha, so their mips keep its average.
+    let mut blended = vec![false; block_textures.len()];
+    for &(overlay, _) in layers.iter().filter_map(|l| l.overlay.as_ref()) {
+        blended[overlay as usize] = true;
+    }
+    let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat, &blended));
+    let layers = images.add(layer_table(layers));
+    commands.insert_resource(terrain::TerrainTextures { textures, layers });
     let sky = sky_materials.add(SkyMaterial { params: SkyParams::default(), atmosphere: default() });
     commands.insert_resource(SkyHandle(sky.clone()));
     commands.spawn((
@@ -344,13 +350,14 @@ pub fn setup(
     ));
 }
 
-/// A square texture array with an optional mip chain.
-fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode) -> Image {
+/// A square texture array with an optional mip chain. The mips of cut-out layers keep the
+/// fraction of texels that pass the alpha test, except those `blended` by their alpha.
+fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode, blended: &[bool]) -> Image {
     let size = layers[0].width;
     let levels = if mipmaps { size.trailing_zeros() + 1 } else { 1 };
     let mut data = Vec::new();
-    for layer in layers {
-        let coverage = alpha_coverage(&layer.pixels);
+    for (i, layer) in layers.iter().enumerate() {
+        let coverage = if blended.get(i).copied().unwrap_or(false) { 1.0 } else { alpha_coverage(&layer.pixels) };
         let mut level = layer.pixels.clone();
         let mut level_size = size;
         data.extend_from_slice(&level);
@@ -392,13 +399,30 @@ fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode) -> Ima
     image
 }
 
-/// How brightly each block texture layer glows by itself, one texel per layer: alpha the
-/// strength (0..1), colour white for now, room for coloured light later. The terrain shader
-/// adds the glow to the texels bright enough to be the glowing part (see voxel.wgsl).
-fn glow_table(glow: &[f32]) -> Image {
-    let data = glow.iter().flat_map(|&g| [255, 255, 255, (g.clamp(0.0, 1.0) * 255.0).round() as u8]).collect::<Vec<u8>>();
+/// What the terrain shader knows of a block texture layer besides its texels.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayerInfo {
+    /// A layer drawn over this one by its alpha, tinted with a biome colour, as Minecraft
+    /// draws a grass block's side: the fringe of grass takes the colour the top has.
+    pub overlay: Option<(u16, Tint)>,
+    /// How brightly it glows by itself, 0..1.
+    pub glow: f32,
+}
+
+/// Each block texture layer's `LayerInfo`, one texel per layer: red and green the overlay's
+/// layer plus one (0 for none), blue its tint, alpha the glow. The terrain shader adds the
+/// glow to the texels bright enough to be the glowing part (see voxel.wgsl).
+fn layer_table(layers: &[LayerInfo]) -> Image {
+    let data = layers
+        .iter()
+        .flat_map(|layer| {
+            let (overlay, tint) = layer.overlay.map_or((0, 0), |(overlay, tint)| (overlay + 1, tint as u8));
+            let [low, high] = overlay.to_le_bytes();
+            [low, high, tint, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
+        })
+        .collect::<Vec<u8>>();
     let mut image = Image::new(
-        Extent3d { width: glow.len().max(1) as u32, height: 1, depth_or_array_layers: 1 },
+        Extent3d { width: layers.len().max(1) as u32, height: 1, depth_or_array_layers: 1 },
         TextureDimension::D2,
         if data.is_empty() { vec![0; 4] } else { data },
         TextureFormat::Rgba8Unorm,
@@ -587,13 +611,15 @@ fn update_environment(
     weather: Res<ClientWeather>,
     sky_handle: Option<Res<SkyHandle>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
-    mut camera: Query<(&GlobalTransform, &mut AmbientLight, &mut DistanceFog), With<Camera3d>>,
-    mut sun: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
-    mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>)>,
+    mut camera: Query<(&Transform, &mut AmbientLight, &mut DistanceFog), With<Camera3d>>,
+    mut sun: Query<(&mut Transform, &mut DirectionalLight), (With<Sun>, Without<Camera3d>)>,
+    mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>, Without<Camera3d>)>,
     mut clear: ResMut<ClearColor>,
     (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
 ) {
     let Some(sky_handle) = sky_handle else { return };
+    // The camera's own transform (it has no parent), as this frame moved it: the global one
+    // is still last frame's, and the cloud layer placed from it would lag a frame behind.
     let Ok((camera, mut ambient, mut fog)) = camera.single_mut() else { return };
     cycle.ticks += time.delta_secs_f64() * voxmar_protocol::TICKS_PER_SECOND as f64;
     let days = cycle.ticks / TICKS_PER_DAY as f64;
@@ -616,7 +642,7 @@ fn update_environment(
         light.color = Color::linear_rgb(env.light_color.x, env.light_color.y, env.light_color.z);
     }
     if let Ok(mut dome) = dome.single_mut() {
-        dome.translation = camera.translation();
+        dome.translation = camera.translation;
     }
 
     let mut horizon = env.horizon;
@@ -635,12 +661,12 @@ fn update_environment(
     let light = atmosphere::Light { horizon, ambient: env.ambient, sun: env.light_color, glow, elevation: env.light_direction.y };
     let air = atmosphere::Air { haze: Some(air.haze), density: air.haze_density };
     let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
-    let position = camera.translation().as_dvec3();
+    let position = camera.translation.as_dvec3();
     let layer = ((DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT).rem_euclid(DVec2::splat(4096.0)).as_vec2();
-    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation().y, underwater: cycle.underwater };
+    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation.y, underwater: cycle.underwater };
     let mut air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, *quality, view);
     if !cycle.underwater {
-        air = air.with_clouds(shown, layer, seconds, &pack);
+        air = air.with_clouds(shown, layer, cloud_map::corner(DVec2::new(position.x, position.z)), seconds, flash, &pack);
     }
     atmosphere.set_if_neq(air);
 
@@ -661,7 +687,6 @@ fn update_environment(
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
             stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
             weather: layer.extend(shown.precipitation).extend(flash),
-            wind: shown.wind.normalize_or(Vec2::X).extend(0.0).extend(0.0),
         };
         sky.atmosphere = air;
     }

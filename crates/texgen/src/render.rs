@@ -311,6 +311,7 @@ fn draw_shift(canvas: &mut Canvas, shift: &Shift, seed: u32) {
 
 fn draw_stamp(canvas: &mut Canvas, stamp: &Stamp, image: &Image) {
     let size = canvas.size;
+    let mut stamped = vec![false; size.len()];
     let origins = if stamp.at.is_empty() { vec![(0, 0)] } else { stamp.at.clone() };
     for (ox, oy) in origins {
         for sy in 0..image.height as i32 {
@@ -323,9 +324,13 @@ fn draw_stamp(canvas: &mut Canvas, stamp: &Stamp, image: &Image) {
                 let colour = image.get(source as u32, sy as u32);
                 if colour[3] > 0 {
                     canvas.texels[size.index(x, y)] = Texel::Colour(colour);
+                    stamped[size.index(x, y)] = true;
                 }
             }
         }
+    }
+    if stamp.shadow != 0 {
+        rim(canvas, &stamped, stamp.shadow, 1);
     }
 }
 
