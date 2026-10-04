@@ -1,12 +1,14 @@
-// Shared terrain lighting: sky ambient, sun or moon with soft cascaded shadows, block light,
-// water ripples, and the air between the eye and the surface. Everything dynamic comes
-// from the view bind group (directional and ambient light) and the atmosphere uniform, so
-// day/night never touches material assets.
+// Shared terrain lighting: warm sun or moon with soft cascaded shadows, cool sky light that
+// falls off steeply into shade, ambient occlusion, block light, leaves glowing against
+// the sun, water ripples, and the air between the eye and the surface. The sun, sky light
+// and shadows come from the view bind group (directional and ambient light) and the
+// atmosphere uniform, so day and night never touch material assets.
 
 #define_import_path voxmar::lighting
 
 #import bevy_pbr::mesh_view_bindings::{view, lights, globals}
-#import voxmar::atmosphere::{Atmosphere, Aerial, aerial}
+#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_light, far_color}
+#import voxmar::clouds::value_noise
 #import voxmar::shadows::soft_shadow
 
 // Bound with every terrain material (terrain.rs, binding 6 of group 2).
@@ -48,7 +50,7 @@ fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, _frag_xy: vec2<f32>) -> f32 {
 }
 
 // Lit colour of a voxel face. `sky` and `block` are 0..1 light levels, `ao` the occlusion
-// factor, `foliage` softens the sun term for leaves so crowns glow when back-lit.
+// factor, `foliage` lights leaves and plants as thin and translucent.
 fn shade(
     albedo: vec3<f32>,
     world: vec3<f32>,
@@ -79,13 +81,21 @@ fn shade_normal(
     if foliage {
         facing = 0.35 + 0.65 * abs(facing);
     }
-    // Sunlight only reaches places open to the sky; shadow maps add the exact shapes.
-    let open = smoothstep(0.5, 0.95, sky);
-    var direct = vec3(0.0);
+    // Sunlight only reaches places open to the sky (never into caves, whatever the shadow
+    // maps missed); the shadow maps add the exact shapes, and passing clouds their shade.
+    let open = smoothstep(0.35, 0.75, sky);
+    var sunlit = 0.0;
     if facing > 0.0 && open > 0.0 {
-        direct = sun_color() * facing * open * sun_shadow(world, normal, frag_xy);
+        sunlit = open * sun_shadow(world, normal, frag_xy);
+        if sunlit > 0.0 {
+            sunlit *= cloud_light(atmosphere, view.world_position, world, to_sun);
+        }
     }
-    let ambient = lights.ambient_color.rgb * light_curve(sky) * ambient_shade * ao;
+    let direct = sun_color() * facing * sunlit;
+    // Sky light falls off steeply with the sky light level, so forest floors, overhangs and
+    // the inside of crowns are much darker than open ground; occlusion grounds corners.
+    let occlusion = pow(ao, atmosphere.surface.y);
+    let ambient = lights.ambient_color.rgb * pow(sky, atmosphere.surface.x) * ambient_shade * occlusion;
     let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
     let floor = vec3(0.010, 0.010, 0.014) * ao;
     // Sunlight bounced off the sunlit ground around: a wall sees half ground, an underside
@@ -94,7 +104,65 @@ fn shade_normal(
     // beaches and grass ledges stood out as dark teeth.
     let bounce = sun_color() * max(to_sun.y, 0.0) * GROUND_ALBEDO * 0.5 * (1.0 - normal.y) * open * ao
         * atmosphere.ground.w;
-    return albedo * (ambient + bounce + direct * mix(1.0, ao, 0.5) + torch + floor);
+    var light = ambient + bounce + direct * mix(1.0, ao, 0.3) + torch + floor;
+    if foliage && sunlit > 0.0 {
+        // Sunlight through leaves and blades, brightest looking towards the sun.
+        let to_eye = normalize(view.world_position - world);
+        let through = pow(max(dot(-to_eye, to_sun), 0.0), 4.0);
+        light += sun_color() * sunlit * atmosphere.surface.z * (0.15 + through);
+    }
+    return albedo * light;
+}
+
+// A surface after the weather: darker where rain has wet it, darker still in puddles on
+// open level ground (which rise and dry with the wetness), whitened by frost, and dusted
+// with snow on top once enough lies around (the server turns grass snowy itself). Returns
+// the albedo, and in w how wet it is (1 in a puddle), for `wet_sheen`.
+fn weathered(albedo: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, sky: f32) -> vec4<f32> {
+    let wetness = atmosphere.ground.x;
+    let frost = atmosphere.ground.y;
+    let snow = atmosphere.ground.z;
+    if wetness <= 0.0 && frost <= 0.0 && snow <= 0.3 {
+        return vec4(albedo, 0.0);
+    }
+    // Rain and frost settle where the sky is open, most on top faces.
+    let exposed = smoothstep(0.8, 1.0, sky);
+    var wet = wetness * exposed * saturate(0.35 + 0.65 * normal.y);
+    if normal.y > 0.9 && wetness > 0.0 {
+        let patches = value_noise(world.xz * 0.21) * 0.65 + value_noise(world.xz * 0.53 + 7.3) * 0.35;
+        let level = 0.75 - 0.3 * wetness;
+        wet = max(wet, smoothstep(level, level + 0.04, patches) * smoothstep(0.3, 0.6, wetness) * exposed);
+    }
+    var color = albedo * (1.0 - 0.4 * min(wet, 1.0));
+    let rime = frost * exposed * saturate(normal.y * 0.8 + 0.2) * smoothstep(0.35, 0.6, value_noise(world.xz * 1.7 + world.y));
+    color = mix(color, vec3(0.78, 0.84, 0.9), rime * 0.6);
+    if snow > 0.3 && normal.y > 0.9 {
+        let drifts = value_noise(world.xz * 0.37 + 3.1) * 0.7 + value_noise(world.xz * 1.9) * 0.3;
+        let dusting = smoothstep(1.0 - snow, 1.15 - snow, drifts) * exposed;
+        color = mix(color, vec3(0.9, 0.93, 0.96), dusting * 0.85);
+    }
+    return vec4(color, wet);
+}
+
+// The sky mirrored by a wet surface, most at a glancing angle and in puddles.
+fn wet_sheen(color: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, wet: f32, sky: f32) -> vec3<f32> {
+    if wet <= 0.0 {
+        return color;
+    }
+    let to_eye = normalize(view.world_position - world);
+    let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(normal, to_eye), 0.0), 5.0);
+    let mirrored = reflect(-to_eye, normal);
+    let reflection = far_color(atmosphere, view.world_position, mirrored, sun_direction());
+    let puddle = smoothstep(0.6, 1.0, wet);
+    return mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.9, puddle));
+}
+
+// Light a glowing block gives off by itself (`glow` 0..1, from its light level): its bright
+// texels, as the lit part of a lantern or the cracks of magma, glow brightly enough to
+// bloom at full strength; its dark texels do not glow.
+fn self_glow(albedo: vec3<f32>, texel: vec3<f32>, glow: f32) -> vec3<f32> {
+    let bright = smoothstep(0.2, 0.6, dot(texel, vec3(0.2126, 0.7152, 0.0722)));
+    return albedo * glow * bright * atmosphere.surface.w;
 }
 
 // Small animated ripples for the water surface normal. Their slopes have a variance of

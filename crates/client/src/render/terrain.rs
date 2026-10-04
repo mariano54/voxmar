@@ -34,7 +34,7 @@ use bevy::render::render_resource::{
     BufferUsages, CachedRenderPipelineId, CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -126,10 +126,11 @@ impl Plugin for TerrainPlugin {
     }
 }
 
-/// The block texture array.
+/// The block texture array, and how brightly each texture layer glows by itself.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TerrainTextures {
     pub textures: Handle<Image>,
+    pub glow: Handle<Image>,
 }
 
 /// The main world's handle on terrain rendering.
@@ -957,9 +958,9 @@ fn prepare_bind_group(
             (6, atmosphere.0.as_entire_binding()),
         )),
     );
-    let blocks = textures.as_ref().and_then(|t| images.get(&t.textures));
-    let (Some(blocks), Some(seeds), Some(wind), Some(colours)) =
-        (blocks, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer)
+    let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.glow)?)));
+    let (Some((blocks, glow)), Some(seeds), Some(wind), Some(colours)) =
+        (textures, &gpu.seeds.buffer, &gpu.wind, &gpu.colours.buffer)
     else {
         gpu.distant_bind_group = Some(distant);
         return;
@@ -975,6 +976,7 @@ fn prepare_bind_group(
             wind.as_entire_binding(),
             colours.as_entire_binding(),
             atmosphere.0.as_entire_binding(),
+            &glow.texture_view,
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -1225,8 +1227,9 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 uniform_buffer::<WindUniform>(false),
                 // Biome colours of columns, by block.
                 storage_buffer_read_only_sized(false, None),
-                // The air and light (lighting.wgsl).
+                // The air and light (lighting.wgsl), and each texture layer's glow.
                 uniform_buffer::<Atmosphere>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );

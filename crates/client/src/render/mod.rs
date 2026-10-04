@@ -40,6 +40,7 @@ pub mod pack;
 pub mod particles;
 pub mod precipitation;
 pub mod terrain;
+pub mod volumetric;
 pub mod water;
 pub mod wind;
 
@@ -73,6 +74,7 @@ impl Plugin for RenderPlugin {
             precipitation::PrecipitationPlugin,
             particles::ParticlePlugin,
             cracks::CrackPlugin,
+            volumetric::VolumetricPlugin,
         ))
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
@@ -147,9 +149,16 @@ impl ShadowQuality {
 }
 
 /// The quality settings the renderer follows (the player's, from settings.rs).
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct Quality {
     pub shadows: ShadowQuality,
+    pub volumetric_light: bool,
+}
+
+impl Default for Quality {
+    fn default() -> Self {
+        Self { shadows: ShadowQuality::default(), volumetric_light: true }
+    }
 }
 
 /// Applies the shadow quality to the sun's shadow maps.
@@ -225,7 +234,7 @@ pub struct SkyParams {
 
 /// Blocks per unit of the sky shader's cloud noise. The cloud layer's offset wraps every
 /// 4096 units, which the wind drift's wrapping matches, so wrapping never shows.
-const CLOUD_UNIT: f64 = DRIFT_WRAP as f64 / 4096.0;
+pub(crate) const CLOUD_UNIT: f64 = DRIFT_WRAP as f64 / 4096.0;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct SkyMaterial {
@@ -279,17 +288,20 @@ pub struct SkyDome;
 #[derive(Component)]
 pub struct Sun;
 
-/// Creates the texture arrays, materials, camera, sun and sky dome.
+/// Creates the texture arrays, materials, camera, sun and sky dome. `glow` is how brightly
+/// each block texture layer glows by itself, 0..1 (see `glow_table`).
 pub fn setup(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
     sky_materials: &mut Assets<SkyMaterial>,
     block_textures: &[Rgba],
+    glow: &[f32],
 ) {
     commands.insert_resource(particles::TexturePieces::new(block_textures));
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat));
-    commands.insert_resource(terrain::TerrainTextures { textures });
+    let glow = images.add(glow_table(glow));
+    commands.insert_resource(terrain::TerrainTextures { textures, glow });
     let sky = sky_materials.add(SkyMaterial { params: SkyParams::default(), atmosphere: default() });
     commands.insert_resource(SkyHandle(sky.clone()));
     commands.spawn((
@@ -305,8 +317,8 @@ pub fn setup(
         ShadowQuality::default().cascades(),
     ));
     commands.spawn((
-        // Water reads the depth of the scene behind it, and without MSAA copies the scene
-        // into the image it draws in (see `water`).
+        // Water reads the depth of the scene behind it, and so does the volumetric light; without
+        // MSAA water copies the scene into the image it draws in (see `water`).
         Camera3d { depth_texture_usages: (TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING).into(), ..default() },
         CameraMainTextureUsages::default().with(TextureUsages::COPY_DST),
         Projection::Perspective(PerspectiveProjection { fov: 75f32.to_radians(), near: 0.05, ..default() }),
@@ -377,6 +389,22 @@ fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode) -> Ima
         mipmap_filter: ImageFilterMode::Linear,
         ..default()
     });
+    image
+}
+
+/// How brightly each block texture layer glows by itself, one texel per layer: alpha the
+/// strength (0..1), colour white for now, room for coloured light later. The terrain shader
+/// adds the glow to the texels bright enough to be the glowing part (see voxel.wgsl).
+fn glow_table(glow: &[f32]) -> Image {
+    let data = glow.iter().flat_map(|&g| [255, 255, 255, (g.clamp(0.0, 1.0) * 255.0).round() as u8]).collect::<Vec<u8>>();
+    let mut image = Image::new(
+        Extent3d { width: glow.len().max(1) as u32, height: 1, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        if data.is_empty() { vec![0; 4] } else { data },
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
     image
 }
 
@@ -572,7 +600,7 @@ fn update_environment(
     let shown = &weather.current;
     let flash = weather.flash();
     let mut env = Environment::at(days.fract() as f32).under(shown, flash);
-    env.light_color *= pack.sun;
+    env.light_color *= pack.sun * pack.sun_tint;
     env.ambient *= pack.ambient * pack.shade_tint;
     // The place's sky tint, as far as the pack lets it show.
     let tint = Vec3::ONE.lerp(air.sky, pack.local_air.clamp(0.0, 1.0));
@@ -604,10 +632,16 @@ fn update_environment(
     } else {
         SUN_GLOW * (env.daylight * 2.0).min(1.0) * (1.0 - 0.7 * overcast)
     };
-    let light = atmosphere::Light { horizon, ambient: env.ambient, sun: env.light_color, glow };
+    let light = atmosphere::Light { horizon, ambient: env.ambient, sun: env.light_color, glow, elevation: env.light_direction.y };
     let air = atmosphere::Air { haze: Some(air.haze), density: air.haze_density };
+    let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
+    let position = camera.translation().as_dvec3();
+    let layer = ((DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT).rem_euclid(DVec2::splat(4096.0)).as_vec2();
     let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation().y, underwater: cycle.underwater };
-    let air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, *quality, view);
+    let mut air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, *quality, view);
+    if !cycle.underwater {
+        air = air.with_clouds(shown, layer, seconds, &pack);
+    }
     atmosphere.set_if_neq(air);
 
     let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
@@ -620,16 +654,13 @@ fn update_environment(
 
     // The sky dome is the only entity using its material, so updating it is cheap.
     if let Some(mut sky) = sky_materials.get_mut(&sky_handle.0) {
-        let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
-        let position = camera.translation().as_dvec3();
-        let layer = (DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT;
         sky.params = SkyParams {
             zenith: env.zenith.extend(1.0),
             horizon: horizon.extend(1.0),
             sun: env.to_sun.extend(env.daylight),
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
             stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
-            weather: layer.rem_euclid(DVec2::splat(4096.0)).as_vec2().extend(shown.precipitation).extend(flash),
+            weather: layer.extend(shown.precipitation).extend(flash),
             wind: shown.wind.normalize_or(Vec2::X).extend(0.0).extend(0.0),
         };
         sky.atmosphere = air;

@@ -322,8 +322,16 @@ fn setup(
             texture.fill_transparent();
         }
     }
+    // Blocks that give off light glow by themselves, as brightly as the light they give.
+    let mut glow = vec![0.0f32; block_textures.len()];
+    for id in 0..registry.len() {
+        let info = registry.info(voxmar_engine::block::BlockId(id as u16));
+        for layer in info.layers {
+            glow[layer as usize] = glow[layer as usize].max(info.emission as f32 / 15.0);
+        }
+    }
     let colormaps = source.colormaps();
-    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures);
+    render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &glow);
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
     render::cracks::setup(&mut commands, &mut images, &mut meshes, &mut crack_materials, crack_stages);
     let palette = LodPalette::new(registry, &block_textures);

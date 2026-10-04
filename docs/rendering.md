@@ -457,7 +457,34 @@ Medium (8 wave octaves, a 12-step march) and High (12 octaves, 20 steps, the def
 packs scale absorption, scattering, reflections, waves, refraction and foam, and choose
 pixelated water (`ShaderPack::water`).
 
-## Shadows and the air
+## The air (ClientAtmosphere)
+
+`weather::atmosphere::ClientAtmosphere`, next to `ClientWeather`, is the air around the
+player: the land's (`Overworld::atmosphere_at`, sampled twice a second from the client's
+own generator and eased over a few seconds, so biome borders pass gradually) with the
+weather, wind and time of day applied.
+
+```rust
+pub struct ClientAtmosphere {
+    pub haze: Vec3,          // haze colour, linear RGB; towards the dust colour in dust,
+                             // towards grey-white in fog and rain
+    pub haze_density: f32,   // relative to the pack's haze, ~1; up to ~4 in fog and dust
+    pub sky: Vec3,           // tint multiplied into the sky, linear; white leaves it
+    pub warmth: f32,         // grading, -1 cooler ..= 1 warmer, ~0
+    pub saturation: f32,     // grading, ~1; less under overcast, rain and fog
+    pub particles: Vec<AmbientParticles>, // sets showing now, densest first:
+                             // name, density 0..1, color (linear), size, motion, glow
+}
+```
+
+The colour parts are for the shader pack to apply within its own look (haze colour and
+density into the haze, `sky` into the sky colours, `warmth` and `saturation` into the
+grading). Particle sets showing only by day, at night or at twilight, in dry or wet
+weather, are already filtered; hovering ones settle out of a strong wind; night-time ones
+(fireflies) come out on six nights in ten. The precipitation particles draw the four
+densest sets. docs/weather-effects.md has the rest of the weather's handover.
+
+## Light, shadow and the air
 
 Mariano's playtest (2026-10-04): shadows flickered, the look still did not read like
 Complementary Reimagined, and there was no atmospheric light, mist or fog. What changed,
@@ -489,6 +516,27 @@ ending in a line. The first cascade ends at 12 blocks (texels of about 2 cm), sh
 blocks at High. Settings: Shadows Off, Low (one hard tap, two cascades to 96 blocks),
 Medium (8 taps, three to 160), High (16 taps, four to 200, the default).
 
+**Light and shade** (lighting.wgsl), after Complementary's way of lighting a voxel world
+rather than its numbers: warm direct sun against cool sky light; sky light falls off
+steeply with the sky light level (`sky_falloff`, an exponent), so forest floors, overhangs
+and the inside of crowns are far darker than open ground, and only sunflecks are bright
+there; voxel ambient occlusion grounds corners and wall bases (`ambient_occlusion`);
+sunlit leaves and plants glow, most when seen against the sun (`subsurface`); passing
+clouds shade the land (`cloud_shadows`): the sky's low cloud is a plane two cloud units
+above the eye, so a point's cloud is where its ray to the sun meets that plane, and the
+same noise (clouds.wgsl) draws the cloud and its shadow. Rain darkens and wets open
+surfaces, fills puddles on level ground that mirror the sky, and frost whitens what lies
+under the open sky (`wet_ground`, `frost`).
+
+**Glowing blocks** glow by themselves, not only light their surroundings: every texture
+layer of a block that gives off light gets a glow strength from its light level (a table of
+one texel per layer, built in main.rs, `glow_table` in render/mod.rs), and the terrain
+shader adds the tinted texel times that strength to its bright texels only (a lantern's
+flame, magma's cracks, lichen's spots; dark texels stay dark), up to three times the lit
+texture at full light, so the brightest bloom. The table's colour channels are white for
+now, room for coloured block light later; a per-texel mask texture can replace the
+brightness test when a pack ships one. Strength: the pack's `glow`.
+
 **The air** (atmosphere.wgsl, render/atmosphere.rs): clear-air haze densest at sea level
 and thinning with height, a layer of ground fog under the weather's `fog_top` (valley fog,
 dawn mist, sea fog), and the weather's fog, dust and falling rain and snow, each
@@ -499,7 +547,28 @@ distance, so a blizzard closes the view to ~60 blocks); fog is lit by the sky an
 takes the colour of blowing dust; the haze takes the place's colour and density from
 `ClientAtmosphere` as far as the pack's `local_air` lets it. The sky is fogged by the same
 functions as the far edge of the land, so they always meet. Everything shares one uniform
-(`Atmosphere`), bound with the terrain and the sky, which also carries the shadow filter's settings.
+(`Atmosphere`), bound with the terrain and the sky.
+
+**Volumetric light** (volumetric.wgsl, after the main passes, before bloom): marches each
+view ray through the cascaded shadow maps out to 96 blocks in 12 steps spaced more closely
+near the eye, adding the sunlight the air scatters towards the eye where the sun reaches it:
+shafts through gaps in canopies, mist and fog glowing in the sun, the sun's glow in haze.
+Rays are marched at half resolution (the light is soft) with each ray's length kept beside
+its light, and added at full resolution from the nearby rays that ended about as far away
+as the pixel's own surface, so shafts keep sharp edges against trunks and ridges in front
+of them. Clear air scatters it more than it dims the view (an artistic
+boost, as shader packs do), so shafts show in clear weather too. Forward fog leaves the
+sunlight within the pass's reach to it, so nothing is counted twice. Setting: Light shafts.
+
+**Grading** (display.wgsl): contrast is now an S-curve on the display image (below mid
+grey exactly the old power curve, above it rolling into white instead of past it), warmth
+leaves highlights neutral, and clouds in full sun are as bright as a sunlit white block,
+never above the bloom threshold. So bright cumulus and cloudy skies under Verdant stay
+white and shaded instead of washing out to cream.
+
+**Shader packs** gained `sun_tint`, `shadow_softness`, `sky_falloff`, `ambient_occlusion`,
+`subsurface`, `cloud_shadows`, `glow`, `rays`, `mist`, `fog`, `wet_ground`, `frost` and
+`local_air`; Classic keeps the plain look (no volumetric light).
 
 ## Fluid state
 

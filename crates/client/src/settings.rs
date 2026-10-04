@@ -94,6 +94,8 @@ pub struct Settings {
     pub shader_pack: String,
     /// How sun shadows are drawn.
     pub shadows: ShadowQuality,
+    /// Shafts of sunlight through canopies and the sun's glow in haze and mist.
+    pub volumetric_light: bool,
     /// How much work water does: waves, and reflections of the terrain (`render::water`).
     pub water_quality: WaterQuality,
     /// Which texture pack comes first; takes effect the next time the game starts.
@@ -240,6 +242,7 @@ impl Default for Settings {
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
             shadows: ShadowQuality::default(),
+            volumetric_light: true,
             water_quality: WaterQuality::default(),
             textures: TextureOrder::default(),
             particles: ParticleAmount::default(),
@@ -406,6 +409,7 @@ impl Slider {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Toggle {
     Vsync,
+    VolumetricLight,
     DebugOverlay,
     CinematicZoom,
     ZoomInSurvival,
@@ -415,6 +419,7 @@ impl Toggle {
     fn label(self) -> &'static str {
         match self {
             Toggle::Vsync => "VSync",
+            Toggle::VolumetricLight => "Light shafts",
             Toggle::DebugOverlay => "Debug overlay",
             Toggle::CinematicZoom => "Cinematic zoom",
             Toggle::ZoomInSurvival => "Zoom in survival",
@@ -424,6 +429,7 @@ impl Toggle {
     fn get(self, settings: &Settings) -> bool {
         match self {
             Toggle::Vsync => settings.vsync,
+            Toggle::VolumetricLight => settings.volumetric_light,
             Toggle::DebugOverlay => settings.debug_overlay,
             Toggle::CinematicZoom => settings.cinematic_zoom,
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
@@ -433,6 +439,7 @@ impl Toggle {
     fn set(self, settings: &mut Settings, on: bool) {
         *match self {
             Toggle::Vsync => &mut settings.vsync,
+            Toggle::VolumetricLight => &mut settings.volumetric_light,
             Toggle::DebugOverlay => &mut settings.debug_overlay,
             Toggle::CinematicZoom => &mut settings.cinematic_zoom,
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
@@ -559,6 +566,7 @@ const SECTIONS: [(&str, &[Control]); 3] = [
             Control::Choice(Choice::Textures),
             Control::Choice(Choice::AntiAliasing),
             Control::Choice(Choice::Shadows),
+            Control::Switch(Toggle::VolumetricLight),
             Control::Choice(Choice::Water),
             Control::Choice(Choice::Particles),
             Control::Slider(Slider::HudRaise),
@@ -952,7 +960,7 @@ fn apply(
         world.set_view_distance(settings.view_distance);
         cycle.view_distance = lod::view_distance(settings.view_distance);
     }
-    quality.set_if_neq(Quality { shadows: settings.shadows });
+    quality.set_if_neq(Quality { shadows: settings.shadows, volumetric_light: settings.volumetric_light });
     world.set_far_detail(settings.far_detail.range());
     let present_mode = if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     if let Ok(mut window) = window.single_mut()

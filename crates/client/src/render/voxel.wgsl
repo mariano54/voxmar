@@ -22,7 +22,7 @@
 @group(0) @binding(1) var<uniform> globals: Globals;
 #else
 #import bevy_pbr::mesh_view_bindings::{view, globals, fog}
-#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow}
+#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, weathered, wet_sheen, self_glow}
 #ifdef TRANSLUCENT
 #import voxmar::water_surface::shade_water
 #endif
@@ -31,10 +31,15 @@
 @group(2) @binding(0) var block_textures: texture_2d_array<f32>;
 @group(2) @binding(1) var block_sampler: sampler;
 @group(2) @binding(2) var<storage, read> chunk_origins: array<vec4<i32>>;
-// Bindings 3 and 4 are grass blade seeds (grass.wgsl) and the wind (wind.wgsl).
+// Bindings 3 and 4 are grass blade seeds (grass.wgsl) and the wind (wind.wgsl), 6 the
+// atmosphere (lighting.wgsl).
 // Biome colours of every column: grass, foliage and water for each block (sRGB, a word
 // each), from the offset a chunk's origin keeps in w.
 @group(2) @binding(5) var<storage, read> column_colours: array<u32>;
+#ifndef PREPASS_PIPELINE
+// How brightly each texture layer glows by itself, in alpha (render/mod.rs, glow_table).
+@group(2) @binding(7) var block_glow: texture_2d<f32>;
+#endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
 const TINT_NONE: u32 = 0u;
@@ -384,7 +389,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     // Seen from its back, the face belongs to the leaf on the other side.
     face = select(face ^ 1u, face, front_facing);
 #endif
-    var color = shade(base, shadow_at, face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant, in.clip_position.xy);
+    // Rain darkens and wets what it falls on, puddles gather on open ground, frost whitens.
+    var surface = vec4(base, 0.0);
+#ifndef TRANSLUCENT
+    if !plant {
+        surface = weathered(base, in.world_position, NORMALS[face], in.light.y);
+    }
+#endif
+    var color = shade(surface.rgb, shadow_at, face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant, in.clip_position.xy);
+#ifndef TRANSLUCENT
+    color = wet_sheen(color, in.world_position, NORMALS[face], surface.a, in.light.y);
+#endif
+    let glow = textureLoad(block_glow, vec2(layer, 0), 0).a;
+    if glow > 0.0 {
+        color += self_glow(base, albedo.rgb, glow);
+    }
     var alpha = albedo.a;
 
 #ifdef TRANSLUCENT

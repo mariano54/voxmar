@@ -2,16 +2,22 @@
 // of ground fog (valley fog, dawn mist, sea fog) lying under a height, and the weather's
 // fog, each dimming what lies behind it and scattering sky light and sunlight towards the
 // eye. Everything is integrated analytically along the view ray, so it costs a few
-// exponentials per pixel and never bands or shimmers. The terrain and the sky share these
-// functions and one uniform (render/atmosphere.rs).
+// exponentials per pixel and never bands or shimmers. The terrain, the sky and the
+// volumetric light pass share these functions and one uniform (render/atmosphere.rs).
 
 #define_import_path voxmar::atmosphere
+
+#import voxmar::clouds::cloud_opacity
 
 struct Atmosphere {
     // Shadows. x: filter taps (0: no shadows, 1: one bilinear tap), y: penumbra width per
     // block between caster and receiver, z: normal offset in shadow texels, w: widest
     // penumbra, in blocks.
     shadow: vec4<f32>,
+    // Surfaces. x: how steeply sky light falls off into shade (an exponent), y: ambient
+    // occlusion strength, z: how brightly leaves and plants glow when the sun is behind
+    // them, w: how brightly glowing blocks glow by themselves.
+    surface: vec4<f32>,
     // Clear-air haze. rgb: its colour, lit by the sky (the horizon's colour), w: how much
     // light it takes out per block at its base.
     haze: vec4<f32>,
@@ -19,7 +25,8 @@ struct Atmosphere {
     // where the distant terrain's edge starts and finishes fading into the sky.
     haze_shape: vec4<f32>,
     // Sunlight scattered by the air. rgb: its colour around the sun (as the sky's glow), w:
-    // unused.
+    // how far the volumetric light pass reaches, in blocks (0 when it is off, and the haze
+    // then scatters all of it).
     glow: vec4<f32>,
     // Fog. rgb: its colour, lit by the sky and the sun, w: how much light the weather's fog
     // (mist, whiteout, rain, dust) takes out per block at its base.
@@ -30,8 +37,18 @@ struct Atmosphere {
     // Ground fog. x: light taken out per block inside it, y: the height of its top, z: how
     // gradually it thins above that, w: unused.
     mist: vec4<f32>,
-    // The ground. w: how much sunlight it bounces onto walls and undersides; x, y, z
-    // unused.
+    // Volumetric light. x: strength, y: ray steps, z: sunlight scattered evenly in every
+    // direction, besides the glow around the sun, w: how much more of the clear air
+    // scatters it than dims (shafts show in clear weather too).
+    rays: vec4<f32>,
+    // The low cloud (clouds.wgsl). xy: the layer's coordinates over the eye, z: how much of
+    // the sky it covers, w: how heaped it is.
+    clouds: vec4<f32>,
+    // Cloud shadows. x: seconds the clouds have been forming for, y: how dark their shadows
+    // are, z: the layer's height above the eye, in blocks.
+    cloud_shadow: vec4<f32>,
+    // The ground. x: how wet rain has left it, y: frost on it, z: snow lying around, w:
+    // how much sunlight it bounces onto walls and undersides.
     ground: vec4<f32>,
 };
 
@@ -131,8 +148,9 @@ fn far_color(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, to_sun: vec3<f
 }
 
 // The air between `eye` and what lies `offset` from it. Sky light scattered by each
-// medium takes its colour, sunlight scattered by it glows around the sun, and the far
-// edge of the distant terrain fades completely into what lies beyond.
+// medium takes its colour; sunlight scattered within the volumetric light pass's reach is
+// left to that pass, which knows where shadows fall. The far edge of the distant terrain
+// fades completely into what lies beyond.
 fn aerial(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>, to_sun: vec3<f32>) -> Aerial {
     let distance = max(length(offset), 1e-4);
     let direction = offset / distance;
@@ -140,7 +158,12 @@ fn aerial(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>, to_sun: vec3<f32>) -
     let total = depth.x + depth.y + depth.z;
     let through = exp(-total);
     let sky_lit = (a.haze.rgb * depth.x + a.fog.rgb * (depth.y + depth.z)) / max(total, 1e-6);
-    let sunlit = 1.0 - through;
+    // Scattered sunlight from beyond the volumetric pass's reach.
+    var sunlit = 1.0 - through;
+    if a.glow.w > 0.0 {
+        let near = optical_depth(a, eye.y, direction * min(distance, a.glow.w));
+        sunlit = exp(-(near.x + near.y + near.z)) - through;
+    }
     let glow = a.glow.rgb * sun_glow(dot(direction, to_sun));
     let edge = smoothstep(a.haze_shape.z, a.haze_shape.w, distance);
     var out: Aerial;
@@ -150,4 +173,16 @@ fn aerial(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>, to_sun: vec3<f32>) -
         out.light += far_color(a, eye, direction, to_sun) * edge;
     }
     return out;
+}
+
+// Fraction of sunlight the low cloud lets through to `world` (with the eye at `eye`), from
+// the cloud where the ray towards the sun `to_sun` meets the layer.
+fn cloud_light(a: Atmosphere, eye: vec3<f32>, world: vec3<f32>, to_sun: vec3<f32>) -> f32 {
+    if a.cloud_shadow.y <= 0.0 || a.clouds.z < 0.005 || to_sun.y < 0.02 {
+        return 1.0;
+    }
+    let rise = a.cloud_shadow.z - (world.y - eye.y);
+    let crossing = world.xz - eye.xz + to_sun.xz / to_sun.y * rise;
+    let at = a.clouds.xy + crossing * (2.0 / a.cloud_shadow.z);
+    return 1.0 - a.cloud_shadow.y * cloud_opacity(at, a.cloud_shadow.x, a.clouds.z, a.clouds.w);
 }
