@@ -86,7 +86,9 @@ impl Plugin for TerrainPlugin {
             .add_systems(
                 Render,
                 (
-                    receive.in_set(RenderSystems::PrepareResources),
+                    // Before culling, which runs in `Queue`: draws must never refer to
+                    // pages a world change has just dropped.
+                    receive.in_set(RenderSystems::PrepareAssets),
                     prepare_bind_group.in_set(RenderSystems::PrepareBindGroups),
                     (cull, queue).chain().in_set(RenderSystems::Queue),
                 ),
@@ -1043,7 +1045,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawDistant {
         let mut current = None;
         for draw in &draws.distant {
             if current != Some(draw.page) {
-                let page = &gpu.tile_pages.pages[draw.page as usize];
+                let Some(page) = gpu.tile_pages.pages.get(draw.page as usize) else { return RenderCommandResult::Skip };
                 render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(page.index_buffer.slice(..), IndexFormat::Uint32);
                 current = Some(draw.page);
@@ -1077,7 +1079,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTerrain {
         let mut current = None;
         for draw in &draws.passes[*pass as usize] {
             if current != Some(draw.page) {
-                let page = &gpu.chunk_pages.pages[draw.page as usize];
+                let Some(page) = gpu.chunk_pages.pages.get(draw.page as usize) else { return RenderCommandResult::Skip };
                 render_pass.set_vertex_buffer(0, page.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(page.index_buffer.slice(..), IndexFormat::Uint32);
                 current = Some(draw.page);

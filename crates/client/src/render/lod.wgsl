@@ -58,6 +58,8 @@ const RIPPLE_FADE: f32 = 256.0;
 const GLINT_SHARPNESS = vec2(50.0, 220.0);
 const GLINT = vec2(0.9, 1.0);
 const RIPPLE_SLOPE_VARIANCE: f32 = 0.0013;
+// How fast light fades through water, per block (as in voxel.wgsl).
+const WATER_EXTINCTION: f32 = 0.32;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -249,7 +251,11 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples))
         * mix(GLINT.x, GLINT.y, ripples);
     let reflected = mix(surface, fog.base_color.rgb * 1.15, fresnel) + sun_color() * glint * 4.0;
-    return mix(floor, reflected, mix(0.72, 1.0, fresnel));
+    // As over real shallows, the floor shows through as far as light reaches it; sky light
+    // at the floor fell by two levels per block of water.
+    let depth = (1.0 - in.params.x) * 7.5;
+    let through = exp(-depth * WATER_EXTINCTION);
+    return mix(floor, reflected, mix(mix(0.92, 0.18, through), 1.0, fresnel));
 }
 
 @fragment
