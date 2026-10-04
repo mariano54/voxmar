@@ -232,6 +232,7 @@ fn send_pending(mut console: ResMut<Console>, net: Res<Net>, player: Res<LocalPl
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw(
     time: Res<Time>,
     settings: Res<Settings>,

@@ -178,6 +178,8 @@ pub struct Wind {
     pub gustiness: f32,  // 0..1
     pub seed: u64,       // seed of the gusts, the server's
     pub seconds: f64,    // world time now (the server's simulation clock), what gusts run on
+    pub offset: Vec2,    // how far gust fronts have travelled with the wind, wrapped every
+                         // engine::weather::GUST_WRAP (40960) blocks
 }
 impl Wind {
     pub fn mean(&self) -> Vec2;                     // direction * speed
@@ -189,21 +191,25 @@ impl Wind {
 Gusts come from `voxmar_engine::weather::gust`, which the server uses too, so swaying
 grass, blowing particles and later gameplay agree. Gust fronts about 40 blocks across
 sweep along with the wind and change over a few seconds; speed swings from about 0.55 to
-1.8 times the mean at full gustiness, with a little sideways veer. For a shader, the
-function is (all of it 32-bit, so it ports exactly; `pcg` is the hash already in
-`precipitation.wgsl`):
+1.8 times the mean at full gustiness, with a little sideways veer. How far the fronts
+have travelled is the mean wind integrated over time (`offset`): the server keeps it for
+each player and sends it with the weather, and the client advances it every frame and
+eases it onto each report, so the fronts never leap when the mean wind changes. The
+noise lattice repeats every 1024 cells (40960 blocks), so the offset wraps unseen. For a
+shader, the function is (all of it 32-bit, so it ports exactly; `pcg` is the hash already
+in `precipitation.wgsl`):
 
 ```wgsl
 // seed = (seed ^ (seed >> 32)) as u32 ^ 0x67757374u, computed on the CPU.
 fn value_noise(seed: u32, p: vec2<f32>, t: f32) -> f32  // as engine::weather::value_noise:
-//   lattice cell = floor(p), floor(t); corners hash pcg(seed ^ pcg(x ^ pcg(z ^ pcg(t))))
-//   (u32 wrapping adds of 0/1 per corner), value (h >> 8) / 2^24, smoothstep-weighted
-//   trilinear blend.
-fn gust(at: vec2<f32>, seconds: f32, mean: vec2<f32>, gusts: f32) -> vec2<f32> {
-    let p = (at - mean * seconds) / 40.0;   // do this subtraction in f64 on the CPU, or
+//   lattice cell = floor(p) mod 1024 (x and z), floor(t); corners hash
+//   pcg(seed ^ pcg(x ^ pcg(z ^ pcg(t)))) with x, z = (cell + 0/1) mod 1024 and t a u32
+//   wrapping add of 0/1; value (h >> 8) / 2^24, smoothstep-weighted trilinear blend.
+fn gust(at: vec2<f32>, seconds: f32, offset: vec2<f32>, mean: vec2<f32>, gusts: f32) -> vec2<f32> {
+    let p = (at - offset) / 40.0;           // `at` relative to a nearby multiple of 40960
     let t = seconds / 5.0;                  // pass seconds wrapped, for f32 precision
     let s = value_noise(seed, p, t);
-    let veer = value_noise(seed ^ 0x9e3779b9u, p * 0.5, t * 0.7) - 0.5;
+    let veer = value_noise(seed ^ 0x9e3779b9u, p, t * 0.7) - 0.5;
     let speed = 1.0 + gusts * (1.8 * s * s - 0.45);
     return mean * speed + vec2(-mean.y, mean.x) * (veer * 0.6 * gusts);
 }
@@ -221,6 +227,33 @@ an offset integrated from the mean wind each frame, rather than `gust` itself: `
 puts its fronts at `mean * seconds`, so when the mean changes by δ they jump by
 `δ * seconds` (with `seconds` in the hundreds of thousands, a whole meadow would lurch
 as the wind veered).
+
+## The air (ClientAtmosphere)
+
+`weather::atmosphere::ClientAtmosphere`, next to `ClientWeather`, is the air around the
+player: the land's (`Overworld::atmosphere_at`, sampled twice a second from the client's
+own generator and eased over a few seconds, so biome borders pass gradually) with the
+weather, wind and time of day applied.
+
+```rust
+pub struct ClientAtmosphere {
+    pub haze: Vec3,          // haze colour, linear RGB; towards the dust colour in dust,
+                             // towards grey-white in fog and rain
+    pub haze_density: f32,   // relative to the pack's haze, ~1; up to ~4 in fog and dust
+    pub sky: Vec3,           // tint multiplied into the sky, linear; white leaves it
+    pub warmth: f32,         // grading, -1 cooler ..= 1 warmer, ~0
+    pub saturation: f32,     // grading, ~1; less under overcast, rain and fog
+    pub particles: Vec<AmbientParticles>, // sets showing now, densest first:
+                             // name, density 0..1, color (linear), size, motion, glow
+}
+```
+
+The colour parts are for the shader pack to apply within its own look (haze colour and
+density into the haze, `sky` into the sky colours, `warmth` and `saturation` into the
+grading). Particle sets showing only by day, at night or at twilight, in dry or wet
+weather, are already filtered; hovering ones settle out of a strong wind; night-time ones
+(fireflies) come out on six nights in ten. The precipitation particles draw the four
+densest sets. docs/weather-effects.md has the rest of the weather's handover.
 
 ## What we took from Voxy
 

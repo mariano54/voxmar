@@ -25,6 +25,8 @@ pub struct GeoSample {
     pub current: Option<Current>,
     /// A cave a river runs through under the ground.
     pub cavity: Option<Cavity>,
+    /// What a trail does here.
+    pub trail: Option<crate::trails::TrailMark>,
 }
 
 impl GeoSample {

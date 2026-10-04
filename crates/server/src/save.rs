@@ -33,7 +33,7 @@ use voxmar_worldgen::Overworld;
 const META_FILE: &str = "world.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
-const COLUMN_MAGIC: &[u8; 4] = b"vxc1";
+const COLUMN_MAGIC: &[u8; 4] = b"vxc2";
 
 /// How a world is played.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,7 +190,7 @@ impl WorldSave {
         ZlibDecoder::new(compressed).read_to_end(&mut encoded)?;
         let file: ColumnFile<Column> = postcard::from_bytes(&encoded).map_err(|e| invalid(&path, e))?;
         let mut column = file.column;
-        if column.climate.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
+        if column.climate.len() != COLUMN_AREA || column.colors.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
             return Err(invalid(&path, "inconsistent column data"));
         }
 
@@ -385,6 +385,31 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         assert!(save.read_column(pos, &old).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn biome_colours_travel_with_columns() {
+        let registry = registry(false);
+        let pos = ColumnPos::new(4, -9);
+        let column = Overworld::new(11, registry.clone()).generate(pos);
+        assert_eq!(column.colors.len(), voxmar_engine::world::COLUMN_AREA);
+        assert!(column.colors.iter().any(|c| *c != voxmar_engine::world::DEFAULT_COLORS), "generation colours columns");
+
+        // Through a save.
+        let dir = temp_dir("colours");
+        let save = WorldSave::new(&dir);
+        save.create(&WorldMeta::new("Colours", 11, GameMode::Creative)).unwrap();
+        save.write_column(pos, &column, &registry).unwrap();
+        assert_eq!(save.read_column(pos, &registry).unwrap().unwrap().colors, column.colors);
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // Over the network, encoded as the TCP transport does.
+        let message = voxmar_protocol::ServerMessage::Column { pos, column: Arc::new(column.clone()) };
+        let bytes = postcard::to_stdvec(&message).unwrap();
+        let voxmar_protocol::ServerMessage::Column { column: received, .. } = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("decoded another message");
+        };
+        assert_eq!(*received, column);
     }
 
     #[test]

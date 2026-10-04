@@ -30,7 +30,7 @@ use voxmar_engine::glam::IVec2;
 use crate::content::{Axis, BiomeDef, Colors, Layer, Role, Stones, WorldContent};
 use crate::geology::{smoothstep, spline};
 use crate::rarity::{Featured, Rarity, Tier, name_hash};
-use crate::rocks::Rocks;
+use crate::rocks::{ProvinceId, Rocks};
 use crate::surface::{Palette, Surface, SurfaceRules};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -92,6 +92,21 @@ struct Claim {
     common: bool,
 }
 
+/// Where an underground claim holds within its cell, beyond aether.
+#[derive(Clone, Copy, Debug)]
+struct Gate {
+    depth: (f32, f32),
+    height: (f32, f32),
+    /// A bit per rock province it lies in.
+    provinces: u64,
+}
+
+impl Gate {
+    fn holds(&self, depth: f32, height: f32, province: ProvinceId) -> bool {
+        (self.depth.0..self.depth.1).contains(&depth) && (self.height.0..self.height.1).contains(&height) && self.provinces & 1 << province.0 != 0
+    }
+}
+
 /// A variant's slot along the variant field.
 #[derive(Clone, Copy, Debug)]
 struct Slot {
@@ -133,6 +148,8 @@ pub struct Biomes {
     land: Vec<Vec<Claim>>,
     /// River and lake claims per cell.
     rivers: Vec<Vec<Claim>>,
+    /// Underground claims per cell, in the same order as land claims.
+    underground: Vec<Vec<(Claim, Gate)>>,
     variants: Vec<Vec<Slot>>,
     ecotones: FxHashMap<(BiomeId, BiomeId), Ecotone>,
     /// Ecotone half-widths along temperature and moisture, for finding the slices' edges.
@@ -177,12 +194,9 @@ impl Biomes {
             .collect();
 
         let cells = counts.iter().product();
-        let (mut land, mut rivers) = (vec![Vec::new(); cells], vec![Vec::new(); cells]);
+        let (mut land, mut rivers, mut underground) = (vec![Vec::new(); cells], vec![Vec::new(); cells], vec![Vec::new(); cells]);
+        let any = (f32::NEG_INFINITY, f32::INFINITY);
         for (i, def) in defs.iter().enumerate() {
-            if def.layer != Layer::Surface {
-                continue;
-            }
-            let table = if def.role == Role::River { &mut rivers } else { &mut land };
             let common = def.rarity == Rarity::Common;
             for climate in &def.climate {
                 let ranges = AXES.map(|axis| match climate.bands(axis) {
@@ -190,13 +204,23 @@ impl Biomes {
                     None => 0..=counts[axis as usize] - 1,
                 });
                 let claim = Claim { biome: BiomeId(i as u16), aether: climate.aether, share: def.weight * if common { 1.0 } else { share(i) }, common };
+                let provinces = climate.provinces.as_ref().map_or(u64::MAX, |names| {
+                    (0..rocks.len().min(64)).filter(|&p| names.iter().any(|n| rocks.matches(ProvinceId(p as u8), n))).fold(0, |m, p| m | 1 << p)
+                });
+                let gate = Gate { depth: climate.depth.unwrap_or(any), height: climate.height.unwrap_or(any), provinces };
                 for t in ranges[0].clone() {
                     for m in ranges[1].clone() {
                         for c in ranges[2].clone() {
                             for e in ranges[3].clone() {
-                                let cell = &mut table[((t * counts[1] + m) * counts[2] + c) * counts[3] + e];
-                                if !cell.iter().any(|other: &Claim| other.biome == claim.biome && other.aether == claim.aether) {
-                                    cell.push(claim);
+                                let index = ((t * counts[1] + m) * counts[2] + c) * counts[3] + e;
+                                match (def.layer, def.role) {
+                                    (Layer::Underground, _) => underground[index].push((claim, gate)),
+                                    (Layer::Surface, role) => {
+                                        let cell: &mut Vec<Claim> = if role == Role::River { &mut rivers[index] } else { &mut land[index] };
+                                        if !cell.iter().any(|other| other.biome == claim.biome && other.aether == claim.aether) {
+                                            cell.push(claim);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -206,11 +230,15 @@ impl Biomes {
         }
         // Rarer claims first, rarest at the front; then commons, all in name-hash order.
         let hash = |claim: &Claim| name_hash(&defs[claim.biome.0 as usize].name);
+        let order = |a: &Claim, b: &Claim| {
+            let rarity = |c: &Claim| if c.common { f32::INFINITY } else { c.share };
+            a.common.cmp(&b.common).then(rarity(a).total_cmp(&rarity(b))).then(hash(a).cmp(&hash(b)))
+        };
         for cell in land.iter_mut().chain(rivers.iter_mut()) {
-            cell.sort_by(|a, b| {
-                let rarity = |c: &Claim| if c.common { f32::INFINITY } else { c.share };
-                a.common.cmp(&b.common).then(rarity(a).total_cmp(&rarity(b))).then(hash(a).cmp(&hash(b)))
-            });
+            cell.sort_by(order);
+        }
+        for cell in &mut underground {
+            cell.sort_by(|a, b| order(&a.0, &b.0));
         }
 
         let variants = defs
@@ -253,7 +281,7 @@ impl Biomes {
         }
 
         let remaps = AXES.map(|axis| content.climate.remaps.iter().find(|r| r.axis == axis).map(|r| r.points.clone()));
-        Self { list, edges, remaps, counts, land, rivers, variants, ecotones, ecotone_widths }
+        Self { list, edges, remaps, counts, land, rivers, underground, variants, ecotones, ecotone_widths }
     }
 
     pub fn get(&self, id: BiomeId) -> &Biome {
@@ -386,6 +414,24 @@ impl Biomes {
     /// The river or lake biome of a point's climate, if any claims it.
     pub(crate) fn river(&self, p: &Point) -> Option<BiomeId> {
         Self::claimant(&self.rivers[self.cell(p)], p.0[A], p.0[W]).map(|(biome, _, _)| biome)
+    }
+
+    /// The underground biome at `p`, `depth` blocks below the surface and `height` blocks
+    /// above sea level (negative below it), in rock province `province`. The weirdness and
+    /// variant of `p` are the underground's own 3D fields. `None` where no underground
+    /// biome claims the place.
+    pub(crate) fn underground(&self, p: &Point, depth: f32, height: f32, province: ProvinceId) -> Option<BiomeId> {
+        const MOST: usize = 24;
+        let mut claims = [Claim { biome: BiomeId(0), aether: None, share: 0.0, common: false }; MOST];
+        let mut n = 0;
+        for (claim, gate) in &self.underground[self.cell(p)] {
+            if n < MOST && gate.holds(depth, height, province) {
+                claims[n] = *claim;
+                n += 1;
+            }
+        }
+        let (biome, _, _) = Self::claimant(&claims[..n], p.0[A], p.0[W])?;
+        Some(self.variant(biome, p.0[V]))
     }
 
     /// Picks the biome at `p` and finds its nearest border, given the points

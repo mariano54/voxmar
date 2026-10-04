@@ -29,6 +29,10 @@ struct Params {
     dust_color: vec4<f32>,
     // xyz: the wind, in blocks per second
     wind: vec4<f32>,
+    // Four sets of ambient particles (pollen, fireflies, …), three entries each: xyz how
+    // far they have drifted, w how many; rgb their colour, w 1 if they glow; x their size
+    // in blocks, y how they move (0 drift, 1 hover, 2 fall, 3 rise, 4 blow)
+    ambient: array<vec4<f32>, 12>,
     // Top of the highest block plus one in each column around the camera, 16 bits each.
     heights: array<vec4<u32>, 512>,
 };
@@ -38,13 +42,15 @@ struct Params {
 // As in precipitation.rs.
 const BOX = vec3(40.0, 36.0, 40.0);
 const MAP: i32 = 64;
-const DROPS: u32 = 22000u;
+const DROPS: u32 = 28000u;
 // The last drops splash on the ground instead, within this many blocks of the camera.
 const SPLASHES: u32 = 3000u;
-// Before them, specks of dust, then motes, ride the wind; the rest fall.
+// Before them, specks of dust, then motes, then four sets of ambient particles ride the
+// air; the rest fall.
 const DUST: u32 = 5200u;
 const MOTES: u32 = 800u;
-const FALLING: u32 = DROPS - SPLASHES - DUST - MOTES;
+const AMBIENT: u32 = 1500u;
+const FALLING: u32 = DROPS - SPLASHES - DUST - MOTES - 4u * AMBIENT;
 const SPLASH_REACH: f32 = 14.0;
 const TAU: f32 = 6.28318531;
 // Off-screen, for drops not drawn: all four corners collapse there.
@@ -132,14 +138,50 @@ fn splash(n: u32, corner: vec2<f32>) -> VertexOutput {
     return out;
 }
 
-// A speck of dust or a glowing mote, carried on the wind with a little turbulence, in a
-// box half as wide as the falling drops'.
+// A speck of dust, a glowing mote or an ambient particle (pollen, a firefly, a spore),
+// carried on the air with a little turbulence, in a box half as wide as the falling
+// drops'.
 fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
     var out: VertexOutput;
     out.clip = HIDDEN;
-    let mote = n >= FALLING + DUST;
-    let amount = select(params.dust.w, params.motes.w, mote);
+    // Which group: 0 dust, 1 motes, 2.. ambient.
+    var group = 0u;
+    if n >= FALLING + DUST + MOTES {
+        group = 2u + (n - FALLING - DUST - MOTES) / AMBIENT;
+    } else if n >= FALLING + DUST {
+        group = 1u;
+    }
+    var drifted: vec3<f32>;
+    var amount: f32;
+    var color: vec3<f32>;
+    var glow = false;
+    var scale: f32;
+    var motion: u32;
     var h = pcg(n * 3266489917u + 99u);
+    let size = unit(pcg(h ^ 0x51u));
+    if group == 0u {
+        drifted = params.dust.xyz;
+        amount = params.dust.w;
+        color = params.dust_color.rgb;
+        scale = 0.06 + 0.1 * size;
+        motion = 4u;
+    } else if group == 1u {
+        drifted = params.motes.xyz;
+        amount = params.motes.w;
+        // Pale gold and sky blue.
+        color = mix(vec3(1.0, 0.85, 0.45), vec3(0.55, 0.85, 1.0), fract(size * 7.0));
+        glow = true;
+        scale = 0.05 + 0.07 * size;
+        motion = 0u;
+    } else {
+        let i = (group - 2u) * 3u;
+        drifted = params.ambient[i].xyz;
+        amount = params.ambient[i].w;
+        color = params.ambient[i + 1u].rgb;
+        glow = params.ambient[i + 1u].w > 0.5;
+        scale = params.ambient[i + 2u].x * (0.6 + 0.8 * size);
+        motion = u32(params.ambient[i + 2u].y + 0.5);
+    }
     if unit(h) >= amount {
         return out;
     }
@@ -150,17 +192,21 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
     h = pcg(h);
     let z = unit(h);
     h = pcg(h);
-    let size = unit(h);
-    h = pcg(h);
     let phase = unit(h) * TAU;
     let box = BOX * 0.5;
-    let drifted = select(params.dust.xyz, params.motes.xyz, mote);
     let p = vec3(x, y, z) * box + drifted - params.camera.xyz;
     var offset = p - box * floor(p / box) - box * 0.5;
     let t = params.camera.w;
-    // Dust tumbles in the gusts; motes wander slowly.
-    let swirl = select(0.6, 0.9, mote);
-    let rate = select(1.3 + size, 0.25 + 0.2 * size, mote);
+    // Blown things tumble in the gusts, drifting ones wander, hovering ones bob.
+    var swirl = 0.9;
+    var rate = 0.25 + 0.2 * size;
+    switch motion {
+        case 1u: { swirl = 0.35; rate = 0.4 + 0.3 * size; }
+        case 2u: { swirl = 0.3; rate = 0.8 + 0.4 * size; }
+        case 3u: { swirl = 0.4; rate = 0.3 + 0.2 * size; }
+        case 4u: { swirl = 0.6; rate = 1.3 + size; }
+        default: {}
+    }
     offset += vec3(sin(t * rate + phase), 0.5 * sin(t * rate * 1.3 + phase * 2.1), cos(t * rate * 0.8 + phase * 1.7)) * swirl;
     let below = ground(offset);
     if offset.y < below + 0.1 {
@@ -168,32 +214,35 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
     }
     let distance = length(offset);
     let pixel = distance * 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
-    let radius = select(0.03 + 0.05 * size, 0.025 + 0.035 * size, mote);
+    let radius = scale * 0.5;
     let drawn = max(radius, pixel * 0.8);
     var world: vec3<f32>;
     let wind = params.wind.xyz;
-    if mote || length(wind) < 1.0 {
+    if motion != 4u || length(wind) < 1.0 {
         let right = view.world_from_view[0].xyz;
         let up = view.world_from_view[1].xyz;
         world = offset + (right * corner.x + up * corner.y) * drawn;
     } else {
-        // Dust streaks along the wind, longer the harder it blows.
+        // Blown dust streaks along the wind, longer the harder it blows.
         let along = normalize(wind);
         let across = normalize(cross(along, offset / max(distance, 1e-3)));
         let streak = drawn + length(wind) * 0.035;
         world = offset + across * corner.x * drawn + along * corner.y * streak;
     }
     var opacity = radius / drawn;
-    if mote {
-        // Pale gold and sky blue, glowing brighter than daylight so bloom haloes them, and
-        // twinkling.
-        let hue = mix(vec3(1.0, 0.85, 0.45), vec3(0.55, 0.85, 1.0), fract(size * 7.0));
-        let twinkle = 0.6 + 0.4 * sin(t * (1.5 + 2.0 * size) + phase);
-        out.color = vec4(hue * 4.0 * twinkle, 0.0);
+    if glow {
+        // Brighter than daylight so bloom haloes it. Motes twinkle; hovering lights
+        // (fireflies) blink, lit for a moment every few seconds.
+        var light = 0.6 + 0.4 * sin(t * (1.5 + 2.0 * size) + phase);
+        if motion == 1u {
+            light = smoothstep(0.55, 0.9, sin(t * (0.7 + 0.5 * size) + phase));
+        }
+        out.color = vec4(color * 4.0 * light, 0.0);
         out.kind = 7u;
     } else {
-        out.color = vec4(params.dust_color.rgb * params.light.rgb * 1.6, 0.0);
-        opacity *= 0.7;
+        // Specks catch the light; big soft puffs (mist) are faint.
+        out.color = vec4(color * params.light.rgb * 2.2, 0.0);
+        opacity *= mix(0.9, 0.2, smoothstep(0.15, 0.5, scale));
         out.kind = 6u;
     }
     let reach = length(offset.xz) / (box.x * 0.5);
