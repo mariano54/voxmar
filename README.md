@@ -223,6 +223,22 @@ volcanism, cave density, mountain height, biodiversity), with sensible correlati
 featured set: a few rare biomes and other things it boosts and common ones it suppresses, so
 no two worlds share a rarity table. Everything else is a continuous field:
 
+- **Land** (`worldgen/src/geology.rs`) follows Tectonic: coasts, mountain ranges and broad
+  valleys each lie along the zero line of a noise folded with `abs()`, so the sea runs in a web
+  of channels and straits between landmasses, ranges run in long chains that rise and fall
+  along their length (ridged peaks, crags and gullies on their spines where the land is young)
+  and a network of valleys cuts passes through them. Plateaus stand behind escarpments. Heights
+  over the sea are stretched by their square and eased under a ceiling, so lowlands stay low
+  while the highest peaks of active worlds reach about 230 blocks over the sea; seas deepen to
+  basins along their middles, with ridges on the deep floor.
+- **Terrain shapes** (`terrain.ron`, `worldgen/src/shapes.rs`) rise where the climate calls
+  for them, on the same bands as the biome table and never by asking which biome won: rolling
+  hills, wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
+  stepped canyons, karst towers on limestone, clusters of spires (some leaning, built in 3D),
+  volcanoes with craters where the world is volcanic, rare lone mountains seen from far away,
+  very rare natural arches, sea cliffs notched at the waterline with stacks offshore, and fjords
+  where valleys meet cold coasts. Rarer shapes take only some regions of their climate. Towers and
+  spires do not cool the climate on their tops.
 - **Temperature** falls towards the poles (latitude repeats along z, colder to the north, so
   hot, temperate and cold land always lie in that order) and with altitude.
 - **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
@@ -319,7 +335,8 @@ every half second). `Overworld::cave_biome_at` gives the cave biome at a block.
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
 `Overworld::locate_biome` serve commands.
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
-`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on, `X`, `Z`
+`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `RELIEF=1` by height, `SHAPES=1`
+tinted by terrain shape, `FIELD=erosion` and so on, `X`, `Z`
 and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
 rivers and creeks in their own blues, trails over them (brown, with fords cyan, bridges red,
 and the places they join marked; `TRAILS=0` leaves them out), and prints each biome's share of
@@ -330,7 +347,8 @@ arguments for fords, bridges and switchbacks near spawn; `trail_stats` counts pl
 and routes that failed. `river_sights` prints
 `--pose` arguments for captures of the places water makes near spawn (highland lakes,
 waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
-`Overworld::water_sights` finds.
+`Overworld::water_sights` finds; `shape_sights` does the same for the best example of each
+terrain shape and the highest peak, with a `/tp` command and `--pose` for each.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,

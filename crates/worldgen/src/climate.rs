@@ -75,6 +75,18 @@ pub struct Regional {
 }
 
 impl Regional {
+    /// Air temperature at the regional elevation, °C: what biomes and terrain shapes are
+    /// placed by, without the hills, valleys and features of each spot.
+    pub fn temperature(&self) -> f32 {
+        self.sea_temperature - LAPSE_RATE * (self.elevation - SEA_LEVEL as f32).max(0.0)
+    }
+
+    /// Precipitation over potential evaporation at the regional elevation, from the
+    /// regional rainfall: what biomes and terrain shapes are placed by.
+    pub fn moisture(&self) -> f32 {
+        moisture(self.rainfall, self.temperature())
+    }
+
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         let mix = |a: f32, b: f32| a + (b - a) * t;
         Self {
@@ -278,7 +290,7 @@ impl Climate {
     }
 }
 
-/// The regional climate over an area, computed once per lattice point and bilinearly
+/// The regional climate over an area, from the lattice points the land caches, bilinearly
 /// interpolated, so every caller sees exactly the same smooth fields.
 pub struct ClimateGrid {
     /// Lattice coordinates of the first point.
@@ -289,13 +301,10 @@ pub struct ClimateGrid {
 
 impl ClimateGrid {
     /// Covers the blocks from `min` to `max` inclusive.
-    pub fn new(climate: &Climate, geology: &Geology, min: IVec2, max: IVec2) -> Self {
+    pub fn new(geology: &Geology, min: IVec2, max: IVec2) -> Self {
         let origin = min.div_euclid(IVec2::splat(CELL));
         let size = max.div_euclid(IVec2::splat(CELL)) + 2 - origin;
-        let points = (0..size.y)
-            .flat_map(|j| (0..size.x).map(move |i| (origin + IVec2::new(i, j)) * CELL))
-            .map(|p| climate.regional(geology, p.x as f32, p.y as f32))
-            .collect();
+        let points = (0..size.y).flat_map(|j| (0..size.x).map(move |i| origin + IVec2::new(i, j))).map(|p| geology.regional_point(p)).collect();
         Self { origin, width: size.x, points }
     }
 
