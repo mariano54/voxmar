@@ -71,6 +71,11 @@ copied.
   ("Very fast procedural ocean", MIT), which we used until our own wave texture replaced them.
 - Where: `crates/client/src/render/water_surface.wgsl` and `water.wgsl`.
 
+### Tectonic
+
+- See its entry under World generation: its terrain splines and regions are adapted in
+  `assets/content/base/land.ron` (MIT, in the notices).
+
 ### Bevy (bloom)
 
 - Author: the Bevy contributors
@@ -87,7 +92,8 @@ copied.
 - Author: Apollo (Apollounknowndev)
 - Link: https://github.com/Apollounknowndev/tectonic
 - Licence: MIT (stated in its build file and on Modrinth; the repository has no licence
-  file). Ideas only.
+  file). **Copied**: its terrain splines and density-function structure, rewritten as our
+  RON (see the notices).
 - What we took: the shape of the land. Coasts, mountain ranges and broad valleys lie along
   the zero lines of noises folded with `abs()`, so they form chains and networks instead of
   blobs; heights are stretched by their square so lowlands stay low while ranges rise; a
@@ -103,8 +109,8 @@ copied.
   selector noise and climate (plateaus, valleys, rolling hills, two-tier terraces stepping
   down to the river lines, jungle pillars, wind-aligned dunes), mountain detail shifted along
   its own gradient, the trench-and-ridge sea floor, and biome parameters synthesised from the
-  terrain classes. Being MIT, its splines may be adapted directly; when they are, this entry
-  is marked copied and the source goes in THIRD_PARTY_NOTICES.md.
+  terrain classes. Its splines and regions are adapted directly in
+  `assets/content/base/land.ron`, run by `crates/worldgen/src/router.rs`.
 
 ### Terralith
 

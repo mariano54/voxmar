@@ -158,6 +158,49 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Tectonic (terrain splines)
+
+- Source: https://github.com/Apollounknowndev/tectonic (version 3.0.25, commit 34241bd)
+- Author: Apollo (Apollounknowndev), with contributors HB Stratos, DawnKiro and Uni
+- Licence: MIT, as declared in the project's build file (`build.gradle.kts`) and on its
+  Modrinth page; the repository carries no licence file, so the notice below is the standard
+  MIT text with the author named there.
+- What we adapted: the structure and knot values of its terrain density functions: the
+  continents, erosion and ridges fields (octave weights and scales, folded with `abs()`),
+  the erosion sharpening curve, the continental offset spline over continentalness, erosion
+  and ridges, the terrain regions (club, heart, spade and diamond: plateaus, single and
+  double valleys, badlands ridges, rolling hills, wet plateaus, two-tier terraces, wetland)
+  with their temperature and vegetation indices, the jaggedness on range spines with its
+  gradient-shifted ridge detail, and the trench-and-ridge sea floor. Rewritten as our own
+  RON expressions, with larger continents and ranges, valley floors kept above the sea for
+  our own rivers, and lowlands lifted a few blocks. Minecraft's own data, which Tectonic
+  builds on, was not copied.
+- Where: `assets/content/base/land.ron`, evaluated by `crates/worldgen/src/router.rs`.
+
+```
+MIT License
+
+Copyright (c) Apollo (Apollounknowndev) and Tectonic contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Field recordings from Freesound (rain, thunder, water)
 
 Every recording below is dedicated to the public domain under Creative Commons CC0 1.0

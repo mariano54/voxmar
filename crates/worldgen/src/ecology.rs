@@ -152,6 +152,9 @@ pub struct Ecology {
     properties: Vec<PlantProperties>,
     /// Per biome, in biome order.
     flora: Vec<Flora>,
+    /// The cold conifers that take over a forest where none of its biome's own trees can
+    /// grow, as forests give way to conifers towards a treeline.
+    hardy: Vec<(TreeId, f32)>,
     /// The forest's structure: old-growth cores, woodland, scrubby edges and gaps.
     stands: FastNoiseLite,
     /// Clearings, across every biome.
@@ -281,7 +284,15 @@ impl Ecology {
             .map(|biome| Flora::new(biome, content, registry, &tree_rarity, &plant_rarity))
             .collect();
 
+        let hardy = content
+            .trees
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.tags.iter().any(|tag| tag == "conifer") && t.tags.iter().any(|tag| tag == "cold") && t.rarity == Rarity::Common)
+            .map(|(i, _)| (TreeId(i as u16), 1.0))
+            .collect();
         Self {
+            hardy,
             trees,
             plants,
             plant_names: content.plants.iter().map(|p| p.name.clone()).collect(),
@@ -372,16 +383,20 @@ impl Ecology {
             }
         }
         if above >= 1 && site.forest > 0.0 && !flora.canopy.is_empty() {
+            // Up a hill too cold for every tree the biome lists (biomes follow the regional
+            // climate, the trees the climate of the spot), the forest gives way to the hardy
+            // conifers, as forests do towards a treeline.
+            let canopy = if flora.canopy.iter().any(|&(tree, _)| suits(tree) > 0.0) { &flora.canopy } else { &self.hardy };
             // The forest grows in stands: a slow noise picks each stand's kind along the
             // weights of the kinds suited here, and the others grow among it, a few.
             let start = out.len();
             let mut total = 0.0;
-            for &(tree, weight) in &flora.canopy {
+            for &(tree, weight) in canopy {
                 let share = weight * suits(tree);
                 total += share;
                 out.push((tree, share));
             }
-            let all: f32 = flora.canopy.iter().map(|c| c.1).sum();
+            let all: f32 = canopy.iter().map(|c| c.1).sum();
             let forest = site.forest * TREE_CHANCE * self.tree_density * (total / (SUITED * all)).min(1.0);
             let jitter = (hash3(self.seed ^ STANDS, x, 0, z) & 0xffff) as f32 / 65536.0 - 0.5;
             let u = (crate::climate::uniform(self.groves.get_noise_2d(x as f32, z as f32)) + 0.04 * jitter).clamp(0.0, 0.9999);

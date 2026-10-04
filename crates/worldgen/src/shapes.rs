@@ -302,7 +302,9 @@ impl Shapes {
                     return false;
                 }
                 let axis = base + lean * t.powf(1.7);
-                let r = radius * (1.0 - t).powf(0.8) + 0.4;
+                // At least about a block across, so the sections stay joined where the lean
+                // carries the axis furthest each block.
+                let r = radius * (1.0 - t).powf(0.8) + 0.9;
                 let d = p.distance(axis);
                 d < r + 1.5 && d < r * (1.0 + 0.15 * rough())
             }
@@ -554,7 +556,7 @@ impl Shapes {
         }
         let b = hash3(shape.seed ^ 0xa1, cx, 0, cz);
         let unit = |k: usize| (([a, b][k / 4] >> (k % 4 * 16)) & 0xffff) as f32 / 65536.0;
-        let units = std::array::from_fn(|k| unit(k));
+        let units = std::array::from_fn(&unit);
         let centre = [(cx as f32 + 0.3 + 0.4 * unit(1)) * cell, (cz as f32 + 0.3 + 0.4 * unit(2)) * cell];
         // Out of its reach, the climate at its centre need not be weighed. (A distance is at
         // least its larger part, which spares most positions the root.)

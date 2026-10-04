@@ -127,6 +127,24 @@ pub fn get_2d_lanes(noise: &FastNoiseLite, x: [f32; 4], y: [f32; 4], n: usize) -
     if n == 1 { [get_2d(noise, x[0], y[0]); 4] } else { get_2d_x4(noise, x, y) }
 }
 
+/// A sum of octaves of 2D OpenSimplex2 at four points, `Σ amplitude · noise(p · frequency)`
+/// over `octaves` of (seed, frequency, amplitude): exactly what summing FastNoiseLite
+/// objects of no fractal with those seeds and frequencies gives, octave after octave, in
+/// one call. `None` where this module cannot evaluate it (not on aarch64).
+#[inline]
+pub fn octaves_2d_x4(octaves: &[(i32, f32, f32)], x: [f32; 4], y: [f32; 4]) -> Option<[f32; 4]> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON is part of every aarch64 processor.
+        Some(unsafe { neon::octaves_2d_x4(octaves, x, y) })
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = (octaves, x, y);
+        None
+    }
+}
+
 /// Whether this module warps with `warp` itself: OpenSimplex2 progressive domain warp,
 /// which is what the land is warped by.
 pub fn supported_warp_2d(warp: &FastNoiseLite) -> bool {
@@ -143,18 +161,6 @@ pub fn warp_2d_x4(warp: &FastNoiseLite, x: [f32; 4], y: [f32; 4]) -> ([f32; 4], 
     }
     let warped: [(f32, f32); 4] = std::array::from_fn(|k| warp.domain_warp_2d(x[k], y[k]));
     (warped.map(|w| w.0), warped.map(|w| w.1))
-}
-
-/// `warp.domain_warp_2d` at the first `n` (1 ..= 4) of four points: one alone through
-/// FastNoiseLite, more a point per lane (`warp_2d_x4`). Lanes past `n` hold whatever.
-#[inline]
-pub fn warp_2d_lanes(warp: &FastNoiseLite, x: [f32; 4], y: [f32; 4], n: usize) -> ([f32; 4], [f32; 4]) {
-    if n == 1 {
-        let (wx, wy) = warp.domain_warp_2d(x[0], y[0]);
-        ([wx; 4], [wy; 4])
-    } else {
-        warp_2d_x4(warp, x, y)
-    }
 }
 
 /// `noise.get_noise_3d` at every point, into `out`.
@@ -452,6 +458,21 @@ mod neon {
         store(sum)
     }
 
+    /// `octaves_2d_x4`: each octave scaled and skewed as FastNoiseLite does, then summed
+    /// in order, multiplying and adding apart (never fused), as the scalar sum would.
+    #[target_feature(enable = "neon")]
+    pub(super) fn octaves_2d_x4(octaves: &[(i32, f32, f32)], x: [f32; 4], y: [f32; 4]) -> [f32; 4] {
+        let (x, y) = (load(x), load(y));
+        let mut sum = vdupq_n_f32(0.);
+        for &(seed, frequency, amplitude) in octaves {
+            let frequency = vdupq_n_f32(frequency);
+            let (sx, sy) = skew(vmulq_f32(x, frequency), vmulq_f32(y, frequency));
+            let value = simplex_2d_v(vdupq_n_s32(seed), sx, sy);
+            sum = vaddq_f32(sum, vmulq_f32(vdupq_n_f32(amplitude), value));
+        }
+        store(sum)
+    }
+
     /// Progressive domain warp at four points, one point per lane: each octave warps the
     /// points the octave before left, so octaves cannot run side by side, but points can.
     #[target_feature(enable = "neon")]
@@ -735,6 +756,31 @@ mod tests {
     }
 
     /// The land's progressive domain warp too, at its own settings and others.
+    #[test]
+    fn octaves_2d_x4_match_summed_fastnoise_lite_exactly() {
+        let mut rng = Rng::new(9, 9, 9, 9);
+        let noises: Vec<(FastNoiseLite, f32)> = (0..7)
+            .map(|i| {
+                let mut n = FastNoiseLite::with_seed(1000 + i);
+                n.set_noise_type(Some(NoiseType::OpenSimplex2));
+                n.set_frequency(Some(2f32.powi(i) / 3000.0));
+                (n, 0.37 / (i + 1) as f32)
+            })
+            .collect();
+        let kernel: Vec<(i32, f32, f32)> = noises.iter().map(|(n, a)| (n.seed, n.frequency, *a)).collect();
+        for p in points_2d(&mut rng, 4000).chunks(4) {
+            let (x, y): ([f32; 4], [f32; 4]) = (std::array::from_fn(|k| p[k].0), std::array::from_fn(|k| p[k].1));
+            let fast = super::octaves_2d_x4(&kernel, x, y).unwrap();
+            for k in 0..4 {
+                let mut sum = 0.0f32;
+                for (n, a) in &noises {
+                    sum += a * n.get_noise_2d(x[k], y[k]);
+                }
+                assert_eq!(fast[k].to_bits(), sum.to_bits(), "at {:?}", p[k]);
+            }
+        }
+    }
+
     #[test]
     fn warp_2d_x4_matches_fastnoise_lite_exactly() {
         let mut rng = Rng::new(10, 10, 10, 10);

@@ -2,11 +2,12 @@
 //!
 //! The overworld generator runs in stages, each a pure function of the world seed and
 //! position: world dials (global parameters such as mean temperature, ocean fraction and
-//! wind), geology (continents, ranges, plateaus and valleys), climate (temperature and
-//! precipitation as continuous fields), terrain shapes that rise with the climate (dunes,
-//! mesas, karst, volcanoes), rivers and lakes, ecology (what grows where), resources (ore
-//! veins) and terrain (blocks, caves, trees, plants). Biomes are data (`biomes.ron` in content
-//! packages) placed over the continuous climate: they decide surface materials and what
+//! wind), geology (continents, ranges, plateaus and valleys, from the land's router and the
+//! splines of `land.ron`), climate (temperature and precipitation as continuous fields),
+//! terrain shapes that rise with the climate (dunes, mesas, karst, volcanoes), rivers and
+//! lakes, ecology (what grows where), resources (ore veins) and terrain (blocks, caves,
+//! trees, plants). Biomes are data (`biomes.ron` in content packages) placed over the
+//! continuous climate: they decide surface materials and what
 //! grows, while temperature, moisture and the rest stay continuous underneath, and
 //! `Overworld::site` exposes all of it for gameplay. Purity means any column can be
 //! generated alone, in any order, on any thread, and features that cross column borders
@@ -32,6 +33,7 @@ mod rarity;
 mod resources;
 mod rng;
 mod rocks;
+mod router;
 mod shapes;
 mod stage;
 mod surface;
@@ -248,7 +250,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 15;
+    pub const VERSION: u32 = 16;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -701,7 +703,7 @@ impl Generator for Overworld {
                 }
                 let site = self.site(x, z);
                 let pleasant = (8.0..20.0).contains(&site.temperature) && (0.6..1.6).contains(&site.soil_moisture());
-                let open = site.slope <= 1 && site.forest < 0.35 && site.river < 0.1;
+                let open = site.slope == 0 && site.forest < 0.35 && site.river < 0.1;
                 if pleasant && open && self.terrain.is_grass(self.surface_layers(&site, x, z).top) {
                     return IVec3::new(x, height + 1, z);
                 }
@@ -959,7 +961,8 @@ mod tests {
             for i in 0..64 * 64 {
                 let (x, z) = (i % 64 * 64 - 2048, i / 64 * 64 - 2048);
                 let site = sampler.site(x, z);
-                if !world.biomes.get(site.home).has_tag("forest") || site.forest < 0.3 || site.height <= site.water {
+                // Banks of creeks and rivers grow the river biome's plants, not the forest's.
+                if !world.biomes.get(site.home).has_tag("forest") || site.forest < 0.3 || site.height <= site.water || site.biome != site.home && site.river > 0.0 {
                     continue;
                 }
                 forested += 1;
@@ -980,8 +983,15 @@ mod tests {
         for (seed, biome) in places {
             let world = Overworld::new(seed, registry.clone());
             let id = world.biomes.id(&format!("base:{biome}")).unwrap();
-            // Dry land well inside the biome, near the first place found.
-            let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {biome}"));
+            // Dry land well inside the biome, not on a sliver of it at a border.
+            let at = (0..6000 / 64)
+                .flat_map(|ring| (0..(ring * 8).max(1)).map(move |step| spiral(ring, step)))
+                .map(|(dx, dz)| IVec2::new(dx, dz) * 64)
+                .find(|&p| {
+                    let site = world.site(p.x, p.y);
+                    site.home == id && site.edge >= 48.0 && site.height > SEA_LEVEL + 2
+                })
+                .unwrap_or_else(|| panic!("no {biome}"));
             let at = (0..60 * 60)
                 .map(|i| spiral(i / 60, i % 60))
                 .map(|(dx, dz)| at + IVec2::new(dx * 8, dz * 8))
@@ -1266,8 +1276,6 @@ mod tests {
         assert!(failures.is_empty(), "wood floats in {} of {places} places:\n{}", failures.len(), failures.join("\n"));
     }
 
-    /// Features reaching across column borders (trees, logs, rocks) come out the same
-    /// whichever column is generated first, on whichever thread.
     /// Water crossing region borders never runs round in a circle that generation has to
     /// break wherever it happened to start. On these seeds' land, regions that resolved a
     /// lake on their shared border differently once passed water round in circles: river
@@ -1287,6 +1295,8 @@ mod tests {
         assert_eq!(water::drainage_loops_ended(), 0, "water ran round in a circle across region borders");
     }
 
+    /// Features reaching across column borders (trees, logs, rocks) come out the same
+    /// whichever column is generated first, on whichever thread.
     #[test]
     fn decorations_never_depend_on_generation_order() {
         let world = Overworld::new(42, registry());
@@ -1578,8 +1588,10 @@ mod tests {
         let mut checked = 0;
         for seed in [5, 1, 42, 7, 3, 11] {
             let world = Overworld::new(seed, registry.clone());
-            for i in 0..400 {
-                let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
+            // Around spawn, which is on land, as geodes are.
+            let spawn = ColumnPos::of_block(world.spawn_point());
+            for i in 0..32 * 32 {
+                let pos = spawn.offset(i % 32 - 16, i / 32 - 16);
                 let origin = pos.origin();
                 let geology = geology::GeoGrid::new(&world, (origin.x - 1, origin.z - 1), voxmar_engine::coords::CHUNK_SIZE + 2);
                 let geodes: Vec<_> = world.caves.geodes_near(&geology, origin).into_iter().filter(|g| ColumnPos::of_block(g.centre.floor().as_ivec3()) == pos).collect();
@@ -1599,7 +1611,10 @@ mod tests {
                         let first = (1..=reach).map(|i| centre + dir * i).find(|&p| registry.info(column.block(local(p))).solid);
                         if let Some(p) = first {
                             let block = column.block(local(p));
-                            assert!(crystal.contains(&block), "seed {seed}: {} at {p} lines the geode at {centre}", registry.def(block).name);
+                            // Where a cave cut away the lining, the open block before it lies
+                            // past the hollow.
+                            let cut = geode.distance(p - dir) > geode.radius + 0.5;
+                            assert!(crystal.contains(&block) || cut, "seed {seed}: {} at {p} lines the geode at {centre}", registry.def(block).name);
                         }
                     }
                     checked += 1;
@@ -2413,16 +2428,17 @@ mod tests {
     fn temperature_changes_smoothly_and_in_order() {
         let world = Overworld::new(11, registry());
         for x in [-2000, 0, 3000] {
-            let sampler = world.sampler(IVec2::new(x, -4000), IVec2::new(x, 4000));
+            let sampler = world.sampler(IVec2::new(x, -8000), IVec2::new(x, 8000));
             // Sea-level temperature: what the site would have without cooling with height.
             let sea_level = |z: i32| {
                 let site = sampler.site(x, z);
                 site.temperature + LAPSE_RATE * (site.height.min(site.form.base.floor() as i32) - SEA_LEVEL).max(0) as f32
             };
-            let temperatures: Vec<f32> = (-4000..=4000).step_by(8).map(sea_level).collect();
+            let temperatures: Vec<f32> = (-8000..=8000).step_by(8).map(sea_level).collect();
             let steepest = temperatures.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
             assert!(steepest < 0.3, "temperature jumps {steepest} °C over 8 blocks at x {x}");
-            // Climate zones are kilometres wide: from cold to hot over this line.
+            // Climate zones are kilometres wide: from cold to hot over this line, longer than
+            // the way from a pole to the equator.
             let (min, max) = temperatures.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &t| (lo.min(t), hi.max(t)));
             assert!(max - min > 15.0, "only {min}..{max} °C along x {x}");
         }
@@ -2442,6 +2458,7 @@ mod tests {
             let half = SIZE * STEP / 2;
             let sampler = world.sampler(IVec2::splat(-half - 1), IVec2::splat(half + 1));
             let mut snow = vec![false; (SIZE * SIZE) as usize];
+            let mut heights = vec![0; (SIZE * SIZE) as usize];
             let mut deserts = Vec::new();
             for i in 0..SIZE {
                 for j in 0..SIZE {
@@ -2449,20 +2466,24 @@ mod tests {
                     let site = sampler.site(x, z);
                     let top = world.surface_layers(&site, x, z).top;
                     snow[(j * SIZE + i) as usize] = snowy.contains(&top);
-                    // Sand away from beaches, banks and the sea's islands is desert.
+                    heights[(j * SIZE + i) as usize] = site.height;
+                    // Warm sand away from beaches, banks and the sea's islands is desert (cold
+                    // steppes have sandy patches too).
                     let shore = world.biomes.get(site.home).has_tag("ocean");
-                    if (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 && !shore {
-                        deserts.push((i, j));
+                    if (top == sand || top == red_sand) && site.height > SEA_LEVEL + 3 && site.river < 0.3 && !shore && site.temperature >= 17.0 {
+                        deserts.push((i, j, site.height));
                     }
                 }
             }
             assert!(!deserts.is_empty() || seed != 3, "the dry world has no desert");
-            for (i, j) in deserts {
+            for (i, j, height) in deserts {
                 for dj in -GAP..=GAP {
                     for di in -GAP..=GAP {
                         let (si, sj) = (i + di, j + dj);
                         let inside = (0..SIZE).contains(&si) && (0..SIZE).contains(&sj);
-                        if inside && di * di + dj * dj <= GAP * GAP && snow[(sj * SIZE + si) as usize] {
+                        // Snow on a peak far above the desert is the mountain's, not the
+                        // desert's neighbour.
+                        if inside && di * di + dj * dj <= GAP * GAP && snow[(sj * SIZE + si) as usize] && heights[(sj * SIZE + si) as usize] < height + 100 {
                             let (desert, snow) = ((i * STEP - half, j * STEP - half), (si * STEP - half, sj * STEP - half));
                             panic!("seed {seed}: desert at {desert:?} within {} blocks of snow at {snow:?}", GAP * STEP);
                         }
@@ -2677,5 +2698,91 @@ mod tests {
         for (x, z) in [(-300, 200), (-1, 450), (37, 699), (100, 700)] {
             assert_eq!(sampler.site(x, z), world.site(x, z));
         }
+    }
+}
+
+#[cfg(test)]
+mod land_spread {
+    use super::*;
+
+    /// `SEED=1,7 cargo test -p voxmar_worldgen climate_bands -- --ignored --nocapture`
+    /// prints how temperature, moisture and height are spread over the land within 4 km of
+    /// the origin, for tuning the climate against the bands of `climate.ron`.
+    #[test]
+    #[ignore]
+    fn climate_bands() {
+        let registry = Arc::new(BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let seeds: Vec<u64> = std::env::var("SEED").ok().map_or(vec![7], |s| s.split(',').filter_map(|s| s.trim().parse().ok()).collect());
+        for seed in seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let sampler = world.sampler(IVec2::splat(-4096), IVec2::splat(4096));
+            let (mut t, mut m, mut h, mut low, mut ranges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
+            for i in 0..128 * 128 {
+                let (x, z) = (i % 128 * 64 - 4096, i / 128 * 64 - 4096);
+                let site = sampler.site(x, z);
+                if site.height > site.water {
+                    t.push(site.temperature);
+                    m.push(site.moisture);
+                    h.push((site.height - SEA_LEVEL) as f32);
+                    if site.mountain < 0.05 {
+                        low.push((site.height - SEA_LEVEL) as f32);
+                    } else {
+                        ranges += 1;
+                    }
+                }
+            }
+            let q = |v: &mut Vec<f32>| {
+                v.sort_by(f32::total_cmp);
+                [0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99].map(|p| format!("{:.2}", v[((v.len() - 1) as f32 * p) as usize])).join(" ")
+            };
+            println!("seed {seed}: land {:.0}%", 100.0 * t.len() as f32 / (128.0 * 128.0));
+            println!("  temperature q01..q99: {}", q(&mut t));
+            println!("  moisture    q01..q99: {}", q(&mut m));
+            println!("  height      q01..q99: {}", q(&mut h));
+            println!("  ranges {:.0}% of the land; height off them q01..q99: {}", 100.0 * ranges as f32 / h.len() as f32, q(&mut low));
+        }
+    }
+
+    /// `SEED=1,2,3 cargo test -p voxmar_worldgen land_heights -- --ignored --nocapture`
+    /// prints how high the land is over 20 km squares around the origin, each seed's and
+    /// all together: its share of the world against the ocean dial's, quantiles of its
+    /// height above the sea and the share above each of a few heights, for tuning how
+    /// mountainous `land.ron` makes the world.
+    #[test]
+    #[ignore]
+    fn land_heights() {
+        let registry = Arc::new(BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap());
+        let seeds: Vec<u64> = std::env::var("SEED").ok().map_or(vec![7], |s| s.split(',').filter_map(|s| s.trim().parse().ok()).collect());
+        let (n, step) = (160, 128);
+        let summary = |h: &mut Vec<f32>, cells: usize| {
+            h.sort_by(f32::total_cmp);
+            let q = |p: f32| h[((h.len() - 1) as f32 * p) as usize];
+            let above = |t: f32| 100.0 * h.iter().filter(|&&v| v > t).count() as f32 / h.len() as f32;
+            format!(
+                "land {:.0}% | median {:.0}, 90% {:.0}, 99% {:.0}, highest {:.0} | above 40: {:.1}%, 70: {:.1}%, 100: {:.1}%, 130: {:.1}%, 160: {:.1}%",
+                100.0 * h.len() as f32 / cells as f32,
+                q(0.5),
+                q(0.9),
+                q(0.99),
+                q(1.0),
+                above(40.0),
+                above(70.0),
+                above(100.0),
+                above(130.0),
+                above(160.0)
+            )
+        };
+        let mut all = Vec::new();
+        for &seed in &seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let mut h: Vec<f32> = (0..n * n)
+                .map(|i| world.height(i % n * step - n * step / 2, i / n * step - n * step / 2) - SEA_LEVEL)
+                .filter(|&height| height > 0)
+                .map(|height| height as f32)
+                .collect();
+            all.extend_from_slice(&h);
+            println!("seed {seed} (dial {:.0}% land): {}", 100.0 * (1.0 - world.dials.ocean_fraction), summary(&mut h, (n * n) as usize));
+        }
+        println!("all: {}", summary(&mut all, (n * n) as usize * seeds.len()));
     }
 }

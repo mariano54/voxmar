@@ -627,7 +627,7 @@ impl Drainage {
     }
 
     /// The exit record of a cell in its own region, if its region sends water out there.
-    fn exit_of<'f>(flow: &'f Flow, cell: IVec2) -> Option<&'f Exit> {
+    fn exit_of(flow: &Flow, cell: IVec2) -> Option<&Exit> {
         flow.exits.binary_search_by(|exit| (exit.cell.x, exit.cell.y).cmp(&(cell.x, cell.y))).ok().map(|i| &flow.exits[i])
     }
 

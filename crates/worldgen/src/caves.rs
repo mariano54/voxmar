@@ -889,7 +889,15 @@ impl CaveColumn<'_> {
             .map(|n| height - n.height + 4)
             .max()
             .unwrap_or(0);
-        let clearance = Caves::clearance(&geo).max(beside);
+        // A river's tunnel lies far under the surface: rock under its floor, as under an
+        // open river's bed, and past its floor beside it, so no cave opens into its water
+        // or breaches the floor where its water stands level with it.
+        let tunnel = [(0, 0, 10), (1, 0, 4), (-1, 0, 4), (0, 1, 4), (0, -1, 4)]
+            .into_iter()
+            .filter_map(|(dx, dz, keep)| self.geology.get(wx + dx, wz + dz).cavity.map(|cavity| height - cavity.floor + keep))
+            .max()
+            .unwrap_or(0);
+        let clearance = Caves::clearance(&geo).max(beside).max(tunnel);
 
         let p = &mut *self.profiles;
         for (lattice, profile) in self.tunnels.iter().zip(&mut p.tunnels) {

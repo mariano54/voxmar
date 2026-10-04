@@ -465,7 +465,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 if trail.stone && height == geo.water && !geo.submerged() {
                     blocks.set_local(x, height, z, terrain.stepping_stone);
                 }
-                if let Some(deck) = trail.deck.filter(|&d| d > height && d < WORLD_HEIGHT) {
+                // No deck where a fall pours in: falling water must land on water, and would
+                // spread over the planks.
+                if let Some(deck) = trail.deck.filter(|&d| d > height && d < WORLD_HEIGHT && !fall) {
                     blocks.set_local(x, deck, z, if trail.log { terrain.log_deck } else { terrain.deck });
                     if trail.pier {
                         for y in height + 1..deck {

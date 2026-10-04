@@ -81,7 +81,7 @@ impl WorldDials {
         Self {
             mean_temperature: 8.0 + 7.0 * warmth,
             latitude_gradient: 26.0 + 12.0 * unit(),
-            pole_distance: 3500.0 + 2000.0 * unit(),
+            pole_distance: 9000.0 + 2000.0 * unit(),
             ocean_fraction,
             continent_size: 1400.0 + 1800.0 * unit(),
             humidity,
