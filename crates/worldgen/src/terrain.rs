@@ -438,7 +438,7 @@ impl Terrain {
             return layers(ids.gravel, ids.stone, 2);
         }
         // Beaches along the sea, sandy (or in warm, wet places muddy) banks along rivers.
-        let coast = site.continentality < 0.45 || site.river > 0.3;
+        let coast = site.continentalness < 0.7 || site.river > 0.3;
         if coast && !past(above, 0.5, 2.5) {
             let top = match () {
                 _ if t < 3.0 => ids.gravel,

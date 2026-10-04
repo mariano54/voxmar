@@ -15,6 +15,7 @@ mod dials;
 mod ecology;
 mod features;
 mod geology;
+mod rarity;
 mod resources;
 mod rng;
 mod terrain;
@@ -29,6 +30,7 @@ use voxmar_engine::world::Column;
 
 pub use climate::LAPSE_RATE;
 pub use dials::WorldDials;
+pub use rarity::{Featured, Rarity};
 
 use crate::climate::{Climate, ClimateGrid};
 use crate::ecology::Ecology;
@@ -61,12 +63,27 @@ pub struct Site {
     /// Precipitation over potential evaporation: around 0.1 in deserts, 1 where they
     /// balance, 2 in rainforests.
     pub moisture: f32,
-    /// 0 at the coast ..= 1 deep inland.
-    pub continentality: f32,
+    /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland.
+    pub continentalness: f32,
     /// 0 at the equator ..= 1 at a pole.
     pub latitude: f32,
     /// 0 on flat land, towards 1 on mountain ranges.
     pub mountain: f32,
+    /// The landform, in steps: 0 on flat land, 1/3 in hill country, 2/3 on the slopes of a
+    /// range and 1 along its peaks, with short ramps between. Like Minecraft's erosion
+    /// inverted: it grows with relief.
+    pub erosion: f32,
+    /// Evenly spread over 0 ..= 1 and varying over kilometres; rare biomes live in its
+    /// extremes.
+    pub weirdness: f32,
+    /// How fantastical the land is, 0 ..= 1. The world's fantasy dial is its median; where
+    /// it is high the strange is common.
+    pub aether: f32,
+    /// How rich the soil is, evenly spread over 0 ..= 1.
+    pub fertility: f32,
+    /// Evenly spread over 0 ..= 1, varying over a few hundred blocks: which sub-biome of a
+    /// biome grows here.
+    pub variant: f32,
     /// 1 in a river or lake, falling to 0 at the edge of its valley or shore.
     pub river: f32,
     /// Ground cover the climate supports, 0 (barren) ..= 1 (lush).
@@ -117,7 +134,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 3;
+    pub const VERSION: u32 = 4;
 
     pub fn new(seed: u64, registry: Arc<BlockRegistry>) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
@@ -198,9 +215,14 @@ impl Sampler<'_> {
             temperature,
             precipitation: regional.precipitation,
             moisture: climate::moisture(regional.precipitation, temperature),
-            continentality: regional.continentality,
+            continentalness: regional.continentalness,
             latitude: regional.latitude,
             mountain: geo.mountain,
+            erosion: regional.erosion,
+            weirdness: regional.weirdness,
+            aether: regional.aether,
+            fertility: regional.fertility,
+            variant: regional.variant,
             river: geo.river,
             vegetation: 0.0,
             forest: 0.0,
@@ -296,10 +318,21 @@ mod tests {
 
     /// `cargo test --release -p voxmar_worldgen map_preview -- --ignored` writes a shaded
     /// top-down map (north up, 8 blocks per pixel) around the origin to
-    /// `target/map_preview.ppm`, for judging the climate layout at a glance.
+    /// `target/map_preview.ppm`, for judging the climate layout at a glance. With
+    /// `FIELD=erosion` (or `continentalness`, `weirdness`, `aether`, `fertility`,
+    /// `variant`) it shows that selection field on land instead, dark to light.
     #[test]
     #[ignore]
     fn map_preview() {
+        let field: Option<fn(&Site) -> f32> = match std::env::var("FIELD").as_deref() {
+            Ok("erosion") => Some(|s| s.erosion),
+            Ok("continentalness") => Some(|s| s.continentalness * 0.5 + 0.5),
+            Ok("weirdness") => Some(|s| s.weirdness),
+            Ok("aether") => Some(|s| s.aether),
+            Ok("fertility") => Some(|s| s.fertility),
+            Ok("variant") => Some(|s| s.variant),
+            _ => None,
+        };
         const SIZE: i32 = 1024;
         const SCALE: i32 = 8;
         let registry = registry();
@@ -333,6 +366,10 @@ mod tests {
                         .find(|(tree, _)| name.contains(tree))
                         .map_or([0.25, 0.45, 0.15], |(_, crown)| crown);
                     rgb = mix(rgb, crown, cover);
+                }
+                if let Some(field) = field {
+                    let v = field(&sampler.site(at(x), at(z)));
+                    rgb = [0.1 + 0.9 * v, 0.1 + 0.8 * v * v, 0.3 + 0.4 * v];
                 }
                 if let Some(water) = surface.water {
                     wet += 1;
@@ -460,6 +497,49 @@ mod tests {
                             panic!("seed {seed}: desert at {desert:?} within {} blocks of snow at {snow:?}", GAP * STEP);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selection_fields_are_smooth_and_evenly_spread() {
+        let world = Overworld::new(5, registry());
+        let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
+        let sites: Vec<Site> = (0..150 * 150).map(|i| sampler.site(i % 150 * 80 - 6000, i / 150 * 80 - 6000)).collect();
+        // Evenly spread fields put a tenth of the land in each tenth of their range.
+        let fields: [(&str, fn(&Site) -> f32); 3] = [("weirdness", |s| s.weirdness), ("fertility", |s| s.fertility), ("variant", |s| s.variant)];
+        for (name, field) in fields {
+            let values: Vec<f32> = sites.iter().map(field).collect();
+            assert!(values.iter().all(|v| (0.0..=1.0).contains(v)), "{name} out of range");
+            for decile in 0..10 {
+                let share = values.iter().filter(|&&v| (v * 10.0) as i32 == decile).count() as f32 / values.len() as f32;
+                assert!((0.04..0.16).contains(&share), "{name}: {share} of the land in decile {decile}");
+            }
+        }
+        let median = |mut v: Vec<f32>| {
+            v.sort_by(f32::total_cmp);
+            v[v.len() / 2]
+        };
+        let aether = median(sites.iter().map(|s| s.aether).collect());
+        assert!((aether - world.dials().fantasy).abs() < 0.1, "median aether {aether}, fantasy {}", world.dials().fantasy);
+        assert!(sites.iter().all(|s| (-1.0..=1.0).contains(&s.continentalness) && (0.0..=1.0).contains(&s.erosion)));
+        assert!(sites.iter().any(|s| s.continentalness < -0.5) && sites.iter().any(|s| s.continentalness > 0.5));
+        assert!(sites.iter().any(|s| s.erosion > 0.9) && sites.iter().any(|s| s.erosion < 0.05));
+
+        // Block to block, nothing a biome is picked by jumps.
+        for x in [-1500, 400] {
+            let line: Vec<Site> = (-3000..3000).map(|z| sampler.site(x, z)).collect();
+            for pair in line.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                for (name, step) in [
+                    ("continentalness", (a.continentalness - b.continentalness).abs()),
+                    ("erosion", (a.erosion - b.erosion).abs()),
+                    ("weirdness", (a.weirdness - b.weirdness).abs()),
+                    ("aether", (a.aether - b.aether).abs()),
+                    ("variant", (a.variant - b.variant).abs()),
+                ] {
+                    assert!(step < 0.03, "{name} jumps by {step} at x {x}");
                 }
             }
         }
