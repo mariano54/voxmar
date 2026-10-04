@@ -119,7 +119,9 @@ impl Atmospheres {
     fn of(&self, biome: BiomeId, site: &Site) -> Atmosphere {
         let air = &self.air[biome.0 as usize];
         let (t, m, aether) = (site.temperature, site.soil_moisture(), site.aether);
-        let (dry, humid, cold, hot) = (1.0 - smoothstep(0.2, 0.6, m), smoothstep(1.1, 2.0, m), 1.0 - smoothstep(-6.0, 6.0, t), smoothstep(20.0, 30.0, t));
+        // The air follows the regional climate, not the damp ground of a riverbank.
+        let air_m = site.moisture;
+        let (dry, humid, cold, hot) = (1.0 - smoothstep(0.2, 0.6, air_m), smoothstep(1.1, 2.0, air_m), 1.0 - smoothstep(-6.0, 6.0, t), smoothstep(20.0, 30.0, t));
         let fantasy = smoothstep(0.6, 1.0, aether);
 
         // Pale blue-grey air, dusty over dry land, greenish over steaming forests, blue in

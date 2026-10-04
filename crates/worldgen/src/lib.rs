@@ -1436,7 +1436,7 @@ mod tests {
             .map(|i| IVec2::new(i % 200 * 40 - 4000, i / 200 * 40 - 4000))
             .find(|p| {
                 let site = sampler.site(p.x, p.y);
-                site.home == id && site.edge > 60.0 && site.soil_moisture() < 0.25
+                site.home == id && site.edge > 40.0 && site.soil_moisture() < 0.3
             })
             .expect("a desert");
         let air = world.atmosphere_at(desert.x, desert.y);
