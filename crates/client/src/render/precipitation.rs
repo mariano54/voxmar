@@ -466,6 +466,10 @@ fn update(
         sets[i * 3 + 2] = Vec4::new(0.06, GLINT, 0.0, 0.0);
     }
 
+    // Rain and snow ground the glowing motes and wisps (ball lightning in a storm would be
+    // a few orbs, which these are not): nothing glows in the rain.
+    let dry = 1.0 - ((shown.precipitation - 0.02) / 0.18).clamp(0.0, 1.0);
+
     let Some(mut material) = materials.get_mut(&handle.0) else { return };
     let light = ambient.color.to_linear();
     let haze = fog.color.to_linear();
@@ -482,7 +486,7 @@ fn update(
         sleet: fallen.sleet.extend(shown.sleet),
         hail: fallen.hail.extend(shown.hail),
         dust: fallen.dust.extend(density(shown.dust)),
-        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3)),
+        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3) * dry),
         dust_color: Color::srgb_u8(shown.dust_color[0], shown.dust_color[1], shown.dust_color[2]).to_linear().to_vec4(),
         wind: wind.extend(0.0),
         ambient: sets,

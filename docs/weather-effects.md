@@ -184,7 +184,8 @@ other top faces (stone, sand, leaves) at `snow_cover > 0.3`, open to the sky.
 `w.wisps` (ball lightning in storms, marsh lights on calm wet nights): a few (up to about
 12) large glowing orbs, 0.3–0.6 blocks, drifting 0.5–3 blocks above the ground within 30
 blocks, pale blue-green, slowly pulsing. For now they add to the motes in the particles
-(`motes.max(wisps * 0.3)`), which are smaller. `w.motes` and `w.falling_stars` together
+(`motes.max(wisps * 0.3)`), which are smaller, and only while nothing falls: in rain the
+motes and wisps are grounded, so ball lightning shows nothing until it has its orbs. `w.motes` and `w.falling_stars` together
 with `aether_storm` in `ClientWeather::effects` mark the rare aether storm: a violet tint to
 the storm cloud and the lightning would sell it.
 
