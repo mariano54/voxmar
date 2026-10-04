@@ -11,7 +11,7 @@ use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
 use voxmar_protocol::{ChatKind, MAX_LINE, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
 use crate::save::GameMode;
-use crate::{Server, load_column};
+use crate::{Server, load_column, wear};
 
 /// How deeply aliases may run other aliases.
 const MAX_DEPTH: usize = 8;
@@ -221,7 +221,7 @@ impl Server {
         let block = at.floor().as_ivec2();
         let pos = ColumnPos::of_block(IVec3::new(block.x, 0, block.y));
         if !self.world.contains(pos) {
-            let column = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, pos);
+            let column = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, &self.wear_rules, wear::day(self.day), pos);
             self.world.insert(pos, std::sync::Arc::new(column));
         }
         (0..WORLD_HEIGHT).rev().find(|&y| self.is_solid(IVec3::new(block.x, y, block.y))).map_or(WORLD_HEIGHT, |y| y + 1)

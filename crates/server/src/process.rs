@@ -25,7 +25,7 @@ pub(crate) trait Process: Send {
 }
 
 pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
-    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::default())]
+    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::default()), Box::new(crate::wear::Footsteps::default())]
 }
 
 /// Fall damage, burning in lava and the void, from the server's own view of where

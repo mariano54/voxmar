@@ -183,7 +183,7 @@ How the design primitives map to the code today:
   predict. Mining, placing, moving items and respawning are all actions.
 - **Process**: continuous server rules at a scheduling tier (`High` every tick, `Low` once a
   second): falling damage, regeneration, which heals slower where the temperature field
-  is freezing, and the weather (below).
+  is freezing, the weather (below), and footsteps, which wear paths (below).
 - **Trait**: typed data with declared replication and persistence (`core:health`,
   `core:inventory`, `core:position`); owner-replicated traits are sent when they change.
 - **Field**: coarse grids (16 blocks per cell unless a field chooses otherwise), generated
@@ -309,6 +309,20 @@ biome near spawn (or near `X`, `Z`, or the nearest surface biome `NEAR=name`, wi
 `--command "/tp X Z"` that takes a capture there), with each cave biome's share of the caves
 there; `column_timing` reports generation time per column, and `river_speed` the cost of
 building a region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+
+## Worn paths
+
+Feet wear the ground (`crates/server/src/wear.rs`, rules in `assets/content/base/wear.ron`).
+Each step onto a block wears it by a step, the blocks to either side by half and the one ahead
+by a quarter, so paths form about three blocks wide. Plants go first: tall grass is trampled to
+short grass, short grass, ferns and flowers to nothing. Then the ground passes through stages,
+grass to worn grass to packed earth to coarse dirt, each block drawing how many steps each stage
+takes from a hash of the seed and its position, so paths fray irregularly at their edges. The
+steps are kept sparsely per surface column in the column (`Column::wear`), so they save and
+load with it; only the changed blocks are sent, and only to players who have the column. Worn
+ground heals a stage every five days nobody walks on it (twice as fast for a lone patch),
+applied when a saved column loads, and grass coming back sometimes sprouts a tuft. Healing only
+undoes what feet did, so generated trails keep their tread.
 
 ## Weather
 
