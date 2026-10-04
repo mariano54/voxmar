@@ -951,7 +951,7 @@ mod tests {
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
-        let places = [(42, "forest"), (7, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (13, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
+        let places = [(42, "forest"), (7, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (9, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
         for (seed, biome) in places {
             let world = Overworld::new(seed, registry.clone());
             let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {biome}"));
@@ -966,10 +966,11 @@ mod tests {
             };
             let info = |b: BlockId| registry.info(b);
             let leafy = |b: BlockId| registry.def(b).name.ends_with("leaves");
-            // Solid blocks above the ground that are not leaves.
+            // Solid blocks above the ground that are not leaves, nor ice, which floats on the
+            // water it froze from.
             let lifted = |p: IVec3| inside(p) && p.y > world.height(p.x, p.z) && p.y < WORLD_HEIGHT_FOR_TESTS && {
                 let b = block(p);
-                info(b).solid && !leafy(b) && b != registry.expect("base:water")
+                info(b).solid && !leafy(b) && b != registry.expect("base:water") && !registry.def(b).name.ends_with("ice")
             };
             let mut seen = rustc_hash::FxHashSet::default();
             let (mut pieces, mut plants) = (0, 0);
@@ -1287,7 +1288,7 @@ mod tests {
         let registry = registry();
         let crystal = [registry.expect("base:crystal_block")];
         let mut checked = 0;
-        for seed in [5, 1, 42, 7] {
+        for seed in [5, 1, 42, 7, 3, 11] {
             let world = Overworld::new(seed, registry.clone());
             for i in 0..400 {
                 let pos = ColumnPos::new(i % 20 - 10, i / 20 - 10);
@@ -2163,11 +2164,21 @@ mod tests {
         let world = Overworld::new(5, registry());
         let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
         let sites: Vec<Site> = (0..150 * 150).map(|i| sampler.site(i % 150 * 80 - 6000, i / 150 * 80 - 6000)).collect();
-        // Evenly spread fields put a tenth of the land in each tenth of their range.
+        // Evenly spread fields put a tenth of the land in each tenth of their range. Weirdness
+        // varies over many kilometres, so a few worlds' worth of it is pooled.
+        let others: Vec<Site> = [6, 7]
+            .into_iter()
+            .flat_map(|seed| {
+                let world = Overworld::new(seed, registry());
+                let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
+                (0..75 * 75).map(|i| sampler.site(i % 75 * 160 - 6000, i / 75 * 160 - 6000)).collect::<Vec<_>>()
+            })
+            .collect();
         type Field = fn(&Site) -> f32;
         let fields: [(&str, Field); 3] = [("weirdness", |s| s.weirdness), ("fertility", |s| s.fertility), ("variant", |s| s.variant)];
         for (name, field) in fields {
-            let values: Vec<f32> = sites.iter().map(field).collect();
+            let pooled = if name == "weirdness" { &others[..] } else { &[] };
+            let values: Vec<f32> = sites.iter().chain(pooled).map(field).collect();
             assert!(values.iter().all(|v| (0.0..=1.0).contains(v)), "{name} out of range");
             for decile in 0..10 {
                 let share = values.iter().filter(|&&v| (v * 10.0) as i32 == decile).count() as f32 / values.len() as f32;
