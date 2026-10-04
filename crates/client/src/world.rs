@@ -296,7 +296,14 @@ fn cull_chunks(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform, W
     world.visibility_dirty = false;
 
     let _span = info_span!("cull_chunks").entered();
-    let visible = visible_chunks(eye, world.view_distance, |pos| world.chunks.get(&pos).map(|c| c.connectivity));
+    // Search as far as columns are loaded. The camera can be away from where they were
+    // loaded around (a capture's pose, the drifting menu camera, a player who has just
+    // moved); a meshed column the search left out would be drawn neither by itself nor by
+    // distant terrain, which gives way to every meshed column, and the hole showed as a
+    // dark slab of sea floor at the edge of the loaded chunks.
+    let camera_column = ColumnPos::of_block(eye);
+    let radius = world.voxels.columns().map(|(pos, _)| (pos.0 - camera_column.0).abs().max_element()).max().unwrap_or(0);
+    let visible = visible_chunks(eye, radius.max(world.view_distance), |pos| world.chunks.get(&pos).map(|c| c.connectivity));
     let (mut count, mut quads) = (0, 0);
     for (pos, render) in &world.chunks {
         if visible.contains(pos) {
