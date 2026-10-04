@@ -1,0 +1,972 @@
+//! Water routing on a grid of square cells, shared by both tiers of rivers.
+//!
+//! Every cell drains to the neighbour down its steepest slope, over eight directions,
+//! with ties broken by position so that "lower" is a total order and water can never
+//! run in a circle. Of two diagonals crossing in one square, only the one from the higher
+//! cell is kept, so rivers never cross.
+//!
+//! A cell lower than all its neighbours is a pit. A priority flood rises from it until
+//! the water would spill towards somewhere lower; what happens then depends on the pit.
+//! Shallow or tiny pits are breached: the river cuts through the rim and never rises
+//! above the pit. Others become lakes at their spill height, or, in dry climates, lower
+//! than that, with no outlet at all (down to a dry salt flat). In the trunk tier, a
+//! deep closed basin may instead drain through a tunnel under its rim. A lake is keyed by
+//! its pit and flooded in a window around the pit alone, so every region that meets it
+//! sees exactly the same lake.
+//!
+//! Flow is accumulated region by region: each cell sheds its runoff, which adds up
+//! downstream. Water leaving a region enters a neighbour, so each region records where
+//! water crosses its border: the cells where it enters, and for each cell where it
+//! leaves, the water gathered inside plus which entries feed it. The total through an
+//! exit is then its local part plus whatever the upstream regions send in, worked out
+//! lazily crossing by crossing, following the water upstream. Water only runs downhill,
+//! so this never loops; the work grows only with the area actually upstream, every cell
+//! belongs to exactly one region, and a river may be any length.
+
+use std::cell::RefCell;
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
+use std::sync::{Arc, OnceLock};
+
+use rustc_hash::{FxHashMap, FxHashSet};
+use voxmar_engine::glam::IVec2;
+
+use super::cache::{Cache, Weigh};
+use crate::SEA_LEVEL;
+use crate::rng::hash3;
+
+/// The eight neighbours, counter-clockwise from +x; odd indices are diagonals.
+pub const DIRS: [IVec2; 8] = [
+    IVec2::new(1, 0),
+    IVec2::new(1, 1),
+    IVec2::new(0, 1),
+    IVec2::new(-1, 1),
+    IVec2::new(-1, 0),
+    IVec2::new(-1, -1),
+    IVec2::new(0, -1),
+    IVec2::new(1, -1),
+];
+const LENGTH: [f32; 8] = [1.0, std::f32::consts::SQRT_2, 1.0, std::f32::consts::SQRT_2, 1.0, std::f32::consts::SQRT_2, 1.0, std::f32::consts::SQRT_2];
+
+/// Routing codes besides the directions 0..8.
+pub const SEA: u8 = 8;
+/// Into the water of the bigger tier (a trunk river or its lake).
+pub const ABSORBED: u8 = 9;
+const SINK: u8 = 10;
+/// Water ends here: a closed basin.
+pub const END: u8 = 11;
+
+/// `Tile::absorbed` where no bigger water covers a cell.
+pub const DRY: i32 = i32::MIN;
+/// The sea's surface, in eighths of a block: the top of the top water block.
+pub const SEA_SURFACE: i32 = (SEA_LEVEL + 1) * 8;
+
+/// The grid and the rules of one tier.
+pub struct Tier {
+    /// Cell size, in blocks.
+    pub cell: i32,
+    /// Cells along a side of a region.
+    pub side: i32,
+    /// Cells along a side of a tile of ground samples; divides `side`.
+    pub tile: i32,
+    /// Furthest a lake reaches from its pit, in cells.
+    pub lake_radius: i32,
+    /// Most cells a lake may have.
+    pub lake_cells: usize,
+    /// Furthest a breach may cut beyond a pit's rim, in cells.
+    pub breach: i32,
+    /// Pits shallower than this many blocks, or with fewer cells below their spill
+    /// height than `min_area`, are breached rather than filled.
+    pub min_depth: f32,
+    pub min_area: usize,
+    /// How far below the ground a river's surface lies, in blocks.
+    pub incision: f32,
+    /// Whether wet basins may fill as lakes. Without, a river breaches or tunnels out of
+    /// any basin it can, and a basin it cannot leave stays dry.
+    pub lakes: bool,
+    pub tunnel: Option<TunnelRule>,
+    pub seed: u64,
+}
+
+/// When a deep basin drains through a tunnel under its rim instead of filling.
+pub struct TunnelRule {
+    /// Depth of the basin below its spill point, in blocks, from which a tunnel is possible.
+    pub depth: f32,
+    /// The chance that such a basin tunnels.
+    pub chance: f32,
+    /// Longest tunnel, in cells.
+    pub length: i32,
+}
+
+impl Tier {
+    /// Cells around a region that its basin examines: enough to find every pit whose
+    /// lake, breach or tunnel reaches within a few cells of the region.
+    fn halo(&self) -> i32 {
+        self.reach() + CORE + 3
+    }
+
+    /// Furthest anything a pit decides reaches from it, in cells.
+    fn reach(&self) -> i32 {
+        self.lake_radius.max(self.tunnel.as_ref().map_or(0, |t| t.length)) + self.breach + 1
+    }
+
+    /// Centre of a cell, in blocks.
+    pub fn centre(&self, cell: IVec2) -> IVec2 {
+        cell * self.cell + self.cell / 2
+    }
+
+    /// The river's surface, in eighths, over ground of this height.
+    pub fn target(&self, height: f32) -> i32 {
+        (((height - self.incision) * 8.0).floor() as i32).max(SEA_SURFACE)
+    }
+}
+
+/// Cells around a region whose routing and levels a basin keeps, for drawing the region's
+/// rivers and lakes.
+pub const CORE: i32 = 4;
+
+/// Ground samples over a tile of cells.
+pub struct Tile {
+    /// Height of the ground at each cell's centre (rows of `Tier::tile` cells).
+    pub height: Box<[f32]>,
+    /// Water each cell sheds into the rivers.
+    pub runoff: Box<[f32]>,
+    /// Surface, in eighths, of bigger water covering each cell, or `DRY`.
+    pub absorbed: Box<[i32]>,
+}
+
+impl Weigh for Tile {
+    fn bytes(&self) -> usize {
+        self.height.bytes() + self.runoff.bytes() + self.absorbed.bytes()
+    }
+}
+
+/// Where a tier reads the ground.
+pub trait Ground {
+    /// The samples of the tile at `key` (in tile units).
+    fn tile(&self, key: IVec2) -> Arc<Tile>;
+    /// How humid the climate is at a cell, 0 (arid) ..= 1 (wet enough that lakes stay
+    /// full).
+    fn humidity(&self, cell: IVec2) -> f32;
+}
+
+/// Reads cells of any tile, keeping the tiles it has used.
+struct Reader<'a> {
+    size: i32,
+    ground: &'a dyn Ground,
+    tiles: FxHashMap<IVec2, Arc<Tile>>,
+}
+
+impl<'a> Reader<'a> {
+    fn new(tier: &Tier, ground: &'a dyn Ground) -> Self {
+        Self { size: tier.tile, ground, tiles: FxHashMap::default() }
+    }
+
+    fn tile(&mut self, key: IVec2) -> &Arc<Tile> {
+        let ground = self.ground;
+        self.tiles.entry(key).or_insert_with(|| ground.tile(key))
+    }
+
+    /// Height and covering water at a cell.
+    fn at(&mut self, cell: IVec2) -> (f32, i32) {
+        let size = self.size;
+        let local = cell.rem_euclid(IVec2::splat(size));
+        let i = (local.y * size + local.x) as usize;
+        let tile = self.tile(cell.div_euclid(IVec2::splat(size)));
+        (tile.height[i], tile.absorbed[i])
+    }
+}
+
+/// A cell's height with its position, as a total order.
+#[derive(Clone, Copy, PartialEq)]
+struct Key {
+    height: f32,
+    cell: IVec2,
+}
+
+impl Eq for Key {}
+
+impl Ord for Key {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.height.total_cmp(&other.height).then(self.cell.x.cmp(&other.cell.x)).then(self.cell.y.cmp(&other.cell.y))
+    }
+}
+
+impl PartialOrd for Key {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn direction(step: IVec2) -> u8 {
+    DIRS.iter().position(|&d| d == step).expect("neighbouring cells") as u8
+}
+
+/// The direction of steepest descent from a cell, over neighbours lower in the total
+/// order, leaving out `skip`.
+fn steepest(at: &mut impl FnMut(IVec2) -> (f32, i32), cell: IVec2, skip: Option<u8>) -> Option<u8> {
+    let here = Key { height: at(cell).0, cell };
+    let mut best: Option<(f32, u8)> = None;
+    for (k, d) in DIRS.iter().enumerate() {
+        if skip == Some(k as u8) {
+            continue;
+        }
+        let next = cell + *d;
+        let height = at(next).0;
+        if (Key { height, cell: next }) < here {
+            let slope = (here.height - height) / LENGTH[k];
+            if best.is_none_or(|(steepest, _)| slope > steepest) {
+                best = Some((slope, k as u8));
+            }
+        }
+    }
+    best.map(|(_, k)| k)
+}
+
+/// Whether water at `from` runs straight to its neighbour `to`, before the crossing rule.
+fn runs_to(at: &mut impl FnMut(IVec2) -> (f32, i32), from: IVec2, to: IVec2) -> bool {
+    let (height, absorbed) = at(from);
+    height >= SEA_LEVEL as f32 && absorbed == DRY && steepest(at, from, None) == Some(direction(to - from))
+}
+
+/// Where water at a cell goes before pits are resolved: a direction, `SEA`, `ABSORBED`
+/// or `SINK`.
+fn route(at: &mut impl FnMut(IVec2) -> (f32, i32), cell: IVec2) -> u8 {
+    let (height, absorbed) = at(cell);
+    if height < SEA_LEVEL as f32 {
+        return SEA;
+    }
+    if absorbed != DRY {
+        return ABSORBED;
+    }
+    let Some(k) = steepest(at, cell, None) else { return SINK };
+    if k % 2 == 1 {
+        // The other diagonal of the same square runs between the two side cells. Of two
+        // crossing diagonals, the one from the higher cell stays.
+        let d = DIRS[k as usize];
+        let (a, b) = (cell + IVec2::new(d.x, 0), cell + IVec2::new(0, d.y));
+        let rival = if runs_to(at, a, b) {
+            Some(a)
+        } else if runs_to(at, b, a) {
+            Some(b)
+        } else {
+            None
+        };
+        if let Some(rival) = rival
+            && (Key { height, cell }) < (Key { height: at(rival).0, cell: rival })
+        {
+            return steepest(at, cell, Some(k)).unwrap_or(SINK);
+        }
+    }
+    k
+}
+
+/// Follows the water down from `start` until its river would lie at or below `level`:
+/// the cells on the way, or nothing if that takes more than `limit` cells.
+fn descend_below(at: &mut impl FnMut(IVec2) -> (f32, i32), tier: &Tier, start: IVec2, level: i32, limit: i32) -> Option<Vec<IVec2>> {
+    let mut cells = Vec::new();
+    let mut cell = start;
+    for _ in 0..=limit {
+        if tier.target(at(cell).0) <= level {
+            return Some(cells);
+        }
+        cells.push(cell);
+        match route(at, cell) {
+            k if k < 8 => cell += DIRS[k as usize],
+            SINK => return None,
+            _ => return Some(cells),
+        }
+    }
+    None
+}
+
+/// The top water block under a surface in eighths.
+fn channel_top(surface: i32) -> i32 {
+    (surface - 1).div_euclid(8)
+}
+
+/// The cells of a straight, 8-connected line from `a` to `b`, both included.
+fn line(a: IVec2, b: IVec2) -> Vec<IVec2> {
+    let d = b - a;
+    let steps = d.abs().max_element();
+    (0..=steps)
+        .map(|i| a + (d.as_vec2() * (i as f32 / steps.max(1) as f32)).round().as_ivec2())
+        .collect()
+}
+
+/// What a pit becomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// The river cuts through the rim, never rising above the pit.
+    Breach,
+    /// A lake at its spill height, drained by a river from its outlet.
+    Lake,
+    /// A lake below its spill height, or a dry basin, with no outlet.
+    Closed,
+    /// The basin drains through a tunnel under its rim.
+    Tunnel,
+    /// Too big a basin for a lake: the water sinks into the ground at the pit.
+    Sink,
+}
+
+/// A pit and what water does there.
+pub struct Lake {
+    pub pit: IVec2,
+    pub kind: Kind,
+    /// Height at which the basin overflows, in blocks.
+    pub spill: f32,
+    /// In eighths of a block: the water surface of a lake, or the level a river keeps
+    /// through a breach or tunnel.
+    pub level: i32,
+    /// Height of the bottom of the pit.
+    pub bottom: f32,
+    /// Basin cells lower than the spill height.
+    pub cells: Vec<IVec2>,
+    /// The way out: the pit, the cells water crosses, and the first cell beyond the rim.
+    pub path: Vec<IVec2>,
+    /// Cells, along and beyond the way out, whose river may not rise above `level`.
+    pub clamp: Vec<IVec2>,
+}
+
+impl Lake {
+    /// Whether the lake holds water: at least half a block over its bottom.
+    pub fn wet(&self) -> bool {
+        matches!(self.kind, Kind::Lake | Kind::Closed) && self.level as f32 >= (self.bottom + 0.5) * 8.0
+    }
+
+    /// Whether the basin is closed and dry enough to crust with salt.
+    pub fn salt(&self) -> bool {
+        self.kind == Kind::Closed && (self.level as f32) < (self.bottom + 2.0) * 8.0
+    }
+}
+
+impl Weigh for Lake {
+    fn bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + (self.cells.capacity() + self.path.capacity() + self.clamp.capacity()) * 8
+    }
+}
+
+/// Water entering a region: a cell inside, fed by cells just outside.
+struct Entry {
+    cell: IVec2,
+    feeders: Vec<IVec2>,
+}
+
+/// Water leaving a region from a cell inside.
+struct Exit {
+    cell: IVec2,
+    /// Water gathered inside the region.
+    local: f32,
+    /// The entries whose water passes through this exit.
+    upstream: Vec<u32>,
+    total: OnceLock<f32>,
+}
+
+/// A region's record of where water crosses its border.
+pub struct Flow {
+    entries: Vec<Entry>,
+    /// Sorted by cell (x, then z).
+    exits: Vec<Exit>,
+}
+
+impl Weigh for Flow {
+    fn bytes(&self) -> usize {
+        let entries: usize = self.entries.iter().map(|e| 32 + e.feeders.len() * 8).sum();
+        let exits: usize = self.exits.iter().map(|e| 64 + e.upstream.len() * 4).sum();
+        entries + exits
+    }
+}
+
+/// The routing and gathered water of one region.
+pub struct Basin {
+    pub region: IVec2,
+    /// First cell of the core: the region plus `CORE` cells around it.
+    core_origin: IVec2,
+    core: i32,
+    /// Over the core: routing (a direction, `SEA`, `ABSORBED` or `END`), the river
+    /// surface in eighths, and whether a tunnel carries the river.
+    next: Box<[u8]>,
+    level: Box<[i32]>,
+    tunnel: Box<[bool]>,
+    /// Whether a lake's water covers the cell's centre.
+    submerged: Box<[bool]>,
+    /// Over the region: water gathered from inside it.
+    local: Box<[f32]>,
+    /// Lakes, wet or dry, whose basins reach the core.
+    pub lakes: Vec<Arc<Lake>>,
+    flow: Arc<Flow>,
+    totals: OnceLock<Box<[f32]>>,
+}
+
+impl Basin {
+    fn core_index(&self, cell: IVec2) -> Option<usize> {
+        let p = cell - self.core_origin;
+        ((0..self.core).contains(&p.x) && (0..self.core).contains(&p.y)).then(|| (p.y * self.core + p.x) as usize)
+    }
+
+    /// Where water goes from a cell within `CORE` cells of the region.
+    pub fn next(&self, cell: IVec2) -> u8 {
+        self.core_index(cell).map_or(END, |i| self.next[i])
+    }
+
+    /// The river surface at a cell within `CORE` cells of the region, in eighths.
+    pub fn level(&self, cell: IVec2) -> i32 {
+        self.core_index(cell).map_or(SEA_SURFACE, |i| self.level[i])
+    }
+
+    /// Whether a lake's water covers a cell within `CORE` cells of the region.
+    pub fn submerged(&self, cell: IVec2) -> bool {
+        self.core_index(cell).is_some_and(|i| self.submerged[i])
+    }
+
+    /// Whether the river at a cell within `CORE` cells of the region runs in a tunnel.
+    pub fn tunnel(&self, cell: IVec2) -> bool {
+        self.core_index(cell).is_some_and(|i| self.tunnel[i])
+    }
+}
+
+impl Weigh for Basin {
+    /// Including the lakes and border record it keeps alive.
+    fn bytes(&self) -> usize {
+        let lakes: usize = self.lakes.iter().map(|l| 8 + l.bytes()).sum();
+        let totals = self.totals.get().map_or(0, |t| t.bytes());
+        self.next.bytes() + self.level.bytes() + self.tunnel.bytes() + self.submerged.bytes() + self.local.bytes() + lakes + self.flow.bytes() + totals
+    }
+}
+
+/// How many bytes a tier's caches may hold.
+pub struct Budget {
+    pub lakes: usize,
+    pub basins: usize,
+    pub flows: usize,
+}
+
+/// One tier's routing, lakes and flow, cached by region.
+pub struct Drainage {
+    pub tier: Tier,
+    lakes: Cache<IVec2, Arc<Lake>>,
+    basins: Cache<IVec2, Arc<Basin>>,
+    flows: Cache<IVec2, Arc<Flow>>,
+    /// Distinguishes this drainage in the per-thread guard against loops.
+    id: u64,
+}
+
+thread_local! {
+    /// Exits whose totals this thread is working out, so that a loop in the water (which
+    /// routing rules out) would end instead of waiting on itself.
+    static PENDING: RefCell<FxHashSet<(u64, IVec2)>> = RefCell::default();
+}
+
+impl Drainage {
+    pub fn new(tier: Tier, budget: Budget) -> Self {
+        static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self {
+            tier,
+            lakes: Cache::new(budget.lakes),
+            basins: Cache::new(budget.basins),
+            flows: Cache::new(budget.flows),
+            id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// The region containing a cell.
+    pub fn region_of(&self, cell: IVec2) -> IVec2 {
+        cell.div_euclid(IVec2::splat(self.tier.side))
+    }
+
+    pub fn basin(&self, ground: &dyn Ground, region: IVec2) -> Arc<Basin> {
+        self.basins.get(region, || Arc::new(self.compute_basin(ground, region)))
+    }
+
+    /// A region's border record, which outlives its basin in a cache of its own, since
+    /// it is small and every region downstream reads it.
+    fn flow(&self, ground: &dyn Ground, region: IVec2) -> Arc<Flow> {
+        self.flows.get(region, || self.basin(ground, region).flow.clone())
+    }
+
+    /// Water flowing through every cell of a basin's region, from everywhere upstream
+    /// (rows of `Tier::side` cells).
+    pub fn totals<'b>(&self, ground: &dyn Ground, basin: &'b Basin) -> &'b [f32] {
+        basin.totals.get_or_init(|| {
+            let mut totals = basin.local.clone();
+            let side = self.tier.side;
+            let origin = basin.region * side;
+            for entry in &basin.flow.entries {
+                let inflow = self.inflow(ground, entry);
+                // Carry it downstream through the region.
+                let mut cell = entry.cell;
+                for _ in 0..side * side {
+                    let p = cell - origin;
+                    if !((0..side).contains(&p.x) && (0..side).contains(&p.y)) {
+                        break;
+                    }
+                    totals[(p.y * side + p.x) as usize] += inflow;
+                    match basin.next(cell) {
+                        k if k < 8 => cell += DIRS[k as usize],
+                        _ => break,
+                    }
+                }
+            }
+            totals
+        })
+    }
+
+    /// Water leaving its region through `cell`, which must drain out of that region.
+    pub fn exit_total(&self, ground: &dyn Ground, cell: IVec2) -> f32 {
+        let flow = self.flow(ground, self.region_of(cell));
+        let Ok(i) = flow.exits.binary_search_by(|exit| (exit.cell.x, exit.cell.y).cmp(&(cell.x, cell.y))) else {
+            debug_assert!(false, "{cell} drains out of its region in a neighbour's view but not its own");
+            return 0.0;
+        };
+        let exit = &flow.exits[i];
+        if let Some(&total) = exit.total.get() {
+            return total;
+        }
+        let key = (self.id, cell);
+        if !PENDING.with(|pending| pending.borrow_mut().insert(key)) {
+            debug_assert!(false, "water loops through {cell}");
+            return exit.local;
+        }
+        let total =
+            *exit.total.get_or_init(|| exit.local + exit.upstream.iter().map(|&e| self.inflow(ground, &flow.entries[e as usize])).sum::<f32>());
+        PENDING.with(|pending| pending.borrow_mut().remove(&key));
+        total
+    }
+
+    fn inflow(&self, ground: &dyn Ground, entry: &Entry) -> f32 {
+        entry.feeders.iter().map(|&feeder| self.exit_total(ground, feeder)).sum()
+    }
+
+    /// What water does at a pit.
+    fn lake(&self, reader: &mut Reader, pit: IVec2) -> Arc<Lake> {
+        self.lakes.get(pit, || {
+            let mut lake = self.flood(reader, pit);
+            lake.cells = match lake.kind {
+                Kind::Lake | Kind::Closed => self.under(reader, pit, lake.level),
+                _ => Vec::new(),
+            };
+            Arc::new(lake)
+        })
+    }
+
+    /// The cells around a pit, connected to it, whose ground lies under a water surface
+    /// (in eighths): the cells of its lake. Ground beyond the spill point stays dry, since
+    /// the spill point itself is never under water.
+    fn under(&self, reader: &mut Reader, pit: IVec2, surface: i32) -> Vec<IVec2> {
+        let top = channel_top(surface);
+        let radius = self.tier.lake_radius;
+        let mut cells = vec![pit];
+        let mut seen = FxHashSet::default();
+        seen.insert(pit);
+        let mut head = 0;
+        while head < cells.len() {
+            let cell = cells[head];
+            head += 1;
+            for d in DIRS {
+                let next = cell + d;
+                if (next - pit).abs().max_element() <= radius && seen.insert(next) && (reader.at(next).0.floor() as i32) < top {
+                    cells.push(next);
+                }
+            }
+        }
+        cells.sort_unstable_by_key(|c| (c.x, c.y));
+        cells
+    }
+
+    /// Floods a pit until it overflows, and decides what it becomes. The cells it
+    /// returns are those the flood passed, for finding tunnels; `lake` replaces them.
+    fn flood(&self, reader: &mut Reader, pit: IVec2) -> Lake {
+        let tier = &self.tier;
+        let ground = reader.ground;
+        let mut at = |c: IVec2| reader.at(c);
+        let bottom = at(pit).0;
+        let floor = Key { height: bottom, cell: pit };
+
+        // Whether water at a cell runs off to somewhere lower than this pit.
+        let mut drains: FxHashMap<IVec2, bool> = FxHashMap::default();
+        let mut drains_lower = |start: IVec2, at: &mut dyn FnMut(IVec2) -> (f32, i32)| -> bool {
+            let mut at = |c: IVec2| at(c);
+            let mut walked = Vec::new();
+            let mut cell = start;
+            let result = loop {
+                if let Some(&known) = drains.get(&cell) {
+                    break known;
+                }
+                walked.push(cell);
+                match route(&mut at, cell) {
+                    SEA | ABSORBED => break true,
+                    SINK => break Key { height: at(cell).0, cell } < floor,
+                    k => cell += DIRS[k as usize],
+                }
+                if walked.len() > 4096 {
+                    break true;
+                }
+            };
+            for cell in walked {
+                drains.insert(cell, result);
+            }
+            result
+        };
+
+        // Priority flood: always take the lowest cell on the shore. Once the water level
+        // passes a cell that drains somewhere lower, the basin overflows there.
+        let mut heap = BinaryHeap::new();
+        let mut seen = FxHashSet::default();
+        seen.insert(pit);
+        let mut parent: FxHashMap<IVec2, IVec2> = FxHashMap::default();
+        let mut expand = |cell: IVec2, heap: &mut BinaryHeap<Reverse<Key>>, at: &mut dyn FnMut(IVec2) -> (f32, i32)| {
+            for d in DIRS {
+                let next = cell + d;
+                if (next - pit).abs().max_element() <= tier.lake_radius && seen.insert(next) {
+                    parent.insert(next, cell);
+                    heap.push(Reverse(Key { height: at(next).0, cell: next }));
+                }
+            }
+        };
+        heap.push(Reverse(floor));
+        let mut level = bottom;
+        let mut cells = Vec::new();
+        let mut outlet = None;
+        let mut overflowed = false;
+        while let Some(Reverse(key)) = heap.pop() {
+            if cells.len() >= tier.lake_cells || (key.cell - pit).abs().max_element() >= tier.lake_radius {
+                overflowed = true;
+                break;
+            }
+            if key.height < level && drains_lower(key.cell, &mut at) {
+                outlet = Some(key.cell);
+                break;
+            }
+            level = level.max(key.height);
+            cells.push(key.cell);
+            expand(key.cell, &mut heap, &mut at);
+        }
+        let spill = level;
+        cells.sort_unstable_by_key(|c| (c.x, c.y));
+        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new() };
+        let way_out = |outlet: IVec2| {
+            // Parents form a tree rooted at the pit, so this ends there; the bound is a
+            // second guard that keeps any mistake from growing without limit.
+            let mut path = vec![outlet];
+            let mut cell = outlet;
+            while let Some(&p) = parent.get(&cell) {
+                path.push(p);
+                cell = p;
+                if path.len() > parent.len() + 1 {
+                    debug_assert!(false, "lake parents loop at {cell}");
+                    break;
+                }
+            }
+            path.reverse();
+            path
+        };
+        let unit = |salt: i32| (hash3(tier.seed ^ 0x1a4e, pit.x, salt, pit.y) >> 40) as f32 / (1u64 << 24) as f32;
+        let pit_level = tier.target(bottom);
+        let depth = spill - bottom;
+
+        if overflowed {
+            // Bigger than a lake may be: the water sinks into the ground here.
+            lake.kind = Kind::Sink;
+            lake.cells.clear();
+            lake.level = pit_level;
+            return lake;
+        }
+        // In dry climates basins evaporate down by up to eight blocks below their spill
+        // height, so they have no outlet, down to dry, salty flats.
+        let big = depth >= tier.min_depth && lake.cells.len() >= tier.min_area;
+        let drop = if big { (unit(2) * 8.0 * (1.0 - ground.humidity(pit))).floor() } else { 0.0 };
+        if drop >= 1.0 || outlet.is_none() {
+            let tunnelled = outlet.is_none() && tier.tunnel.as_ref().is_some_and(|rule| self.tunnel(&mut at, &mut lake, rule));
+            if !tunnelled {
+                lake.level = if tier.lakes { ((spill - 1.0 - drop) * 8.0).floor() as i32 } else { pit_level };
+            }
+            return lake;
+        }
+        let outlet = outlet.expect("checked above");
+        if let Some(rule) = &tier.tunnel
+            && depth >= rule.depth
+            && unit(1) < rule.chance
+            && self.tunnel(&mut at, &mut lake, rule)
+        {
+            return lake;
+        }
+        // Shallow or small pits are breached: the river keeps the pit's level until the
+        // land beyond falls below it. Without lakes, any pit is, as far as a breach can
+        // reach, then by a tunnel.
+        let path = way_out(outlet);
+        if (!tier.lakes || depth < tier.min_depth || lake.cells.len() < tier.min_area)
+            && let Some(beyond) = descend_below(&mut at, tier, outlet, pit_level, tier.breach)
+        {
+            lake.kind = Kind::Breach;
+            lake.level = pit_level;
+            lake.clamp = path.iter().copied().chain(beyond).collect();
+            lake.path = path;
+            return lake;
+        }
+        if !tier.lakes {
+            if let Some(rule) = &tier.tunnel
+                && self.tunnel(&mut at, &mut lake, rule)
+            {
+                return lake;
+            }
+            // Cut through however far it takes, which makes a gorge.
+            let beyond = descend_below(&mut at, tier, outlet, pit_level, 4 * tier.breach).unwrap_or_default();
+            lake.kind = Kind::Breach;
+            lake.level = pit_level;
+            lake.clamp = path.iter().copied().chain(beyond).collect();
+            lake.path = path;
+            return lake;
+        }
+        // A lake one block under its spill height, drained from its outlet.
+        lake.kind = Kind::Lake;
+        lake.path = path;
+        lake.level = ((spill - 1.0) * 8.0).floor() as i32;
+        lake
+    }
+
+    /// Turns a basin into one that drains through a tunnel to the nearest lower ground
+    /// beyond its rim, if there is any within reach.
+    fn tunnel(&self, at: &mut impl FnMut(IVec2) -> (f32, i32), lake: &mut Lake, rule: &TunnelRule) -> bool {
+        let pit = lake.pit;
+        let inside = |c: IVec2| lake.cells.binary_search_by_key(&(c.x, c.y), |c| (c.x, c.y)).is_ok();
+        for r in 2..=rule.length {
+            let mut best: Option<Key> = None;
+            for i in -r..r {
+                for c in [pit + IVec2::new(i, -r), pit + IVec2::new(r, i), pit + IVec2::new(-i, r), pit + IVec2::new(-r, -i)] {
+                    let (height, _) = at(c);
+                    let key = Key { height, cell: c };
+                    if height < lake.bottom - 2.0 && !inside(c) && best.is_none_or(|b| key < b) {
+                        best = Some(key);
+                    }
+                }
+            }
+            if let Some(end) = best {
+                lake.kind = Kind::Tunnel;
+                lake.level = self.tier.target(lake.bottom);
+                lake.path = line(pit, end.cell);
+                lake.clamp = lake.path.clone();
+                return true;
+            }
+        }
+        false
+    }
+
+    fn compute_basin(&self, ground: &dyn Ground, region: IVec2) -> Basin {
+        let tier = &self.tier;
+        let side = tier.side;
+        let halo = tier.halo();
+        let origin = region * side;
+        let low = origin - halo;
+        let width = side + 2 * halo;
+        let mut reader = Reader::new(tier, ground);
+
+        // A dense copy of the window, and the runoff of the region.
+        let mut heights = vec![0.0f32; (width * width) as usize];
+        let mut covered = vec![DRY; (width * width) as usize];
+        let mut runoff = vec![0.0f32; (side * side) as usize];
+        let size = tier.tile;
+        for ty in low.y.div_euclid(size)..=(low.y + width - 1).div_euclid(size) {
+            for tx in low.x.div_euclid(size)..=(low.x + width - 1).div_euclid(size) {
+                let tile = reader.tile(IVec2::new(tx, ty)).clone();
+                for j in 0..size {
+                    for i in 0..size {
+                        let cell = IVec2::new(tx, ty) * size + IVec2::new(i, j);
+                        let (w, t) = (cell - low, (j * size + i) as usize);
+                        if (0..width).contains(&w.x) && (0..width).contains(&w.y) {
+                            heights[(w.y * width + w.x) as usize] = tile.height[t];
+                            covered[(w.y * width + w.x) as usize] = tile.absorbed[t];
+                        }
+                        let r = cell - origin;
+                        if (0..side).contains(&r.x) && (0..side).contains(&r.y) {
+                            runoff[(r.y * side + r.x) as usize] = tile.runoff[t];
+                        }
+                    }
+                }
+            }
+        }
+        let mut at = |c: IVec2| {
+            let w = c - low;
+            debug_assert!((0..width).contains(&w.x) && (0..width).contains(&w.y), "{c} outside the window");
+            let i = (w.y.clamp(0, width - 1) * width + w.x.clamp(0, width - 1)) as usize;
+            (heights[i], covered[i])
+        };
+
+        // Raw routing wherever it can be worked out from the window (two cells short of
+        // its edge), and every pit there with its lake.
+        let span = width - 4;
+        let raw: Vec<u8> = (0..span * span).map(|i| route(&mut at, low + 2 + IVec2::new(i % span, i / span))).collect();
+        let raw_at = |c: IVec2| raw[((c.y - low.y - 2) * span + c.x - low.x - 2) as usize];
+        let mut lakes: Vec<Arc<Lake>> = Vec::new();
+        let reach = tier.reach() + CORE + 1;
+        for z in origin.y - reach..origin.y + side + reach {
+            for x in origin.x - reach..origin.x + side + reach {
+                let cell = IVec2::new(x, z);
+                if raw_at(cell) == SINK {
+                    lakes.push(self.lake(&mut reader, cell));
+                }
+            }
+        }
+        // Where two lakes' ways out cross, the bigger lake's wins.
+        lakes.sort_by(|a, b| a.spill.total_cmp(&b.spill).then((a.pit.x, a.pit.y).cmp(&(b.pit.x, b.pit.y))));
+
+        // Routing and river levels over the core.
+        let core = side + 2 * CORE;
+        let core_origin = origin - CORE;
+        let core_index = |c: IVec2| {
+            let p = c - core_origin;
+            ((0..core).contains(&p.x) && (0..core).contains(&p.y)).then(|| (p.y * core + p.x) as usize)
+        };
+        let mut next = vec![END; (core * core) as usize];
+        let mut clamp = vec![i32::MAX; (core * core) as usize];
+        let mut floor = vec![i32::MIN; (core * core) as usize];
+        let mut tunnel = vec![false; (core * core) as usize];
+        for i in 0..core * core {
+            let cell = core_origin + IVec2::new(i % core, i / core);
+            next[i as usize] = match raw_at(cell) {
+                SINK => END,
+                k => k,
+            };
+        }
+        for lake in &lakes {
+            for pair in lake.path.windows(2) {
+                if let Some(i) = core_index(pair[0]) {
+                    next[i] = direction(pair[1] - pair[0]);
+                    tunnel[i] |= lake.kind == Kind::Tunnel;
+                }
+            }
+            for &cell in &lake.clamp {
+                if let Some(i) = core_index(cell) {
+                    clamp[i] = clamp[i].min(lake.level);
+                }
+            }
+            if lake.wet() {
+                for &cell in &lake.cells {
+                    if let Some(i) = core_index(cell) {
+                        floor[i] = floor[i].max(lake.level);
+                    }
+                }
+            }
+        }
+        let submerged: Vec<bool> = (0..core * core)
+            .map(|i| {
+                let height = at(core_origin + IVec2::new(i % core, i / core)).0;
+                let floor = floor[i as usize];
+                floor != i32::MIN && (height.floor() as i32) < (floor - 1).div_euclid(8)
+            })
+            .collect();
+        let level: Vec<i32> = (0..core * core)
+            .map(|i| {
+                let cell = core_origin + IVec2::new(i % core, i / core);
+                let (height, absorbed) = at(cell);
+                let i = i as usize;
+                match next[i] {
+                    SEA => SEA_SURFACE,
+                    ABSORBED => absorbed,
+                    _ => tier.target(height).min(clamp[i]).max(floor[i]).max(SEA_SURFACE),
+                }
+            })
+            .collect();
+
+        // Gather the water inside the region, upstream first. Routing never loops, but
+        // should it, the loop's water would end there.
+        let region_index = |c: IVec2| {
+            let p = c - origin;
+            ((0..side).contains(&p.x) && (0..side).contains(&p.y)).then(|| (p.y * side + p.x) as usize)
+        };
+        let downstream = |i: usize, next: &[u8]| -> Option<usize> {
+            let cell = origin + IVec2::new(i as i32 % side, i as i32 / side);
+            let k = next[core_index(cell)?];
+            if k < 8 { region_index(cell + DIRS[k as usize]) } else { None }
+        };
+        let order = loop {
+            let mut incoming = vec![0u32; (side * side) as usize];
+            for i in 0..(side * side) as usize {
+                if let Some(d) = downstream(i, &next) {
+                    incoming[d] += 1;
+                }
+            }
+            let mut order: Vec<usize> = (0..(side * side) as usize).filter(|&i| incoming[i] == 0).collect();
+            let mut head = 0;
+            while head < order.len() {
+                if let Some(d) = downstream(order[head], &next) {
+                    incoming[d] -= 1;
+                    if incoming[d] == 0 {
+                        order.push(d);
+                    }
+                }
+                head += 1;
+            }
+            if order.len() == (side * side) as usize {
+                break order;
+            }
+            debug_assert!(false, "water loops in region {region}");
+            for (i, &n) in incoming.iter().enumerate() {
+                if n > 0 {
+                    let cell = origin + IVec2::new(i as i32 % side, i as i32 / side);
+                    next[core_index(cell).unwrap()] = END;
+                }
+            }
+        };
+
+        // Where water crosses the border.
+        let mut entries: Vec<Entry> = Vec::new();
+        let mut entry_of: FxHashMap<usize, u32> = FxHashMap::default();
+        for i in 0..core * core {
+            let cell = core_origin + IVec2::new(i % core, i / core);
+            let p = cell - origin;
+            let ring = (-1..=side).contains(&p.x) && (-1..=side).contains(&p.y) && region_index(cell).is_none();
+            let k = next[i as usize];
+            if ring && k < 8 && let Some(target) = region_index(cell + DIRS[k as usize]) {
+                let e = *entry_of.entry(target).or_insert_with(|| {
+                    entries.push(Entry { cell: cell + DIRS[k as usize], feeders: Vec::new() });
+                    entries.len() as u32 - 1
+                });
+                entries[e as usize].feeders.push(cell);
+            }
+        }
+        let mut local = runoff;
+        let mut upstream: Vec<Vec<u32>> = vec![Vec::new(); (side * side) as usize];
+        let mut exits = Vec::new();
+        for &i in &order {
+            if let Some(&e) = entry_of.get(&i) {
+                upstream[i].push(e);
+                upstream[i].sort_unstable();
+            }
+            match downstream(i, &next) {
+                Some(d) => {
+                    local[d] += local[i];
+                    let carried = std::mem::take(&mut upstream[i]);
+                    let merged = &mut upstream[d];
+                    merged.extend(carried.iter().copied());
+                    merged.sort_unstable();
+                    merged.dedup();
+                    upstream[i] = carried;
+                }
+                None => {
+                    let cell = origin + IVec2::new(i as i32 % side, i as i32 / side);
+                    if next[core_index(cell).unwrap()] < 8 {
+                        exits.push(Exit { cell, local: local[i], upstream: upstream[i].clone(), total: OnceLock::new() });
+                    }
+                }
+            }
+        }
+        exits.sort_unstable_by_key(|exit| (exit.cell.x, exit.cell.y));
+
+        // Lakes, wet or dry, that reach the core.
+        lakes.retain(|lake| lake.cells.iter().any(|&c| core_index(c).is_some()));
+        lakes.sort_by_key(|lake| (lake.pit.x, lake.pit.y));
+        Basin {
+            region,
+            core_origin,
+            core,
+            next: next.into(),
+            level: level.into(),
+            tunnel: tunnel.into(),
+            submerged: submerged.into(),
+            local: local.into(),
+            lakes,
+            flow: Arc::new(Flow { entries, exits }),
+            totals: OnceLock::new(),
+        }
+    }
+}

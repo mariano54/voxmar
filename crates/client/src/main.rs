@@ -4,18 +4,21 @@
 //! `--world NAME` play (or create) the saved world NAME, `--connect HOST[:PORT]` join a
 //! server, `--capture PATH` (screenshot and exit once loaded; plays an unsaved world unless
 //! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
-//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--time
+//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--wait
+//! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--menu` (show the settings menu) or
 //! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
-//! `--fov DEGREES`, `--weather clear|cirrus|cumulus|cloudy|overcast|rain|storm|snow` (show
-//! that instead of the server's weather), `--no-vsync`, `--no-music`. `--view-distance`,
+//! `--fov DEGREES`, `--weather KIND` (show that instead of the server's weather; the kinds
+//! are in `weather.ron`), `--command LINE` (run a console command once in game, such as
+//! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings.
 
 mod capture;
 mod hud;
 mod interact;
+mod keys;
 mod menu;
 mod music;
 mod net;
@@ -59,9 +62,11 @@ struct Options {
     fov: Option<i32>,
     vsync: Option<bool>,
     weather: Option<voxmar_protocol::Weather>,
+    commands: Vec<String>,
     capture: Option<std::path::PathBuf>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    wait: f32,
     time: Option<f32>,
     menu: bool,
     screen: Option<Screen>,
@@ -79,9 +84,11 @@ fn parse_options() -> Result<Options, String> {
         fov: None,
         vsync: None,
         weather: None,
+        commands: Vec::new(),
         capture: None,
         pose: None,
         flight: None,
+        wait: 0.0,
         time: None,
         menu: false,
         screen: None,
@@ -103,9 +110,11 @@ fn parse_options() -> Result<Options, String> {
                 let name = value()?;
                 options.weather = Some(weather::preset(&name).ok_or_else(|| format!("--weather: unknown weather {name}"))?);
             }
+            "--command" => options.commands.push(value()?),
             "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
+            "--wait" => options.wait = value()?.parse().map_err(|e| format!("--wait: {e}"))?,
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
             "--screen" => {
@@ -191,6 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(forced) = options.weather {
         app.world_mut().resource_mut::<weather::ClientWeather>().force(forced);
     }
+    app.world_mut().resource_mut::<hud::console::Console>().run_when_joined(options.commands);
 
     // Go straight into a game when asked to, otherwise to the title screen.
     let first = if let Some(screen) = options.screen {
@@ -218,6 +228,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             path,
             pose: options.pose,
             flight: options.flight,
+            wait: options.wait,
             time: options.time,
             menu: options.menu,
         });

@@ -24,7 +24,7 @@
 //! Bit 27 marks the same crossed quads used as a leaf fringe (`ChunkMesh::fringe`). On water
 //! surfaces, bits 25..27 hold the depth of water below the vertex (0..=7 blocks).
 
-use glam::IVec3;
+use glam::{IVec3, UVec3};
 
 use crate::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use crate::coords::{CHUNK_SIZE, Face};
@@ -79,6 +79,9 @@ pub struct ChunkMesh {
     pub translucent: MeshBuffers,
     /// Leafy sprigs sticking out of crowns (bushy leaves), only worth drawing nearby.
     pub fringe: MeshBuffers,
+    /// One seed per grass block open to the air, from which the renderer grows a tuft of
+    /// blades, packed by `blade_seed`.
+    pub blades: Vec<u32>,
     pub connectivity: Connectivity,
 }
 
@@ -172,6 +175,7 @@ pub fn mesh_chunk(registry: &BlockRegistry, region: &LitRegion, column: &Column,
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
         emit_plant(&mut mesh.cutout, registry, column, &cells[i], local, cy * CHUNK_SIZE);
     }
+    mesh.blades = grass_tops(registry, column, &cells);
     for (y, plane) in leaves.iter().enumerate().take(S + 1).skip(1) {
         for (z, &bits) in plane.iter().enumerate().take(S + 1).skip(1) {
             let mut row = bits & !1 & !(1 << (S + 1));
@@ -595,6 +599,42 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
         // Both windings, so back-face culling keeps one of them from either side.
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
     }
+}
+
+/// A blade seed for every grass block whose top is open to the air (or a plant).
+fn grass_tops(registry: &BlockRegistry, column: &Column, cells: &[Cell]) -> Vec<u32> {
+    let mut seeds = Vec::new();
+    for y in 1..=S {
+        for z in 1..=S {
+            for x in 1..=S {
+                let info = registry.info(cells[pidx(x, y, z)].block);
+                if info.render != RenderKind::Opaque || info.tints[Face::PosY as usize] != Tint::Grass {
+                    continue;
+                }
+                let above = &cells[pidx(x, y + 1, z)];
+                if above.occludes || registry.info(above.block).render == RenderKind::Translucent {
+                    continue;
+                }
+                let local = UVec3::new(x as u32 - 1, y as u32 - 1, z as u32 - 1);
+                let climate = column.climate_at(local.x as i32, local.z as i32);
+                seeds.push(blade_seed(local, climate, above.light));
+            }
+        }
+    }
+    seeds
+}
+
+/// Packs a grass block's chunk-local position, the climate that picks its colour and the
+/// light above it into one word: x:5 | y:5 | z:5 | temperature:5 | humidity:5 | block
+/// light:3 | sky light:4. Block light keeps its top three bits.
+fn blade_seed(local: UVec3, [temperature, humidity]: [u8; 2], light: u8) -> u32 {
+    local.x
+        | local.y << 5
+        | local.z << 10
+        | ((temperature >> 3) as u32) << 15
+        | ((humidity >> 3) as u32) << 20
+        | ((light & 0xF) as u32 >> 1) << 25
+        | ((light >> 4) as u32) << 28
 }
 
 /// Depth of water at and below each padded cell, counting cells below the chunk too, or

@@ -1,4 +1,7 @@
-//! Heads-up display: crosshair, hotbar, health, inventory screen and debug overlay.
+//! Heads-up display: crosshair, hotbar, health, inventory screen, debug overlay and the
+//! console.
+
+pub mod console;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -12,17 +15,26 @@ use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
 use crate::settings::Settings;
-use crate::weather::{self, ClientWeather};
+use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostStartup, spawn_hud)
+        app.add_plugins(console::ConsolePlugin)
+            .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
-                (toggle_screens, update_slots, update_hearts, update_status, update_debug, click_inventory)
+                (
+                    toggle_screens,
+                    update_slots,
+                    update_hearts,
+                    update_status,
+                    update_debug,
+                    click_inventory,
+                    raise.run_if(resource_changed::<Settings>),
+                )
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnEnter(Screen::InGame), show_hud::<true>)
@@ -45,6 +57,8 @@ pub struct HudImages {
 
 const SCALE: f32 = 2.0;
 const SLOT: f32 = 20.0 * SCALE;
+/// Gap under the hotbar before the settings raise it, in screen pixels.
+const BOTTOM: f32 = 8.0;
 
 /// The HUD's root, shown only in game.
 #[derive(Component)]
@@ -55,6 +69,9 @@ struct SlotIcon(usize);
 struct SlotCount(usize);
 #[derive(Component)]
 struct HotbarSelection;
+/// What sits along the bottom edge: the hotbar and hearts.
+#[derive(Component)]
+struct Bottom;
 #[derive(Component)]
 struct Heart(usize);
 #[derive(Component)]
@@ -120,14 +137,16 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>) {
             ));
         });
 
-        // Hotbar, selection frame and hearts, anchored bottom-centre.
-        root.spawn(Node {
+        // Hotbar, selection frame and hearts, anchored bottom-centre and raised by the
+        // settings.
+        let bottom = Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(8.0),
+            bottom: Val::Px(BOTTOM),
             width: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
             ..default()
-        })
+        };
+        root.spawn((Bottom, bottom))
         .with_children(|bottom| {
             bottom
                 .spawn((
@@ -221,15 +240,31 @@ fn toggle_screens(
     mut panel: Query<&mut Visibility, With<InventoryPanel>>,
     mut held: ResMut<HeldSlot>,
 ) {
-    if keys.just_pressed(KeyCode::KeyE) && !player.dead && !ui.menu_open {
+    if keys.just_pressed(KeyCode::KeyE) && !player.dead && !ui.menu_open && !ui.console_open {
         ui.inventory_open = !ui.inventory_open;
         held.0 = None;
     }
-    if player.dead && keys.just_pressed(KeyCode::KeyR) {
+    if player.dead && keys.just_pressed(KeyCode::KeyR) && !ui.console_open {
         net.propose(actions.0.expect("core:respawn"), ActionTarget::None);
     }
     if let Ok(mut visibility) = panel.single_mut() {
         visibility.set_if_neq(if ui.inventory_open { Visibility::Inherited } else { Visibility::Hidden });
+    }
+}
+
+/// How far the hotbar sits above the screen's bottom edge, in pixels.
+pub fn bottom_offset(settings: &Settings) -> f32 {
+    BOTTOM + settings.hud_raise as f32 * SCALE
+}
+
+/// Lifts the bottom of the HUD off the screen's edge by the setting, in HUD pixels (like
+/// the Raised mod), which keeps it clear of rounded corners and the dock.
+fn raise(settings: Res<Settings>, mut bottom: Query<&mut Node, With<Bottom>>) {
+    let offset = Val::Px(bottom_offset(&settings));
+    for mut node in &mut bottom {
+        if node.bottom != offset {
+            node.bottom = offset;
+        }
     }
 }
 
@@ -338,18 +373,10 @@ fn update_debug(
         .hit
         .and_then(|hit| world.block(hit.block).map(|b| format!("{} at {}", world.registry.def(b).name, hit.block)))
         .unwrap_or_else(|| "nothing".into());
-    let w = &weather.current;
-    let sky = format!(
-        "{}: cloud {:.0}% ({:.0}% heaped), cirrus {:.0}%, humidity {:.0}%, {} {:.0}%, wind {:.1} blocks/s",
-        weather::describe(w),
-        w.cover * 100.0,
-        w.convection * 100.0,
-        w.cirrus * 100.0,
-        w.humidity * 100.0,
-        if w.snow > 0.5 { "snow" } else { "rain" },
-        w.precipitation * 100.0,
-        w.wind.length(),
-    );
+    let mut sky = format!("{}: {}", weather.current.describe(), weather.current.summary());
+    if !weather.effects.is_empty() {
+        sky.push_str(&format!("\neffects: {}", weather.effects.join(", ").replace('_', " ")));
+    }
     text.0 = format!(
         "{fps:.0} fps ({frame_ms:.2} ms)\n\
          xyz {:.1} {:.1} {:.1}{}\n\
@@ -357,7 +384,7 @@ fn update_debug(
          mesh jobs {} | waiting {} | distant tiles {}/{}\n\
          looking at {looking}\n\
          {sky}\n\
-         F3 debug  F fly  E inventory  M music  Esc menu",
+         F3 debug  F fly  E inventory  T chat  / command  M music  Esc menu",
         p.x,
         p.y,
         p.z,

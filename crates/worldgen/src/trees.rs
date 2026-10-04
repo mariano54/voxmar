@@ -1,5 +1,6 @@
 //! Procedural trees, in the spirit of TanTanDev's shrubbery: a species is a handful of
-//! parameters (trunk height, thickness and lean, roots, and a crown shape), and each tree
+//! parameters (trunk height, thickness and lean, roots, and a crown shape) defined in
+//! `trees.ron`, and each tree
 //! lays out its trunk, branches and leaf shapes in continuous space from its own random
 //! stream, then voxelizes them. Randomness tied to a voxel comes from hashing its
 //! position, never from the stream, so every column a tree reaches into builds the same
@@ -8,87 +9,16 @@
 use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::glam::{IVec3, Vec3};
 
+use crate::content::{Crown, Roots, WorldContent};
 use crate::rng::{Rng, hash3};
 use crate::terrain::Blocks;
 
 /// Furthest any part of a tree reaches from its base, horizontally.
 pub const REACH: i32 = 8;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tree {
-    Oak,
-    BigOak,
-    Birch,
-    Spruce,
-    GiantSpruce,
-    Pine,
-    DarkOak,
-    Cherry,
-    Jungle,
-    GiantJungle,
-    JungleBush,
-    Acacia,
-    Willow,
-    Mangrove,
-    Palm,
-    Shrub,
-    Dead,
-    Cactus,
-}
-
-impl Tree {
-    pub const ALL: [Tree; 18] = [
-        Tree::Oak,
-        Tree::BigOak,
-        Tree::Birch,
-        Tree::Spruce,
-        Tree::GiantSpruce,
-        Tree::Pine,
-        Tree::DarkOak,
-        Tree::Cherry,
-        Tree::Jungle,
-        Tree::GiantJungle,
-        Tree::JungleBush,
-        Tree::Acacia,
-        Tree::Willow,
-        Tree::Mangrove,
-        Tree::Palm,
-        Tree::Shrub,
-        Tree::Dead,
-        Tree::Cactus,
-    ];
-}
-
-/// The shape of the leafy part of a tree.
-#[derive(Clone, Copy, Debug)]
-enum Crown {
-    /// Leaf blobs at the ends of branches spreading from the upper trunk, and one on top.
-    /// `squash` flattens the blobs.
-    Round { branches: (i32, i32), reach: (f32, f32), radius: (f32, f32), squash: f32 },
-    /// Whorls of leaves narrowing to a tip, from `start` (a fraction of the trunk) up.
-    Conical { radius: (f32, f32), start: f32 },
-    /// Flat canopies on a few long branches that fork off the trunk.
-    Umbrella { branches: (i32, i32), reach: (f32, f32), radius: (f32, f32) },
-    /// A round crown with curtains of leaves hanging from its rim.
-    Weeping { radius: (f32, f32), drape: (i32, i32) },
-    /// Long drooping fronds at the top of a bare trunk.
-    Palm { fronds: (i32, i32), length: (f32, f32) },
-    /// A low mound of leaves on a stub of wood.
-    Bush { radius: (f32, f32) },
-    /// Bare branches.
-    Dead { branches: (i32, i32), reach: (f32, f32) },
-    /// No crown at all (cacti).
-    None,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Roots {
-    None,
-    /// Fins of wood flaring out from the base of a giant trunk.
-    Buttress,
-    /// Arching roots that hold the trunk above water.
-    Stilts,
-}
+/// A kind of tree, by its place in the pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TreeId(pub u16);
 
 struct Species {
     log: BlockId,
@@ -105,72 +35,54 @@ struct Species {
     crown: Crown,
 }
 
+/// The blocks a tree put down inside the column being generated, so that decorations
+/// (litter, fallen petals, fungi on logs) can follow the tree's own shape.
+#[derive(Default)]
+pub struct TreeParts {
+    pub logs: Vec<IVec3>,
+    pub leaves: Vec<IVec3>,
+}
+
 pub struct Trees {
     species: Vec<Species>,
 }
 
 impl Trees {
-    pub fn new(registry: &BlockRegistry) -> Self {
-        let id = |name: &str| registry.expect(&format!("base:{name}"));
-        let species = |wood: &str, leaves: &str, height, thick, lean, roots, crown| Species {
-            log: id(&format!("{wood}_log")),
-            leaves: id(&format!("{leaves}_leaves")),
-            alternate: None,
-            roots_block: id(&format!("{wood}_log")),
-            height,
-            thick,
-            lean,
-            roots,
-            crown,
-        };
-        let round = |branches, reach, radius, squash| Crown::Round { branches, reach, radius, squash };
-        let cone = |radius, start| Crown::Conical { radius, start };
-        let umbrella = |branches, reach, radius| Crown::Umbrella { branches, reach, radius };
-        // Lean + branch reach + crown radius stays within `REACH`.
-        let species = Tree::ALL
-            .map(|tree| match tree {
-                Tree::Oak => species("oak", "oak", (4, 7), false, 0.6, Roots::None, round((2, 4), (1.5, 2.5), (2.0, 2.8), 0.8)),
-                Tree::BigOak => species("oak", "oak", (8, 12), false, 0.8, Roots::None, round((4, 6), (2.5, 4.0), (2.2, 3.0), 0.75)),
-                Tree::Birch => species("birch", "birch", (5, 9), false, 0.4, Roots::None, round((1, 3), (0.5, 1.5), (1.6, 2.2), 1.3)),
-                Tree::Spruce => species("spruce", "spruce", (7, 12), false, 0.2, Roots::None, cone((2.2, 3.2), 0.25)),
-                Tree::GiantSpruce => species("spruce", "spruce", (16, 24), true, 0.3, Roots::None, cone((3.5, 5.0), 0.4)),
-                Tree::Pine => species("spruce", "spruce", (9, 14), false, 0.5, Roots::None, cone((2.2, 3.0), 0.5)),
-                Tree::DarkOak => species("dark_oak", "dark_oak", (6, 9), true, 0.8, Roots::None, round((3, 5), (2.0, 3.5), (2.8, 3.6), 0.6)),
-                Tree::Cherry => species("cherry", "cherry", (4, 7), false, 0.8, Roots::None, umbrella((2, 4), (2.5, 4.0), (2.5, 3.2))),
-                Tree::Jungle => species("jungle", "jungle", (8, 13), false, 0.5, Roots::None, round((2, 4), (2.0, 3.0), (2.2, 3.0), 0.7)),
-                Tree::GiantJungle => {
-                    species("jungle", "jungle", (18, 26), true, 0.6, Roots::Buttress, round((3, 5), (2.5, 4.0), (2.8, 3.4), 0.65))
+    pub fn new(content: &WorldContent, registry: &BlockRegistry) -> Self {
+        let species = content
+            .trees
+            .iter()
+            .map(|def| {
+                let log = registry.expect(&def.log);
+                Species {
+                    log,
+                    // A tree without leaves never places them.
+                    leaves: def.leaves.as_deref().map_or(BlockId::AIR, |name| registry.expect(name)),
+                    alternate: def.alternate.as_ref().map(|(name, share)| (registry.expect(name), *share)),
+                    roots_block: def.root_block.as_deref().map_or(log, |name| registry.expect(name)),
+                    height: def.height,
+                    thick: def.thick,
+                    lean: def.lean,
+                    roots: def.roots,
+                    crown: def.crown,
                 }
-                Tree::JungleBush => species("jungle", "oak", (1, 2), false, 0.0, Roots::None, Crown::Bush { radius: (1.6, 2.6) }),
-                Tree::Acacia => species("acacia", "acacia", (4, 7), false, 1.0, Roots::None, umbrella((1, 3), (2.5, 3.8), (2.5, 3.2))),
-                Tree::Willow => {
-                    species("oak", "oak", (5, 8), false, 0.8, Roots::None, Crown::Weeping { radius: (2.8, 3.8), drape: (10, 18) })
-                }
-                Tree::Mangrove => Species {
-                    roots_block: id("mangrove_roots"),
-                    ..species("mangrove", "mangrove", (5, 8), false, 0.6, Roots::Stilts, round((2, 3), (1.5, 2.5), (2.2, 2.8), 0.7))
-                },
-                Tree::Palm => species("jungle", "jungle", (6, 10), false, 3.0, Roots::None, Crown::Palm { fronds: (6, 8), length: (3.5, 5.0) }),
-                Tree::Shrub => Species {
-                    alternate: Some((id("flowering_azalea_leaves"), 0.35)),
-                    ..species("oak", "azalea", (1, 2), false, 0.0, Roots::None, Crown::Bush { radius: (1.4, 2.4) })
-                },
-                Tree::Dead => species("oak", "oak", (3, 6), false, 1.0, Roots::None, Crown::Dead { branches: (2, 4), reach: (1.5, 3.0) }),
-                Tree::Cactus => Species { log: id("cactus"), ..species("oak", "oak", (1, 4), false, 0.0, Roots::None, Crown::None) },
             })
-            .into();
+            .collect();
         Self { species }
     }
 
     /// The leaves that colour a species' canopy from afar.
-    pub fn leaves(&self, tree: Tree) -> BlockId {
-        self.species[tree as usize].leaves
+    pub fn leaves(&self, tree: TreeId) -> BlockId {
+        self.species[tree.0 as usize].leaves
     }
 
-    /// Grows a tree standing on the ground at `base` (the first block above it).
-    pub fn grow(&self, tree: Tree, base: IVec3, rng: &mut Rng, blocks: &mut Blocks<'_>) {
-        let s = &self.species[tree as usize];
-        let mut g = Grower { blocks, seed: rng.next_u64(), base };
+    /// Grows a tree standing on the ground at `base` (the first block above it), and
+    /// records in `parts` the blocks it put down in the column.
+    pub fn grow(&self, tree: TreeId, base: IVec3, rng: &mut Rng, blocks: &mut Blocks<'_>, parts: &mut TreeParts) {
+        let s = &self.species[tree.0 as usize];
+        parts.logs.clear();
+        parts.leaves.clear();
+        let mut g = Grower { blocks, seed: rng.next_u64(), base, parts };
         let leaves = match s.alternate {
             Some((alternate, share)) if rng.chance(share) => alternate,
             _ => s.leaves,
@@ -300,7 +212,7 @@ impl Trees {
                     g.line(from, from + dir * pick(rng, reach), s.log);
                 }
             }
-            Crown::None => {}
+            Crown::Bare => {}
         }
     }
 }
@@ -329,6 +241,7 @@ struct Grower<'a, 'b> {
     /// Seeds per-voxel randomness (ragged leaf edges).
     seed: u64,
     base: IVec3,
+    parts: &'a mut TreeParts,
 }
 
 impl Grower<'_, '_> {
@@ -341,14 +254,21 @@ impl Grower<'_, '_> {
     }
 
     fn wood(&mut self, cell: IVec3, log: BlockId) {
-        if self.reachable(cell) {
-            self.blocks.put_log(cell, log);
+        if self.reachable(cell) && self.blocks.put_log(cell, log) {
+            self.parts.logs.push(cell);
         }
     }
 
     fn leaf(&mut self, cell: IVec3, leaves: BlockId) {
         if self.reachable(cell) {
-            self.blocks.put_if_air(cell, leaves);
+            self.put_leaf(cell, leaves);
+        }
+    }
+
+    /// Puts a leaf at a cell already known to be within reach.
+    fn put_leaf(&mut self, cell: IVec3, leaves: BlockId) {
+        if !leaves.is_air() && self.blocks.put_if_air(cell, leaves) {
+            self.parts.leaves.push(cell);
         }
     }
 
@@ -366,8 +286,8 @@ impl Grower<'_, '_> {
                     let cell = step + IVec3::new(dx, 0, dz);
                     if k >= 0 {
                         self.wood(cell, log);
-                    } else if self.reachable(cell) {
-                        self.blocks.put_if_air(cell, log);
+                    } else if self.reachable(cell) && self.blocks.put_if_air(cell, log) {
+                        self.parts.logs.push(cell);
                     }
                 }
             }
@@ -413,7 +333,7 @@ impl Grower<'_, '_> {
                     let cell = IVec3::new(x, y, z);
                     let d = (cell.as_vec3() + 0.5 - center) / radii;
                     if d.length_squared() <= 1.0 - 0.35 * self.unit(cell) {
-                        self.blocks.put_if_air(cell, leaves);
+                        self.put_leaf(cell, leaves);
                     }
                 }
             }

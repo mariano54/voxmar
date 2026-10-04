@@ -13,10 +13,15 @@ cargo run --release -- --host               # also open singleplayer worlds on t
 cargo run --release -p voxmar_server        # dedicated server on port 25665, world in ./world
 ```
 
+While developing, use `--profile iter` in place of `--release` (for `run`, `build` and `test`):
+it rebuilds in seconds rather than minutes after an edit and runs nearly as fast. Keep
+`--release` for performance measurements.
+
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
-frame rate), `--weather clear|cirrus|cumulus|cloudy|overcast|rain|storm|snow` (show that instead
-of the server's weather), and
+frame rate), `--weather KIND` (show a kind of weather from `weather.ron`, such as `storm`,
+instead of the server's), `--command LINE` (run a console line once in game, such as
+`--command "/time set noon"`; repeatable, and handy with captures), and
 `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
@@ -26,19 +31,52 @@ The title screen, over a slowly turning view of a demo world, leads to Singlepla
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;
 the last few servers are remembered) and Settings. A new world takes a name, an optional seed
 (a number, or any text, which is hashed; empty means random) and a game mode: Creative allows
-flight and makes you the world's admin, Survival does neither.
+flight, Survival does not. Either way you are the world's admin, who can run commands.
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, 1-9 or wheel select hotbar slot, E inventory (click a slot, then
-another to move it), F3 debug overlay, Esc menu, R respawn.
+another to move it), T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
+creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 
-Esc opens the settings menu: render distance, field of view, VSync, debug overlay, music and
-sound volume, mouse sensitivity, and fly speed for admins, with Resume, Save and quit to title
-(Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in the OS
-config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config`
-on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`); `--view-distance` and
-`--no-vsync` override them. On a dedicated server, name admins with `--admin NAME`
-(repeatable), and cap render distance with `--view-distance N` (default 32).
+### Console and commands
+
+T opens the console to chat with everyone on the server; / opens it with a command. Up and down
+recall earlier lines, Tab completes a command's name, Enter sends and Esc closes. Replies and
+chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
+like actions: admins (the singleplayer host, and players named with `--admin` on a dedicated
+server) may use them all, everyone else `/help`, `/seed` and `/list`.
+
+- `/time` tells the time; `/time set sunrise|day|morning|noon|afternoon|sunset|dusk|night|midnight|dawn|TICKS`
+  moves forward to that time of day (a day is 24000 ticks, 0 is sunrise), `/time add 100|30s|2h|1d`
+  moves it on, `/time speed 10` runs days ten times as fast, `/time freeze` stops the sun and
+  `/time resume` lets it run normally. `/day` and `/night` are shortcuts. The time of day and its
+  speed are saved with the world; the weather keeps its own pace.
+- `/weather` describes the weather where you are. `/weather KIND [SECONDS]` brings that kind
+  (`/weather list`) to the land within about a kilometre of you, for five minutes unless you
+  say; then the natural weather takes over again, slowly. `/weather natural` ends it at once.
+- `/wind` describes the wind; `/wind calm|breeze|strong|gale [FROM] [SECONDS]` brings that
+  wind (from a compass point, `n` to `nw`, or degrees from north) on top of any forced
+  weather.
+- `/tp X Y Z`, `/tp X Z` (onto the ground), `/tp PLAYER`, `/tp PLAYER X Y Z`, `/tp PLAYER PLAYER`;
+  `~` means where the player is, so `/tp ~ ~10 ~` goes ten blocks up.
+- `/gamemode survival|creative [PLAYER]` switches a player's mode, which is kept with them.
+- `/seed`, `/list` (who is online), `/help [COMMAND]`.
+
+Commands are data: each package's `commands.ron` names its commands, who may use them, their
+usage and help, and what they run: one of the engine's built-in commands, or other command
+lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
+is `time set day`).
+
+Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
+sits above the bottom edge (Raise HUD), VSync, debug overlay, music and sound volume, mouse
+sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom (the
+view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins, with
+Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved to
+`voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
+`$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces
+`…/voxmar`); `--view-distance` and `--no-vsync` override them. On a dedicated server, name
+admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
+(default 32).
 
 ### Saved worlds
 
@@ -119,7 +157,8 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 
 How the design primitives map to the code today:
 
-- **Definition**: blocks (`content/base/blocks.ron`) and actions (`content/core/actions.ron`),
+- **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`),
+  console commands (`content/core/commands.ron`) and kinds of weather (`content/base/weather.ron`),
   namespaced per package (`base:stone`, `core:mine`; `core:air` is built in).
 - **Action**: the only way discrete changes happen. Every action goes through one lifecycle on
   the server (propose, validate, schedule one completion, re-validate, commit or cancel) and
@@ -154,7 +193,15 @@ no two worlds share a rarity table. Everything else is a continuous field:
   hot, temperate and cold land always lie in that order) and with altitude.
 - **Precipitation** follows moisture the prevailing wind carries in from the sea: wet coasts,
   drier interiors, rain shadows behind mountains, wet tropics and dry subtropics.
-- **Rivers and lakes** are carved into the height function, ending as dry valleys in high country.
+- **Rivers and lakes** (`worldgen/src/water/`) run where water would. Trunk rivers are routed on
+  a 64-block grid over the land's broad shape and cut their valleys (and, rarely, tunnels
+  through a ridge) into it; creeks and streams are routed on an 8-block grid from the hills to a
+  trunk, a lake or the sea, joining as they go. Each river is as big as the rain on its whole
+  catchment. Shallow pits are breached; deeper ones fill as lakes at their own height, lower
+  and without outlet in dry climates, down to salt flats. Water steps down in whole blocks,
+  falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
+  summed region by region through records of where water crosses each 1 km region's border,
+  so rivers can be any length and nothing depends on generation order.
 - **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
   everywhere, more tangled with depth, opening to the surface as entrances in some places;
   cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
@@ -177,16 +224,27 @@ variants take shares of their parent; ecotones sit on borders; fantastical biome
 where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
 lines such as game trails) over the stones of its rock province, while snow, ice and bare rock
-follow the climate everywhere. Trees and plants still follow the climate directly: each
-climate has its own procedurally shaped trees (giant spruce, pine, birch, oak, dark oak,
-cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti).
+follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
+birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
+and plants (`plants.ron`, with nutrition, alchemy and dye properties) are a shared pool:
+each says what climate, ground and habitat it likes, biomes select from the pool by tag or
+name, and the climate at each spot weighs the candidates, so a new plant with the right
+tags grows in every biome that fits. Biomes, trees, plants and rock provinces carry rarity
+tiers from common to legendary, and wonders (anything tagged `wonder`) grow where aether
+runs high. Each place also has an atmosphere (`Overworld::atmosphere_at`: haze, sky and
+colour-grading nudges, and ambient particle sets from `ambient.ron` such as pollen,
+fireflies, spores, dust, drifting snow and aether motes), taken from the climate unless a
+biome sets parts of it, and blended across borders.
 
 `Overworld::site(x, z)` returns every parameter at a position for gameplay to use, including
 its biome, the biome next door and the distance to their border; `Overworld::biome_at` and
 `Overworld::locate_biome` serve commands.
 `cargo test --release -p voxmar_worldgen map_preview -- --ignored --nocapture` (optionally with
-`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on) writes a
-shaded 8 km map to `target/map_preview.ppm` and prints each biome's share of it.
+`SEED=n` or `SEED=1,2,3`, `BIOMES=1` to colour by biome, `FIELD=erosion` and so on, `X`, `Z`
+and `SCALE` to move and zoom) writes a shaded 8 km map to `target/map_preview.ppm`, with lakes,
+rivers and creeks in their own blues, and prints each biome's share of it. `river_sights` prints
+`--pose` arguments for captures of a highland lake, a waterfall, a confluence and a river mouth
+near spawn.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections and level cuts of the caves over 1.5 km to `target/caves_*.ppm`; `cave_sights` prints `--pose`
 arguments for captures of caverns, labyrinths, ravines, sinkholes and entrances near spawn;
@@ -212,7 +270,15 @@ only exact arithmetic on seeded hash streams, so it is deterministic on every ma
 Each player is sent `ServerMessage::Weather` for where they stand (low cloud cover, how heaped
 it is, cirrus, humidity, precipitation, how much falls as snow, wind) when it changes or every
 five seconds, and the client eases towards it: cloud builds and clears over tens of seconds,
-rain sets in over a few. The sky's cloud layer sits at fixed places in the world and drifts
+rain sets in over a few. The weather runs on the simulation clock, so it carries on when the
+time of day is frozen or sped up; only the afternoon heating that builds showers follows the
+sun.
+
+An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
+(kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`
+snows where it is freezing) and blends it over what the drivers make. Players there are told
+at once and change over in a second or two. When its time is up it fades over a minute, and
+the released cells drift back to the natural weather over the next few minutes. The sky's cloud layer sits at fixed places in the world and drifts
 with the wind; its shape follows the weather, from flat grey stratus through billowing cumulus
 to dark storm cloud, under streaks of cirrus. Thick cloud greys and dims the sky, sunlight,
 ambient light and fog, and rain and snow close in the view. Rain streaks, splashes and

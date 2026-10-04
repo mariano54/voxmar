@@ -65,6 +65,11 @@ impl Palette {
         self.blocks[i]
     }
 
+    /// The block for a value only computed if there is more than one to choose from.
+    fn pick_with(&self, u: impl Fn() -> f32) -> BlockId {
+        if self.blocks.len() == 1 { self.blocks[0] } else { self.pick(u()) }
+    }
+
     pub fn blocks(&self) -> impl Iterator<Item = BlockId> + '_ {
         self.blocks.iter().copied()
     }
@@ -88,6 +93,7 @@ struct LayersRule {
 enum Cond {
     Underwater,
     Deeper(f32, f32),
+    Water(Vec<crate::Body>),
     Slope(f32, f32),
     Altitude(f32, f32),
     Colder(f32, f32),
@@ -149,8 +155,9 @@ pub struct Spot<'a> {
     pub z: i32,
     /// Clumpy dither for thresholds, 0..1.
     pub dither: f32,
-    /// A second, independent one for choosing among mixed blocks.
-    pub mix: f32,
+    /// A second, independent one for choosing among mixed blocks, computed only when a
+    /// mix needs it.
+    pub mix: &'a dyn Fn() -> f32,
     /// Uniform per-column randomness.
     pub chance: f32,
 }
@@ -212,6 +219,7 @@ impl SurfaceRules {
         match c {
             Condition::Underwater => Cond::Underwater,
             Condition::Deeper(a, b) => Cond::Deeper(*a, *b),
+            Condition::Water(bodies) => Cond::Water(bodies.clone()),
             Condition::Slope(a, b) => Cond::Slope(*a, *b),
             Condition::Altitude(a, b) => Cond::Altitude(*a, *b),
             Condition::Colder(a, b) => Cond::Colder(*a, *b),
@@ -239,7 +247,8 @@ impl SurfaceRules {
         let above = (site.height - SEA_LEVEL) as f32;
         match c {
             Cond::Underwater => true,
-            Cond::Deeper(a, b) => -above > at(*a, *b),
+            Cond::Deeper(a, b) => (site.water - site.height) as f32 > at(*a, *b),
+            Cond::Water(bodies) => bodies.contains(&site.body),
             Cond::Slope(a, b) => site.slope as f32 > at(*a, *b),
             Cond::Altitude(a, b) => above > at(*a, *b),
             Cond::Colder(a, b) => site.temperature < at(*a, *b),
@@ -294,12 +303,12 @@ impl SurfaceRules {
 fn resolve(rule: &LayersRule, spot: &Spot, stones: &Palette, strata: &[BlockId]) -> Layers {
     let band = |y: i32| strata[y.rem_euclid(strata.len() as i32) as usize];
     let top = match &rule.top {
-        Mat::Mix(p) => p.pick(spot.mix),
-        Mat::Stones => stones.pick(spot.mix),
+        Mat::Mix(p) => p.pick_with(spot.mix),
+        Mat::Stones => stones.pick_with(spot.mix),
         Mat::Strata => band(spot.site.height),
     };
     let filler = match &rule.filler {
-        Mat::Mix(p) => Fill::Block(p.pick(spot.mix)),
+        Mat::Mix(p) => Fill::Block(p.pick_with(spot.mix)),
         Mat::Stones => Fill::Stones,
         Mat::Strata => Fill::Strata,
     };
