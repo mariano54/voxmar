@@ -1,4 +1,5 @@
-//! The console: a line opened with T (or / to start a command) that says something to
+//! The console: a line opened with the chat key (T unless rebound), or / to start a
+//! command, that says something to
 //! everyone, or sends a command (`/time set noon`) to the server, which checks and runs
 //! it. Replies and chat show above it, fading after a few seconds while it is closed.
 //! Up and down recall earlier lines, Tab completes a command's name and Esc closes it.
@@ -15,6 +16,7 @@ use crate::menu::widgets::UiFont;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
+use crate::settings::Settings;
 
 pub struct ConsolePlugin;
 
@@ -36,6 +38,9 @@ const LINGER: f32 = 10.0;
 const FADE: f32 = 1.5;
 const TEXT_SIZE: f32 = 16.0;
 const WIDTH: f32 = 640.0;
+/// Space between the console's input line and the bottom of the screen, above the
+/// hotbar, hearts and any Raise HUD offset (see `hud::bottom_offset`).
+const ABOVE_HUD: f32 = 96.0;
 
 #[derive(Resource, Default)]
 pub struct Console {
@@ -93,6 +98,8 @@ impl Console {
 
 /// The console's widgets, made for each game.
 #[derive(Component)]
+struct ConsoleRoot;
+#[derive(Component)]
 struct ConsoleLine(usize);
 #[derive(Component)]
 struct ConsoleInput;
@@ -102,12 +109,12 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let root = Node {
         position_type: PositionType::Absolute,
         left: Val::Px(8.0),
-        bottom: Val::Px(112.0),
+        bottom: Val::Px(ABOVE_HUD),
         width: Val::Px(WIDTH),
         flex_direction: FlexDirection::Column,
         ..default()
     };
-    commands.spawn((root, DespawnOnExit(Screen::InGame))).with_children(|console| {
+    commands.spawn((root, ConsoleRoot, DespawnOnExit(Screen::InGame))).with_children(|console| {
         for i in 0..SHOWN {
             console.spawn((
                 Node { padding: UiRect::axes(Val::Px(6.0), Val::Px(1.0)), ..default() },
@@ -138,6 +145,7 @@ fn type_line(
     net: Res<Net>,
     player: Res<LocalPlayer>,
     launch: Res<Launch>,
+    settings: Res<Settings>,
 ) {
     let pressed: Vec<&KeyboardInput> = keys.read().filter(|key| key.state == ButtonState::Pressed).collect();
     if !ui.console_open {
@@ -145,7 +153,7 @@ fn type_line(
             return;
         }
         let slash = pressed.iter().any(|key| key.logical_key == Key::Character("/".into()));
-        if slash || pressed.iter().any(|key| key.key_code == KeyCode::KeyT) {
+        if slash || pressed.iter().any(|key| key.key_code == settings.chat_key.0) {
             // The key that opened it is not typed into it.
             ui.console_open = true;
             console.input = if slash { "/".into() } else { String::new() };
@@ -226,6 +234,8 @@ fn send_pending(mut console: ResMut<Console>, net: Res<Net>, player: Res<LocalPl
 
 fn draw(
     time: Res<Time>,
+    settings: Res<Settings>,
+    mut root: Query<&mut Node, With<ConsoleRoot>>,
     ui: Res<UiState>,
     console: Res<Console>,
     mut lines: Query<(&ConsoleLine, &Children, &mut Visibility, &mut BackgroundColor), Without<ConsoleInput>>,
@@ -234,6 +244,12 @@ fn draw(
 ) {
     let now = time.elapsed_secs();
     let open = ui.console_open;
+    if let Ok(mut node) = root.single_mut() {
+        let bottom = Val::Px(super::bottom_offset(&settings) + ABOVE_HUD);
+        if node.bottom != bottom {
+            node.bottom = bottom;
+        }
+    }
     let first = console.lines.len().saturating_sub(SHOWN);
     let shown = console.lines.len() - first;
     for (slot, children, mut visibility, mut background) in &mut lines {

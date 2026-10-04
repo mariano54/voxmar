@@ -1,6 +1,6 @@
-//! Local player: mouse look, predicted movement with voxel collision, and the camera.
+//! Local player: mouse look, zoom, predicted movement with voxel collision, and the camera.
 
-use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use voxmar_engine::coords::ColumnPos;
@@ -18,8 +18,12 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LocalPlayer>()
             .init_resource::<UiState>()
-            .add_systems(Update, (grab_cursor, look, movement, follow_camera).chain().run_if(in_state(Screen::InGame)))
-            .add_systems(OnExit(Screen::InGame), release_cursor);
+            .init_resource::<Zoom>()
+            .add_systems(
+                Update,
+                ((grab_cursor, zoom, look, movement, follow_camera).chain().run_if(in_state(Screen::InGame)), set_fov.after(zoom)),
+            )
+            .add_systems(OnExit(Screen::InGame), (release_cursor, |mut zoom: ResMut<Zoom>| *zoom = Zoom::default()));
     }
 }
 
@@ -129,14 +133,136 @@ fn release_cursor(mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>) {
     }
 }
 
-fn look(motion: Res<AccumulatedMouseMotion>, ui: Res<UiState>, settings: Res<Settings>, mut player: ResMut<LocalPlayer>) {
+/// Zooming in, like a spyglass: while the zoom key is held the view narrows by the chosen
+/// magnification, which the wheel changes, easing in and out. Mouse look slows to match,
+/// so the view sweeps across the screen as fast as unzoomed, and with cinematic zoom it
+/// follows the mouse smoothly, for steady shots.
+#[derive(Resource)]
+pub struct Zoom {
+    /// Whether the zoom key is held where zooming is allowed.
+    pub held: bool,
+    /// Magnification while held: the setting's, changed by the wheel since the key went down.
+    target: f32,
+    /// Magnification shown now, easing towards `target` while held and back to 1 after.
+    current: f32,
+    /// Where cinematic zoom is taking the view (yaw, pitch), while it is on.
+    aim: Option<Vec2>,
+}
+
+impl Default for Zoom {
+    fn default() -> Self {
+        Self { held: false, target: 1.0, current: 1.0, aim: None }
+    }
+}
+
+impl Zoom {
+    /// Magnifications the wheel stays between. The smallest is also the least the setting
+    /// allows.
+    pub const MIN: f32 = 1.5;
+    pub const MAX: f32 = 50.0;
+    /// Change in magnification per notch of the wheel.
+    const STEP: f32 = 1.15;
+    /// Pixels of trackpad scrolling that count as one notch.
+    const PIXELS_PER_NOTCH: f32 = 20.0;
+    /// How quickly the view zooms in and out, per second.
+    const RATE: f32 = 12.0;
+    /// How quickly the cinematic view catches up with the mouse, per second.
+    const FOLLOW: f32 = 5.0;
+
+    /// The vertical field of view, in radians, for `degrees` unzoomed: narrowed so that
+    /// everything at the centre looks magnified, rather than the angle simply divided.
+    pub fn fov(&self, degrees: f32) -> f32 {
+        2.0 * ((degrees.to_radians() / 2.0).tan() / self.current).atan()
+    }
+
+    /// How far cinematic smoothing applies, from 0 unzoomed to 1 from the least
+    /// magnification on, so it comes and goes with the zoom without a jump.
+    fn smoothing(&self) -> f32 {
+        (self.current.ln() / Self::MIN.ln()).clamp(0.0, 1.0)
+    }
+
+    /// Holds or releases the zoom, turns it by `notches` of the wheel while held, and eases
+    /// the magnification over `dt` seconds. `magnification` is the setting.
+    fn update(&mut self, held: bool, magnification: f32, notches: f32, dt: f32) {
+        if held && !self.held {
+            self.target = magnification;
+        }
+        self.held = held;
+        if held {
+            self.target = (self.target * Self::STEP.powf(notches)).clamp(Self::MIN, Self::MAX);
+        }
+        // Eased in proportion, so every doubling takes as long.
+        let goal = if held { self.target } else { 1.0 };
+        let eased = goal * (self.current / goal).powf((-Self::RATE * dt).exp());
+        self.current = if (eased / goal - 1.0).abs() < 1e-3 { goal } else { eased };
+    }
+
+    /// Turns the view by `turn` (yaw, pitch) of mouse movement, already scaled to radians,
+    /// over `dt` seconds. With `cinematic`, the view eases towards where the mouse points.
+    fn look(&mut self, player: &mut LocalPlayer, turn: Vec2, cinematic: bool, dt: f32) {
+        let clamp_pitch = |pitch: f32| pitch.clamp(-1.55, 1.55);
+        let smoothing = if cinematic { self.smoothing() } else { 0.0 };
+        if smoothing == 0.0 {
+            self.aim = None;
+            player.yaw -= turn.x;
+            player.pitch = clamp_pitch(player.pitch - turn.y);
+            return;
+        }
+        let aim = self.aim.get_or_insert(Vec2::new(player.yaw, player.pitch));
+        *aim = Vec2::new(aim.x - turn.x, clamp_pitch(aim.y - turn.y));
+        let follow = 1.0 - smoothing * (-Self::FOLLOW * dt).exp();
+        player.yaw += (aim.x - player.yaw) * follow;
+        player.pitch += (aim.y - player.pitch) * follow;
+    }
+}
+
+/// Zooms while the zoom key is held, in creative (where flight is allowed) or anywhere if
+/// the settings allow it. The wheel changes the magnification while zoomed.
+pub fn zoom(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    scroll: Res<AccumulatedMouseScroll>,
+    ui: Res<UiState>,
+    settings: Res<Settings>,
+    player: Res<LocalPlayer>,
+    mut zoom: ResMut<Zoom>,
+) {
+    let allowed = ui.cursor_locked && !player.dead && (player.allow_flight || settings.zoom_in_survival);
+    let held = allowed && keys.pressed(settings.zoom_key.0);
+    let notches = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / Zoom::PIXELS_PER_NOTCH,
+    };
+    zoom.update(held, settings.zoom as f32 / 100.0, notches, time.delta_secs());
+}
+
+fn look(
+    time: Res<Time>,
+    motion: Res<AccumulatedMouseMotion>,
+    ui: Res<UiState>,
+    settings: Res<Settings>,
+    mut zoom: ResMut<Zoom>,
+    mut player: ResMut<LocalPlayer>,
+) {
     const SENSITIVITY: f32 = 0.0022;
-    if !ui.cursor_locked || motion.delta == Vec2::ZERO {
+    let delta = if ui.cursor_locked { motion.delta } else { Vec2::ZERO };
+    if delta == Vec2::ZERO && zoom.aim.is_none() {
         return;
     }
-    let sensitivity = SENSITIVITY * settings.sensitivity as f32 / 100.0;
-    player.yaw -= motion.delta.x * sensitivity;
-    player.pitch = (player.pitch - motion.delta.y * sensitivity).clamp(-1.55, 1.55);
+    let sensitivity = SENSITIVITY * settings.sensitivity as f32 / 100.0 / zoom.current;
+    zoom.look(&mut *player, delta * sensitivity, settings.cinematic_zoom, time.delta_secs());
+}
+
+/// The camera's field of view: the setting's, narrowed while zoomed.
+fn set_fov(settings: Res<Settings>, zoom: Res<Zoom>, mut camera: Query<&mut Projection, With<Camera3d>>) {
+    let Ok(mut projection) = camera.single_mut() else { return };
+    let fov = zoom.fov(settings.fov as f32);
+    if let Projection::Perspective(perspective) = projection.bypass_change_detection()
+        && perspective.fov != fov
+    {
+        perspective.fov = fov;
+        projection.set_changed();
+    }
 }
 
 fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, world: Res<ClientWorld>, mut player: ResMut<LocalPlayer>) {
@@ -234,4 +360,53 @@ fn follow_camera(
     }
     let underwater = world.block(player.eye().floor().as_ivec3()) == world.registry.id("base:water");
     cycle.underwater = underwater;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zoom_eases_in_and_out_and_the_wheel_changes_it() {
+        let mut zoom = Zoom::default();
+        assert_eq!(zoom.fov(70.0), 70f32.to_radians());
+        // Held for a second, the view reaches the setting's magnification.
+        for _ in 0..60 {
+            zoom.update(true, 4.0, 0.0, 1.0 / 60.0);
+        }
+        assert_eq!(zoom.current, 4.0);
+        let half = (35f32.to_radians().tan() / 4.0).atan();
+        assert!((zoom.fov(70.0) - 2.0 * half).abs() < 1e-6);
+        // Scrolling up zooms further, within limits.
+        zoom.update(true, 4.0, 2.0, 0.0);
+        assert!((zoom.target - 4.0 * Zoom::STEP * Zoom::STEP).abs() < 1e-4);
+        zoom.update(true, 4.0, 1000.0, 0.0);
+        assert_eq!(zoom.target, Zoom::MAX);
+        // Released, it eases back, and the next hold starts from the setting again.
+        for _ in 0..60 {
+            zoom.update(false, 4.0, 0.0, 1.0 / 60.0);
+        }
+        assert_eq!(zoom.current, 1.0);
+        zoom.update(true, 4.0, 0.0, 0.0);
+        assert_eq!(zoom.target, 4.0);
+    }
+
+    #[test]
+    fn cinematic_zoom_follows_the_mouse_smoothly_and_only_while_zoomed() {
+        let mut player = LocalPlayer::default();
+        let mut zoom = Zoom::default();
+        // Unzoomed, looking is direct even with cinematic zoom on.
+        zoom.look(&mut player, Vec2::new(0.1, 0.0), true, 1.0 / 60.0);
+        assert_eq!(player.yaw, -0.1);
+        zoom.current = 4.0;
+        zoom.look(&mut player, Vec2::new(0.1, 0.0), true, 1.0 / 60.0);
+        assert!(player.yaw > -0.2 && player.yaw < -0.1, "eases towards the aim");
+        for _ in 0..300 {
+            zoom.look(&mut player, Vec2::ZERO, true, 1.0 / 60.0);
+        }
+        assert!((player.yaw + 0.2).abs() < 1e-4, "catches up");
+        // Without cinematic zoom the view turns at once.
+        zoom.look(&mut player, Vec2::new(0.1, 0.0), false, 1.0 / 60.0);
+        assert!((player.yaw + 0.3).abs() < 1e-4);
+    }
 }

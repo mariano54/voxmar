@@ -134,6 +134,60 @@ through the block, turned at random, grown 1.45–1.9× and leaning, in their ow
 within that the sprigs shrink back into their block from 56 blocks, so they cost nothing
 in the distance.
 
+## Wind
+
+The wind is part of the weather the server simulates and comes to the client in the
+player's weather report: a mean wind (direction and speed) and how much it gusts. It is
+light under settled skies, freshens and veers as fronts pass (where moist and dry air
+masses meet), blows hard in storms, picks up in the afternoon, and is stronger on open
+heights and over water and calmer in forests and valleys. `/wind calm|breeze|strong|gale
+[from] [seconds]` forces it for testing.
+
+The client exposes it as the `weather::Wind` resource, next to `ClientWeather`, eased
+like the rest of the weather and updated every frame (`Update`):
+
+```rust
+pub struct Wind {
+    pub direction: Vec2, // unit (x, z) the mean wind blows towards
+    pub speed: f32,      // mean, blocks/s: <1 calm, ~4 breeze, ~10 strong, ~18 gale
+    pub gustiness: f32,  // 0..1
+    pub seed: u64,       // seed of the gusts, the server's
+    pub seconds: f64,    // world time now (the server's simulation clock), what gusts run on
+}
+impl Wind {
+    pub fn mean(&self) -> Vec2;                     // direction * speed
+    pub fn at(&self, at: Vec2, seconds: f64) -> Vec2; // the wind at (x, z) and a time, gusts included
+    pub fn now(&self, at: Vec2) -> Vec2;            // at(at, self.seconds)
+}
+```
+
+Gusts come from `voxmar_engine::weather::gust`, which the server uses too, so swaying
+grass, blowing particles and later gameplay agree. Gust fronts about 40 blocks across
+sweep along with the wind and change over a few seconds; speed swings from about 0.55 to
+1.8 times the mean at full gustiness, with a little sideways veer. For a shader, the
+function is (all of it 32-bit, so it ports exactly; `pcg` is the hash already in
+`precipitation.wgsl`):
+
+```wgsl
+// seed = (seed ^ (seed >> 32)) as u32 ^ 0x67757374u, computed on the CPU.
+fn value_noise(seed: u32, p: vec2<f32>, t: f32) -> f32  // as engine::weather::value_noise:
+//   lattice cell = floor(p), floor(t); corners hash pcg(seed ^ pcg(x ^ pcg(z ^ pcg(t))))
+//   (u32 wrapping adds of 0/1 per corner), value (h >> 8) / 2^24, smoothstep-weighted
+//   trilinear blend.
+fn gust(at: vec2<f32>, seconds: f32, mean: vec2<f32>, gusts: f32) -> vec2<f32> {
+    let p = (at - mean * seconds) / 40.0;   // do this subtraction in f64 on the CPU, or
+    let t = seconds / 5.0;                  // pass seconds wrapped, for f32 precision
+    let s = value_noise(seed, p, t);
+    let veer = value_noise(seed ^ 0x9e3779b9u, p * 0.5, t * 0.7) - 0.5;
+    let speed = 1.0 + gusts * (1.8 * s * s - 0.45);
+    return mean * speed + vec2(-mean.y, mean.x) * (veer * 0.6 * gusts);
+}
+```
+
+Rain, snow and the other falling and drifting particles (`precipitation.rs`) already move
+with `ClientWeather::current.wind`, which is `Wind::now` at the camera; clouds drift with
+the mean wind.
+
 ## What we took from Voxy
 
 Voxy (Fabric LOD mod, read from its source) stores the world as 32³ voxel sections mipped

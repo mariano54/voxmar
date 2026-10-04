@@ -17,6 +17,7 @@
 mod capture;
 mod hud;
 mod interact;
+mod keys;
 mod menu;
 mod music;
 mod net;

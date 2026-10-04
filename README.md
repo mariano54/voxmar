@@ -31,7 +31,8 @@ flight, Survival does not. Either way you are the world's admin, who can run com
 
 Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, 1-9 or wheel select hotbar slot, E inventory (click a slot, then
-another to move it), T chat, / command, F3 debug overlay, Esc menu, R respawn.
+another to move it), T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
+creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 
 ### Console and commands
 
@@ -49,6 +50,9 @@ server) may use them all, everyone else `/help`, `/seed` and `/list`.
 - `/weather` describes the weather where you are. `/weather KIND [SECONDS]` brings that kind
   (`/weather list`) to the land within about a kilometre of you, for five minutes unless you
   say; then the natural weather takes over again, slowly. `/weather natural` ends it at once.
+- `/wind` describes the wind; `/wind calm|breeze|strong|gale [FROM] [SECONDS]` brings that
+  wind (from a compass point, `n` to `nw`, or degrees from north) on top of any forced
+  weather.
 - `/tp X Y Z`, `/tp X Z` (onto the ground), `/tp PLAYER`, `/tp PLAYER X Y Z`, `/tp PLAYER PLAYER`;
   `~` means where the player is, so `/tp ~ ~10 ~` goes ten blocks up.
 - `/gamemode survival|creative [PLAYER]` switches a player's mode, which is kept with them.
@@ -59,13 +63,16 @@ usage and help, and what they run: one of the engine's built-in commands, or oth
 lines with the arguments filled in (`$1`, `$*`), which is how a package adds its own (`/day`
 is `time set day`).
 
-Esc opens the settings menu: render distance, field of view, VSync, debug overlay, music and
-sound volume, mouse sensitivity, and fly speed for admins, with Resume, Save and quit to title
-(Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in the OS
-config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config`
-on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`); `--view-distance` and
-`--no-vsync` override them. On a dedicated server, name admins with `--admin NAME`
-(repeatable), and cap render distance with `--view-distance N` (default 32).
+Esc opens the settings menu: render distance, field of view, anti-aliasing, how far the hotbar
+sits above the bottom edge (Raise HUD), VSync, debug overlay, music and sound volume, mouse
+sensitivity, the zoom key (click it, then press a key), zoom magnification, cinematic zoom (the
+view follows the mouse smoothly while zoomed), zoom in survival, and fly speed for admins, with
+Resume, Save and quit to title (Disconnect on a server) and Quit game. Settings are saved to
+`voxmar/settings.ron` in the OS config directory (`~/Library/Application Support` on macOS,
+`$XDG_CONFIG_HOME` or `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces
+`…/voxmar`); `--view-distance` and `--no-vsync` override them. On a dedicated server, name
+admins with `--admin NAME` (repeatable), and cap render distance with `--view-distance N`
+(default 32).
 
 ### Saved worlds
 
