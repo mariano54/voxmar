@@ -5,7 +5,10 @@
 //! Gust fronts are drawn with their own noise, carried along by the mean wind as it blows
 //! (an offset integrated frame by frame), rather than with `voxmar_engine::weather::gust`:
 //! that function places its fronts at `mean * seconds`, which leaps whenever the mean wind
-//! changes, and on screen a whole meadow would lurch.
+//! changes, and on screen a whole meadow would lurch. The flutter is integrated the same
+//! way: `time * pace` leaps by `time * Δpace` whenever the pace changes, so an hour into a
+//! game every change of wind sent the grass into a fit, and a changing wind kept it
+//! shaking far faster than its pace.
 
 use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
@@ -16,6 +19,12 @@ use crate::weather::Wind;
 
 /// Gusts repeat every this many blocks (see wind.wgsl), so their offset wraps unseen.
 const GUST_PERIOD: f32 = 1024.0;
+/// The flutter phase wraps after 320 turns, so a flutter at any whole number of tenths or
+/// 64ths of it (see wind.wgsl) is still in step across the wrap.
+const FLUTTER_PERIOD: f32 = 320.0 * std::f32::consts::TAU;
+/// A gale, in blocks per second, where foliage's response to the wind tops out (as
+/// `wind_strength` in wind.wgsl).
+const GALE: f32 = 18.0;
 
 pub struct WindPlugin;
 
@@ -34,6 +43,8 @@ pub struct Breeze {
     pub gustiness: f32,
     /// How far gusts have travelled with the wind, wrapped every `GUST_PERIOD` blocks.
     pub offset: Vec2,
+    /// The flutter's phase in radians, which runs quicker in a stronger wind.
+    pub flutter: f32,
     /// The player's feet, while in a game.
     pub player: Option<Vec3>,
 }
@@ -43,5 +54,7 @@ fn blow(time: Res<Time>, wind: Res<Wind>, player: Res<LocalPlayer>, screen: Res<
     breeze.velocity = velocity;
     breeze.gustiness = wind.gustiness;
     breeze.offset = (breeze.offset + velocity * time.delta_secs()).rem_euclid(Vec2::splat(GUST_PERIOD));
+    let pace = 1.0 + 1.4 * (velocity.length() / GALE).min(1.0);
+    breeze.flutter = (breeze.flutter + pace * time.delta_secs()).rem_euclid(FLUTTER_PERIOD);
     breeze.player = (*screen.get() == Screen::InGame && player.joined).then_some(player.position);
 }
