@@ -456,19 +456,21 @@ impl Geology {
         let n = points.len();
         let at: [(f32, f32); 4] = std::array::from_fn(|k| (points[k.min(n - 1)].0 as f32, points[k.min(n - 1)].1 as f32));
         let reliefs = self.relief_lanes(&at[..n]);
-        let hills = crate::noise::get_2d_lanes(&self.hills, at.map(|p| p.0), at.map(|p| p.1), n);
-        for (k, (&(x, z), out)) in points.iter().zip(out).enumerate() {
-            let relief = &reliefs[k];
-            let inland = smoothstep(-0.06, 0.1, relief.continental);
-            let hills = hills[k] * (3.0 + 14.0 * relief.roughness) * self.hill_scale * inland;
-            let ground = relief.elevation + hills;
-            let regional = self.regional(x, z);
-            let anywhere = |x: i32, z: i32| self.regional(x, z);
-            let shaped = self.shapes.shape(x, z, &Ground { regional: &anywhere, height: ground, hills, relief }, &regional);
-            let sea = SEA_LEVEL as f32;
+        let noise = crate::noise::get_2d_lanes(&self.hills, at.map(|p| p.0), at.map(|p| p.1), n);
+        let hills: [f32; 4] = std::array::from_fn(|k| {
+            let inland = smoothstep(-0.06, 0.1, reliefs[k].continental);
+            noise[k] * (3.0 + 14.0 * reliefs[k].roughness) * self.hill_scale * inland
+        });
+        let anywhere = |x: i32, z: i32| self.regional(x, z);
+        let grounds: [Ground; 4] = std::array::from_fn(|k| Ground { regional: &anywhere, height: reliefs[k].elevation + hills[k], hills: hills[k], relief: &reliefs[k] });
+        let regionals: [Regional; 4] = std::array::from_fn(|k| if k < n { self.regional(points[k].0, points[k].1) } else { Regional::default() });
+        let shaped = self.shapes.shape_lanes(points, &grounds[..n], &regionals[..n]);
+        let sea = SEA_LEVEL as f32;
+        for (k, out) in out.iter_mut().enumerate() {
+            let (ground, shaped) = (grounds[k].height, &shaped[k]);
             let base = sea + ease(ground + shaped.terrain - sea);
             let height = sea + ease(ground + shaped.terrain + shaped.features - sea);
-            *out = Landform { height, mountain: relief.mountain, form: Form { shape: shaped.shape, strength: shaped.strength, base } };
+            *out = Landform { height, mountain: reliefs[k].mountain, form: Form { shape: shaped.shape, strength: shaped.strength, base } };
         }
     }
 
