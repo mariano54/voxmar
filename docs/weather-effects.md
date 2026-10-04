@@ -31,18 +31,25 @@ captures log the weather and air they show. Every kind: `/weather list`.
   fireflies that blink, spores, drifting snow, marsh mist, aether motes): all in the
   existing precipitation particles (`render/precipitation.rs` and `.wgsl`, contained
   additions; a group of drops per kind, the same box around the camera and height map).
-  When the graphics thread's reusable particle system lands, these move to it; the data
-  that drives them (`Weather` channels, `ClientAtmosphere::particles`) stays.
+  They stay there now that the spawned particle system (`render/particles.rs`) exists: a
+  steady field wrapping around the camera costs no CPU and has no spawn rate to manage,
+  which suits air full of particles better (see docs/rendering.md, "Particles and breaking
+  blocks"); particles tied to events or places use the spawned system.
 - Rain is tinted half towards the sky's haze, so it matches the sky it falls from, and
   its streaks lie along its motion as seen from the moving camera, so running into rain
   tilts it towards you (Particle Rain's trick). A sparser layer of faint streaks in a box
   three times as wide carries rain (or, as specks, snow) into the distance. Raindrops
   splash as crowns on the ground and ring out as ripples on water; under leaves they come
   through as slow, heavy drips that carry on for a few minutes after the rain, as the
-  ground dries. Snowflakes are mostly fine with a few large ones, six-armed, turning and
-  glinting as they flutter down.
+  ground dries. Snowflakes are soft, slightly ragged blobs of a few pixels, varied in size
+  and opacity. Sparkle belongs to diamond dust alone: in bitter cold under a halo, ice
+  crystals hang in the air, each glinting for an instant as it turns (`glints` in
+  precipitation.rs, drawn as an ambient particle set).
 - Every kind of weather has an intensity (`/weather rain 0.3`, `--weather snow:heavy`):
-  what falls scales with it, from a few streaks to a downpour that fills the view.
+  what falls follows a steep curve (`density` in precipitation.rs, intensity^1.8), so
+  light stays a few streaks or flakes, heavy sits between, and max is a downpour, a
+  whiteout or a brown-out: at heavy and above, the far layer adds veils of rain, snow or
+  dust a few blocks off that grey, white or tan out the distance.
 - Rain, snow and particles slant and drift with the gusting wind; clouds drift with the
   mean wind; grass sways with `Wind` (graphics thread).
 - Lightning: the flash (existing) and the bolt, drawn for now as bright gizmo lines that
@@ -177,7 +184,8 @@ other top faces (stone, sand, leaves) at `snow_cover > 0.3`, open to the sky.
 `w.wisps` (ball lightning in storms, marsh lights on calm wet nights): a few (up to about
 12) large glowing orbs, 0.3–0.6 blocks, drifting 0.5–3 blocks above the ground within 30
 blocks, pale blue-green, slowly pulsing. For now they add to the motes in the particles
-(`motes.max(wisps * 0.3)`), which are smaller. `w.motes` and `w.falling_stars` together
+(`motes.max(wisps * 0.3)`), which are smaller, and only while nothing falls: in rain the
+motes and wisps are grounded, so ball lightning shows nothing until it has its orbs. `w.motes` and `w.falling_stars` together
 with `aether_storm` in `ClientWeather::effects` mark the rare aether storm: a violet tint to
 the storm cloud and the lightning would sell it.
 

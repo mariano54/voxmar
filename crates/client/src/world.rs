@@ -38,6 +38,8 @@ struct ChunkRender {
 /// A finished relight+remesh job.
 struct MeshResult {
     pos: ColumnPos,
+    /// The level of detail it was meshed at (see `mesh_chunk`).
+    detail: i32,
     chunks: Vec<ChunkResult>,
 }
 
@@ -76,6 +78,23 @@ impl ChunkResult {
 /// streaming and edits never cause a long frame.
 const UPLOAD_BUDGET: usize = 32_000;
 
+/// The level of detail a column `distance` columns from the camera is meshed at: full
+/// detail out to `range[0]` columns, two blocks merged into one along x and z out to
+/// `range[1]`, four beyond (see `mesh_chunk` and `settings::FarDetail`). A column keeps its
+/// `current` detail until it is a column past the boundary, so walking back and forth over
+/// one does not remesh.
+fn detail_at(distance: i32, current: Option<i32>, range: [i32; 2]) -> i32 {
+    let wanted = |distance: i32| match distance {
+        d if d <= range[0] => 1,
+        d if d <= range[1] => 2,
+        _ => 4,
+    };
+    match current {
+        Some(current) if (wanted(distance - 1)..=wanted(distance + 1)).contains(&current) => current,
+        _ => wanted(distance),
+    }
+}
+
 const PASSES: [TerrainPass; 5] =
     [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent, TerrainPass::Fringe];
 
@@ -89,6 +108,12 @@ pub struct ClientWorld {
     results_tx: Sender<MeshResult>,
     results_rx: Receiver<MeshResult>,
     chunks: FxHashMap<ChunkPos, ChunkRender>,
+    /// The level of detail each meshed column was meshed at, and how far out each level
+    /// reaches (see `detail_at`).
+    details: FxHashMap<ColumnPos, i32>,
+    detail_range: [i32; 2],
+    /// Set when the detail range changed, so every column's detail is checked again.
+    details_dirty: bool,
     terrain: Terrain,
     /// Set when chunk meshes or connectivity changed, so culling must rerun.
     visibility_dirty: bool,
@@ -117,6 +142,9 @@ impl ClientWorld {
             results_tx,
             results_rx,
             chunks: FxHashMap::default(),
+            details: FxHashMap::default(),
+            detail_range: [i32::MAX; 2],
+            details_dirty: false,
             terrain,
             visibility_dirty: true,
             view_distance,
@@ -128,7 +156,17 @@ impl ClientWorld {
     /// deliver to a channel nobody reads any more.
     pub fn reset(&mut self, view_distance: i32) {
         self.terrain.clear();
+        let detail_range = self.detail_range;
         *self = Self::new(self.registry.clone(), view_distance, self.terrain.clone());
+        self.detail_range = detail_range;
+    }
+
+    /// How far out chunks keep full and half detail, in columns.
+    pub fn set_far_detail(&mut self, range: [i32; 2]) {
+        if self.detail_range != range {
+            self.detail_range = range;
+            self.details_dirty = true;
+        }
     }
 
     pub fn set_view_distance(&mut self, view_distance: i32) {
@@ -159,6 +197,7 @@ impl ClientWorld {
             }
         }
         self.terrain.remove_column(pos);
+        self.details.remove(&pos);
         self.visibility_dirty = true;
     }
 
@@ -201,8 +240,13 @@ impl ClientWorld {
     }
 }
 
-/// Starts relight+remesh jobs for dirty columns, nearest to the camera first.
-fn dispatch_jobs(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform, With<Camera3d>>) {
+/// Starts relight+remesh jobs for dirty columns, nearest to the camera first, and remeshes
+/// columns whose level of detail changed as the camera moved.
+fn dispatch_jobs(
+    mut world: ResMut<ClientWorld>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
+    mut last_center: Local<Option<ColumnPos>>,
+) {
     let max_in_flight = rayon::current_num_threads() * 2;
     let center = camera
         .single()
@@ -210,6 +254,15 @@ fn dispatch_jobs(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform,
         .unwrap_or(ColumnPos::new(0, 0));
 
     let world = &mut *world;
+    if *last_center != Some(center) || world.details_dirty {
+        *last_center = Some(center);
+        world.details_dirty = false;
+        for (&pos, &detail) in &world.details {
+            if detail_at(pos.distance(center), Some(detail), world.detail_range) != detail {
+                world.dirty.insert(pos);
+            }
+        }
+    }
     let voxels = &world.voxels;
     world.dirty.retain(|pos| voxels.contains(*pos));
     let mut ready: Vec<ColumnPos> = world
@@ -229,11 +282,13 @@ fn dispatch_jobs(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform,
         world.in_flight.insert(pos);
         let registry = world.registry.clone();
         let tx = world.results_tx.clone();
+        let detail = detail_at(pos.distance(center), world.details.get(&pos).copied(), world.detail_range);
         rayon::spawn(move || {
             let region = LitRegion::compute(&registry, &columns);
-            let chunks =
-                (0..COLUMN_CHUNKS).map(|cy| ChunkResult::new(mesh_chunk(&registry, &region, &columns[4], cy))).collect();
-            let _ = tx.send(MeshResult { pos, chunks });
+            let chunks = (0..COLUMN_CHUNKS)
+                .map(|cy| ChunkResult::new(mesh_chunk(&registry, &region, &columns[4], cy, detail)))
+                .collect();
+            let _ = tx.send(MeshResult { pos, detail, chunks });
         });
     }
     world.stats.jobs_in_flight = world.in_flight.len();
@@ -252,6 +307,7 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
         if !world.voxels.contains(result.pos) {
             continue;
         }
+        world.details.insert(result.pos, result.detail);
         for (cy, chunk_result) in result.chunks.into_iter().enumerate() {
             let chunk = result.pos.chunk(cy as i32);
             let render = world.chunks.entry(chunk).or_default();

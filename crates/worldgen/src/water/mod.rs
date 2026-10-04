@@ -16,13 +16,13 @@
 //! demand and cached in caches bounded by bytes (about 400 MB in all, at most). No result depends on which column, region or
 //! thread came first.
 //!
-//! Generated water is sealed: every water block lies on ground or water, and beside it
-//! is ground, water, or the lower water a waterfall drops into, so nothing generated
-//! needs to settle.
+//! Generated water is settled: it is a fixed point of the fluid rule, so loading it costs
+//! nothing (see `settle`, and the curtains of falls the terrain stamps).
 
 pub(crate) mod cache;
 mod channel;
 mod drainage;
+mod sights;
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -37,9 +37,11 @@ use crate::dials::WorldDials;
 use fastnoise_lite::FractalType;
 
 use crate::geology::{GeoSample, Geology, noise, smoothstep};
+use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
 
 pub use self::channel::{Body, Cavity, Current};
+pub use self::sights::WaterSight;
 
 /// Blocks along a side of a region, the unit in which rivers are routed and cached.
 pub const REGION: i32 = 1024;
@@ -97,6 +99,10 @@ impl Ground for TrunkGround<'_> {
         self.rivers.coarse.get(key, || Arc::new(self.rivers.coarse_tile(self.land, key)))
     }
 
+    fn has(&self, key: IVec2) -> bool {
+        self.rivers.coarse.has(key)
+    }
+
     fn humidity(&self, cell: IVec2) -> f32 {
         self.rivers.humidity(self.land, self.rivers.trunks.tier.centre(cell))
     }
@@ -105,6 +111,10 @@ impl Ground for TrunkGround<'_> {
 impl Ground for StreamGround<'_> {
     fn tile(&self, key: IVec2) -> Arc<Tile> {
         self.rivers.fine.get(key, || Arc::new(self.rivers.fine_tile(self.land, key)))
+    }
+
+    fn has(&self, key: IVec2) -> bool {
+        self.rivers.fine.has(key)
     }
 
     fn humidity(&self, cell: IVec2) -> f32 {
@@ -204,8 +214,9 @@ impl Rivers {
         (flow / self.creek).powf(0.6).clamp(1.0, 28.0)
     }
 
-    /// The regional climate at a position, from samples every `RAIN_CELL` blocks.
-    fn rain_at(&self, land: Stages, x: i32, z: i32) -> Regional {
+    /// The regional climate over the region holding (x, z), sampled every `RAIN_CELL`
+    /// blocks, for [`Rain::at`].
+    fn rain(&self, land: Stages, x: i32, z: i32) -> Rain {
         let per = REGION / RAIN_CELL;
         let region = IVec2::new(x, z).div_euclid(IVec2::splat(REGION));
         let samples = self.rain.get(region, || {
@@ -216,24 +227,12 @@ impl Rivers {
                 })
                 .collect()
         });
-        let local = IVec2::new(x, z) - region * REGION;
-        let cell = local / RAIN_CELL;
-        let f = (local - cell * RAIN_CELL).as_vec2() / RAIN_CELL as f32;
-        let at = |i: i32, j: i32| samples[((cell.y + j) * (per + 1) + cell.x + i) as usize];
-        at(0, 0).lerp(at(1, 0), f.x).lerp(at(0, 1).lerp(at(1, 1), f.x), f.y)
+        Rain { region, samples }
     }
 
     /// Precipitation over evaporation at a position whose ground is `height` high.
     fn moisture(&self, land: Stages, x: i32, z: i32, height: f32) -> f32 {
-        let regional = self.rain_at(land, x, z);
-        let temperature = regional.sea_temperature - LAPSE_RATE * (height - SEA_LEVEL as f32).max(0.0);
-        climate::moisture(regional.precipitation, temperature)
-    }
-
-    /// Water a block of ground sheds into rivers: a little even in dry country, rising
-    /// with rainfall.
-    fn runoff(&self, land: Stages, x: i32, z: i32, height: f32) -> f32 {
-        0.1 + 0.7 * self.moisture(land, x, z, height).clamp(0.0, 1.6)
+        self.rain(land, x, z).moisture(x, z, height)
     }
 
     /// Whether lakes stay full: 0 in deserts, 1 from moist grassland up.
@@ -248,6 +247,8 @@ impl Rivers {
         let tier = &self.trunks.tier;
         let n = (tier.tile * tier.tile) as usize;
         let (mut height, mut runoff) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        // A tile lies in one region, whose rain it reads.
+        let rain = self.rain(land, key.x * tier.tile * tier.cell, key.y * tier.tile * tier.cell);
         for i in 0..tier.tile * tier.tile {
             let centre = tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile));
             let h = [IVec2::ZERO, IVec2::new(-20, -20), IVec2::new(20, -20), IVec2::new(-20, 20), IVec2::new(20, 20)]
@@ -255,7 +256,7 @@ impl Rivers {
                 .map(|o| land.geology.land(centre.x + o.x, centre.y + o.y).height)
                 .fold(f32::MAX, f32::min);
             height.push(h);
-            runoff.push(self.runoff(land, centre.x, centre.y, h) * (TRUNK_CELL * TRUNK_CELL) as f32 / FLOW_AREA);
+            runoff.push(rain.runoff(centre.x, centre.y, h) * (TRUNK_CELL * TRUNK_CELL) as f32 / FLOW_AREA);
         }
         Tile { height: height.into(), runoff: runoff.into(), absorbed: vec![drainage::DRY; n].into() }
     }
@@ -268,6 +269,7 @@ impl Rivers {
         let (mut height, mut runoff, mut absorbed) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
         let first = tier.centre(key * tier.tile);
         let trunks = self.near(land, Level::Trunk, TRUNK_MARGIN, first, first + (tier.tile - 1) * tier.cell);
+        let rain = self.rain(land, first.x, first.y);
         for i in 0..tier.tile * tier.tile {
             let centre = tier.centre(key * tier.tile + IVec2::new(i % tier.tile, i / tier.tile));
             let ground = Carved::land(land.geology.land(centre.x, centre.y).height);
@@ -277,7 +279,7 @@ impl Rivers {
                 Some(surface) if carved.cavity.is_none() => surface,
                 _ => drainage::DRY,
             });
-            runoff.push(self.runoff(land, centre.x, centre.y, carved.ground) * (STREAM_CELL * STREAM_CELL) as f32 / FLOW_AREA);
+            runoff.push(rain.runoff(centre.x, centre.y, carved.ground) * (STREAM_CELL * STREAM_CELL) as f32 / FLOW_AREA);
         }
         Tile { height: height.into(), runoff: runoff.into(), absorbed: absorbed.into() }
     }
@@ -361,9 +363,11 @@ impl Rivers {
         }
         let channels = match level {
             Level::Trunk => self.trunk_channels.get(region, || {
+                let _stage = stage::enter(Stage::RiverRegions);
                 Arc::new(self.build_channels(level, &TrunkGround { rivers: self, land }, region))
             }),
             Level::Stream => self.stream_channels.get(region, || {
+                let _stage = stage::enter(Stage::RiverRegions);
                 Arc::new(self.build_channels(level, &StreamGround { rivers: self, land }, region))
             }),
         };
@@ -408,6 +412,11 @@ impl Rivers {
             None => carved.near.map_or(SEA_LEVEL, |near| top_block(near).min(height)),
         };
         let submerged = water > height || carved.cavity.is_some_and(|c| water > c.floor);
+        // Eighths of the top block the surface fills; the sea, and rivers meeting it, fill it.
+        let top = match carved.water {
+            Some(surface) if top_block(surface) == water => (surface - 8 * water) as u8,
+            _ => 8,
+        };
         let body = match carved.body {
             Some(body) => body,
             None => Body::Sea,
@@ -418,6 +427,7 @@ impl Rivers {
                 mountain: ground.mountain,
                 river: carved.wet,
                 water,
+                top,
                 body: if height < SEA_LEVEL && carved.water.is_none() { Body::Sea } else { body },
                 current: if submerged { carved.current } else { None },
                 cavity: carved.cavity,
@@ -430,12 +440,33 @@ impl Rivers {
     /// The geology of one column, with its rivers and lakes.
     pub fn sample(&self, land: Stages, x: i32, z: i32) -> GeoSample {
         let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-        let column = self.unsealed(land, &tiers, x, z);
-        if !column.near || column.sample.water > column.sample.height {
+        self.sealed(land, &tiers, x, z)
+    }
+
+    /// One column with both tiers carved in and sealed: the same whatever the columns
+    /// `tiers` were found for, as long as they include it and its neighbours. (A region
+    /// whose index does not reach a column adds nothing to it, and `near` keeps regions
+    /// in the same order however many it finds.)
+    fn sealed(&self, land: Stages, tiers: &(Near, Near), x: i32, z: i32) -> GeoSample {
+        let column = self.unsealed(land, tiers, x, z);
+        if !column.near {
             return column.sample;
         }
-        let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, &tiers, x + dx, z + dz).sample);
-        seal(column.sample, &neighbours)
+        let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.unsealed(land, tiers, x + dx, z + dz).sample);
+        settle(column.sample, &neighbours)
+    }
+
+    /// The geology of the `size`×`size` columns `step` blocks apart from `origin`, row by
+    /// row: the same as sampling each, finding the rivers near them once.
+    pub fn grid(&self, land: Stages, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        let (min, max) = (origin - 1, origin + (size - 1) * step + 1);
+        let regions = ((max + TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) - (min - TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) + 1).element_product();
+        let at = |i: i32| origin + IVec2::new(i % size, i / size) * step;
+        if regions > 4 {
+            return (0..size * size).map(|i| self.sample(land, at(i).x, at(i).y)).collect();
+        }
+        let tiers = self.tiers(land, min, max);
+        (0..size * size).map(|i| self.sealed(land, &tiers, at(i).x, at(i).y)).collect()
     }
 
     /// The geology of every column of a `size`×`size` square from `min`, with rivers and
@@ -448,13 +479,45 @@ impl Rivers {
             .map(|i| {
                 let (x, z) = (i % size + 1, i / size + 1);
                 let column = &columns[(z * wide + x) as usize];
-                if !column.near || column.sample.water > column.sample.height {
+                if !column.near {
                     return column.sample;
                 }
                 let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| columns[((z + dz) * wide + x + dx) as usize].sample);
-                seal(column.sample, &neighbours)
+                settle(column.sample, &neighbours)
             })
             .collect()
+    }
+}
+
+/// The regional climate over one region, sampled every `RAIN_CELL` blocks.
+struct Rain {
+    region: IVec2,
+    samples: Arc<[Regional]>,
+}
+
+impl Rain {
+    /// The regional climate at a position in the region, interpolated.
+    fn at(&self, x: i32, z: i32) -> Regional {
+        let per = REGION / RAIN_CELL;
+        let local = IVec2::new(x, z) - self.region * REGION;
+        debug_assert!(local.cmpge(IVec2::ZERO).all() && local.cmplt(IVec2::splat(REGION)).all(), "({x}, {z}) outside region {}", self.region);
+        let cell = local / RAIN_CELL;
+        let f = (local - cell * RAIN_CELL).as_vec2() / RAIN_CELL as f32;
+        let at = |i: i32, j: i32| self.samples[((cell.y + j) * (per + 1) + cell.x + i) as usize];
+        at(0, 0).lerp(at(1, 0), f.x).lerp(at(0, 1).lerp(at(1, 1), f.x), f.y)
+    }
+
+    /// Precipitation over evaporation at a position whose ground is `height` high.
+    fn moisture(&self, x: i32, z: i32, height: f32) -> f32 {
+        let regional = self.at(x, z);
+        let temperature = regional.sea_temperature - LAPSE_RATE * (height - SEA_LEVEL as f32).max(0.0);
+        climate::moisture(regional.precipitation, temperature)
+    }
+
+    /// Water a block of ground sheds into rivers: a little even in dry country, rising
+    /// with rainfall.
+    fn runoff(&self, x: i32, z: i32, height: f32) -> f32 {
+        0.1 + 0.7 * self.moisture(x, z, height).clamp(0.0, 1.6)
     }
 }
 
@@ -487,12 +550,33 @@ struct Column {
     near: bool,
 }
 
-/// Raises a dry column beside water to the water's surface, so no water stands beside air.
-/// Water beside lower water is a waterfall and stays.
-fn seal(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
+/// Shapes a column so its water is a fixed point of the fluid rule (see "Generated water"
+/// in `voxmar_engine::fluid`), given its four neighbours before this:
+/// - a dry column beside water rises to the water's level, so water never stands beside
+///   air, except at a fall, and takes that level as the water it borders;
+/// - water whose top block stands above a neighbour's fills that block by one eighth
+///   only, which pours nothing over the step;
+/// - water two or more blocks above a neighbour's runs over a sill of ground just above
+///   that neighbour's water, so the curtain a fall pours (which the terrain stamps) has no
+///   upper water beside its foot, where water lying on more water would spread.
+fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
+    let Some((_, top)) = sample.wet() else {
+        // The water beside it is the water it is the bank of, which trails cut down to.
+        for n in neighbours {
+            if n.water > n.height && n.cavity.is_none() {
+                sample.height = sample.height.max(n.water);
+                sample.water = sample.water.max(n.water);
+            }
+        }
+        return sample;
+    };
     for n in neighbours {
-        if n.water > n.height && n.water > sample.height && n.cavity.is_none() {
-            sample.height = n.water;
+        let Some((_, below)) = n.wet() else { continue };
+        if below < top {
+            sample.top = 1;
+        }
+        if below <= top - 2 && sample.cavity.is_none() {
+            sample.height = sample.height.max(below + 1);
         }
     }
     sample

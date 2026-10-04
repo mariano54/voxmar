@@ -22,10 +22,14 @@ mod ecology;
 mod features;
 mod geology;
 mod lattice;
+mod parallel;
+#[cfg(test)]
+mod perf;
 mod rarity;
 mod resources;
 mod rng;
 mod rocks;
+mod stage;
 mod surface;
 mod terrain;
 mod trails;
@@ -48,7 +52,7 @@ pub use climate::LAPSE_RATE;
 pub use content::{ContentError, WorldContent};
 pub use dials::WorldDials;
 pub use ecology::PlantProperties;
-pub use water::{Body, Cavity, Current};
+pub use water::{Body, Cavity, Current, WaterSight};
 pub use rarity::{Featured, Rarity, Tier};
 pub use rocks::ProvinceId;
 pub use trails::{Kind as PlaceKind, Poi, TrailMark};
@@ -60,6 +64,7 @@ use crate::climate::{Climate, ClimateGrid, Regional};
 use crate::ecology::Ecology;
 use crate::geology::{GeoSample, Geology, smoothstep};
 use crate::rocks::Rocks;
+use crate::stage::Stage;
 use crate::surface::SurfaceRules;
 use crate::trails::Land;
 
@@ -153,7 +158,7 @@ impl Site {
         self.moisture.max(self.river * 1.3)
     }
 
-    /// Temperature and humidity bytes as stored in `Column::climate`: coordinates in
+    /// Temperature and humidity as bytes (0..=255): coordinates in
     /// Minecraft-style grass and foliage colour maps.
     pub fn tint(&self) -> [u8; 2] {
         let temperature = ((self.temperature + 5.0) / 25.0).clamp(0.0, 1.0);
@@ -175,7 +180,7 @@ pub struct SurfaceSample {
     pub water_level: i32,
     /// Dominant leaves and the fraction of ground under trees.
     pub canopy: Option<(BlockId, f32)>,
-    /// Temperature and humidity, as stored in `Column::climate`.
+    /// Temperature and humidity bytes, as [`Site::tint`] gives them.
     pub climate: [u8; 2],
     /// Grass, foliage and water colours.
     pub colors: BiomeColors,
@@ -369,13 +374,22 @@ impl Overworld {
     /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
         let land = self.land();
-        self.trails.apply(&land, land.sample(x, z), x, z)
+        let sample = {
+            let _stage = stage::enter(Stage::Rivers);
+            land.sample(x, z)
+        };
+        let _stage = stage::enter(Stage::Trails);
+        self.trails.apply(&land, sample, x, z)
     }
 
     /// The ground over the `size`×`size` positions from (x, z), row by row.
     pub(crate) fn geo_area(&self, x: i32, z: i32, size: i32) -> Vec<GeoSample> {
         let land = self.land();
-        let mut area = self.rivers.area(self.stages(), IVec2::new(x, z), size);
+        let mut area = {
+            let _stage = stage::enter(Stage::Rivers);
+            self.rivers.area(self.stages(), IVec2::new(x, z), size)
+        };
+        let _stage = stage::enter(Stage::Trails);
         for (i, sample) in area.iter_mut().enumerate() {
             *sample = self.trails.apply(&land, *sample, x + i as i32 % size, z + i as i32 / size);
         }
@@ -412,7 +426,12 @@ impl Overworld {
     /// A sampler that picks the biomes of every cell in its area up front, for sampling
     /// it block by block.
     pub(crate) fn dense_sampler(&self, min: IVec2, max: IVec2) -> Sampler<'_> {
-        let mut sampler = Sampler { world: self, grid: self.grid(min, max), picks: None };
+        let grid = {
+            let _stage = stage::enter(Stage::Climate);
+            self.grid(min, max)
+        };
+        let _stage = stage::enter(Stage::Biomes);
+        let mut sampler = Sampler { world: self, grid, picks: None };
         let (first, last) = (min.div_euclid(IVec2::splat(biome::CELL)), max.div_euclid(IVec2::splat(biome::CELL)));
         let size = last - first + 1;
         let picks = (0..size.x * size.y).map(|i| sampler.pick_cell(first + IVec2::new(i % size.x, i / size.x))).collect();
@@ -450,6 +469,10 @@ struct RiverLand<'a> {
 impl trails::Land for RiverLand<'_> {
     fn sample(&self, x: i32, z: i32) -> GeoSample {
         self.rivers.sample(self.stages, x, z)
+    }
+
+    fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        self.rivers.grid(self.stages, origin, step, size)
     }
 }
 
@@ -499,6 +522,7 @@ impl Sampler<'_> {
 
     /// The colours at a site already sampled at (x, z).
     pub(crate) fn colors_of(&self, site: &Site, x: i32, z: i32) -> BiomeColors {
+        let _stage = stage::enter(Stage::Climate);
         let (climate, n) = self.climate_colors(site, x, z);
         // Bilinear between the four nearest cell centres, so identity colours fade in
         // block by block rather than in steps of a cell.
@@ -576,6 +600,7 @@ impl Sampler<'_> {
 
     /// The site on already sampled geology.
     fn site_on(&self, geo: &GeoSample, x: i32, z: i32, slope: i32) -> Site {
+        let _stage = stage::enter(Stage::Climate);
         let regional = self.grid.at(x, z);
         let temperature = regional.sea_temperature - LAPSE_RATE * (geo.height - SEA_LEVEL).max(0) as f32;
         let mut site = Site {
@@ -676,6 +701,7 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perf::thread_time;
     use voxmar_engine::coords::COLUMN_CHUNKS;
     use voxmar_engine::light::LitRegion;
     use voxmar_engine::mesh::mesh_chunk;
@@ -701,7 +727,7 @@ mod tests {
         let region = LitRegion::compute(&registry, &columns);
         let lit = start.elapsed();
         let start = std::time::Instant::now();
-        let quads: usize = (0..COLUMN_CHUNKS).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy).opaque.vertices.len() / 4).sum();
+        let quads: usize = (0..COLUMN_CHUNKS).map(|cy| mesh_chunk(&registry, &region, &columns[4], cy, 1).opaque.vertices.len() / 4).sum();
         println!("9 columns {generated:?}, light {lit:?}, mesh {:?}, {quads} quads, spawn {spawn}", start.elapsed());
         println!("{:#?}", world.dials());
         assert!(quads > 0);
@@ -714,6 +740,8 @@ mod tests {
     #[test]
     #[ignore]
     fn column_timing() {
+        // CPU time on this thread measures all the work only if it all stays here.
+        crate::parallel::set_enabled(false);
         let registry = registry();
         let mut total = std::time::Duration::ZERO;
         let mut count = 0;
@@ -735,7 +763,7 @@ mod tests {
     }
 
     /// Generates the `count`×`count` columns from `first` on all cores.
-    fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
+    pub(crate) fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let mut columns: Vec<Option<Column>> = (0..count * count).map(|_| None).collect();
         let chunk = columns.len().div_ceil(threads);
@@ -781,90 +809,33 @@ mod tests {
     }
 
     /// `cargo test --release -p voxmar_worldgen river_sights -- --ignored --nocapture`
-    /// finds a highland lake, the tallest waterfall, a confluence, a river mouth, a river
-    /// tunnel, an island in a river and a hot spring near spawn and prints `--pose` arguments that look at each, for in-game
-    /// captures.
+    /// (with `SEED`, `RANGE` and `BACK`, the camera's distance) prints `--pose` arguments
+    /// that look at each of the places water makes near spawn ([`Overworld::water_sights`]),
+    /// for in-game captures.
     #[test]
     #[ignore]
     fn river_sights() {
-        let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-        let range: i32 = std::env::var("RANGE").ok().and_then(|s| s.parse().ok()).unwrap_or(420);
+        let env = |name: &str, default: i64| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
+        let (seed, range, back) = (env("SEED", 1) as u64, env("RANGE", 420) as i32, env("BACK", 16) as f32);
         let world = Overworld::new(seed, registry());
         let spawn = world.spawn_point();
         let eye = spawn.as_vec3() + IVec3::Y.as_vec3() * 1.62;
-        let step = 2;
-        let n = 2 * range / step + 1;
-        let geos: Vec<GeoSample> = (0..n * n).map(|i| world.geo(spawn.x - range + i % n * step, spawn.z - range + i / n * step)).collect();
-        let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
-        // (score, x, z, y)
-        let mut best: [(f32, i32, i32, i32); 7] = [(0.0, 0, 0, 0); 7];
-        for j in 1..n - 1 {
-            for i in 1..n - 1 {
-                let g = at(i, j);
-                let (x, z) = (spawn.x - range + i * step, spawn.z - range + j * step);
-                let near = 1.0 / (1.0 + (((x - spawn.x).pow(2) + (z - spawn.z).pow(2)) as f32).sqrt() / 200.0);
-                let mut consider = |k: usize, score: f32| {
-                    if score * near > best[k].0 {
-                        best[k] = (score * near, x, z, g.water);
-                    }
-                };
-                if g.cavity.is_some() {
-                    consider(4, 1.0);
-                }
-                let river = |o: GeoSample| o.submerged() && o.body == Body::River;
-                if g.submerged() && g.body == Body::Spring {
-                    consider(6, 1.0);
-                }
-                if !g.submerged() && g.body == Body::River && (river(at(i - 2, j)) && river(at(i + 2, j)) || river(at(i, j - 2)) && river(at(i, j + 2))) {
-                    consider(5, 1.0);
-                }
-                if !g.submerged() {
-                    continue;
-                }
-                if g.body == Body::Lake && g.water > SEA_LEVEL + 20 {
-                    consider(0, (g.water - SEA_LEVEL) as f32);
-                }
-                // Steps of two samples, so a fall is found from its top.
-                let drop = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|&(di, dj)| at(i + di, j + dj)).filter(|o| o.submerged()).map(|o| g.water - o.water).max().unwrap_or(0);
-                if drop >= 3 && g.body != Body::Lake {
-                    consider(1, (drop * drop) as f32);
-                }
-                let channel = |o: GeoSample| o.submerged() && matches!(o.body, Body::Creek | Body::River);
-                if channel(g) {
-                    // Arms of water crossing a ring around the point: three or more meet here.
-                    let ring: Vec<bool> = (0..32)
-                        .map(|k| {
-                            let a = k as f32 / 32.0 * std::f32::consts::TAU;
-                            channel(at(i + (a.cos() * 5.0).round() as i32, j + (a.sin() * 5.0).round() as i32))
-                        })
-                        .collect();
-                    let arms = (0..32).filter(|&k| ring[k] && !ring[(k + 31) % 32]).count();
-                    if arms >= 3 && ring.iter().filter(|&&w| w).count() < 16 {
-                        consider(2, arms as f32 + if g.body == Body::River { 2.0 } else { 0.0 });
-                    }
-                    let sea = (-6..=6).flat_map(|dj| (-6..=6).map(move |di| (di, dj))).filter(|&(di, dj)| at(i + di, j + dj).body == Body::Sea && at(i + di, j + dj).submerged()).count();
-                    if g.water == SEA_LEVEL && sea > 0 {
-                        consider(3, sea as f32 + if g.body == Body::River { 20.0 } else { 0.0 });
-                    }
-                }
-            }
-        }
         println!("seed {seed}, spawn {spawn}");
-        for (name, (score, x, z, y)) in ["highland lake", "waterfall", "confluence", "river mouth", "river tunnel", "river island", "hot spring"].into_iter().zip(best) {
-            if score == 0.0 {
-                println!("{name}: none within {range}");
+        let sights = world.water_sights(IVec2::new(spawn.x, spawn.z), range);
+        for sight in WaterSight::ALL {
+            let Some(&(_, at)) = sights.iter().find(|(s, _)| *s == sight) else {
+                println!("{}: none within {range}", sight.name());
                 continue;
-            }
+            };
             // Stand back and above, looking at it from the south-east, clear of the ground.
-            let back: f32 = std::env::var("BACK").ok().and_then(|s| s.parse().ok()).unwrap_or(16.0);
-            let target = IVec3::new(x, y, z).as_vec3();
+            let target = at.as_vec3();
             let mut camera = target + voxmar_engine::glam::Vec3::new(back, back * 0.6, back);
             camera.y = camera.y.max(world.height(camera.x as i32, camera.z as i32) as f32 + 5.0);
             let d = target - camera;
             let yaw = (-d.x).atan2(-d.z).to_degrees();
             let pitch = d.y.atan2(d.x.hypot(d.z)).to_degrees();
             let o = camera - eye;
-            println!("{name} at {x},{y},{z}: --pose {:.0},{:.0},{:.0},{yaw:.0},{pitch:.0}", o.x, o.y, o.z);
+            println!("{} at {at}: --pose {:.0},{:.0},{:.0},{yaw:.0},{pitch:.0}", sight.name(), o.x, o.y, o.z);
         }
     }
 
@@ -1775,21 +1746,14 @@ mod tests {
         }
     }
 
-    /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
-    /// processes compete for the cores.
-    fn thread_time() -> std::time::Duration {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: `t` is a valid timespec for the call to fill.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
-    }
-
     /// `cargo test --release -p voxmar_worldgen river_speed -- --ignored --nocapture`
     /// separates the two costs rivers add, in CPU time on one thread: building a region's
     /// rivers (once, for its 32×32 columns) and generating columns once it is built.
     #[test]
     #[ignore]
     fn river_speed() {
+        // CPU time on this thread measures all the work only if it all stays here.
+        crate::parallel::set_enabled(false);
         let registry = registry();
         let (mut first, mut warm, mut columns) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
         for seed in [1, 3, 0x5eed] {
@@ -1814,6 +1778,8 @@ mod tests {
     #[test]
     #[ignore]
     fn generation_speed() {
+        // CPU time on this thread measures all the work only if it all stays here.
+        crate::parallel::set_enabled(false);
         use std::time::Duration;
         let registry = registry();
         let (mut columns, mut generating) = (0, Duration::ZERO);

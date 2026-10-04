@@ -15,6 +15,7 @@ use fastnoise_lite::{FastNoiseLite, FractalType};
 use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::chunk::Chunk;
 use voxmar_engine::coords::{CHUNK_SIZE, CHUNK_VOLUME, COLUMN_CHUNKS, ColumnPos, WORLD_HEIGHT, local_index};
+use voxmar_engine::fluid::{self, Fluid, FluidState};
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::Column;
 
@@ -28,6 +29,7 @@ use crate::lattice::{self, Lattice, Profile};
 use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
+use crate::stage::{self, Stage};
 use crate::surface::{Fill, Layers, Palette, Spot};
 use crate::trails::Marker;
 use crate::trees::TreeId;
@@ -59,6 +61,9 @@ struct Ids {
 
 pub struct Terrain {
     ids: Ids,
+    /// Water's states: rivers' pinned water with its current, partial tops, and the
+    /// flowing and falling water of a fall's curtain.
+    water: Fluid,
     rock: FastNoiseLite,
     /// Patches that dither the borders between surface materials.
     patches: FastNoiseLite,
@@ -96,7 +101,10 @@ impl Terrain {
         let frost = &content.climate.frost;
         let water = id("water");
         let by_id = |f: &dyn Fn(BlockId) -> bool| (0..registry.len()).map(|i| f(BlockId(i as u16))).collect::<Vec<bool>>();
-        let soft = by_id(&|block| block.is_air() || block == water || registry.def(block).name.ends_with("_leaves"));
+        let water_fluid = registry.fluid_def(registry.fluid(water).expect("water is a fluid").fluid).clone();
+        let soft = by_id(&|block| {
+            block.is_air() || registry.fluid(block).is_some_and(|s| s.fluid == water_fluid.id) || registry.def(block).name.ends_with("_leaves")
+        });
         let mut stones: Vec<BlockId> = rocks.stones().chain([id("stone"), id("deepslate")]).collect();
         stones.extend(biomes.iter().filter_map(|(_, b)| b.stones.as_ref()).flat_map(|p| p.blocks()));
         // What a block offers plants follows its tags: snow over soil, then soil, sand.
@@ -126,6 +134,7 @@ impl Terrain {
             .map(|i| content.snow_cover.iter().find(|(ground, _)| registry.def(BlockId(i as u16)).name == *ground).map(|(_, snowy)| registry.expect(snowy)))
             .collect();
         Self {
+            water: water_fluid,
             ids: Ids {
                 bedrock: id("bedrock"),
                 deepslate: id("deepslate"),
@@ -255,10 +264,19 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let geology = GeoGrid::new(world, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
     let top = geology.samples().iter().map(|g| g.height.max(g.water)).max().unwrap_or(0).max(SEA_LEVEL);
 
-    let rock = Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0);
+    let rock = {
+        let _stage = stage::enter(Stage::Fill);
+        Lattice::noise(&terrain.rock, origin, 0, top, lattice::STEP, 1.0)
+    };
     let mut rock_profile = Profile::default();
-    let mut caves = world.caves.column(&geology, origin, top);
-    let underground = world.underground.column(world, &area, &geology, origin, top);
+    let mut caves = {
+        let _stage = stage::enter(Stage::Caves);
+        world.caves.column(&geology, origin, top)
+    };
+    let underground = {
+        let _stage = stage::enter(Stage::CaveBiomes);
+        world.underground.column(world, &area, &geology, origin, top)
+    };
     let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
     let mut blocks = Blocks {
@@ -272,19 +290,26 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
+            let _fill = stage::enter(Stage::Fill);
             let (wx, wz) = (origin.x + x, origin.z + z);
             let geo = geology.get(wx, wz);
             let height = geo.height;
             let site = area.site_on(&geo, wx, wz, geology.slope(wx, wz));
-            column.climate[(z * CHUNK_SIZE + x) as usize] = site.tint();
             let colors = area.colors_of(&site, wx, wz);
             column.colors[(z * CHUNK_SIZE + x) as usize] = [colors.grass, colors.foliage, colors.water];
+            let surface = stage::enter(Stage::Surface);
             let layers = world.surface_layers(&site, wx, wz);
             let stones = world.stones(&site);
             let strata = &world.biomes.get(site.biome).strata;
-            caves.carve(x, z, &mut cave);
+            drop(surface);
+            {
+                let _stage = stage::enter(Stage::Caves);
+                caves.carve(x, z, &mut cave);
+            }
             rock.profile(x, z, &mut rock_profile);
             let rocky = underground.rocky(x, z);
+            // Strata wobble the same all the way down a block column.
+            let mut wobble = None;
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -311,30 +336,40 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     }
                 } else {
                     let rock = rock_profile.at(y);
-                    match underground.rock(x, y, z).filter(|_| rocky) {
+                    match if rocky { underground.rock(x, y, z) } else { None } {
                         Some(Rock::Stones(stones)) => stones.pick((0.5 + rock * 0.53).clamp(0.0, 0.9999)),
-                        Some(Rock::Strata(strata)) => terrain.band(strata, y, wx, wz),
+                        Some(Rock::Strata(strata)) => stratum(strata, y + *wobble.get_or_insert_with(|| terrain.wobble(wx, wz))),
                         None => stone_at(ids, stones, rock, world.seed, y, wx, wz),
                     }
                 };
                 blocks.set_local(x, y, z, block);
             }
-            underground.decorate(x, z, &site, &cave, &mut blocks);
-            underground.bury(x, z, &cave, &mut blocks);
-            // Fast water stays open in the cold.
-            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring);
-            for y in height + 1..=geo.water {
-                blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
+            {
+                let _stage = stage::enter(Stage::CaveBiomes);
+                underground.decorate(x, z, &site, &cave, &mut blocks);
+                underground.bury(x, z, &cave, &mut blocks);
             }
-            // Rocks break the surface of rapids, though not right under a fall, whose water
-            // must land in water.
+            // Rivers' water is pinned with its current, and every body's top block holds its
+            // surface's eighths. Fast water stays open in the cold, and so does water a fall
+            // pours into.
+            let sides = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| geology.get(wx + dx, wz + dz));
+            let fall = sides.iter().any(|n| n.wet().is_some_and(|(_, top)| top >= geo.water + 2));
+            let ice = terrain
+                .ice(&site, wx, wz)
+                .filter(|_| geo.current.is_none_or(|c| c.speed < 3) && geo.body != Body::Spring && !fall);
+            for y in height + 1..=geo.water {
+                let block = match y == geo.water {
+                    true => ice.unwrap_or_else(|| terrain.water_block(geo.top, geo.current)),
+                    false => terrain.water_block(8, geo.current),
+                };
+                blocks.set_local(x, y, z, block);
+            }
+            // Rocks break the surface of rapids, though not by a step in the water, where
+            // the water on one side must meet water on the other.
             if geo.current.is_some_and(|c| c.speed >= 3)
                 && matches!(geo.body, Body::Creek | Body::River)
                 && hash3(world.seed ^ 0xb01d, wx, 0, wz) % 100 < 9
-                && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().all(|&(dx, dz)| {
-                    let n = geology.get(wx + dx, wz + dz);
-                    !n.submerged() || n.water <= geo.water
-                })
+                && sides.iter().all(|n| n.wet().is_none_or(|(_, top)| top == geo.water))
             {
                 let rock = stones.pick((hash3(world.seed ^ 0xb01e, wx, 0, wz) & 0xffff) as f32 / 65536.0);
                 for y in height + 1..=geo.water {
@@ -358,16 +393,29 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             // A river running in a tunnel under the ground.
             if let Some(cavity) = geo.cavity {
                 for y in cavity.floor + 1..=cavity.ceiling.min(height - 3) {
-                    blocks.set_local(x, y, z, if y <= geo.water { ids.water } else { BlockId::AIR });
+                    let block = match y.cmp(&geo.water) {
+                        std::cmp::Ordering::Less => terrain.water_block(8, geo.current),
+                        std::cmp::Ordering::Equal => terrain.water_block(geo.top, geo.current),
+                        std::cmp::Ordering::Greater => BlockId::AIR,
+                    };
+                    blocks.set_local(x, y, z, block);
                 }
             }
             surfaces.push((site, layers.top));
         }
     }
 
-    terrain.resources.place(world.seed, pos, &mut blocks);
+    {
+        let _stage = stage::enter(Stage::Ores);
+        terrain.resources.place(world.seed, pos, &mut blocks);
+    }
+    let decoration = stage::enter(Stage::Decoration);
     terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks);
-    terrain.markers(world, &area, &geology, pos, &mut blocks);
+    {
+        let _stage = stage::enter(Stage::Trails);
+        terrain.markers(world, &area, &geology, pos, &mut blocks);
+    }
+    terrain.curtains(&geology, origin, &mut blocks);
 
     // Ground plants, wherever trees, decorations, caves and water left the ground open.
     for z in 0..CHUNK_SIZE {
@@ -424,6 +472,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         }
     }
 
+    drop(decoration);
+    let _stage = stage::enter(Stage::Pack);
     for (cy, chunk) in column.chunks.iter_mut().enumerate() {
         *chunk = Chunk::from_dense(&blocks.data[cy * CHUNK_VOLUME..(cy + 1) * CHUNK_VOLUME]);
     }
@@ -431,6 +481,50 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
 }
 
 impl Terrain {
+    /// A block of water filling `amount` eighths of its cell, pinned with a river's current
+    /// where it has one.
+    fn water_block(&self, amount: u8, current: Option<crate::Current>) -> BlockId {
+        let current = current.filter(|c| c.speed > 0).map(|c| fluid::Current { direction: c.direction, speed: c.speed });
+        self.water.block(FluidState { amount, current, ..FluidState::source(self.water.id) })
+    }
+
+    /// Where water stands two or more blocks above a column's, it pours down into it as the
+    /// fluid rule would pour it, so generated water is a fixed point of the rule (see
+    /// "Generated water" in `voxmar_engine::fluid`): each air cell beside the upper water
+    /// holds the deepest flowing water, or falling water under more water, and every cell
+    /// below, down to the column's own water, falling water. The upper water's top block
+    /// holds an eighth (see `water::settle`), which pours nothing, so the curtain starts a
+    /// block below it.
+    fn curtains(&self, geology: &GeoGrid, origin: IVec3, blocks: &mut Blocks) {
+        let (flowing, falling) = (self.water.flowing(7), self.water.falling());
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let (wx, wz) = (origin.x + x, origin.z + z);
+                let Some((_, top)) = geology.get(wx, wz).wet() else { continue };
+                let upper: Vec<(i32, i32)> = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                    .into_iter()
+                    .filter_map(|(dx, dz)| geology.get(wx + dx, wz + dz).wet())
+                    .filter(|&(_, above)| above >= top + 2)
+                    .collect();
+                let Some(highest) = upper.iter().map(|&(_, above)| above).max() else { continue };
+                let mut pouring = false;
+                for y in (top + 1..highest).rev() {
+                    let open = blocks.get_local(x, y, z).is_air();
+                    let beside = upper.iter().any(|&(bottom, above)| bottom < y && y < above);
+                    pouring = if pouring && (open || self.soft[blocks.get_local(x, y, z).0 as usize]) {
+                        blocks.set_local(x, y, z, falling);
+                        true
+                    } else if beside && open {
+                        blocks.set_local(x, y, z, flowing);
+                        true
+                    } else {
+                        false
+                    };
+                }
+            }
+        }
+    }
+
     /// Builds what stands beside trails in and around a column: cairns where trees do not
     /// grow, larger cairns on summits, and old waymarkers at trailheads. Each stone stands
     /// on its own column's ground, so they settle onto uneven ground.
@@ -511,8 +605,12 @@ impl Terrain {
 
     /// Strata: bands of rock, one block each, that wobble gently.
     fn band(&self, strata: &[BlockId], y: i32, x: i32, z: i32) -> BlockId {
-        let wobble = (self.patches.get_noise_2d(x as f32 * 0.25, z as f32 * 0.25) * 2.5).round() as i32;
-        strata[(y + wobble).rem_euclid(strata.len() as i32) as usize]
+        stratum(strata, y + self.wobble(x, z))
+    }
+
+    /// How far strata are shifted up or down at (x, z).
+    fn wobble(&self, x: i32, z: i32) -> i32 {
+        (self.patches.get_noise_2d(x as f32 * 0.25, z as f32 * 0.25) * 2.5).round() as i32
     }
 
     /// The frozen surface of sea, lake or river water at this site, if it freezes: ice
@@ -651,11 +749,16 @@ fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) ->
     Some([Some(stone(hash >> 8)), (hash >> 16 & 3 == 0).then(|| stone(hash >> 20))])
 }
 
+/// The band of `strata` at height `y`, shifted by its wobble.
+fn stratum(strata: &[BlockId], y: i32) -> BlockId {
+    strata[y.rem_euclid(strata.len() as i32) as usize]
+}
+
 /// The stone at a block: deepslate in the depths, otherwise one of `stones` in blobs and
 /// veins that follow a 3D noise (`rock`, its value here).
 fn stone_at(ids: &Ids, stones: &Palette, rock: f32, seed: u64, y: i32, wx: i32, wz: i32) -> BlockId {
-    // Deepslate below `DEEPSLATE`, dithered over 8 blocks.
-    if y < DEEPSLATE + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
+    // Deepslate below `DEEPSLATE`, dithered over 8 blocks (hashed only within them).
+    if y < DEEPSLATE || y < DEEPSLATE + 7 && y < DEEPSLATE + (hash3(seed ^ 0xd5, wx, y, wz) % 8) as i32 {
         return ids.deepslate;
     }
     // A single octave of simplex noise is spread nearly evenly over about ±0.94.

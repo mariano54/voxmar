@@ -112,13 +112,8 @@ fn receive(
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
-    (time, mut clock, mut console, mut air, mut broken): (
-        Res<Time>,
-        ResMut<Clock>,
-        ResMut<Console>,
-        ResMut<ClientAtmosphere>,
-        MessageWriter<BlockBroken>,
-    ),
+    (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
+    mut broken: MessageWriter<BlockBroken>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
