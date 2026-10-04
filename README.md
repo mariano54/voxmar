@@ -333,6 +333,13 @@ there; `decor_sights` prints `--pose` arguments for captures of old-growth fores
 edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near spawn;
 `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
+`generation_stages` breaks generation time per column down by stage (climate, biomes, rivers
+and their region builds, trails and their planning, surface, caves, cave biomes, fill, ores,
+trees, decoration, packing), cold and warm, and reports lighting and meshing per column;
+`first_column` times a new world's spawn point, spawn column and first 9×9 columns, building
+regions on one core and on all. `output_is_unchanged` and `light_is_unchanged` (ordinary tests)
+hash generated columns and their light on three seeds, so performance work cannot change a
+block; when a change is meant, they print the hashes to put in `crates/worldgen/src/perf.rs`.
 
 ## Worn paths
 
