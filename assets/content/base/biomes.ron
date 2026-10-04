@@ -522,7 +522,7 @@
                 forest: 0.18,
                 trees: [Name("spruce", 1.0), Name("dead_tree", 0.6), Name("birch", 0.3)],
                 cover: 0.85, flowers: 0.03,
-                plants: [Name("cotton_grass", 2.0), Name("short_grass", 1.0), Name("rush", 2.0), Name("cattail", 1.0), Name("marsh_marigold", 1.0), Name("blueberry_bush", 0.5)],
+                plants: [Name("cotton_grass", 0.5), Name("short_grass", 2.0), Name("rush", 1.5), Name("cattail", 1.0), Name("marsh_marigold", 1.0), Name("blueberry_bush", 0.5)],
             ),
             surface: (
                 rules: [

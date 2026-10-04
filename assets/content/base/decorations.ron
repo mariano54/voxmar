@@ -156,7 +156,7 @@
         (
             // Drifts of fallen leaves and petals under autumn and blossom trees.
             name: "fallen_leaves", tags: ["forest", "grassland", "autumn", "blossom"],
-            shape: LeafPiles(cover: 0.1),
+            shape: LeafPiles(cover: 0.05),
             trees: [Tag("autumn", 1.0), Tag("blossom", 1.0)],
         ),
         (

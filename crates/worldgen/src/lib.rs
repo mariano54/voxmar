@@ -1052,11 +1052,10 @@ mod tests {
                     println!("{name}: not found");
                     continue;
                 };
-                let site = world.site(at.x, at.y);
-                let ground = voxmar_engine::glam::Vec3::new(at.x as f32 + 0.5, site.height as f32 + 1.0, at.y as f32 + 0.5);
-                let stand = ground + voxmar_engine::glam::Vec3::Y * 1.7 - eye;
-                let above = ground + voxmar_engine::glam::Vec3::new(14.0, 12.0, 14.0) - eye;
-                println!("{name} at {},{}: --pose {:.1},{:.1},{:.1},45,-10  above: --pose {:.1},{:.1},{:.1},45,-32", at.x, at.y, stand.x, stand.y, stand.z, above.x, above.y, above.z);
+                // Poses are relative to the eye of the player the command takes there.
+                let forest = world.site(at.x, at.y).forest > 0.3;
+                let (back, up) = if forest { (20.0, 26.0) } else { (14.0, 11.0) };
+                println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,45,-8  above: --pose {back},{up},{back},45,-36", at.x, at.y, at.x, at.y);
             }
             return;
         }
