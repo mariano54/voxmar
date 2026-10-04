@@ -22,11 +22,14 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `storm` or `rain:0.3`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--menu | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker] [--menu | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
 time of day (a fraction of the day, 0 at sunrise), and `--mine` mines the block in the middle of
 the view that far (0..1, cracks and chips showing; 1 breaks it just before the screenshot).
+`--flicker` measures shimmer: with the clock stopped it also takes `OUT-moved.png` after
+stepping the camera 4 cm sideways, logs the share of pixels that changed by more than 60
+levels, and marks them in red in `OUT-flicker.png`.
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;

@@ -75,6 +75,7 @@ struct Options {
     mine: Option<f32>,
     time: Option<f32>,
     menu: bool,
+    flicker: bool,
     screen: Option<Screen>,
     music: bool,
 }
@@ -98,6 +99,7 @@ fn parse_options() -> Result<Options, String> {
         mine: None,
         time: None,
         menu: false,
+        flicker: false,
         screen: None,
         music: true,
     };
@@ -125,6 +127,7 @@ fn parse_options() -> Result<Options, String> {
             "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
+            "--flicker" => options.flicker = true,
             "--screen" => {
                 let name = value()?;
                 options.screen = Some(Screen::from_name(&name).ok_or_else(|| format!("--screen: no screen called {name}"))?);
@@ -247,6 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mine: options.mine,
             time: options.time,
             menu: options.menu,
+            flicker: options.flicker,
         });
     }
     app.run();
