@@ -223,6 +223,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let height = geo.height;
             let site = area.site_on(&geo, wx, wz, geology.slope(wx, wz));
             column.climate[(z * CHUNK_SIZE + x) as usize] = site.tint();
+            let colors = area.colors_of(&site, wx, wz);
+            column.colors[(z * CHUNK_SIZE + x) as usize] = [colors.grass, colors.foliage, colors.water];
             let layers = world.surface_layers(&site, wx, wz);
             let stones = world.stones(&site);
             let strata = &world.biomes.get(site.biome).strata;

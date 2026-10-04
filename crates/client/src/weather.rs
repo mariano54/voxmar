@@ -9,16 +9,19 @@
 //! lightning bolt. docs/weather-effects.md says how each is meant to look.
 
 use bevy::prelude::*;
-use voxmar_engine::weather::{WeatherTable, gust, pcg};
+use voxmar_engine::weather::{GUST_WRAP, WeatherTable, advance_gusts, gust, pcg};
 use voxmar_protocol::{TICKS_PER_SECOND, Weather};
 
 use crate::menu::Screen;
+
+pub mod atmosphere;
 
 pub struct WeatherPlugin;
 
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ClientWeather>()
+        app.add_plugins(atmosphere::AtmospherePlugin)
+            .init_resource::<ClientWeather>()
             .init_resource::<Wind>()
             .add_message::<Thunder>()
             .add_systems(Update, (ease, draw_bolts).chain())
@@ -40,6 +43,10 @@ pub struct ClientWeather {
     pub current: Weather,
     /// The mean wind, eased, before gusts.
     mean_wind: Vec2,
+    /// How far gust fronts have travelled, advanced locally, and how far it still has to
+    /// move to agree with the server's last report.
+    gust_offset: Vec2,
+    gust_error: Vec2,
     /// Effects showing, by name, strongest first, as the server last said.
     pub effects: Vec<String>,
     /// How far the wind has carried the clouds, in blocks, wrapped every `DRIFT_WRAP`.
@@ -68,11 +75,21 @@ pub struct Wind {
     pub seed: u64,
     /// Seconds of world time now: the server's simulation clock, which the gusts run on.
     pub seconds: f64,
+    /// How far gust fronts have travelled with the wind (x, z), wrapped every
+    /// `voxmar_engine::weather::GUST_WRAP` blocks; the server's, advanced between reports.
+    pub offset: Vec2,
 }
 
 impl Default for Wind {
     fn default() -> Self {
-        Self { direction: FAIR.wind.normalize(), speed: FAIR.wind.length(), gustiness: FAIR.gusts, seed: 0, seconds: 0.0 }
+        Self {
+            direction: FAIR.wind.normalize(),
+            speed: FAIR.wind.length(),
+            gustiness: FAIR.gusts,
+            seed: 0,
+            seconds: 0.0,
+            offset: Vec2::ZERO,
+        }
     }
 }
 
@@ -84,7 +101,7 @@ impl Wind {
 
     /// The wind at `at` (x, z) and `seconds` of world time, gusts included.
     pub fn at(&self, at: Vec2, seconds: f64) -> Vec2 {
-        gust(self.seed, at, seconds, self.mean(), self.gustiness)
+        gust(self.seed, at, seconds, self.offset, self.mean(), self.gustiness)
     }
 
     /// The wind at `at` now.
@@ -183,6 +200,8 @@ impl Default for ClientWeather {
             quick_until: 0.0,
             current: FAIR,
             mean_wind: FAIR.wind,
+            gust_offset: Vec2::ZERO,
+            gust_error: Vec2::ZERO,
             effects: Vec::new(),
             drift: Vec2::ZERO,
             seed: 0,
@@ -210,6 +229,9 @@ impl ClientWeather {
         if quick {
             self.quick_until = now + QUICK_FOR;
         }
+        // Bring the gusts round to the server's over a second or so, the short way round.
+        let half = Vec2::splat(GUST_WRAP / 2.0);
+        self.gust_error = (weather.gust_offset - self.gust_offset + half).rem_euclid(Vec2::splat(GUST_WRAP)) - half;
         self.target = Some(weather);
         self.effects = effects;
     }
@@ -353,6 +375,9 @@ fn ease(
         current.dust_color = target.dust_color;
         weather.mean_wind += (target.wind - weather.mean_wind) * pace(10.0);
     }
+    let correction = weather.gust_error * (dt / 1.2).min(1.0);
+    weather.gust_error -= correction;
+    weather.gust_offset = advance_gusts(weather.gust_offset + correction, weather.mean_wind, dt);
     let at = camera.single().map_or(Vec2::ZERO, |camera| camera.translation().xz());
     *wind = Wind {
         direction: weather.mean_wind.normalize_or(wind.direction),
@@ -360,6 +385,7 @@ fn ease(
         gustiness: weather.current.gusts,
         seed: weather.seed,
         seconds: weather.world_seconds(time.elapsed_secs_f64()),
+        offset: weather.gust_offset,
     };
     weather.current.wind = wind.now(at);
     // Clouds drift with the mean wind; gusts are too quick and too local to move them.
