@@ -261,7 +261,7 @@ fn setup(
     world: Res<ClientWorld>,
 ) {
     let registry = &registry.0;
-    let mut source = Source::discover();
+    let mut source = Source::discover(&voxmar_server::assets_dir());
     let (_, mut block_textures) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
@@ -304,6 +304,7 @@ fn setup(
         heart_half: sprite("heart/half", (9, 9), [150, 20, 20, 255]),
         heart_container: sprite("heart/container", (9, 9), [40, 0, 0, 255]),
     });
+    source.report();
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {
