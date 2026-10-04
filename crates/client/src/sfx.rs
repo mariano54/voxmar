@@ -74,9 +74,22 @@ pub struct SfxPlugin;
 impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SoundCue>()
+            .configure_sets(Update, Audible.run_if(sound_on))
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, play_cues).chain(), weather_sounds, rain, thunder));
+            .add_systems(Update, ((footsteps, play_cues.in_set(Audible)).chain(), (weather_sounds, rain, thunder).in_set(Audible)));
     }
+}
+
+/// Systems that start, resume or turn up sounds (here, in the ambience, the music and the
+/// interface). They run only while sound is on: a capture, or any run with VOXMAR_MUTE set,
+/// has a global volume of zero (see main.rs) and so never starts a sound at all, whatever
+/// volume it would have been given. The global volume still scales every sound otherwise.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Audible;
+
+/// Whether sound is on: the global volume is above zero.
+pub fn sound_on(global: Option<Res<GlobalVolume>>) -> bool {
+    global.is_some_and(|g| g.volume.to_linear() > 0.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1025,6 +1038,31 @@ mod tests {
                 assert!(samples.last().unwrap().abs() < 0.05, "{sound:?} {cue:?} ends abruptly");
             }
         }
+    }
+
+    /// A muted run (a capture, VOXMAR_MUTE) starts no sound at all, and an unmuted one
+    /// does: block sounds and thunder here, the rest through the same `Audible` set.
+    #[test]
+    fn muted_runs_start_no_sound() {
+        for (global, started) in [(Volume::SILENT, 0), (Volume::Linear(1.0), 2)] {
+            let mut app = App::new();
+            let mut clips = FxHashMap::default();
+            clips.insert((Sound::Stone, Cue::Step), vec![Clip { source: Handle::default(), gain: 1.0, speed: 1.0 }]);
+            let rolls = [vec![Handle::default()], vec![Handle::default()], vec![Handle::default()]];
+            app.insert_resource(GlobalVolume::new(global))
+                .insert_resource(Settings::default())
+                .insert_resource(Sfx { clips, thunder: rolls, counter: 0 })
+                .add_message::<SoundCue>()
+                .add_message::<Thunder>()
+                .configure_sets(Update, Audible.run_if(sound_on))
+                .add_systems(Update, (play_cues, thunder).in_set(Audible));
+            app.world_mut().write_message(SoundCue::new(Sound::Stone, Cue::Step));
+            app.world_mut().write_message(Thunder { distance: 100.0 });
+            app.update();
+            assert_eq!(app.world_mut().query::<&AudioPlayer>().iter(app.world()).count(), started, "at {global:?}");
+        }
+        // No audio at all (no global volume) is muted too.
+        assert!(!App::new().world_mut().run_system_cached(sound_on).unwrap());
     }
 
     #[test]

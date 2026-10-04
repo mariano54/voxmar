@@ -10,13 +10,13 @@ use bevy::prelude::*;
 
 use super::widgets::Disabled;
 use crate::settings::Settings;
-use crate::sfx::{MASTER, RATE, wav};
+use crate::sfx::{Audible, MASTER, RATE, wav};
 
 pub struct UiSoundPlugin;
 
 impl Plugin for UiSoundPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<UiSound>().add_systems(Startup, synthesize).add_systems(Update, (click_buttons, play).chain());
+        app.add_message::<UiSound>().add_systems(Startup, synthesize).add_systems(Update, (click_buttons, play.in_set(Audible)).chain());
     }
 }
 

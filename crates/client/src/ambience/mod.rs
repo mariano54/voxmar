@@ -71,6 +71,8 @@ impl Plugin for AmbiencePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Surroundings>()
             .add_systems(Startup, start)
+            // Playing runs muted too (it starts nothing then, as its level is zero), so
+            // captures still log which beds would play.
             .add_systems(Update, (receive_clips, (survey, listen, play).chain().run_if(in_state(Screen::InGame))))
             .add_systems(OnExit(Screen::InGame), leave);
     }
