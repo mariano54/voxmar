@@ -162,6 +162,33 @@ pub struct Spot<'a> {
     pub mix: &'a dyn Fn() -> f32,
     /// Uniform per-column randomness.
     pub chance: f32,
+    /// Noise values already sampled here: rules often test one noise twice (a trail and
+    /// its fringe, a patch and its rim).
+    pub sampled: Sampled,
+}
+
+/// A few noise values sampled at one spot, by noise index.
+#[derive(Default)]
+pub struct Sampled {
+    values: std::cell::Cell<[(u32, f32); 6]>,
+    len: std::cell::Cell<usize>,
+}
+
+impl Sampled {
+    fn get(&self, noise: usize, sample: impl FnOnce() -> f32) -> f32 {
+        let mut values = self.values.get();
+        let len = self.len.get();
+        if let Some(&(_, v)) = values[..len].iter().find(|(i, _)| *i == noise as u32) {
+            return v;
+        }
+        let v = sample();
+        if len < values.len() {
+            values[len] = (noise as u32, v);
+            self.values.set(values);
+            self.len.set(len + 1);
+        }
+        v
+    }
 }
 
 /// The named noise fields of every biome's rules.
@@ -253,7 +280,7 @@ impl SurfaceRules {
     fn holds(&self, c: &Cond, spot: &Spot) -> bool {
         let site = spot.site;
         let at = |a: f32, b: f32| a + (b - a) * spot.dither;
-        let noise = |i: usize| self.noises[i].get_noise_2d(spot.x as f32, spot.z as f32);
+        let noise = |i: usize| spot.sampled.get(i, || self.noises[i].get_noise_2d(spot.x as f32, spot.z as f32));
         let above = (site.height - SEA_LEVEL) as f32;
         match c {
             Cond::Underwater => true,

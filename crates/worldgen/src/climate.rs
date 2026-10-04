@@ -116,20 +116,38 @@ fn continentalness(continental: f32) -> f32 {
 }
 
 /// Spreads a two-octave noise value evenly over 0 ..= 1 through its measured distribution,
-/// so a share of the range is the same share of the land.
+/// so a share of the range is the same share of the land. A table lookup, cheap enough to
+/// call per block.
 pub fn uniform(n: f32) -> f32 {
     /// Quantiles of the noise at every 1/QUANTILES, measured once from many samples.
     const QUANTILES: usize = 256;
-    static TABLE: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    /// The distribution at evenly spaced noise values between the lowest and highest
+    /// quantile, for finding a value's place without a search.
+    const BINS: usize = 2048;
+    struct Table {
+        low: f32,
+        scale: f32,
+        cdf: Vec<f32>,
+    }
+    static TABLE: LazyLock<Table> = LazyLock::new(|| {
         let n = noise(0x0d15_7a1b, 0, 1.0, FractalType::FBm, 2);
         // Samples far enough apart to be nearly independent.
         let mut samples: Vec<f32> = (0..1 << 16).map(|i| n.get_noise_2d((i & 255) as f32 * 2.3, (i >> 8) as f32 * 2.3)).collect();
         samples.sort_by(f32::total_cmp);
-        (0..=QUANTILES).map(|q| samples[(q * (samples.len() - 1)) / QUANTILES]).collect()
+        let quantiles: Vec<f32> = (0..=QUANTILES).map(|q| samples[(q * (samples.len() - 1)) / QUANTILES]).collect();
+        let at = |n: f32| {
+            let i = quantiles.partition_point(|&q| q < n).clamp(1, QUANTILES);
+            let (lo, hi) = (quantiles[i - 1], quantiles[i]);
+            ((i - 1) as f32 + ((n - lo) / (hi - lo).max(1e-6)).clamp(0.0, 1.0)) / QUANTILES as f32
+        };
+        let (low, high) = (quantiles[0], quantiles[QUANTILES]);
+        let cdf = (0..=BINS).map(|b| at(low + (high - low) * b as f32 / BINS as f32)).collect();
+        Table { low, scale: BINS as f32 / (high - low), cdf }
     });
-    let i = TABLE.partition_point(|&q| q < n).clamp(1, QUANTILES);
-    let (lo, hi) = (TABLE[i - 1], TABLE[i]);
-    ((i - 1) as f32 + ((n - lo) / (hi - lo).max(1e-6)).clamp(0.0, 1.0)) / QUANTILES as f32
+    let table = &*TABLE;
+    let t = ((n - table.low) * table.scale).clamp(0.0, BINS as f32 - 1e-3);
+    let i = t as usize;
+    table.cdf[i] + (table.cdf[i + 1] - table.cdf[i]) * (t - i as f32)
 }
 
 /// Water available to plants: precipitation over potential evaporation, which grows with

@@ -439,7 +439,7 @@ impl Overworld {
         let d = terrain.dither(x, z);
         let chance = (hash3(terrain.seed ^ 0xc4a, x, 0, z) & 0xffff) as f32 / 65536.0;
         let mix = || terrain.mix(x, z);
-        let spot = Spot { site, x, z, dither: d, mix: &mix, chance };
+        let spot = Spot { site, x, z, dither: d, mix: &mix, chance, sampled: Default::default() };
         let (stones, strata) = (self.stones(site), &biome.strata);
         let rules = &self.rules;
         // Whether `v` lies past a threshold that is dithered across `lo..hi`.
