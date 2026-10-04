@@ -20,7 +20,7 @@
 //! is ground, water, or the lower water a waterfall drops into, so nothing generated
 //! needs to settle.
 
-mod cache;
+pub(crate) mod cache;
 mod channel;
 mod drainage;
 
@@ -408,6 +408,7 @@ impl Rivers {
                 body: if height < SEA_LEVEL && carved.water.is_none() { Body::Sea } else { body },
                 current: if submerged { carved.current } else { None },
                 cavity: carved.cavity,
+                form: ground.form,
             },
             near: carved.near.is_some() || carved.wet > 0.0,
         }
@@ -483,10 +484,12 @@ mod tests {
         let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1u64);
         let stream = rng::stream_seed(seed, crate::Overworld::ID, crate::Overworld::VERSION);
         let dials = WorldDials::sample(stream);
-        let geology = Geology::new(stream, &dials);
-        let climate = Climate::new(stream, &dials);
+        let registry = voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap();
+        let content = crate::WorldContent::base(&registry).unwrap();
+        let rocks = crate::rocks::Rocks::new(stream, &content, &registry, &dials.featured);
+        let geology = Geology::new(stream, &dials, &content, &rocks);
         let rivers = Rivers::new(stream, &dials);
-        let land = Stages { geology: &geology, climate: &climate };
+        let land = Stages { geology: &geology, climate: geology.climate() };
         let x = std::env::var("X").ok().and_then(|s| s.parse().ok()).unwrap_or(2544);
         let z = std::env::var("Z").ok().and_then(|s| s.parse().ok()).unwrap_or(384);
         let region = IVec2::new(x, z).div_euclid(IVec2::splat(REGION));

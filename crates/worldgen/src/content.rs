@@ -2,10 +2,10 @@
 //! are, so a mod adds a biome, a tree or a rock province exactly as the base game does.
 //!
 //! Each package may hold `climate.ron` (the bands every biome is placed by, and the blocks
-//! of snow and ice), `rocks.ron` (rock provinces), `biomes.ron`, `trees.ron` and
-//! `plants.ron`. Names are qualified with the package (`base:taiga`). Loading resolves
-//! `inherit`, then checks every reference: blocks, provinces, biomes, trees, plants, band
-//! names, and that the biome table has no holes. A broken package fails at load with a
+//! of snow and ice), `rocks.ron` (rock provinces), `biomes.ron`, `trees.ron`, `plants.ron`
+//! and `terrain.ron` (terrain shapes). Names are qualified with the package (`base:taiga`).
+//! Loading resolves `inherit`, then checks every reference: blocks, provinces, biomes,
+//! trees, plants, band names, and that the biome table has no holes. A broken package fails at load with a
 //! message naming the file, the definition and what is wrong, never later in generation.
 //!
 //! Trees, plants and stones are a shared pool. Each tree and plant says what climate it
@@ -685,6 +685,81 @@ pub struct AtmosphereDef {
 }
 
 // ---------------------------------------------------------------------------------------
+// terrain.ron
+
+/// A terrain shape: landforms of one kind that rise wherever the climate falls in its
+/// boxes. The boxes are written on the bands of `climate.ron`, like biomes', so a shape and
+/// the biomes made for it share their edges, while the terrain never asks which biome won.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeDef {
+    pub name: String,
+    pub kind: ShapeKind,
+    /// The climate it rises in; everywhere when left out.
+    #[serde(default)]
+    pub climate: Vec<ClimateBox>,
+    /// Only over rock provinces with this name or tag.
+    #[serde(default)]
+    pub province: Option<String>,
+    /// How much of its climate it takes: all of it when common, a few regions of it when
+    /// rarer; for shapes that stand alone (volcanoes, arches), how many there are.
+    #[serde(default)]
+    pub rarity: Rarity,
+    /// The ground it makes where it stands tallest, over the biome's.
+    #[serde(default)]
+    pub surface: Option<SurfaceDef>,
+    /// Banded rock for its surface's `Strata`.
+    #[serde(default)]
+    pub strata: Vec<String>,
+}
+
+/// What a shape makes, and its sizes in blocks.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub enum ShapeKind {
+    /// Rounded hills with creased valleys between them.
+    Hills { height: f32, spacing: f32 },
+    /// Dunes across the prevailing wind: a gentle slope up the windward side and a steep
+    /// lee face, in fields with calm margins.
+    Dunes { height: f32, spacing: f32 },
+    /// Flat-topped tiers with steep risers, stepping down towards the valleys.
+    Mesas { height: f32, spacing: f32 },
+    /// Gorges cut into high ground, with stepped walls.
+    Canyons { depth: f32, width: f32 },
+    /// Steep-sided towers with rounded tops, standing in the plain.
+    Towers { height: f32, spacing: f32 },
+    /// Clusters of thin rock spikes, a share `lean` of them leaning and curving.
+    Spires { height: f32, spacing: f32, lean: f32 },
+    /// Cones with a crater, as many as the world's volcanism allows.
+    Volcanoes { height: f32, radius: f32 },
+    /// A lone massif rising far above the land around it, seen from far away.
+    Mountain { height: f32, radius: f32 },
+    /// Natural arches: ribbons of rock bridging open ground.
+    Arches { span: f32, height: f32 },
+    /// Cliffs where upland meets the sea, undercut at the waterline, with stacks offshore.
+    SeaCliffs { height: f32 },
+    /// Broad valleys drowned by the sea where they reach a rugged coast, `depth` below it.
+    Fjords { depth: f32 },
+}
+
+impl ShapeKind {
+    /// Its sizes, which must all be positive.
+    fn sizes(&self) -> Vec<f32> {
+        match *self {
+            ShapeKind::Hills { height, spacing }
+            | ShapeKind::Dunes { height, spacing }
+            | ShapeKind::Mesas { height, spacing }
+            | ShapeKind::Towers { height, spacing } => vec![height, spacing],
+            ShapeKind::Canyons { depth, width } => vec![depth, width],
+            ShapeKind::Spires { height, spacing, lean } => vec![height, spacing, 1.0 - lean, lean + 1.0],
+            ShapeKind::Volcanoes { height, radius } | ShapeKind::Mountain { height, radius } => vec![height, radius],
+            ShapeKind::Arches { span, height } => vec![span, height],
+            ShapeKind::SeaCliffs { height } => vec![height],
+            ShapeKind::Fjords { depth } => vec![depth],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
 // Loading
 
 #[derive(Deserialize)]
@@ -697,6 +772,12 @@ struct ProvinceFile {
 #[serde(deny_unknown_fields)]
 struct BiomeFile {
     biomes: Vec<RawBiome>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShapeFile {
+    shapes: Vec<ShapeDef>,
 }
 
 #[derive(Deserialize)]
@@ -726,16 +807,18 @@ pub struct WorldContent {
     pub trees: Vec<TreeDef>,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
+    pub shapes: Vec<ShapeDef>,
 }
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 6] = [
+pub(crate) const BASE_FILES: [(&str, &str); 7] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
     ("rocks.ron", include_str!("../../../assets/content/base/rocks.ron")),
+    ("terrain.ron", include_str!("../../../assets/content/base/terrain.ron")),
     ("trees.ron", include_str!("../../../assets/content/base/trees.ron")),
 ];
 
@@ -758,7 +841,7 @@ impl WorldContent {
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
         let mut provinces = Vec::new();
-        let (mut trees, mut plants, mut particles) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -805,12 +888,18 @@ impl WorldContent {
                     let q = |n: &str| qualify(&file.package, n);
                     PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), ..p }
                 })),
+                "terrain.ron" => shapes.extend(parse::<ShapeFile>(&at, &file.source)?.shapes.into_iter().map(|s| ShapeDef {
+                    name: q(&s.name),
+                    surface: s.surface.map(|surface| qualify_surface(&file.package, surface)),
+                    strata: s.strata.iter().map(|n| q(n)).collect(),
+                    ..s
+                })),
                 _ => {}
             }
         }
         let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
         let biomes = inherit(&raw)?;
-        let content = Self { climate, provinces, biomes, trees, plants, particles };
+        let content = Self { climate, provinces, biomes, trees, plants, particles, shapes };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }
@@ -900,24 +989,7 @@ impl WorldContent {
             }
             positive(&at, "weight", biome.weight)?;
             for climate in &biome.climate {
-                for axis in [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion] {
-                    if let Some((from, to)) = climate.bands(axis) {
-                        let names = &self.bands(axis).names;
-                        let index = |band: &str| {
-                            names.iter().position(|n| n == band).ok_or_else(|| {
-                                ContentError(format!("{}: unknown {axis:?} band `{band}` (bands: {})", at(), names.join(", ")))
-                            })
-                        };
-                        if index(from)? > index(to)? {
-                            return Err(ContentError(format!("{}: the {axis:?} range from `{from}` to `{to}` is empty", at())));
-                        }
-                    }
-                }
-                if let Some((lo, hi)) = climate.aether
-                    && !(0.0 <= lo && lo < hi && hi <= 1.0)
-                {
-                    return Err(ContentError(format!("{}: the aether range ({lo}, {hi}) is empty or outside 0..=1", at())));
-                }
+                self.check_box(climate, &at)?;
             }
             let is_variant = self.biomes.iter().any(|b| b.variants.iter().any(|(v, _)| *v == biome.name));
             if biome.layer == Layer::Surface && biome.climate.is_empty() && biome.ecotone.is_none() && !is_variant {
@@ -961,8 +1033,74 @@ impl WorldContent {
             self.check_surface(&biome.surface, !biome.strata.is_empty(), &|| at(), &block, &blocks)?;
         }
 
+        // Terrain shapes.
+        for (i, shape) in self.shapes.iter().enumerate() {
+            let at = || format!("terrain.ron: shape `{}`", shape.name);
+            if self.shapes[..i].iter().any(|s| s.name == shape.name) {
+                return Err(ContentError(format!("{}: defined twice", at())));
+            }
+            if shape.kind.sizes().iter().any(|&size| !(size > 0.0 && size.is_finite())) {
+                return Err(ContentError(format!("{}: sizes must be positive (and `lean` below 1)", at())));
+            }
+            for climate in &shape.climate {
+                if climate.aether.is_some() {
+                    return Err(ContentError(format!("{}: shapes follow the climate, not aether", at())));
+                }
+                self.check_box(climate, &at)?;
+            }
+            if let Some(province) = &shape.province
+                && !self.provinces.iter().any(|p| p.matches(province))
+            {
+                return Err(ContentError(format!("{}: no rock province is named or tagged `{province}`", at())));
+            }
+            for name in &shape.strata {
+                block(&|| format!("{}, strata", at()), name)?;
+            }
+            if let Some(surface) = &shape.surface {
+                self.check_surface(surface, !shape.strata.is_empty(), &|| at(), &block, &blocks)?;
+            }
+        }
+
         self.check_flora(&block, &file_of)?;
         self.check_coverage()
+    }
+
+    /// Checks a box of the band table: its band names and ranges, and its aether.
+    fn check_box(&self, climate: &ClimateBox, at: &dyn Fn() -> String) -> Result<(), ContentError> {
+        for axis in [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion] {
+            if let Some((from, to)) = climate.bands(axis) {
+                let names = &self.bands(axis).names;
+                let index = |band: &str| {
+                    names
+                        .iter()
+                        .position(|n| n == band)
+                        .ok_or_else(|| ContentError(format!("{}: unknown {axis:?} band `{band}` (bands: {})", at(), names.join(", "))))
+                };
+                if index(from)? > index(to)? {
+                    return Err(ContentError(format!("{}: the {axis:?} range from `{from}` to `{to}` is empty", at())));
+                }
+            }
+        }
+        if let Some((lo, hi)) = climate.aether
+            && !(0.0 <= lo && lo < hi && hi <= 1.0)
+        {
+            return Err(ContentError(format!("{}: the aether range ({lo}, {hi}) is empty or outside 0..=1", at())));
+        }
+        Ok(())
+    }
+
+    /// The span of an axis a range of its bands covers, from the lower edge of the first
+    /// to the upper edge of the last; infinite at the ends of the axis.
+    pub fn span(&self, axis: Axis, bands: Option<&(String, String)>) -> (f32, f32) {
+        let def = self.bands(axis);
+        let Some((from, to)) = bands else {
+            return (f32::NEG_INFINITY, f32::INFINITY);
+        };
+        let index = |band: &str| def.names.iter().position(|n| n == band).expect("checked at load");
+        let (lo, hi) = (index(from), index(to));
+        let lower = if lo == 0 { f32::NEG_INFINITY } else { def.edges[lo - 1] };
+        let upper = def.edges.get(hi).copied().unwrap_or(f32::INFINITY);
+        (lower, upper)
     }
 
     /// Tags of a plant: its own and its block's.
@@ -1293,6 +1431,16 @@ fn qualify_layers(package: &str, layers: LayersDef) -> LayersDef {
     }
 }
 
+fn qualify_surface(package: &str, surface: SurfaceDef) -> SurfaceDef {
+    SurfaceDef {
+        rules: surface.rules.into_iter().map(|r| RuleDef { when: r.when, place: qualify_layers(package, r.place) }).collect(),
+        ground: qualify_layers(package, surface.ground),
+        underwater: qualify_layers(package, surface.underwater),
+        shore: surface.shore.map(|l| qualify_layers(package, l)),
+        cliff: surface.cliff.map(|m| qualify_material(package, m)),
+    }
+}
+
 
 fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
     let q = |name: &str| qualify(package, name);
@@ -1300,20 +1448,7 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
         name: q(&biome.name),
         inherit: biome.inherit.as_deref().map(q),
         ecotone: biome.ecotone.map(|e| EcotoneDef { between: (q(&e.between.0), q(&e.between.1)), ..e }),
-        surface: biome.surface.map(|s| SurfaceDef {
-            rules: s
-                .rules
-                .into_iter()
-                .map(|r| RuleDef {
-                    when: r.when,
-                    place: qualify_layers(package, r.place),
-                })
-                .collect(),
-            ground: qualify_layers(package, s.ground),
-            underwater: qualify_layers(package, s.underwater),
-            shore: s.shore.map(|l| qualify_layers(package, l)),
-            cliff: s.cliff.map(|m| qualify_material(package, m)),
-        }),
+        surface: biome.surface.map(|s| qualify_surface(package, s)),
         strata: biome.strata.map(|names| names.iter().map(|n| q(n)).collect()),
         atmosphere: biome.atmosphere.map(|a| AtmosphereDef {
             particles: a.particles.map(|p| p.iter().map(|s| qualify_select(package, s)).collect()),

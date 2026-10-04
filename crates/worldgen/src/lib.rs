@@ -2,9 +2,10 @@
 //!
 //! The overworld generator runs in stages, each a pure function of the world seed and
 //! position: world dials (global parameters such as mean temperature, ocean fraction and
-//! wind), geology (continents, mountains, rivers and lakes), climate (temperature and
-//! precipitation as continuous fields), ecology (what grows where), resources (ore veins)
-//! and terrain (blocks, caves, trees, plants). Biomes are data (`biomes.ron` in content
+//! wind), geology (continents, ranges, plateaus and valleys), climate (temperature and
+//! precipitation as continuous fields), terrain shapes that rise with the climate (dunes,
+//! mesas, karst, volcanoes), rivers and lakes, ecology (what grows where), resources (ore
+//! veins) and terrain (blocks, caves, trees, plants). Biomes are data (`biomes.ron` in content
 //! packages) placed over the continuous climate: they decide surface materials and what
 //! grows, while temperature, moisture and the rest stay continuous underneath, and
 //! `Overworld::site` exposes all of it for gameplay. Purity means any column can be
@@ -25,6 +26,7 @@ mod rarity;
 mod resources;
 mod rng;
 mod rocks;
+mod shapes;
 mod surface;
 mod terrain;
 mod trees;
@@ -47,12 +49,14 @@ pub use dials::WorldDials;
 pub use ecology::PlantProperties;
 pub use water::{Body, Cavity, Current};
 pub use rarity::{Featured, Rarity, Tier};
+pub use geology::Form;
 pub use rocks::ProvinceId;
+pub use shapes::ShapeId;
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
 use crate::biome::{GRADIENT_STEP, Pick, Point};
-use crate::climate::{Climate, ClimateGrid, Regional};
+use crate::climate::{ClimateGrid, Regional};
 use crate::ecology::Ecology;
 use crate::geology::{GeoSample, Geology, smoothstep};
 use crate::rocks::Rocks;
@@ -132,6 +136,9 @@ pub struct Site {
     pub edge: f32,
     /// 0 at the centre of the home biome's climate ..= 1 at its edge.
     pub from_centre: f32,
+    /// The terrain shape (dunes, a volcano, karst towers) that made the ground here, if any,
+    /// and how strongly.
+    pub form: Form,
 }
 
 impl Site {
@@ -178,17 +185,25 @@ pub struct BiomeColors {
     pub water: [u8; 3],
 }
 
+/// A terrain shape's own ground, and its banded rock (the biome's when empty).
+struct ShapeSurface {
+    surface: surface::Surface,
+    strata: Vec<BlockId>,
+}
+
 /// The default overworld.
 pub struct Overworld {
     dials: WorldDials,
+    /// The land, and the climate over it.
     geology: Geology,
-    climate: Climate,
     rivers: water::Rivers,
     ecology: Ecology,
     biomes: Biomes,
     atmospheres: atmosphere::Atmospheres,
     rocks: Rocks,
     rules: SurfaceRules,
+    /// The ground of the terrain shapes that make their own, by shape.
+    shape_surfaces: Vec<Option<ShapeSurface>>,
     caves: caves::Caves,
     terrain: terrain::Terrain,
     /// Clumps for dithering between biomes near their borders.
@@ -201,7 +216,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 8;
+    pub const VERSION: u32 = 9;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -217,10 +232,17 @@ impl Overworld {
         let rocks = Rocks::new(stream, content, &registry, &dials.featured);
         let mut rules = SurfaceRules::new(stream, content, &registry);
         let biomes = Biomes::new(content, &registry, &mut rules, &rocks, &dials.featured);
+        let shape_surfaces = content
+            .shapes
+            .iter()
+            .map(|shape| {
+                let surface = rules.compile(shape.surface.as_ref()?, &registry, &rocks);
+                Some(ShapeSurface { surface, strata: shape.strata.iter().map(|name| registry.expect(name)).collect() })
+            })
+            .collect();
         Self {
             dials,
-            geology: Geology::new(stream, &dials),
-            climate: Climate::new(stream, &dials),
+            geology: Geology::new(stream, &dials, content, &rocks),
             rivers: water::Rivers::new(stream, &dials),
             ecology: Ecology::new(stream, &dials, content, &registry),
             caves: caves::Caves::new(stream, &dials),
@@ -229,6 +251,7 @@ impl Overworld {
             biomes,
             rocks,
             rules,
+            shape_surfaces,
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
             seed: stream,
@@ -259,6 +282,11 @@ impl Overworld {
         self.atmospheres.sets()
     }
 
+    /// The name of a terrain shape (`base:volcanoes`).
+    pub fn shape_name(&self, id: ShapeId) -> &str {
+        self.geology.shapes().name(id)
+    }
+
     /// The biome whose rules make the ground at (x, z).
     pub fn biome_at(&self, x: i32, z: i32) -> &Biome {
         self.biomes.get(self.site(x, z).biome)
@@ -274,18 +302,16 @@ impl Overworld {
             from,
             radius,
             climate::CELL,
-            |at| self.point(&self.climate.regional_at(&self.geology, at)),
+            |at| self.point(&self.geology.climate().regional_at(&self.geology, at)),
             |at| self.sampler(at, at).pick(at.x, at.y).home == id,
         )
     }
 
     /// The biome picker's fields from the regional climate.
     fn point(&self, regional: &Regional) -> Point {
-        let temperature = regional.sea_temperature - LAPSE_RATE * (regional.elevation - SEA_LEVEL as f32).max(0.0);
-        let moisture = climate::moisture(regional.rainfall, temperature);
         self.biomes.remap(Point([
-            temperature,
-            moisture,
+            regional.temperature(),
+            regional.moisture(),
             regional.continentalness,
             regional.erosion,
             regional.weirdness,
@@ -317,7 +343,7 @@ impl Overworld {
     }
 
     fn stages(&self) -> water::Stages<'_> {
-        water::Stages { geology: &self.geology, climate: &self.climate }
+        water::Stages { geology: &self.geology, climate: self.geology.climate() }
     }
 
     /// The ground at one position, with its rivers and lakes.
@@ -355,7 +381,7 @@ impl Overworld {
     /// The regional climate over an area, with room for the biome picker's probes.
     fn grid(&self, min: IVec2, max: IVec2) -> ClimateGrid {
         let margin = biome::CELL + GRADIENT_STEP;
-        ClimateGrid::new(&self.climate, &self.geology, min - margin, max + margin)
+        ClimateGrid::new(&self.geology, min - margin, max + margin)
     }
 
     /// The parameters of the surface at one position.
@@ -482,7 +508,8 @@ impl Sampler<'_> {
     /// The site on already sampled geology.
     fn site_on(&self, geo: &GeoSample, x: i32, z: i32, slope: i32) -> Site {
         let regional = self.grid.at(x, z);
-        let temperature = regional.sea_temperature - LAPSE_RATE * (geo.height - SEA_LEVEL).max(0) as f32;
+        // Cooled by the height of the land, not of the towers and spires standing on it.
+        let temperature = regional.sea_temperature - LAPSE_RATE * (geo.climate_height() - SEA_LEVEL).max(0) as f32;
         let mut site = Site {
             height: geo.height,
             slope,
@@ -508,6 +535,7 @@ impl Sampler<'_> {
             neighbour: BiomeId(0),
             edge: 0.0,
             from_centre: 0.0,
+            form: geo.form,
         };
         let pick = self.pick(x, z);
         let share = Biomes::blend(pick.edge, regional.fertility);
@@ -679,6 +707,61 @@ mod tests {
         });
         for (i, column) in results {
             assert!(column == reference[i], "column {:?} differs with another generation order", columns[i]);
+        }
+    }
+
+    /// `cargo test --release -p voxmar_worldgen shape_sights -- --ignored --nocapture`
+    /// (optionally `SEED=n` and `RANGE=blocks`, 3000 by default) finds the best example of
+    /// each terrain shape near spawn, and the highest peak, and prints capture arguments
+    /// that look at each from a little way off: a `/tp` to stand there and a `--pose`.
+    #[test]
+    #[ignore]
+    fn shape_sights() {
+        let env = |name: &str, default: i64| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
+        let seed = env("SEED", 1) as u64;
+        let range = env("RANGE", 3000) as i32;
+        let world = Overworld::new(seed, registry());
+        let spawn = world.spawn_point();
+        let shapes = world.geology.shapes();
+        // (score, x, z, height) per shape, and the highest peak.
+        let mut best: Vec<(f32, i32, i32, f32)> = vec![(0.0, 0, 0, 0.0); 256];
+        let mut peak = (0.0f32, 0, 0);
+        for dz in (-range..=range).step_by(12) {
+            for dx in (-range..=range).step_by(12) {
+                let (x, z) = (spawn.x + dx, spawn.z + dz);
+                let land = world.geology.land(x, z);
+                let near = 1.0 / (1.0 + ((dx * dx + dz * dz) as f32).sqrt() / 1500.0);
+                if land.height > peak.0 {
+                    peak = (land.height, x, z);
+                }
+                if let Some(id) = land.form.shape {
+                    let score = land.form.strength.min(1.0) * near;
+                    let slot = &mut best[id.0 as usize];
+                    if score > slot.0 {
+                        *slot = (score, x, z, land.height);
+                    }
+                }
+            }
+        }
+        println!("seed {seed}, spawn {spawn}, volcanism {:.2}", world.dials().volcanism);
+        let view = |name: &str, x: i32, z: i32, top: f32, back: f32| {
+            // From the south-east, raised, looking at the top.
+            let target = voxmar_engine::glam::Vec3::new(x as f32, top, z as f32);
+            let (cx, cz) = ((x as f32 + back * 0.7) as i32, (z as f32 + back * 0.7) as i32);
+            let ground = world.height(cx, cz) as f32;
+            let eye = ground + 1.0 + 1.62;
+            let camera_y = (top + back * 0.25).max(ground + 6.0);
+            let d = target - voxmar_engine::glam::Vec3::new(cx as f32, camera_y, cz as f32);
+            let yaw = (-d.x).atan2(-d.z).to_degrees();
+            let pitch = d.y.atan2(d.x.hypot(d.z)).to_degrees();
+            println!("{name} at {x},{top:.0},{z}: --command \"/tp {cx} {cz}\" --pose 0,{:.0},0,{yaw:.0},{pitch:.0}", camera_y - eye);
+        };
+        view("highest peak", peak.1, peak.2, peak.0, 600.0);
+        for (i, &(score, x, z, height)) in best.iter().enumerate().filter(|(_, b)| b.0 > 0.0) {
+            let name = shapes.name(ShapeId(i as u8));
+            let back = if name.contains("volcano") { 420.0 } else if name.contains("mesa") || name.contains("canyon") { 160.0 } else { 70.0 };
+            print!("score {score:.2}: ");
+            view(name, x, z, height, back);
         }
     }
 
@@ -1017,6 +1100,8 @@ mod tests {
     ///
     /// - `SEED=n`, or `SEED=1,2,3` for several maps (`map_preview_<seed>.ppm`);
     /// - `BIOMES=1` colours land by biome (a colour per biome, from its name);
+    /// - `RELIEF=1` colours land by height, green lowland to white peaks, and `SHAPES=1`
+    ///   tints it by the terrain shape that made it (a colour per shape, from its name);
     /// - `FIELD=erosion` (or `continentalness`, `weirdness`, `aether`, `fertility`,
     ///   `variant`) shows that selection field on land, dark to light;
     /// - `X=x Z=z` centre the map elsewhere and `SCALE=s` sets the blocks per pixel.
@@ -1056,6 +1141,25 @@ mod tests {
         [r + v - c, g + v - c, b + v - c]
     }
 
+    /// A colour for land `h` high: green lowland, tan hills, brown and grey ranges, white
+    /// peaks.
+    fn hypsometric(h: i32) -> [f32; 3] {
+        const STOPS: [(f32, [f32; 3]); 7] = [
+            (0.0, [0.33, 0.55, 0.28]),
+            (25.0, [0.55, 0.68, 0.36]),
+            (60.0, [0.8, 0.75, 0.47]),
+            (100.0, [0.66, 0.52, 0.35]),
+            (150.0, [0.52, 0.44, 0.4]),
+            (190.0, [0.74, 0.72, 0.71]),
+            (225.0, [0.98, 0.98, 0.99]),
+        ];
+        let a = (h - SEA_LEVEL) as f32;
+        let i = STOPS.iter().position(|s| s.0 > a).unwrap_or(STOPS.len()).clamp(1, STOPS.len() - 1);
+        let ((a0, c0), (a1, c1)) = (STOPS[i - 1], STOPS[i]);
+        let t = ((a - a0) / (a1 - a0)).clamp(0.0, 1.0);
+        std::array::from_fn(|k| c0[k] + (c1[k] - c0[k]) * t)
+    }
+
     fn map(seed: u64, path: &str) {
         type Field = fn(&Site) -> f32;
         let field: Option<Field> = match std::env::var("FIELD").as_deref() {
@@ -1067,9 +1171,11 @@ mod tests {
             Ok("variant") => Some(|s| s.variant),
             Ok("moisture") => Some(|s| s.moisture / 2.0),
             Ok("temperature") => Some(|s| (s.temperature + 10.0) / 40.0),
+            Ok("mountain") => Some(|s| s.mountain),
             _ => None,
         };
-        let by_biome = std::env::var("BIOMES").is_ok_and(|v| v != "0");
+        let flag = |name: &str| std::env::var(name).is_ok_and(|v| v != "0");
+        let (by_biome, by_height, by_shape) = (flag("BIOMES"), flag("RELIEF"), flag("SHAPES"));
         const SIZE: i32 = 1024;
         let env = |name: &str, default: i32| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
         let scale = env("SCALE", 8);
@@ -1086,6 +1192,8 @@ mod tests {
         let mut pixels = Vec::with_capacity((SIZE * SIZE * 3) as usize);
         let (mut wet, mut creeks, mut rivers, mut lakes) = (0, 0, 0, 0);
         let mut area = vec![0usize; world.biomes.len()];
+        let mut shaped = vec![0usize; 256];
+        let mut land_heights = Vec::new();
         let mut near_spawn = vec![false; world.biomes.len()];
         for z in 0..SIZE {
             for x in 0..SIZE {
@@ -1112,6 +1220,18 @@ mod tests {
                 }
                 if by_biome {
                     rgb = biome_color(&world.biomes.get(site.biome).name);
+                }
+                if by_height {
+                    rgb = hypsometric(h);
+                }
+                if let Some(shape) = site.form.shape {
+                    shaped[shape.0 as usize] += 1;
+                    if by_shape {
+                        rgb = mix(rgb, biome_color(world.shape_name(shape)), 0.35 + 0.5 * site.form.strength.min(1.0));
+                    }
+                }
+                if h >= SEA_LEVEL {
+                    land_heights.push(h);
                 }
                 if let Some(field) = field {
                     let v = field(&site);
@@ -1167,6 +1287,19 @@ mod tests {
         for (a, name) in shares {
             let [r, g, b] = biome_color(name).map(|c| (c * 255.0) as u8);
             println!("  {:6.2}%  {name}  #{r:02x}{g:02x}{b:02x}", a as f32 * 100.0 / (SIZE * SIZE) as f32);
+        }
+        land_heights.sort_unstable();
+        let pct = |p: f32| land_heights.get(((land_heights.len() as f32 - 1.0) * p) as usize).map_or(0, |h| h - SEA_LEVEL);
+        println!(
+            "land above the sea: median {}, 90% {}, 99% {}, 99.9% {}, highest {}",
+            pct(0.5),
+            pct(0.9),
+            pct(0.99),
+            pct(0.999),
+            pct(1.0)
+        );
+        for (i, &count) in shaped.iter().enumerate().filter(|(_, c)| **c > 0) {
+            println!("  {:6.2}%  shaped by {}", count as f32 * 100.0 / (SIZE * SIZE) as f32, world.shape_name(ShapeId(i as u8)));
         }
         let near: Vec<&str> = (0..near_spawn.len()).filter(|&i| near_spawn[i]).map(|i| world.biomes.get(BiomeId(i as u16)).name.as_str()).collect();
         println!("{} biomes within 5 km of spawn: {}\nwrote {path}", near.len(), near.join(", "));
@@ -1451,6 +1584,51 @@ mod tests {
             let step = (0..3).map(|c| (pair[0].haze[c] - pair[1].haze[c]).abs()).fold(0.0, f32::max);
             assert!(step < 0.05 && (pair[0].haze_density - pair[1].haze_density).abs() < 0.1, "{pair:?}");
         }
+    }
+
+    /// Shapes rise only inside their climate boxes, read off the same bands as the biome
+    /// table; features never cool the climate; nothing rises past the ceiling.
+    #[test]
+    fn shapes_follow_the_climate_and_not_the_other_way() {
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let axes = [content::Axis::Temperature, content::Axis::Moisture, content::Axis::Continentalness, content::Axis::Erosion];
+        let (mut shaped, mut features, mut highest) = (vec![0; content.shapes.len()], 0, 0.0f32);
+        for seed in [3, 11] {
+            let world = Overworld::new(seed, registry.clone());
+            let shapes = world.geology.shapes();
+            for i in 0..160 * 160 {
+                let (x, z) = (i % 160 * 50 - 4000, i / 160 * 50 - 4000);
+                let land = world.geology.land(x, z);
+                highest = highest.max(land.height);
+                let Some(id) = land.form.shape else { continue };
+                shaped[id.0 as usize] += 1;
+                let def = content.shapes.iter().find(|s| s.name == shapes.name(id)).unwrap();
+                let regional = world.geology.regional(x, z);
+                let fields = [regional.temperature(), regional.moisture(), regional.continentalness, regional.erosion];
+                let inside = def.climate.is_empty()
+                    || def.climate.iter().any(|b| {
+                        axes.iter().zip(fields).all(|(&axis, v)| {
+                            let (lo, hi) = content.span(axis, b.bands(axis));
+                            (lo..=hi).contains(&v)
+                        })
+                    });
+                assert!(inside, "seed {seed}: {} at {x}, {z} outside its climate: {fields:?}", def.name);
+                // A tower or spire leaves the climate at the height of the land beneath it.
+                if land.height > land.form.base + 15.0 {
+                    features += 1;
+                    let site = world.site(x, z);
+                    if site.height > site.form.base as i32 + 15 && !site.form.base.is_nan() {
+                        let cooled = regional.sea_temperature - LAPSE_RATE * (site.form.base.floor() - SEA_LEVEL as f32).max(0.0);
+                        assert!((site.temperature - cooled).abs() < 1e-3, "seed {seed}: {} at {x}, {z} cooled by its own height", def.name);
+                    }
+                }
+            }
+        }
+        println!("{shaped:?}, {features} features, highest {highest}");
+        assert!(shaped.iter().filter(|&&n| n > 0).count() >= 5, "few shapes rose: {shaped:?}");
+        assert!(features > 0, "no towers or spires");
+        assert!(highest < (voxmar_engine::coords::WORLD_HEIGHT - 16) as f32, "land reaches {highest}");
     }
 
     #[test]
