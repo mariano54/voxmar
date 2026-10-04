@@ -240,17 +240,57 @@ fn top(column: &voxmar_engine::world::Column, registry: &BlockRegistry, local: I
     }
 }
 
-#[derive(Component)]
-struct Drops;
+/// The drops' kinds, as ranges of their indices (as in precipitation.wgsl): the falling
+/// drops (with the distant rain and drips from leaves), then specks of dust, motes, the
+/// ambient particle sets, and the splashes.
+const SPLASHES: u32 = 3000;
+const DUST: u32 = 9200;
+const MOTES: u32 = 800;
+const AMBIENT: u32 = 1500;
+const AIRBORNE: u32 = DROPS - SPLASHES - DUST - MOTES - AMBIENT_SETS as u32 * AMBIENT;
+
+/// One kind of drops, drawn only while it shows: undrawn drops cost the vertex shader
+/// too, and in fair weather all 74,000 were drawn to show a few specks of pollen.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum Drops {
+    Falling,
+    Dust,
+    Motes,
+    Ambient,
+    Splashes,
+    /// One drop, always drawn (and in fair weather hidden by the shader), so the drops'
+    /// pipeline is built with the world rather than when the first rain starts: where
+    /// pipelines are built synchronously (macOS) that would stall a frame.
+    Warm,
+}
+
+impl Drops {
+    const ALL: [Drops; 6] = [Drops::Falling, Drops::Dust, Drops::Motes, Drops::Ambient, Drops::Splashes, Drops::Warm];
+
+    fn range(self) -> std::ops::Range<u32> {
+        match self {
+            Drops::Falling => 0..AIRBORNE,
+            Drops::Dust => AIRBORNE..AIRBORNE + DUST,
+            Drops::Motes => AIRBORNE + DUST..AIRBORNE + DUST + MOTES,
+            Drops::Ambient => AIRBORNE + DUST + MOTES..DROPS - SPLASHES,
+            Drops::Splashes => DROPS - SPLASHES..DROPS,
+            Drops::Warm => 0..1,
+        }
+    }
+}
 
 /// The drops never move on the CPU: each vertex knows its drop and corner, and the shader
 /// does the rest.
 fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<PrecipitationMaterial>>) {
-    let vertices: Vec<u32> = (0..DROPS * 4).collect();
-    let indices: Vec<u32> = (0..DROPS).flat_map(|d| [0, 1, 2, 2, 1, 3].map(|i| d * 4 + i)).collect();
-    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(ATTRIBUTE_DROP, VertexAttributeValues::Uint32(vertices))
-        .with_inserted_indices(Indices::U32(indices));
+    let mut mesh = |drops: std::ops::Range<u32>| {
+        let vertices: Vec<u32> = (drops.start * 4..drops.end * 4).collect();
+        let indices: Vec<u32> = (0..drops.len() as u32).flat_map(|d| [0, 1, 2, 2, 1, 3].map(|i| d * 4 + i)).collect();
+        meshes.add(
+            Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+                .with_inserted_attribute(ATTRIBUTE_DROP, VertexAttributeValues::Uint32(vertices))
+                .with_inserted_indices(Indices::U32(indices)),
+        )
+    };
     let params = PrecipitationParams {
         camera: Vec4::ZERO,
         map: Vec4::ZERO,
@@ -270,13 +310,11 @@ fn spawn_drops(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         ambient: [Vec4::ZERO; 3 * AMBIENT_SETS],
         heights: [UVec4::ZERO; MAP_WORDS],
     };
-    commands.spawn((
-        Drops,
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(materials.add(PrecipitationMaterial { params })),
-        NoFrustumCulling,
-        NotShadowCaster,
-    ));
+    let material = materials.add(PrecipitationMaterial { params });
+    for drops in Drops::ALL {
+        let visibility = if drops == Drops::Warm { Visibility::Inherited } else { Visibility::Hidden };
+        commands.spawn((drops, Mesh3d(mesh(drops.range())), MeshMaterial3d(material.clone()), visibility, NoFrustumCulling, NotShadowCaster));
+    }
 }
 
 /// How many of the drops show for an amount of rain, snow or dust (0..1): few in light
@@ -348,25 +386,40 @@ fn update(
     world: Res<ClientWorld>,
     mut map: ResMut<SkyMap>,
     camera: Query<(&GlobalTransform, &AmbientLight, &DistanceFog), With<Camera3d>>,
-    drops: Query<&MeshMaterial3d<PrecipitationMaterial>, With<Drops>>,
+    mut drops: Query<(&Drops, &MeshMaterial3d<PrecipitationMaterial>, &mut Visibility)>,
     mut materials: ResMut<Assets<PrecipitationMaterial>>,
     mut fallen: Local<Fallen>,
 ) {
-    let (Ok((camera, ambient, fog)), Ok(handle)) = (camera.single(), drops.single()) else { return };
+    let Ok((camera, ambient, fog)) = camera.single() else { return };
+    let Some(handle) = drops.iter().next().map(|(_, material, _)| material.0.clone()) else { return };
     let shown = &weather.current;
     // Leaves keep dripping for a few minutes after the rain, as the ground dries.
     let rain = shown.precipitation * (1.0 - shown.snow);
     let drips = (rain * 1.5 + shown.wetness * 0.6 - 0.05).clamp(0.0, 1.0);
     let glints = glints(shown);
+    // Rain and snow ground the glowing motes and wisps (ball lightning in a storm would be
+    // a few orbs, which these are not): nothing glows in the rain.
+    let dry = 1.0 - ((shown.precipitation - 0.02) / 0.18).clamp(0.0, 1.0);
+    let motes = shown.motes.max(shown.wisps * 0.3) * dry;
+    for (kind, _, mut visibility) in &mut drops {
+        let shows = match kind {
+            // The distant layer carries blowing dust as well as rain and snow.
+            Drops::Falling => shown.precipitation > 0.01 || drips > 0.0 || shown.dust > 0.01,
+            Drops::Dust => shown.dust > 0.01,
+            Drops::Motes => motes > 0.0,
+            Drops::Ambient => !air.particles.is_empty() || glints > 0.01,
+            Drops::Splashes => shown.precipitation > 0.01,
+            Drops::Warm => true,
+        };
+        visibility.set_if_neq(if shows { Visibility::Inherited } else { Visibility::Hidden });
+    }
     if shown.precipitation <= 0.01 && drips <= 0.0 && shown.dust <= 0.01 && shown.motes <= 0.01 && glints <= 0.01 && air.particles.is_empty() {
-        // The drops stay drawn while nothing falls, every one culled in the vertex shader, so
-        // their pipeline is built with the world rather than when the first rain starts:
-        // where pipelines are built synchronously (macOS) that would stall a frame.
+        // Nothing shows: only the warm drop is drawn, and the shader hides it too.
         let showing = |p: &PrecipitationParams| {
             p.rain.w > 0.0 || p.far.w > 0.0 || p.dust.w > 0.0 || p.motes.w > 0.0 || p.ambient.iter().step_by(3).any(|a| a.w > 0.0)
         };
-        if materials.get(&handle.0).is_some_and(|m| showing(&m.params))
-            && let Some(mut material) = materials.get_mut(&handle.0)
+        if materials.get(&handle).is_some_and(|m| showing(&m.params))
+            && let Some(mut material) = materials.get_mut(&handle)
         {
             material.params.rain.w = 0.0;
             material.params.far.w = 0.0;
@@ -444,11 +497,7 @@ fn update(
         sets[i * 3 + 2] = Vec4::new(0.06, GLINT, 0.0, 0.0);
     }
 
-    // Rain and snow ground the glowing motes and wisps (ball lightning in a storm would be
-    // a few orbs, which these are not): nothing glows in the rain.
-    let dry = 1.0 - ((shown.precipitation - 0.02) / 0.18).clamp(0.0, 1.0);
-
-    let Some(mut material) = materials.get_mut(&handle.0) else { return };
+    let Some(mut material) = materials.get_mut(&handle) else { return };
     let light = ambient.color.to_linear();
     let haze = fog.color.to_linear();
     material.params = PrecipitationParams {
@@ -464,7 +513,7 @@ fn update(
         sleet: fallen.sleet.extend(shown.sleet),
         hail: fallen.hail.extend(shown.hail),
         dust: fallen.dust.extend(density(shown.dust)),
-        motes: fallen.motes.extend(shown.motes.max(shown.wisps * 0.3) * dry),
+        motes: fallen.motes.extend(motes),
         dust_color: Color::srgb_u8(shown.dust_color[0], shown.dust_color[1], shown.dust_color[2]).to_linear().to_vec4(),
         wind: wind.extend(0.0),
         ambient: sets,
