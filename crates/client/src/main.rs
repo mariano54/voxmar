@@ -198,13 +198,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         present_mode: if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync },
         ..default()
     };
+    // Captures make no sound, nor does any run with VOXMAR_MUTE set: games launched while
+    // developing would otherwise play over whoever is at the machine. Such runs never open
+    // an audio device at all (see `silence`).
+    let muted = options.capture.is_some() || std::env::var_os("VOXMAR_MUTE").is_some();
     // Our few Bevy meshes (the sky, rain, cracks, other players) are batched on the CPU:
     // building their instances on the GPU takes four compute passes and two checks of
     // indirect draws a frame, and every pass costs about 0.2 ms on Metal however little it
     // does (see docs/rendering.md).
-    let plugins = DefaultPlugins
+    let mut plugins = DefaultPlugins
         .set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() })
         .set(bevy::pbr::PbrPlugin { use_gpu_instance_buffer_builder: false, ..default() });
+    if muted {
+        plugins = plugins.disable::<bevy::audio::AudioPlugin>();
+    }
     if options.capture.is_some() {
         // Headless: render offscreen as fast as possible, independent of any display.
         app.add_plugins((
@@ -216,11 +223,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         app.add_plugins(plugins.set(WindowPlugin { primary_window: Some(window), ..default() }));
     }
-    // Captures make no sound, nor does any run with VOXMAR_MUTE set: games launched while
-    // developing would otherwise play over whoever is at the machine. Every sound plays at
-    // Bevy's global volume, here zero, so the settings themselves are left alone.
-    if options.capture.is_some() || std::env::var_os("VOXMAR_MUTE").is_some() {
-        app.insert_resource(bevy::audio::GlobalVolume::new(bevy::audio::Volume::SILENT));
+    if muted {
+        silence(&mut app);
     }
     app
     .add_plugins((
@@ -434,4 +438,26 @@ fn tint(texture: &mut Rgba, color: [f32; 3]) {
             pixel[c] = (pixel[c] as f32 * color[c]) as u8;
         }
     }
+}
+
+/// Stands in for Bevy's audio plugin in a silent run: the game's sounds are still made and
+/// spawned, but with no audio output nothing plays them. One-shot sounds are despawned as
+/// they arrive, as playing would have; loops and music simply never start.
+fn silence(app: &mut App) {
+    use bevy::audio::{AudioLoader, AudioPlayer, AudioSource, GlobalVolume, PlaybackMode, PlaybackSettings, Volume};
+    fn drop_sounds(mut commands: Commands, sounds: Query<(Entity, &PlaybackSettings), Added<AudioPlayer>>) {
+        for (entity, settings) in &sounds {
+            match settings.mode {
+                PlaybackMode::Despawn => commands.entity(entity).despawn(),
+                PlaybackMode::Remove => {
+                    commands.entity(entity).remove::<(AudioPlayer, PlaybackSettings)>();
+                }
+                PlaybackMode::Once | PlaybackMode::Loop => {}
+            }
+        }
+    }
+    app.init_asset::<AudioSource>()
+        .init_asset_loader::<AudioLoader>()
+        .insert_resource(GlobalVolume::new(Volume::SILENT))
+        .add_systems(PostUpdate, drop_sounds);
 }
