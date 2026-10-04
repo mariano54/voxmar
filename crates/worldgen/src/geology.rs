@@ -148,9 +148,10 @@ impl Geology {
     /// Continents and mountain ranges at (x, z).
     pub fn relief(&self, x: f32, z: f32) -> Relief {
         let (wx, wz) = self.warp.domain_warp_2d(x, z);
-        let continental = self.continental.get_noise_2d(wx, wz) + self.ocean_bias;
-        let erosion = self.erosion.get_noise_2d(wx, wz);
-        let ridge = (self.ridges.get_noise_2d(wx, wz) + 1.0) * 0.5;
+        // Their octaves side by side: the same values, sooner.
+        let continental = crate::noise::get_2d(&self.continental, wx, wz) + self.ocean_bias;
+        let erosion = crate::noise::get_2d(&self.erosion, wx, wz);
+        let ridge = (crate::noise::get_2d(&self.ridges, wx, wz) + 1.0) * 0.5;
 
         let sea = SEA_LEVEL as f32;
         let base = spline(
@@ -175,7 +176,7 @@ impl Geology {
     /// The land at (x, z), before rivers and lakes.
     pub fn land(&self, x: i32, z: i32) -> Landform {
         let relief = self.relief(x as f32, z as f32);
-        let hills = self.hills.get_noise_2d(x as f32, z as f32);
+        let hills = crate::noise::get_2d(&self.hills, x as f32, z as f32);
         let inland = smoothstep(-0.06, 0.1, relief.continental);
         let land = relief.elevation + hills * (3.0 + 14.0 * relief.roughness) * self.hill_scale * inland;
         let height = if land > PEAK_KNEE { PEAK_KNEE + PEAK_ROOM * ((land - PEAK_KNEE) / PEAK_ROOM).tanh() } else { land };
