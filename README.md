@@ -156,7 +156,8 @@ texel, optionally beside the same name from another pack (`--pack DIR` picks the
 `--columns`, `--zoom` and `--out` the layout).
 
 Code and assets adapted from other open source projects are listed, with their licences, in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Every mod, shader pack and project whose
+ideas we used is credited in [INSPIRATIONS.md](INSPIRATIONS.md).
 
 ## Layout
 
