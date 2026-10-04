@@ -9,7 +9,8 @@
 //! tick), worked out on the GPU (see `render::particles`).
 
 use bevy::prelude::*;
-use voxmar_engine::block::{BlockId, BlockInfo, RenderKind};
+use voxmar_engine::block::{BlockId, BlockInfo, RenderKind, Tint};
+use voxmar_engine::world::DEFAULT_COLORS;
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, Face};
 
 use crate::interact::{InteractSystems, Target};
@@ -203,11 +204,17 @@ fn piece(
     size: f32,
 ) -> Particle {
     let layer = info.layers[face as usize];
-    let tint = info.tints[face as usize];
-    let climate = world
+    // Tinted faces take the block's biome colour, as the terrain does.
+    let colors = world
         .voxels
         .column(ColumnPos::of_block(pos))
-        .map_or([128, 128], |column| column.climate_at(pos.x & (CHUNK_SIZE - 1), pos.z & (CHUNK_SIZE - 1)));
+        .map_or(DEFAULT_COLORS, |column| column.colors_at(pos.x & (CHUNK_SIZE - 1), pos.z & (CHUNK_SIZE - 1)));
+    let [r, g, b] = match info.tints[face as usize] {
+        Tint::None => [255; 3],
+        Tint::Grass => colors[0],
+        Tint::Foliage => colors[1],
+        Tint::Water => colors[2],
+    };
     Particle {
         position,
         velocity,
@@ -217,7 +224,8 @@ fn piece(
         // Resting mostly above the ground, as a flat piece would.
         floor: landing_floor(world, position, velocity) + size * 0.35,
         size,
-        look: Look::Texture { layer, corner: pieces.corner(layer, dice.roll()), span: 0.25, tint, climate },
+        look: Look::Texture { layer, corner: pieces.corner(layer, dice.roll()), span: 0.25 },
+        color: [r, g, b, 255],
         light: [sky, info.emission],
         ..default()
     }

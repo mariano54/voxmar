@@ -20,12 +20,36 @@ meshes, 3–4 million quads), plus distant terrain rings out to ~6.6 km.
 | Technique in the video | voxmar today |
 | --- | --- |
 | 1. Render from raw vertex/index data, not engine mesh objects | Yes (`render/terrain.rs`): chunk meshes live in shared pages with no entity per chunk, and a table of chunk origins is indexed by instance. Remeshing replaces one chunk's range. |
-| 2. Batch chunks with indexed indirect drawing | One phase item per pass and view issues all of that pass's chunk draws. **Metal has no native multi-draw**, so it is still one draw call per chunk. |
-| 3. GPU frustum culling | CPU culling per view (cameras and shadow cascades), in parallel, ~0.05 ms. |
+| 2. Batch chunks with indexed indirect drawing | **Metal has no native multi-draw** (wgpu loops one draw per chunk), so instead each view's visible chunks are gathered into one index buffer on the GPU and drawn once per page and stream (see "Drawing chunks" below). |
+| 3. GPU frustum culling | CPU culling per view (cameras and shadow cascades), in parallel, ~0.05 ms; the GPU only copies what survives. |
 | 4. Hierarchical (octree) culling | Not needed yet: per-chunk tests for ~3,500 chunks are negligible, the visibility graph culls through terrain, and LOD rings keep the chunk count constant as the view grows. |
 | 5. Paged geometry buffers | Yes: 32 MB vertex and 24 MB index pages with first-fit range allocation. |
-| 6–11. Vertex compression, 48 → 16 bytes | **8 bytes per vertex**: normal from a 3-bit face id, UVs from position, 12-bit texture layer, tint as a 2-bit kind plus climate, AO and light bit-packed. |
+| 6–11. Vertex compression, 48 → 16 bytes | **8 bytes per vertex**: normal from a 3-bit face id, UVs from position, 12-bit texture layer, 2-bit tint kind (the colour is looked up per block, see "Biome colours"), AO and light bit-packed. |
 | Not in the video | Binary greedy meshing, cave culling, distant LOD rings, meshing and lighting on worker threads with a per-frame upload budget. |
+
+## Drawing chunks
+
+Each chunk's mesh is split into streams, each with its own pages: opaque faces by the
+direction they face, cut-out faces, plants, inner leaf faces, water and ice, and leaf
+fringes. Per view, culling then skips whole streams per chunk: the three opaque
+directions turned away from a camera (or from the sun, for a shadow cascade), which is
+half of all opaque faces; plants beyond 320 blocks, where they have sunk away; fringes
+beyond 96.
+
+Drawing a chunk at a time cost a draw call per chunk and stream: about 4,700 for the
+camera and 1,900 for the shadow cascades at view distance 32, which wgpu and the Metal
+driver turned into milliseconds of CPU time. Instead:
+
+- Pages hand vertices out to chunks in blocks of 64, and keep a table of which chunk owns
+  each block. A page's indices count from the start of the page, and the vertex shader
+  finds its chunk's origin through the table, so any set of chunks in a page can be drawn
+  with one draw call.
+- Culling writes, per view, where each surviving chunk's indices go in that view's own
+  index buffer, and a compute pass (`terrain/compact.wgsl`) copies them there, in pieces
+  of at most 2,048 indices so the copy spreads over the GPU. Translucent chunks are
+  gathered back to front.
+- Each view then draws once per page and stream: about 100 draws for the camera and 5–10
+  per shadow cascade at view distance 32.
 
 ## Where a frame goes now
 
@@ -136,12 +160,25 @@ in the distance.
 
 Grass blocks open to the air also grow blades, in the spirit of the Grassier Grass mod.
 The mesher records one 4-byte seed per such block (`ChunkMesh::blades`: position in the
-chunk, the climate that picks the grass colour, and the light above it), and all seeds
-share one storage buffer. Chunks within 46 blocks of the camera draw a tuft of 16 blades
-per seed with no vertex buffer: `grass.wgsl` pulls each vertex's seed by its index and
-places, sizes, tints and bends the blade from hashes of the block and blade. Blades thin
-out and shrink into the ground between 24 and 44 blocks, are darker at the root and
-lighter at the tip, receive shadows but cast none, and part around the player's feet.
+chunk and the light above it), and all seeds share one storage buffer. Chunks within 34
+blocks of the camera draw up to 16 blades per seed with no vertex buffer: `grass.wgsl`
+pulls each vertex's seed by its index and places, sizes, colours and bends the blade from
+hashes of the block and blade. An index buffer repeating one blade's three triangles over
+its five points lets the GPU shade each point once. Blades thin out and shrink into the
+ground between 16 and 34 blocks, and each chunk draws only as many blades per block as
+survive at its nearest point, so distant grass costs little: at view distance 32 the
+blades went from about 2.5 ms of GPU vertex time to a fraction of that. They are darker
+at the root and lighter at the tip, receive shadows but cast none, and part around the
+player's feet.
+
+## Biome colours
+
+Grass, foliage and water take their colour from the biome data (`Column::colors`, one set
+per block, blended across borders by worldgen). The renderer keeps every loaded column's
+colours in one table (three words a block) and the fragment shader looks up the colour of
+the block a face belongs to, so colours change block by block even across a merged face,
+and the vertex carries only the kind of tint. Greedy meshing no longer has to split faces
+where the climate changes.
 
 ## Particles and breaking blocks
 
@@ -293,6 +330,43 @@ grading). Particle sets showing only by day, at night or at twilight, in dry or 
 weather, are already filtered; hovering ones settle out of a strong wind; night-time ones
 (fireflies) come out on six nights in ten. The precipitation particles draw the four
 densest sets. docs/weather-effects.md has the rest of the weather's handover.
+
+## Fluid state
+
+Water and lava flow (`engine/src/fluid.rs`). Each state of a fluid is its own block, made
+by the registry right after the fluid's source: `water` (the source), `water_flow_1` (the
+deepest flow) to `water_flow_7`, `water_falling`, and for rivers `water_top_1..7` (a still
+source with a partial surface, in eighths) and `water_current_<direction>_<speed>_<eighths>`
+(pinned river water). Lava has the first nine. Every state shares its source's render kind,
+textures, tint and light filter, so until the mesher reads the state, flowing water draws as
+whole water blocks. A mesher reads it like this:
+
+- `registry.info(block).fluid` (or `registry.fluid(block)`) is `Option<FluidState>`:
+  `fluid` (which fluid: compare these, not block ids), `amount` (eighths of the cell filled,
+  1..=8: 8 for sources and falling cells, 7 down to 1 as a flow thins, a river's own surface
+  for a partial source), `source`, `falling`, and `current` (pinned river water's
+  `Current { direction: 16ths of a turn counter-clockwise from +x towards +z, speed: 1..=3 }`).
+- **Join faces by fluid.** The face between two cells holding the same fluid is never seen:
+  hide it whenever `a.fluid == b.fluid`, not only between identical blocks. (Until the mesher
+  does this, a stream draws a faint internal face wherever its level changes.)
+- **Surface.** `fluid::corner_heights(registry, block, pos) -> [f32; 4]` gives the surface's
+  height at the cell's top corners, 0..=1, in the order (−x, −z), (+x, −z), (+x, +z),
+  (−x, +z). A cell with the same fluid above it has no top face (it is joined), and corners
+  next to such cells are 1. Otherwise each corner is the mean of the four cells around it:
+  the fluid's cells by height (`amount / 8`; cells at least 0.8 high count ten times),
+  open cells (air, plants) as 0, solid cells and other fluids left out (Minecraft's rule), so
+  a lake's surface stays flat, shores dip, and flows slope down from their source.
+  `block` is any `Fn(IVec3) -> Option<BlockId>` (`None` counts as solid), such as one over
+  the mesher's padded cells.
+- **Flow.** `fluid::flow(registry, block, pos) -> Vec2` is the direction and speed (blocks
+  per second, along x and z) to scroll the texture: a pinned cell's current (0.7, 1.4 or
+  2.8), `FLOW_SPEED` (1.4) down the slope of a flow, and zero on still water. Player physics
+  calls the same function, so what scrolls is what pushes a swimmer.
+- **Falling.** `falling` cells are full columns of water pouring down; scroll their sides
+  downwards.
+
+Fluid changes reach the client as `ServerMessage::Blocks` (one message per tick with every
+change in columns the player has) and go through `ClientWorld::set_block` like any edit.
 
 ## What we took from Voxy
 

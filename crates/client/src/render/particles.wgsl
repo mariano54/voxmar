@@ -14,7 +14,7 @@ struct Particle {
     life: f32,
     gravity: f32,
     drag: f32,
-    // layer:12 | tint:2 | temperature:5 | humidity:5 | block light:4 | sky light:4
+    // layer:12 | free:12 | block light:4 | sky light:4
     surface: u32,
     // corner u:8 | corner v:8 | span:8 (256ths of the texture) | motion:4 | flags:4
     sprite: u32,
@@ -25,9 +25,7 @@ struct Particle {
 
 @group(2) @binding(0) var block_textures: texture_2d_array<f32>;
 @group(2) @binding(1) var block_sampler: sampler;
-@group(2) @binding(2) var colormaps: texture_2d_array<f32>;
-@group(2) @binding(3) var colormap_sampler: sampler;
-@group(2) @binding(4) var<storage, read> particles: array<Particle>;
+@group(2) @binding(2) var<storage, read> particles: array<Particle>;
 
 // globals.time wraps every hour.
 const TIME_WRAP: f32 = 3600.0;
@@ -137,18 +135,6 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     return out;
 }
 
-// The biome colour of a tinted texture, as on the terrain (voxel.wgsl).
-fn biome_tint(surface: u32) -> vec3<f32> {
-    let kind = (surface >> 12u) & 3u;
-    if kind == 0u || kind == 3u {
-        return vec3(1.0);
-    }
-    let temperature = f32((surface >> 14u) & 31u) / 31.0;
-    let humidity = f32((surface >> 19u) & 31u) / 31.0 * temperature;
-    let uv = vec2(1.0 - temperature, max(1.0 - humidity, 1.0 - temperature + 1.5 / 256.0));
-    return textureSampleLevel(colormaps, colormap_sampler, uv, i32(kind - 1u), 0.0).rgb;
-}
-
 // Interleaved gradient noise, for fading by discarding pixels without MSAA.
 fn dither(xy: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(dot(xy, vec2(0.06711056, 0.00583715))));
@@ -163,7 +149,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var albedo = in.color.rgb;
     if textured {
         coverage = texel.a;
-        albedo *= texel.rgb * biome_tint(in.surface);
+        albedo *= texel.rgb;
     }
 #ifdef ALPHA_TO_COVERAGE
     // Sharpened so texel edges stay crisp; the fade spreads over the samples.
