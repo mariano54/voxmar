@@ -3,10 +3,11 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::fluid;
 use voxmar_engine::inventory::Inventory;
-use voxmar_engine::physics::{Aabb, move_and_slide, player as dims};
+use voxmar_engine::movement::{self, Body, Controls, Surroundings};
+use voxmar_engine::physics::{Aabb, player as dims};
 
 use crate::menu::Screen;
 use crate::render::DayCycle;
@@ -37,6 +38,8 @@ pub struct LocalPlayer {
     pub pitch: f32,
     pub on_ground: bool,
     pub in_water: bool,
+    /// Whether the last step was stopped by a wall across (see `movement::Body`).
+    pub against_wall: bool,
     pub flying: bool,
     pub allow_flight: bool,
     pub admin: bool,
@@ -61,6 +64,7 @@ impl Default for LocalPlayer {
             pitch: 0.0,
             on_ground: false,
             in_water: false,
+            against_wall: false,
             flying: false,
             allow_flight: false,
             admin: false,
@@ -294,96 +298,46 @@ fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, 
             wish += dir;
         }
     }
-    let wish = wish.normalize_or_zero();
-    let sprint = pressed(KeyCode::ControlLeft);
-    let jump = pressed(KeyCode::Space);
-    let sneak = pressed(KeyCode::ShiftLeft);
-
-    // Fixed substeps keep collision stable at low frame rates.
-    let mut remaining = time.delta_secs().min(0.25);
-    while remaining > 0.0 {
-        let dt = remaining.min(1.0 / 120.0);
-        remaining -= dt;
-        step(player, &world, wish, sprint, jump, sneak, dt);
-    }
+    let controls = Controls {
+        wish: wish.normalize_or_zero(),
+        sprint: pressed(KeyCode::ControlLeft),
+        jump: pressed(KeyCode::Space),
+        descend: pressed(KeyCode::ShiftLeft),
+    };
+    let mut body = Body {
+        position: player.position,
+        velocity: player.velocity,
+        on_ground: player.on_ground,
+        in_water: player.in_water,
+        flying: player.flying,
+        fly_speed: player.fly_speed,
+        against_wall: player.against_wall,
+    };
+    let water = world.registry.id("base:water").unwrap_or(BlockId::AIR);
+    movement::advance(&mut body, &Around { world: &world, water }, controls, time.delta_secs().min(0.25));
+    player.position = body.position;
+    player.velocity = body.velocity;
+    player.on_ground = body.on_ground;
+    player.in_water = body.in_water;
+    player.flying = body.flying;
+    player.against_wall = body.against_wall;
 }
 
-/// Water shallower than this over the feet is waded through: walked and jumped in, though
-/// slowly and carried by its flow, rather than swum in.
-const WADE_DEPTH: f32 = 0.4;
-
-/// How deep the water a body stands in is over its feet (0 out of water), and the mean
-/// flow of that water (blocks per second along x, z): flowing water and river currents
-/// carry swimmers along.
-fn water_around(world: &ClientWorld, aabb: &Aabb) -> (f32, Vec2) {
-    let registry = &world.registry;
-    let water = registry.id("base:water").and_then(|b| registry.fluid(b)).map(|f| f.fluid);
-    let (lo, hi) = (aabb.min.floor().as_ivec3(), (aabb.max - 1e-4).floor().as_ivec3());
-    let (mut cells, mut depth, mut flow) = (0, 0.0f32, Vec2::ZERO);
-    for y in lo.y..=hi.y {
-        for z in lo.z..=hi.z {
-            for x in lo.x..=hi.x {
-                let cell = IVec3::new(x, y, z);
-                let Some(state) = world.block(cell).and_then(|b| registry.fluid(b)).filter(|s| Some(s.fluid) == water) else { continue };
-                // Shallow flowing water only counts up to its surface.
-                let covered = world.block(cell + IVec3::Y).and_then(|b| registry.fluid(b)).is_some_and(|s| s.fluid == state.fluid);
-                let surface = y as f32 + if covered { 1.0 } else { state.height() };
-                if aabb.min.y < surface {
-                    cells += 1;
-                    depth = depth.max(surface - aabb.min.y);
-                    flow += fluid::flow(registry, |p| world.block(p), cell);
-                }
-            }
-        }
-    }
-    (depth, if cells > 0 { flow / cells as f32 } else { Vec2::ZERO })
+/// The client's world as movement sees it.
+struct Around<'a> {
+    world: &'a ClientWorld,
+    /// The water block, the one fluid that is swum in.
+    water: BlockId,
 }
 
-fn step(player: &mut LocalPlayer, world: &ClientWorld, wish: Vec3, sprint: bool, jump: bool, sneak: bool, dt: f32) {
-    let aabb = Aabb::standing(player.position, dims::WIDTH, dims::HEIGHT);
-    let (depth, current) = water_around(world, &aabb);
-    player.in_water = depth > 0.0;
-    let swimming = player.in_water && !(player.on_ground && depth < WADE_DEPTH);
-
-    if player.flying {
-        let vertical = (jump as i32 - sneak as i32) as f32;
-        let speed = if sprint { dims::FLY_SPRINT_SPEED } else { dims::FLY_SPEED } * player.fly_speed;
-        let target = (wish + Vec3::Y * vertical) * speed;
-        player.velocity = player.velocity.lerp(target, (12.0 * dt).min(1.0));
-    } else {
-        let speed = if sprint { dims::SPRINT_SPEED } else { dims::WALK_SPEED } * if player.in_water { 0.5 } else { 1.0 };
-        let control = if player.on_ground { 16.0 } else { 3.0 };
-        // In water you move relative to the water, so a current carries you along.
-        let target = wish * speed + Vec3::new(current.x, 0.0, current.y);
-        let horizontal = player.velocity.with_y(0.0).lerp(target, (control * dt).min(1.0));
-        player.velocity = horizontal.with_y(player.velocity.y);
-
-        if swimming {
-            player.velocity.y -= dims::GRAVITY * 0.15 * dt;
-            player.velocity.y *= 1.0 - (2.5 * dt).min(1.0);
-            if jump {
-                player.velocity.y = (player.velocity.y + 25.0 * dt).min(3.5);
-            }
-        } else {
-            if jump && player.on_ground {
-                player.velocity.y = dims::JUMP_VELOCITY;
-            }
-            player.velocity.y = (player.velocity.y - dims::GRAVITY * dt).max(-dims::TERMINAL_VELOCITY);
-        }
+impl Surroundings for Around<'_> {
+    fn solid(&self, cell: IVec3) -> bool {
+        self.world.is_solid(cell)
     }
 
-    let mut aabb = Aabb::standing(player.position, dims::WIDTH, dims::HEIGHT);
-    let blocked = move_and_slide(&mut aabb, player.velocity * dt, |p| world.is_solid(p));
-    player.on_ground = blocked[1] && player.velocity.y <= 0.0;
-    for (axis, blocked) in blocked.into_iter().enumerate() {
-        if blocked {
-            player.velocity[axis] = 0.0;
-        }
+    fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
+        movement::water_around(&self.world.registry, self.water, |p| self.world.block(p), aabb)
     }
-    if player.on_ground && player.flying && !jump {
-        player.flying = false;
-    }
-    player.position = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
 }
 
 fn follow_camera(
