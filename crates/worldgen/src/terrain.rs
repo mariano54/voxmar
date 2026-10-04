@@ -1,5 +1,6 @@
 //! Stage 4: turns sites and resources into blocks: surface materials, caves, water and
-//! ice, then trees and the small plants on the ground.
+//! ice at the level of the sea, lake or river over each column, then trees and the small
+//! plants on the ground.
 //!
 //! Surface materials follow the site's parameters through thresholds (cold enough for
 //! snow, steep enough for bare rock, dry and hot enough for sand). Every threshold is a
@@ -21,7 +22,7 @@ use crate::geology::{GeoGrid, noise};
 use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::trees::Tree;
-use crate::{Overworld, SEA_LEVEL, Site};
+use crate::{Body, Overworld, SEA_LEVEL, Site};
 
 /// Spacing of the lattice on which 3D noise is evaluated and then interpolated.
 const LATTICE: i32 = 4;
@@ -36,6 +37,7 @@ struct Ids {
     andesite: BlockId,
     tuff: BlockId,
     calcite: BlockId,
+    cobblestone: BlockId,
     dirt: BlockId,
     coarse_dirt: BlockId,
     rooted_dirt: BlockId,
@@ -110,6 +112,7 @@ impl Terrain {
                 andesite: id("andesite"),
                 tuff: id("tuff"),
                 calcite: id("calcite"),
+                cobblestone: id("cobblestone"),
                 dirt: id("dirt"),
                 coarse_dirt: id("coarse_dirt"),
                 rooted_dirt: id("rooted_dirt"),
@@ -252,8 +255,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let area = world.sampler(corner - features::REACH, corner + CHUNK_SIZE - 1 + features::REACH);
 
     // Geology for the column plus a one-block border (for slopes).
-    let geology = GeoGrid::new(&world.geology, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
-    let top = geology.samples().iter().map(|g| g.height).max().unwrap_or(0).max(SEA_LEVEL);
+    let geology = GeoGrid::new(world, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
+    let top = geology.samples().iter().map(|g| g.height.max(g.water)).max().unwrap_or(0).max(SEA_LEVEL);
 
     let cheese = Lattice::new(&terrain.cheese, origin, top, 1.6);
     let tunnel_a = Lattice::new(&terrain.tunnel_a, origin, top, 1.0);
@@ -277,7 +280,14 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let site = area.site_on(&geo, wx, wz, geology.slope(wx, wz));
             column.climate[(z * CHUNK_SIZE + x) as usize] = site.tint();
             let layers = terrain.surface_layers(&site, wx, wz);
-            let underwater = height < SEA_LEVEL;
+            // Caves stay out of a band under and beside the sea, lakes and rivers, so they
+            // never open into a bed or bank and let the water out.
+            let near_water = geo.submerged() || geo.river > 0.05 || geo.cavity.is_some();
+            let dry_below = match () {
+                _ if near_water => geo.water.min(height).min(geo.cavity.map_or(i32::MAX, |c| c.floor)) - 8,
+                _ if height <= SEA_LEVEL + 4 => SEA_LEVEL - 8,
+                _ => i32::MAX,
+            };
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -293,16 +303,22 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     stone_at(ids, &rock, world.seed, x, y, z, wx, wz)
                 };
 
-                // Caves stay dry: they never open into the floor of a sea, lake or river.
-                let carvable = y > 4 && block != ids.bedrock && (!underwater || below_surface > 6);
+                let carvable = y > 4 && y < dry_below && block != ids.bedrock;
                 if carvable && is_cave(&cheese, &tunnel_a, &tunnel_b, x, y, z, below_surface) {
                     continue;
                 }
                 blocks.set_local(x, y, z, block);
             }
-            let ice = terrain.ice(&site, wx, wz);
-            for y in height + 1..=SEA_LEVEL {
-                blocks.set_local(x, y, z, if y == SEA_LEVEL { ice.unwrap_or(ids.water) } else { ids.water });
+            // Fast water stays open in the cold.
+            let ice = terrain.ice(&site, wx, wz).filter(|_| geo.current.is_none_or(|c| c.speed < 3));
+            for y in height + 1..=geo.water {
+                blocks.set_local(x, y, z, if y == geo.water { ice.unwrap_or(ids.water) } else { ids.water });
+            }
+            // A river running in a tunnel under the ground.
+            if let Some(cavity) = geo.cavity {
+                for y in cavity.floor + 1..=cavity.ceiling.min(height - 3) {
+                    blocks.set_local(x, y, z, if y <= geo.water { ids.water } else { BlockId::AIR });
+                }
             }
             surfaces.push((site, layers.top));
         }
@@ -317,7 +333,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let (site, surface) = &surfaces[(z * CHUNK_SIZE + x) as usize];
             let h = site.height;
             let open = |y: i32| y < WORLD_HEIGHT && blocks.get_local(x, y, z).is_air();
-            if h < SEA_LEVEL || blocks.get_local(x, h, z) != *surface || !open(h + 1) {
+            if h < site.water || blocks.get_local(x, h, z) != *surface || !open(h + 1) {
                 continue;
             }
             match world.ecology.plant(site, terrain.ground(*surface), origin.x + x, origin.z + z) {
@@ -381,19 +397,13 @@ impl Terrain {
         let (t, w) = (site.temperature, site.soil_moisture());
         let above = (site.height - SEA_LEVEL) as f32;
 
-        if above < 0.0 {
-            // Muddy warm rivers, sandy beds and shallows, clay patches, gravel in deep or
-            // cold water.
-            let block = if site.river > 0.3 && t > 18.0 && w > 1.0 && d > 0.45 {
-                ids.mud
-            } else if patch > 0.5 && above > -10.0 {
-                ids.clay
-            } else if site.river > 0.5 || (above >= -8.0 && past(t, 0.0, 4.0)) {
-                ids.sand
-            } else {
-                ids.gravel
-            };
-            return layers(block, block, 3);
+        let shore = (site.height - site.water) as f32;
+        if shore < 0.0 {
+            return layers(self.bed(site, x, z, -shore), self.bed(site, x, z, -shore), 3);
+        }
+        if site.body == Body::Salt {
+            // A dry closed basin crusts over with salt.
+            return layers(if d < 0.75 { ids.calcite } else { ids.sand }, ids.sand, 3);
         }
 
         // Sand deserts are hot; cooler dry land is steppe with coarse, stony soil.
@@ -437,15 +447,21 @@ impl Terrain {
         if above > 70.0 && t < 8.0 && past(exposure, 1.8, 3.2) {
             return layers(ids.gravel, ids.stone, 2);
         }
-        // Beaches along the sea, sandy (or in warm, wet places muddy) banks along rivers.
-        let coast = site.continentality < 0.45 || site.river > 0.3;
-        if coast && !past(above, 0.5, 2.5) {
+        // Beaches along the sea; along lakes and rivers, banks of their own (see `bank`).
+        if site.body == Body::Sea && site.continentality < 0.45 && !past(above, 0.5, 2.5) {
             let top = match () {
                 _ if t < 3.0 => ids.gravel,
                 _ if t > 18.0 && w > 1.2 && site.river > 0.3 && d > 0.5 => ids.mud,
                 _ => ids.sand,
             };
             return layers(top, top, 3);
+        }
+        if site.body != Body::Sea
+            && site.river > 0.35
+            && !past(shore, 0.5, 2.0)
+            && let Some(top) = self.bank(site, x, z)
+        {
+            return layers(top, if top == ids.mud || top == ids.sand { top } else { ids.gravel }, 2);
         }
         // Dry land: grass gives way to coarse dirt, then to sand or red sand.
         if hot && arid {
@@ -474,11 +490,89 @@ impl Terrain {
         layers(ids.grass, under, 3)
     }
 
+    /// The bed under `depth` blocks of water: gravel and stone in creeks and mountain
+    /// rivers, mud in warm, wet lowland rivers, sand in slow lowland rivers, lakes' shallows
+    /// and the sea's, and clay in patches.
+    fn bed(&self, site: &Site, x: i32, z: i32, depth: f32) -> BlockId {
+        let ids = &self.ids;
+        let d = self.dither(x, z);
+        let patch = self.patches.get_noise_2d(x as f32, z as f32);
+        let (t, w) = (site.temperature, site.soil_moisture());
+        let warm_wet = t > 17.0 && w > 1.05;
+        let lowland = site.height < SEA_LEVEL + 24;
+        match site.body {
+            Body::Creek => match () {
+                _ if patch < -0.45 => ids.stone,
+                _ if warm_wet && lowland && d > 0.6 => ids.mud,
+                _ if d < 0.12 => ids.cobblestone,
+                _ => ids.gravel,
+            },
+            Body::River => match () {
+                _ if warm_wet && d > 0.4 => ids.mud,
+                _ if patch > 0.55 => ids.clay,
+                _ if lowland && site.mountain < 0.2 && d > 0.45 => ids.sand,
+                _ if patch < -0.5 => ids.stone,
+                _ => ids.gravel,
+            },
+            Body::Lake => match () {
+                _ if depth <= 2.0 && t > 3.0 && (site.mountain < 0.3 || d > 0.5) => ids.sand,
+                _ if warm_wet && d > 0.35 => ids.mud,
+                _ if patch > 0.35 && depth < 10.0 => ids.clay,
+                _ if t < 3.0 || site.mountain > 0.4 => ids.gravel,
+                _ if d > 0.5 => ids.sand,
+                _ => ids.gravel,
+            },
+            _ => match () {
+                _ if site.river > 0.3 && t > 18.0 && w > 1.0 && d > 0.45 => ids.mud,
+                _ if patch > 0.5 && depth < 10.0 => ids.clay,
+                _ if site.river > 0.5 || (depth <= 8.0 && t > 2.0 * d) => ids.sand,
+                _ => ids.gravel,
+            },
+        }
+    }
+
+    /// The ground just above a lake or river, if it is not grass: rocky and gravelly by
+    /// creeks, with moss and mud where it is warm and wet, sand on the shores of lakes and
+    /// lowland rivers.
+    fn bank(&self, site: &Site, x: i32, z: i32) -> Option<BlockId> {
+        let ids = &self.ids;
+        let d = self.dither(x, z);
+        let patch = self.patches.get_noise_2d(x as f32, z as f32);
+        let (t, w) = (site.temperature, site.soil_moisture());
+        let near = site.river > 0.6;
+        Some(match site.body {
+            Body::Creek | Body::River if t < 2.0 => if d < 0.5 { ids.gravel } else { ids.stone },
+            Body::Creek => match () {
+                _ if !near && d > 0.35 => return None,
+                _ if patch < -0.3 => if d < 0.5 { ids.stone } else { ids.andesite },
+                _ if w > 1.1 && t > 8.0 && d > 0.7 => ids.moss,
+                _ if w > 1.2 && t > 15.0 && d > 0.45 => ids.mud,
+                _ if d < 0.3 => ids.gravel,
+                _ if d < 0.42 => ids.cobblestone,
+                _ => return None,
+            },
+            Body::River => match () {
+                _ if w > 1.2 && t > 16.0 && d > 0.4 => ids.mud,
+                _ if site.height < SEA_LEVEL + 20 && site.mountain < 0.2 && patch > -0.1 => ids.sand,
+                _ if d < 0.45 => ids.gravel,
+                _ if !near => return None,
+                _ => ids.stone,
+            },
+            Body::Lake => match () {
+                _ if t < 3.0 => ids.gravel,
+                _ if w > 1.2 && t > 16.0 && d > 0.6 => ids.mud,
+                _ if site.mountain > 0.35 && patch < 0.0 => if d < 0.5 { ids.stone } else { ids.gravel },
+                _ => ids.sand,
+            },
+            _ => return None,
+        })
+    }
+
     /// Top block of dry or submerged ground, and the block (water or ice) above it when
-    /// it lies below sea level.
+    /// it lies under the sea, a lake or a river.
     pub fn surface_blocks(&self, site: &Site, x: i32, z: i32) -> (BlockId, Option<BlockId>) {
         let top = self.surface_layers(site, x, z).top;
-        let water = (site.height < SEA_LEVEL).then(|| self.ice(site, x, z).unwrap_or(self.ids.water));
+        let water = (site.height < site.water).then(|| self.ice(site, x, z).unwrap_or(self.ids.water));
         (top, water)
     }
 

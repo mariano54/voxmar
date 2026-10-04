@@ -138,11 +138,13 @@ impl Ecology {
     pub fn tree_chances(&self, site: &Site, ground: Option<Ground>, x: i32, z: i32) -> [f32; Tree::ALL.len()] {
         let (t, m) = (site.temperature, site.soil_moisture());
         let above = site.height - SEA_LEVEL;
+        // Height over the sea, lake or river over or beside the site.
+        let shore = site.height - site.water;
         let grove = smoothstep(-0.3, 0.3, self.groves.get_noise_2d(x as f32, z as f32));
         let mut chances = [0.0; Tree::ALL.len()];
         let mut set = |tree: Tree, chance: f32| chances[tree as usize] += chance;
 
-        if above >= 1 {
+        if shore >= 1 {
             // Forest trees share the forest by how well each suits the climate.
             let shares = [
                 (Tree::Oak, band(t, (5.0, 25.0), (9.0, 21.0)) * (1.5 - grove)),
@@ -172,10 +174,10 @@ impl Ecology {
             let cold_dead = band(t, (-10.0, -2.0), (-8.0, -4.0)) * smoothstep(0.3, 0.6, m);
             set(Tree::Dead, 0.012 * (dry_dead + cold_dead));
             set(Tree::Cactus, smoothstep(18.0, 24.0, t) * (1.0 - smoothstep(0.12, 0.3, m)) * 0.06);
-            let beach = above <= 3 && (site.continentality < 0.5 || site.river > 0.5);
+            let beach = shore <= 3 && (site.continentality < 0.5 || site.river > 0.5);
             set(Tree::Palm, if beach { 0.12 * smoothstep(20.0, 24.0, t) * smoothstep(0.4, 0.7, m) } else { 0.0 });
         }
-        let shallows = (-2..=1).contains(&above) && (site.continentality < 0.5 || site.river > 0.3);
+        let shallows = (-2..=1).contains(&shore) && (site.continentality < 0.5 || site.river > 0.3);
         set(Tree::Mangrove, if shallows { 0.35 * smoothstep(21.0, 25.0, t) * smoothstep(0.95, 1.25, m) } else { 0.0 });
 
         if let Some(ground) = ground {
@@ -209,8 +211,8 @@ impl Ecology {
         let unit = |bits: u64| (bits & 0xff_ffff) as f32 / (1u32 << 24) as f32;
         let (second, third) = (unit(hash >> 24), unit(hash >> 40));
         let (t, m) = (site.temperature, site.soil_moisture());
-        let above = site.height - SEA_LEVEL;
-        let bank = smoothstep(0.35, 0.7, site.river) * smoothstep(10.0, 14.0, t) * if above <= 3 { 1.0 } else { 0.0 };
+        let shore = site.height - site.water;
+        let bank = smoothstep(0.35, 0.7, site.river) * smoothstep(10.0, 14.0, t) * if shore <= 3 { 1.0 } else { 0.0 };
         // Each kind of plant takes a slice of one roll, as wide as its chance here.
         let mut roll = unit(hash);
         let mut take = |chance: f32| {
