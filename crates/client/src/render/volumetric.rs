@@ -45,6 +45,10 @@ use super::water::WaterPass;
 const SHADER: &str = "embedded://voxmar/render/volumetric.wgsl";
 /// The half-resolution light, with how much of the scene shows through in alpha.
 const MARCH_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
+/// The view depth each half-resolution ray ended at, which the composite compares its own
+/// pixel's against for every ray it blends: read from this small texture rather than as
+/// sixteen loads from the full-resolution depth per pixel, it halves the composite's cost.
+const RAY_DEPTH_FORMAT: TextureFormat = TextureFormat::R16Float;
 
 pub struct VolumetricPlugin;
 
@@ -99,6 +103,7 @@ struct VolumetricView {
     march_group: BindGroup,
     composite_group: BindGroup,
     target: CachedTexture,
+    ray_depths: CachedTexture,
 }
 
 /// Cells before the cloud noise's 2D and 3D lattices repeat (clouds.wgsl).
@@ -209,7 +214,10 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>, device: Res<Rend
         composite: Layouts::new(|depth| {
             BindGroupLayoutDescriptor::new(
                 "volumetric_composite_layout",
-                &BindGroupLayoutEntries::sequential(ShaderStages::FRAGMENT, (depth, texture_2d(TextureSampleType::Float { filterable: false }))),
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::FRAGMENT,
+                    (depth, texture_2d(TextureSampleType::Float { filterable: false }), texture_2d(TextureSampleType::Float { filterable: false })),
+                ),
             )
         }),
         noise: Noise::new(&device, &queue),
@@ -244,9 +252,10 @@ impl VolumetricPipelines {
         // The air's light, plus the scene times how much of it shows through.
         let over = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::SrcAlpha, operation: BlendOperation::Add };
         let keep = BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
-        let march = ColorTargetState { format: MARCH_FORMAT, blend: None, write_mask: ColorWrites::ALL };
+        let target = |format| Some(ColorTargetState { format, blend: None, write_mask: ColorWrites::ALL });
+        let march = vec![target(MARCH_FORMAT), target(RAY_DEPTH_FORMAT)];
         let march = self.descriptor(&base, fullscreen, self.march.get(multisampled), "march", march, 1);
-        let composite = ColorTargetState { format, blend: Some(BlendState { color: over, alpha: keep }), write_mask: ColorWrites::COLOR };
+        let composite = vec![Some(ColorTargetState { format, blend: Some(BlendState { color: over, alpha: keep }), write_mask: ColorWrites::COLOR })];
         let composite =
             self.descriptor(&base, fullscreen, self.composite.get(multisampled), "composite", composite, key.msaa_samples());
         let ids = (cache.queue_render_pipeline(march), cache.queue_render_pipeline(composite));
@@ -262,7 +271,7 @@ impl VolumetricPipelines {
         fullscreen: &FullscreenShader,
         group: &BindGroupLayoutDescriptor,
         entry_point: &'static str,
-        target: ColorTargetState,
+        targets: Vec<Option<ColorTargetState>>,
         samples: u32,
     ) -> RenderPipelineDescriptor {
         let mut descriptor = base.clone();
@@ -281,7 +290,7 @@ impl VolumetricPipelines {
             } else {
                 fragment.shader_defs.extend(["NOISE_TEXTURES", "CLOUD_MAP"].map(ShaderDefVal::from));
             }
-            fragment.targets = vec![Some(target)];
+            fragment.targets = targets;
         }
         descriptor
     }
@@ -314,19 +323,22 @@ fn prepare(
             continue;
         };
         let size = depth.texture.size();
-        let target = textures.get(
-            &device,
-            TextureDescriptor {
-                label: Some("volumetric_light"),
-                size: Extent3d { width: size.width.div_ceil(2), height: size.height.div_ceil(2), depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: MARCH_FORMAT,
-                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-        );
+        let mut half = |label, format| {
+            textures.get(
+                &device,
+                TextureDescriptor {
+                    label: Some(label),
+                    size: Extent3d { width: size.width.div_ceil(2), height: size.height.div_ceil(2), depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format,
+                    usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+            )
+        };
+        let (target, ray_depths) = (half("volumetric_light", MARCH_FORMAT), half("volumetric_ray_depths", RAY_DEPTH_FORMAT));
         let multisampled = key.msaa_samples() > 1;
         let march_group = device.create_bind_group(
             "volumetric_march",
@@ -344,9 +356,9 @@ fn prepare(
         let composite_group = device.create_bind_group(
             "volumetric_composite",
             &cache.get_bind_group_layout(pipelines.composite.get(multisampled)),
-            &BindGroupEntries::sequential((depth.view(), &target.default_view)),
+            &BindGroupEntries::sequential((depth.view(), &target.default_view, &ray_depths.default_view)),
         );
-        commands.entity(entity).insert(VolumetricView { march, composite, march_group, composite_group, target });
+        commands.entity(entity).insert(VolumetricView { march, composite, march_group, composite_group, target, ray_depths });
     }
 }
 
@@ -363,18 +375,24 @@ fn volumetric_light(
     };
     // March into the half-resolution target, then blend it over the image (the
     // multisampled one under MSAA, resolved at the end of the pass).
-    let march_target = RenderPassColorAttachment {
-        view: &volumetric.target.default_view,
-        depth_slice: None,
-        resolve_target: None,
-        ops: Operations { load: LoadOp::Clear(default()), store: StoreOp::Store },
+    let half = |view| {
+        Some(RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: Operations { load: LoadOp::Clear(default()), store: StoreOp::Store },
+        })
     };
-    let passes =
-        [(march_target, march, &volumetric.march_group), (target.get_color_attachment(), composite, &volumetric.composite_group)];
-    for (attachment, pipeline, group) in passes {
+    let march_targets = [half(&volumetric.target.default_view), half(&volumetric.ray_depths.default_view)];
+    let composite_target = [Some(target.get_color_attachment())];
+    let passes = [
+        (&march_targets[..], march, &volumetric.march_group),
+        (&composite_target[..], composite, &volumetric.composite_group),
+    ];
+    for (attachments, pipeline, group) in passes {
         let descriptor = RenderPassDescriptor {
             label: Some("volumetric_light"),
-            color_attachments: &[Some(attachment)],
+            color_attachments: attachments,
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,

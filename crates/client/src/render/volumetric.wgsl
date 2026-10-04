@@ -25,6 +25,8 @@
 // `march`: the atmosphere. `composite`: the half-resolution light and transmittance.
 #ifdef COMPOSITE
 @group(2) @binding(1) var march_texture: texture_2d<f32>;
+// The view depth each ray ended at (`march`'s second target).
+@group(2) @binding(2) var ray_depths: texture_2d<f32>;
 #else
 @group(2) @binding(1) var<uniform> atmosphere: Atmosphere;
 #endif
@@ -32,6 +34,13 @@
 // Rays to the sky stop here (far beyond anything drawn).
 const SKY: f32 = 65504.0;
 const LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
+
+// How far in front of the eye what full-resolution `pixel` shows lies (the view depth of
+// Bevy's infinite reverse-z projection), as cheap as a load and a divide.
+fn depth_at(pixel: vec2<i32>) -> f32 {
+    let depth = textureLoad(depth_texture, pixel, 0);
+    return select(view.clip_from_view[3][2] / depth, SKY, depth <= 0.0);
+}
 
 #ifndef COMPOSITE
 // The direction from the eye to what full-resolution `pixel` shows, and in w its distance.
@@ -269,8 +278,14 @@ fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f3
     return out;
 }
 
+struct Marched {
+    @location(0) air: vec4<f32>,
+    // The view depth the ray ended at, for the composite.
+    @location(1) depth: f32,
+}
+
 @fragment
-fn march(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+fn march(in: FullscreenVertexOutput) -> Marched {
     let a = atmosphere;
     // The full-resolution pixel this half-resolution one stands for.
     let ray = surface(vec2<i32>(in.position.xy) * 2);
@@ -283,17 +298,10 @@ fn march(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // The cloud lies behind the air near the eye (or, around the eye inside it, mingles with
     // it, which this treats alike).
     let cloud = cloud_layer(a, eye, ray.xyz, ray.w, unit(pcg(pixel.x + pcg(pixel.y ^ 0x5bd1e995u))));
-    return vec4(near.light + near.through * cloud.light, near.through * cloud.through);
+    return Marched(vec4(near.light + near.through * cloud.light, near.through * cloud.through), depth_at(vec2<i32>(in.position.xy) * 2));
 }
 
 #else
-
-// How far in front of the eye what full-resolution `pixel` shows lies (the view depth of
-// Bevy's infinite reverse-z projection), as cheap as a load and a divide.
-fn depth_at(pixel: vec2<i32>) -> f32 {
-    let depth = textureLoad(depth_texture, pixel, 0);
-    return select(view.clip_from_view[3][2] / depth, SKY, depth <= 0.0);
-}
 
 @fragment
 fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -304,7 +312,6 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let base = vec2<i32>(floor(at));
     let f = fract(at);
     let last = vec2<i32>(textureDimensions(march_texture)) - 1;
-    let full = vec2<i32>(view.viewport.zw) - 1;
     var air = vec4(0.0);
     var total = 0.0;
     // A tent two rays wide over the 4×4 nearest rays smooths the march's grain away.
@@ -314,7 +321,7 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let d = vec2<f32>(o) - f;
         let tent = max(2.0 - abs(d.x), 0.0) * max(2.0 - abs(d.y), 0.0);
         // Rays that ended much nearer or farther than this pixel's surface saw other things.
-        let ended = depth_at(min(ray * 2, full));
+        let ended = textureLoad(ray_depths, ray, 0).r;
         let alike = exp(-abs(ended - distance) / (0.05 * min(distance, ended) + 0.25));
         let weight = tent * (alike + 1e-4);
         air += textureLoad(march_texture, ray, 0) * weight;
