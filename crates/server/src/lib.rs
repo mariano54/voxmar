@@ -103,6 +103,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
 /// A running server thread. Dropping it stops the server.
 pub struct ServerHandle {
     connections: Sender<ServerConnection>,
+    console: Sender<String>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -111,6 +112,13 @@ impl ServerHandle {
     /// Sender for new connections (local or accepted by a TCP listener).
     pub fn connections(&self) -> Sender<ServerConnection> {
         self.connections.clone()
+    }
+
+    /// Runs a line typed into the server's own console, as an admin standing at spawn: a
+    /// command (`time set noon`, with or without the `/`), or `say …` to tell everyone.
+    /// Replies are logged.
+    pub fn console(&self, line: impl Into<String>) {
+        let _ = self.console.send(line.into());
     }
 }
 
@@ -128,14 +136,15 @@ impl Drop for ServerHandle {
 pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
     let (save, meta) = open_world(&mut config)?;
     let (connections, incoming) = unbounded();
+    let (console, lines) = unbounded();
     let stop = Arc::new(AtomicBool::new(false));
     let thread = {
         let stop = stop.clone();
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, meta, save, content, incoming).run(&stop))?
+            .spawn(move || Server::new(config, meta, save, content, incoming, lines).run(&stop))?
     };
-    Ok(ServerHandle { connections, stop, thread: Some(thread) })
+    Ok(ServerHandle { connections, console, stop, thread: Some(thread) })
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -204,6 +213,8 @@ pub(crate) struct Server {
     generated_tx: Sender<(ColumnPos, Column)>,
     generated_rx: Receiver<(ColumnPos, Column)>,
     incoming: Receiver<ServerConnection>,
+    /// Lines typed into the server's own console.
+    console: Receiver<String>,
     players: FxHashMap<PlayerId, Player>,
     next_player: PlayerId,
     spawn: Vec3,
@@ -225,6 +236,7 @@ impl Server {
         save: Option<WorldSave>,
         content: Content,
         incoming: Receiver<ServerConnection>,
+        console: Receiver<String>,
     ) -> Self {
         let world_content = WorldContent::load(&content).expect("checked by load_content");
         let overworld = Arc::new(Overworld::with_content(meta.seed, content.blocks.clone(), &world_content));
@@ -265,6 +277,7 @@ impl Server {
             generated_tx,
             generated_rx,
             incoming,
+            console,
             players: FxHashMap::default(),
             next_player: 1,
             spawn,
@@ -280,6 +293,9 @@ impl Server {
             self.accept_connections();
             self.receive_generated();
             self.handle_messages();
+            while let Ok(line) = self.console.try_recv() {
+                self.console(&line);
+            }
             let now = Instant::now();
             if now >= next_tick {
                 self.tick();

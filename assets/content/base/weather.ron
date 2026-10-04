@@ -30,12 +30,30 @@
         ),
         (
             name: "thunderstorm", tags: ["wet", "lightning"],
-            when: [(Precipitation, 0.4, 0.8), (Lift, 0.25, 0.6)],
-            shows: [Gusts(0.9)], minutes: 30.0,
+            when: [(Precipitation, 0.25, 0.6), (Lift, 0.2, 0.5)],
+            shows: [Gusts(0.8), Fog(0.15)], minutes: 30.0,
+        ),
+        // The towering storms of hot, wet country: a near-black sky, a deluge, lightning all
+        // around. An afternoon sight in the tropics, rare anywhere cooler or drier.
+        (
+            name: "supercell", tags: ["wet", "lightning", "hazard", "visibility"],
+            when: [(Precipitation, 0.5, 0.8), (Lift, 0.3, 0.6), (Temperature, 21.0, 27.0), (Rainfall, 1500.0, 2500.0)],
+            shows: [Lightning(1.0), Fog(0.35), Gusts(1.0)], minutes: 40.0,
+        ),
+        // Far-off flashes with no thunder on warm, humid summer nights.
+        (
+            name: "heat_lightning", rarity: Uncommon, tags: ["night", "lightning"],
+            when: [(Temperature, 20.0, 25.0), (Humidity, 0.55, 0.75), (Night, 0.6, 0.95), (Convection, 0.2, 0.5), (Precipitation, 0.1, 0.0)],
+            shows: [Lightning(0.3)], minutes: 40.0,
+        ),
+        (
+            name: "freezing_rain", rarity: Rare, tags: ["wet", "cold", "hazard"],
+            when: [(Temperature, 1.5, -0.5), (Temperature, -5.0, -2.0), (Precipitation, 0.05, 0.25), (Humidity, 0.75, 0.9)],
+            shows: [Sleet(0.3), Frost(1.0)], minutes: 40.0,
         ),
         (
             name: "sleet", tags: ["wet", "cold"],
-            when: [(Snow, 0.15, 0.4), (Snow, 0.85, 0.6), (Precipitation, 0.05, 0.2)],
+            when: [(Snow, 0.15, 0.4), (Snow, 0.85, 0.6), (Precipitation, 0.03, 0.12)],
             shows: [Sleet(0.8)], minutes: 30.0,
         ),
         (
@@ -45,12 +63,12 @@
         ),
         (
             name: "blizzard", rarity: Uncommon, tags: ["cold", "visibility"],
-            when: [(Snow, 0.7, 0.95), (Precipitation, 0.15, 0.45), (Wind, 4.0, 8.0)],
+            when: [(Snow, 0.7, 0.95), (Precipitation, 0.08, 0.3), (Wind, 3.0, 6.5)],
             shows: [Fog(0.85), Gusts(1.0)], minutes: 40.0,
         ),
         (
             name: "thundersnow", rarity: Rare, tags: ["cold", "lightning"],
-            when: [(Snow, 0.7, 0.95), (Precipitation, 0.2, 0.5), (Wind, 3.5, 7.0)],
+            when: [(Snow, 0.7, 0.95), (Precipitation, 0.06, 0.2), (Wind, 2.5, 5.0)],
             shows: [Lightning(1.0), Gusts(0.8)], minutes: 15.0,
         ),
         // Wind.
@@ -58,7 +76,7 @@
         (name: "squall", when: [(Convection, 0.5, 0.8), (Precipitation, 0.2, 0.5)], shows: [Gusts(1.0)], minutes: 10.0),
         (
             name: "drifting_snow", tags: ["cold", "visibility"],
-            when: [(SnowCover, 0.5, 0.8), (Wind, 6.0, 10.0), (Precipitation, 0.1, 0.0)],
+            when: [(SnowCover, 0.5, 0.8), (Wind, 4.0, 8.0), (Precipitation, 0.1, 0.0)],
             shows: [Dust(0.3), Gusts(0.8)], minutes: 30.0,
         ),
         (
@@ -68,12 +86,12 @@
         ),
         (
             name: "dust_storm", rarity: Uncommon, tags: ["dry", "visibility"],
-            when: [(Moisture, 0.7, 0.3), (Vegetation, 0.6, 0.3), (Wind, 6.0, 10.0), (Temperature, 12.0, 22.0), (Precipitation, 0.05, 0.0)],
+            when: [(Moisture, 0.7, 0.3), (Vegetation, 0.6, 0.3), (Wind, 4.0, 8.0), (Temperature, 12.0, 22.0), (Precipitation, 0.05, 0.0)],
             shows: [Dust(0.6), Gusts(0.8)], minutes: 40.0,
         ),
         (
             name: "sandstorm", rarity: Uncommon, tags: ["dry", "hazard", "visibility"],
-            when: [(Moisture, 0.35, 0.15), (Vegetation, 0.35, 0.1), (Wind, 5.0, 9.0), (Precipitation, 0.1, 0.0), (Water, 0.5, 0.0)],
+            when: [(Moisture, 0.35, 0.15), (Vegetation, 0.35, 0.1), (Wind, 3.5, 7.0), (Precipitation, 0.1, 0.0), (Water, 0.5, 0.0)],
             shows: [Dust(1.0), Fog(0.5), Gusts(1.0)], minutes: 45.0,
         ),
         // Fog and frost.
@@ -96,6 +114,18 @@
             name: "sea_fog", rarity: Uncommon, tags: ["visibility"],
             when: [(Coast, 0.4, 0.9), (Humidity, 0.6, 0.85), (Temperature, 24.0, 12.0), (Wind, 9.0, 5.0)],
             shows: [GroundFog(density: 0.85, depth: 30.0), Fog(0.3)], minutes: 90.0,
+        ),
+        // Mist rising off lakes and rivers on cool, still mornings.
+        (
+            name: "lake_mist", tags: ["visibility"],
+            when: [(Water, 0.3, 0.8), (Dawn, 0.0, 1.0), (Temperature, 16.0, 8.0), (Wind, 4.5, 2.0)],
+            shows: [GroundFog(density: 0.7, depth: 4.0)], minutes: 60.0,
+        ),
+        // Steam rising off hot ground in the sun after rain.
+        (
+            name: "steam_after_rain", tags: ["hot", "wet"],
+            when: [(Wetness, 0.25, 0.6), (Temperature, 20.0, 27.0), (SunHeight, 0.2, 0.5), (Precipitation, 0.05, 0.0)],
+            shows: [GroundFog(density: 0.35, depth: 3.0), HeatHaze(0.3)], minutes: 15.0,
         ),
         (
             name: "frost", tags: ["cold"],
@@ -128,6 +158,12 @@
             when: [(Cirrus, 0.3, 0.7), (Cover, 0.5, 0.2), (SunHeight, 0.0, 0.08), (SunHeight, 0.35, 0.15)],
             shows: [Halo(1.0)], minutes: 30.0,
         ),
+        // Ice crystals glittering in still, bitter air, ringing the sun with a halo.
+        (
+            name: "diamond_dust", rarity: Uncommon, tags: ["cold", "wonder"],
+            when: [(Temperature, -14.0, -20.0), (Cover, 0.3, 0.05), (Wind, 3.5, 1.5), (Humidity, 0.25, 0.45)],
+            shows: [Halo(0.7), Fog(0.1)], minutes: 60.0,
+        ),
         (
             name: "aurora", rarity: Uncommon, tags: ["wonder", "night"],
             when: [(Latitude, 0.72, 0.85), (Night, 0.6, 0.95), (Cover, 0.6, 0.3)],
@@ -141,7 +177,7 @@
         (
             name: "shooting_stars", tags: ["night"],
             when: [(Night, 0.85, 1.0), (Cover, 0.3, 0.1)],
-            shows: [FallingStars(0.15)], minutes: 30.0,
+            shows: [FallingStars(0.01)], minutes: 30.0,
         ),
         (
             name: "meteor_shower", rarity: VeryRare, tags: ["wonder", "night"],
@@ -176,41 +212,49 @@
             shows: [FallingStars(1.0), Motes(0.4)], minutes: 60.0,
         ),
     ],
-    // Kinds of weather `/weather KIND` brings and `--weather KIND` shows. Each sets some of
-    // what the weather does; what it leaves out stays natural where it is forced, so rain
-    // falls as snow where it is freezing. Fractions are 0..1, wind is in blocks per second
-    // and temperature in °C. `effects` are held at full strength.
+    // Kinds of weather `/weather KIND [INTENSITY]` brings and `--weather KIND[:INTENSITY]`
+    // shows. Each sets some of what the weather does at its fiercest (intensity 1); what it
+    // leaves out stays natural where it is forced, so rain falls as snow where it is
+    // freezing. Intensity scales what falls and the effects held, and the wind partly;
+    // `intensity` is how intense it is when asked for without saying. Fractions are 0..1,
+    // wind is in blocks per second and temperature in °C.
     presets: [
-        (name: "clear", cover: 0.0, convection: 0.5, cirrus: 0.0, humidity: 0.3, precipitation: 0.0, wind: 2.2),
-        (name: "cirrus", cover: 0.05, convection: 0.3, cirrus: 0.9, humidity: 0.35, precipitation: 0.0, wind: 4.1),
-        (name: "cumulus", cover: 0.35, convection: 1.0, cirrus: 0.1, humidity: 0.5, precipitation: 0.0, wind: 3.4),
-        (name: "cloudy", cover: 0.6, convection: 0.3, cirrus: 0.0, humidity: 0.6, precipitation: 0.0, wind: 4.5),
-        (name: "overcast", cover: 0.95, convection: 0.0, cirrus: 0.0, humidity: 0.75, precipitation: 0.0, wind: 5.4),
-        (name: "drizzle", cover: 0.97, convection: 0.0, cirrus: 0.0, humidity: 0.95, precipitation: 0.15, wind: 3.0, effects: ["drizzle"]),
-        (name: "rain", cover: 0.98, convection: 0.1, cirrus: 0.0, humidity: 0.85, precipitation: 0.5, wind: 5.4),
-        (name: "downpour", cover: 1.0, convection: 0.6, cirrus: 0.0, humidity: 0.95, precipitation: 0.9, wind: 7.0, effects: ["downpour"]),
-        (name: "storm", cover: 1.0, convection: 1.0, cirrus: 0.0, humidity: 0.9, precipitation: 1.0, wind: 10.8, effects: ["thunderstorm"]),
-        (name: "hail", cover: 1.0, convection: 1.0, humidity: 0.9, precipitation: 0.8, wind: 9.0, temperature: 14.0, effects: ["hail", "thunderstorm"]),
-        (name: "sleet", cover: 0.98, convection: 0.1, humidity: 0.9, precipitation: 0.5, snow: 0.5, wind: 5.0, temperature: 0.5, effects: ["sleet"]),
-        (name: "snow", cover: 0.95, convection: 0.0, cirrus: 0.0, humidity: 0.8, precipitation: 0.6, snow: 1.0, wind: 3.2, temperature: -3.0),
-        (name: "blizzard", cover: 1.0, convection: 0.2, humidity: 0.9, precipitation: 0.9, snow: 1.0, wind: 13.0, temperature: -8.0, effects: ["blizzard"]),
-        (name: "thundersnow", cover: 1.0, convection: 0.4, humidity: 0.9, precipitation: 0.8, snow: 1.0, wind: 9.0, temperature: -4.0, effects: ["thundersnow"]),
-        (name: "fog", cover: 0.4, convection: 0.0, humidity: 0.98, precipitation: 0.0, wind: 0.8, effects: ["mist", "valley_fog"]),
-        (name: "mist", cover: 0.6, convection: 0.0, humidity: 0.9, precipitation: 0.0, wind: 1.5, effects: ["mist"]),
-        (name: "sea_fog", cover: 0.5, convection: 0.0, humidity: 0.95, precipitation: 0.0, wind: 4.0, effects: ["sea_fog"]),
+        (name: "clear", cover: 0.0, convection: 0.5, cirrus: 0.0, humidity: 0.3, precipitation: 0.0, wind: 1.8),
+        (name: "cirrus", cover: 0.05, convection: 0.3, cirrus: 0.9, humidity: 0.35, precipitation: 0.0, wind: 2.8),
+        (name: "cumulus", cover: 0.35, convection: 1.0, cirrus: 0.1, humidity: 0.5, precipitation: 0.0, wind: 2.6),
+        (name: "cloudy", cover: 0.6, convection: 0.3, cirrus: 0.0, humidity: 0.6, precipitation: 0.0, wind: 3.0),
+        (name: "overcast", cover: 0.95, convection: 0.0, cirrus: 0.0, humidity: 0.75, precipitation: 0.0, wind: 3.5),
+        (name: "drizzle", cover: 0.97, convection: 0.0, cirrus: 0.0, humidity: 0.95, precipitation: 0.35, wind: 3.0, effects: ["drizzle"], intensity: 0.5),
+        (name: "rain", cover: 0.98, convection: 0.1, cirrus: 0.0, humidity: 0.85, precipitation: 1.0, wind: 6.0, intensity: 0.4),
+        (name: "downpour", cover: 1.0, convection: 0.6, cirrus: 0.0, humidity: 0.95, precipitation: 1.0, wind: 8.0, effects: ["downpour"], intensity: 0.85),
+        (name: "storm", cover: 1.0, convection: 1.0, cirrus: 0.0, humidity: 0.9, precipitation: 1.0, wind: 12.0, effects: ["thunderstorm"], intensity: 0.75),
+        (name: "supercell", cover: 1.0, convection: 1.0, cirrus: 0.0, humidity: 0.95, precipitation: 1.0, wind: 15.0, temperature: 26.0, effects: ["supercell", "thunderstorm"], intensity: 0.9),
+        (name: "hail", cover: 1.0, convection: 1.0, humidity: 0.9, precipitation: 1.0, wind: 10.0, temperature: 14.0, effects: ["hail", "thunderstorm"], intensity: 0.7),
+        (name: "sleet", cover: 0.98, convection: 0.1, humidity: 0.9, precipitation: 0.8, snow: 0.5, wind: 6.0, temperature: 0.5, effects: ["sleet"], intensity: 0.6),
+        (name: "freezing_rain", cover: 1.0, convection: 0.1, humidity: 0.95, precipitation: 0.7, snow: 0.0, wind: 4.0, temperature: -1.0, effects: ["freezing_rain"], intensity: 0.6),
+        (name: "snow", cover: 0.95, convection: 0.0, cirrus: 0.0, humidity: 0.8, precipitation: 1.0, snow: 1.0, wind: 4.0, temperature: -3.0, intensity: 0.45),
+        (name: "blizzard", cover: 1.0, convection: 0.2, humidity: 0.9, precipitation: 1.0, snow: 1.0, wind: 16.0, temperature: -8.0, effects: ["blizzard"], intensity: 0.85),
+        (name: "thundersnow", cover: 1.0, convection: 0.4, humidity: 0.9, precipitation: 1.0, snow: 1.0, wind: 10.0, temperature: -4.0, effects: ["thundersnow"], intensity: 0.8),
+        (name: "fog", cover: 0.4, convection: 0.0, humidity: 0.98, precipitation: 0.0, wind: 0.8, effects: ["mist", "valley_fog"], intensity: 0.8),
+        (name: "mist", cover: 0.6, convection: 0.0, humidity: 0.9, precipitation: 0.0, wind: 1.5, effects: ["mist"], intensity: 0.7),
+        (name: "sea_fog", cover: 0.5, convection: 0.0, humidity: 0.95, precipitation: 0.0, wind: 4.0, effects: ["sea_fog"], intensity: 0.8),
+        (name: "lake_mist", cover: 0.1, convection: 0.0, humidity: 0.9, precipitation: 0.0, wind: 0.5, temperature: 6.0, effects: ["lake_mist", "dawn_mist"], intensity: 0.8),
         (name: "frost", cover: 0.0, convection: 0.0, humidity: 0.6, precipitation: 0.0, wind: 0.8, temperature: -4.0, effects: ["frost"]),
-        (name: "heat_haze", cover: 0.0, convection: 0.3, cirrus: 0.0, humidity: 0.25, precipitation: 0.0, wind: 1.5, temperature: 34.0, effects: ["heat_haze"]),
-        (name: "dust_storm", cover: 0.2, convection: 0.2, humidity: 0.2, precipitation: 0.0, wind: 11.0, temperature: 26.0, effects: ["dust_storm"]),
-        (name: "sandstorm", cover: 0.1, convection: 0.2, cirrus: 0.0, humidity: 0.12, precipitation: 0.0, wind: 13.0, temperature: 33.0, effects: ["sandstorm"]),
-        (name: "rainbow", cover: 0.6, convection: 0.7, humidity: 0.8, precipitation: 0.05, wind: 4.0, effects: ["rainbow"]),
-        (name: "double_rainbow", cover: 0.6, convection: 0.7, humidity: 0.8, precipitation: 0.05, wind: 4.0, effects: ["double_rainbow"]),
-        (name: "halo", cover: 0.05, convection: 0.2, cirrus: 0.8, humidity: 0.4, precipitation: 0.0, wind: 4.0, effects: ["halo"]),
-        (name: "sun_dogs", cover: 0.05, convection: 0.2, cirrus: 0.8, humidity: 0.4, precipitation: 0.0, wind: 4.0, temperature: -10.0, effects: ["sun_dogs"]),
-        (name: "aurora", cover: 0.05, convection: 0.0, cirrus: 0.0, humidity: 0.4, precipitation: 0.0, wind: 2.0, temperature: -12.0, effects: ["aurora"]),
+        (name: "diamond_dust", cover: 0.0, convection: 0.0, cirrus: 0.2, humidity: 0.7, precipitation: 0.0, wind: 0.5, temperature: -22.0, effects: ["diamond_dust"]),
+        (name: "heat_haze", cover: 0.0, convection: 0.3, cirrus: 0.0, humidity: 0.25, precipitation: 0.0, wind: 1.5, temperature: 34.0, effects: ["heat_haze"], intensity: 0.8),
+        (name: "steam", cover: 0.3, convection: 0.5, humidity: 0.8, precipitation: 0.0, wind: 1.0, temperature: 28.0, effects: ["steam_after_rain"], intensity: 0.8),
+        (name: "dust_storm", cover: 0.2, convection: 0.2, humidity: 0.2, precipitation: 0.0, wind: 12.0, temperature: 26.0, effects: ["dust_storm"], intensity: 0.6),
+        (name: "sandstorm", cover: 0.1, convection: 0.2, cirrus: 0.0, humidity: 0.12, precipitation: 0.0, wind: 15.0, temperature: 33.0, effects: ["sandstorm"], intensity: 0.7),
+        (name: "rainbow", cover: 0.6, convection: 0.7, humidity: 0.8, precipitation: 0.05, wind: 3.0, effects: ["rainbow"]),
+        (name: "double_rainbow", cover: 0.6, convection: 0.7, humidity: 0.8, precipitation: 0.05, wind: 3.0, effects: ["double_rainbow"]),
+        (name: "halo", cover: 0.05, convection: 0.2, cirrus: 0.8, humidity: 0.4, precipitation: 0.0, wind: 3.0, effects: ["halo"]),
+        (name: "sun_dogs", cover: 0.05, convection: 0.2, cirrus: 0.8, humidity: 0.4, precipitation: 0.0, wind: 3.0, temperature: -10.0, effects: ["sun_dogs"]),
+        (name: "aurora", cover: 0.05, convection: 0.0, cirrus: 0.0, humidity: 0.4, precipitation: 0.0, wind: 1.5, temperature: -12.0, effects: ["aurora"]),
+        (name: "heat_lightning", cover: 0.4, convection: 0.6, humidity: 0.75, precipitation: 0.0, wind: 1.5, temperature: 26.0, effects: ["heat_lightning"]),
         (name: "meteor_shower", cover: 0.0, convection: 0.0, cirrus: 0.0, humidity: 0.3, precipitation: 0.0, wind: 1.5, effects: ["meteor_shower"]),
-        (name: "ball_lightning", cover: 1.0, convection: 1.0, humidity: 0.9, precipitation: 0.6, wind: 8.0, effects: ["ball_lightning", "thunderstorm"]),
+        (name: "ball_lightning", cover: 1.0, convection: 1.0, humidity: 0.9, precipitation: 0.6, wind: 7.0, effects: ["ball_lightning", "thunderstorm"]),
         (name: "marsh_lights", cover: 0.2, convection: 0.0, humidity: 0.95, precipitation: 0.0, wind: 0.5, effects: ["marsh_lights", "dawn_mist"]),
-        (name: "aether_storm", cover: 0.75, convection: 0.8, humidity: 0.7, precipitation: 0.1, wind: 9.0, effects: ["aether_storm"]),
+        (name: "aether_storm", cover: 0.75, convection: 0.8, humidity: 0.7, precipitation: 0.1, wind: 8.0, effects: ["aether_storm"]),
         (name: "starfall", cover: 0.0, convection: 0.0, cirrus: 0.0, humidity: 0.3, precipitation: 0.0, wind: 1.0, effects: ["starfall"]),
     ],
     // Winds `/wind KIND` brings: speed in blocks per second and how much it gusts.

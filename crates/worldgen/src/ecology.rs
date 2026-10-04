@@ -5,9 +5,19 @@
 //! biome and across biomes: oaks give way to birches as it gets cooler, and a mod's new
 //! flower grows wherever its tags and climate fit.
 //!
-//! Low-frequency noise adds the patchiness of real vegetation: clearings and groves, stands
-//! of one tree species among others, lusher and sparser meadows, and drifts of one kind of
-//! flower. Where aether runs high, rare fantastical trees and plants turn up.
+//! Low-frequency noise adds the patchiness of real vegetation. One field, the stand, grades
+//! a forest's structure from old-growth cores (dense, tall, with the giants) through
+//! ordinary woodland to scrubby edges and gaps (Terralith's band-pass forests), so tree
+//! density and tree size change together. A second, global field opens clearings with a
+//! soft edge across every biome: trees fade out first, shrubs reach further in, and meadow
+//! plants and the clearing's own decorations fill them (Wilder Wild's clearings). Further
+//! noise makes stands of one tree species among others, lusher and sparser meadows, and
+//! drifts of one kind of flower. Where aether runs high, rare fantastical trees and plants
+//! turn up.
+//!
+//! Small plants are decided block by block in a fixed order of stages: flowers (and
+//! wonders), fungi and other plants that grow alone, then the grasses and ferns that
+//! carpet whatever is left, so most open ground in a meadow carries a plant.
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 use voxmar_engine::block::{BlockId, BlockRegistry};
@@ -24,7 +34,22 @@ use crate::Site;
 pub use crate::content::Ground;
 
 /// Chance that a tree grows on a 4×4 candidate cell where the forest is densest.
-pub const TREE_CHANCE: f32 = 0.5;
+pub const TREE_CHANCE: f32 = 0.6;
+/// Where the clearing field (evenly spread over 0 ..= 1) starts to open a clearing, and
+/// where the clearing is fully open: about a tenth of the land lies in clearings.
+const CLEARING: (f32, f32) = (0.85, 0.95);
+/// Flowers where the bloom field (evenly spread over 0 ..= 1) is low: a stray one here and
+/// there, as a share of the biome's `flowers`.
+const STRAY_FLOWERS: f32 = 0.03;
+/// Where the bloom field grows drifts of flowers: about a seventh of the land.
+const DRIFTS: (f32, f32) = (0.82, 0.95);
+/// The bloom field's rare peaks, where flowers grow densely, and how much denser.
+const FLOWER_PATCHES: (f32, f32) = (0.985, 0.998);
+const PATCH_BOOST: f32 = 4.0;
+/// How many kinds of flower grow together in one place, about.
+const KINDS_AT_ONCE: f32 = 2.5;
+/// Margin over which a tree fades in and out of its band of the stand field.
+const STAND_MARGIN: f32 = 0.08;
 /// Chance per candidate cell of a weight-1 tree of a particular habitat (a willow by a
 /// stream), where the habitat is just right.
 const HABITAT_CHANCE: f32 = 0.15;
@@ -58,6 +83,7 @@ struct TreeSpec {
     comfort: Comfort,
     stands: bool,
     shades: bool,
+    stand: Option<(f32, f32)>,
 }
 
 /// What generation needs of a plant definition.
@@ -69,6 +95,7 @@ struct PlantSpec {
     ground: u8,
     habitat: Habitat,
     comfort: Comfort,
+    snowy: Option<BlockId>,
 }
 
 /// What one biome grows: candidates from the pools with the biome's weight for each,
@@ -101,11 +128,15 @@ pub struct Ecology {
     trees: Vec<TreeSpec>,
     plants: Vec<PlantSpec>,
     plant_names: Vec<String>,
+    /// Each plant's rarity times the world's featured boost.
+    rarity: Vec<f32>,
     properties: Vec<PlantProperties>,
     /// Per biome, in biome order.
     flora: Vec<Flora>,
-    /// Clearings and groves in forests.
-    patches: FastNoiseLite,
+    /// The forest's structure: old-growth cores, woodland, scrubby edges and gaps.
+    stands: FastNoiseLite,
+    /// Clearings, across every biome.
+    clearings: FastNoiseLite,
     /// Stands of one tree species.
     groves: FastNoiseLite,
     /// Lush and sparse grass.
@@ -114,6 +145,8 @@ pub struct Ecology {
     blooms: FastNoiseLite,
     /// Which flower grows in a drift.
     kinds: FastNoiseLite,
+    /// Which few kinds of flower grow in a region.
+    varieties: FastNoiseLite,
     richness: f32,
     seed: u64,
 }
@@ -148,6 +181,14 @@ pub(crate) fn fit(comfort: &Comfort, temperature: f32, moisture: f32) -> f32 {
     band(temperature, comfort.temperature, 2.0) * band(moisture, comfort.moisture, 0.12)
 }
 
+/// How well a stand value suits a band of the stand field, 0 ..= 1: 1 inside, fading out
+/// over a margin, except at the ends of the field.
+fn stand_band(lo: f32, hi: f32, stand: f32) -> f32 {
+    let rise = if lo <= 0.0 { 1.0 } else { smoothstep(lo - STAND_MARGIN, lo + STAND_MARGIN, stand) };
+    let fall = if hi >= 1.0 { 1.0 } else { 1.0 - smoothstep(hi - STAND_MARGIN, hi + STAND_MARGIN, stand) };
+    rise * fall
+}
+
 /// How much of its habitat a site offers, 0 ..= 1.
 fn habitat(habitat: Habitat, site: &Site) -> f32 {
     // Height over the sea, lake or river over or beside the site.
@@ -158,6 +199,7 @@ fn habitat(habitat: Habitat, site: &Site) -> f32 {
         Habitat::Anywhere => 1.0,
         Habitat::Open => 1.0 - 0.6 * site.forest,
         Habitat::Shade => smoothstep(0.3, 0.7, site.forest),
+        Habitat::Understory => 0.25 + 0.75 * smoothstep(0.15, 0.6, site.forest),
         Habitat::Water => smoothstep(0.35, 0.7, site.river) * yes(above <= 3),
         Habitat::Shore => yes((0..=3).contains(&above) && (coast || site.river > 0.5)),
         Habitat::Shallows => yes((-2..=1).contains(&above) && (coast || site.river > 0.3)),
@@ -184,6 +226,7 @@ impl Ecology {
                 comfort: t.comfort.clone(),
                 stands: t.stands,
                 shades: t.crown.shades(),
+                stand: t.stand,
             })
             .collect();
         let plants = content
@@ -206,6 +249,7 @@ impl Ecology {
                     ground: mask(&p.ground),
                     habitat: p.habitat,
                     comfort: p.comfort.clone(),
+                    snowy: p.snowy.as_deref().map(|n| registry.expect(n)),
                 }
             })
             .collect();
@@ -217,16 +261,24 @@ impl Ecology {
             trees,
             plants,
             plant_names: content.plants.iter().map(|p| p.name.clone()).collect(),
+            rarity: plant_rarity.clone(),
             properties,
             flora,
-            patches: noise(seed, 30, 1.0 / 300.0, FractalType::FBm, 2),
+            stands: noise(seed, 30, 1.0 / 220.0, FractalType::FBm, 2),
+            clearings: noise(seed, 35, 1.0 / 150.0, FractalType::FBm, 2),
             groves: noise(seed, 31, 1.0 / 140.0, FractalType::FBm, 2),
             meadows: noise(seed, 32, 1.0 / 40.0, FractalType::FBm, 2),
             blooms: noise(seed, 33, 1.0 / 90.0, FractalType::FBm, 2),
-            kinds: noise(seed, 34, 1.0 / 22.0, FractalType::None, 1),
+            kinds: noise(seed, 34, 1.0 / 22.0, FractalType::FBm, 2),
+            varieties: noise(seed, 36, 1.0 / 600.0, FractalType::FBm, 2),
             richness: dials.vegetation,
             seed,
         }
+    }
+
+    /// Whether a tree casts a canopy (shrubs, snags and cacti do not).
+    pub fn shades(&self, tree: TreeId) -> bool {
+        self.trees[tree.0 as usize].shades
     }
 
     /// A plant's properties for gameplay, by name.
@@ -234,15 +286,30 @@ impl Ecology {
         self.plant_names.iter().position(|n| n == name).map(|i| &self.properties[i])
     }
 
-    /// Tree cover (0..=1) at a position: the forest of the biome there (and of the one next
-    /// door, near a border), broken into clearings and groves, richer on fertile soil.
-    pub fn forest(&self, x: i32, z: i32, home: BiomeId, neighbour: BiomeId, share: f32, fertility: f32) -> f32 {
+    /// The forest's structure at a position, 0 ..= 1 and evenly spread: gaps and scrubby
+    /// edges low, ordinary woodland in the middle, old-growth cores high.
+    pub fn stand(&self, x: i32, z: i32) -> f32 {
+        crate::climate::uniform(self.stands.get_noise_2d(x as f32, z as f32))
+    }
+
+    /// How deep into a clearing a position lies: 0 outside, rising across the soft edge to
+    /// 1 where the clearing is open.
+    pub fn clearing(&self, x: i32, z: i32) -> f32 {
+        let u = crate::climate::uniform(self.clearings.get_noise_2d(x as f32, z as f32));
+        smoothstep(CLEARING.0, CLEARING.1, u)
+    }
+
+    /// Tree cover (0..=1) at a position, given its stand and clearing: the forest of the
+    /// biome there (and of the one next door, near a border), dense in old-growth cores,
+    /// thin in gaps, gone in clearings, richer on fertile soil.
+    pub fn forest(&self, stand: f32, clearing: f32, home: BiomeId, neighbour: BiomeId, share: f32, fertility: f32) -> f32 {
         let density = self.flora[home.0 as usize].forest * (1.0 - share) + self.flora[neighbour.0 as usize].forest * share;
         if density <= 0.0 {
             return 0.0;
         }
-        let patch = 0.08 + 0.92 * smoothstep(-0.2, 0.5, self.patches.get_noise_2d(x as f32, z as f32));
-        (density * patch * (0.6 + 0.5 * self.richness) * (0.75 + 0.5 * fertility)).min(1.0)
+        let cover = 0.12 + 0.88 * smoothstep(0.08, 0.5, stand);
+        let open = 1.0 - smoothstep(0.0, 0.45, clearing);
+        (density * cover * open * (0.6 + 0.5 * self.richness) * (0.75 + 0.5 * fertility)).min(1.0)
     }
 
     /// The chance, per candidate cell, of each kind of tree growing here, into `out`. With
@@ -255,7 +322,8 @@ impl Ecology {
         let above = site.height - site.water;
         let suits = |tree: TreeId| {
             let spec = &self.trees[tree.0 as usize];
-            fit(&spec.comfort, t, m) * habitat(spec.habitat, site)
+            let band = spec.stand.map_or(1.0, |(lo, hi)| stand_band(lo, hi, site.stand));
+            fit(&spec.comfort, t, m) * habitat(spec.habitat, site) * band
         };
 
         if above >= 1 && site.forest > 0.0 && !flora.canopy.is_empty() {
@@ -307,7 +375,10 @@ impl Ecology {
     }
 
     /// The small plant growing on `ground` at a site, if any. Each position decides alone,
-    /// from a hash and smooth noise, so plants never depend on generation order.
+    /// from a hash and smooth noise, so plants never depend on generation order. The
+    /// stages take slices of one roll in a fixed order (flowers and wonders, then fungi and
+    /// other plants that grow alone, then the carpet of grasses and ferns), so a stage can
+    /// only take what the earlier ones left.
     pub fn plant(&self, site: &Site, ground: Ground, x: i32, z: i32) -> Option<Plant> {
         if matches!(ground, Ground::Bare | Ground::Shallows) {
             return None;
@@ -317,13 +388,8 @@ impl Ecology {
         let unit = |bits: u64| (bits & 0xff_ffff) as f32 / (1u32 << 24) as f32;
         let (second, third) = (unit(hash >> 24), unit(hash >> 40));
         let (t, m) = (site.temperature, site.soil_moisture());
-        let grows = |plant: PlantId| {
-            let spec = &self.plants[plant.0 as usize];
-            if spec.ground & ground_bit(ground) == 0 {
-                return 0.0;
-            }
-            fit(&spec.comfort, t, m) * habitat(spec.habitat, site)
-        };
+        let snow = ground == Ground::Snow;
+        let grows = |plant: PlantId| self.grows(plant, site, ground, t, m);
         // Each kind of growth takes a slice of one roll, as wide as its chance here.
         let mut roll = unit(hash);
         let mut take = |chance: f32| {
@@ -341,65 +407,101 @@ impl Ecology {
             }
             (total, if all > 0.0 { (total / (SUITED * all)).min(1.0) } else { 0.0 })
         };
-        // Picks along the cumulative weights of those that grow here, with `u` in 0..1.
-        let choose = |list: &[(PlantId, f32)], total: f32, u: f32| {
-            let mut left = u * total;
-            let mut last = list[0].0;
-            for &(plant, weight) in list {
-                let weight = weight * grows(plant);
-                if weight > 0.0 {
-                    if left < weight {
-                        return plant;
-                    }
-                    left -= weight;
-                    last = plant;
-                }
-            }
-            last
-        };
-        let fertile = 0.7 + 0.6 * site.fertility;
+        let choose = |list: &[(PlantId, f32)], total: f32, u: f32| choose(list, total, u, grows);
+        let fertile = 0.8 + 0.4 * site.fertility;
 
-        // Carpets of grass and ferns, lusher in patches.
-        if flora.cover > 0.0 {
-            let (total, thriving) = suited(&flora.carpet);
+        // Flowers, sparse: a stray one here and there, drifts where the bloom field runs
+        // high, and dense patches only in its rare peaks (and in biomes whose `flowers` is
+        // high, such as flower meadows). A smooth noise chooses along the cumulative
+        // weights, within a window a slow noise moves about, so neighbours mostly share a
+        // kind and a place has only a few kinds at a time.
+        if flora.flowers > 0.0 {
+            let (total, thriving) = suited(&flora.drifts);
             if total > 0.0 {
-                let meadow = 0.45 + 0.55 * smoothstep(-0.5, 0.4, self.meadows.get_noise_2d(x as f32, z as f32));
-                if take(flora.cover * site.vegetation * meadow * thriving * fertile) {
-                    return Some(self.place(choose(&flora.carpet, total, second), third));
+                let bloom = crate::climate::uniform(self.blooms.get_noise_2d(x as f32, z as f32));
+                let field = STRAY_FLOWERS + smoothstep(DRIFTS.0, DRIFTS.1, bloom) + PATCH_BOOST * smoothstep(FLOWER_PATCHES.0, FLOWER_PATCHES.1, bloom);
+                // Fewest deep in the woods; more at forest edges, in clearings and along
+                // creeks and rivers.
+                let edge = smoothstep(0.05, 0.25, site.forest) * (1.0 - smoothstep(0.35, 0.6, site.forest));
+                let open = (1.0 - 0.75 * site.forest) * (1.0 + 0.5 * site.clearing + 1.2 * edge + 1.5 * site.river);
+                if take(flora.flowers * field * open * thriving * (0.7 + 0.6 * self.richness) * fertile) {
+                    let variety = crate::climate::uniform(self.varieties.get_noise_2d(x as f32, z as f32));
+                    let local = crate::climate::uniform(self.kinds.get_noise_2d(x as f32, z as f32)) + 0.1 * (second - 0.5);
+                    let window = (KINDS_AT_ONCE / flora.drifts.len() as f32).min(1.0);
+                    let drift = (variety + window * local.clamp(0.0, 1.0)).rem_euclid(1.0);
+                    return Some(self.place(choose(&flora.drifts, total, drift), third, snow));
                 }
-            }
-        }
-        // Plants that grow alone.
-        for &(plant, weight) in &flora.alone {
-            if take(ALONE_CHANCE * weight * grows(plant)) {
-                return Some(self.place(plant, second));
             }
         }
         // Rare fantastical plants, more common where aether is high.
         let aether = site.aether * site.aether;
         for &(plant, weight) in &flora.wonder_plants {
             if take(WONDER_PLANT_CHANCE * weight * grows(plant) * aether) {
-                return Some(self.place(plant, second));
+                return Some(self.place(plant, second, snow));
             }
         }
-        // Flowers in drifts: a smooth noise chooses along the cumulative weights, so
-        // neighbours mostly share a kind.
-        if flora.flowers > 0.0 {
-            let (total, thriving) = suited(&flora.drifts);
+        // Fungi, bushes, reeds: plants that grow alone.
+        for &(plant, weight) in &flora.alone {
+            if take(ALONE_CHANCE * weight * grows(plant)) {
+                return Some(self.place(plant, second, snow));
+            }
+        }
+        // Carpets of grass and ferns over most of what is left, lusher in patches and in
+        // clearings.
+        if flora.cover > 0.0 {
+            let (total, thriving) = suited(&flora.carpet);
             if total > 0.0 {
-                let field = 0.04 + smoothstep(0.1, 0.55, self.blooms.get_noise_2d(x as f32, z as f32));
-                if take(flora.flowers * field * thriving * (0.6 + 0.8 * self.richness) * fertile) {
-                    let drift = self.kinds.get_noise_2d(x as f32, z as f32) * 2.0 + 0.5 + 0.15 * (second - 0.5);
-                    return Some(self.place(choose(&flora.drifts, total, drift.rem_euclid(1.0)), third));
+                let meadow = 0.7 + 0.3 * smoothstep(-0.5, 0.4, self.meadows.get_noise_2d(x as f32, z as f32));
+                let lush = (meadow + 0.3 * site.clearing).min(1.0);
+                if take(flora.cover * site.vegetation * lush * thriving * fertile) {
+                    return Some(self.place(choose(&flora.carpet, total, second), third, snow));
                 }
             }
         }
         None
     }
 
-    /// A plant's blocks, with its look (and a stack's height) chosen by `u` in 0..1.
-    fn place(&self, plant: PlantId, u: f32) -> Plant {
+    /// How well a plant grows on `ground` at a site with temperature `t` and soil moisture
+    /// `m`, 0 ..= 1. Under snow, only plants with a snowy look grow, where they would on soil.
+    fn grows(&self, plant: PlantId, site: &Site, ground: Ground, t: f32, m: f32) -> f32 {
         let spec = &self.plants[plant.0 as usize];
+        let rooted = spec.ground & ground_bit(ground) != 0 || (ground == Ground::Snow && spec.snowy.is_some() && spec.ground & ground_bit(Ground::Soil) != 0);
+        if !rooted {
+            return 0.0;
+        }
+        fit(&spec.comfort, t, m) * habitat(spec.habitat, site)
+    }
+
+    /// A plant from `list` (weights) that suits a site, with `u` and `look` in 0..1, or
+    /// none if none of them grows there. For decorations: fungi on logs, plants at the
+    /// foot of trunks.
+    pub fn pick(&self, list: &[(PlantId, f32)], site: &Site, ground: Ground, u: f32, look: f32) -> Option<Plant> {
+        let (t, m) = (site.temperature, site.soil_moisture());
+        let grows = |plant: PlantId| self.grows(plant, site, ground, t, m);
+        let total: f32 = list.iter().map(|&(p, w)| w * grows(p)).sum();
+        (total > 0.0).then(|| self.place(choose(list, total, u, grows), look, ground == Ground::Snow))
+    }
+
+    /// Plants a decoration names by selector, with their weights (times rarity).
+    pub fn select(&self, selects: &[Select], content: &WorldContent, registry: &BlockRegistry) -> Vec<(PlantId, f32)> {
+        content
+            .plants
+            .iter()
+            .enumerate()
+            .filter_map(|(i, plant)| {
+                let weight = selected(selects, &[], &plant.name, content.plant_tags(plant, registry)) * self.rarity[i];
+                (weight > 0.0).then_some((PlantId(i as u16), weight))
+            })
+            .collect()
+    }
+
+    /// A plant's blocks, with its look (and a stack's height) chosen by `u` in 0..1; its
+    /// snowy look where it grows under snow.
+    fn place(&self, plant: PlantId, u: f32, snow: bool) -> Plant {
+        let spec = &self.plants[plant.0 as usize];
+        if let Some(snowy) = spec.snowy.filter(|_| snow) {
+            return Plant::One(snowy);
+        }
         let look = spec.looks.iter().find(|l| u < l.1).unwrap_or(&spec.looks[spec.looks.len() - 1]).0;
         match (spec.top, spec.stack) {
             (Some(top), _) => Plant::Tall(look, top),
@@ -407,6 +509,24 @@ impl Ecology {
             (None, None) => Plant::One(look),
         }
     }
+}
+
+/// Picks along the cumulative weights of the plants in `list` that grow here (`grows`),
+/// whose weights add up to `total`, with `u` in 0..1.
+fn choose(list: &[(PlantId, f32)], total: f32, u: f32, grows: impl Fn(PlantId) -> f32) -> PlantId {
+    let mut left = u * total;
+    let mut last = list[0].0;
+    for &(plant, weight) in list {
+        let weight = weight * grows(plant);
+        if weight > 0.0 {
+            if left < weight {
+                return plant;
+            }
+            left -= weight;
+            last = plant;
+        }
+    }
+    last
 }
 
 impl Flora {

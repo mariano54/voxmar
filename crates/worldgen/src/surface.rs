@@ -75,12 +75,37 @@ impl Palette {
     }
 }
 
+/// A material compiled from data.
 #[derive(Clone, Debug)]
-enum Mat {
+pub(crate) enum Mat {
     Mix(Palette),
     Stones,
     Strata,
 }
+
+impl Mat {
+    pub(crate) fn new(material: &Material, registry: &BlockRegistry) -> Self {
+        match material {
+            Material::Block(name) => Mat::Mix(Palette::one(registry.expect(name))),
+            Material::Mix(selects) => Mat::Mix(Palette::new(selects, registry)),
+            Material::Stones => Mat::Stones,
+            Material::Strata => Mat::Strata,
+        }
+    }
+
+    /// The block for a uniform value `u` in 0..1, at height `y` for strata.
+    pub(crate) fn pick(&self, u: f32, stones: &Palette, strata: &[BlockId], y: i32) -> BlockId {
+        match self {
+            Mat::Mix(p) => p.pick(u),
+            Mat::Stones => stones.pick(u),
+            Mat::Strata => strata[y.rem_euclid(strata.len() as i32) as usize],
+        }
+    }
+}
+
+/// Conditions compiled from data, for other rules that test columns the way surfaces do.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Conditions(Vec<Cond>);
 
 #[derive(Clone, Debug)]
 struct LayersRule {
@@ -102,6 +127,8 @@ enum Cond {
     Drier(f32, f32),
     Forest(f32, f32),
     River(f32, f32),
+    Clearing(f32, f32),
+    Stand(f32, f32),
     /// A bit per matching province.
     Province(u64),
     Band(usize, f32),
@@ -160,6 +187,33 @@ pub struct Spot<'a> {
     pub mix: &'a dyn Fn() -> f32,
     /// Uniform per-column randomness.
     pub chance: f32,
+    /// Noise values already sampled here: rules often test one noise twice (a trail and
+    /// its fringe, a patch and its rim).
+    pub sampled: Sampled,
+}
+
+/// A few noise values sampled at one spot, by noise index.
+#[derive(Default)]
+pub struct Sampled {
+    values: std::cell::Cell<[(u32, f32); 6]>,
+    len: std::cell::Cell<usize>,
+}
+
+impl Sampled {
+    fn get(&self, noise: usize, sample: impl FnOnce() -> f32) -> f32 {
+        let mut values = self.values.get();
+        let len = self.len.get();
+        if let Some(&(_, v)) = values[..len].iter().find(|(i, _)| *i == noise as u32) {
+            return v;
+        }
+        let v = sample();
+        if len < values.len() {
+            values[len] = (noise as u32, v);
+            self.values.set(values);
+            self.len.set(len + 1);
+        }
+        v
+    }
 }
 
 /// The named noise fields of every biome's rules.
@@ -174,7 +228,8 @@ impl SurfaceRules {
         Self { noises: Vec::new(), names: FxHashMap::default(), seed }
     }
 
-    fn noise(&mut self, def: &NoiseDef) -> usize {
+    /// The index of a named noise field, made on first use.
+    pub(crate) fn noise(&mut self, def: &NoiseDef) -> usize {
         let key = format!("{}/{}/{}", def.name, def.scale, def.octaves);
         if let Some(&i) = self.names.get(&key) {
             return i;
@@ -186,12 +241,7 @@ impl SurfaceRules {
     }
 
     pub fn compile(&mut self, def: &SurfaceDef, registry: &BlockRegistry, rocks: &Rocks) -> Surface {
-        let material = |m: &Material| match m {
-            Material::Block(name) => Mat::Mix(Palette::one(registry.expect(name))),
-            Material::Mix(selects) => Mat::Mix(Palette::new(selects, registry)),
-            Material::Stones => Mat::Stones,
-            Material::Strata => Mat::Strata,
-        };
+        let material = |m: &Material| Mat::new(m, registry);
         let layers = |l: &LayersDef| LayersRule {
             top: material(&l.top),
             filler: l.filler.as_ref().map_or_else(|| material(&l.top), material),
@@ -215,6 +265,15 @@ impl SurfaceRules {
         }
     }
 
+    pub(crate) fn conditions(&mut self, when: &[Condition], rocks: &Rocks) -> Conditions {
+        Conditions(when.iter().map(|c| self.condition(c, rocks)).collect())
+    }
+
+    /// Whether all of `conditions` hold at a spot.
+    pub(crate) fn hold(&self, conditions: &Conditions, spot: &Spot) -> bool {
+        conditions.0.iter().all(|c| self.holds(c, spot))
+    }
+
     fn condition(&mut self, c: &Condition, rocks: &Rocks) -> Cond {
         match c {
             Condition::Underwater => Cond::Underwater,
@@ -228,6 +287,8 @@ impl SurfaceRules {
             Condition::Drier(a, b) => Cond::Drier(*a, *b),
             Condition::Forest(a, b) => Cond::Forest(*a, *b),
             Condition::River(a, b) => Cond::River(*a, *b),
+            Condition::Clearing(a, b) => Cond::Clearing(*a, *b),
+            Condition::Stand(a, b) => Cond::Stand(*a, *b),
             Condition::Province(name) => {
                 Cond::Province((0..rocks.len().min(64)).filter(|&i| rocks.matches(ProvinceId(i as u8), name)).fold(0, |m, i| m | 1 << i))
             }
@@ -240,10 +301,15 @@ impl SurfaceRules {
         }
     }
 
+    /// A noise field's value at a position, −1 ..= 1.
+    pub(crate) fn sample(&self, noise: usize, x: i32, z: i32) -> f32 {
+        self.noises[noise].get_noise_2d(x as f32, z as f32)
+    }
+
     fn holds(&self, c: &Cond, spot: &Spot) -> bool {
         let site = spot.site;
         let at = |a: f32, b: f32| a + (b - a) * spot.dither;
-        let noise = |i: usize| self.noises[i].get_noise_2d(spot.x as f32, spot.z as f32);
+        let noise = |i: usize| spot.sampled.get(i, || self.noises[i].get_noise_2d(spot.x as f32, spot.z as f32));
         let above = (site.height - SEA_LEVEL) as f32;
         match c {
             Cond::Underwater => true,
@@ -257,6 +323,8 @@ impl SurfaceRules {
             Cond::Drier(a, b) => site.soil_moisture() < at(*a, *b),
             Cond::Forest(a, b) => site.forest > at(*a, *b),
             Cond::River(a, b) => site.river > at(*a, *b),
+            Cond::Clearing(a, b) => site.clearing > at(*a, *b),
+            Cond::Stand(a, b) => site.stand > at(*a, *b),
             Cond::Province(mask) => mask & (1 << site.province.0) != 0,
             Cond::Band(n, w) => noise(*n).abs() < *w,
             Cond::Tapered(n, by, widths) => {
@@ -291,6 +359,20 @@ impl SurfaceRules {
             _ => &surface.ground,
         };
         resolve(self.first(surface, spot, false, fallback), spot, stones, strata)
+    }
+
+    /// The lining of a cave floor (`ground`, or `underwater` when `underwater`) for an
+    /// underground biome's surface; `None` where it is the stones beneath, which stay as
+    /// they are.
+    pub(crate) fn cave_floor(&self, surface: &Surface, spot: &Spot, underwater: bool, stones: &Palette, strata: &[BlockId]) -> Option<Layers> {
+        let rule = self.first(surface, spot, underwater, if underwater { &surface.underwater } else { &surface.ground });
+        (!matches!(rule.top, Mat::Stones)).then(|| resolve(rule, spot, stones, strata))
+    }
+
+    /// The lining of a cave ceiling (an underground biome's `cliff`), if it is not the
+    /// stones beneath.
+    pub(crate) fn cave_ceiling(&self, surface: &Surface, spot: &Spot, stones: &Palette, strata: &[BlockId]) -> Option<BlockId> {
+        (!matches!(surface.cliff, Mat::Stones)).then(|| surface.cliff.pick((spot.mix)(), stones, strata, spot.site.height))
     }
 
     /// Bare rock of steep slopes and exposed heights.

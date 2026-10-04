@@ -16,6 +16,7 @@ use crate::player::LocalPlayer;
 use crate::render::DayCycle;
 use crate::render::lod::Lod;
 use crate::weather::ClientWeather;
+use crate::weather::atmosphere::ClientAtmosphere;
 use crate::world::ClientWorld;
 
 pub struct NetPlugin;
@@ -111,7 +112,13 @@ fn receive(
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
-    (time, mut clock, mut console, mut broken): (Res<Time>, ResMut<Clock>, ResMut<Console>, MessageWriter<BlockBroken>),
+    (time, mut clock, mut console, mut air, mut broken): (
+        Res<Time>,
+        ResMut<Clock>,
+        ResMut<Console>,
+        ResMut<ClientAtmosphere>,
+        MessageWriter<BlockBroken>,
+    ),
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     loop {
@@ -128,6 +135,7 @@ fn receive(
         match message {
             ServerMessage::Welcome { position, yaw, flying, allow_flight, admin, seed, weather_seed, .. } => {
                 weather.set_seed(weather_seed);
+                air.start(seed);
                 lod.start(seed, world.registry.clone());
                 player.position = position;
                 player.yaw = yaw;
@@ -194,10 +202,10 @@ fn receive(
                 player.admin = admin;
             }
             ServerMessage::Chat { kind, text } => console.push(kind, &text, time.elapsed_secs()),
-            ServerMessage::Weather { weather: report, effects, quick } => {
-                weather.receive(report, effects, quick, time.elapsed_secs())
+            ServerMessage::Weather { weather: report, effects, nearby, quick } => {
+                weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }
-            ServerMessage::Lightning { at, seed } => weather.lightning(at, seed, at.distance(player.eye())),
+            ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
         }
     }

@@ -14,6 +14,7 @@
 //! | Ravines | rare | carved along seeded paths, about one per 4 km², 30–70 deep and 3–12 wide, some open to the sky |
 //! | Labyrinths | rare | mazes of level passages on several floors, domain-warped (Cave Overhaul) |
 //! | Sinkholes | rare | shafts from the surface down into the caves, some flooded into cenotes |
+//! | Geodes | rare | buried hollows 4–9 blocks across, lined with crystal by `crate::underground` |
 //! | Giant caverns | very rare | cavern systems hundreds of blocks across, most holding one great lake whose pillars stand in it as islands |
 //! | Long ravines | very rare | ravines a kilometre long |
 //!
@@ -39,7 +40,6 @@
 //! generated fluids are always contained and never hang in the air.
 
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType};
-use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::CHUNK_SIZE;
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 
@@ -89,6 +89,10 @@ const RAVINE_CELL: i32 = 1024;
 const RAVINE_STEP: f32 = 8.0;
 /// Sinkholes are seeded per cell of this size.
 const SINKHOLE_CELL: i32 = 192;
+/// Geodes are seeded per cell of this size.
+const GEODE_CELL: i32 = 96;
+/// Rock around a geode's hollow: crystal, then calcite, then dark rock.
+pub(crate) const GEODE_SHELL: f32 = 3.2;
 
 /// Gradient of the 3D noise fields where they cross zero, in field units per block per
 /// unit of frequency (measured). Dividing a field by it and its frequency gives roughly
@@ -98,6 +102,7 @@ const GRADIENT: f32 = 2.9;
 const STYLE: u64 = 0xca7e;
 const RAVINES: u64 = 0x7a71;
 const SINKHOLES: u64 = 0x5141;
+const GEODES: u64 = 0x6e0d;
 const BASINS: u64 = 0xba51;
 const PERCHED: u64 = 0x9e7c;
 const LEDGES: u64 = 0x1ed6;
@@ -252,17 +257,6 @@ impl Caves {
         &self.style
     }
 
-    /// What lines a cave where its rock at `pos`, `depth` blocks under the surface, meets
-    /// the open cave: the floor (open above) or the ceiling (open below).
-    ///
-    /// This is where cave biomes (dripstone, lush, fungal, frozen, molten, painted, crystal)
-    /// will choose their blocks and decorations from depth, climate and rock. Until they
-    /// exist caves are bare rock, so this returns `None`.
-    #[inline]
-    pub fn decoration(&self, _pos: IVec3, _depth: i32, _face: CaveFace) -> Option<BlockId> {
-        None
-    }
-
     /// Radius of the main tunnels in field units at height `y`, `depth` under the surface,
     /// given the local width and entrance fields.
     #[inline]
@@ -339,6 +333,7 @@ impl Caves {
             labyrinth,
             ravines: self.ravines_near(geology, origin),
             sinkholes: self.sinkholes_near(geology, origin),
+            geodes: self.geodes_near(geology, origin),
             tables: Tables::new(self, geology, origin, top),
             profiles: Default::default(),
         }
@@ -453,6 +448,37 @@ impl Caves {
         })
     }
 
+    /// Geodes within reach of the column at `origin`: hollow balls of crystal buried in
+    /// the rock, found by mining into them or where a cave cuts one open. Their hollows are
+    /// carved like caves (so the water tables flood some); `crate::underground` lines them.
+    pub(crate) fn geodes_near(&self, geology: &GeoGrid, origin: IVec3) -> Vec<Geode> {
+        const REACH: i32 = 9;
+        let cell = |v: i32| v.div_euclid(GEODE_CELL);
+        let mut found = Vec::new();
+        for gz in cell(origin.z - REACH)..=cell(origin.z + CHUNK_SIZE + REACH) {
+            for gx in cell(origin.x - REACH)..=cell(origin.x + CHUNK_SIZE + REACH) {
+                let mut rng = Rng::new(self.seed, GEODES, gx, gz);
+                if !rng.chance(0.12) {
+                    continue;
+                }
+                let span = (GEODE_CELL - 2 * REACH) as u32;
+                let (x, z) = (gx * GEODE_CELL + REACH + rng.below(span), gz * GEODE_CELL + REACH + rng.below(span));
+                let near = |c: i32, o: i32| (o - REACH..o + CHUNK_SIZE + REACH).contains(&c);
+                if !near(x, origin.x) || !near(z, origin.z) {
+                    continue;
+                }
+                let y = rng.range(LAVA_LEVEL + 12, SEA_LEVEL - 20);
+                let radius = 2.2 + 2.3 * rng.unit();
+                // Well inside the ground, clear of river beds.
+                if geology.get(x, z).height - y < 18 {
+                    continue;
+                }
+                found.push(Geode { centre: Vec3::new(x as f32, y as f32, z as f32) + 0.5, radius, seed: rng.next_u64() });
+            }
+        }
+        found
+    }
+
     /// Sinkholes within reach of the column at `origin`.
     fn sinkholes_near(&self, geology: &GeoGrid, origin: IVec3) -> Vec<Sinkhole> {
         // The widest sinkhole's rim, plus the reach of features asking `surface_open`.
@@ -536,13 +562,6 @@ impl Heights {
             more: ys.map(|y| 0.7 * smoothstep((DEEP_TUNNELS - 2) as f32, (DEEP_TUNNELS - 60) as f32, y as f32)).collect(),
         }
     }
-}
-
-/// Which side of a block of rock is open cave (see [`Caves::decoration`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CaveFace {
-    Floor,
-    Ceiling,
 }
 
 /// A ravine's path before it is fitted to the ground.
@@ -663,6 +682,32 @@ impl RavineSpan {
         // Ledges: the walls step in and out every couple of blocks, the same along the length.
         let ledge = 1.0 + 0.25 * ((hash3(self.ledges ^ LEDGES, 0, y.div_euclid(2), 0) & 0xff) as f32 / 255.0 - 0.5);
         self.distance < p.half_width * shape * ledge
+    }
+}
+
+/// A geode: a hollow `radius` blocks across, lined with `GEODE_SHELL` blocks of rock.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Geode {
+    pub centre: Vec3,
+    pub radius: f32,
+    pub seed: u64,
+}
+
+impl Geode {
+    /// Distance from the centre to the middle of the block at `p`.
+    #[inline]
+    pub fn distance(&self, p: IVec3) -> f32 {
+        (p.as_vec3() + 0.5).distance(self.centre)
+    }
+
+    /// The heights the geode spans in the block column at (x, z), with its shell.
+    pub fn span(&self, x: i32, z: i32) -> Option<std::ops::RangeInclusive<i32>> {
+        let outer = self.radius + GEODE_SHELL;
+        let d = Vec2::new(x as f32 + 0.5 - self.centre.x, z as f32 + 0.5 - self.centre.z).length();
+        (d < outer).then(|| {
+            let half = (outer * outer - d * d).sqrt();
+            (self.centre.y - half).floor() as i32..=(self.centre.y + half).ceil() as i32
+        })
     }
 }
 
@@ -806,6 +851,7 @@ pub struct CaveColumn<'a> {
     labyrinth: Option<[Lattice; 2]>,
     ravines: Vec<Ravine>,
     sinkholes: Vec<Sinkhole>,
+    geodes: Vec<Geode>,
     tables: Tables,
     profiles: Box<Profiles>,
 }
@@ -871,6 +917,16 @@ impl CaveColumn<'_> {
         let pillar = if cavern + giant > 0.0 { caves.pillars.get_noise_2d(wx as f32, wz as f32) } else { -1.0 };
 
         let sinkholes: Vec<&Sinkhole> = self.sinkholes.iter().filter(|s| s.centre.distance_squared(column) < (2.0 * s.radius).powi(2)).collect();
+        // The hollows of geodes are open like caves.
+        for geode in &self.geodes {
+            if let Some(span) = geode.span(wx, wz) {
+                for y in span.filter(|&y| (FLOOR..=height).contains(&y)) {
+                    if geode.distance(IVec3::new(wx, y, wz)) < geode.radius {
+                        out[y as usize] = Cave::Air;
+                    }
+                }
+            }
+        }
         let tunnel_scale = caves.tunnel_scale(self.width.at(x, z));
         let heights = &caves.heights;
         let noodle_radius = 1.25 * noodle.sqrt() * GRADIENT * NOODLE_FREQUENCY;

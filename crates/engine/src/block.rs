@@ -176,6 +176,22 @@ pub struct BlockDef {
     pub variants: Vec<Variant>,
     /// For a block made from another's variant: that block's name.
     pub variant_of: Option<String>,
+    /// What the block needs to stay: plants need ground (`Below`, their default), hanging
+    /// plants and stalactites a ceiling (`Above`), other blocks nothing.
+    pub support: Option<Support>,
+}
+
+/// Which neighbour a block rests on. It cannot be placed without a solid block there, and
+/// goes when that block does, together with the column of blocks resting on it in turn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Support {
+    /// Stands on its own.
+    #[default]
+    None,
+    /// Grows up from the block beneath (plants).
+    Below,
+    /// Hangs from the block above (vines, hanging roots, stalactites).
+    Above,
 }
 
 impl Default for BlockDef {
@@ -200,6 +216,7 @@ impl Default for BlockDef {
             rarity: Rarity::Common,
             variants: Vec::new(),
             variant_of: None,
+            support: None,
         }
     }
 }
@@ -292,11 +309,30 @@ pub struct BlockPatch {
     pub icon: Option<String>,
     pub rarity: Option<Rarity>,
     pub variants: Option<Vec<Variant>>,
+    pub support: Option<Support>,
 }
 
 impl BlockPatch {
     fn apply(&self, def: &mut BlockDef) {
-        let BlockPatch { render, solid, textures, tint, tint_top_only, light, light_filter, hardness, sound, drops, drop_count, color, tags, icon, rarity, variants } =
+        let BlockPatch {
+            render,
+            solid,
+            textures,
+            tint,
+            tint_top_only,
+            light,
+            light_filter,
+            hardness,
+            sound,
+            drops,
+            drop_count,
+            color,
+            tags,
+            icon,
+            rarity,
+            variants,
+            support,
+        } =
             self.clone();
         render.into_iter().for_each(|v| def.render = v);
         solid.into_iter().for_each(|v| def.solid = v);
@@ -314,6 +350,7 @@ impl BlockPatch {
         icon.into_iter().for_each(|v| def.icon = Some(v));
         rarity.into_iter().for_each(|v| def.rarity = v);
         variants.into_iter().for_each(|v| def.variants = v);
+        support.into_iter().for_each(|v| def.support = Some(v));
     }
 }
 
@@ -373,8 +410,8 @@ pub struct BlockInfo {
     pub drops: BlockId,
     /// A block placed into this cell replaces it (air, fluids, plants).
     pub replaceable: bool,
-    /// Removed together with the block beneath it (plants).
-    pub needs_support: bool,
+    /// The neighbour it rests on and goes with (see [`Support`]).
+    pub support: Support,
     /// How many of `drops` breaking it gives.
     pub drop_count: u8,
 }
@@ -547,7 +584,7 @@ impl BlockRegistry {
                 sound: def.sound,
                 drops,
                 replaceable: !def.solid && matches!(def.render, RenderKind::Invisible | RenderKind::Translucent | RenderKind::Plant),
-                needs_support: def.render == RenderKind::Plant,
+                support: def.support.unwrap_or(if def.render == RenderKind::Plant { Support::Below } else { Support::None }),
                 drop_count: def.drop_count,
             });
         }

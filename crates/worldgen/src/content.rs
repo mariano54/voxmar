@@ -2,11 +2,14 @@
 //! are, so a mod adds a biome, a tree or a rock province exactly as the base game does.
 //!
 //! Each package may hold `climate.ron` (the bands every biome is placed by, and the blocks
-//! of snow and ice), `rocks.ron` (rock provinces), `biomes.ron`, `trees.ron` and
-//! `plants.ron`. Names are qualified with the package (`base:taiga`). Loading resolves
-//! `inherit`, then checks every reference: blocks, provinces, biomes, trees, plants, band
-//! names, and that the biome table has no holes. A broken package fails at load with a
-//! message naming the file, the definition and what is wrong, never later in generation.
+//! of snow and ice), `rocks.ron` (rock provinces), `biomes.ron`, `cave_biomes.ron` (biomes
+//! of the `Underground` layer, in a file of their own), `surfaces.ron` (surface rule sets
+//! biomes share), `trees.ron`, `plants.ron` and `decorations.ron` (rocks, logs, bushes,
+//! patches and tree ornaments). Names are qualified with the package (`base:taiga`).
+//! Loading resolves `inherit` and shared rule sets, then checks every reference: blocks,
+//! provinces, biomes, trees, plants, band names, and that the biome table has no holes. A
+//! broken package fails at load with a message naming the file, the definition and what is
+//! wrong, never later in generation.
 //!
 //! Trees, plants and stones are a shared pool. Each tree and plant says what climate it
 //! likes, what ground it takes root in and where it grows (by a stream, in shade), and
@@ -113,6 +116,18 @@ pub struct FrostDef {
     pub thick_ice: String,
     /// A rare block among thick ice.
     pub rare_ice: String,
+    /// The snow blanket: where snow lies on the ground, blocks above it (in tree crowns,
+    /// on rocks) that match one of these and are open to the sky turn into the block
+    /// given, so snow covers every level down through the canopy.
+    #[serde(default)]
+    pub blanket: Vec<(BlockMatch, String)>,
+}
+
+/// One block by name, or every block carrying a tag.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub enum BlockMatch {
+    Name(String),
+    Tag(String),
 }
 
 // ---------------------------------------------------------------------------------------
@@ -151,7 +166,10 @@ pub enum Layer {
     /// The ground under the sky.
     #[default]
     Surface,
-    /// Caves, chosen by depth as well (later).
+    /// Caves: chosen in 3D, by depth, height and rock province as well as climate. Their
+    /// `surface` lines cave floors (`ground`, or `underwater` under water) and ceilings
+    /// (`cliff`); their `stones` (or `strata`) are the rock around them; and their
+    /// `cave_decoration` grows from floors and ceilings. See `crate::underground`.
     Underground,
 }
 
@@ -175,6 +193,12 @@ pub struct ClimateBox {
     pub erosion: Option<(String, String)>,
     /// Where aether is in this range the biome displaces the ordinary biomes of its cells.
     pub aether: Option<(f32, f32)>,
+    /// Underground biomes only: blocks below the surface.
+    pub depth: Option<(f32, f32)>,
+    /// Underground biomes only: height above sea level (negative below it).
+    pub height: Option<(f32, f32)>,
+    /// Underground biomes only: the rock provinces it lies in, by name or tag.
+    pub provinces: Option<Vec<String>>,
 }
 
 impl ClimateBox {
@@ -263,6 +287,11 @@ pub enum Condition {
     Forest(f32, f32),
     /// Nearness to a river or lake above this, 0 ..= 1.
     River(f32, f32),
+    /// Deeper into a clearing than this: 0 outside, rising across its soft edge to 1.
+    Clearing(f32, f32),
+    /// The forest's structure above this: 0 in its gaps and scrubby edges ..= 1 in its
+    /// old-growth cores (see `Site::stand`).
+    Stand(f32, f32),
     /// The rock province, by name (`granite` or `base:granite`) or tag.
     Province(String),
     /// `|noise| < width`: thin lines along the noise's zero contour (trails, creeks).
@@ -296,6 +325,10 @@ pub struct RuleDef {
 pub struct SurfaceDef {
     #[serde(default)]
     pub rules: Vec<RuleDef>,
+    /// Shared rule sets from `surfaces.ron` (slopes, trails), tried in this order before
+    /// the biome's own rules.
+    #[serde(default)]
+    pub include: Vec<String>,
     pub ground: LayersDef,
     pub underwater: LayersDef,
     #[serde(default)]
@@ -303,6 +336,40 @@ pub struct SurfaceDef {
     /// The stones beneath when left out.
     #[serde(default)]
     pub cliff: Option<Material>,
+}
+
+/// Which way a cave decoration grows.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub enum Side {
+    /// Up from a cave floor.
+    Floor,
+    /// Down from a cave ceiling.
+    Ceiling,
+}
+
+/// Something growing in a cave: a plant or mushroom on the floor, a stalagmite, a
+/// stalactite, an icicle, hanging roots or vines, a crystal. It grows straight up or down
+/// within its block column, into open air only.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DecorationDef {
+    pub on: Side,
+    /// The chance per block of floor or ceiling. A position takes the first decoration of
+    /// its side that it rolls, in order.
+    pub chance: f32,
+    /// Further conditions on the column, as in surface rules (patches, warmth).
+    #[serde(default)]
+    pub when: Vec<Condition>,
+    /// Only on floor or ceiling blocks carrying one of these tags (soil for plants).
+    #[serde(default)]
+    pub on_tags: Vec<String>,
+    pub block: Material,
+    /// How many blocks it grows, from the first number to the second; one when left out.
+    #[serde(default = "single")]
+    pub length: (i32, i32),
+    /// A different last block, with this chance: glowing tips.
+    #[serde(default)]
+    pub tip: Option<(Material, f32)>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -344,6 +411,7 @@ struct RawBiome {
     flora: Option<FloraDef>,
     atmosphere: Option<AtmosphereDef>,
     variants: Option<Vec<(String, f32)>>,
+    cave_decoration: Option<Vec<DecorationDef>>,
 }
 
 /// A biome with its inheritance resolved.
@@ -368,6 +436,8 @@ pub struct BiomeDef {
     pub atmosphere: AtmosphereDef,
     /// Sub-biomes and the share of this biome's land each takes.
     pub variants: Vec<(String, f32)>,
+    /// What grows from the floors and ceilings of an underground biome's caves.
+    pub cave_decoration: Vec<DecorationDef>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -397,6 +467,8 @@ pub enum Habitat {
     Open,
     /// Under trees.
     Shade,
+    /// Thickest under trees, sparser in the open (ferns).
+    Understory,
     /// Along rivers and lake shores, just above the water.
     Water,
     /// On beaches just above the sea.
@@ -425,6 +497,11 @@ pub enum Crown {
     Round { branches: (i32, i32), reach: (f32, f32), radius: (f32, f32), squash: f32 },
     /// Whorls of leaves narrowing to a tip, from `start` (a fraction of the trunk) up.
     Conical { radius: (f32, f32), start: f32 },
+    /// A narrow flame of leaves from `start` (a fraction of the trunk) to well above its
+    /// top, widest a third of the way up (cypresses).
+    Spire { radius: (f32, f32), start: f32 },
+    /// A domed cap with a hanging rim, on a stem (giant mushrooms).
+    Cap { radius: (f32, f32) },
     /// Flat canopies on a few long branches that fork off the trunk.
     Umbrella { branches: (i32, i32), reach: (f32, f32), radius: (f32, f32) },
     /// A round crown with curtains of leaves hanging from its rim.
@@ -444,7 +521,8 @@ impl Crown {
     pub fn reach(&self) -> f32 {
         match *self {
             Crown::Round { reach, radius, .. } | Crown::Umbrella { reach, radius, .. } => reach.1 + radius.1,
-            Crown::Conical { radius, .. } | Crown::Weeping { radius, .. } | Crown::Bush { radius } => radius.1,
+            Crown::Conical { radius, .. } | Crown::Spire { radius, .. } | Crown::Weeping { radius, .. } | Crown::Bush { radius } => radius.1,
+            Crown::Cap { radius } => radius.1 + 0.5,
             Crown::Palm { length, .. } => length.1,
             Crown::Dead { reach, .. } => reach.1,
             Crown::Bare => 0.0,
@@ -507,6 +585,11 @@ pub struct TreeDef {
     /// Grows in stands of its own kind among other trees (birch among oaks).
     #[serde(default)]
     pub stands: bool,
+    /// Where in the forest's structure it grows (`Site::stand`, 0 in gaps and scrubby
+    /// edges ..= 1 in old-growth cores), fading out over a small margin: giants in the
+    /// cores, shrubs at the edges. Everywhere when left out.
+    #[serde(default)]
+    pub stand: Option<(f32, f32)>,
 }
 
 /// What a plant is good for, read by cooking, alchemy and dyeing (later). Left out, each
@@ -563,6 +646,10 @@ pub struct PlantDef {
     pub comfort: Comfort,
     #[serde(default)]
     pub properties: PlantProperties,
+    /// Its look where snow lies: it grows on snowy ground as this block. Plants without one
+    /// do not grow under snow.
+    #[serde(default)]
+    pub snowy: Option<String>,
 }
 
 /// What a biome grows, drawn from the shared pools of trees and plants.
@@ -584,8 +671,170 @@ pub struct FloraDef {
     /// Rare fantastical trees and plants, by selector, more common where aether is high.
     /// Everything tagged `wonder` that suits the climate when left out.
     pub wonders: Option<Vec<Select>>,
-    /// Tags whose trees and plants never grow here, whatever selects them.
+    /// Decorations from `decorations.ron`, by selector; the weight scales each one's
+    /// density. When left out, every decoration carrying one of the biome's tags.
+    pub decorations: Option<Vec<Select>>,
+    /// Tags whose trees, plants and decorations never grow here, whatever selects them.
     pub exclude: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------------------
+// decorations.ron
+
+/// A field a decoration's density follows.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub enum Field {
+    /// Tree cover, 0 ..= 1.
+    Forest,
+    /// The forest's structure, 0 in gaps and scrubby edges ..= 1 in old-growth cores.
+    Stand,
+    /// 0 outside clearings, rising across their soft edge to 1.
+    Clearing,
+    /// How rich the soil is, 0 ..= 1.
+    Fertility,
+    /// Soil moisture.
+    Moisture,
+    /// °C.
+    Temperature,
+    /// Steepest step to a neighbour, in blocks.
+    Slope,
+    /// Nearness to a river or lake, 0 ..= 1.
+    River,
+    /// Blocks above the sea.
+    Altitude,
+    /// How fantastical the land is, 0 ..= 1.
+    Aether,
+    /// A named noise field, −1 ..= 1 (shared with surface rules of the same name).
+    Noise(NoiseDef),
+}
+
+/// A density ramp: `(field, from, to)` scales the density by 0 where the field is at
+/// `from` rising smoothly to 1 at `to`; with `from` above `to` it falls instead.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Follow(pub Field, pub f32, pub f32);
+
+/// What a decoration is. Its shape decides the stage it is placed in, in this fixed
+/// order: patches of ground, rocks, trees (bushes), tree ornaments, logs; then the plant
+/// stages (flowers, fungi, grass) and the snow blanket.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub enum Shape {
+    /// The ground repainted in a ragged disc: dirt, gravel or moss patches, worn ground.
+    Patch { radius: (f32, f32), top: Material },
+    /// A lump of rock half sunk into the ground; `moss` is the chance, in damp shade, of
+    /// moss on each block of its top.
+    Boulder { radius: (f32, f32), stones: Material, #[serde(default)] moss: f32 },
+    /// A few small stones scattered within `spread` blocks.
+    Rocks { count: (i32, i32), spread: f32, size: (f32, f32), stones: Material, #[serde(default)] moss: f32 },
+    /// A mound of leaves on a stub of wood: of the trees growing there, or of `leaves`
+    /// (and `log`) where given.
+    Bush { radius: (f32, f32), #[serde(default)] leaves: Option<String>, #[serde(default)] log: Option<String> },
+    /// A fallen trunk of the trees growing there, lying only where the ground holds it:
+    /// `thick` is the chance of a big trunk, `hollow` of a big one being hollow, `branches`
+    /// of side branches, `stump` of the stump it broke from, and `growth` of a plant from
+    /// `plants` on each block of its top.
+    FallenLog {
+        length: (i32, i32),
+        #[serde(default)]
+        thick: f32,
+        #[serde(default)]
+        hollow: f32,
+        #[serde(default)]
+        branches: f32,
+        #[serde(default)]
+        stump: f32,
+        #[serde(default)]
+        growth: f32,
+        #[serde(default)]
+        plants: Vec<Select>,
+    },
+    /// What is left of a tree that broke: a stump `height` blocks tall, with a chance
+    /// `growth` of a plant from `plants` on top.
+    Stump {
+        height: (i32, i32),
+        #[serde(default)]
+        growth: f32,
+        #[serde(default)]
+        plants: Vec<Select>,
+    },
+    /// Ornament: the ground under the tree's crown, where `cover` of it is reached,
+    /// becomes `top` (needles, leaf mould), densest near the trunk.
+    Litter { top: Material, cover: f32 },
+    /// Ornament: heaps of the tree's own leaves on the ground under its crown.
+    LeafPiles { cover: f32 },
+    /// Ornament: plants from `plants` at the foot of the trunk (fungi), each side with
+    /// chance `cover`.
+    Foot { plants: Vec<Select>, cover: f32 },
+}
+
+/// A decoration in the shared pool.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GroundDecorationDef {
+    pub name: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub rarity: Rarity,
+    pub shape: Shape,
+    /// Placed decorations: about one every this many blocks in each direction where it is
+    /// densest. Ornaments ignore it.
+    #[serde(default)]
+    pub spacing: Option<f32>,
+    /// Ornaments: the share of matching trees it decorates where it is densest.
+    #[serde(default)]
+    pub chance: Option<f32>,
+    /// Density ramps, multiplied together.
+    #[serde(default)]
+    pub follows: Vec<Follow>,
+    #[serde(default)]
+    pub comfort: Comfort,
+    /// The ground it stands on; each shape has a default.
+    #[serde(default)]
+    pub ground: Option<Vec<Ground>>,
+    /// Ornaments: the trees it decorates, by selector.
+    #[serde(default)]
+    pub trees: Vec<Select>,
+}
+
+impl GroundDecorationDef {
+    /// Whether it decorates trees rather than standing on its own.
+    pub fn ornament(&self) -> bool {
+        matches!(self.shape, Shape::Litter { .. } | Shape::LeafPiles { .. } | Shape::Foot { .. })
+    }
+
+    /// Farthest it reaches from its position, horizontally, in blocks.
+    pub fn reach(&self) -> f32 {
+        match &self.shape {
+            Shape::Patch { radius, .. } | Shape::Boulder { radius, .. } | Shape::Bush { radius, .. } => radius.1 * 1.35,
+            Shape::Rocks { spread, size, .. } => spread + size.1,
+            // Centred on its position; a thick trunk is three wide, branches stick out two
+            // more, and the stump stands up to four blocks behind its foot.
+            Shape::FallenLog { length, .. } => length.1 as f32 / 2.0 + 4.0,
+            Shape::Stump { .. } | Shape::Litter { .. } | Shape::LeafPiles { .. } | Shape::Foot { .. } => 1.0,
+        }
+    }
+
+    /// The ground it stands on, given or by shape.
+    pub fn grounds(&self) -> Vec<Ground> {
+        self.ground.clone().unwrap_or_else(|| match self.shape {
+            Shape::Patch { .. } | Shape::Litter { .. } | Shape::LeafPiles { .. } | Shape::Foot { .. } => vec![Ground::Soil],
+            Shape::Boulder { .. } | Shape::Rocks { .. } => vec![Ground::Soil, Ground::Snow, Ground::Sand, Ground::Bare],
+            Shape::Bush { .. } | Shape::FallenLog { .. } | Shape::Stump { .. } => vec![Ground::Soil, Ground::Snow],
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// surfaces.ron
+
+/// Surface rules many biomes share (slopes of mixed rock and soil, game trails), included
+/// by name.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSetDef {
+    pub name: String,
+    pub rules: Vec<RuleDef>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -717,6 +966,18 @@ struct AmbientFile {
     particles: Vec<ParticleDef>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecorationFile {
+    decorations: Vec<GroundDecorationDef>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SurfaceFile {
+    sets: Vec<RuleSetDef>,
+}
+
 /// Everything the world generator reads from content packages.
 #[derive(Clone, Debug)]
 pub struct WorldContent {
@@ -726,17 +987,56 @@ pub struct WorldContent {
     pub trees: Vec<TreeDef>,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
+    pub decorations: Vec<GroundDecorationDef>,
+    /// Shared surface rule sets, already included into the biomes that name them.
+    pub rule_sets: Vec<RuleSetDef>,
+    /// Ground blocks and the snowy blocks snow lying on them turns them into, from
+    /// `weather.ron`: generated snow uses the same table as snow that falls in play.
+    pub snow_cover: Vec<(String, String)>,
+    pub trails: TrailsDef,
+}
+
+/// What hiking trails are made of (`trails.ron`); a later package's replaces an earlier
+/// one's.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TrailsDef {
+    /// The first rule whose tags the biome has picks the tread.
+    pub tread: Vec<TreadDef>,
+    /// What grass at the edge of the tread is worn to.
+    pub edge: String,
+    /// The deck of a bridge, of a short bridge over a creek, and the stones of a ford.
+    pub bridge: String,
+    pub log: String,
+    pub stepping_stone: String,
+    /// The stones of cairns and of waymarkers.
+    pub cairn: Vec<Select>,
+    pub waymarker: Vec<Select>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TreadDef {
+    /// Any of these biome tags; none matches every biome.
+    #[serde(default)]
+    pub biome: Vec<String>,
+    pub blocks: Vec<Select>,
 }
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 6] = [
+pub(crate) const BASE_FILES: [(&str, &str); 11] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
+    ("cave_biomes.ron", include_str!("../../../assets/content/base/cave_biomes.ron")),
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
+    ("decorations.ron", include_str!("../../../assets/content/base/decorations.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
     ("rocks.ron", include_str!("../../../assets/content/base/rocks.ron")),
+    ("surfaces.ron", include_str!("../../../assets/content/base/surfaces.ron")),
+    ("trails.ron", include_str!("../../../assets/content/base/trails.ron")),
     ("trees.ron", include_str!("../../../assets/content/base/trees.ron")),
+    ("weather.ron", include_str!("../../../assets/content/base/weather.ron")),
 ];
 
 impl WorldContent {
@@ -757,8 +1057,11 @@ impl WorldContent {
     /// replaces an earlier one's; other definitions accumulate.
     pub fn from_files<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Self, ContentError> {
         let mut climate = None;
+        let mut trails = None;
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
+        let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut raw = Vec::new();
         for file in files {
             let at = format!("{}/{}", file.package, file.name);
@@ -774,6 +1077,7 @@ impl WorldContent {
                         ice: q(&f.ice),
                         thick_ice: q(&f.thick_ice),
                         rare_ice: q(&f.rare_ice),
+                        blanket: f.blanket.iter().map(|(m, to)| (qualify_match(&file.package, m), q(to))).collect(),
                     };
                     climate = Some(ClimateDef { frost, ..def });
                 }
@@ -782,7 +1086,7 @@ impl WorldContent {
                     stones: p.stones.iter().map(|s| qualify_select(&file.package, s)).collect(),
                     ..p
                 })),
-                "biomes.ron" => {
+                "biomes.ron" | "cave_biomes.ron" => {
                     for biome in parse::<BiomeFile>(&at, &file.source)?.biomes {
                         raw.push((at.clone(), qualify_biome(&file.package, biome)));
                     }
@@ -803,14 +1107,51 @@ impl WorldContent {
                 ),
                 "plants.ron" => plants.extend(parse::<PlantFile>(&at, &file.source)?.plants.into_iter().map(|p| {
                     let q = |n: &str| qualify(&file.package, n);
-                    PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), ..p }
+                    PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
                 })),
+                "weather.ron" => weather.extend(&file.package, &file.source).map_err(|e| ContentError(e.0))?,
+                "decorations.ron" => decorations.extend(
+                    parse::<DecorationFile>(&at, &file.source)?.decorations.into_iter().map(|d| qualify_decoration(&file.package, d)),
+                ),
+                "surfaces.ron" => rule_sets.extend(parse::<SurfaceFile>(&at, &file.source)?.sets.into_iter().map(|set| RuleSetDef {
+                    name: qualify(&file.package, &set.name),
+                    rules: set.rules.into_iter().map(|r| RuleDef { when: r.when, place: qualify_layers(&file.package, r.place) }).collect(),
+                })),
+                "trails.ron" => {
+                    let def = parse::<TrailsDef>(&at, &file.source)?;
+                    let tread = def.tread.iter().map(|t| TreadDef { blocks: t.blocks.iter().map(|s| qualify_select(&file.package, s)).collect(), ..t.clone() }).collect();
+                    let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect();
+                    trails = Some(TrailsDef {
+                        tread,
+                        edge: q(&def.edge),
+                        bridge: q(&def.bridge),
+                        log: q(&def.log),
+                        stepping_stone: q(&def.stepping_stone),
+                        cairn: stones(&def.cairn),
+                        waymarker: stones(&def.waymarker),
+                    });
+                }
                 _ => {}
             }
         }
         let climate = climate.ok_or_else(|| ContentError("no content package defines climate.ron".into()))?;
-        let biomes = inherit(&raw)?;
-        let content = Self { climate, provinces, biomes, trees, plants, particles };
+        let trails = trails.ok_or_else(|| ContentError("no content package defines trails.ron".into()))?;
+        let mut biomes = inherit(&raw)?;
+        // Shared rule sets come before each biome's own rules.
+        for biome in &mut biomes {
+            let mut rules = Vec::new();
+            for name in &biome.surface.include {
+                let Some(set) = rule_sets.iter().find(|s: &&RuleSetDef| s.name == *name) else {
+                    let at = raw.iter().find(|(_, b)| b.name == biome.name).map_or("?", |(at, _)| at.as_str());
+                    return Err(ContentError(format!("{at}: biome `{}`: unknown surface rule set `{name}`", biome.name)));
+                };
+                rules.extend(set.rules.iter().cloned());
+            }
+            rules.append(&mut biome.surface.rules);
+            biome.surface.rules = rules;
+        }
+        let snow_cover = weather.snow_cover().to_vec();
+        let content = Self { climate, provinces, biomes, trees, plants, particles, decorations, rule_sets, snow_cover, trails };
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
         Ok(content)
     }
@@ -856,6 +1197,21 @@ impl WorldContent {
             Ok(())
         };
 
+        // Trails.
+        let trails_at = || "trails.ron".to_owned();
+        if !self.trails.tread.last().is_some_and(|t| t.biome.is_empty()) {
+            return Err(ContentError(format!("{}: the last tread rule must match every biome (no tags)", trails_at())));
+        }
+        for tread in &self.trails.tread {
+            blocks(&trails_at, &tread.blocks)?;
+        }
+        block(&trails_at, &self.trails.edge)?;
+        block(&trails_at, &self.trails.bridge)?;
+        block(&trails_at, &self.trails.log)?;
+        blocks(&trails_at, &self.trails.cairn)?;
+        blocks(&trails_at, &self.trails.waymarker)?;
+        block(&trails_at, &self.trails.stepping_stone)?;
+
         // Climate.
         let climate_at = || "climate.ron".to_owned();
         for axis in [Axis::Temperature, Axis::Moisture, Axis::Continentalness, Axis::Erosion] {
@@ -875,6 +1231,20 @@ impl WorldContent {
         let frost = &self.climate.frost;
         for name in [&frost.snow, &frost.powder, &frost.snowy_ground, &frost.ice, &frost.thick_ice, &frost.rare_ice] {
             block(&climate_at, name)?;
+        }
+        for (ground, snowy) in &self.snow_cover {
+            block(&|| "weather.ron: snow_cover".to_owned(), ground)?;
+            block(&|| "weather.ron: snow_cover".to_owned(), snowy)?;
+        }
+        for (from, to) in &frost.blanket {
+            block(&climate_at, to)?;
+            match from {
+                BlockMatch::Name(name) => block(&climate_at, name)?,
+                BlockMatch::Tag(tag) if registry.tagged(tag).next().is_none() => {
+                    return Err(ContentError(format!("climate.ron: no block has the tag `{tag}` the snow blanket covers")));
+                }
+                BlockMatch::Tag(_) => {}
+            }
         }
 
         // Provinces.
@@ -918,10 +1288,36 @@ impl WorldContent {
                 {
                     return Err(ContentError(format!("{}: the aether range ({lo}, {hi}) is empty or outside 0..=1", at())));
                 }
+                let underground = climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some();
+                if underground && biome.layer != Layer::Underground {
+                    return Err(ContentError(format!("{}: depth, height and provinces are for underground biomes", at())));
+                }
+                for (what, range) in [("depth", climate.depth), ("height", climate.height)] {
+                    if let Some((lo, hi)) = range
+                        && lo.partial_cmp(&hi) != Some(std::cmp::Ordering::Less)
+                    {
+                        return Err(ContentError(format!("{}: the {what} range ({lo}, {hi}) is empty", at())));
+                    }
+                }
+                for name in climate.provinces.iter().flatten() {
+                    if !self.provinces.iter().any(|p| p.matches(name)) {
+                        return Err(ContentError(format!("{}: no rock province is named or tagged `{name}`", at())));
+                    }
+                }
+            }
+            if !biome.cave_decoration.is_empty() && biome.layer != Layer::Underground {
+                return Err(ContentError(format!("{}: cave decoration is for underground biomes", at())));
+            }
+            for (i, decoration) in biome.cave_decoration.iter().enumerate() {
+                let at = || format!("{}, cave decoration {}", at(), i + 1);
+                self.check_decoration(decoration, !biome.strata.is_empty(), registry, &at, &block, &blocks)?;
             }
             let is_variant = self.biomes.iter().any(|b| b.variants.iter().any(|(v, _)| *v == biome.name));
             if biome.layer == Layer::Surface && biome.climate.is_empty() && biome.ecotone.is_none() && !is_variant {
                 return Err(ContentError(format!("{}: never grows: it has no climate, is no ecotone and no biome's variant", at())));
+            }
+            if biome.layer == Layer::Underground && (biome.climate.is_empty() && !is_variant || biome.ecotone.is_some()) {
+                return Err(ContentError(format!("{}: an underground biome grows in a climate box or as a variant, not as an ecotone", at())));
             }
             if let Some(ecotone) = &biome.ecotone {
                 if ecotone.width.is_nan() || ecotone.width <= 0.0 {
@@ -962,6 +1358,19 @@ impl WorldContent {
         }
 
         self.check_flora(&block, &file_of)?;
+        self.check_decorations(&block, &blocks)?;
+        for set in &self.rule_sets {
+            let at = || format!("surfaces.ron: rule set `{}`", set.name);
+            let surface = SurfaceDef {
+                rules: set.rules.clone(),
+                include: Vec::new(),
+                ground: LayersDef { top: Material::Stones, filler: None, depth: None },
+                underwater: LayersDef { top: Material::Stones, filler: None, depth: None },
+                shore: None,
+                cliff: None,
+            };
+            self.check_surface(&surface, true, &at, &block, &blocks)?;
+        }
         self.check_coverage()
     }
 
@@ -1004,6 +1413,11 @@ impl WorldContent {
             if tree.ground.is_empty() {
                 return Err(ContentError(format!("{}: grows on no ground", at())));
             }
+            if let Some((lo, hi)) = tree.stand
+                && !(0.0 <= lo && lo < hi && hi <= 1.0)
+            {
+                return Err(ContentError(format!("{}: the stand range ({lo}, {hi}) is empty or outside 0..=1", at())));
+            }
             comfort(&at, &tree.comfort)?;
         }
         for (i, plant) in self.plants.iter().enumerate() {
@@ -1022,6 +1436,9 @@ impl WorldContent {
             }
             if plant.ground.is_empty() {
                 return Err(ContentError(format!("{}: grows on no ground", at())));
+            }
+            if let Some(snowy) = &plant.snowy {
+                block(&at, snowy)?;
             }
             comfort(&at, &plant.comfort)?;
         }
@@ -1082,6 +1499,145 @@ impl WorldContent {
             if let Some(wonders) = &flora.wonders {
                 check("wonders", wonders, true, true)?;
             }
+            for select in flora.decorations.iter().flatten() {
+                positive(&|| format!("{}, decorations", at()), "weight", select.weight())?;
+                if let Select::Name(name, _) = select
+                    && !self.decorations.iter().any(|d| d.name == *name)
+                {
+                    return Err(ContentError(format!("{}, decorations: unknown decoration `{name}`", at())));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_decorations(&self, block: &BlockCheck<'_, str>, blocks: &BlockCheck<'_, [Select]>) -> Result<(), ContentError> {
+        for (i, def) in self.decorations.iter().enumerate() {
+            let at = || format!("decorations.ron: decoration `{}`", def.name);
+            if self.decorations[..i].iter().any(|d| d.name == def.name) {
+                return Err(ContentError(format!("{}: defined twice", at())));
+            }
+            let material = |m: &Material| match m {
+                Material::Block(name) => block(&at, name),
+                Material::Mix(selects) => blocks(&at, selects),
+                Material::Stones => Ok(()),
+                Material::Strata => Err(ContentError(format!("{}: decorations have no strata to use", at()))),
+            };
+            let range = |what: &str, (lo, hi): (f32, f32), max: f32| {
+                if lo > 0.0 && lo <= hi && hi <= max {
+                    Ok(())
+                } else {
+                    Err(ContentError(format!("{}: {what} must be a range within (0, {max}]", at())))
+                }
+            };
+            let share = |what: &str, v: f32| {
+                if (0.0..=1.0).contains(&v) { Ok(()) } else { Err(ContentError(format!("{}: {what} must be in 0..=1", at()))) }
+            };
+            let plants = |list: &[Select]| -> Result<(), ContentError> {
+                for select in list {
+                    positive(&at, "weight", select.weight())?;
+                    if let Select::Name(name, _) = select
+                        && !self.plants.iter().any(|p| p.name == *name)
+                    {
+                        return Err(ContentError(format!("{}: unknown plant `{name}`", at())));
+                    }
+                }
+                Ok(())
+            };
+            match &def.shape {
+                Shape::Patch { radius, top } => {
+                    range("radius", *radius, 6.0)?;
+                    material(top)?;
+                }
+                Shape::Boulder { radius, stones, moss } => {
+                    range("radius", *radius, 4.0)?;
+                    material(stones)?;
+                    share("moss", *moss)?;
+                }
+                Shape::Rocks { count, spread, size, stones, moss } => {
+                    if count.0 < 1 || count.0 > count.1 || count.1 > 12 {
+                        return Err(ContentError(format!("{}: count must be a range within 1..=12", at())));
+                    }
+                    range("size", *size, 2.0)?;
+                    range("spread", (*spread, *spread), 6.0)?;
+                    material(stones)?;
+                    share("moss", *moss)?;
+                }
+                Shape::Bush { radius, leaves, log } => {
+                    range("radius", *radius, 3.0)?;
+                    for name in leaves.iter().chain(log) {
+                        block(&at, name)?;
+                    }
+                }
+                Shape::FallenLog { length, thick, hollow, branches, stump, growth, plants: list } => {
+                    if length.0 < 2 || length.0 > length.1 || length.1 > 8 {
+                        return Err(ContentError(format!("{}: length must be a range within 2..=8", at())));
+                    }
+                    for (what, v) in [("thick", *thick), ("hollow", *hollow), ("branches", *branches), ("stump", *stump), ("growth", *growth)] {
+                        share(what, v)?;
+                    }
+                    plants(list)?;
+                }
+                Shape::Stump { height, growth, plants: list } => {
+                    if height.0 < 1 || height.0 > height.1 || height.1 > 6 {
+                        return Err(ContentError(format!("{}: height must be a range within 1..=6", at())));
+                    }
+                    share("growth", *growth)?;
+                    plants(list)?;
+                }
+                Shape::Litter { top, cover } => {
+                    material(top)?;
+                    share("cover", *cover)?;
+                }
+                Shape::LeafPiles { cover } => share("cover", *cover)?,
+                Shape::Foot { plants: list, cover } => {
+                    share("cover", *cover)?;
+                    plants(list)?;
+                }
+            }
+            if def.ornament() {
+                share("chance", def.chance.unwrap_or(1.0))?;
+                if def.trees.is_empty() {
+                    return Err(ContentError(format!("{}: an ornament needs trees to decorate", at())));
+                }
+                for select in &def.trees {
+                    positive(&at, "weight", select.weight())?;
+                    if let Select::Name(name, _) = select
+                        && !self.trees.iter().any(|t| t.name == *name)
+                    {
+                        return Err(ContentError(format!("{}: unknown tree `{name}`", at())));
+                    }
+                }
+            } else {
+                let spacing = def.spacing.ok_or_else(|| ContentError(format!("{}: needs a spacing", at())))?;
+                if !(spacing >= 2.0 && spacing.is_finite()) {
+                    return Err(ContentError(format!("{}: spacing must be at least 2 blocks", at())));
+                }
+            }
+            let reach = def.reach();
+            if reach > crate::features::REACH as f32 {
+                return Err(ContentError(format!("{}: reaches {reach} blocks, more than {}", at(), crate::features::REACH)));
+            }
+            if def.grounds().is_empty() {
+                return Err(ContentError(format!("{}: stands on no ground", at())));
+            }
+            for follow in &def.follows {
+                if !(follow.1.is_finite() && follow.2.is_finite() && follow.1 != follow.2) {
+                    return Err(ContentError(format!("{}: a ramp needs two different, finite ends", at())));
+                }
+                if let Field::Noise(noise) = &follow.0
+                    && !(noise.scale > 0.0 && (1..=6).contains(&noise.octaves))
+                {
+                    return Err(ContentError(format!("{}: noise `{}` needs a positive scale and 1..=6 octaves", at(), noise.name)));
+                }
+            }
+            for (what, range) in [("temperature", def.comfort.temperature), ("moisture", def.comfort.moisture)] {
+                if let Some((lo, hi)) = range
+                    && !(lo.is_finite() && hi.is_finite() && lo < hi)
+                {
+                    return Err(ContentError(format!("{}: the {what} comfort range ({lo}, {hi}) is empty", at())));
+                }
+            }
         }
         Ok(())
     }
@@ -1132,6 +1688,44 @@ impl WorldContent {
         Ok(())
     }
 
+    fn check_decoration(
+        &self,
+        decoration: &DecorationDef,
+        strata: bool,
+        registry: &BlockRegistry,
+        at: &dyn Fn() -> String,
+        block: &BlockCheck<'_, str>,
+        blocks: &BlockCheck<'_, [Select]>,
+    ) -> Result<(), ContentError> {
+        let material = |material: &Material| match material {
+            Material::Block(name) => block(at, name),
+            Material::Mix(selects) => blocks(at, selects),
+            Material::Stones => Ok(()),
+            Material::Strata if strata => Ok(()),
+            Material::Strata => Err(ContentError(format!("{}: uses strata but the biome has none", at()))),
+        };
+        material(&decoration.block)?;
+        if let Some((tip, chance)) = &decoration.tip {
+            material(tip)?;
+            if !(0.0..=1.0).contains(chance) {
+                return Err(ContentError(format!("{}: the tip's chance must be in 0..=1", at())));
+            }
+        }
+        if !(0.0..=1.0).contains(&decoration.chance) {
+            return Err(ContentError(format!("{}: a chance must be in 0..=1", at())));
+        }
+        let (lo, hi) = decoration.length;
+        if !(1 <= lo && lo <= hi && hi <= 32) {
+            return Err(ContentError(format!("{}: the length ({lo}, {hi}) must be within 1..=32 and increase", at())));
+        }
+        for tag in &decoration.on_tags {
+            if registry.tagged(tag).next().is_none() {
+                return Err(ContentError(format!("{}: no block has the tag `{tag}`", at())));
+            }
+        }
+        decoration.when.iter().try_for_each(|c| self.check_condition(c, at))
+    }
+
     fn check_condition(&self, condition: &Condition, at: &dyn Fn() -> String) -> Result<(), ContentError> {
         let noise = |noise: &NoiseDef| {
             if noise.scale > 0.0 && (1..=6).contains(&noise.octaves) {
@@ -1157,7 +1751,9 @@ impl WorldContent {
             | Condition::Wetter(a, b)
             | Condition::Drier(a, b)
             | Condition::Forest(a, b)
-            | Condition::River(a, b) => {
+            | Condition::River(a, b)
+            | Condition::Clearing(a, b)
+            | Condition::Stand(a, b) => {
                 if a.is_finite() && b.is_finite() {
                     Ok(())
                 } else {
@@ -1285,6 +1881,32 @@ fn qualify_material(package: &str, material: Material) -> Material {
     }
 }
 
+fn qualify_match(package: &str, m: &BlockMatch) -> BlockMatch {
+    match m {
+        BlockMatch::Name(name) => BlockMatch::Name(qualify(package, name)),
+        BlockMatch::Tag(tag) => BlockMatch::Tag(tag.clone()),
+    }
+}
+
+fn qualify_decoration(package: &str, def: GroundDecorationDef) -> GroundDecorationDef {
+    let q = |name: &str| qualify(package, name);
+    let selects = |list: Vec<Select>| list.iter().map(|s| qualify_select(package, s)).collect();
+    let shape = match def.shape {
+        Shape::Patch { radius, top } => Shape::Patch { radius, top: qualify_material(package, top) },
+        Shape::Boulder { radius, stones, moss } => Shape::Boulder { radius, stones: qualify_material(package, stones), moss },
+        Shape::Rocks { count, spread, size, stones, moss } => Shape::Rocks { count, spread, size, stones: qualify_material(package, stones), moss },
+        Shape::Bush { radius, leaves, log } => Shape::Bush { radius, leaves: leaves.as_deref().map(q), log: log.as_deref().map(q) },
+        Shape::FallenLog { length, thick, hollow, branches, stump, growth, plants } => {
+            Shape::FallenLog { length, thick, hollow, branches, stump, growth, plants: selects(plants) }
+        }
+        Shape::Stump { height, growth, plants } => Shape::Stump { height, growth, plants: selects(plants) },
+        Shape::Litter { top, cover } => Shape::Litter { top: qualify_material(package, top), cover },
+        Shape::LeafPiles { cover } => Shape::LeafPiles { cover },
+        Shape::Foot { plants, cover } => Shape::Foot { plants: selects(plants), cover },
+    };
+    GroundDecorationDef { name: q(&def.name), shape, trees: selects(def.trees), ..def }
+}
+
 fn qualify_layers(package: &str, layers: LayersDef) -> LayersDef {
     LayersDef {
         top: qualify_material(package, layers.top),
@@ -1309,6 +1931,7 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
                     place: qualify_layers(package, r.place),
                 })
                 .collect(),
+            include: s.include.iter().map(|n| q(n)).collect(),
             ground: qualify_layers(package, s.ground),
             underwater: qualify_layers(package, s.underwater),
             shore: s.shore.map(|l| qualify_layers(package, l)),
@@ -1323,6 +1946,7 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             trees: f.trees.iter().map(|s| qualify_select(package, s)).collect(),
             plants: f.plants.iter().map(|s| qualify_select(package, s)).collect(),
             wonders: f.wonders.map(|w| w.iter().map(|s| qualify_select(package, s)).collect()),
+            decorations: f.decorations.map(|d| d.iter().map(|s| qualify_select(package, s)).collect()),
             ..f
         }),
         stones: biome.stones.map(|s| match s {
@@ -1330,6 +1954,15 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             Stones::Blocks(selects) => Stones::Blocks(selects.iter().map(|s| qualify_select(package, s)).collect()),
         }),
         variants: biome.variants.map(|v| v.into_iter().map(|(name, share)| (q(&name), share)).collect()),
+        cave_decoration: biome.cave_decoration.map(|list| {
+            list.into_iter()
+                .map(|d| DecorationDef {
+                    block: qualify_material(package, d.block),
+                    tip: d.tip.map(|(m, chance)| (qualify_material(package, m), chance)),
+                    ..d
+                })
+                .collect()
+        }),
         ..biome
     }
 }
@@ -1381,6 +2014,7 @@ fn inherit(raw: &[(String, RawBiome)]) -> Result<Vec<BiomeDef>, ContentError> {
                 flora: field!(flora).unwrap_or_default(),
                 atmosphere: field!(atmosphere).unwrap_or_default(),
                 variants: biome.variants.clone().unwrap_or_default(),
+                cave_decoration: field!(cave_decoration).unwrap_or_default(),
             })
         })
         .collect()
@@ -1400,6 +2034,10 @@ fn one() -> f32 {
 
 fn one_octave() -> i32 {
     1
+}
+
+fn single() -> (i32, i32) {
+    (1, 1)
 }
 
 fn temperature_axis() -> Axis {
@@ -1505,5 +2143,33 @@ mod tests {
         let only_cold = format!("#![enable(implicit_some)]\n(biomes: [(name: \"cold\", climate: [(temperature: (\"frozen\", \"cold\"))], {GROUND})])");
         let message = load_with(&only_cold).unwrap_err().0;
         assert!(message.contains("holes") && message.contains("cool"), "{message}");
+    }
+
+    #[test]
+    fn broken_cave_biomes_fail_with_clear_errors() {
+        let load = |caves: &str| {
+            let mut files = base_files();
+            let source = format!("#![enable(implicit_some)]\n(biomes: [{caves}])");
+            files.iter_mut().find(|f| f.name == "cave_biomes.ron").unwrap().source = source;
+            WorldContent::from_files(files.iter(), &registry())
+        };
+        let cave = |extra: &str| format!("(name: \"c\", layer: Underground, climate: [(depth: (4.0, 80.0))], {GROUND}, {extra})");
+        assert!(load(&cave("cave_decoration: [(on: Ceiling, chance: 0.1, block: Block(\"ice\"), length: (1, 3))]")).is_ok());
+        let cases = [
+            (cave("cave_decoration: [(on: Ceiling, chance: 1.5, block: Block(\"ice\"))]"), "chance"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, block: Block(\"ice\"), length: (3, 1))]"), "length"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, block: Block(\"icee\"))]"), "unknown block `base:icee`"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, on_tags: [\"nope\"], block: Block(\"ice\"))]"), "tag `nope`"),
+            (cave("cave_decoration: [(on: Floor, chance: 0.1, block: Strata)]"), "strata"),
+            ("(name: \"c\", layer: Underground, climate: [(depth: (80.0, 4.0))], SURFACE)".replace("SURFACE", GROUND), "depth range"),
+            ("(name: \"c\", layer: Underground, climate: [(provinces: [\"chalk\"])], SURFACE)".replace("SURFACE", GROUND), "rock province"),
+            ("(name: \"c\", layer: Underground, SURFACE)".replace("SURFACE", GROUND), "climate box"),
+            // Underground parts on a surface biome.
+            ("(name: \"c\", climate: [(depth: (4.0, 80.0))], SURFACE)".replace("SURFACE", GROUND), "underground biomes"),
+        ];
+        for (source, expected) in cases {
+            let message = load(&source).unwrap_err().0;
+            assert!(message.contains(expected) && message.contains("cave_biomes.ron"), "expected `{expected}` in: {message}");
+        }
     }
 }
