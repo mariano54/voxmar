@@ -1,10 +1,11 @@
-//! Texture sources. Block, colormap and HUD textures are read at runtime from the
-//! player's own Minecraft install or a resource pack (zip, jar or folder); nothing from
-//! Minecraft is shipped. Without one, simple placeholder textures are generated.
+//! Texture sources. Block, colormap and HUD textures are read at runtime from a stack of
+//! texture packs: our own default pack, the player's chosen pack, and their Minecraft
+//! install if they have one (nothing from Minecraft is shipped or needed). Whatever no pack
+//! provides gets a simple generated placeholder.
 
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use voxmar_engine::block::{RenderKind, TextureRef};
 
@@ -56,60 +57,122 @@ impl Rgba {
     }
 }
 
-pub enum Source {
+/// Where a pack's files live.
+enum Files {
     Zip(zip::ZipArchive<File>),
     Folder(PathBuf),
-    None,
+}
+
+impl Files {
+    fn open(path: &Path) -> Result<Self, String> {
+        if path.is_dir() {
+            return Ok(Files::Folder(path.to_owned()));
+        }
+        let file = File::open(path).map_err(|e| e.to_string())?;
+        zip::ZipArchive::new(file).map(Files::Zip).map_err(|e| e.to_string())
+    }
+
+    fn read(&mut self, name: &str) -> Option<Vec<u8>> {
+        match self {
+            Files::Zip(archive) => {
+                let mut file = archive.by_name(name).ok()?;
+                let mut bytes = Vec::with_capacity(file.size() as usize);
+                file.read_to_end(&mut bytes).ok()?;
+                Some(bytes)
+            }
+            Files::Folder(root) => std::fs::read(root.join(name)).ok(),
+        }
+    }
+}
+
+/// One texture pack: a folder, zip or jar with images at `textures/<path>.png` (our
+/// layout) or `assets/minecraft/textures/<path>.png` (Minecraft's, so its client jar and
+/// resource packs work unchanged).
+struct Pack {
+    name: String,
+    files: Files,
+    /// Textures this pack provided since the last log.
+    served: usize,
+}
+
+impl Pack {
+    fn open(path: &Path) -> Result<Self, String> {
+        let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        Ok(Self { name, files: Files::open(path)?, served: 0 })
+    }
+
+    fn read(&mut self, path: &str) -> Option<Rgba> {
+        let bytes = ["textures", "assets/minecraft/textures"]
+            .iter()
+            .find_map(|root| self.files.read(&format!("{root}/{path}.png")))?;
+        let image = decode_png(&bytes)?;
+        self.served += 1;
+        Some(image)
+    }
+}
+
+/// The texture packs in priority order. Each texture comes from the first pack that has
+/// it, then from a placeholder:
+///
+/// 1. the pack the player chose with `$VOXMAR_TEXTURES` (a folder, zip or jar), which
+///    overrides ours;
+/// 2. our default pack, `assets/packs/default`;
+/// 3. any other pack in `assets/packs`, in name order (how mods ship art: they add
+///    textures, but cannot replace ours);
+/// 4. without a chosen pack, the newest Minecraft client jar found in a standard launcher
+///    location, to fill in names the packs above lack.
+pub struct Source {
+    packs: Vec<Pack>,
 }
 
 impl Source {
-    /// `$VOXMAR_TEXTURES` (a jar, zip or folder), else the newest Minecraft client jar
-    /// found in a standard launcher location.
     pub fn discover() -> Self {
-        let path = std::env::var_os("VOXMAR_TEXTURES").map(PathBuf::from).or_else(find_minecraft_jar);
-        match path {
-            Some(path) if path.is_dir() => {
-                bevy::log::info!("textures from {}", path.display());
-                Source::Folder(path)
-            }
-            Some(path) => match File::open(&path).map_err(|e| e.to_string()).and_then(|f| {
-                zip::ZipArchive::new(f).map_err(|e| e.to_string())
-            }) {
-                Ok(archive) => {
-                    bevy::log::info!("textures from {}", path.display());
-                    Source::Zip(archive)
-                }
-                Err(e) => {
-                    bevy::log::warn!("cannot open {}: {e}; using placeholder textures", path.display());
-                    Source::None
-                }
-            },
-            None => {
-                bevy::log::info!("no Minecraft install or VOXMAR_TEXTURES found; using placeholder textures");
-                Source::None
+        let assets = voxmar_server::assets_dir();
+        let mut packs = Vec::new();
+        let chosen = std::env::var_os("VOXMAR_TEXTURES").map(PathBuf::from);
+        if let Some(path) = &chosen {
+            match Pack::open(path) {
+                Ok(pack) => packs.push(pack),
+                Err(e) => bevy::log::warn!("cannot open texture pack {}: {e}", path.display()),
             }
         }
-    }
-
-    /// Reads `assets/minecraft/textures/<path>.png`.
-    pub fn read(&mut self, path: &str) -> Option<Rgba> {
-        let path = format!("assets/minecraft/textures/{path}.png");
-        let bytes = match self {
-            Source::Zip(archive) => {
-                let mut file = archive.by_name(&path).ok()?;
-                let mut bytes = Vec::with_capacity(file.size() as usize);
-                file.read_to_end(&mut bytes).ok()?;
-                bytes
+        let root = assets.join("packs");
+        let mut bundled: Vec<PathBuf> = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        bundled.sort_by_key(|path| (path.file_name() != Some("default".as_ref()), path.clone()));
+        packs.extend(bundled.iter().filter_map(|path| Pack::open(path).ok()));
+        if chosen.is_none()
+            && let Some(jar) = find_minecraft_jar()
+        {
+            match Pack::open(&jar) {
+                Ok(pack) => packs.push(pack),
+                Err(e) => bevy::log::warn!("cannot open {}: {e}", jar.display()),
             }
-            Source::Folder(root) => std::fs::read(root.join(&path)).ok()?,
-            Source::None => return None,
-        };
-        decode_png(&bytes)
+        }
+        Self { packs }
     }
 
-    /// One square texture per block texture reference, all `size`×`size`.
+    /// Reads `<path>.png` from the first pack that has it.
+    pub fn read(&mut self, path: &str) -> Option<Rgba> {
+        self.packs.iter_mut().find_map(|pack| pack.read(path))
+    }
+
+    /// One square texture per block texture reference, all `size`×`size`. Logs how many
+    /// each pack provided.
     pub fn block_textures(&mut self, refs: &[TextureRef]) -> (u32, Vec<Rgba>) {
         let loaded: Vec<Option<Rgba>> = refs.iter().map(|r| self.read(&format!("block/{}", r.name))).collect();
+        let served: Vec<String> = self
+            .packs
+            .iter_mut()
+            .map(|pack| format!("{} from {}", std::mem::take(&mut pack.served), pack.name))
+            .chain(Some(format!("{} placeholders", loaded.iter().filter(|t| t.is_none()).count())))
+            .collect();
+        bevy::log::info!("block textures: {}", served.join(", "));
         let size = loaded.iter().flatten().map(|t| t.width.min(t.height)).max().unwrap_or(16).next_power_of_two();
         let textures = loaded
             .into_iter()

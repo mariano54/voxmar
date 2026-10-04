@@ -60,9 +60,21 @@ type `stop` to save and quit.
 
 ### Textures
 
-No Minecraft assets are shipped. At startup the client reads textures from the newest Minecraft
-client jar it finds (official launcher or Prism Launcher), or from `VOXMAR_TEXTURES` pointing at
-a jar, resource pack zip or folder. Without one it generates placeholder textures.
+Textures come from a stack of packs, each a folder, zip or jar; every texture is taken from the
+first pack that has it:
+
+1. the pack chosen with `VOXMAR_TEXTURES` (a resource pack or a Minecraft jar also works), which
+   overrides ours;
+2. our default pack, `assets/packs/default`;
+3. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
+   never replacing ours;
+4. without a chosen pack, the newest Minecraft client jar found (official launcher or Prism
+   Launcher), only for names the packs above lack.
+
+Anything still missing gets a generated placeholder. The startup log says how many textures
+each pack provided. A pack keeps images at `textures/<path>.png` (`textures/block/stone.png`),
+or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No
+Minecraft assets are shipped.
 
 ## Layout
 
@@ -101,7 +113,9 @@ How the design primitives map to the code today:
 
 ## World generation
 
-There are no biomes. Each world draws a few physically meaningful dials from its seed
+The world is 384 blocks tall (columns of 12 chunks) with the sea surface at 128: 128 blocks
+of ground and caves below it, 256 of land, mountains and sky above. There are no biomes. Each
+world draws a few physically meaningful dials from its seed
 (`Overworld::dials`: mean temperature, equator-to-pole temperature difference and distance,
 ocean fraction, continent size, humidity, prevailing wind, tectonic activity, erosion age,
 river density, vegetation), with sensible correlations. Everything else is a continuous field:
