@@ -824,7 +824,7 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
 mod tests {
     use super::*;
     use crate::perf::thread_time;
-    use voxmar_engine::coords::COLUMN_CHUNKS;
+    use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS};
     use voxmar_engine::light::LitRegion;
     use voxmar_engine::mesh::mesh_chunk;
 
@@ -1778,6 +1778,52 @@ mod tests {
             let far = crown + back * 70.0 + Vec3::Y * 45.0;
             println!("  far:   {}", pose(mid, far, crown + back * 10.0 - Vec3::Y * 10.0));
         }
+    }
+
+    /// Every waterfall pours: wherever water stands three or more blocks above the water
+    /// beside it, the upper water's top is water and the face below it holds the curtain
+    /// it pours, around the falls nearest spawn on a few seeds.
+    #[test]
+    fn waterfalls_pour() {
+        let registry = registry();
+        let mut faces = 0;
+        for seed in [1, 3, 7, 42] {
+            let world = Overworld::new(seed, registry.clone());
+            let spawn = world.spawn_point();
+            let sights = world.water_sights(IVec2::new(spawn.x, spawn.z), 600);
+            let Some(&(_, fall)) = sights.iter().find(|(s, _)| *s == WaterSight::Waterfall) else { continue };
+            let first = ColumnPos::of_block(fall).offset(-2, -2);
+            let columns = generate_area(&world, first, 5);
+            let origin = first.origin();
+            let block = |p: IVec3| {
+                let (cx, cz) = ((p.x - origin.x).div_euclid(CHUNK_SIZE), (p.z - origin.z).div_euclid(CHUNK_SIZE));
+                columns[(cz * 5 + cx) as usize].block(IVec3::new(p.x.rem_euclid(CHUNK_SIZE), p.y, p.z.rem_euclid(CHUNK_SIZE)))
+            };
+            let geos = world.geo_area(origin.x + 31, origin.z + 31, 98);
+            let geo = |x: i32, z: i32| geos[((z - origin.z - 31) * 98 + x - origin.x - 31) as usize];
+            for z in origin.z + 32..origin.z + 128 {
+                for x in origin.x + 32..origin.x + 128 {
+                    let Some((_, top)) = geo(x, z).wet() else { continue };
+                    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let Some((_, above)) = geo(x + dx, z + dz).wet() else { continue };
+                        if above < top + 3 {
+                            continue;
+                        }
+                        faces += 1;
+                        let lip = block(IVec3::new(x + dx, above, z + dz));
+                        let curtain = (top + 1..above).filter(|&y| registry.fluid(block(IVec3::new(x, y, z))).is_some()).count();
+                        assert!(
+                            registry.fluid(lip).is_some() && curtain > 0,
+                            "seed {seed}: the fall from {},{} (water at {above}) to {x},{z} (water at {top}) is dry: lip {}, {curtain} curtain cells",
+                            x + dx,
+                            z + dz,
+                            registry.def(lip).name
+                        );
+                    }
+                }
+            }
+        }
+        assert!(faces >= 4, "only {faces} fall faces near spawn on the test seeds");
     }
 
     /// Generated water and lava stay put: no fluid touches air below it, nor beside it
