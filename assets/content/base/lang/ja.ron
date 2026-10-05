@@ -580,4 +580,10 @@
     "block.base.baked_potato": "焼きじゃがいも",
     "block.base.roast_carrot": "焼きにんじん",
     "block.base.burnt_food": "焦げた食べ物",
+    "block.base.egg": "卵",
+    "block.base.duck_egg": "鴨の卵",
+    "block.base.fried_egg": "目玉焼き",
+    "block.base.milk": "牛乳",
+    "block.base.shears": "はさみ",
+    "block.base.pail": "手おけ",
 }

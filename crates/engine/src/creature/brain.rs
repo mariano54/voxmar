@@ -79,6 +79,8 @@ pub struct Seen {
     /// Has stayed in one small area long enough that hunters there lose interest
     /// (RuneScape's tolerance).
     pub tolerated: bool,
+    /// Its owner, whom a kept creature neither fears nor hunts.
+    pub friend: bool,
 }
 
 /// What a creature senses this decision.
@@ -96,6 +98,8 @@ pub struct Situation<'a> {
     pub kin: &'a [Vec3],
     /// The nearest block of its food, if any is near.
     pub food: Option<IVec3>,
+    /// Another of its kind ready to breed, when it is ready too.
+    pub mate: Option<Vec3>,
     /// Seconds since the last decision.
     pub dt: f32,
     /// The seed for this decision's random choices.
@@ -303,9 +307,9 @@ impl Ctx<'_> {
         to.distance(self.at.position)
     }
 
-    /// The nearest player it senses.
+    /// The nearest player it senses who is not its owner.
     pub fn nearest(&self) -> Option<&Seen> {
-        self.at.players.first()
+        self.at.players.iter().find(|p| !p.friend)
     }
 
     /// A player it remembers being hurt by, if they are about.
@@ -409,7 +413,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::block::BlockRegistry;
     use crate::creature::{CreatureId, CreatureRegistry};
@@ -423,11 +427,11 @@ mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {
@@ -531,5 +535,26 @@ mod tests {
             picked.insert(doing(&idler, &mind).to_owned());
         }
         assert_eq!(picked.len(), 2, "both near-equal modules get chosen: {picked:?}");
+    }
+}
+
+#[cfg(test)]
+mod kept {
+    use super::tests::*;
+    use super::*;
+
+    #[test]
+    fn kept_creatures_do_not_fear_their_owner_and_court_a_mate() {
+        let rabbit = species(&format!(
+            "(creatures: [(name: \"rabbit\", health: 3, {BODY}, temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let owner = [Seen { friend: true, ..player(Vec3::new(2.0, 0.0, 0.0)) }];
+        let mut mind = Mind::new(&rabbit.def.temperament, 1);
+        let _ = think(&rabbit, &mut mind, &situation(&owner));
+        assert_ne!(mind.doing.map(|i| rabbit.modules[i].0.name()), Some("flee"));
+        let ready = Situation { mate: Some(Vec3::new(5.0, 0.0, 0.0)), ..situation(&owner) };
+        let decision = think(&rabbit, &mut mind, &ready);
+        assert_eq!(mind.doing.map(|i| rabbit.modules[i].0.name()), Some("court"));
+        assert_eq!(decision.goal, Some(Vec3::new(5.0, 0.0, 0.0)));
     }
 }
