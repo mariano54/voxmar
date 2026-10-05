@@ -365,11 +365,11 @@ impl Rivers {
         Channels::new(style, tier.cell, tier.seed, region, REGION, margin, &spans, lakes)
     }
 
-    /// The nearest place within `radius` blocks of `from` where a river runs deep in a slot
-    /// gorge (at least `GORGE_FOUND` of one): the column, and the height of its top water
-    /// block. Searches region by region outwards, building their rivers as it goes, so it
-    /// is quick when one lies near.
-    pub(crate) fn locate_gorge(&self, land: Stages, from: IVec2, radius: i32) -> Option<IVec3> {
+    /// Places within `radius` blocks of `from` where a river runs deep in a slot gorge (at
+    /// least `GORGE_FOUND` of one), nearest first, as far as `enough` of them: each the
+    /// column and the height of its top water block. Searches region by region outwards,
+    /// building their rivers as it goes, so it is quick when some lie near.
+    pub(crate) fn gorges_near(&self, land: Stages, from: IVec2, radius: i32, enough: usize) -> Vec<IVec3> {
         const GORGE_FOUND: f32 = 0.75;
         let (lo, hi) = ((from - radius).div_euclid(IVec2::splat(REGION)), (from + radius).div_euclid(IVec2::splat(REGION)));
         // Regions by how near they come to `from`.
@@ -382,21 +382,22 @@ impl Rivers {
             .filter(|&(d, _)| d <= radius as f32)
             .collect();
         regions.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut best: Option<(f32, IVec3)> = None;
+        let mut found: Vec<(f32, IVec3)> = Vec::new();
         for (near, region) in regions {
-            if best.is_some_and(|(d, _)| d <= near) {
+            if found.len() >= enough && found[enough - 1].0 <= near {
                 break;
             }
             for level in [Level::Trunk, Level::Stream] {
                 for (at, water, gorge) in self.channels(land, level, region).gorges() {
                     let d = (at - from.as_vec2()).length();
-                    if gorge >= GORGE_FOUND && d <= radius as f32 && best.is_none_or(|(b, _)| d < b) {
-                        best = Some((d, IVec3::new(at.x.floor() as i32, water, at.y.floor() as i32)));
+                    if gorge >= GORGE_FOUND && d <= radius as f32 {
+                        found.push((d, IVec3::new(at.x.floor() as i32, water, at.y.floor() as i32)));
                     }
                 }
             }
+            found.sort_by(|a, b| a.0.total_cmp(&b.0));
         }
-        best.map(|(_, at)| at)
+        found.into_iter().map(|(_, at)| at).collect()
     }
 
     fn channels(&self, land: Stages, level: Level, region: IVec2) -> Arc<Channels> {

@@ -52,8 +52,17 @@ impl Overworld {
     /// deep in a slot gorge: the column, and the height of its top water block. Much
     /// quicker over a wide area than `water_sights`, as it reads the rivers rather than the
     /// ground.
+    /// The walls must stand `GORGE_WALLS` blocks over the water on both sides, within 8
+    /// blocks of it, across it straight or diagonally.
     pub fn locate_gorge(&self, centre: IVec2, radius: i32) -> Option<IVec3> {
-        self.rivers.locate_gorge(self.stages(), centre, radius)
+        const GORGE_WALLS: i32 = 8;
+        let walls = |at: IVec3| {
+            let side = |dx: i32, dz: i32| {
+                (3..=8).map(|k| self.geo(at.x + dx * k, at.z + dz * k)).filter(|g| !g.submerged()).map(|g| g.height).max().unwrap_or(at.y) - at.y
+            };
+            [(1, 0), (0, 1), (1, 1), (1, -1)].map(|(dx, dz)| side(dx, dz).min(side(-dx, -dz))).into_iter().max().unwrap_or(0)
+        };
+        self.rivers.gorges_near(self.stages(), centre, radius, 24).into_iter().find(|&at| walls(at) >= GORGE_WALLS)
     }
 
     /// The best place of each kind within `range` blocks of `centre` (searched every two

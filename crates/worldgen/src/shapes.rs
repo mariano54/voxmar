@@ -11,16 +11,18 @@
 //!
 //! Rarer shapes take only some regions of their climate, chosen by a slow mask noise of
 //! their own. Every outline follows noise: towers, spires and sea stacks rise where a noise
-//! passes a threshold, so no two are alike and none is round; only volcanoes, which really
-//! are cones around a vent, are seeded on a jittered grid, gathered into volcanic fields
-//! (regions of a mask like the rarer shapes') as many as their rarity and the world's dials
-//! allow, on land, warped by a third of their radius so their outlines are irregular, and
-//! their craters breached. Every shape is a pure function of the seed and the position, and
-//! costs nothing where its weight is zero.
+//! passes a threshold, so no two are alike and none is round. Two kinds are things rather
+//! than landscapes, and are seeded on jittered grids instead, as many as their rarity and
+//! the world's dials allow, on land, gathered into regions of a mask like the rarer
+//! shapes': volcanoes, which really are cones around a vent, warped by a third of their
+//! radius so their outlines are irregular, their craters breached; and natural arches, a
+//! rare find, one at a site, sometimes two or three, very rarely a field of them. Every
+//! shape is a pure function of the seed and the position, and costs nothing where its
+//! weight is zero.
 //!
 //! Most shapes change the height of the land. Volcanoes, mesas, dunes, canyons, hills and
-//! sea cliffs are terrain, which the climate cools with; towers, spires and the fins of
-//! arches are features standing on it, which it does not, so a karst tower in a jungle grows
+//! sea cliffs are terrain, which the climate cools with; towers, spires and arches are
+//! features standing on it, which it does not, so a karst tower in a jungle grows
 //! no snow cap. An arch is a short, thick span of rock with a window through it
 //! (`Shaped::window`), which generation opens in the column.
 
@@ -34,6 +36,7 @@ use crate::rarity::{Rarity, Tier, name_hash};
 use crate::rng::hash3;
 use crate::rocks::{ProvinceMask, Rocks};
 use crate::SEA_LEVEL;
+use voxmar_engine::glam::Vec2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ShapeId(pub u8);
@@ -135,7 +138,7 @@ impl Shapes {
             .map(|(def, boost)| {
                 let seed = seed ^ name_hash(&def.name);
                 let share = (def.rarity.multiplier() * boost).min(1.0);
-                let alone = matches!(def.kind, ShapeKind::Volcanoes { .. });
+                let alone = matches!(def.kind, ShapeKind::Volcanoes { .. } | ShapeKind::Arches { .. });
                 let gates = def
                     .climate
                     .iter()
@@ -249,7 +252,7 @@ impl Shapes {
                 out[k].features += features;
                 if features > 0.0 && matches!(shape.kind, ShapeKind::Arches { .. }) {
                     arches[k] += features;
-                    out[k].window = out[k].window.max(self.window(shape, x[k], z[k], weight[k]));
+                    out[k].window = out[k].window.max(self.arches(shape, x[k], z[k], &grounds[k]).1);
                 }
                 let change = terrain.abs() + features;
                 if change > most[k] {
@@ -378,38 +381,64 @@ impl Shapes {
                 let cut = weight * walls * (ground.height - floor).max(0.0);
                 (-cut, 0.0, weight * walls)
             }
-            ShapeKind::Arches { span, height } => {
-                // Short, thick spans of rock along the zero line of a noise, where a second
-                // noise rises in blobs about a span across: each a rock mass with a window
-                // through its middle (`window`), standing on legs at its ends. The line
-                // noise's typical slope where it crosses zero (about 3 per unit) turns its
-                // value into blocks from the line.
-                let scale = span * 5.0;
-                let d = n0.get_noise_2d(x / scale, z / scale).abs() / (3.0 / scale);
-                let wide = 3.0 + 2.0 * (0.5 + 0.5 * n2.get_noise_2d(x / 40.0, z / 40.0));
-                // Steep-sided, so the rock is about as high across its thickness as along
-                // its middle, and a window's lintel is level across it.
-                let across = 1.0 - smoothstep(wide - 0.4, wide + 0.4, d);
-                let fin = across * smoothstep(ARCH_MASS, ARCH_MASS + 0.06, arch_mass(n1, span, x, z));
-                (0.0, arch_height(n1, span, height, weight, x, z) * fin, weight * fin)
+            ShapeKind::Arches { .. } => {
+                let (rise, _, strength) = self.arches(shape, x, z, ground);
+                (0.0, rise, strength)
             }
         }
     }
 
-    /// How high a window opens under an arch at (x, z), from the ground, where its weight
-    /// is `weight`: in the middle of the span, two thirds of the rock's height, leaving a
-    /// thick lintel (four blocks at least), the opening rounding down towards the legs at
-    /// the span's ends. It
-    /// follows the span's height along its middle, so it is the same across its thickness.
-    fn window(&self, shape: &Shape, x: f32, z: f32, weight: f32) -> f32 {
-        let ShapeKind::Arches { span, height } = shape.kind else { return 0.0 };
-        let n1 = &shape.noises[1];
-        let high = arch_height(n1, span, height, weight, x, z);
-        if high < 9.0 {
-            return 0.0;
+    /// The arches at (x, z), if a site of them stands near: the height of their rock, how
+    /// high a window opens under it from the ground, and how much of an arch's full form
+    /// rises here. A site is one arch, sometimes two or three close together, and very
+    /// rarely a field of half a dozen or more; arches stand alone on a jittered grid of
+    /// `ARCH_CELL` blocks, gathered into the regions of their climate their rarity allows.
+    /// Each is a short, thick span of rock, steep-sided and higher in the middle, with an
+    /// opening through the middle that rounds down to legs at both ends, under a lintel a
+    /// third of its height; its outline is warped a little by noise.
+    fn arches(&self, shape: &Shape, x: f32, z: f32, ground: &Ground) -> (f32, f32, f32) {
+        let ShapeKind::Arches { span, height } = shape.kind else { return (0.0, 0.0, 0.0) };
+        let Some(site) = self.standalone(shape, x, z, ARCH_CELL, ARCH_REACH, ground) else { return (0.0, 0.0, 0.0) };
+        let u = site.units;
+        let count = if u[4] > 0.97 { 6 + (u[5] * 4.0) as u32 } else { 1 + u32::from(u[3] > 0.7) + u32::from(u[3] > 0.93) };
+        let spread = if count > 3 { 80.0 } else { 36.0 };
+        // A small warp, so outlines are not ruled.
+        let [_, _, n2] = &shape.noises;
+        let (wx, wz) = (x + 1.5 * n2.get_noise_2d(x / 9.0, z / 9.0), z + 1.5 * n2.get_noise_2d(x / 9.0 + 37.1, z / 9.0));
+        let full = smoothstep(0.0, 0.5, site.weight);
+        let (mut rock, mut window, mut strength) = (0.0f32, 0.0f32, 0.0f32);
+        for k in 0..count {
+            let h = hash3(shape.seed ^ 0xa4c5, site.cell[0] * 16 + k as i32, 0, site.cell[1]);
+            let unit = |i: u32| ((h >> (i * 10)) & 0x3ff) as f32 / 1023.0;
+            let centre = if k == 0 {
+                Vec2::from(site.centre)
+            } else {
+                Vec2::from(site.centre) + Vec2::from_angle(unit(0) * std::f32::consts::TAU) * spread * (0.5 + 0.5 * unit(1))
+            };
+            let (dx, dz) = (wx - centre.x, wz - centre.y);
+            let half = span * (0.22 + 0.18 * unit(2));
+            let thick = 3.0 + 2.0 * unit(3);
+            if dx.abs() > half + thick || dz.abs() > half + thick {
+                continue;
+            }
+            let along = Vec2::from_angle(unit(4) * std::f32::consts::TAU);
+            let (s, t) = (dx * along.x + dz * along.y, -dx * along.y + dz * along.x);
+            // A rounded oblong, steep at its edges.
+            let shape_at = (s / half).powi(4) + (t / thick).powi(2);
+            let inside = 1.0 - smoothstep(0.8, 1.0, shape_at);
+            if inside <= 0.0 {
+                continue;
+            }
+            let tall = full * height * (0.75 + 0.4 * unit(5));
+            rock = rock.max(tall * (0.88 + 0.12 * (1.0 - (s / half).powi(2))) * inside);
+            strength = strength.max(site.weight * inside);
+            // The opening, between legs a third of the span long at least three blocks.
+            let open = half - (0.32 * half).max(3.0);
+            if tall >= 9.0 && open > 2.0 && s.abs() < open {
+                window = window.max(((1.0 - (s / open).powi(2)).sqrt() * (0.65 * tall).min(tall - 4.0)).floor());
+            }
         }
-        let open = smoothstep(ARCH_CORE, ARCH_CORE + 0.1, arch_mass(n1, span, x, z));
-        (open.sqrt() * (0.65 * high).min(high - 4.0)).floor()
+        (rock, window, strength)
     }
 
     /// The standalone shape of the grid cell holding (x, z), if the cell holds one and it
@@ -549,24 +578,10 @@ impl Shape {
     }
 }
 
-/// Where an arch's rock stands along its line (its mass noise past `ARCH_MASS`), and
-/// where its window opens (past `ARCH_CORE`, well inside the rock, leaving legs at both
-/// ends).
-const ARCH_MASS: f32 = 0.28;
-const ARCH_CORE: f32 = 0.46;
-
-/// The noise whose blobs are an arch's spans, about `span` blocks across.
-fn arch_mass(noise: &FastNoiseLite, span: f32, x: f32, z: f32) -> f32 {
-    noise.get_noise_2d(x / (span * 1.2), z / (span * 1.2))
-}
-
-/// How high an arch's rock stands along the middle of its span at (x, z), where its
-/// weight is `weight`: full height from halfway into its climate (a low span reads as a
-/// wall), and highest over its window.
-fn arch_height(noise: &FastNoiseLite, span: f32, height: f32, weight: f32, x: f32, z: f32) -> f32 {
-    let crown = 0.8 + 0.2 * smoothstep(ARCH_MASS, ARCH_CORE + 0.1, arch_mass(noise, span, x, z));
-    smoothstep(0.0, 0.5, weight) * height * crown
-}
+/// Cells of the grid arch sites stand on, and the farthest an arch of a site reaches
+/// from its centre: well inside its cell, so no other cell's site reaches a position.
+const ARCH_CELL: f32 = 512.0;
+const ARCH_REACH: f32 = 130.0;
 
 /// What rolling hills of the given height make of a position where their weight is
 /// `weight` and their noise `n`: folded noise, round tops with creased hollows between them.
@@ -586,13 +601,16 @@ fn kind_noises(kind: ShapeKind, seed: u64) -> [FastNoiseLite; 3] {
 /// The chance that a cell of a standalone shape's grid holds one where it may, and the
 /// share of the world's regions it may: about one volcano per fifteen square kilometres
 /// in a moderately volcanic world, at rare, gathered into volcanic fields where most cells
-/// hold one, so a field of cones is a place rather than cones scattered everywhere.
+/// hold one, so a field of cones is a place rather than cones scattered everywhere; arch
+/// sites likewise gather in arch country.
 fn standalone_chance(kind: ShapeKind, share: f32, dials: &WorldDials) -> (f32, f32) {
-    let base = match kind {
-        ShapeKind::Volcanoes { .. } => 0.15 * (0.15 + 1.4 * dials.volcanism),
-        _ => 1.0,
+    // Arches: a site per eight or nine square kilometres of their climate, at very rare.
+    let (base, rarity) = match kind {
+        ShapeKind::Volcanoes { .. } => (0.15 * (0.15 + 1.4 * dials.volcanism), Rarity::Rare),
+        ShapeKind::Arches { .. } => (0.03, Rarity::VeryRare),
+        _ => (1.0, Rarity::Rare),
     };
-    let overall = (base * share / Rarity::Rare.multiplier()).min(1.0);
+    let overall = (base * share / rarity.multiplier()).min(1.0);
     let fields = (overall / 0.6).clamp(0.05, 0.6);
     ((overall / fields).min(0.9), fields)
 }

@@ -755,12 +755,17 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     const MIDNIGHT: u64 = 18_000;
     let ticks = world.resource::<crate::render::DayCycle>().ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64);
     let at = |time: u64| (ticks - time as f64).abs() < 100.0;
+    // The sky's checks judge the sun, moon and stars against the sky around them, so they
+    // wait for the clear weather the weather step left (cloud cover 0) to have cleared every
+    // cloud, whatever the seed's weather was. (No second command: another line on the
+    // console would cover the moon.)
+    let cloudless = world.resource::<crate::weather::ClientWeather>().current.cover <= 0.01;
     match gate.phase {
         0 => {
             world.resource::<Net>().command(&format!("time set {MORNING}"));
             gate.advance(now);
         }
-        1 if at(MORNING) && in_phase > 0.5 => {
+        1 if at(MORNING) && cloudless && in_phase > 0.5 => {
             aim_at_light(world);
             gate.advance(now);
         }
@@ -823,7 +828,12 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("sky: stars", stars(&shot));
             gate.next(Step::Tree, now);
         }
-        1 | 4 | 7 if in_phase > 5.0 => {
+        1 if in_phase > 15.0 => {
+            let why = if cloudless { format!("the time of day did not change: {ticks:.0} ticks") } else { "the sky did not clear of cloud".to_owned() };
+            gate.check("sky", Err(why));
+            gate.next(Step::Tree, now);
+        }
+        4 | 7 if in_phase > 5.0 => {
             gate.check("sky", Err(format!("the time of day did not change: {ticks:.0} ticks")));
             gate.next(Step::Tree, now);
         }

@@ -686,7 +686,7 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
    deep; in the 16 km² around the origin, 15 trunk spans (about a kilometre of canyon) and
    about 30 stream spans run more than half in a gorge. Trunk gorges are canyons twenty to
    thirty blocks deep; creek gorges are the small kind in the reference, five to ten. `/locate gorge` finds the nearest (`Overworld::locate_gorge`,
-   which reads the rivers region by region, nearest first), `Overworld::water_sights` lists
+   which reads the rivers region by region, nearest first, and keeps to gorges whose walls stand eight blocks over the water), `Overworld::water_sights` lists
    one among the other sights (`WaterSight::Gorge`), and the landing gate goes to the
    nearest and checks the server's world has water there between walls six blocks high.
 
@@ -710,6 +710,18 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
 6. **Comparison and tuning pass.** Captures beside Tectonic and Terralith screenshots and
    the hiking frames, before and after, for mountains, coasts, plains, plateaus, valleys,
    gorges and every biome; a performance pass.
+
+   *As built (first pass):* the crags got their dramatic tuning: up to fourteen blocks on
+   the spines of ranges (was nine), eight on their slopes, three on foothills, with a
+   shorter wavelength (48 blocks), faster change upwards (squash 1.7) and density falling
+   more slowly above the surface (0.45), so ranges carry more tors, buttresses and
+   overhangs. Natural arches became a rare find: sites on a jittered 512-block grid, one
+   per eight or nine square kilometres of their climate at very rare, gathered into arch
+   country; a site holds one arch, sometimes two or three within 40 blocks, and one in
+   thirty-odd a field of six to nine. Each arch is a rounded oblong of rock 10 to 25 blocks
+   long, its window under a lintel a third of its height. Whole-rebuild views (old
+   terrain at f4d64c8 against this) are `step6_rebuild_*` in the shots folder. Side-by-side
+   captures with Tectonic itself are still missing: we have its source, not screenshots.
 
 Steps 1 and 3 are the big ones. Step 2 touches `biomes.ron` claims only (not palettes), to
 stay clear of the decor track's colour work.

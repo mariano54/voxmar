@@ -33,8 +33,8 @@
             // biome includes them for now: they read as paths, which belong near settlements.
             name: "trails",
             rules: [
-                (when: [Not(Slope(0.9, 1.5)), Band((name: "game_trails", scale: 140.0), 0.009)], place: (top: Mix([Name("coarse_dirt", 4.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
-                (when: [Not(Slope(0.9, 1.5)), Band((name: "game_trails", scale: 140.0), 0.017), Chance(0.35)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
+                (when: [Not(Slope(1.0, 2.0)), Band((name: "game_trails", scale: 140.0), 0.009)], place: (top: Mix([Name("coarse_dirt", 4.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
+                (when: [Not(Slope(1.0, 2.0)), Band((name: "game_trails", scale: 140.0), 0.017), Chance(0.35)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
             ],
         ),
         (
@@ -44,11 +44,11 @@
             name: "washes",
             rules: [
                 (
-                    when: [Not(Slope(0.9, 1.5)), Warmer(8.0, 12.0), Tapered((name: "dry_washes", scale: 320.0, octaves: 2), (name: "dry_wash_width", scale: 500.0, octaves: 2), [(0.3, 0.014), (0.0, 0.008), (-0.25, 0.004)])],
+                    when: [Not(Slope(1.0, 2.0)), Warmer(8.0, 12.0), Tapered((name: "dry_washes", scale: 320.0, octaves: 2), (name: "dry_wash_width", scale: 500.0, octaves: 2), [(0.3, 0.014), (0.0, 0.008), (-0.25, 0.004)])],
                     place: (top: Mix([Name("gravel", 3.0), Name("sand", 2.0), Name("coarse_dirt", 1.0)]), filler: Block("gravel"), depth: 2),
                 ),
                 (
-                    when: [Not(Slope(0.9, 1.5)), Tapered((name: "dry_washes", scale: 320.0, octaves: 2), (name: "dry_wash_width", scale: 500.0, octaves: 2), [(0.3, 0.014), (0.0, 0.008), (-0.25, 0.004)])],
+                    when: [Not(Slope(1.0, 2.0)), Tapered((name: "dry_washes", scale: 320.0, octaves: 2), (name: "dry_wash_width", scale: 500.0, octaves: 2), [(0.3, 0.014), (0.0, 0.008), (-0.25, 0.004)])],
                     place: (top: Mix([Name("gravel", 3.0), Name("coarse_dirt", 2.0)]), filler: Block("gravel"), depth: 2),
                 ),
             ],

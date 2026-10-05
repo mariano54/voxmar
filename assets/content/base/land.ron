@@ -235,17 +235,17 @@
         ])])),
         ("valley", Spline(on: "Wf", points: [(0.03, 1.0), (0.2, 0.0)])),
         // How far the 3D density moves the ground, in blocks (see `density` below): up to
-        // nine on the spines of ranges, where rock breaks into crags, ledges and overhangs,
-        // a few on their foothills, none on the lowland.
+        // fourteen on the spines of ranges, where rock breaks into crags, ledges and
+        // overhangs, a few on their foothills, none on the lowland.
         ("crag", Mul([
             Spline(on: "C", points: [(-0.1, 0.0), (0.05, 1.0)]),
-            Spline(on: "Ef", points: [(0.0, 9.0), (0.18, 6.0), (0.3, 2.5), (0.4, 0.0)]),
+            Spline(on: "Ef", points: [(0.0, 14.0), (0.18, 8.0), (0.3, 3.0), (0.4, 0.0)]),
         ])),
     ],
     // The 3D noise `crag` moves the ground by: wavelength in blocks, octaves, how much
     // faster it changes up than across (ledges), and how much more slowly density falls
     // above the surface than below it (overhangs).
-    density: (wavelength: 56.0, octaves: 2, squash: 1.5, above: 0.5),
+    density: (wavelength: 48.0, octaves: 2, squash: 1.7, above: 0.45),
     vertical_scale: 1.0,
     elevation_boost: 0.15,
     ceiling: (190.0, 48.0),

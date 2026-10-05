@@ -95,7 +95,7 @@
                     (when: [Water([Creek])], place: (top: Block("grass_block"), filler: Block("dirt"))),
                     (when: [Water([River]), Altitude(24.0, 36.0)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0)]), filler: Block("gravel"), depth: 2)),
                     (when: [Water([River]), River(0.6, 0.85), Patch((name: "river_gravel", scale: 30.0, octaves: 2), 0.2)], place: (top: Block("gravel"), depth: 2)),
-                    (when: [Water([Lake]), Slope(1.4, 2.2)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0)]), filler: Block("gravel"), depth: 2)),
+                    (when: [Water([Lake]), Slope(1.5, 2.5)], place: (top: Mix([Name("gravel", 2.0), Name("stone", 1.0)]), filler: Block("gravel"), depth: 2)),
                 ],
                 ground: (top: Block("grass_block"), filler: Block("dirt")),
                 underwater: (top: Block("sand")),
@@ -712,7 +712,7 @@
             surface: (
                 include: ["rocky_slopes"],
                 rules: [
-                    (when: [Altitude(70.0, 95.0), Colder(6.0, 9.0), Slope(1.0, 2.0)], place: (top: Mix([Name("gravel", 3.0), Name("stone", 1.0)]), filler: Block("stone"))),
+                    (when: [Altitude(70.0, 95.0), Colder(6.0, 9.0), Slope(1.0, 2.5)], place: (top: Mix([Name("gravel", 3.0), Name("stone", 1.0)]), filler: Block("stone"))),
                     (when: [Altitude(50.0, 80.0), Patch((name: "alpine_rock", scale: 14.0, octaves: 2), 0.25)], place: (top: Mix([Name("stone", 1.0), Name("coarse_dirt", 1.0)]))),
                 ],
                 ground: (top: Block("grass_block"), filler: Block("dirt")),
@@ -969,7 +969,7 @@
             ),
             surface: (
                 rules: [
-                    (when: [Slope(1.3, 2.4)], place: (top: Strata, filler: Strata, depth: 14)),
+                    (when: [Slope(1.5, 3.0)], place: (top: Strata, filler: Strata, depth: 14)),
                 ],
                 ground: (top: Block("red_sand"), filler: Strata, depth: 14),
                 underwater: (top: Block("red_sand")),
@@ -991,7 +991,7 @@
             ),
             surface: (
                 rules: [
-                    (when: [Slope(1.3, 2.4)], place: (top: Strata, filler: Strata, depth: 14)),
+                    (when: [Slope(1.5, 3.0)], place: (top: Strata, filler: Strata, depth: 14)),
                     (when: [Patch((name: "mesa_soil", scale: 20.0, octaves: 2), -0.1)], place: (top: Mix([Name("grass_block", 2.0), Name("coarse_dirt", 2.0)]), filler: Strata, depth: 14)),
                 ],
                 ground: (top: Block("red_sand"), filler: Strata, depth: 14),
