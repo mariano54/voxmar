@@ -78,6 +78,8 @@ const RIPPLE_SLOPE_VARIANCE: f32 = 0.0013;
 // Depth of water at which sky light at the floor has run out, in blocks (it falls two
 // levels per block).
 const SHEET_DEPTH: f32 = 7.5;
+// Falling water's foam, lit: a little blue, as real waterfalls' streaks (water_surface.wgsl).
+const FALLING_FOAM = vec3(0.85, 0.9, 0.95);
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -304,8 +306,11 @@ fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surfa
 
 // Water and ice: the surface over the floor beneath. Water is shaded like real water
 // (water.wgsl): the floor seen through it, dimmed and coloured by the water it is seen and lit
-// through, the water's own colour where it is deep, and a reflection of the sky.
-fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
+// through, the water's own colour where it is deep, and a reflection of the sky. Where the
+// sheet falls steeply (`surface_slope`, rise per block: a river dropping off a cliff) it is
+// white water, as real falling water is, not a mirror: a level sheet's reflection there
+// took the horizon's colour, and waterfalls showed as sky-blue holes in the hills.
+fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32) -> vec3<f32> {
     let light = shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, true);
     let floor = saturate(in.side) * face_light(in, UP, 1.0, 1.0, false);
     if in.kind == ICE {
@@ -335,7 +340,10 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>) -> vec3<f32> {
     let seen = floor * transmittance(absorbed, scattered, path + depth) + inscattered(absorbed, scattered, path, light);
     // The sky as real water reflects it where its reflections leave the screen.
     let reflected = sky_gradient(r, distant.zenith.rgb, distant.horizon.rgb);
-    return mix(seen, reflected, fresnel(facing)) + sun_color() * glint * 4.0;
+    let falls = smoothstep(0.7, 1.5, surface_slope);
+    let still = mix(seen, reflected, fresnel(facing)) + sun_color() * glint * 4.0;
+    let white_water = mix(seen, light * FALLING_FOAM, 0.55);
+    return mix(still, white_water, falls);
 }
 
 @fragment
@@ -372,7 +380,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             color *= 1.0 + PATCHES * patches * (value_noise(in.world_position.xz / PATCH_CELL + 17.0).x - 0.5);
         }
     } else {
-        color = sheet(in, to_eye);
+        color = sheet(in, to_eye, surface_slope);
     }
     // A NaN from a degenerate sliver would bloom into a blob; drop it.
     color = select(color, vec3(0.0), color != color);
