@@ -21,6 +21,9 @@ use crate::content::{Axis, BiomeDef, WorldContent};
 /// How far from its palette's anchor a canopy's colour may lie and still grow freely; at
 /// three times this distance a tree is a rare accent.
 pub(crate) const CANOPY_SPREAD: f32 = 0.07;
+/// Likewise for a crown of its own colour that a biome without a canopy colour names,
+/// against the biome's foliage: looser, as the foliage is no colour the biome chose.
+pub(crate) const FOLIAGE_SPREAD: f32 = 0.1;
 /// Likewise for flowers against a palette set in data.
 pub(crate) const FLOWER_SPREAD: f32 = 0.08;
 /// Likewise for the blocks mixed in a ground material, against its main block.

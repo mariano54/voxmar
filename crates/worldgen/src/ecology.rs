@@ -655,12 +655,19 @@ impl Flora {
         // so they always fit; leaves of their own colour (cherry, maple, silverwood) grow
         // only in a biome whose palette is built around a colour like theirs, never as
         // specks among other colours.
-        let canopy_fit = |tree: &TreeDef| -> f32 {
+        // A biome without a canopy colour of its own may still name such a tree (an olive's
+        // grey-green, a larch's yellow-green): it grows as far as its colour sits with the
+        // biome's foliage, judged more loosely, rarer the further it strays.
+        let canopy_fit = |tree: &TreeDef, named: bool| -> f32 {
             let crown = tree.leaves.as_deref().unwrap_or(&tree.log);
             if !tree.crown.shades() || registry.def(registry.expect(crown)).tint != voxmar_engine::block::Tint::None {
                 return 1.0;
             }
-            let fit = def.palette.canopy.map_or(0.0, |anchor| hue::harmony(shown(crown), rgb(anchor), hue::CANOPY_SPREAD));
+            let fit = match def.palette.canopy {
+                Some(anchor) => hue::harmony(shown(crown), rgb(anchor), hue::CANOPY_SPREAD),
+                None if named => hue::harmony(shown(crown), foliage, hue::FOLIAGE_SPREAD),
+                None => 0.0,
+            };
             if fit < hue::CLASH { 0.0 } else { fit }
         };
         // Plants much brighter or more saturated than the grass are rarer accents.
@@ -672,12 +679,12 @@ impl Flora {
             let id = TreeId(i as u16);
             // A tree the biome names is part of its forest, wonder or not.
             let named = def.trees.iter().any(|s| matches!(s, Select::Name(n, _) if *n == tree.name));
-            let wonder = if named { 0.0 } else { selected(&wonders, &def.exclude, &tree.name, tags.clone()) * tree_rarity[i] * canopy_fit(tree) };
+            let wonder = if named { 0.0 } else { selected(&wonders, &def.exclude, &tree.name, tags.clone()) * tree_rarity[i] * canopy_fit(tree, false) };
             if wonder > 0.0 {
                 flora.wonder_trees.push((id, wonder));
                 continue;
             }
-            let weight = selected(&def.trees, &def.exclude, &tree.name, tags) * tree_rarity[i] * canopy_fit(tree);
+            let weight = selected(&def.trees, &def.exclude, &tree.name, tags) * tree_rarity[i] * canopy_fit(tree, named);
             if weight > 0.0 {
                 let own_terms = matches!(tree.habitat, Habitat::Water | Habitat::Shore | Habitat::Shallows);
                 if own_terms { &mut flora.habitat } else { &mut flora.canopy }.push((id, weight));
@@ -807,6 +814,40 @@ mod tests {
         assert!(share("base:maple_forest", "base:amber_maple") > 0.2);
         assert!(share("base:cherry_grove", "base:cherry") > 0.8);
         assert_eq!(share("base:forest", "base:cherry"), 0.0);
+    }
+
+    #[test]
+    fn gathering_trees_grow_only_where_named() {
+        let registry = registry();
+        let content = content(&[], &registry);
+        let ecology = Ecology::new(1, &WorldDials::sample(1), &content, &registry);
+        let name = |t: TreeId| content.trees[t.0 as usize].name.trim_start_matches("base:").to_owned();
+        for (b, biome) in content.biomes.iter().enumerate() {
+            let flora = &ecology.flora[b];
+            for &(tree, _) in flora.canopy.iter().chain(&flora.habitat) {
+                let def = &content.trees[tree.0 as usize];
+                if def.tags.iter().any(|t| t == "gathering") {
+                    let named = biome.flora.trees.iter().any(|s| matches!(s, Select::Name(n, _) if *n == def.name));
+                    assert!(named, "{} grows in {} unnamed", def.name, biome.name);
+                }
+            }
+        }
+        let share = |biome: &str, tree: &str| {
+            let flora = &ecology.flora[content.biomes.iter().position(|b| b.name == format!("base:{biome}")).unwrap()];
+            let total: f32 = flora.canopy.iter().map(|c| c.1).sum();
+            flora.canopy.iter().find(|c| name(c.0) == tree).map_or(0.0, |c| c.1 / total)
+        };
+        // Olives and larches, leaves of their own colour, grow where named though the
+        // biome has no canopy colour, an accent rather than a stand.
+        for (biome, tree) in [("mediterranean", "olive"), ("taiga", "larch"), ("bog", "larch")] {
+            assert!((0.005..0.15).contains(&share(biome, tree)), "{tree} in {biome}: {}", share(biome, tree));
+        }
+        let habitat = |biome: &str| {
+            let flora = &ecology.flora[content.biomes.iter().position(|b| b.name == format!("base:{biome}")).unwrap()];
+            flora.habitat.iter().map(|c| name(c.0)).collect::<Vec<_>>()
+        };
+        assert!(habitat("bayou").contains(&"bald_cypress".to_owned()));
+        assert!(habitat("swamp").contains(&"alder".to_owned()));
     }
 
     #[test]
