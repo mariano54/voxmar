@@ -54,14 +54,14 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, mut notice: ResMut<Notice>) 
         card.0.row_gap = Val::Px(4.0 * PX);
         root.spawn(card).with_children(|card| {
             card.spawn(button_row(0.0)).with_children(|row| {
-                spawn_button(row, font, "Singleplayer", ButtonStyle::Primary, Action::Singleplayer);
+                spawn_button(row, font, "menu.singleplayer", ButtonStyle::Primary, Action::Singleplayer);
             });
             card.spawn(button_row(0.0)).with_children(|row| {
-                spawn_button(row, font, "Multiplayer", ButtonStyle::Secondary, Action::Multiplayer);
+                spawn_button(row, font, "menu.multiplayer", ButtonStyle::Secondary, Action::Multiplayer);
             });
             card.spawn(button_row(0.0)).with_children(|row| {
-                spawn_button(row, font, "Settings", ButtonStyle::Secondary, Action::Settings);
-                spawn_button(row, font, "Quit", ButtonStyle::Secondary, Action::Quit);
+                spawn_button(row, font, "menu.settings", ButtonStyle::Secondary, Action::Settings);
+                spawn_button(row, font, "menu.quit", ButtonStyle::Secondary, Action::Quit);
             });
             if let Some(message) = notice.0.take() {
                 let node = Node { max_width: Val::Px(170.0 * PX), margin: UiRect::top(Val::Px(4.0)), ..default() };
