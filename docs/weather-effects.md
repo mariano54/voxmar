@@ -99,10 +99,10 @@ after this table.
 | --- | --- | --- |
 | drizzle | fine drizzle, light rain bed | – |
 | rain, downpour | streaks, splashes, ripples, drips under leaves, far veils; rain beds by strength and cover | glassy near streaks; rain shafts under distant cells (§8) |
-| storm, thunderstorm, supercell | as a downpour, gusts; storm wind; thunder near to far | lightning bolt geometry (§1); flashes lighting the cloud from inside (§8); storm fronts (§8) |
+| storm, thunderstorm, supercell | as a downpour, gusts; storm wind; thunder near to far | storm fronts (§8) (bolts and flashes in the cloud drawn) |
 | heat lightning | silent far flashes | lighting the horizon's cloud from inside (§8) |
-| hail | white pellets that bounce and lie; icy rattle | hail lying white on top faces for a while (as the snow dusting, from `w.hail`) |
-| sleet, freezing rain | icy pellets; sleet patter | the glaze of freezing rain: a glassy sheen on surfaces open to the sky while `w.frost` and `w.sleet` are both up |
+| hail | white pellets that bounce and lie; icy rattle | – (drawn) |
+| sleet, freezing rain | icy pellets; sleet patter | – (drawn) |
 | snow, blizzard, thundersnow | soft flakes, whiteout veils; blizzard howl, gusts, thunder | – (fog, snow dusting and bolts as above) |
 | drifting snow | white dust blowing low; gusts | – |
 | dusty afternoon, dust storm, sandstorm | grains and brown-out veils; sandstorm bed | – |
@@ -122,7 +122,7 @@ after this table.
 In order of how much they show. Each is a few lines to a small pass; all read
 `ClientWeather::current` (call it `w`) unless said.
 
-### 1. Lightning bolts
+### 1. Lightning bolts (drawn: render/bolts.rs)
 
 `ClientWeather::bolts()` yields each visible bolt: `channel` (points from the cloud base,
 150–220 blocks up, to the strike point, about 10 blocks apart), `branches` (forks that
@@ -207,7 +207,8 @@ the precipitation particles cannot do on their own:
   cloud base to the ground under every cell with rain above about 0.2 beyond 150 blocks
   (darker and denser with more rain, soft-edged, swaying with the wind), so a storm is
   seen coming over the hills before it arrives.
-- **Lightning inside clouds**: most flashes now stay within the cloud
+- **Lightning inside clouds** (drawn: volumetric.wgsl lights the low cloud within about
+  180 blocks of the brightest flash): most flashes now stay within the cloud
   (`ClientWeather::cloud_flashes()`: position about 160 blocks up and brightness). Light the
   cloud layer around that point (a soft glow of 200–400 blocks) rather than the whole sky.
 - **Snow on leaves and other surfaces**: drawn now (a dusting on top faces).

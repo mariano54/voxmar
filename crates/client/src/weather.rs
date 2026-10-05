@@ -24,7 +24,7 @@ impl Plugin for WeatherPlugin {
             .init_resource::<ClientWeather>()
             .init_resource::<Wind>()
             .add_message::<Thunder>()
-            .add_systems(Update, (ease, draw_bolts).chain())
+            .add_systems(Update, ease)
             .add_systems(OnExit(Screen::InGame), |mut weather: ResMut<ClientWeather>| weather.leave());
     }
 }
@@ -276,7 +276,6 @@ impl ClientWeather {
     /// Flashes within clouds now, for lighting the clouds from inside: where (in the cloud,
     /// about 160 blocks over the ground) and how bright, 0..1. For the renderer; see
     /// docs/weather-effects.md.
-    #[allow(dead_code)]
     pub fn cloud_flashes(&self) -> impl Iterator<Item = (Vec3, f32)> + '_ {
         self.strikes.iter().filter(|s| s.cloud && s.age < BOLT_LIFE * 2.0).map(|s| (s.at, pulses(s.age).min(1.0)))
     }
@@ -421,18 +420,6 @@ fn ease(
     weather.current.wind = wind.now(at);
     // Clouds drift with the mean wind; gusts are too quick and too local to move them.
     weather.drift = (weather.drift + weather.mean_wind * dt).rem_euclid(Vec2::splat(DRIFT_WRAP));
-}
-
-/// Draws lightning bolts as bright lines, which bloom gives a glow, until the renderer
-/// draws them properly (see docs/weather-effects.md).
-fn draw_bolts(weather: Res<ClientWeather>, mut gizmos: Gizmos) {
-    for bolt in weather.bolts() {
-        let color = LinearRgba::rgb(6.0, 6.5, 8.0) * bolt.brightness;
-        gizmos.linestrip(bolt.channel.iter().copied(), color);
-        for branch in &bolt.branches {
-            gizmos.linestrip(branch.iter().copied(), color * 0.5);
-        }
-    }
 }
 
 /// A kind of weather by name (`clear`, `storm`, `aurora`, …), as the content packages in

@@ -4,7 +4,7 @@
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
-#import voxmar::atmosphere::{Atmosphere, dusk_tint, edge_fog, under_water}
+#import voxmar::atmosphere::{Atmosphere, band, dusk_tint, edge_fog, under_water}
 #import voxmar::clouds::{pcg, unit, value_noise, cloud_body}
 
 struct SkyParams {
@@ -362,38 +362,6 @@ fn disc(dir: vec3<f32>, ddx: vec3<f32>, ddy: vec3<f32>, center: vec3<f32>, radiu
     return vec3(vec2(dot(s, e), dot(s, n)) / r, clamp(r - length(s) + 0.5, 0.0, 1.0));
 }
 
-// A colour of the spectrum, red (0) through yellow and green to violet (1), soft as a
-// rainbow's are (each colour spread over its neighbours).
-fn spectrum(t: f32) -> vec3<f32> {
-    let h = saturate(t) * 0.8;
-    let rgb = saturate(abs(fract(vec3(h, h + 2.0 / 3.0, h + 1.0 / 3.0)) * 6.0 - 3.0) - 1.0);
-    return mix(vec3(dot(rgb, vec3(0.3, 0.5, 0.2))), rgb, 0.75);
-}
-
-// A band from `inner` to `outer` degrees with edges a degree soft, 0..1.
-fn band(angle: f32, inner: f32, outer: f32) -> f32 {
-    return smoothstep(inner - 0.6, inner + 0.4, angle) * (1.0 - smoothstep(outer - 0.4, outer + 0.6, angle));
-}
-
-// Rainbows, opposite the sun: the primary bow red outside at 42° to violet at 40.5°, the
-// sky a little brighter inside it; with a double rainbow (`strength` over 0.75) the
-// secondary bow from 50° to 53.5°, its colours reversed and fainter, and Alexander's dark
-// band between the two. Returns light to add and, in w, a factor for the sky beneath.
-fn rainbow(dir: vec3<f32>, sun: vec3<f32>, strength: f32) -> vec4<f32> {
-    let a = degrees(acos(clamp(dot(dir, -sun), -1.0, 1.0)));
-    if a > 56.0 {
-        return vec4(0.0, 0.0, 0.0, 1.0);
-    }
-    var light = spectrum((42.0 - a) / 1.5) * band(a, 40.5, 42.0) * 0.45 * strength;
-    var sky = select(1.0, 1.0 + 0.05 * strength, a < 40.0);
-    if strength > 0.75 {
-        let double = smoothstep(0.75, 0.9, strength);
-        light += spectrum((a - 50.0) / 3.5) * band(a, 50.0, 53.5) * 0.14 * strength * double;
-        sky *= 1.0 - 0.08 * band(a, 42.0, 50.0) * double;
-    }
-    return vec4(light, sky);
-}
-
 // A 22° halo round the sun or moon (`light`), reddish on its inner edge, and with `strength`
 // over 0.5 sun dogs: bright, slightly coloured spots 22° to either side at its height,
 // strongest with the light low.
@@ -648,12 +616,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         color += night_sky * clear;
     }
 
-    // Rainbows opposite the sun (cloud in front hides them, below).
-    if sky.optics.x > 0.0 && sky.sun.y > 0.0 && dir.y > 0.0 {
-        let bow = rainbow(dir, sky.sun.xyz, sky.optics.x);
-        let shows = daylight * smoothstep(0.0, 0.05, dir.y);
-        color = color * mix(1.0, bow.w, shows) + bow.rgb * shows;
-    }
     // A halo round the sun by day, fainter round the moon by night.
     if sky.optics.y > 0.0 {
         let light = select(-sky.sun.xyz, sky.sun.xyz, sky.sun.y > 0.0);
