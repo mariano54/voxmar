@@ -1451,6 +1451,24 @@ mod tests {
                 let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
                 // Peaks are steep by nature.
                 let steep = if world.biomes.get(id).has_tag("peaks") || world.biomes.get(id).has_tag("mountain") { 6 } else { 2 };
+                // The sea: a view from above the water a little off its coast.
+                if world.biomes.get(id).has_tag("ocean") {
+                    let centre = IVec2::new(spawn.x, spawn.z);
+                    let near = world.sampler(centre - 3000, centre + 3000);
+                    let found = (0..188 * 188)
+                        .map(|i| centre + IVec2::new(i % 188 * 32 - 3000, i / 188 * 32 - 3000))
+                        .map(|p| (p, near.site(p.x, p.y)))
+                        .filter(|(_, site)| site.home == id && site.height < site.water && (24.0..64.0).contains(&site.edge))
+                        .min_by_key(|(p, _)| (*p - centre).length_squared());
+                    match found {
+                        Some((at, site)) => {
+                            let up = (site.water - site.height) as f32 + 24.0;
+                            println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,45,-8  above: --pose 0,{up:.0},0,45,-25", at.x, at.y, at.x, at.y);
+                        }
+                        None => println!("{name}: not found"),
+                    }
+                    continue;
+                }
                 // The point deepest inside the biome within a few kilometres of spawn, else
                 // the deepest around the first place found further out.
                 let centre = IVec2::new(spawn.x, spawn.z);
