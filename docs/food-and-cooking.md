@@ -1,0 +1,189 @@
+# Food and cooking
+
+Oct 5, 2026. Ingredients, recipes, stations, preservation and the Cooking skill, built on
+the hunger and warmth the Game UI thread added (`engine::vitals`). Part of the creatures,
+food and breeding design (see [creatures.md](creatures.md)).
+
+## Decisions
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Hunger | Kept as built: hunger 0–20 that empties in about 50 minutes, filled by food by tags (`food:N`, or by kind), Well fed heals twice as fast (`engine::vitals`). |
+| 2 | Healing | A hybrid. Raw food only fills hunger (Minecraft). Cooked food also heals at once, RuneScape-style, so cooking matters for fighting. |
+| 3 | Recipes match properties | A recipe asks for kinds (`meat`, `vegetable`, `herb`), not items. Any creature's meat and any mod's vegetable work in a stew on day one. Named dishes with exact items add flavour on top (the mob survey's main lesson). |
+| 4 | A dish is computed | Its hunger, healing, flavour and effects come from its ingredients and technique, with caps, so a venison and carrot stew differs from a carp and leek stew. |
+| 5 | Food answers the world | Effects counter the warmth bands that already exist (a warm meal against Chilly and Freezing), and cover the dark, heat, fire and water. |
+| 6 | Techniques use fields | Drying needs dry air, fermenting and ageing need a cool place, smoking needs a smoker and wood. The weather's moisture and the temperature field decide where they work. |
+| 7 | Cooking skill | Gates recipes and stations, lowers burning, raises quality (see [skills.md](skills.md)). |
+
+## Ingredients
+
+Every edible item is an ingredient through its tags, many of which blocks already carry
+(`edible`, `fruit`, `produce`, `root`, `grain`, `berry`, `fungus`, `flavour:*`,
+`alchemy:*`, `dye:*`). The food layer adds a few:
+
+| Tag | Meaning |
+| --- | --- |
+| kind: `meat`, `fish`, `egg`, `dairy`, `fat`, `grain`, `flour`, `vegetable`, `root`, `legume`, `fruit`, `berry`, `nut`, `herb`, `spice`, `fungus`, `sweet` | what recipes match |
+| `raw` | cooking it is better; raw meat and fish may give Food poisoning (hunger drains fast for a minute) |
+| `flavour:sweet/sour/salty/bitter/savoury/spicy/aromatic/resin` | the seven flavour axes (plus resin from wood) |
+| `warming`, `cooling` | shifts how warm you feel after eating (chili, ginger, emberfruit; mint, cucumber, frostpetal) |
+| `alchemy:*` | already on plants; some carry into dishes as effects (healing, clarity, night_sight) |
+| `aether` | supernatural; strengthens effects and can carry its own |
+| `spoils:N` | in-game days until stale; preserved foods have none |
+| `food:N` | hunger filled, as vitals reads it today |
+
+Creatures supply: meat (raw chicken, rabbit, duck, mutton, pork, chevon, beef, venison,
+camel, crocodile, wyrm), fish (trout, carp, cod, tuna, crab, frog legs), eggs (hen, duck,
+turtle, sunwing), dairy (cow, goat, sheep, reindeer and camel milk), fat (lard, bear fat),
+honey and wax, and supernatural ingredients (moon dust, lumen slime, ember scale).
+
+Plants supply (all real items in plants.ron, crops.ron and trees.ron): grains (wheat,
+barley, oats, rice, millet, quinoa, corn), legumes (beans, peas, lentils), roots (carrot,
+potato, turnip, beet, radish, parsnip, yam, taro, ginger), vegetables (cabbage, tomato,
+onion, leek, garlic, asparagus, pumpkin, squash, chili), fruit (apple, pear, plum,
+cherries, fig, lemon, orange, olives, banana, mango, avocado, coconut, marula, baobab,
+melon, pineapple, grapes, prickly pear), berries (blueberry, raspberry, blackberry,
+elderberry, cranberry, lingonberry, cloudberry, gooseberry, currant, goji, rowan,
+strawberry, sweet berries), nuts (hazelnut, walnut, chestnut, almond), herbs (mint, sage,
+thyme, basil, rosemary, oregano, parsley, dill, fennel, coriander, lemongrass, wild
+garlic, sorrel, nettle), spices (cumin, saffron, vanilla, juniper), fungi (chanterelle,
+porcini, morel, puffball, oyster, shiitake, lion's mane, chicken of the woods, truffle),
+tea and coffee, cacao, and the fantastical plants (moonbloom, glowcap, emberbloom,
+frostpetal, starlily, heartbloom, emberfruit, golden apple and those proposed in
+[systems-web.md](systems-web.md)).
+
+## Recipes
+
+A recipe is an action at a station: inputs by kind or item, a technique, a time, a
+Cooking level, experience and a burn curve. Its output is a dish whose properties are
+computed:
+
+```
+hunger   = min(cap, Σ ingredient food × technique factor)      // cooked ×1.5, raw ×1
+heal     = hunger × 0.5 × quality                              // instant, only cooked
+flavour  = Σ ingredient flavours, scaled; the best-balanced dishes give a little more
+effects  = from ingredient tags: warming → Warm meal, cooling → Cool meal,
+           alchemy:night_sight → Dark sight, … ; strength from the count and aether
+name     = template + main ingredients ("venison and carrot stew")
+```
+
+Named dishes (data) match exact ingredients and override the name and add an effect: a
+"hunter's stew" (venison, juniper, any root) also gives Quiet steps.
+
+## Stations and techniques
+
+| Station | Technique | Needs | Level |
+| --- | --- | --- | --- |
+| Campfire | roast | fuel | 1 |
+| Pot (on a fire) | boil, stew, soup, porridge, jam | water | 5 |
+| Quern | mill grain to flour | | 8 |
+| Oven | bake bread, pies, cakes | fuel | 15 |
+| Pan (on a fire) | fry | a fat (butter, lard, bear fat, olive oil) | 18 |
+| Churn | butter, cream | milk | 22 |
+| Smoker | smoke meat and fish; hours | wood (oak, cherry, maple, juniper, pine each flavour differently) | 33 |
+| Cheese press and cellar | fresh then aged cheese; days to weeks | milk, rennet or a herb; a cool place (temperature 4–15 °C) | 35, 50 |
+| Drying rack | jerky, dried fruit, dried herbs; hours | dry air (moisture field low, no rain) and warmth | 42 |
+| Crock | ferment: sauerkraut, pickles, sauces, cider; days | a cool place | 45 |
+| Table | banquet: dishes set out together, shared effects | | 99 |
+
+Long techniques (smoking, drying, fermenting, ageing) are due-time events, like crop
+stages, computed from the conditions where the station stands and recomputed only when
+they change: a drying rack in a desert finishes in an hour, in a swamp it never does, and
+rain pauses it.
+
+## Effects
+
+Effects are the vitals effects, plus food buffs, all with a duration and a strength:
+
+| Effect | From | Does |
+| --- | --- | --- |
+| Warm meal | `warming` ingredients, hot stews and soups | feel up to 8 °C warmer for 10–20 min: counters Chilly and Freezing on a mountain in a blizzard |
+| Cool meal | `cooling` ingredients, sorbets | feel up to 8 °C cooler: counters Hot and Overheated in the desert at noon |
+| Dark sight | glowcap, lumen slime, carrots in quantity | see in the dark (for caves and night) |
+| Fire ward | ember scale, emberfruit | resist fire and lava heat |
+| Deep breath | sky lotus, seaweed, fish | breathe longer under water |
+| Quiet steps | hunter's stew, moonhare | creatures hear you less (Hunter) |
+| Steady hand | honey, tea, coffee | fewer misses (Attack) for a while |
+| Hearty | heartbloom, aged cheese | +10 maximum health for an hour |
+| Aether sight | starlily tea | see the aether field as a faint shimmer |
+| Nourished | a varied diet: five different dishes in the last ten meals | heal faster (stacks with Well fed) |
+| Food poisoning | raw meat or fish, spoiled food | hunger drains fast for a minute |
+
+**Variety** matters: eating the same dish again and again fills less each time (back to
+full after a few other meals). A varied diet earns Nourished. This pushes players to cook
+many things, which pulls them into farming, hunting and foraging.
+
+## Quality and burning
+
+- **Burning.** Each recipe has a level where you start (often burning) and a level where
+  you stop burning it, as RuneScape. A good station (an oven over a campfire) lowers the
+  chance. Burnt food goes to the compost.
+- **Quality.** Normal, fine, exquisite. The chance of better quality rises with level, the
+  quality of the ingredients (a well-kept cow's milk, a crop grown in its comfort) and the
+  station. Quality multiplies healing and effect duration.
+
+## Preservation and spoilage
+
+Raw meat, fish, milk and soft fruit go stale after a few in-game days and spoil after a
+few more (stale: half the food; spoiled: compost or bait). Cold slows it (the temperature
+where the item lies or is carried, so a snowy biome and an ice-lined cellar keep food).
+Smoked, dried, salted, pickled and aged foods keep. Spoilage is stamped on the item when
+made and read lazily, never ticked; stacks merge only within one freshness step.
+
+This makes food a supply problem for long trips (a mining expedition, a winter journey)
+and gives the preserving stations their reason.
+
+## Food for animals and traps
+
+- **Feed** (Cooking 12): mash, seed mix and hay, from grain, roots and greens. Each species
+  prefers feed matching its diet; feed is its breeding food and raises its condition (see
+  [breeding.md](breeding.md)).
+- **Treats** (Cooking 38): honey cakes, fish bits and the like, used for taming by feeding.
+- **Bait** (any level): spoiled meat for scavengers and traps, fruit for bats, grain for
+  birds, wyrmroot for sand wyrms (Hunter).
+
+## The first dishes
+
+All from real items. Levels are Cooking levels; effects as above.
+
+| Dish | Level | Station | Ingredients | Effect |
+| --- | --- | --- | --- | --- |
+| Roast meat (any) | 1 | campfire | 1 meat | heals |
+| Roast fish (any) | 1 | campfire | 1 fish | heals |
+| Roast egg / root / mushroom | 1 | campfire | 1 egg, root or fungus | heals |
+| Herb tea | 1 | campfire | 1 herb, water | Steady hand (short) |
+| Baked potato | 3 | campfire | potato | heals |
+| Boiled eggs | 5 | pot | 2 eggs, water | heals |
+| Porridge | 5 | pot | oats or millet, water or milk | Warm meal (short) |
+| Flatbread | 8 | campfire | flour, water | heals |
+| Jam | 10 | pot | 3 fruit or berries, honey | Steady hand |
+| Mash | 12 | pot | grain, root, greens | animal feed |
+| Bread | 15 | oven | 2 flour, water | heals |
+| Omelette | 18 | pan | 2 eggs, fat, optional herb | heals |
+| Vegetable stew | 20 | pot | 2 vegetable or root, herb, water | Warm meal |
+| Butter | 22 | churn | milk | (ingredient: fat) |
+| Meat stew | 25 | pot | meat, 2 vegetable or root, water | Warm meal |
+| Hunter's stew | 25 | pot | venison, juniper, root | Warm meal, Quiet steps |
+| Fish soup | 28 | pot | fish, onion or leek, herb | Deep breath |
+| Fruit pie | 30 | oven | flour, butter, 2 fruit | heals well |
+| Mushroom pie | 30 | oven | flour, butter, 2 fungi | heals well |
+| Smoked fish or meat | 33 | smoker | fish or meat | keeps; heals |
+| Fresh cheese | 35 | press | milk, sorrel or nettle | Hearty (short) |
+| Honey cake | 38 | oven | flour, honey, egg | taming treat; heals |
+| Curry | 40 | pot | chili, cumin or coriander, meat or legume, rice | Warm meal (strong) |
+| Jerky / dried fruit | 42 | drying rack | meat or fruit | keeps |
+| Sauerkraut, pickles | 45 | crock | cabbage or cucumber, salt | keeps; Nourished counts double |
+| Roast fowl feast | 48 | oven | whole bird, 2 roots, herb | heals a lot |
+| Aged cheese | 50 | cellar | fresh cheese, weeks | Hearty |
+| Saffron rice | 52 | pot | rice, saffron, butter | Steady hand (long) |
+| Glowcap broth | 55 | pot | glowcap, any fungus, water | Dark sight |
+| Chocolate | 58 | pot | cacao, honey or sugar, milk | Steady hand, Warm meal |
+| Emberfruit stew | 60 | pot | emberfruit, chili, meat | Fire ward, Warm meal |
+| Frostpetal sorbet | 65 | churn | frostpetal, fruit, honey | Cool meal (strong) |
+| Moonhare stew | 70 | pot | moonhare, moonbloom, root | Quiet steps (long), Dark sight |
+| Starlily tea | 75 | pot | starlily, honey | Aether sight |
+| Crystal-salt feast | 80 | table | crystal salt, 3 dishes | their effects together, longer |
+| Sunwing-egg soufflé | 85 | oven | sunwing egg, butter, cheese | Warm meal, Hearty |
+| Heartbloom pie | 90 | oven | heartbloom, flour, butter, honey | Hearty (strong) |
+| Banquet | 99 | table | 5 different dishes | every effect, shared with all who eat |

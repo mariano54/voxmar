@@ -1,0 +1,152 @@
+# Taming, husbandry and breeding
+
+Oct 5, 2026. How wild animals become yours, how you keep them, and how breeding works,
+from Minecraft-simple to deep genetics. Breeding is part of the **Farming** skill
+(Mariano); taming is part of the proposed **Hunter** skill, or Farming if he prefers (see
+[skills.md](skills.md)). Part of the creatures, food and breeding design (see
+[creatures.md](creatures.md)).
+
+## Decisions
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Accessible | The first layer is Minecraft's: feed two adults the food they like and a baby comes. Nothing else is required. |
+| 2 | Deep | Underneath, every animal carries genes. Selective breeding, domestication, mutations, named breeds, hybrids and inbreeding reward players who care, with an inspect action that reveals more with level. |
+| 3 | One genetics engine | The same genes code serves animals and crops (crop crossing, research/farming.md 12.9), so seed stats and coat colours follow the same rules. |
+| 4 | Where the world comes in | Condition (food, water, shelter, space, climate) sets fertility and product quality; the aether field at the pen raises mutation; seasons set breeding seasons; temperature hatches eggs. |
+| 5 | Supernatural from mundane | Mundane parents in a high-aether pen, fed aether plants, can have a supernatural child. Moonhares come from rabbits this way. |
+| 6 | Cheapest update | Gestation, incubation, growth and products are due times in a heap, as crops are. A barn of animals costs nothing between events. |
+| 7 | Levels | Gate which species you may breed and what inspect shows; raise mutation finds and product quality a little (the shared formulas in [skills.md](skills.md)). Never make anything grow faster. |
+
+## Taming
+
+Each species names a method and the Hunter level it takes:
+
+| Method | How | Species |
+| --- | --- | --- |
+| Lure | lead it home with food it likes held in hand; it is yours once penned and fed | junglefowl, rabbit, mallard, mouflon, aurochs |
+| Feed | offer a favourite food repeatedly; trust rises with each, falls if you hurt or startle it | goat, horse, wolf, fox, alpaca |
+| Patience | stay near it, sneaking, without threatening; trust rises with time | lynx, reindeer, frost stag |
+| Rescue | heal a hurt one (with a healing herb or bandage) and feed it | boar, bear (cub) |
+| Imprint | be the first thing a hatchling sees | ducks, sea turtles, griffins (from an egg) |
+| Gift | bring the right strange thing | moonhare (aether mote), silver hart (silvermint, then patience) |
+
+Trust is a value 0..1 per creature and player. Taming fails (and the creature flees) if
+you attack it, sprint at it, or a companion of yours does. A tamed animal is saved as an
+individual with its owner, name and genes.
+
+**Wild stock is wild.** A tamed mouflon has little wool and a skittish temper; a tamed
+boar is fierce. Domestic breeds come from breeding (below), so the first flock is the start
+of a project, not the end.
+
+## Keeping animals
+
+An animal's **condition** (0..1) is the product of what its species needs:
+
+| Need | Met by |
+| --- | --- |
+| Food | grazing its food blocks within its leash, or feed in a trough |
+| Water | water within its leash, or a trough |
+| Shelter | a roof within a few blocks when it rains or snows (except ducks) |
+| Space | blocks of room per animal (chickens 2, sheep 6, cattle 12); crowding lowers condition and raises disease |
+| Climate | its comfort range (the temperature field): cold coats thrive in the north, zebu in the heat; a heated barn or a shaded one fixes a misfit |
+| Company | social species want at least one of their kind |
+
+Condition drives everything that follows: product amount and quality, fertility, growth
+of the young (well-fed young grow at the full rate, starved ones slower), and illness.
+Condition comes from the world and the keeper's work, never from a level.
+
+**Feed** is cooked food (Cooking 12): mash, seed mix, hay. Each species prefers feed whose
+ingredients match its diet tags; better feed raises condition faster and counts as its
+breeding food. Special feeds act on genetics (see "Mutation").
+
+**Illness** comes from crowding, wet and poor food, spreads to neighbours, and is cured
+with herbs tagged `alchemy:healing` (dandelion, oxeye daisy and others already carry the
+tag). Untreated, it lowers condition and can kill.
+
+## Breeding: the simple layer
+
+1. Two adults of a species, owned, in condition above half, in their breeding season
+   (year-round for chickens and rabbits; autumn for deer; spring for most birds).
+2. Feed both their breeding food (data, usually their favourite food or feed).
+3. They court for a moment (a behaviour, see [creature-ai.md](creature-ai.md)), then:
+   - mammals: after the gestation time, a litter is born (rabbits 2–5, sheep 1–2, cattle 1);
+   - birds and reptiles: eggs are laid in a nest if one is near, or on the ground.
+4. Both parents rest for a cooldown before breeding again.
+5. Young follow their mother and grow to adults over the growth time.
+
+The Farming level for the species is needed to start it. Experience comes at the birth,
+scaled by the species' level (`10 × 2^(level / 10)`), with a first-time bonus for a new
+breed or variant.
+
+**Eggs** hatch after their incubation time if kept warm: a hen sitting on them, or a nest
+where the temperature field (plus any heat nearby) is within the species' range. A cold
+coop in winter needs a heater; a sunwing egg needs a fire. Collected eggs are food instead.
+
+## Genes: the deep layer
+
+Each species declares its **genes** in data. Two kinds:
+
+**Discrete genes** (Mendelian). Each animal carries two alleles; each parent passes one at
+random; dominance decides what shows. Examples: coat colour (agouti, black, white),
+pattern (spotted), polled (no horns), cold coat (thick, white in snow), desert ears, albino
+(recessive, rare). Hidden carriers make breeding a puzzle: two brown rabbits can have a
+white kit.
+
+**Quantitative genes** (many small effects). Each is a number around the species' mean;
+a child's value is the mid-parent value plus a little noise (`σ` per gene, the breeder's
+equation's heritability in data). Examples: size, yield (wool length, milk, eggs per
+week), speed, stamina, temperament (calm to fierce), hardiness (shifts comfort toward heat
+or cold), fertility, longevity, aether affinity.
+
+What players do with it:
+
+- **Selective breeding.** Keep the woolliest, breed them together, and wool rises a little
+  each generation. Because the noise is small, it takes generations, which is the game.
+- **Domestication.** Breed tamed wild stock for calm temperament and yield; once both
+  pass a species' thresholds for a few generations, the line becomes its domestic form
+  (mouflon to sheep, wild boar to pig, aurochs to cattle, junglefowl to hen). Domestic
+  forms have their own looks, products and drops.
+- **Named breeds.** A breed is a data definition: a set of gene conditions (a highland
+  aurochs: cold coat, long hair, hardy to −10 °C). When an animal meets one, it is that
+  breed, named in the studbook, with experience the first time. Mods add breeds as data.
+- **Hybrids.** Species in the same family may cross where data says so: horse × donkey =
+  mule (strong, sure-footed, sterile); red deer × frost stag = rimehart (supernatural,
+  rare); junglefowl × sunwing = emberhen (lays warm eggs that hatch nothing but cook
+  themselves). Hybrid fertility is data.
+- **Inbreeding.** The studbook (Farming 30) records parents. A child's inbreeding
+  coefficient from shared ancestors lowers fertility and condition and makes hidden bad
+  recessives show. New blood comes from taming wild animals (Hunter) or trading, which
+  keeps the two skills tied.
+
+## Mutation
+
+At each birth, each gene may mutate: a new allele (a colour nobody has seen, a twisted
+horn) or a jump in a quantitative gene. The chance is small and comes from the world:
+
+```
+chance = base (0.5%)
+       × aether at the pen          (×1 at none, up to ×5 where aether is highest)
+       × mutagenic feed             (whisper oats, aether orchid: ×2)
+       × level finds                (up to ×1.5 at 99, the shared rare-find bonus)
+```
+
+**Supernatural births.** A species may name a supernatural form it can become, with the
+conditions: rabbits become moonhares when aether at the pen is high, both parents' aether
+affinity is high, and they were fed moonbloom. The first one is a discovery; after that,
+moonhares breed true. This is how a farm in a mundane valley can raise supernatural
+animals, at the cost of building where aether is high or bringing aether feed from far.
+
+## Inspecting
+
+The inspect action shows more with Farming level: condition and age at 1; visible genes
+in words ("long wool, calm") at 20; hidden alleles and carriers at 40; exact numbers and
+the inbreeding coefficient at 60; mutation odds at the pen at 75. This is the seed
+analysis idea from farming research, applied to animals: information is progression.
+
+## Crops share it
+
+Crop crossing (research/farming.md 12.9: growth, gain and resistance stats, deterministic
+recipes then similarity-weighted crosses) uses the same genes engine: discrete and
+quantitative genes, mid-parent plus noise, mutation chance from aether and feed (here,
+fertiliser). A player who learns one has learned both.
