@@ -36,6 +36,8 @@ const AHEAD: f32 = 0.25;
 /// Seconds a struck creature flashes red, and a dead one takes to topple and go.
 const FLASH: f32 = 0.3;
 const DYING: f32 = 0.9;
+/// Seconds between a player's blows (the server's own limit is a little shorter).
+const SWING: f32 = 0.55;
 /// Creatures further than this are not drawn.
 const DRAWN_WITHIN: f32 = 96.0;
 /// The darkest a creature is drawn, so one in a cave is still a shape.
@@ -320,7 +322,10 @@ fn show(
 /// Finds the creature under the crosshair, nearer than any block, and strikes it on a
 /// left click. Runs between finding the block target and breaking, so aiming at a
 /// creature never mines the ground behind it.
+#[allow(clippy::too_many_arguments)]
 pub fn aim(
+    time: Res<Time>,
+    mut cooldown: Local<f32>,
     mouse: Res<ButtonInput<MouseButton>>,
     ui: Res<UiState>,
     launch: Res<Launch>,
@@ -343,13 +348,17 @@ pub fn aim(
     if target.creature.is_some() {
         target.hit = None;
     }
+    *cooldown -= time.delta_secs();
     if let Some(id) = target.creature
+        && *cooldown <= 0.0
         && ui.cursor_locked
         && !player.dead
         && mouse.just_pressed(MouseButton::Left)
         && let Some(attack) = actions.0.id("core:attack")
     {
         net.propose_from(&player, attack, ActionTarget::Creature(id));
+        // Blows come no faster than the server takes them.
+        *cooldown = SWING;
     }
 }
 

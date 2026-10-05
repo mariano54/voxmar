@@ -141,9 +141,11 @@ enum Step {
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
     Tree,
-    /// A creature summoned on the test ground reaches the client and draws; struck until
-    /// it dies, it drops its loot.
+    /// Creatures summoned on a pad beside the test ground reach the client and draw.
     Creatures,
+    /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
+    /// over picks up.
+    Strike,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
@@ -556,6 +558,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
+        Step::Strike => strike(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -957,25 +960,40 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.shot(world, "creatures").is_some() {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
-                gate.advance(now);
+                gate.next(Step::Strike, now);
             }
         }
-        3 => {
+        _ => {}
+    }
+}
+
+/// The lumen snail summoned in [`creatures`], struck until it dies; its slime must drop
+/// and be picked up.
+fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(CREATURE) else { return };
+    let snail = |world: &World| {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        creatures.views().find(|v| v.species == species).copied()
+    };
+    match gate.phase {
+        0 => {
             // Strike it as a player would, a click every few frames, until it dies.
             match snail(world) {
-                Some(view) if in_phase < 20.0 => {
+                Some(view) if in_phase < 25.0 => {
                     // Close in to striking reach, then strike.
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
-                    mouse(world, MouseButton::Left, gate.frames % 4 == 0);
+                    // A click every third of a second, as a player swings.
+                    let swing = (in_phase * 3.0).fract() < 0.15;
+                    mouse(world, MouseButton::Left, swing);
                 }
                 Some(_) => {
                     mouse(world, MouseButton::Left, false);
                     key(world, KeyCode::KeyW, false);
                     let aimed = world.resource::<crate::interact::Target>().creature.is_some();
                     let distance = snail(world).map_or(0.0, |v| v.position.distance(world.resource::<LocalPlayer>().eye()));
-                    gate.check("creature struck", Err(format!("twenty seconds of blows did not kill it (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
+                    gate.check("creature struck", Err(format!("25 seconds of blows did not kill it (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
                     gate.next(Step::Gorge, now);
                 }
                 None => {
@@ -988,7 +1006,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
             }
         }
-        4 => {
+        1 => {
             if in_phase > 0.8 {
                 key(world, KeyCode::KeyW, false);
             }
