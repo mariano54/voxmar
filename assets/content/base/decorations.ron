@@ -69,8 +69,8 @@
             // Erratics: great boulders a glacier carried from far away, of rock unlike the
             // ground they lie on.
             name: "erratic", tags: ["erratics"],
-            shape: Boulder(radius: (1.8, 3.4), stones: Mix([Name("granite", 3.0), Name("diorite", 1.0), Name("andesite", 1.0), Name("marble", 0.5)]), moss: 0.3),
-            spacing: 13.0,
+            shape: Boulder(radius: (1.8, 3.4), stones: Mix([Name("andesite", 3.0), Name("stone", 2.0), Name("diorite", 0.5)]), moss: 0.3),
+            spacing: 34.0,
         ),
         (
             // Clusters of ice crystals and pale stone.
