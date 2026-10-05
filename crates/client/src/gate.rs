@@ -799,12 +799,14 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let Some(observer) = gate.observer.as_ref() else { return };
             let def = |p: IVec3| observer.world.block(p).map(|b| client.registry.def(b));
+            // Water in any of its states (a river's is mostly flowing).
+            let wet = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.fluid(b).is_some());
             // The river's water, within a couple of blocks of the place named (which lies on
             // its course; the water there may stand a block or two lower after a fall).
             let named = gate.gorge - IVec3::Y;
             let found = (-2..=2)
                 .flat_map(|dz| (-2..=2).flat_map(move |dx| (-3..=0).map(move |dy| named + IVec3::new(dx, dy, dz))))
-                .find(|&p| def(p).is_some_and(|d| d.name.ends_with("water")) && !def(p + IVec3::Y).is_some_and(|d| d.name.ends_with("water")));
+                .find(|&p| wet(p) && !wet(p + IVec3::Y));
             let is_water = found.is_some();
             let (at, water) = found.map_or((named, named.y), |p| (p, p.y));
             // The ground's top in a column: its highest solid block, trees aside.
