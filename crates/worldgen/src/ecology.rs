@@ -45,6 +45,8 @@ pub const TREE_CHANCE: f32 = 0.6;
 /// The exponent a biome's `cover` is eased by: a meadow's 0.95 stays about 0.92, a
 /// forest's 0.75 becomes about 0.63.
 const COVER_EASE: f32 = 1.6;
+/// The least share of a biome's forest a kind needs to lead stands of its own.
+const STAND_LEADERS: f32 = 0.15;
 /// The share of a stand's trees of its own kind; the others grow among them.
 const STAND_PURITY: f32 = 0.9;
 /// Where the clearing field (evenly spread over 0 ..= 1) starts to open a clearing, and
@@ -413,9 +415,16 @@ impl Ecology {
             let forest = site.forest * TREE_CHANCE * self.tree_density * (total / (SUITED * all)).min(1.0);
             let jitter = (hash3(self.seed ^ STANDS, x, 0, z) & 0xffff) as f32 / 65536.0 - 0.5;
             let u = (crate::climate::uniform(self.groves.get_noise_2d(x as f32, z as f32)) + 0.04 * jitter).clamp(0.0, 0.9999);
+            // Only the main kinds (each at least `STAND_LEADERS` of the forest) lead a stand;
+            // the rest are accents that grow only among the others' stands.
             let canopy = &mut out[start..];
-            let mut left = u * total;
+            let leading = |share: f32| share >= STAND_LEADERS * total;
+            let leaders: f32 = canopy.iter().map(|c| c.1).filter(|&s| leading(s)).sum();
+            let mut left = u * leaders;
             let dominant = canopy.iter().position(|&(_, share)| {
+                if !leading(share) {
+                    return false;
+                }
                 let hit = share > 0.0 && left < share;
                 left -= share;
                 hit
