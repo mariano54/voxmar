@@ -130,6 +130,11 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
             let skills = (text(font, "", BODY, SOFT), TextLayout::justify(Justify::Center), SkillsLine);
             card.spawn((Node { margin: UiRect::top(Val::Px(3.0 * PX)), ..default() }, skills));
+            // How you are: buffs and debuffs, with health and hunger.
+            card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() }).with_children(|section| {
+                crate::ui::widgets::spawn_rule(section, 4.0 * PX);
+                super::character::spawn_condition(section, font);
+            });
         });
         super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
         // The held stack and the tooltip float above everything, at the pointer.

@@ -162,6 +162,10 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.get(self.player.selected).map(|s| s.item)
     }
 
+    fn actor_hunger(&self) -> u8 {
+        self.player.vitals.hunger
+    }
+
     fn occupied(&self, cell: IVec3) -> bool {
         Aabb::standing(self.player.position, dims::WIDTH, dims::HEIGHT).intersects(|c| c == cell)
     }
@@ -240,6 +244,27 @@ fn break_and_place(
         }
     }
 
+    // Food in hand is eaten when it would not be placed: an item, or nothing in reach to
+    // put it on. Eating takes a moment, so it starts on the press, not again while held.
+    if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
+        let content = &launch.content;
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        let food = held.is_some_and(|item| world.registry.info(item).food > 0);
+        let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
+        if food && (hit.is_none() || !placeable) {
+            let eat = actions.0.expect("core:eat");
+            let context = ClientContext { world: &world, player: &player, content };
+            match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
+                Some(Ok(())) => {
+                    net.propose_from(&player, eat, ActionTarget::None);
+                    target.place_cooldown = 1.2;
+                }
+                Some(Err(Rejection::Unmet(Requirement::Hungry))) => toasts.refused("You are full".into(), time.elapsed_secs()),
+                _ => {}
+            }
+            return;
+        }
+    }
     let Some(hit) = hit else { return };
     if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 {
         target.place_cooldown = 0.2;

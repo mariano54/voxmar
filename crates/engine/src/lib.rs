@@ -25,6 +25,7 @@ pub mod physics;
 pub mod schedule;
 pub mod skill;
 pub mod traits;
+pub mod vitals;
 pub mod visibility;
 pub mod weather;
 pub mod world;

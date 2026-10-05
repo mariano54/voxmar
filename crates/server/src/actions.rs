@@ -87,6 +87,10 @@ impl ActionContext for Context<'_> {
         self.server.players[&self.agent].held()
     }
 
+    fn actor_hunger(&self) -> u8 {
+        self.server.players[&self.agent].vitals.hunger
+    }
+
     fn occupied(&self, cell: IVec3) -> bool {
         self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
@@ -231,10 +235,22 @@ impl Server {
                     let spawn = self.spawn;
                     let player = self.players.get_mut(&agent).unwrap();
                     player.health.heal(MAX_HEALTH);
+                    player.vitals.hunger = voxmar_engine::vitals::MAX_HUNGER;
                     player.position = spawn;
                     player.fall_start = None;
                     player.changed(traits::HEALTH);
+                    player.changed(traits::VITALS);
                     player.connection.send(ServerMessage::Teleport { position: spawn });
+                }
+                (Effect::EatHeld, _) => {
+                    let blocks = self.content.blocks.clone();
+                    let player = self.players.get_mut(&agent).unwrap();
+                    let selected = player.selected;
+                    let Some(item) = player.inventory.take_one(selected) else { continue };
+                    let food = blocks.info(item).food;
+                    player.vitals.hunger = (player.vitals.hunger + food).min(voxmar_engine::vitals::MAX_HUNGER);
+                    player.changed(traits::INVENTORY);
+                    player.changed(traits::VITALS);
                 }
                 (effect, target) => tracing::warn!("{} cannot apply {effect:?} to {target:?}", def.name),
             }

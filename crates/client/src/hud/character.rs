@@ -1,5 +1,5 @@
-//! The character screen (C): how you are on the left (health, hunger, warmth and the
-//! effects on you), every skill on the right with its level and how far to the next.
+//! The character screen (C): how you are on the left (health, hunger, how warm you feel
+//! and the effects on you, also shown in the inventory), every skill on the right with its level and how far to the next.
 //! Clicking a skill opens its guide: what it opens up at each level, from the skill's own
 //! guide in skills.ron and every crop that needs it, marked as reached or not.
 
@@ -25,7 +25,7 @@ impl Plugin for CharacterPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                (show, pick_skill, draw_skills, draw_guide, draw_condition).chain().after(ScreenSystems).run_if(in_state(Screen::InGame)),
+                ((show, pick_skill, draw_skills, draw_guide).chain().after(ScreenSystems), draw_condition).run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut guide: ResMut<Guide>| guide.0 = None);
     }
@@ -50,11 +50,9 @@ struct GuidePage;
 struct BackToSkills;
 #[derive(Component)]
 struct HealthMeter;
-#[derive(Component)]
-struct ConditionLines;
 
 const WIDTH: f32 = 400.0 * PX;
-const LEFT: f32 = 130.0 * PX;
+const LEFT: f32 = 150.0 * PX;
 const LIST_HEIGHT: f32 = 170.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
@@ -65,11 +63,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             card.spawn(Node { column_gap: Val::Px(8.0 * PX), ..default() }).with_children(|columns| {
                 // How you are.
                 let left = Node { width: Val::Px(LEFT), flex_shrink: 0.0, flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), ..default() };
-                columns.spawn(left).with_children(|left| {
-                    left.spawn(text(font, "Health", BODY, MUTED));
-                    spawn_meter(left, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
-                    left.spawn((Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), margin: UiRect::top(Val::Px(3.0 * PX)), ..default() }, ConditionLines));
-                });
+                columns.spawn(left).with_children(|left| spawn_condition(left, font));
                 // Skills, or one skill's guide.
                 let right = Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, min_width: Val::ZERO, ..default() };
                 columns.spawn(right).with_children(|right| {
@@ -262,21 +256,83 @@ fn guide_steps(launch: &Launch, skill: SkillId) -> Vec<(u8, String)> {
     steps
 }
 
-/// Health, and the lines on how you are.
+/// How you are, as the character and inventory screens show it: health and hunger
+/// meters, how warm you feel, and every effect on you with what it does.
+#[derive(Component)]
+pub struct Condition;
+/// The list of effects in a condition panel.
+#[derive(Component)]
+struct EffectList;
+#[derive(Component)]
+struct HungerMeter;
+#[derive(Component)]
+struct FeltLine;
+
+/// A condition panel, filling its parent's width.
+pub fn spawn_condition(parent: &mut ChildSpawnerCommands, font: &Handle<Font>) {
+    let column = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), width: Val::Percent(100.0), ..default() };
+    parent.spawn((Condition, column)).with_children(|panel| {
+        let row = || Node { column_gap: Val::Px(3.0 * PX), align_items: AlignItems::Center, ..default() };
+        panel.spawn(row()).with_children(|row| {
+            row.spawn((Node { width: Val::Px(28.0 * PX), flex_shrink: 0.0, ..default() }, text(font, "Health", BODY, MUTED)));
+            spawn_meter(row, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
+        });
+        panel.spawn(row()).with_children(|row| {
+            row.spawn((Node { width: Val::Px(28.0 * PX), flex_shrink: 0.0, ..default() }, text(font, "Hunger", BODY, MUTED)));
+            spawn_meter(row, font, Piece::BarHunger, Val::Percent(100.0), HungerMeter);
+        });
+        panel.spawn((FeltLine, text(font, "", BODY, SOFT)));
+        panel.spawn((EffectList, Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0 * PX), ..default() }));
+    });
+}
+
+/// Keeps every condition panel current.
 #[allow(clippy::too_many_arguments)]
 fn draw_condition(
-    ui: Res<UiState>,
+    mut commands: Commands,
     player: Res<LocalPlayer>,
+    font: Res<UiFont>,
     health: Query<&Meter, With<HealthMeter>>,
+    hunger: Query<&Meter, (With<HungerMeter>, Without<HealthMeter>)>,
+    mut felt: Query<&mut Text, With<FeltLine>>,
+    lists: Query<(Entity, Ref<EffectList>)>,
     mut nodes: Query<&mut Node>,
     children: Query<&Children>,
-    mut texts: Query<&mut Text>,
+    mut texts: Query<&mut Text, Without<FeltLine>>,
+    mut shown: Local<Option<Vec<voxmar_engine::vitals::Effect>>>,
 ) {
-    if !ui.character_open {
+    for meter in &health {
+        set_meter(meter, player.health as f32 / 20.0, &format!("{}/20", player.health), &mut nodes, &children, &mut texts);
+    }
+    let max = voxmar_engine::vitals::MAX_HUNGER;
+    for meter in &hunger {
+        let value = player.vitals.hunger;
+        set_meter(meter, value as f32 / max as f32, &format!("{value}/{max}"), &mut nodes, &children, &mut texts);
+    }
+    let line = format!("Feels like {:.0} °C", player.vitals.felt);
+    for mut text in &mut felt {
+        if text.0 != line {
+            text.0.clone_from(&line);
+        }
+    }
+    let effects = &player.vitals.effects;
+    let fresh = lists.iter().any(|(_, list)| list.is_added());
+    if !fresh && shown.as_ref() == Some(effects) {
         return;
     }
-    if let Ok(meter) = health.single() {
-        let max = 20.0;
-        set_meter(meter, player.health as f32 / max, &format!("{}/{}", player.health, max as u8), &mut nodes, &children, &mut texts);
+    *shown = Some(effects.clone());
+    for (entity, _) in &lists {
+        commands.entity(entity).despawn_children().with_children(|list| {
+            if effects.is_empty() {
+                list.spawn(text(&font.0, "No effects on you.", BODY, MUTED));
+            }
+            for &effect in effects {
+                list.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|row| {
+                    let color = if effect.is_buff() { ACCENT } else { crate::ui::widgets::ERROR };
+                    row.spawn(shadowed(&font.0, format!("{} {}", if effect.is_buff() { "▴" } else { "▾" }, effect.title()), BODY, color));
+                    row.spawn(text(&font.0, effect.description(), BODY, MUTED));
+                });
+            }
+        });
     }
 }
