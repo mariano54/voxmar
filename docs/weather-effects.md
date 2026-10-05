@@ -45,6 +45,16 @@ captures log the weather and air they show. Every kind: `/weather list`.
   and opacity. Sparkle belongs to diamond dust alone: in bitter cold under a halo, ice
   crystals hang in the air, each glinting for an instant as it turns (`glints` in
   precipitation.rs, drawn as an ambient particle set).
+- Hail reads as hail: hard, bright white pellets falling fast with a short blur (not
+  streaks), and on the ground they bounce twice, lower each time, roll a little and lie
+  white for a few seconds before melting (`hailstone` in precipitation.wgsl, in the splash
+  slots: as many as the hail's share). On water they only ring. Its sound is an icy rattle
+  that leads over the rain (the ambience's `hail` bed ducks the rain beds).
+- Mist hangs as big, faint puffs drifting with the wind: ground fog (dawn mist, valley and
+  sea fog, lake mist, steam after rain) below its top, and plain mist while nothing falls
+  (`mist` in precipitation.rs, an ambient particle set), over the renderer's fog.
+- Heat lightning is silent: with no storm overhead its flashes are beyond where thunder is
+  heard (`THUNDER_HEARD`, 1300 blocks). Drifting snow is white whatever the ground.
 - Every kind of weather has an intensity (`/weather rain 0.3`, `--weather snow:heavy`):
   what falls follows a steep curve (`density` in precipitation.rs, intensity^1.8), so
   light stays a few streaks or flakes, heavy sits between, and max is a downpour, a
@@ -78,6 +88,34 @@ captures log the weather and air they show. Every kind: `/weather list`.
   (`snow_cover` over 0.3), on surfaces open to the sky (render/lighting.wgsl, `weathered`
   and `wet_sheen`): wet surfaces darken and mirror the sky at glancing angles, puddles
   gather on level ground as it gets wetter and mirror it strongly.
+
+## Every kind of weather: what it has, and what is still missing
+
+Ours (particles in `render/precipitation.*`, sounds in `ambience.ron`, `sounds.ron` and
+sfx.rs) are done for every kind; what is left is the graphics thread's, in the sections
+after this table.
+
+| Kind (effects) | Particles and sound (done) | Still missing (graphics thread) |
+| --- | --- | --- |
+| drizzle | fine drizzle, light rain bed | – |
+| rain, downpour | streaks, splashes, ripples, drips under leaves, far veils; rain beds by strength and cover | glassy near streaks; rain shafts under distant cells (§8) |
+| storm, thunderstorm, supercell | as a downpour, gusts; storm wind; thunder near to far | lightning bolt geometry (§1); flashes lighting the cloud from inside (§8); storm fronts (§8) |
+| heat lightning | silent far flashes | lighting the horizon's cloud from inside (§8) |
+| hail | white pellets that bounce and lie; icy rattle | hail lying white on top faces for a while (as the snow dusting, from `w.hail`) |
+| sleet, freezing rain | icy pellets; sleet patter | the glaze of freezing rain: a glassy sheen on surfaces open to the sky while `w.frost` and `w.sleet` are both up |
+| snow, blizzard, thundersnow | soft flakes, whiteout veils; blizzard howl, gusts, thunder | – (fog, snow dusting and bolts as above) |
+| drifting snow | white dust blowing low; gusts | – |
+| dusty afternoon, dust storm, sandstorm | grains and brown-out veils; sandstorm bed | – |
+| mist, dawn mist, valley fog, sea fog, lake mist, steam | mist puffs below the fog's top | – (fog drawn) |
+| frost | – (silent) | – (frost drawn) |
+| heat haze | – | the shimmer (§6) |
+| rainbow, double rainbow | – | the bows (§2) |
+| halo, sun dogs | – | the ring and the dogs (§3) |
+| diamond dust | glinting crystals | its halo (§3) |
+| aurora, low aurora | – | the curtains (§4) |
+| shooting stars, meteor shower, starfall | starfall's motes | the falling stars (§5) |
+| ball lightning, marsh lights | marsh lights as glowing motes on dry nights | ball lightning's few large orbs, which glow even in rain (§7) |
+| aether motes, aether storm | glowing motes, lightning | a violet tint to the aether storm's cloud and lightning (§7) |
 
 ## Waiting on the graphics thread
 
@@ -216,6 +254,28 @@ fields and values any system can read on the server:
 | `Weather::visibility()` | engine | blocks one can see near the ground |
 | `Weather::wind`, `gusts`, `voxmar_engine::weather::gust` | engine | the wind, gusts included, the same on server and client |
 | effect tags | `weather.ron` | `cold`, `hot`, `wet`, `dry`, `visibility`, `hazard`, `lightning`, `wonder`, `night`, `aether`: find what is happening by kind, not by name |
+
+### Hazards: what weather does to machines and buildings
+
+For whoever builds machines, roofs and crops: the weather process works out, in every
+simulated 128-block cell (the 5×5 around each player), what the weather would do to things
+left out in it, as fields on `WeatherState::hazards` (`Hazards::of` in server/weather.rs
+for the formulas). They are rates or states now, for a machine to integrate over time
+(damage per second from `core:hail`, rust per hour from `core:corrosion`); away from
+players they read 0.
+
+| Field | Meaning | Magnitude |
+| --- | --- | --- |
+| `core:hail` | kinetic energy of hailstones striking a square metre facing the sky, J m⁻² s⁻¹ | 0 without hail; ~1 pea to marble hail; 2 walnut hail (the `hail` effect at full); 4 golf-ball hail |
+| `core:wind_load` | the wind's pressure on a surface facing it at the gusts' peak, Pa (½ρv²) | ~10 a breeze; ~60 a strong wind; 200–600 a gale |
+| `core:corrosion` | how fast bare iron rusts, relative | 1 steady wet at 15 °C inland; ~2 at 30 °C; ×2 by the sea; 0 dry or frozen |
+| `core:frost` | how hard the cold bites, 0..1 | 0 above freezing; 1 at -20 °C, or in freezing rain or hard frost (ice on everything) |
+| `core:heat` | heat stress, 0..1 | 0 below 32 °C; 1 at 48 °C; halved under full cloud |
+| `core:lightning` | ground strikes in the cell lately, each 1, halving every 10 minutes | a few in a thunderstorm's path |
+| `WeatherState::strikes` | the last 64 strikes that reached the ground: the block struck (on top of the ground), the tick and the peak current | 10–200 kA, most 20–40 |
+
+Cloud flashes never reach the ground, so they are not strikes. A lightning rod or a
+machine's surge damage reads the events; a building's wear reads the fields.
 
 A buff system should read these through modifiers (a stew's +2 warmth against
 `feels_like()`), never by naming effects, so a mod's new effect with the `cold` tag

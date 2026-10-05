@@ -28,6 +28,11 @@
 //! make. When it ends the cells are released from that state and the natural weather
 //! slowly takes over again.
 //!
+//! What the weather would do to things left out in it (machines and buildings, once they
+//! exist) is worked out in every simulated cell as hazard fields, with lightning strikes
+//! as events: hail's impact, the wind's load, corrosion, frost and heat (see `Hazards`).
+//! Nothing uses them yet.
+//!
 //! The simulation runs on simulation ticks, so it keeps going when the time of day is
 //! frozen or sped up; only what follows the sun (afternoon showers, dawn fog, night-time
 //! cold, the aurora) reads the time of day.
@@ -35,6 +40,7 @@
 //! Only exact floating point operations are used (no `sin`, `exp` or `powf`), so every
 //! machine computes the same weather.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -46,7 +52,7 @@ use voxmar_engine::glam::{DVec2, IVec2, IVec3, Vec2, Vec3};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::weather::{Input, Inputs, Preset, WeatherTable, advance_gusts, ramp};
 use voxmar_worldgen::{Featured, Overworld, SEA_LEVEL, Tier as _};
-use voxmar_protocol::{Nearby, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND, WEATHER_CELL, Weather as LocalWeather};
+use voxmar_protocol::{Nearby, PlayerId, ServerMessage, THUNDER_HEARD, TICKS_PER_DAY, TICKS_PER_SECOND, WEATHER_CELL, Weather as LocalWeather};
 
 use crate::Server;
 use crate::process::Process;
@@ -214,6 +220,10 @@ pub(crate) struct WeatherState {
     pub precipitation: Field,
     pub wetness: Field,
     pub snow_cover: Field,
+    /// What the weather does to things left out in it, per cell (see `Hazards`).
+    pub hazards: HazardFields,
+    /// Lightning that reached the ground lately, newest last (at most `STRIKES_KEPT`).
+    pub strikes: VecDeque<StrikeEvent>,
     sky: Sky,
     land: Arc<dyn Land>,
     places: FxHashMap<IVec2, Place>,
@@ -282,6 +292,8 @@ impl WeatherState {
             wetness: Field::with_cell_size("core:wetness", CELL, |_, _| 0.0),
             // Snow lies all year in cold climates.
             snow_cover: Field::with_cell_size("core:snow_cover", CELL, move |x, z| lasting_snow(cold.climate(x, z).0)),
+            hazards: HazardFields::default(),
+            strikes: VecDeque::new(),
             sky: Sky {
                 seed: mix(world_seed ^ 0x0077_6561_7468_6572), // "weather"
                 prevailing: wind.as_dvec2().normalize_or(DVec2::X),
@@ -371,6 +383,41 @@ impl WeatherState {
         self.precipitation.reset(at.x, at.y);
         self.wetness.reset(at.x, at.y);
         self.snow_cover.reset(at.x, at.y);
+        self.hazards.reset(at);
+    }
+
+    /// Works out the hazards in every simulated cell from its weather now, and lets the
+    /// memory of lightning there fade; `dt` seconds have passed since the last time.
+    pub fn update_hazards(&mut self, temperature: &mut Field, tick: u64, day: f64, dt: f32) {
+        let fade = (1.0 - dt * LN_2 / LIGHTNING_MEMORY).max(0.0);
+        let mut cells: Vec<IVec2> = self.active.iter().copied().collect();
+        cells.sort_unstable_by_key(|c| (c.x, c.y));
+        for cell in cells {
+            let at = cell_center(cell);
+            let weather = self.local(temperature, at.as_vec2(), tick, day).weather;
+            let coast = self.place(at).coast;
+            let hazards = Hazards::of(&weather, coast);
+            let fields = &mut self.hazards;
+            fields.hail.set(at.x, at.y, hazards.hail);
+            fields.wind_load.set(at.x, at.y, hazards.wind_load);
+            fields.corrosion.set(at.x, at.y, hazards.corrosion);
+            fields.frost.set(at.x, at.y, hazards.frost);
+            fields.heat.set(at.x, at.y, hazards.heat);
+            let lightning = fields.lightning.sample(at.x, at.y) * fade;
+            fields.lightning.set(at.x, at.y, lightning);
+        }
+    }
+
+    /// Records lightning that reached the ground at `at`.
+    pub fn struck(&mut self, at: IVec3, seed: u32, tick: u64) {
+        // Peak current: most strikes some tens of kiloamperes, a few far more.
+        let u = (seed >> 8) as f32 / 16_777_216.0;
+        let current = 10.0 + 190.0 * u * u * u;
+        self.hazards.lightning.emit(at.x, at.z, 1.0);
+        self.strikes.push_back(StrikeEvent { at, tick, current });
+        while self.strikes.len() > STRIKES_KEPT {
+            self.strikes.pop_front();
+        }
     }
 
     /// The strongest forced preset at `at`, and how strongly it holds.
@@ -460,16 +507,18 @@ impl Process for Weather {
             server.players.values().filter(|p| p.joined).map(|p| (p.id, Vec2::new(p.position.x, p.position.z))).collect();
         let around: Vec<IVec2> = positions.iter().map(|(_, at)| at.floor().as_ivec2()).collect();
         let mut strikes = server.weather.update(&mut server.temperature, &around, tick, day);
+        let dt = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
+        server.weather.update_hazards(&mut server.temperature, tick, day, dt);
 
         self.sent.retain(|id, _| server.players.contains_key(id));
         self.gusts.retain(|id, _| server.players.contains_key(id));
-        let dt = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
         for &(id, at) in &positions {
             let mut report = server.weather.local(&mut server.temperature, at, tick, day);
             let offset = self.gusts.entry(id).or_default();
             *offset = advance_gusts(*offset, report.weather.wind, dt);
             report.weather.gust_offset = *offset;
-            strikes.extend(server.weather.sky.effect_lightning(id, at, report.weather.lightning, tick));
+            let dry = report.weather.precipitation < 0.05;
+            strikes.extend(server.weather.sky.effect_lightning(id, at, report.weather.lightning, dry, tick));
             let quick = server.weather.recently_changed(at);
             let due = quick
                 || self.sent.get(&id).is_none_or(|(last, sent_at)| {
@@ -488,6 +537,9 @@ impl Process for Weather {
             // A flash in the cloud lights it from inside, near its base.
             let y = if cloud { ground.max(SEA_LEVEL) + CLOUD_FLASH_HEIGHT } else { ground };
             let strike = Vec3::new(at.x, y as f32, at.y);
+            if !cloud {
+                server.weather.struck(strike.floor().as_ivec3(), seed, tick);
+            }
             for (id, player) in &positions {
                 if player.distance(at) < LIGHTNING_REACH {
                     server.players[id].connection.send(ServerMessage::Lightning { at: strike, seed, cloud });
@@ -762,6 +814,11 @@ impl WeatherState {
             }
         }
         self.table.apply(&mut weather, &strengths, place.floor);
+        // What blows over snow is snow: drifting snow is white, not the ground's colour.
+        if weather.snow_cover > 0.1 {
+            let white = smoothstep(0.1, 0.5, weather.snow_cover);
+            weather.dust_color = weather.dust_color.map(|c| (c as f32 + (250.0 - c as f32) * white) as u8);
+        }
         let mut effects: Vec<(usize, f32)> = strengths.into_iter().enumerate().filter(|&(_, s)| s > 0.01).collect();
         effects.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         Report { weather, effects }
@@ -874,7 +931,9 @@ impl Sky {
 
     /// Lightning from effects (thundersnow, fantastical storms) near a player, at
     /// `strength` (the `lightning` channel): 150 to 900 blocks away.
-    fn effect_lightning(&self, player: PlayerId, at: Vec2, strength: f32, tick: u64) -> Option<Strike> {
+    /// Dry lightning (heat lightning: no storm overhead) flashes far off, beyond where
+    /// thunder is heard (`protocol::THUNDER_HEARD`), so it is silent.
+    fn effect_lightning(&self, player: PlayerId, at: Vec2, strength: f32, dry: bool, tick: u64) -> Option<Strike> {
         let h = mix(mix(self.seed ^ EFFECT_STRIKES ^ tick) ^ player as u64);
         if unit(h) >= (EFFECT_LIGHTNING * strength) as f64 {
             return None;
@@ -882,7 +941,8 @@ impl Sky {
         // A direction from a point on the unit square's edge, then a distance.
         let (a, b) = (unit(mix(h)) as f32 * 2.0 - 1.0, unit(mix(mix(h))) as f32 * 2.0 - 1.0);
         let direction = Vec2::new(a, b).normalize_or(Vec2::X);
-        let distance = 150.0 + 750.0 * unit(mix(mix(mix(h)))) as f32;
+        let far = unit(mix(mix(mix(h)))) as f32;
+        let distance = if dry { THUNDER_HEARD + 20.0 + (LIGHTNING_REACH - THUNDER_HEARD - 40.0) * far } else { 150.0 + 750.0 * far };
         // Mostly strikes, some flashes within the cloud.
         Some(Strike { at: at + direction * distance, seed: (h >> 32) as u32, cloud: unit(mix(h ^ 0xc10d)) < 0.4 })
     }
@@ -924,6 +984,103 @@ impl Sky {
 }
 
 /// The centre of a weather cell, in blocks.
+/// Lightning strikes kept in `WeatherState::strikes`.
+const STRIKES_KEPT: usize = 64;
+/// Seconds over which the memory of a strike in a cell (`core:lightning`) halves.
+const LIGHTNING_MEMORY: f32 = 600.0;
+const LN_2: f32 = std::f32::consts::LN_2;
+/// Hail's impact at full strength (`hail` 1: golf-ball stones), J m⁻² s⁻¹.
+const HAIL_ENERGY: f32 = 4.0;
+/// Density of air, kg m⁻³, for the wind's pressure.
+const AIR_DENSITY: f32 = 1.225;
+
+/// Lightning that reached the ground: where (the block it struck, on top of the ground),
+/// when, and its peak current in kiloamperes (10 to 200, most about 20 to 40).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StrikeEvent {
+    pub at: IVec3,
+    pub tick: u64,
+    pub current: f32,
+}
+
+/// What the weather does to things left out in it, at one place and moment. All are
+/// physical or relative rates for whatever builds machines, roofs and crops to read and
+/// integrate over time; nothing reads them yet. Meanings and magnitudes:
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Hazards {
+    /// `core:hail`: the kinetic energy of hailstones striking a square metre facing the
+    /// sky, J m⁻² s⁻¹: 0 without hail, about 1 in pea to marble hail, 2 in walnut hail
+    /// (the `hail` effect at full), 4 in golf-ball hail.
+    pub hail: f32,
+    /// `core:wind_load`: the wind's pressure on a surface facing it at the gusts' peak,
+    /// Pa (½ρv²): about 10 in a breeze, 60 in a strong wind, 200 to 600 in a gale.
+    pub wind_load: f32,
+    /// `core:corrosion`: how fast bare iron rusts, relative: 1 for steady wet at 15 °C
+    /// inland, more in warmth (about double at 30 °C) and twice by the sea, down to 0
+    /// when dry or frozen.
+    pub corrosion: f32,
+    /// `core:frost`: how hard the cold bites, 0..1: 0 above freezing, 1 at -20 °C, and 1
+    /// in freezing rain or hard frost however mild (ice on everything).
+    pub frost: f32,
+    /// `core:heat`: heat stress, 0..1: 0 below 32 °C, 1 at 48 °C, less under cloud.
+    pub heat: f32,
+}
+
+impl Hazards {
+    /// The hazards of `weather` at a place `coast` (1 at the sea) from the shore.
+    pub fn of(weather: &LocalWeather, coast: f32) -> Self {
+        let t = weather.temperature;
+        let gust_peak = weather.wind.length() * (1.0 + 0.75 * weather.gusts);
+        let raining = weather.precipitation * (1.0 - weather.snow);
+        let damp = ((weather.humidity - 0.8) / 0.2).clamp(0.0, 1.0) * 0.3;
+        let wet = weather.wetness.max(raining).max(damp);
+        // Rusting roughly doubles for 15 °C warmer, and stops as the water freezes.
+        let warmth = (1.0 + (t - 15.0) / 15.0).clamp(0.25, 3.0) * ramp(-4.0, 1.0, t);
+        let frozen = 1.0 - ramp(-20.0, 0.0, t);
+        Self {
+            hail: HAIL_ENERGY * weather.hail * weather.hail,
+            wind_load: 0.5 * AIR_DENSITY * gust_peak * gust_peak,
+            corrosion: wet * warmth * (1.0 + coast.clamp(0.0, 1.0)),
+            frost: frozen.max(weather.frost),
+            heat: ramp(32.0, 48.0, t) * (1.0 - 0.5 * weather.cover),
+        }
+    }
+}
+
+/// The hazard fields, in weather cells; derived each update, so nothing of them is saved.
+pub(crate) struct HazardFields {
+    pub hail: Field,
+    pub wind_load: Field,
+    pub corrosion: Field,
+    pub frost: Field,
+    pub heat: Field,
+    /// `core:lightning`: ground strikes in the cell lately, each counting 1 and fading by
+    /// half every `LIGHTNING_MEMORY` seconds (a few in a thunderstorm's path).
+    pub lightning: Field,
+}
+
+impl Default for HazardFields {
+    fn default() -> Self {
+        let field = |name: &str| Field::with_cell_size(name, CELL, |_, _| 0.0);
+        Self {
+            hail: field("core:hail"),
+            wind_load: field("core:wind_load"),
+            corrosion: field("core:corrosion"),
+            frost: field("core:frost"),
+            heat: field("core:heat"),
+            lightning: field("core:lightning"),
+        }
+    }
+}
+
+impl HazardFields {
+    fn reset(&mut self, at: IVec2) {
+        for field in [&mut self.hail, &mut self.wind_load, &mut self.corrosion, &mut self.frost, &mut self.heat, &mut self.lightning] {
+            field.reset(at.x, at.y);
+        }
+    }
+}
+
 fn cell_center(cell: IVec2) -> IVec2 {
     cell * CELL + CELL / 2
 }
@@ -1262,9 +1419,12 @@ mod tests {
         assert!(ground * 2 < storm.len() && ground * 5 > storm.len(), "{ground} of {}", storm.len());
         assert_eq!(storm, flashes(1.0, 1.0));
         // Effects' lightning strikes around the player, as often as the channel says.
-        let near: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, s * SECOND)).collect();
+        let near: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, false, s * SECOND)).collect();
         assert!((700..1300).contains(&near.len()), "{} strikes", near.len());
         assert!(near.iter().all(|s| (149.0..901.0).contains(&s.at.length())));
+        // Heat lightning, with no storm overhead, flashes too far off to be heard.
+        let dry: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, true, s * SECOND)).collect();
+        assert!(!dry.is_empty() && dry.iter().all(|s| (THUNDER_HEARD..LIGHTNING_REACH).contains(&s.at.length())));
     }
 
     #[test]
@@ -1304,6 +1464,55 @@ mod tests {
         assert!(weather.release(here, 10_000 + 902 * SECOND));
         assert!(report(&mut weather, &mut temperature, 903).precipitation < 0.01);
         assert!(!weather.release(here, 10_000 + 904 * SECOND));
+    }
+
+    #[test]
+    fn hazards_have_their_magnitudes() {
+        let calm = LocalWeather { temperature: 15.0, humidity: 0.5, wind: Vec2::new(1.0, 0.0), ..LocalWeather::NONE };
+        let none = Hazards::of(&calm, 0.0);
+        assert!(none.hail == 0.0 && none.corrosion == 0.0 && none.frost == 0.0 && none.heat == 0.0 && none.wind_load < 1.0, "{none:?}");
+        // A gale of 18 blocks/s gusting hard: a few hundred pascals.
+        let gale = Hazards::of(&LocalWeather { wind: Vec2::new(18.0, 0.0), gusts: 0.8, ..calm }, 0.0);
+        assert!((300.0..700.0).contains(&gale.wind_load), "{}", gale.wind_load);
+        // Walnut hail, the hail effect at full.
+        let hail = Hazards::of(&LocalWeather { hail: 0.7, precipitation: 1.0, ..calm }, 0.0);
+        assert!((1.5..2.5).contains(&hail.hail), "{}", hail.hail);
+        // Rust: steady wet at 15 °C is 1, by the sea 2, frozen none.
+        let wet = LocalWeather { wetness: 1.0, ..calm };
+        assert!((Hazards::of(&wet, 0.0).corrosion - 1.0).abs() < 1e-5 && (Hazards::of(&wet, 1.0).corrosion - 2.0).abs() < 1e-5);
+        assert_eq!(Hazards::of(&LocalWeather { temperature: -10.0, ..wet }, 1.0).corrosion, 0.0);
+        // Frost from the cold or from freezing rain; heat in a desert afternoon.
+        assert_eq!(Hazards::of(&LocalWeather { temperature: -25.0, ..calm }, 0.0).frost, 1.0);
+        assert_eq!(Hazards::of(&LocalWeather { frost: 1.0, temperature: 1.0, ..calm }, 0.0).frost, 1.0);
+        assert!(Hazards::of(&LocalWeather { temperature: 45.0, ..calm }, 0.0).heat > 0.8);
+    }
+
+    #[test]
+    fn hazards_fill_the_cells_around_players_and_strikes_are_kept() {
+        let table = table();
+        let (mut weather, mut temperature) = setup(4, Vec2::X, 0);
+        let here = Vec2::new(10.0, 20.0);
+        weather.force(table.preset("hail").unwrap().at(1.0), here, 300, 10_000);
+        for s in 0..5 {
+            let tick = 10_000 + s * SECOND;
+            weather.update(&mut temperature, &[here.as_ivec2()], tick, tick as f64);
+            weather.update_hazards(&mut temperature, tick, tick as f64, 1.0);
+        }
+        let (x, z) = (here.x as i32, here.y as i32);
+        assert!(weather.hazards.hail.sample(x, z) > 1.0 && weather.hazards.wind_load.sample(x, z) > 10.0);
+        assert!(weather.hazards.corrosion.sample(x, z) > 0.1);
+        // Far from any player nothing is worked out.
+        assert_eq!(weather.hazards.hail.sample(5000, 5000), 0.0);
+        // Strikes are kept, the newest last, and remembered in the cell for a while.
+        for k in 0..100 {
+            weather.struck(IVec3::new(x, 70, z), k * 7919, 20_000 + k as u64);
+        }
+        assert_eq!(weather.strikes.len(), STRIKES_KEPT);
+        assert_eq!(weather.strikes.back().unwrap().tick, 20_099);
+        assert!(weather.strikes.iter().all(|s| (10.0..=200.0).contains(&s.current)));
+        let remembered = weather.hazards.lightning.sample(x, z);
+        weather.update_hazards(&mut temperature, 20_100, 20_100.0, LIGHTNING_MEMORY);
+        assert!((weather.hazards.lightning.sample(x, z) - remembered * (1.0 - LN_2)).abs() < 1e-3);
     }
 
     #[test]

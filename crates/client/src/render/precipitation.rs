@@ -342,6 +342,20 @@ struct Fallen {
     ambient: Vec<(String, Vec3)>,
     /// The glinting ice crystals of diamond dust.
     glints: Vec3,
+    /// Puffs of mist.
+    mist: Vec3,
+}
+
+/// The shader's motion code for mist: big, faint puffs drifting slowly, kept below the top
+/// of the fog layer.
+const MIST: f32 = 6.0;
+
+/// How much mist hangs in the air as puffs: ground fog (dawn mist, valley and sea fog, lake
+/// mist, steam after rain), and plain mist while nothing falls or blows. Rain, snow and
+/// dust bring their own murk.
+fn mist(shown: &Weather) -> f32 {
+    let clear_air = (1.0 - shown.precipitation * 4.0).clamp(0.0, 1.0) * (1.0 - shown.dust * 3.0).clamp(0.0, 1.0);
+    shown.ground_fog.max(shown.fog * clear_air) * 0.5
 }
 
 /// The shader's motion code for diamond dust: crystals hanging in the air that glint for
@@ -397,6 +411,7 @@ fn update(
     let rain = shown.precipitation * (1.0 - shown.snow);
     let drips = (rain * 1.5 + shown.wetness * 0.6 - 0.05).clamp(0.0, 1.0);
     let glints = glints(shown);
+    let mist = mist(shown);
     // Rain and snow ground the glowing motes and wisps (ball lightning in a storm would be
     // a few orbs, which these are not): nothing glows in the rain.
     let dry = 1.0 - ((shown.precipitation - 0.02) / 0.18).clamp(0.0, 1.0);
@@ -407,13 +422,13 @@ fn update(
             Drops::Falling => shown.precipitation > 0.01 || drips > 0.0 || shown.dust > 0.01,
             Drops::Dust => shown.dust > 0.01,
             Drops::Motes => motes > 0.0,
-            Drops::Ambient => !air.particles.is_empty() || glints > 0.01,
+            Drops::Ambient => !air.particles.is_empty() || glints > 0.01 || mist > 0.01,
             Drops::Splashes => shown.precipitation > 0.01,
             Drops::Warm => true,
         };
         visibility.set_if_neq(if shows { Visibility::Inherited } else { Visibility::Hidden });
     }
-    if shown.precipitation <= 0.01 && drips <= 0.0 && shown.dust <= 0.01 && shown.motes <= 0.01 && glints <= 0.01 && air.particles.is_empty() {
+    if shown.precipitation <= 0.01 && drips <= 0.0 && shown.dust <= 0.01 && shown.motes <= 0.01 && glints <= 0.01 && mist <= 0.01 && air.particles.is_empty() {
         // Nothing shows: only the warm drop is drawn, and the shader hides it too.
         let showing = |p: &PrecipitationParams| {
             p.rain.w > 0.0 || p.far.w > 0.0 || p.dust.w > 0.0 || p.motes.w > 0.0 || p.ambient.iter().step_by(3).any(|a| a.w > 0.0)
@@ -488,13 +503,24 @@ fn update(
         sets[i * 3 + 1] = set.color.extend(if set.glow { 1.0 } else { 0.0 });
         sets[i * 3 + 2] = Vec4::new(set.size, motion_code(set.motion), 0.0, 0.0);
     }
-    // Diamond dust takes the last set, settling slowly.
+    // The weather's own sets take the last slots, before the land's sparsest: diamond
+    // dust settling slowly, and mist drifting with the wind below the fog's top.
+    let mut slot = AMBIENT_SETS;
     fallen.glints = (fallen.glints + (wind * 0.1 - Vec3::Y * 0.05) * dt).rem_euclid(BOX);
     if glints > 0.01 {
-        let i = air.particles.len().min(AMBIENT_SETS - 1);
-        sets[i * 3] = fallen.glints.extend((glints * 1.4).min(1.0));
-        sets[i * 3 + 1] = Vec3::new(0.85, 0.93, 1.0).extend(1.0);
-        sets[i * 3 + 2] = Vec4::new(0.06, GLINT, 0.0, 0.0);
+        slot -= 1;
+        sets[slot * 3] = fallen.glints.extend((glints * 1.4).min(1.0));
+        sets[slot * 3 + 1] = Vec3::new(0.85, 0.93, 1.0).extend(1.0);
+        sets[slot * 3 + 2] = Vec4::new(0.06, GLINT, 0.0, 0.0);
+    }
+    fallen.mist = (fallen.mist + wind * 0.25 * dt).rem_euclid(BOX);
+    if mist > 0.01 {
+        slot -= 1;
+        // Ground fog lies below its top; plain mist fills the air.
+        let ceiling = if shown.ground_fog >= shown.fog { shown.fog_top - eye.y } else { 1000.0 };
+        sets[slot * 3] = fallen.mist.extend(mist.min(1.0));
+        sets[slot * 3 + 1] = Vec3::new(0.34, 0.35, 0.37).extend(0.0);
+        sets[slot * 3 + 2] = Vec4::new(2.6, MIST, ceiling, 0.0);
     }
 
     let Some(mut material) = materials.get_mut(&handle) else { return };

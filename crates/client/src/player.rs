@@ -11,6 +11,7 @@ use voxmar_engine::physics::{Aabb, player as dims};
 
 use crate::menu::Screen;
 use crate::render::DayCycle;
+use crate::session::Launch;
 use crate::settings::Settings;
 use crate::world::ClientWorld;
 
@@ -21,11 +22,18 @@ impl Plugin for PlayerPlugin {
         app.init_resource::<LocalPlayer>()
             .init_resource::<UiState>()
             .init_resource::<Zoom>()
+            .init_resource::<SprintFov>()
             .add_systems(
                 Update,
                 ((grab_cursor, zoom, look, movement, follow_camera).chain().run_if(in_state(Screen::InGame)), set_fov.after(zoom)),
             )
-            .add_systems(OnExit(Screen::InGame), (release_cursor, |mut zoom: ResMut<Zoom>| *zoom = Zoom::default()));
+            .add_systems(
+                OnExit(Screen::InGame),
+                (release_cursor, |mut zoom: ResMut<Zoom>, mut kick: ResMut<SprintFov>| {
+                    *zoom = Zoom::default();
+                    *kick = SprintFov::default();
+                }),
+            );
     }
 }
 
@@ -41,6 +49,9 @@ pub struct LocalPlayer {
     /// Whether the last step was stopped by a wall across (see `movement::Body`).
     pub against_wall: bool,
     pub flying: bool,
+    pub sprinting: bool,
+    /// Seconds until a held jump may jump again (see `movement::Body`).
+    pub jump_delay: f32,
     pub allow_flight: bool,
     pub admin: bool,
     /// Flight speed multiplier, as last agreed with the server.
@@ -66,6 +77,8 @@ impl Default for LocalPlayer {
             in_water: false,
             against_wall: false,
             flying: false,
+            sprinting: false,
+            jump_delay: 0.0,
             allow_flight: false,
             admin: false,
             fly_speed: 1.0,
@@ -261,10 +274,42 @@ fn look(
     zoom.look(&mut player, delta * sensitivity, settings.cinematic_zoom, time.delta_secs());
 }
 
-/// The camera's field of view: the setting's, narrowed while zoomed.
-fn set_fov(settings: Res<Settings>, zoom: Res<Zoom>, mut camera: Query<&mut Projection, With<Camera3d>>) {
+/// The view widening a little while sprinting, as Minecraft's does, so speed is felt.
+#[derive(Resource, Default)]
+pub struct SprintFov {
+    /// How far into the kick the view is, 0 to 1.
+    amount: f32,
+}
+
+impl SprintFov {
+    /// How much wider the view is at full kick (Minecraft's is 1.15).
+    const WIDEST: f32 = 1.1;
+    /// How quickly it widens and narrows back, per second.
+    const RATE: f32 = 10.0;
+
+    fn update(&mut self, sprinting: bool, dt: f32) {
+        let goal = if sprinting { 1.0 } else { 0.0 };
+        self.amount += (goal - self.amount) * (1.0 - (-Self::RATE * dt).exp());
+    }
+
+    fn factor(&self) -> f32 {
+        1.0 + (Self::WIDEST - 1.0) * self.amount
+    }
+}
+
+/// The camera's field of view: the setting's, widened while sprinting and narrowed while
+/// zoomed.
+fn set_fov(
+    time: Res<Time>,
+    settings: Res<Settings>,
+    zoom: Res<Zoom>,
+    player: Res<LocalPlayer>,
+    mut kick: ResMut<SprintFov>,
+    mut camera: Query<&mut Projection, With<Camera3d>>,
+) {
     let Ok(mut projection) = camera.single_mut() else { return };
-    let fov = zoom.fov(settings.fov as f32);
+    kick.update(settings.fov_effects && player.sprinting && player.velocity.with_y(0.0).length() > 1.0, time.delta_secs());
+    let fov = zoom.fov(settings.fov as f32 * kick.factor());
     if let Projection::Perspective(perspective) = projection.bypass_change_detection()
         && perspective.fov != fov
     {
@@ -273,7 +318,21 @@ fn set_fov(settings: Res<Settings>, zoom: Res<Zoom>, mut camera: Query<&mut Proj
     }
 }
 
-fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, world: Res<ClientWorld>, mut player: ResMut<LocalPlayer>) {
+/// Seconds within which a second press of forward starts a sprint (Minecraft's seven
+/// ticks).
+const DOUBLE_TAP: f32 = 0.35;
+
+#[allow(clippy::too_many_arguments)]
+fn movement(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    ui: Res<UiState>,
+    settings: Res<Settings>,
+    launch: Res<Launch>,
+    world: Res<ClientWorld>,
+    mut player: ResMut<LocalPlayer>,
+    mut last_forward: Local<Option<f32>>,
+) {
     let player = &mut *player;
     if !player.joined || player.dead {
         return;
@@ -298,9 +357,17 @@ fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, 
             wish += dir;
         }
     }
+    // A second tap of forward soon after the first starts a sprint.
+    let now = time.elapsed_secs();
+    let mut double_tap = false;
+    if ui.cursor_locked && keys.just_pressed(KeyCode::KeyW) {
+        double_tap = settings.double_tap_sprint && last_forward.is_some_and(|t| now - t < DOUBLE_TAP);
+        *last_forward = (!double_tap).then_some(now);
+    }
     let controls = Controls {
         wish: wish.normalize_or_zero(),
-        sprint: pressed(KeyCode::ControlLeft),
+        forward: pressed(KeyCode::KeyW) && !pressed(KeyCode::KeyS),
+        sprint: pressed(settings.sprint_key.0) || double_tap,
         jump: pressed(KeyCode::Space),
         descend: pressed(KeyCode::ShiftLeft),
     };
@@ -312,15 +379,20 @@ fn movement(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, 
         flying: player.flying,
         fly_speed: player.fly_speed,
         against_wall: player.against_wall,
+        sprinting: player.sprinting,
+        jump_delay: player.jump_delay,
     };
     let water = world.registry.id("base:water").unwrap_or(BlockId::AIR);
-    movement::advance(&mut body, &Around { world: &world, water }, controls, time.delta_secs().min(0.25));
+    let tuning = &launch.content.movement;
+    movement::advance(&mut body, &Around { world: &world, water }, tuning, controls, time.delta_secs().min(0.25));
     player.position = body.position;
     player.velocity = body.velocity;
     player.on_ground = body.on_ground;
     player.in_water = body.in_water;
     player.flying = body.flying;
     player.against_wall = body.against_wall;
+    player.sprinting = body.sprinting;
+    player.jump_delay = body.jump_delay;
 }
 
 /// The client's world as movement sees it.

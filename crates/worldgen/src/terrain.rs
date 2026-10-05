@@ -49,7 +49,7 @@ struct Ids {
     /// The crust of a dry salt flat.
     salt: BlockId,
     /// Boulders by creeks and rivers.
-    boulder: BlockId,
+    /// The top of a damp creek boulder.
     mossy_boulder: BlockId,
     sand: BlockId,
     snow: BlockId,
@@ -154,8 +154,7 @@ impl Terrain {
                 water,
                 lava: id("lava"),
                 salt: id("calcite"),
-                boulder: id("cobblestone"),
-                mossy_boulder: id("mossy_cobblestone"),
+                mossy_boulder: id("moss_block"),
                 sand: id("sand"),
                 snow: registry.expect(&frost.snow),
                 powder: registry.expect(&frost.powder),
@@ -1006,10 +1005,13 @@ fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) ->
     if hash % 100 >= chance {
         return None;
     }
-    let ids = &world.terrain.ids;
+    // Of the local stone, a tall one mossy on top where it is damp.
+    let stones = world.outcrop(site);
+    let stone = |bits: u64| stones.pick((bits & 0xffff) as f32 / 65536.0);
     let damp = site.soil_moisture() > 0.85 && site.temperature > 0.0;
-    let stone = |bits: u64| if damp && !bits.is_multiple_of(3) { ids.mossy_boulder } else { ids.boulder };
-    Some([Some(stone(hash >> 8)), (hash >> 16 & 3 == 0).then(|| stone(hash >> 20))])
+    let tall = hash >> 16 & 3 == 0;
+    let top = if damp && !(hash >> 20).is_multiple_of(3) { world.terrain.ids.mossy_boulder } else { stone(hash >> 24) };
+    Some([Some(stone(hash >> 8)), tall.then_some(top)])
 }
 
 /// Whether a block is ground or rock (see `Terrain::earth`).

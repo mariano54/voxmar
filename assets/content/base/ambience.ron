@@ -45,10 +45,12 @@
         (
             name: "rain", recording: ["sounds/rain_light_1.mp3", "sounds/rain_light_2.mp3", "sounds/rain_light_3.mp3"], volume: 0.5, fade: 3,
             when: {"rain": (min: 0.45, max: 0.75, fade: 0.42)},
+            duck: {"hail": 0.7, "sleet": 0.4},
         ),
         (
             name: "downpour", recording: ["sounds/rain_heavy_1.mp3", "sounds/rain_heavy_2.mp3", "sounds/rain_heavy_3.mp3"], volume: 0.75, fade: 3,
             when: {"rain": (min: 0.85, fade: 0.4)},
+            duck: {"hail": 0.7},
         ),
         (
             name: "rain_on_roof", recording: ["sounds/rain_roof_1.mp3", "sounds/rain_roof_2.mp3", "sounds/rain_roof_3.mp3"], volume: 0.4, fade: 2,
@@ -76,7 +78,7 @@
         ),
         // Ice falling: hail rattling on everything, sleet's fine patter.
         (
-            name: "hail", sound: Hail, volume: 0.42, fade: 2,
+            name: "hail", sound: Hail, volume: 0.6, fade: 2,
             when: {"hail": (min: 0.25, fade: 0.25)},
         ),
         (

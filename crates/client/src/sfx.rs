@@ -470,7 +470,7 @@ fn footsteps(player: Res<LocalPlayer>, world: Res<ClientWorld>, mut cues: Messag
             }
         }
         state.travelled += (position - previous).with_y(0.0).length();
-        let stride = if player.velocity.with_y(0.0).length() > dims::WALK_SPEED + 0.5 { 2.1 } else { 1.7 };
+        let stride = if player.sprinting { 2.1 } else { 1.7 };
         if state.travelled >= stride {
             state.travelled = 0.0;
             for cue in step_cues(&world.registry, ground, cover, wading) {

@@ -157,7 +157,8 @@ impl Rivers {
             breach: 6,
             min_depth: 4.0,
             min_area: 3,
-            incision: 2.0,
+            // Trunks lie well down in the valleys they cut.
+            incision: 3.0,
             lakes: false,
             springs: 0.0,
             tunnel: Some(TunnelRule { depth: 14.0, chance: 0.35, length: 6 }),
@@ -172,6 +173,7 @@ impl Rivers {
             breach: 6,
             min_depth: 5.0,
             min_area: 48,
+            // Creeks and streams run a block below the ground beside them.
             incision: 1.0,
             lakes: true,
             // Rare: a few in a volcanic world's kilometre, none in a quiet one.
@@ -188,6 +190,7 @@ impl Rivers {
                 river_width: 5.0,
                 floodplain: 1.0,
                 wall: 1.6,
+                shore_run: 4.0,
                 valley: 48.0,
                 jitter: 18.0,
                 shore: 5,
@@ -198,6 +201,7 @@ impl Rivers {
                 river_width: 5.0,
                 floodplain: 0.3,
                 wall: 1.1,
+                shore_run: 2.5,
                 valley: 20.0,
                 jitter: 2.5,
                 shore: 0,
@@ -215,10 +219,10 @@ impl Rivers {
         }
     }
 
-    /// Width of a river carrying `flow`, in blocks: a trickle at the smallest creek, six
-    /// blocks with twenty times its water, ten with fifty.
+    /// Width of a river carrying `flow`, in blocks: two and a half at the smallest creek,
+    /// seven and a half with twenty times its water, eleven and a half with fifty.
     fn width(&self, flow: f32) -> f32 {
-        (flow / self.creek).powf(0.6).clamp(1.0, 28.0)
+        (1.5 + (flow / self.creek).powf(0.6)).clamp(2.5, 28.0)
     }
 
     /// The regional climate over the region holding (x, z), sampled every `RAIN_CELL`
