@@ -3,6 +3,7 @@
 #
 #   tools/gate                 # before every landing: fast, only what the change can affect
 #   tools/gate --full          # everything; play builds are made only from commits it passed
+#   tools/gate stop            # stops this worktree's own gate run, and nobody else's
 #   tools/gate --passed [--full] [REV]
 #                              # exits 0 if REV (default HEAD) passed (the full gate)
 #
@@ -29,6 +30,27 @@ memcap=~/Projects/voxmar-wt/memcap
 # Away from the Mac (a Linux machine, a fresh clone), the copy in this tree.
 [[ -x $memcap ]] || memcap=$PWD/tools/memcap
 passed_dir="$(git rev-parse --git-common-dir)/gate-passed"
+
+# The run in progress in this worktree, for `tools/gate stop`.
+pid_file=$PWD/target/gate.pid
+
+# Stops this worktree's gate run: its script and everything it started (memcap passes the
+# signal on to the build, the tests and the game). Never stop gates by pattern (`pkill -f
+# tools/gate`, `pkill -f voxmar`): that kills every thread's run.
+if [[ ${1:-} == stop ]]; then
+  pid=$(cat "$pid_file" 2>/dev/null)
+  if [[ -z $pid ]] || ! kill -0 "$pid" 2>/dev/null; then
+    echo "gate: no gate run in this worktree"
+    exit 0
+  fi
+  descendants=$(ps -A -o pid=,ppid= | awk -v root="$pid" '
+    { parent[$1] = $2 }
+    END { for (p in parent) { q = p; while (q > 1) { if (q == root) { print p; break } q = parent[q] } } }')
+  kill -TERM $descendants "$pid" 2>/dev/null
+  rm -f "$pid_file"
+  echo "gate: stopped this worktree's run ($pid)"
+  exit 0
+fi
 
 full=0 check=0 rev=HEAD
 while (($#)); do
@@ -73,6 +95,8 @@ SLOW_TESTS=(
 started=$(date +%s)
 out=$PWD/target/gate
 rm -rf "$out" && mkdir -p "$out"
+echo $$ >"$pid_file"
+trap 'rm -f "$pid_file"' EXIT
 fail() {
   echo "gate: FAILED: $*" >&2
   exit 1

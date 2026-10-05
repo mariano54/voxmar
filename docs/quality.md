@@ -74,6 +74,9 @@ changes don't move it, and checks:
 out of the way: its copy of the world is what the server sends everyone. The shots, the
 game's log and the report stay in `target/gate/`; look at them when something fails.
 
+`tools/gate stop` stops this worktree's run and what it started, and nobody else's;
+never stop runs by pattern (`pkill -f tools/gate`), which stops every thread's.
+
 On a clean tree a pass is recorded against the tree (in the repository's common git
 directory); `tools/gate --passed [--full] [REV]` tells whether a commit passed (the full
 gate).
