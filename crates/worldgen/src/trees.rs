@@ -236,6 +236,9 @@ impl Trees {
         if let Crown::Bush { radius } = s.crown {
             let r = pick(rng, radius) * k.sqrt();
             g.mound(r, leaves, s.log, rng);
+            if let Some((fruit, share)) = s.fruit {
+                g.fruit(leaves, fruit, share);
+            }
             return;
         }
 

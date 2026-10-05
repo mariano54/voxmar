@@ -32,14 +32,14 @@
         (
             name: "oak", tags: ["broadleaf", "temperate"],
             log: "oak_log", leaves: "oak_leaves", height: (5, 8), lean: 0.6,
-            fruit: (leaves: "apple_leaves", share: 0.06),
+            fruit: (leaves: "apple_leaves", share: 0.02),
             crown: Round(reach: (1.8, 3.0), radius: (1.8, 2.5), squash: 0.95, start: 0.45),
             comfort: (temperature: (7.0, 23.0)),
         ),
         (
             name: "big_oak", tags: ["broadleaf", "temperate", "giant"], rarity: Uncommon, stand: (0.5, 1.0),
             log: "oak_log", leaves: "oak_leaves", height: (9, 13), lean: 0.8,
-            fruit: (leaves: "apple_leaves", share: 0.06),
+            fruit: (leaves: "apple_leaves", share: 0.02),
             crown: Round(reach: (2.8, 4.2), radius: (2.0, 2.8), squash: 0.9, start: 0.4),
             comfort: (temperature: (10.0, 20.0), moisture: (1.0, 8.0)),
         ),
@@ -191,6 +191,7 @@
         (
             name: "baobab", tags: ["broadleaf", "savanna", "dry", "giant"], rarity: Uncommon,
             log: "baobab_log", leaves: "baobab_leaves", height: (7, 11), thick: true, lean: 0.3,
+            fruit: (leaves: "baobab_fruit_leaves", share: 0.04),
             crown: Umbrella(reach: (1.8, 3.0), radius: (1.4, 2.0), squash: 0.5, fork: 0.75),
             comfort: (temperature: (20.0, 40.0), moisture: (0.15, 0.95)),
         ),
@@ -234,6 +235,168 @@
             log: "glowcap_stem", leaves: "glowcap_cap", height: (5, 9), lean: 0.6,
             crown: Cap(radius: (2.4, 3.4)),
             comfort: (temperature: (2.0, 26.0), moisture: (0.9, 8.0)),
+        ),
+
+        // Trees for gathering: fruit and nut trees and a few others, each comfortable in its
+        // own climate. None carries the broadleaf, conifer or tropical tags biomes pick
+        // their forests by, so each grows only where a biome names it: rare, in small
+        // stands.
+        (
+            // Low and spreading, laden in autumn.
+            name: "apple_tree", tags: ["gathering", "fruit", "temperate"], rarity: Uncommon,
+            log: "oak_log", leaves: "oak_leaves", height: (4, 6), lean: 0.8,
+            fruit: (leaves: "apple_leaves", share: 0.1),
+            crown: Round(reach: (2.0, 3.0), radius: (1.6, 2.2), squash: 0.7, start: 0.3),
+            comfort: (temperature: (4.0, 20.0), moisture: (0.6, 8.0)),
+        ),
+        (
+            // Tall and narrow.
+            name: "pear_tree", tags: ["gathering", "fruit", "temperate"], rarity: Uncommon,
+            log: "oak_log", leaves: "oak_leaves", height: (5, 8), lean: 0.4,
+            fruit: (leaves: "pear_leaves", share: 0.08),
+            crown: Round(reach: (1.2, 2.0), radius: (1.6, 2.0), squash: 1.15, start: 0.35),
+            comfort: (temperature: (2.0, 20.0), moisture: (0.6, 8.0)),
+        ),
+        (
+            name: "plum_tree", tags: ["gathering", "fruit", "temperate"], rarity: Uncommon,
+            log: "cherry_log", leaves: "oak_leaves", height: (4, 6), lean: 0.8,
+            fruit: (leaves: "plum_leaves", share: 0.08),
+            crown: Round(reach: (1.6, 2.4), radius: (1.5, 2.0), squash: 0.85, start: 0.35),
+            comfort: (temperature: (4.0, 22.0), moisture: (0.6, 8.0)),
+        ),
+        (
+            // A thicket of hazel at the edge of the wood.
+            name: "hazel", tags: ["gathering", "nut", "temperate", "shrub"], stand: (0.0, 0.6),
+            log: "oak_log", leaves: "oak_leaves", height: (2, 3),
+            fruit: (leaves: "hazelnut_leaves", share: 0.1),
+            crown: Bush(radius: (1.6, 2.4)),
+            comfort: (temperature: (-2.0, 20.0), moisture: (0.6, 8.0)),
+        ),
+        (
+            name: "walnut", tags: ["gathering", "nut", "temperate"], rarity: Rare,
+            log: "dark_oak_log", leaves: "oak_leaves", height: (8, 12), lean: 0.6,
+            fruit: (leaves: "walnut_leaves", share: 0.05),
+            crown: Round(reach: (2.6, 3.8), radius: (2.2, 2.8), squash: 0.8, start: 0.4),
+            comfort: (temperature: (4.0, 22.0), moisture: (0.6, 1.6)),
+        ),
+        (
+            name: "chestnut", tags: ["gathering", "nut", "temperate"], rarity: Rare,
+            log: "oak_log", leaves: "oak_leaves", height: (8, 12), thick: true, lean: 0.6,
+            fruit: (leaves: "chestnut_leaves", share: 0.05),
+            crown: Round(reach: (2.8, 3.8), radius: (2.2, 2.8), squash: 0.85, start: 0.35),
+            comfort: (temperature: (6.0, 22.0), moisture: (0.7, 8.0)),
+        ),
+        (
+            name: "wild_cherry", tags: ["gathering", "fruit", "temperate", "cold"], rarity: Uncommon,
+            log: "cherry_log", leaves: "oak_leaves", height: (6, 10), lean: 0.4,
+            fruit: (leaves: "wild_cherries_leaves", share: 0.07),
+            crown: Round(reach: (1.4, 2.4), radius: (1.6, 2.2), squash: 0.95, start: 0.5),
+            comfort: (temperature: (0.0, 16.0), moisture: (0.6, 8.0)),
+        ),
+        (
+            // Clusters of red berries on a slender tree of the north and the hills.
+            name: "rowan", tags: ["gathering", "berry", "cold"], rarity: Uncommon,
+            log: "birch_log", leaves: "birch_leaves", height: (4, 7), lean: 0.6,
+            fruit: (leaves: "rowan_berries_leaves", share: 0.1),
+            crown: Round(reach: (1.2, 2.0), radius: (1.4, 1.9), squash: 0.9, start: 0.45),
+            ground: [Soil, Snow],
+            comfort: (temperature: (-10.0, 12.0), moisture: (0.5, 8.0)),
+        ),
+        (
+            // Gnarled and grey-green, of dry warm hills.
+            name: "olive", tags: ["gathering", "fruit", "warm", "dry"], rarity: Uncommon,
+            log: "acacia_log", leaves: "olive_leaves", height: (3, 5), lean: 1.4,
+            fruit: (leaves: "olives_leaves", share: 0.1),
+            crown: Umbrella(reach: (1.6, 2.6), radius: (1.6, 2.2), squash: 0.6, fork: 0.4),
+            comfort: (temperature: (12.0, 30.0), moisture: (0.1, 1.0)),
+        ),
+        (
+            name: "fig", tags: ["gathering", "fruit", "warm"], rarity: Rare,
+            log: "acacia_log", leaves: "oak_leaves", height: (3, 5), lean: 1.0,
+            fruit: (leaves: "fig_leaves", share: 0.07),
+            crown: Round(reach: (2.2, 3.2), radius: (1.6, 2.2), squash: 0.6, start: 0.25),
+            comfort: (temperature: (14.0, 32.0), moisture: (0.2, 1.4)),
+        ),
+        (
+            name: "lemon_tree", tags: ["gathering", "fruit", "warm", "citrus"], rarity: Rare,
+            log: "jungle_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.6,
+            fruit: (leaves: "lemon_leaves", share: 0.1),
+            crown: Round(reach: (1.2, 2.0), radius: (1.5, 2.0), squash: 0.95, start: 0.25),
+            comfort: (temperature: (14.0, 32.0), moisture: (0.3, 8.0)),
+        ),
+        (
+            name: "orange_tree", tags: ["gathering", "fruit", "warm", "citrus"], rarity: Rare,
+            log: "jungle_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.6,
+            fruit: (leaves: "orange_leaves", share: 0.1),
+            crown: Round(reach: (1.2, 2.0), radius: (1.5, 2.0), squash: 0.95, start: 0.25),
+            comfort: (temperature: (16.0, 34.0), moisture: (0.4, 8.0)),
+        ),
+        (
+            // Pink blossom, then nuts, on dry warm slopes.
+            name: "almond", tags: ["gathering", "nut", "warm", "dry", "blossom"], rarity: Rare,
+            log: "cherry_log", leaves: "oak_leaves", height: (3, 5), lean: 0.8,
+            fruit: (leaves: "almond_leaves", share: 0.08),
+            crown: Round(reach: (1.6, 2.4), radius: (1.4, 1.9), squash: 0.8, start: 0.3),
+            comfort: (temperature: (12.0, 30.0), moisture: (0.1, 1.0)),
+        ),
+        (
+            // Broad fronds on a short stem, a bunch hanging beneath.
+            name: "banana", tags: ["gathering", "fruit", "hot", "wet"], rarity: Uncommon,
+            log: "palm_log", leaves: "palm_leaves", height: (3, 5), lean: 0.4,
+            fruit: (leaves: "banana_leaves", share: 0.1),
+            crown: Palm(fronds: (6, 9), length: (2.5, 3.5)),
+            comfort: (temperature: (20.0, 40.0), moisture: (0.8, 8.0)),
+        ),
+        (
+            name: "mango", tags: ["gathering", "fruit", "hot"], rarity: Rare,
+            log: "jungle_log", leaves: "jungle_leaves", height: (7, 10), lean: 0.5,
+            fruit: (leaves: "mango_leaves", share: 0.06),
+            crown: Round(reach: (2.4, 3.4), radius: (2.2, 2.8), squash: 0.85, start: 0.4),
+            comfort: (temperature: (20.0, 40.0), moisture: (0.6, 8.0)),
+        ),
+        (
+            name: "avocado", tags: ["gathering", "fruit", "hot"], rarity: Rare,
+            log: "jungle_log", leaves: "jungle_leaves", height: (6, 9), lean: 0.5,
+            fruit: (leaves: "avocado_leaves", share: 0.06),
+            crown: Round(reach: (1.8, 2.6), radius: (1.8, 2.4), squash: 1.05, start: 0.35),
+            comfort: (temperature: (18.0, 36.0), moisture: (0.6, 8.0)),
+        ),
+        (
+            // A small tree of the jungle's shade, its pods hanging under the leaves.
+            name: "cacao", tags: ["gathering", "fruit", "hot", "wet"], rarity: VeryRare, habitat: Shade,
+            log: "jungle_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.5,
+            fruit: (leaves: "cacao_leaves", share: 0.06),
+            crown: Round(reach: (1.2, 2.0), radius: (1.4, 1.8), squash: 0.9, start: 0.4),
+            comfort: (temperature: (21.0, 40.0), moisture: (1.0, 8.0)),
+        ),
+        (
+            name: "marula", tags: ["gathering", "fruit", "savanna", "dry"], rarity: Uncommon,
+            log: "acacia_log", leaves: "acacia_leaves", height: (5, 8), lean: 0.8,
+            fruit: (leaves: "marula_leaves", share: 0.07),
+            crown: Umbrella(reach: (2.2, 3.4), radius: (2.0, 2.8), squash: 0.4, fork: 0.5),
+            comfort: (temperature: (20.0, 42.0), moisture: (0.05, 1.0)),
+        ),
+        (
+            // A conifer whose needles turn gold and fall.
+            name: "larch", tags: ["cold", "mountain"], rarity: Uncommon,
+            log: "pine_log", leaves: "larch_leaves", height: (10, 16), lean: 0.3,
+            crown: Conical(radius: (2.2, 3.2), start: 0.25),
+            ground: [Soil, Snow],
+            comfort: (temperature: (-14.0, 8.0), moisture: (0.4, 8.0)),
+        ),
+        (
+            name: "alder", tags: ["wetland", "riverbank", "temperate"], habitat: Water,
+            log: "dark_oak_log", leaves: "dark_oak_leaves", height: (7, 11), lean: 0.4,
+            crown: Round(reach: (1.2, 2.0), radius: (1.6, 2.0), squash: 1.1, start: 0.45),
+            comfort: (temperature: (0.0, 18.0), moisture: (1.0, 8.0)),
+        ),
+        (
+            // Standing in still water on flared roots.
+            name: "bald_cypress", tags: ["wetland", "warm"], rarity: Uncommon, habitat: Shallows,
+            log: "cypress_log", leaves: "cypress_leaves", height: (12, 18), thick: true, lean: 0.3, roots: Buttress,
+            crown: Conical(radius: (2.6, 3.6), start: 0.4),
+            ground: [Shallows, Soil],
+            comfort: (temperature: (12.0, 32.0), moisture: (1.2, 8.0)),
         ),
     ],
 )
