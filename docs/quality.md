@@ -110,9 +110,9 @@ the commit, the machine (platform, and on a Mac the power mode and AC), so `tool
 history` shows each scene over time. Compare only rows of the same machine and power mode.
 
 Where benchmarks run (Mariano, 2026-10-05): until the Linux GPU box is set up, on his Mac
-whatever else it is doing; the benchmark waits a minute at most for the machine to idle,
-then times anyway, with the load recorded in every history row, and judges by the median
-of its runs. Once the box is up, all benchmarks run there and its rows are the reference
+whatever else it is doing: by default the benchmark holds no quiet window, so nobody's
+work pauses, records the load in every history row, and judges by the median of its runs
+(`--quiet` holds a window when an idle machine matters). Once the box is up, all benchmarks run there and its rows are the reference
 baseline; Mac rows stay only for absolute sign-off on his own hardware.
 
 Frame times come from captures (`--flight`, `--dig`, and for still views the last
@@ -161,7 +161,7 @@ Every heavy command goes through `memcap`, which gets out of the way:
   starts and running builds pause; tests and game runs, which finish within a minute or
   two, finish. A paused command leaves `/tmp/voxmar-heavy-N.lock.paused`.
 
-So a quiet window needs no announcement: `tools/bench` waits until his game is closed
+So a quiet window needs no announcement: `tools/bench --quiet` waits until his game is closed
 (numbers taken while it runs would be wrong, and it stops if he starts one), claims
 `QUIET` (waiting only for another timing run's), waits for the running tests and game
 runs to finish and up to a minute for the machine to idle (under three cores busy, three
