@@ -573,6 +573,9 @@ pub fn ui_image(texture: &Rgba) -> Image {
 struct Environment {
     to_sun: Vec3,
     daylight: f32,
+    /// How strongly the side of the sky towards the low sun is warmer than the side away
+    /// (see `atmosphere::Light::dusk`).
+    dusk: f32,
     light_direction: Vec3,
     light_color: Vec3,
     ambient: Vec3,
@@ -637,7 +640,7 @@ impl Environment {
         let zenith = fade(NIGHT_ZENITH, DAY_ZENITH, daylight);
         let horizon = tint(fade(NIGHT_HORIZON, DAY_HORIZON, daylight), DUSK_HORIZON, dusk * 0.9);
         let ambient = tint(fade(NIGHT_AMBIENT, DAY_AMBIENT, daylight), DUSK_AMBIENT, dusk * 0.5);
-        Self { to_sun, daylight, light_direction, light_color, ambient, zenith, horizon }
+        Self { to_sun, daylight, dusk, light_direction, light_color, ambient, zenith, horizon }
     }
 
     /// The same light under cloud: a full layer hides the sun or moon, and the sky and
@@ -650,6 +653,8 @@ impl Environment {
             color.lerp(Vec3::splat(color.dot(Vec3::new(0.2126, 0.7152, 0.0722)) * brightness), overcast)
         };
         self.light_color *= (1.0 - 0.9 * overcast) * gloom;
+        // Under cloud no side of the sky is lit more than another.
+        self.dusk *= 1.0 - overcast;
         self.zenith = grey(self.zenith, 1.0) * gloom;
         self.horizon = grey(self.horizon, 0.9) * gloom;
         // Cloud spreads the hidden sunlight over the whole sky, brightening the shade.
@@ -728,7 +733,16 @@ fn update_environment(
     } else {
         SUN_GLOW * (env.daylight * 2.0).min(1.0) * (1.0 - 0.7 * overcast)
     };
-    let light = atmosphere::Light { horizon, ambient: env.ambient, sun: env.light_color, glow, elevation: env.light_direction.y };
+    let across = Vec2::new(env.to_sun.x, env.to_sun.z).normalize_or_zero();
+    let dusk = if cycle.underwater { 0.0 } else { env.dusk };
+    let light = atmosphere::Light {
+        horizon,
+        ambient: env.ambient,
+        sun: env.light_color,
+        glow,
+        elevation: env.light_direction.y,
+        dusk: across.extend(dusk),
+    };
     let air = atmosphere::Air { haze: Some(air.haze), density: air.haze_density };
     let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
     let position = camera.translation.as_dvec3();

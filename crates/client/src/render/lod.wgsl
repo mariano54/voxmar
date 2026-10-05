@@ -8,7 +8,7 @@
 //                                    beneath; a: cover of small plants)
 
 #import bevy_pbr::mesh_view_bindings::{view, fog}
-#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, sun_unclouded, water_normal, reflected_cloud}
+#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, sun_unclouded, water_normal, reflected_cloud, horizon_along}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct DistantView {
@@ -345,7 +345,7 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32) -> vec3<f32> {
     // The sky and the low cloud as real water reflects them where its reflections leave
     // the screen.
     let cloud = reflected_cloud(in.world_position, r);
-    let reflected = sky_gradient(r, distant.zenith.rgb, distant.horizon.rgb) * (1.0 - cloud.a) + cloud.rgb;
+    let reflected = sky_gradient(r, distant.zenith.rgb, horizon_along(distant.horizon.rgb, r)) * (1.0 - cloud.a) + cloud.rgb;
     let falls = smoothstep(0.7, 1.5, surface_slope);
     let still = mix(seen, reflected, fresnel(facing)) + sun_color() * glint * 4.0;
     let white_water = mix(seen, light * FALLING_FOAM, 0.55);

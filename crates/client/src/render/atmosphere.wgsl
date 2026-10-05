@@ -70,7 +70,22 @@ struct Atmosphere {
     water_light: vec4<f32>,
     // x, y: how strongly water absorbs and scatters light (the pack's).
     water_scales: vec4<f32>,
+    // Dusk and dawn (see `dusk_tint`). xy: the way to the sun across the land, z: how
+    // strongly its side of the sky is warmer than the other.
+    dusk: vec4<f32>,
 };
+
+// At full dusk or dawn, how much more red, green and blue the side of the sky towards the
+// sun has, and the side away from it less: a warm, bright glow under the low sun, the
+// cool, dimmer sky opposite under the earth's shadow.
+const DUSK_CONTRAST = vec3(0.45, 0.12, -0.25);
+
+// The tint the sky's light takes looking along `direction` at dusk and dawn, as a factor
+// (1 at other times): its horizontal part says how far it looks towards the sun, so the
+// zenith, and a top face, take neither side. A shorter `direction` takes less of it.
+fn dusk_tint(a: Atmosphere, direction: vec3<f32>) -> vec3<f32> {
+    return max(vec3(1.0) + DUSK_CONTRAST * (dot(direction.xz, a.dusk.xy) * a.dusk.z), vec3(0.0));
+}
 
 // Mean density between heights `y0` and `y0 + dy` of air that is densest below `base`
 // and thins by e every `height` above it.
@@ -136,7 +151,7 @@ fn sun_glow(cos_sun: f32) -> f32 {
 // The colour of distant haze looking along `direction`: the horizon, glowing around the
 // sun as the sky does.
 fn haze_color(a: Atmosphere, direction: vec3<f32>, to_sun: vec3<f32>) -> vec3<f32> {
-    return a.haze.rgb + a.glow.rgb * sun_glow(dot(direction, to_sun));
+    return a.haze.rgb * dusk_tint(a, direction) + a.glow.rgb * sun_glow(dot(direction, to_sun));
 }
 
 struct Aerial {
@@ -190,7 +205,7 @@ fn air_along(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>, to_sun: vec3<f32>
     let depth = optical_depth(a, eye, offset);
     let total = depth.x + depth.y + depth.z;
     let through = exp(-total);
-    let sky_lit = (a.haze.rgb * depth.x + a.fog.rgb * (depth.y + depth.z)) / max(total, 1e-6);
+    let sky_lit = (a.haze.rgb * dusk_tint(a, direction) * depth.x + a.fog.rgb * (depth.y + depth.z)) / max(total, 1e-6);
     // Scattered sunlight from beyond the volumetric pass's reach.
     var sunlit = 1.0 - through;
     if a.glow.w > 0.0 {
@@ -255,7 +270,6 @@ const LAYER_SCALE: f32 = 1.1;
 const CLOUD_DETAIL: f32 = 7.0;
 // Size of the 3D puffs of the low cloud near the eye, in blocks.
 const BILLOW_SIZE: f32 = 22.0;
-
 // The low cloud's 2D body (clouds.wgsl) at `offset` (x, z) from the eye, before the
 // layer's profile shapes it.
 fn cloud_body_at(a: Atmosphere, offset: vec2<f32>) -> f32 {

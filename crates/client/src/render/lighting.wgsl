@@ -7,7 +7,7 @@
 #define_import_path voxmar::lighting
 
 #import bevy_pbr::mesh_view_bindings::{view, lights, globals}
-#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_across, cloud_light, cloud_seen, far_color, water_glow}
+#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_across, cloud_light, cloud_seen, dusk_tint, far_color, water_glow}
 #import voxmar::clouds::value_noise
 #import voxmar::shadows::soft_shadow
 
@@ -97,7 +97,9 @@ fn shade_normal(
     // Sky light falls off steeply with the sky light level, so forest floors, overhangs and
     // the inside of crowns are much darker than open ground; occlusion grounds corners.
     let occlusion = pow(ao, atmosphere.surface.y);
-    let ambient = lights.ambient_color.rgb * pow(sky, atmosphere.surface.x) * ambient_shade * occlusion;
+    // At dusk and dawn, faces turned towards the sun take the warmer sky on its side, those
+    // turned away the cooler one.
+    let ambient = lights.ambient_color.rgb * dusk_tint(atmosphere, normal * 0.5) * pow(sky, atmosphere.surface.x) * ambient_shade * occlusion;
     let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
     let floor = vec3(0.010, 0.010, 0.014) * ao;
     // Sunlight bounced off the sunlit ground around: a wall sees half ground, an underside
@@ -197,6 +199,12 @@ fn reflected_cloud(world: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
 // the light beneath does.
 fn sun_unclouded(world: vec3<f32>) -> f32 {
     return 1.0 - cloud_across(atmosphere, view.world_position, world, sun_direction()).x;
+}
+
+// The horizon's colour `horizon` looking along `direction`, warmer towards the low sun
+// and cooler away from it (`dusk_tint`).
+fn horizon_along(horizon: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
+    return horizon * dusk_tint(atmosphere, direction);
 }
 
 // Under water, what the water scatters towards the eye along a ray heading `direction`

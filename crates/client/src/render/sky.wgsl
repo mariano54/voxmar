@@ -4,7 +4,7 @@
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
-#import voxmar::atmosphere::{Atmosphere, edge_fog, under_water}
+#import voxmar::atmosphere::{Atmosphere, dusk_tint, edge_fog, under_water}
 #import voxmar::clouds::{pcg, unit, value_noise, cloud_body}
 
 struct SkyParams {
@@ -437,9 +437,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Angle a pixel spans mid-screen, where pixels span the widest angle.
     let px = 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
     let up = max(dir.y, 0.0);
-    var color = mix(sky.horizon.rgb, sky.zenith.rgb, pow(up, 0.55));
+    // Warmer towards the low sun at dusk and dawn, cooler away from it.
+    let horizon = sky.horizon.rgb * dusk_tint(atmosphere, dir);
+    var color = mix(horizon, sky.zenith.rgb, pow(up, 0.55));
     if dir.y < 0.0 {
-        color = sky.horizon.rgb * mix(1.0, 0.7, min(-dir.y * 4.0, 1.0));
+        color = horizon * mix(1.0, 0.7, min(-dir.y * 4.0, 1.0));
     }
 
     let daylight = sky.sun.w;

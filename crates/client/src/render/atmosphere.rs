@@ -102,6 +102,7 @@ pub struct Atmosphere {
     pub water: Vec4,
     pub water_light: Vec4,
     pub water_scales: Vec4,
+    pub dusk: Vec4,
 }
 
 impl Default for Atmosphere {
@@ -150,6 +151,9 @@ pub struct Light {
     pub glow: Vec3,
     /// Height of the sun or moon in the sky, the sine of its elevation.
     pub elevation: f32,
+    /// Dusk and dawn: xy the way to the sun across the land (a unit vector along x and z),
+    /// z how strongly the side of the sky towards it is warmer than the side away (0..1).
+    pub dusk: Vec3,
 }
 
 impl Default for Light {
@@ -160,6 +164,7 @@ impl Default for Light {
             sun: Vec3::splat(0.7),
             glow: Vec3::new(1.0, 0.8, 0.55),
             elevation: 0.7,
+            dusk: Vec3::ZERO,
         }
     }
 }
@@ -207,6 +212,7 @@ impl Atmosphere {
                 water: water.tint.extend(water.surface),
                 water_light: water.light.extend(1.0),
                 water_scales: Vec4::new(pack.water.absorption, pack.water.scattering, 0.0, 0.0),
+                dusk: Vec4::ZERO,
             };
         }
 
@@ -260,6 +266,7 @@ impl Atmosphere {
             water: Vec4::ZERO,
             water_light: Vec4::ZERO,
             water_scales: Vec4::ZERO,
+            dusk: light.dusk.extend(0.0),
         }
     }
 
