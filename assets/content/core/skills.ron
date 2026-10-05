@@ -7,24 +7,20 @@
     curve: RuneScape(max: 99),
     // `guide` lists what a skill opens up, by level, for its guide in the character screen;
     // crops add their own lines from crops.ron. Skills nothing trains yet are listed so
-    // players can see what is coming.
+    // players can see what is coming. Breeding animals is part of Farming.
     skills: [
         (
-            name: "farming", title: "Farming", description: "Sowing, tending and harvesting crops.",
+            name: "farming", title: "Farming", description: "Sowing, tending and harvesting crops, and breeding animals.",
             guide: [
                 (level: 1, text: "Forage wild crops for their seeds, and sow them on soil near water"),
                 (level: 10, text: "Harvests find uncommon produce a little more often"),
                 (level: 50, text: "Harvests find rare produce a little more often"),
             ],
         ),
-        (name: "foraging", title: "Foraging", description: "Finding food, herbs and seeds in the wild."),
-        (name: "woodcutting", title: "Woodcutting", description: "Felling trees and working their wood."),
         (name: "mining", title: "Mining", description: "Digging stone, ore and gems from the ground."),
-        (name: "cooking", title: "Cooking", description: "Turning what you gather into meals that feed and warm you."),
-        (name: "herbalism", title: "Herbalism", description: "Knowing plants: what heals, what harms, what grows where."),
-        (name: "alchemy", title: "Alchemy", description: "Brewing potions from plants and strange materials."),
-        (name: "smithing", title: "Smithing", description: "Smelting ore and forging tools."),
-        (name: "building", title: "Building", description: "Raising walls, roofs and everything in between."),
-        (name: "exploring", title: "Exploring", description: "Finding new biomes, landmarks and wonders."),
+        (name: "cooking", title: "Cooking", description: "Turning crops, meat and wild food into meals that feed and warm you."),
+        (name: "attack", title: "Attack", description: "Hitting hard and often."),
+        (name: "defence", title: "Defence", description: "Turning blows aside, and wearing armour."),
+        (name: "hitpoints", title: "Hitpoints", description: "How much harm you can take."),
     ],
 )

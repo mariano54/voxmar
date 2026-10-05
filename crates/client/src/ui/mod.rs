@@ -1,7 +1,9 @@
 //! The interface's shared look and parts: the pixel skin, the widgets screens are built
-//! from, the blur behind menus and the sounds buttons make.
+//! from, the blur behind menus, the sounds buttons make, and typing through the system's
+//! input method.
 
 pub mod blur;
+pub mod ime;
 pub mod skin;
 pub mod sound;
 pub mod widgets;
@@ -14,7 +16,7 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((widgets::WidgetsPlugin, blur::BlurPlugin, sound::UiSoundPlugin))
+        app.add_plugins((widgets::WidgetsPlugin, blur::BlurPlugin, sound::UiSoundPlugin, ime::ImePlugin))
             .add_systems(Update, change_font.run_if(resource_changed::<Settings>));
     }
 }

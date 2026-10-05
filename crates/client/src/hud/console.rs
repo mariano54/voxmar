@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use bevy::text::FontSmoothing;
 use voxmar_protocol::{ChatKind, MAX_LINE};
 
+use crate::ui::ime::{Composing, ImeSystems};
 use crate::menu::Screen;
 use crate::ui::skin::Piece;
 use crate::ui::widgets::{SHADOW, UiFont};
@@ -26,7 +27,7 @@ impl Plugin for ConsolePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Console>()
             .add_systems(OnEnter(Screen::InGame), spawn)
-            .add_systems(Update, (type_line, send_pending, draw).chain().run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (type_line, send_pending, draw).chain().after(ImeSystems).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut console: ResMut<Console>| console.leave());
     }
 }
@@ -148,6 +149,7 @@ fn type_line(
     player: Res<LocalPlayer>,
     launch: Res<Launch>,
     settings: Res<Settings>,
+    mut composing: ResMut<Composing>,
 ) {
     let pressed: Vec<&KeyboardInput> = keys.read().filter(|key| key.state == ButtonState::Pressed).collect();
     if !ui.console_open {
@@ -165,6 +167,7 @@ fn type_line(
     }
     // Shortcuts (copy, select all, …) are not text.
     let shortcut = held.any_pressed([KeyCode::SuperLeft, KeyCode::SuperRight, KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let mut typed = String::new();
     for key in pressed {
         match &key.logical_key {
             Key::Enter => {
@@ -186,14 +189,17 @@ fn type_line(
             Key::ArrowDown => console.recall(false),
             Key::Tab => complete(&mut console, &launch, player.admin, time.elapsed_secs()),
             _ => {
-                if let Some(typed) = key.text.as_ref().filter(|_| !shortcut) {
-                    for c in typed.chars().filter(|c| !c.is_control()) {
-                        if console.input.chars().count() < MAX_LINE {
-                            console.input.push(c);
-                        }
-                    }
+                if let Some(text) = key.text.as_ref().filter(|_| !shortcut) {
+                    typed.push_str(text);
                 }
             }
+        }
+    }
+    // Keys typed, then what the input method committed (Japanese, for one).
+    typed.push_str(&composing.take(&typed));
+    for c in typed.chars().filter(|c| !c.is_control()) {
+        if console.input.chars().count() < MAX_LINE {
+            console.input.push(c);
         }
     }
 }
@@ -244,6 +250,7 @@ fn draw(
     mut lines: Query<(&ConsoleLine, &Children, &mut Visibility, &mut BackgroundColor), Without<ConsoleInput>>,
     mut input: Query<(&Children, &mut Visibility), With<ConsoleInput>>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
+    composing: Res<Composing>,
 ) {
     let now = time.elapsed_secs();
     let open = ui.console_open;
@@ -275,12 +282,14 @@ fn draw(
         }
     }
     if let Ok((children, mut visibility)) = input.single_mut() {
+        // Text the input method is composing shows after the line, before the caret.
+        let composing = &composing.preedit;
         visibility.set_if_neq(if open { Visibility::Inherited } else { Visibility::Hidden });
         if let (true, Some(&child)) = (open, children.first())
             && let Ok((mut text, _)) = texts.get_mut(child)
         {
             let caret = if now.fract() < 0.55 { "|" } else { " " };
-            let shown = format!("{}{caret}", console.input);
+            let shown = format!("{}{composing}{caret}", console.input);
             if text.0 != shown {
                 text.0 = shown;
             }

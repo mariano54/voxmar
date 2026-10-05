@@ -13,6 +13,7 @@ use voxmar_engine::skill::SkillId;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, SLOTS};
 use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
 
+use crate::lang::Locale;
 use crate::Actions;
 use crate::breaking::{BlockBroken, shows_breaking};
 use crate::hud::skills::SkillToasts;
@@ -162,6 +163,10 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.get(self.player.selected).map(|s| s.item)
     }
 
+    fn actor_hunger(&self) -> u8 {
+        self.player.vitals.hunger
+    }
+
     fn occupied(&self, cell: IVec3) -> bool {
         Aabb::standing(self.player.position, dims::WIDTH, dims::HEIGHT).intersects(|c| c == cell)
     }
@@ -182,7 +187,7 @@ fn break_and_place(
     mut target: ResMut<Target>,
     mut cues: MessageWriter<SoundCue>,
     mut broken: MessageWriter<BlockBroken>,
-    (launch, mut toasts): (Res<Launch>, ResMut<SkillToasts>),
+    (launch, mut toasts, locale): (Res<Launch>, ResMut<SkillToasts>, Res<Locale>),
 ) {
     target.place_cooldown -= time.delta_secs();
     target.mine_cooldown -= time.delta_secs();
@@ -240,6 +245,27 @@ fn break_and_place(
         }
     }
 
+    // Food in hand is eaten when it would not be placed: an item, or nothing in reach to
+    // put it on. Eating takes a moment, so it starts on the press, not again while held.
+    if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
+        let content = &launch.content;
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        let food = held.is_some_and(|item| world.registry.info(item).food > 0);
+        let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
+        if food && (hit.is_none() || !placeable) {
+            let eat = actions.0.expect("core:eat");
+            let context = ClientContext { world: &world, player: &player, content };
+            match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
+                Some(Ok(())) => {
+                    net.propose_from(&player, eat, ActionTarget::None);
+                    target.place_cooldown = 1.2;
+                }
+                Some(Err(Rejection::Unmet(Requirement::Hungry))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
+                _ => {}
+            }
+            return;
+        }
+    }
     let Some(hit) = hit else { return };
     if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 {
         target.place_cooldown = 0.2;
@@ -261,8 +287,9 @@ fn break_and_place(
                 }
                 Some(Err(Rejection::Unmet(Requirement::SkillLevel))) => {
                     if let Some(crop) = held.and_then(|item| content.crops.planted_by(item)).map(|id| content.crops.get(id)) {
-                        let skill = &content.skills.get(crop.skill).title;
-                        toasts.refused(format!("Needs {skill} {}", crop.def.level), time.elapsed_secs());
+                        let skill = locale.skill(content.skills.get(crop.skill));
+                        let words = locale.format("skills.needs", &[("skill", &skill), ("level", &crop.def.level)]);
+                        toasts.refused(words, time.elapsed_secs());
                     }
                 }
                 _ => {}

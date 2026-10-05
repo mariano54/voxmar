@@ -21,6 +21,12 @@ impl Key {
         KEYS.iter().find(|&&(k, _)| k == self.0).map_or("?", |&(_, label)| label)
     }
 
+    /// What the menu calls it in the player's language: a language may rename a key
+    /// (`key.Space`), and the others keep the names below.
+    pub fn name(self, lang: &voxmar_engine::lang::Lang) -> String {
+        lang.get_or(&format!("key.{}", self.code()), self.label()).to_owned()
+    }
+
     /// The standard code name, as kept in the settings file.
     fn code(self) -> String {
         format!("{:?}", self.0)

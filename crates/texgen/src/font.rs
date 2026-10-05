@@ -328,6 +328,9 @@ fn simplify(points: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
 
 /// The TrueType container: just the tables every text engine requires, with simple glyph
 /// outlines made only of on-curve points and no hinting.
+mod import;
+pub use import::import;
+
 mod ttf {
     use super::*;
 
@@ -476,33 +479,26 @@ mod ttf {
             hmtx.u16(glyph.advance).i16(glyph.bounds().0);
         }
 
-        // One segment per character keeps the map trivially right; fonts this small do
-        // not need the ranges merged.
-        let mut cmap_table = Out::default();
-        let segments = chars.len() as u16 + 1;
-        let (range, selector, shift) = search(segments, 2);
-        cmap_table.u16(4).u16(16 + segments * 8).u16(0).u16(segments * 2).u16(range).u16(selector).u16(shift);
-        let codes: Vec<u16> = chars.iter().map(|&c| c as u32).filter(|&c| c <= 0xFFFF).map(|c| c as u16).collect();
-        for &code in &codes {
-            cmap_table.u16(code);
-        }
-        cmap_table.u16(0xFFFF).u16(0);
-        for &code in &codes {
-            cmap_table.u16(code);
-        }
-        cmap_table.u16(0xFFFF);
-        for (i, &code) in codes.iter().enumerate() {
-            cmap_table.u16(((i as u32 + 1).wrapping_sub(code as u32)) as u16);
-        }
-        cmap_table.u16(1);
-        for _ in 0..segments {
-            cmap_table.u16(0);
+        // Format 12: runs of consecutive characters with consecutive glyphs, so fonts
+        // with thousands of kanji fit as easily as a few dozen letters.
+        let mut runs: Vec<(u32, u32, u32)> = Vec::new();
+        for (i, &c) in chars.iter().enumerate() {
+            let (code, glyph) = (c as u32, i as u32 + 1);
+            // Glyphs follow the characters' order, so the next character continues a run.
+            match runs.last_mut() {
+                Some((_, end, _)) if *end + 1 == code => *end = code,
+                _ => runs.push((code, code, glyph)),
+            }
         }
         let mut cmap = Out::default();
         cmap.u16(0).u16(2);
-        cmap.u16(0).u16(3).u32(20); // Unicode, BMP
-        cmap.u16(3).u16(1).u32(20); // Windows, Unicode BMP
-        cmap.0.extend(&cmap_table.0);
+        cmap.u16(0).u16(4).u32(20); // Unicode, full repertoire
+        cmap.u16(3).u16(10).u32(20); // Windows, Unicode full repertoire
+        cmap.u16(12).u16(0).u32(16 + 12 * runs.len() as u32).u32(0).u32(runs.len() as u32);
+        for &(start, end, glyph) in &runs {
+            cmap.u32(start).u32(end).u32(glyph);
+        }
+        let codes: Vec<u16> = chars.iter().map(|&c| c as u32).filter(|&c| c <= 0xFFFF).map(|c| c as u16).collect();
 
         let first = codes.first().copied().unwrap_or(0x20);
         let last = codes.last().copied().unwrap_or(0x20);
