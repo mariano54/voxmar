@@ -25,6 +25,8 @@ pub struct TraitDecl {
 pub const HEALTH: TraitDecl = TraitDecl { name: "core:health", replication: Replication::Owner, persistent: true };
 pub const INVENTORY: TraitDecl = TraitDecl { name: "core:inventory", replication: Replication::Owner, persistent: true };
 pub const SKILLS: TraitDecl = TraitDecl { name: "core:skills", replication: Replication::Owner, persistent: true };
+/// `core:vitals`: hunger, how warm one feels and the effects of both (see [`crate::vitals`]).
+pub const VITALS: TraitDecl = TraitDecl { name: "core:vitals", replication: Replication::Owner, persistent: true };
 pub const POSITION: TraitDecl =
     TraitDecl { name: "core:position", replication: Replication::Interpolated, persistent: true };
 

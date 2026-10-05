@@ -129,7 +129,7 @@ impl Client {
                     self.world.set_block(pos, block);
                 }
             }
-            ServerMessage::PlayerState { health, inventory, skills } => {
+            ServerMessage::PlayerState { health, inventory, skills, .. } => {
                 self.health = health.current;
                 self.inventory = inventory;
                 self.skills = skills;

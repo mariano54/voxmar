@@ -10,6 +10,7 @@ use voxmar_engine::lang::Words;
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
+use voxmar_engine::vitals::Vitals;
 use voxmar_protocol::{
     ClientMessage, MAX_FLY_SPEED, PROTOCOL_VERSION, PlayerId, PlayerInput, PlayerView, ServerConnection, ServerMessage,
     TICKS_PER_SECOND,
@@ -40,6 +41,13 @@ pub struct Player {
     pub health: Health,
     pub inventory: Inventory,
     pub skills: Skills,
+    /// Hunger, warmth and their effects.
+    pub vitals: Vitals,
+    /// Hunger used up but not yet a whole point, healing and hurting under way, in points
+    /// and seconds (`process::Survival`).
+    pub exhaustion: f32,
+    pub heal_clock: f32,
+    pub hurt_clock: f32,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
     pub last_input_tick: u64,
@@ -69,9 +77,13 @@ impl Player {
             health: Health::full(MAX_HEALTH),
             inventory: Inventory::default(),
             skills: Skills::default(),
+            vitals: Vitals::default(),
+            exhaustion: 0.0,
+            heal_clock: 0.0,
+            hurt_clock: 0.0,
             fall_start: None,
             last_input_tick: 0,
-            dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS],
+            dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
             items_seen: FxHashSet::default(),
         }
@@ -117,6 +129,7 @@ impl Player {
             mode: Some(self.mode()),
             flying: self.flying,
             health: self.health,
+            hunger: self.vitals.hunger,
             inventory: self.inventory.clone(),
             skills: skills.ids().map(|id| (skills.get(id).name.clone(), self.skills.xp(id))).filter(|(_, xp)| *xp > 0).collect(),
         }
@@ -186,6 +199,7 @@ impl Server {
                 player.yaw = saved.yaw;
                 player.flying = saved.flying && player.allow_flight;
                 player.health = saved.health;
+                player.vitals.hunger = saved.hunger;
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
             }
@@ -203,6 +217,7 @@ impl Server {
         player.changed(traits::INVENTORY);
         player.changed(traits::HEALTH);
         player.changed(traits::SKILLS);
+        player.changed(traits::VITALS);
         let admin = player.admin;
         player.connection.send(ServerMessage::Welcome {
             player: id,

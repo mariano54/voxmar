@@ -18,6 +18,7 @@ use bevy::text::LineHeight;
 use voxmar_engine::block::{BlockDef, BlockRegistry};
 use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, languages, title_from_id};
 use voxmar_engine::skill::SkillDef;
+use voxmar_engine::vitals::Effect;
 
 use crate::settings::Settings;
 
@@ -79,6 +80,16 @@ impl Locale {
         self.find("language.line_height").and_then(|value| value.parse().ok()).filter(|&h: &f32| (1.0..3.0).contains(&h)).unwrap_or(1.2)
     }
 
+    /// What a condition (well fed, chilly) is called.
+    pub fn effect(&self, effect: Effect) -> String {
+        self.get_or(&format!("effect.{}", effect_key(effect)), effect.title()).to_owned()
+    }
+
+    /// What a condition does, in a line.
+    pub fn effect_description(&self, effect: Effect) -> String {
+        self.get_or(&format!("effect.{}.description", effect_key(effect)), effect.description()).to_owned()
+    }
+
     /// The language's name in itself, for the language setting.
     pub fn language_name<'a>(&'a self, code: &'a str) -> &'a str {
         self.languages.iter().find(|language| language.code == code).map_or(code, |language| language.name.as_str())
@@ -104,6 +115,18 @@ fn resolve(wanted: &str, languages: &[Language]) -> String {
     let system = sys_locale::get_locale().unwrap_or_default();
     let primary = system.split(['-', '_', '.']).next().unwrap_or("").to_ascii_lowercase();
     if has(&primary) { primary } else { ENGLISH.to_owned() }
+}
+
+/// The end of a condition's keys: `WellFed` is `well_fed`.
+fn effect_key(effect: Effect) -> String {
+    let mut key = String::new();
+    for (i, c) in format!("{effect:?}").chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            key.push('_');
+        }
+        key.extend(c.to_lowercase());
+    }
+    key
 }
 
 /// Text that shows a key's string in the player's language, rewritten when it changes.
@@ -237,7 +260,7 @@ mod tests {
         let mut unknown = BTreeSet::new();
         let namespaces = [
             "menu", "worlds", "time", "create", "mode", "join", "loading", "net", "settings", "screen", "hud", "inventory",
-            "rarity", "item", "skills", "character", "language",
+            "rarity", "item", "skills", "character", "language", "effect",
         ];
         while let Some(path) = files.pop() {
             if path.is_dir() {

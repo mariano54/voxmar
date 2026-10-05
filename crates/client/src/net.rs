@@ -204,8 +204,9 @@ fn receive(
                     }
                 }
             }
-            ServerMessage::PlayerState { health, inventory, skills } => {
+            ServerMessage::PlayerState { health, inventory, skills, vitals } => {
                 player.health = health.current;
+                player.vitals = vitals;
                 player.inventory = inventory;
                 // A level reached since the last word is announced (not on joining).
                 let registry = &launch.content.skills;
