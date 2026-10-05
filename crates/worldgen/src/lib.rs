@@ -718,7 +718,7 @@ impl Sampler<'_> {
         let share = Biomes::blend(pick.edge, regional.fertility);
         if !geo.submerged() {
             site.vegetation = ecology::ground_cover(temperature, site.soil_moisture());
-            site.forest = self.world.ecology.forest(site.stand, site.clearing, pick.home, pick.neighbour, share, regional.fertility);
+            site.forest = self.world.ecology.forest(site.stand, site.clearing, pick.home, pick.neighbour, share, regional.fertility, temperature, site.soil_moisture());
         }
         let dither = if share > 0.0 || geo.river > 0.0 { self.world.blend_dither(x, z) } else { 1.0 };
         site.biome = if dither < share { pick.neighbour } else { pick.home };
@@ -1430,6 +1430,8 @@ mod tests {
         if let Ok(names) = std::env::var("BIOMES") {
             for name in names.split(',') {
                 let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
+                // Peaks are steep by nature.
+                let steep = if world.biomes.get(id).has_tag("peaks") || world.biomes.get(id).has_tag("mountain") { 6 } else { 2 };
                 // The point deepest inside the biome within a few kilometres of spawn, else
                 // the deepest around the first place found further out.
                 let centre = IVec2::new(spawn.x, spawn.z);
@@ -1437,7 +1439,7 @@ mod tests {
                 let found = (0..188 * 188)
                     .map(|i| centre + IVec2::new(i % 188 * 32 - 3000, i / 188 * 32 - 3000))
                     .map(|p| (p, near.site(p.x, p.y)))
-                    .filter(|(_, site)| site.home == id && dry(site) && site.slope <= 2)
+                    .filter(|(_, site)| site.home == id && site.slope <= steep && (dry(site) || steep > 2 && site.height > site.water && site.river < 0.2))
                     .max_by(|a, b| a.1.edge.total_cmp(&b.1.edge))
                     .map(|(p, _)| p);
                 let found = found.or_else(|| world.locate_biome(name, centre, 12000)).and_then(|at| {
@@ -1445,7 +1447,7 @@ mod tests {
                     (0..64 * 64)
                         .map(|i| at + IVec2::new(i % 64 * 8 - 256, i / 64 * 8 - 256))
                         .map(|p| (p, sampler.site(p.x, p.y)))
-                        .filter(|(_, site)| site.home == id && dry(site) && site.slope <= 2)
+                        .filter(|(_, site)| site.home == id && site.slope <= steep && (dry(site) || steep > 2 && site.height > site.water && site.river < 0.2))
                         .max_by(|a, b| a.1.edge.total_cmp(&b.1.edge))
                         .map(|(p, _)| p)
                 });

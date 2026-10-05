@@ -338,11 +338,21 @@ impl Ecology {
         smoothstep(CLEARING.0, CLEARING.1, u)
     }
 
-    /// Tree cover (0..=1) at a position, given its stand and clearing: the forest of the
-    /// biome there (and of the one next door, near a border), dense in old-growth cores,
-    /// thin in gaps, gone in clearings, richer on fertile soil.
-    pub fn forest(&self, stand: f32, clearing: f32, home: BiomeId, neighbour: BiomeId, share: f32, fertility: f32) -> f32 {
-        let density = self.flora[home.0 as usize].forest * (1.0 - share) + self.flora[neighbour.0 as usize].forest * share;
+    /// Tree cover (0..=1) at a position, given its stand and clearing and its climate
+    /// (°C, soil moisture): the forest of the biome there (and of the one next door, near
+    /// a border), dense in old-growth cores, thin in gaps, gone in clearings, richer on
+    /// fertile soil, and thinning where the climate suits few of its trees (towards the
+    /// tree line), so everything that follows tree cover (forest floors, litter, flowers
+    /// at the edge) follows the trees that actually stand.
+    #[allow(clippy::too_many_arguments)]
+    pub fn forest(&self, stand: f32, clearing: f32, home: BiomeId, neighbour: BiomeId, share: f32, fertility: f32, t: f32, m: f32) -> f32 {
+        let suited = |biome: BiomeId| {
+            let flora = &self.flora[biome.0 as usize];
+            let all: f32 = flora.canopy.iter().map(|c| c.1).sum();
+            let total: f32 = flora.canopy.iter().map(|&(tree, w)| w * fit(&self.trees[tree.0 as usize].comfort, t, m)).sum();
+            if all > 0.0 { (total / (SUITED * all)).min(1.0) } else { 1.0 }
+        };
+        let density = self.flora[home.0 as usize].forest * suited(home) * (1.0 - share) + self.flora[neighbour.0 as usize].forest * suited(neighbour) * share;
         if density <= 0.0 {
             return 0.0;
         }
