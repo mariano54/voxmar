@@ -573,11 +573,12 @@ sand and snow it meets, nearer ones counting more. With the climate and biome fr
 generator, height above the land around, depth underground, the weather and the time of day,
 that makes an environment vector, and `ambience.ron` in any content package lists what plays
 where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
-surf, cave air, synthesized; rain by strength and cover, dripping trees, streams and lakes,
+surf, a slight cave air, lava seething and bubbling, a waterfall's roar by falling water,
+synthesized; rain by strength and cover, dripping trees, streams and lakes,
 recorded) as stereo segments that crossfade and never repeat back to back, and one-shots at a
 rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker on a trunk,
-owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips and
-rumbles in caves). Recordings are CC0 field recordings in the package
+owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips
+near and far and rumbles in caves, lava bursting bubbles). Recordings are CC0 field recordings in the package
 (`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
 far, swimming strokes and splashes (`sounds.ron`). One-shots sound from real blocks the fill found,
 panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft

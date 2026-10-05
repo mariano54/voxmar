@@ -195,7 +195,7 @@
             hardness: -1.0,
             drops: "core:air",
             color: (214, 96, 24),
-            tags: ["natural", "light", "hot", "deep"],
+            tags: ["natural", "light", "hot", "deep", "lava"],
             fluid: (
                 tick: 30, drop: 2, slope: 2,
                 crust: (block: "basalt", after: 400),

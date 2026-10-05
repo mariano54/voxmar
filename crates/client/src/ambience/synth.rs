@@ -55,6 +55,12 @@ pub enum Synth {
     Sleet,
     /// Sand and dust blown hard: a dry, grainy hiss over a roar, rising with the gusts.
     Sandstorm,
+    /// Lava: slow, thick bubbles that swell and burst low, the crust ticking and crackling
+    /// as it cools, over a deep seething.
+    Lava,
+    /// A waterfall: a broad, steady roar with a low thunder of the plunge and a hiss of
+    /// spray, surging a little.
+    Waterfall,
     /// A quick songbird: trills and twitters.
     Warbler,
     /// A fluting songbird that repeats its phrases.
@@ -81,11 +87,13 @@ pub enum Synth {
     Rumble,
     /// A trunk or branch creaking in the wind.
     Creak,
+    /// A bubble of lava bursting: a thick, low blurp and a spatter.
+    LavaPop,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 24] = [
+    pub const ALL: [Synth; 27] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -97,6 +105,8 @@ impl Synth {
         Synth::Hail,
         Synth::Sleet,
         Synth::Sandstorm,
+        Synth::Lava,
+        Synth::Waterfall,
         Synth::Warbler,
         Synth::Thrush,
         Synth::Whistler,
@@ -110,6 +120,7 @@ impl Synth {
         Synth::Drip,
         Synth::Rumble,
         Synth::Creak,
+        Synth::LavaPop,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -127,6 +138,8 @@ impl Synth {
                 | Synth::Hail
                 | Synth::Sleet
                 | Synth::Sandstorm
+                | Synth::Lava
+                | Synth::Waterfall
         )
     }
 
@@ -175,6 +188,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Drip => drip(&mut noise),
         Synth::Rumble => rumble(&mut noise),
         Synth::Creak => creak(&mut noise),
+        Synth::LavaPop => lava_pop(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -197,6 +211,8 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Hail => hail(noise, len),
         Synth::Sleet => sleet(noise, len),
         Synth::Sandstorm => sandstorm(noise, len),
+        Synth::Lava => lava(noise, len),
+        Synth::Waterfall => waterfall(noise, len),
         one_shot => panic!("{one_shot:?} makes one-shots, not a bed"),
     }
 }
@@ -604,6 +620,64 @@ fn cave(noise: &mut Noise, len: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Lava (after Farnell's bubbles, made thick): slow bubbles low in pitch that swell for a
+/// moment and burst, the cooling crust ticking and crackling now and then, over a deep
+/// seething rumble.
+fn lava(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let seethe = Drift::new(noise, 0.2);
+    let mut deep = Svf::new(90.0, 0.7);
+    let mut body = Svf::new(220.0, 0.9);
+    let mut out: Vec<f32> = (0..len)
+        .map(|i| {
+            let white = noise.next();
+            let s = seethe.unit(i as f32 / SR);
+            deep.low(white) * (0.55 + 0.3 * s) + body.band(white) * 0.12
+        })
+        .collect();
+    // Bubbles: swelling briefly, then bursting with a low blurp.
+    let mut t = between(noise, 0.0, 0.5);
+    while t < len as f32 / SR {
+        let frequency = between(noise, 90.0, 260.0);
+        let gain = between(noise, 0.15, 0.4);
+        let swell = between(noise, 0.04, 0.12);
+        add_at(&mut out, t, seconds(swell), |j| {
+            let x = j as f32 / seconds(swell) as f32;
+            0.15 * gain * x * x * (TAU * frequency * 0.7 * j as f32 / SR).sin()
+        });
+        bubble(&mut out, t + swell, frequency, gain, between(noise, 0.3, 0.8));
+        t += gap(noise, 1.6);
+    }
+    // The crust: sparse dry ticks.
+    let mut tick = Svf::new(3000.0, 1.2);
+    let mut t = 0.0;
+    while t < len as f32 / SR {
+        let gain = 0.15 + 0.35 * noise.unit().powi(3);
+        let length = between(noise, 0.002, 0.006);
+        add_at(&mut out, t, seconds(length * 5.0), |j| gain * tick.band(noise.next()) * (-(j as f32 / SR) / length).exp());
+        t += gap(noise, 4.0);
+    }
+    out
+}
+
+/// A waterfall: pink noise roaring through a broad band, the low thunder of the plunge
+/// below it and the hiss of spray above, swelling and easing a little.
+fn waterfall(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let surge = Drift::new(noise, 0.4);
+    let churn = Drift::new(noise, 7.0);
+    let mut pink = Pink::default();
+    let mut roar = Svf::new(900.0, 0.4);
+    let mut plunge = Svf::new(110.0, 0.7);
+    let mut spray = Svf::new(4500.0, 0.6);
+    (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let p = pink.next(noise.next());
+            let s = 0.85 + 0.15 * surge.unit(t) + 0.05 * churn.at(t);
+            (roar.band(p) * 0.9 + plunge.low(p) * 0.6 + spray.band(noise.next()) * 0.05) * s
+        })
+        .collect()
+}
+
 // --- One-shots ---
 
 /// Trills and twitters: a few quick notes, then a short motif repeated as a trill.
@@ -787,6 +861,25 @@ fn plop(noise: &mut Noise) -> Vec<f32> {
         bubble(&mut out, t, between(noise, 700.0, 2200.0), gain * between(noise, 0.5, 1.0), between(noise, 0.1, 0.35));
         t += between(noise, 0.02, 0.07);
         gain *= 0.75;
+    }
+    out
+}
+
+/// A bubble of lava bursting: a low, thick blurp, a second smaller one, and a spatter of
+/// drops landing around.
+fn lava_pop(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(0.8)];
+    let frequency = between(noise, 60.0, 130.0);
+    bubble(&mut out, 0.01, frequency, 1.0, between(noise, 0.5, 0.9));
+    bubble(&mut out, between(noise, 0.08, 0.15), frequency * between(noise, 1.3, 1.8), 0.4, 0.6);
+    // Spatter: a few soft taps after the burst.
+    let mut t = between(noise, 0.06, 0.12);
+    for _ in 0..3 + (noise.unit() * 5.0) as usize {
+        let mut band = Svf::new(between(noise, 1200.0, 3000.0), 0.9);
+        let gain = between(noise, 0.05, 0.2);
+        let length = between(noise, 0.004, 0.012);
+        add_at(&mut out, t, seconds(length * 5.0), |j| gain * band.band(noise.next()) * (-(j as f32 / SR) / length).exp());
+        t += between(noise, 0.02, 0.09);
     }
     out
 }
