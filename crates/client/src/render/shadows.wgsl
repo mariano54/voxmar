@@ -52,9 +52,8 @@ fn next_point(s: ptr<function, Spiral>) -> vec2<f32> {
     return point;
 }
 
-// Fraction of the sun reaching `world` from one cascade, or -1 outside it, soft-edged or
-// not (one comparison of the four texels around).
-fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>, soft: bool) -> f32 {
+// Fraction of the sun reaching `world` from one cascade, or -1 outside it.
+fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>) -> f32 {
     let light = &lights.directional_lights[0];
     let cascade = &(*light).cascades[index];
     let m = (*cascade).clip_from_world;
@@ -80,7 +79,7 @@ fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>
     let depth_per_block = length(vec3(m[0].z, m[1].z, m[2].z));
     let slope = -vec2(n.x, -n.y) / n_z * texel * depth_per_block;
     let taps = u32(a.shadow.x);
-    if taps <= 1u || !soft {
+    if taps <= 1u {
         return textureSampleCompareLevel(directional_shadow_textures, directional_shadow_textures_comparison_sampler, uv, layer, clip.z);
     }
 
@@ -129,9 +128,9 @@ fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>
     return lit / f32(count);
 }
 
-// Fraction of direct sun reaching `world`, on a face with `normal` (exact for voxel faces),
-// `soft`-edged or not. 1 beyond the shadow maps.
-fn soft_shadow(a: Atmosphere, world: vec3<f32>, normal: vec3<f32>, soft: bool) -> f32 {
+// Fraction of direct sun reaching `world`, on a face with `normal` (exact for voxel faces).
+// 1 beyond the shadow maps.
+fn soft_shadow(a: Atmosphere, world: vec3<f32>, normal: vec3<f32>) -> f32 {
     let light = &lights.directional_lights[0];
     if a.shadow.x <= 0.0 || lights.n_directional_lights == 0u || ((*light).flags & 1u) == 0u {
         return 1.0;
@@ -145,12 +144,12 @@ fn soft_shadow(a: Atmosphere, world: vec3<f32>, normal: vec3<f32>, soft: bool) -
     if index >= count {
         return 1.0;
     }
-    var shadow = cascade_shadow(a, index, world, normal, soft);
+    var shadow = cascade_shadow(a, index, world, normal);
     // Blend into the next cascade over the overlap between them.
     let far = (*light).cascades[index].far_bound;
     let overlap = (1.0 - (*light).cascades_overlap_proportion) * far;
     if index + 1u < count && depth > overlap {
-        let next = cascade_shadow(a, index + 1u, world, normal, soft);
+        let next = cascade_shadow(a, index + 1u, world, normal);
         if shadow < 0.0 {
             shadow = next;
         } else if next >= 0.0 {

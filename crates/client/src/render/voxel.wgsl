@@ -440,7 +440,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
         surface = weathered(base, in.world_position, NORMALS[face], in.light.y);
     }
 #endif
-    var color = shade(surface.rgb, shadow_at, face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant);
+    var color = shade(surface.rgb, shadow_at, face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant, in.clip_position.xy);
 #ifndef TRANSLUCENT
     color = wet_sheen(color, in.world_position, NORMALS[face], surface.a, in.light.y);
 #endif
@@ -477,7 +477,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
         let n = NORMALS[in.face];
         let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, to_eye), 0.0), 5.0);
         let glint = pow(max(dot(reflect(-to_eye, n), sun_direction()), 0.0), 160.0) * open
-            * sun_shadow(in.world_position, n, true);
+            * sun_shadow(in.world_position, n, in.clip_position.xy);
         let hue = base / max(max(base.r, max(base.g, base.b)), 0.001);
         let reflection = sky * mix(vec3(1.0), hue, 0.5);
         color = mix(color, reflection * open + color * (1.0 - open), fresnel * 0.7) + sun_color() * glint * 3.0;

@@ -181,7 +181,7 @@ fn covered_by_finer(xz: vec2<f32>, margin: f32, cell: f32) -> bool {
 
 // Light reaching a block face, as real chunks shade it.
 fn face_light(in: VertexOutput, normal: vec3<f32>, ambient_shade: f32, ao: f32, foliage: bool) -> vec3<f32> {
-    return shade_normal(vec3(1.0), in.world_position, normal, ambient_shade, in.params.x, 0.0, ao, foliage, true);
+    return shade_normal(vec3(1.0), in.world_position, normal, ambient_shade, in.params.x, 0.0, ao, foliage, in.clip_position.xy);
 }
 
 // Fraction of [y - width / 2, y + width / 2] where fract(y) lies in [a, b): a band repeating
@@ -311,7 +311,7 @@ fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surfa
 // white water, as real falling water is, not a mirror: a level sheet's reflection there
 // took the horizon's colour, and waterfalls showed as sky-blue holes in the hills.
 fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32) -> vec3<f32> {
-    let light = shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, true);
+    let light = shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, in.clip_position.xy);
     let floor = saturate(in.side) * face_light(in, UP, 1.0, 1.0, false);
     if in.kind == ICE {
         return mix(floor, in.top * light, in.params.y);

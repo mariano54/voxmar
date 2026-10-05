@@ -406,7 +406,7 @@ fn shade_water(
     // bent; outside it the surface mirrors the deep water below.
     if water.optics.w > 0.5 && dot(to_eye, normal) < 0.0 {
         let out = refract(-to_eye, -waves, 1.33);
-        let light = shade_normal(vec3(1.0), world, vec3(0.0, 1.0, 0.0), 1.0, sky, 0.0, 1.0, false, false);
+        let light = shade_normal(vec3(1.0), world, vec3(0.0, 1.0, 0.0), 1.0, sky, 0.0, 1.0, false, frag.xy);
         let deep = inscattered(absorbed, scattered, 1e4, light);
         var seen_above = deep;
         if dot(out, out) > 0.0 {
@@ -443,11 +443,8 @@ fn shade_water(
     }
     let behind = unproject(vec3(behind_uv, behind_depth));
     let path = max(distance(eye, behind) - distance_to_eye, 0.0);
-    // Sun and sky light at the surface, and what is left of it at the bed. Shadows on
-    // water need no soft edges: the light only tints what the water scatters, and the soft
-    // filter took up to a quarter of the water's time (0.15–0.3 ms at 2268×1473 over a
-    // lake).
-    let light = shade_normal(vec3(1.0), world, vec3(0.0, 1.0, 0.0), 1.0, sky, 0.0, 1.0, false, false);
+    // Sun and sky light at the surface, and what is left of it at the bed.
+    let light = shade_normal(vec3(1.0), world, vec3(0.0, 1.0, 0.0), 1.0, sky, 0.0, 1.0, false, frag.xy);
     // Light reached the bed through the water above it too (the mesher lights the bed as
     // the surface is, leaving the dimming to this).
     let down = max(world.y - behind.y, 0.0);
@@ -487,7 +484,7 @@ fn shade_water(
     var glint = 0.0;
     if toward_sun > 0.95 && open > 0.0 {
         glint = (pow(toward_sun, GLINT.x) * GLINT_STRENGTH.x + pow(toward_sun, GLINT.y) * GLINT_STRENGTH.y)
-            * open * sun_shadow(world, normal, false) * water.strengths.x;
+            * open * sun_shadow(world, normal, frag.xy) * water.strengths.x;
     }
     var color = mix(seen, reflected, reflectance) + sun_color() * glint * air.through;
 
