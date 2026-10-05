@@ -93,20 +93,25 @@ fewer quads than Full, and loads much faster, since fewer quads are uploaded.
 
 ## Where a frame goes now
 
-At view distance 32 with the default settings (MSAA 4×, Balanced far detail, the new
-lighting and water), looking at a still view, the GPU takes 6.0–6.6 ms a frame, measured
-from Metal traces one game at a time on an M5 Max (about 100–110 fps):
+On the player's settings (view distance 32, SMAA, shadows High, volumetric light, the
+world at 75% of the 3024×1964 screen) after the October 5 rounds, relative to the display
+transform's time in the same Metal trace (Low Power Mode; see Measuring), in a dense
+forest seen from above the canopy:
 
-- Main opaque pass: vertices 1.6–1.8 ms, fragments 1.5–1.6 ms (the soft shadow filter is
-  most of the fragment cost).
-- Sun shadows: about 0.9 ms, most of it the farthest cascade's vertices.
-- Light shafts about 0.3 ms, water about 0.3 ms, translucent terrain about 0.4 ms, bloom
-  and post effects about 0.4 ms.
-- The pass that builds each view's indices is skipped while the view holds still, and
-  costs about 0.5–0.8 ms while it moves.
+- Terrain pixels about 10×, terrain vertices about 11×: leaves, plants and fringes are
+  most of both. Shading is about half the pixels' cost, and the soft shadow filter most of
+  that on terrain and grass blades.
+- Sun shadows about 5× over four cascades, the farthest two most of it.
+- Water, light shafts and clouds, bloom and SMAA about 1× each where they show.
 
-The CPU side is no longer the limit: about 130 terrain draws a frame, about 2 ms of render
-thread work. Before this work the same view took about 6,600 draw calls.
+On AC power (Low Power Mode off), headless captures at the player's settings went from
+124 to 164 fps at full resolution and from 149 to 233 fps at 75% in that forest, and from
+185 to 210 and 204 to 237 over the sea at the spawn, against the morning's code on the
+same terrain (one round each, so indicative).
+
+The CPU side: about 130 terrain draws a frame. With the GPU at full clocks the frame is
+limited by hand-offs between the main and render threads and the task pool rather than by
+any one system (see Measuring).
 
 ### Every pass costs a command buffer
 
