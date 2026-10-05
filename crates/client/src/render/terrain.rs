@@ -1136,8 +1136,11 @@ fn cull(
             commands.entity(entity).insert(TerrainDraws::default());
         }
     }
-    // The camera the sun's cascades serve.
-    let viewer = views.iter().find(|(_, _, light, _)| light.is_none()).map(|(_, view, _, _)| Viewer::new(view));
+    // The camera the sun's cascades serve: where it is and which way it looks.
+    let viewer = views
+        .iter()
+        .find(|(_, _, light, _)| light.is_none())
+        .map(|(_, view, _, _)| (view.world_from_view.translation(), view.world_from_view.forward().as_vec3()));
     views.par_iter_mut().for_each(|(_, view, light_entity, draws)| {
         let Some(mut draws) = draws else { return };
         let clip_from_world = view
@@ -1244,58 +1247,32 @@ fn cull(
 /// blocks (see `Casters`).
 const CASTER_RISE: f32 = 160.0;
 
-/// The camera, as the sun's cascades see it: where it is, which way it looks, and the
-/// four side planes of its view, normalised (pointing inwards).
-#[derive(Clone, Copy)]
-struct Viewer {
-    eye: Vec3,
-    forward: Vec3,
-    sides: [Vec4; 4],
-}
-
-impl Viewer {
-    fn new(view: &ExtractedView) -> Self {
-        let clip_from_world = view.clip_from_world.unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
-        let sides = Frustum::new(clip_from_world, false).planes;
-        Self {
-            eye: view.world_from_view.translation(),
-            forward: view.world_from_view.forward().as_vec3(),
-            sides: std::array::from_fn(|i| sides[i] / sides[i].truncate().length()),
-        }
-    }
-}
-
 /// Which chunks can shade what a sun cascade covers. A cascade's box is much larger than
 /// the stretch of view it serves (it bounds the slice of the view frustum at any angle,
 /// so it is as wide as the slice's diagonal), and reaches up the sun's rays without end.
 /// A chunk only matters if a shadow it casts can land within the cascade's range of view
-/// depth, and within the view itself: its shadow falls along the sun's direction, and no
-/// further than ground `CASTER_RISE` blocks above what it shades would throw it at the
-/// sun's height. The view's sides take a fifth off the two farthest cascades' work, the
-/// chunks their boxes take in off to either side of the view.
+/// depth: its shadow falls along the sun's direction, and no further than ground
+/// `CASTER_RISE` blocks above what it shades would throw it at the sun's height.
 struct Casters {
     towards: Vec3,
     reach: f32,
-    viewer: Viewer,
+    eye: Vec3,
+    forward: Vec3,
     /// The cascade's range of view depth, in blocks.
     depths: (f32, f32),
 }
 
 impl Casters {
-    fn new(towards: Vec3, depths: (f32, f32), viewer: Viewer) -> Self {
-        Self { towards, reach: (CASTER_RISE / (-towards.y).max(0.05)).min(4096.0), viewer, depths }
+    fn new(towards: Vec3, depths: (f32, f32), (eye, forward): (Vec3, Vec3)) -> Self {
+        Self { towards, reach: (CASTER_RISE / (-towards.y).max(0.05)).min(4096.0), eye, forward, depths }
     }
 
     fn matter(&self, min: Vec3, max: Vec3) -> bool {
         let centre = (min + max) * 0.5;
         let radius = (max - min).length() * 0.5;
-        // Where its shadow can fall: from the chunk itself down the sun's rays.
-        let far = centre + self.towards * self.reach;
-        let Viewer { eye, forward, sides } = &self.viewer;
-        let (start, end) = ((centre - *eye).dot(*forward), (far - *eye).dot(*forward));
-        let within_depths = start.max(end) + radius >= self.depths.0 && start.min(end) - radius <= self.depths.1;
-        let in_view = |plane: &Vec4| plane.truncate().dot(centre).max(plane.truncate().dot(far)) + plane.w >= -radius;
-        within_depths && sides.iter().all(in_view)
+        let start = (centre - self.eye).dot(self.forward);
+        let end = (centre + self.towards * self.reach - self.eye).dot(self.forward);
+        start.max(end) + radius >= self.depths.0 && start.min(end) - radius <= self.depths.1
     }
 }
 
