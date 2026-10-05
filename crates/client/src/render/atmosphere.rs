@@ -69,9 +69,10 @@ const RAY_ISOTROPIC: f32 = 0.015;
 const RAY_CLEAR_AIR: f32 = 10.0;
 /// The low cloud: its base over sea level in fair and in wet weather, its depth as flat
 /// layers and as heaped cloud, steps through it in the volumetric pass, and how far it is
-/// drawn. High peaks stand in it; in rain it comes down onto the hills.
-const CLOUD_BASE: [f32; 2] = [170.0, 95.0];
-const CLOUD_DEPTH: [f32; 2] = [28.0, 100.0];
+/// drawn. High peaks stand in it; in rain it comes down onto the hills. Its clouds float
+/// above and below these, by up to 0.6 of its depth (`cloud_lift` in atmosphere.wgsl).
+const CLOUD_BASE: [f32; 2] = [135.0, 85.0];
+const CLOUD_DEPTH: [f32; 2] = [32.0, 150.0];
 const CLOUD_STEPS: f32 = 16.0;
 const CLOUD_FAR: f32 = 6000.0;
 /// The widest shadow penumbra, in blocks, and how far shadow lookups step off a surface,
@@ -102,6 +103,9 @@ pub struct Atmosphere {
     pub water: Vec4,
     pub water_light: Vec4,
     pub water_scales: Vec4,
+    pub dusk: Vec4,
+    pub cloud_flash: Vec4,
+    pub bow: Vec4,
 }
 
 impl Default for Atmosphere {
@@ -150,6 +154,9 @@ pub struct Light {
     pub glow: Vec3,
     /// Height of the sun or moon in the sky, the sine of its elevation.
     pub elevation: f32,
+    /// Dusk and dawn: xy the way to the sun across the land (a unit vector along x and z),
+    /// z how strongly the side of the sky towards it is warmer than the side away (0..1).
+    pub dusk: Vec3,
 }
 
 impl Default for Light {
@@ -160,6 +167,7 @@ impl Default for Light {
             sun: Vec3::splat(0.7),
             glow: Vec3::new(1.0, 0.8, 0.55),
             elevation: 0.7,
+            dusk: Vec3::ZERO,
         }
     }
 }
@@ -207,6 +215,9 @@ impl Atmosphere {
                 water: water.tint.extend(water.surface),
                 water_light: water.light.extend(1.0),
                 water_scales: Vec4::new(pack.water.absorption, pack.water.scattering, 0.0, 0.0),
+                dusk: Vec4::ZERO,
+                cloud_flash: Vec4::ZERO,
+                bow: Vec4::ZERO,
             };
         }
 
@@ -260,6 +271,9 @@ impl Atmosphere {
             water: Vec4::ZERO,
             water_light: Vec4::ZERO,
             water_scales: Vec4::ZERO,
+            dusk: light.dusk.extend(0.0),
+            cloud_flash: Vec4::ZERO,
+            bow: Vec4::ZERO,
         }
     }
 
@@ -270,6 +284,7 @@ impl Atmosphere {
     /// Its shadows on the land fade as the sky closes over, when the cloud's dimming of the
     /// whole sky (in the sun's colour) takes over.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn with_clouds(
         mut self,
         weather: &Weather,
@@ -278,6 +293,7 @@ impl Atmosphere {
         to_light: Vec3,
         seconds: f32,
         flash: f32,
+        cloud_flash: Option<(Vec3, f32)>,
         pack: &ShaderPack,
     ) -> Self {
         // Rain only falls from a well covered sky.
@@ -303,6 +319,7 @@ impl Atmosphere {
         }
         let shade = cloud_map::shade_corner(eye.xz(), eye.xz() + towards);
         self.cloud_shade = Vec4::new(shade.x, shade.y, cloud_map::SHADE_EXTENT, drawn);
+        self.cloud_flash = cloud_flash.map_or(Vec4::ZERO, |(at, brightness)| at.extend(brightness));
         self
     }
 }
@@ -394,13 +411,13 @@ mod tests {
     fn the_low_cloud_comes_down_in_rain() {
         let pack = ShaderPack::default();
         let air = Atmosphere::new(&Light::default(), &Weather::NONE, &Air::default(), &pack, Quality::default(), View::new(2000.0));
-        let cloud = |weather: Weather| air.with_clouds(&weather, Vec2::ZERO, DVec3::ZERO, Vec3::Y, 0.0, 0.0, &pack);
+        let cloud = |weather: Weather| air.with_clouds(&weather, Vec2::ZERO, DVec3::ZERO, Vec3::Y, 0.0, 0.0, None, &pack);
         assert_eq!(cloud(Weather::NONE).cloud_look.z, 0.0, "a clear sky has no cloud to march");
         let fair = cloud(Weather { cover: 0.4, ..Weather::NONE });
         let rain = cloud(Weather { cover: 1.0, precipitation: 1.0, ..Weather::NONE });
         assert!(fair.cloud_look.z > 0.0);
-        assert!(fair.cloud_shape.x > SEA_LEVEL + 150.0, "fair-weather cloud lies above the hills: {}", fair.cloud_shape.x);
-        assert!(rain.cloud_shape.x < fair.cloud_shape.x - 50.0, "rain cloud comes down onto them");
+        assert!(fair.cloud_shape.x > SEA_LEVEL + 120.0, "fair-weather cloud lies above most hills: {}", fair.cloud_shape.x);
+        assert!(rain.cloud_shape.x < fair.cloud_shape.x - 40.0, "rain cloud comes down onto them");
         assert!(rain.cloud_shape.y > rain.cloud_shape.x && rain.cloud_shape.w > fair.cloud_shape.w);
     }
 

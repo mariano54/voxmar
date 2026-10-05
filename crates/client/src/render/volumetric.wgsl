@@ -14,7 +14,7 @@
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 #import bevy_pbr::mesh_view_bindings::{view, lights, directional_shadow_textures, directional_shadow_textures_comparison_sampler}
 #import bevy_pbr::utils::interleaved_gradient_noise
-#import voxmar::atmosphere::{Atmosphere, air_along, cloud_density, cloud_light, sun_glow, weather_fog_density}
+#import voxmar::atmosphere::{Atmosphere, air_along, cloud_density, cloud_height, cloud_lift, cloud_lift_range, cloud_light, rainbow, sun_glow, weather_fog_density}
 #import voxmar::clouds::{pcg, unit, value_noise, value_noise3}
 
 #ifdef MULTISAMPLED
@@ -71,6 +71,10 @@ const CLOUD_SPAN: f32 = 1500.0;
 const CLOUD_BILLOWS = vec2(400.0, 800.0);
 // The longest step through cloud worth taking, in blocks, until the steps run out.
 const CLOUD_STEP: f32 = 12.0;
+// Lightning inside the low cloud: how far its glow reaches (e-folding, blocks) and its
+// colour and brightness at the flash.
+const FLASH_REACH: f32 = 180.0;
+const FLASH_LIGHT = vec3(1.2, 1.3, 1.6);
 // Where cloud towards the sun is looked up (blocks along the way), and how much of the
 // light it takes out relative to the view (light passing through cloud is mostly
 // scattered onwards, not lost).
@@ -200,8 +204,9 @@ fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f3
     if least == 0u {
         return out;
     }
-    let base = a.cloud_shape.x;
-    let top = a.cloud_shape.y;
+    // The layer's slab, as far as its clouds are raised or sunk (`cloud_lift`).
+    let base = a.cloud_shape.x - cloud_lift_range(a);
+    let top = a.cloud_shape.y + cloud_lift_range(a);
     // The stretch of the ray inside the layer.
     var start = 0.0;
     var end = min(distance, a.cloud_look.w);
@@ -249,7 +254,7 @@ fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f3
         let density = cloud_density(a, p, eye, billows) * far;
         if density > 0.0 {
             let alpha = 1.0 - exp(-density * CLOUD_EXTINCTION * step);
-            let h = saturate((p.y - base) / (top - base));
+            let h = saturate(cloud_height(a, p, cloud_lift(a, p.xz - eye.xz)));
             // How much cloud lies towards the sun, from two looks along the way: sunlit
             // faces and tops are bright, the far side and the cores shaded, and near the eye
             // each billow shades the next.
@@ -261,7 +266,13 @@ fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f3
             let lit = sunlight * sunlit * phase;
             // Sky light, less of it low down, where the cloud above hides the sky.
             let ambient = sky * mix(0.65, 1.0, h) * (1.0 - 0.5 * storm);
-            color += through * alpha * (lit + ambient + flash);
+            // Lightning inside the cloud lights it from within, a few hundred blocks round.
+            var inner = vec3(0.0);
+            if a.cloud_flash.w > 0.0 {
+                let to_flash = p - a.cloud_flash.xyz;
+                inner = FLASH_LIGHT * a.cloud_flash.w * exp(-dot(to_flash, to_flash) / (FLASH_REACH * FLASH_REACH));
+            }
+            color += through * alpha * (lit + ambient + flash + inner);
             weighted += through * alpha * at;
             through *= 1.0 - alpha;
             if through < 0.02 {
@@ -299,7 +310,14 @@ fn march(in: FullscreenVertexOutput) -> Marched {
     // The cloud lies behind the air near the eye (or, around the eye inside it, mingles with
     // it, which this treats alike).
     let cloud = cloud_layer(a, eye, ray.xyz, ray.w, unit(pcg(pixel.x + pcg(pixel.y ^ 0x5bd1e995u))));
-    return Marched(vec4(near.light + near.through * cloud.light, near.through * cloud.through), depth_at(vec2<i32>(in.position.xy) * 2));
+    var light = near.light + near.through * cloud.light;
+    // A rainbow in the rain in front of whatever lies well beyond the eye, above the
+    // horizon, where the sun shines on the rain (judged at the eye).
+    if a.bow.w > 0.0 {
+        let beyond = smoothstep(80.0, 250.0, ray.w) * smoothstep(-0.04, 0.02, ray.y);
+        light += rainbow(a, ray.xyz) * beyond * cloud_light(a, eye, eye, a.bow.xyz);
+    }
+    return Marched(vec4(light, near.through * cloud.through), depth_at(vec2<i32>(in.position.xy) * 2));
 }
 
 #else

@@ -128,7 +128,7 @@ impl Plugin for CapturePlugin {
         .add_systems(Update, press.before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
-            (apply_pose.run_if(in_state(Screen::InGame)), hold_time).before(TransformSystems::Propagate),
+            (apply_pose.run_if(in_state(Screen::InGame)), hold_time.before(crate::render::update_environment)).before(TransformSystems::Propagate),
         );
     }
 }
@@ -304,10 +304,15 @@ fn mine(
     }
 }
 
-/// Holds the time of day, or during `--flicker-still` runs it on from there.
+/// Holds the time of day for still shots. Clips (once the world has settled) and
+/// `--flicker-still` runs let it run on from there, so the sky moves in them as in the game
+/// (clouds forming, stars falling). Runs after the server's clock has moved the day and
+/// before the sky reads it.
 fn hold_time(state: Res<Capture>, time: Res<Time>, mut cycle: ResMut<DayCycle>) {
     if let Some(day) = state.time {
-        let since = state.flicker.as_ref().and_then(|f| f.since).map_or(0.0, |start| time.elapsed_secs_f64() - start);
+        let clip_start = state.clip.as_ref().and(state.settled_at).map(f64::from);
+        let start = state.flicker.as_ref().and_then(|f| f.since).or(clip_start);
+        let since = start.map_or(0.0, |start| time.elapsed_secs_f64() - start);
         cycle.ticks = day as f64 * TICKS_PER_DAY as f64 + since * voxmar_protocol::TICKS_PER_SECOND as f64;
     }
 }

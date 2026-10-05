@@ -67,8 +67,8 @@ captures log the weather and air they show. Every kind: `/weather list`.
 - Snow lying on the ground: the server turns grass blocks snowy as the snow cover deepens
   and back as it melts (`snow_cover` in weather.rs; data in `weather.ron`).
 - Cloud cover, heaped and layered cloud, cirrus, storm gloom. The low cloud is a layer in
-  the world (graphics thread, volumetric.wgsl): its base comes down from 170 blocks over sea
-  level in fair weather to 95 in rain, it heaps up with convection, darkens in storms and is
+  the world (graphics thread, volumetric.wgsl): its base comes down from 135 blocks over sea
+  level in fair weather to 85 in rain, its clouds float higher or lower by drifts, it heaps up with convection, darkens in storms and is
   lit by lightning; the sky dome keeps the high sheet and cirrus.
 - Fog, mist, whiteout, rain murk and dust haze (graphics thread, render/atmosphere.rs and
   atmosphere.wgsl): the weather's `fog`, `dust` and falling rain and snow are an extinction
@@ -99,21 +99,21 @@ after this table.
 | --- | --- | --- |
 | drizzle | fine drizzle, light rain bed | – |
 | rain, downpour | streaks, splashes, ripples, drips under leaves, far veils; rain beds by strength and cover | glassy near streaks; rain shafts under distant cells (§8) |
-| storm, thunderstorm, supercell | as a downpour, gusts; storm wind; thunder near to far | lightning bolt geometry (§1); flashes lighting the cloud from inside (§8); storm fronts (§8) |
+| storm, thunderstorm, supercell | as a downpour, gusts; storm wind; thunder near to far | storm fronts (§8) (bolts and flashes in the cloud drawn) |
 | heat lightning | silent far flashes | lighting the horizon's cloud from inside (§8) |
-| hail | white pellets that bounce and lie; icy rattle | hail lying white on top faces for a while (as the snow dusting, from `w.hail`) |
-| sleet, freezing rain | icy pellets; sleet patter | the glaze of freezing rain: a glassy sheen on surfaces open to the sky while `w.frost` and `w.sleet` are both up |
+| hail | white pellets that bounce and lie; icy rattle | – (drawn) |
+| sleet, freezing rain | icy pellets; sleet patter | – (drawn) |
 | snow, blizzard, thundersnow | soft flakes, whiteout veils; blizzard howl, gusts, thunder | – (fog, snow dusting and bolts as above) |
 | drifting snow | white dust blowing low; gusts | – |
 | dusty afternoon, dust storm, sandstorm | grains and brown-out veils; sandstorm bed | – |
 | mist, dawn mist, valley fog, sea fog, lake mist, steam | mist puffs below the fog's top | – (fog drawn) |
 | frost | – (silent) | – (frost drawn) |
 | heat haze | – | the shimmer (§6) |
-| rainbow, double rainbow | – | the bows (§2) |
-| halo, sun dogs | – | the ring and the dogs (§3) |
-| diamond dust | glinting crystals | its halo (§3) |
-| aurora, low aurora | – | the curtains (§4) |
-| shooting stars, meteor shower, starfall | starfall's motes | the falling stars (§5) |
+| rainbow, double rainbow | – | – (drawn, §2) |
+| halo, sun dogs | – | – (drawn, §3) |
+| diamond dust | glinting crystals | – (its halo drawn, §3) |
+| aurora, low aurora | – | – (drawn, §4) |
+| shooting stars, meteor shower, starfall | starfall's motes | – (drawn, §5) |
 | ball lightning, marsh lights | marsh lights as glowing motes on dry nights | ball lightning's few large orbs, which glow even in rain (§7) |
 | aether motes, aether storm | glowing motes, lightning | a violet tint to the aether storm's cloud and lightning (§7) |
 
@@ -122,7 +122,7 @@ after this table.
 In order of how much they show. Each is a few lines to a small pass; all read
 `ClientWeather::current` (call it `w`) unless said.
 
-### 1. Lightning bolts
+### 1. Lightning bolts (drawn: render/bolts.rs)
 
 `ClientWeather::bolts()` yields each visible bolt: `channel` (points from the cloud base,
 150–220 blocks up, to the strike point, about 10 blocks apart), `branches` (forks that
@@ -132,7 +132,7 @@ additive, colour `(0.75, 0.8, 1.0) * 8.0 * brightness` (HDR, so bloom gives the 
 fogged by more than half. Then delete `draw_bolts` in weather.rs. Thunder is already
 delayed by distance (343 blocks/s) and played by sfx.rs.
 
-### 2. Rainbows
+### 2. Rainbows (drawn: `rainbow` in sky.wgsl)
 
 `w.rainbow`: 0.6 a rainbow, 1.0 a double one. In sky.wgsl, with `a` the angle between the
 view direction and the antisolar point (`-sun`), when the sun is above the horizon:
@@ -145,14 +145,14 @@ view direction and the antisolar point (`-sun`), when the sun is above the horiz
 - it only exists below the horizon line of the sky dome and fades where cloud cover is
   thick in that direction.
 
-### 3. Halo and sun dogs
+### 3. Halo and sun dogs (drawn: `halo` in sky.wgsl)
 
 `w.halo`: up to 0.5 a 22° halo, above that sun dogs too. Ring at 21.5°–23° around the sun,
 reddish on the inner edge, `0.25 * halo * daylight`. Sun dogs: two bright, slightly
 coloured spots at ±22° of azimuth from the sun at the sun's height, strength
 `2 * (halo - 0.5)`, strongest with a low sun. Also around the moon at night, fainter.
 
-### 4. Aurora
+### 4. Aurora (drawn: `aurora` in sky.wgsl)
 
 `w.aurora` (0..1; 0.6 for the rare aurora far from the poles). Night sky only: curtains
 towards the pole (north is −z), from about 10° to 60° above the horizon. Vertical rays from
@@ -160,7 +160,7 @@ a 1D noise along azimuth, folded ribbons drifting slowly (a few degrees a second
 `(0.2, 1.0, 0.45)` at the bottom fading to violet `(0.6, 0.3, 1.0)` at the top, brightness
 `aurora * night * (1 - cover)` at about the Milky Way's peak, so it needs a dark sky.
 
-### 5. Falling stars and meteor showers
+### 5. Falling stars and meteor showers (drawn: `falling_stars` in sky.wgsl)
 
 `w.falling_stars`: about `2 × falling_stars` stars a second, so 0.01 (an ordinary clear
 night) is one every 50 s or so and 1.0 (a meteor shower) a couple a second, all from one
@@ -207,7 +207,8 @@ the precipitation particles cannot do on their own:
   cloud base to the ground under every cell with rain above about 0.2 beyond 150 blocks
   (darker and denser with more rain, soft-edged, swaying with the wind), so a storm is
   seen coming over the hills before it arrives.
-- **Lightning inside clouds**: most flashes now stay within the cloud
+- **Lightning inside clouds** (drawn: volumetric.wgsl lights the low cloud within about
+  180 blocks of the brightest flash): most flashes now stay within the cloud
   (`ClientWeather::cloud_flashes()`: position about 160 blocks up and brightness). Light the
   cloud layer around that point (a soft glow of 200–400 blocks) rather than the whole sky.
 - **Snow on leaves and other surfaces**: drawn now (a dusting on top faces).

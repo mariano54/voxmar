@@ -11,12 +11,12 @@
 //! | Caverns | uncommon | cheese caverns where a noise is high, in cavernous regions, larger with depth, with hourglass pillars |
 //! | Noodles | uncommon | thin, claustrophobic tubes, in their own regions |
 //! | Underground lakes | uncommon | water tables and perched pools (below) |
-//! | Ravines | rare | carved along seeded paths, about one per 4 km², 30–70 deep and 3–12 wide, some open to the sky |
+//! | Ravines | rare | buried canyons carved along seeded paths, about one per 4 km², 30–70 deep and 3–12 wide, never open to the sky (gorges open to it are cut by rivers, in `crate::water`) |
 //! | Labyrinths | rare | mazes of level passages on several floors, domain-warped (Cave Overhaul) |
 //! | Sinkholes | rare | shafts from the surface down into the caves, some flooded into cenotes |
 //! | Geodes | rare | buried hollows 4–9 blocks across, lined with crystal by `crate::underground` |
 //! | Giant caverns | very rare | cavern systems hundreds of blocks across, most holding one great lake whose pillars stand in it as islands |
-//! | Long ravines | very rare | ravines a kilometre long |
+//! | Long ravines | very rare | buried ravines a kilometre long |
 //!
 //! The world's cave density dial scales all of them, the world's featured rarity table
 //! (`crate::rarity`) boosts some kinds, and the seed varies each and makes one scarce, so
@@ -441,8 +441,13 @@ impl Caves {
             points,
             depth: 30.0 + 40.0 * rng.unit(),
             width: 3.0 + 9.0 * rng.unit(),
-            open: rng.chance(0.45),
-            cover: 6.0 + 14.0 * rng.unit(),
+            // Buried, always: gorges open to the sky are cut by rivers (`crate::water`),
+            // where water would cut them. (The roll that once opened some is still drawn,
+            // so the values after it stay as they were.)
+            cover: {
+                let _ = rng.chance(0.45);
+                6.0 + 14.0 * rng.unit()
+            },
             phases: [rng.unit(), rng.unit()].map(|u| u * std::f32::consts::TAU),
             ledges: rng.next_u64(),
         })
@@ -572,8 +577,7 @@ struct RavinePath {
     depth: f32,
     /// Widest full width, in blocks.
     width: f32,
-    /// Open to the sky, or buried `cover` blocks under the surface.
-    open: bool,
+    /// How far under the lowest ground along it the ravine's top lies.
     cover: f32,
     phases: [f32; 2],
     ledges: u64,
@@ -593,7 +597,6 @@ struct Ravine {
     points: Vec<RavinePoint>,
     /// Segments (indices of their first point) that pass within reach of the column.
     segments: Vec<usize>,
-    open: bool,
     ledges: u64,
 }
 
@@ -610,12 +613,13 @@ impl Ravine {
         if segments.is_empty() {
             return None;
         }
-        // The ground along the path, smoothed so the floor does not copy every bump.
+        // The lowest ground near each point along the path, so the ravine stays buried
+        // where valleys cross it, and its floor does not copy every bump.
         let ground: Vec<f32> = path.points.iter().map(|p| geology.get(p.x as i32, p.y as i32).height as f32).collect();
         let n = ground.len();
-        let smooth = |i: usize| {
+        let low = |i: usize| {
             let (a, b) = (i.saturating_sub(3), (i + 3).min(n - 1));
-            ground[a..=b].iter().sum::<f32>() / (b - a + 1) as f32
+            ground[a..=b].iter().copied().fold(f32::MAX, f32::min)
         };
         let length = (n - 1) as f32 * RAVINE_STEP;
         let points = (0..n)
@@ -627,17 +631,12 @@ impl Ravine {
                 let waver = 1.0 + 0.25 * (s / 37.0 + path.phases[0]).sin() + 0.15 * (s / 13.0 + path.phases[1]).sin();
                 let half_width = 0.5 * path.width * ends.powf(0.6) * waver;
                 let depth = path.depth * (0.3 + 0.7 * ends.powf(0.5));
-                let surface = smooth(i);
-                let (floor, top) = if path.open {
-                    (surface - depth, ground[i].max(surface) + 48.0)
-                } else {
-                    let top = surface - path.cover;
-                    (top - depth, top)
-                };
+                let top = low(i) - path.cover;
+                let floor = top - depth;
                 RavinePoint { at: path.points[i], floor: floor.max((LAVA_LEVEL + 2) as f32), top, half_width }
             })
             .collect();
-        Some(Self { points, segments, open: path.open, ledges: path.ledges })
+        Some(Self { points, segments, ledges: path.ledges })
     }
 
     /// The cross-section nearest the block column at `p`, and its distance.
@@ -666,7 +665,6 @@ impl Ravine {
 struct RavineSpan {
     distance: f32,
     point: RavinePoint,
-    open: bool,
     ledges: u64,
 }
 
@@ -679,8 +677,8 @@ impl RavineSpan {
             return false;
         }
         let u = (yf - p.floor) / (p.top - p.floor);
-        // Open ravines are V-shaped, narrowing to the floor; buried ones are lens-shaped.
-        let shape = if self.open { 0.3 + 0.7 * u.min(1.0).sqrt() } else { (1.0 - (2.0 * u - 1.0).powi(2)).max(0.0).sqrt() };
+        // Lens-shaped, widest halfway up.
+        let shape = (1.0 - (2.0 * u - 1.0).powi(2)).max(0.0).sqrt();
         // Ledges: the walls step in and out every couple of blocks, the same along the length.
         let ledge = 1.0 + 0.25 * ((hash3(self.ledges ^ LEDGES, 0, y.div_euclid(2), 0) & 0xff) as f32 / 255.0 - 0.5);
         self.distance < p.half_width * shape * ledge
@@ -931,7 +929,7 @@ impl CaveColumn<'_> {
             .iter()
             .map(|r| {
                 let (distance, point) = r.nearest(column);
-                RavineSpan { distance, point, open: r.open, ledges: r.ledges }
+                RavineSpan { distance, point, ledges: r.ledges }
             })
             .filter(|s| s.distance < s.point.half_width * 1.25)
             .collect();
@@ -1050,7 +1048,7 @@ impl CaveColumn<'_> {
         let column = Vec2::new(x as f32 + 0.5, z as f32 + 0.5);
         let ravine = self.ravines.iter().any(|r| {
             let (distance, point) = r.nearest(column);
-            RavineSpan { distance, point, open: r.open, ledges: r.ledges }.contains(y)
+            RavineSpan { distance, point, ledges: r.ledges }.contains(y)
         });
         if ravine || self.sinkholes.iter().any(|s| s.contains(column, y)) {
             return true;
@@ -1233,7 +1231,7 @@ mod locate {
             for rx in -4..4 {
                 if let Some(path) = caves.ravine_path(rx, rz) {
                     let (a, b) = (path.points[0], path.points[path.points.len() / 2]);
-                    println!("ravine from {a} via {b}, {} long, {:.0} deep, {:.0} wide, open {}", path.points.len() as f32 * RAVINE_STEP, path.depth, path.width, path.open);
+                    println!("ravine from {a} via {b}, {} long, {:.0} deep, {:.0} wide, {:.0} under", path.points.len() as f32 * RAVINE_STEP, path.depth, path.width, path.cover);
                 }
             }
         }

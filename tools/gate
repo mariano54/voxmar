@@ -10,7 +10,7 @@
 # build (`--profile iter`, tests included), tests, and a scripted session in the real game
 # with its integrated server running behind (`voxmar --gate`, crates/client/src/gate.rs):
 # building, digging, drops, climbing out of water, the menu and inventory, storm and snow,
-# the sun, moon and stars, leaving the world. The session fails on any failed check, a
+# the sun, moon and stars, a gorge, leaving the world. The session fails on any failed check, a
 # crash, a panic, any ERROR line (wgpu validation errors among them) and any WARN line not
 # listed in ALLOWED_WARNINGS. Tests and the session run side by side.
 #

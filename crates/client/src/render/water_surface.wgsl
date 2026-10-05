@@ -16,7 +16,7 @@
 #define_import_path voxmar::water_surface
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, sun_unclouded, air_between, reflected_cloud, glow_below_surface}
+#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, sun_unclouded, air_between, reflected_cloud, glow_below_surface, horizon_along}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct Water {
@@ -414,7 +414,7 @@ fn shade_water(
             // The sky through the window, or what stands above the water where the bent
             // view finds it on screen behind the surface, which was drawn seen through
             // the water up to the surface already.
-            var above = sky_gradient(out, water.zenith.rgb, water.horizon.rgb) * open * air.through + air.light;
+            var above = sky_gradient(out, water.zenith.rgb, horizon_along(water.horizon.rgb, out)) * open * air.through + air.light;
             let bent = project(world + out * 4.0);
             if all(bent.xy == saturate(bent.xy)) {
                 let behind = depth_at(bent.xy);
@@ -474,7 +474,7 @@ fn shade_water(
     }
     let reflectance = fresnel(facing) * water.strengths.x * edge;
     let cloud = reflected_cloud(world, r);
-    let sky_color = sky_gradient(r, water.zenith.rgb, water.horizon.rgb) * (1.0 - cloud.a) + cloud.rgb;
+    let sky_color = sky_gradient(r, water.zenith.rgb, horizon_along(water.horizon.rgb, r)) * (1.0 - cloud.a) + cloud.rgb;
     var reflected = mix(seen, sky_color * air.through + air.light, open);
     if reflectance > MIN_REFLECTION {
         let hit = trace(world + normal * 0.02, r);

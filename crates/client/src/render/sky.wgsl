@@ -4,7 +4,7 @@
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
-#import voxmar::atmosphere::{Atmosphere, edge_fog, under_water}
+#import voxmar::atmosphere::{Atmosphere, band, dusk_tint, edge_fog, under_water}
 #import voxmar::clouds::{pcg, unit, value_noise, cloud_body}
 
 struct SkyParams {
@@ -20,6 +20,9 @@ struct SkyParams {
     // xy: where the cloud layer is over the camera (its position and wind drift, in cloud
     // units), z: precipitation 0..1, w: lightning flash 0..1
     weather: vec4<f32>,
+    // Light in the sky, 0..1: x rainbow (above 0.75 a double one), y halo (above 0.5 with
+    // sun dogs), z aurora, w falling stars (1 a meteor shower)
+    optics: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> sky: SkyParams;
@@ -359,6 +362,119 @@ fn disc(dir: vec3<f32>, ddx: vec3<f32>, ddy: vec3<f32>, center: vec3<f32>, radiu
     return vec3(vec2(dot(s, e), dot(s, n)) / r, clamp(r - length(s) + 0.5, 0.0, 1.0));
 }
 
+// A 22° halo round the sun or moon (`light`), reddish on its inner edge, and with `strength`
+// over 0.5 sun dogs: bright, slightly coloured spots 22° to either side at its height,
+// strongest with the light low.
+fn halo(dir: vec3<f32>, light: vec3<f32>, strength: f32) -> vec3<f32> {
+    let a = degrees(acos(clamp(dot(dir, light), -1.0, 1.0)));
+    if a > 30.0 {
+        return vec3(0.0);
+    }
+    let edge = saturate((a - 21.5) / 1.5);
+    var glow = mix(vec3(1.0, 0.72, 0.55), vec3(0.85, 0.92, 1.0), edge) * band(a, 21.5, 23.0) * 0.25 * strength;
+    let dogs = saturate(2.0 * (strength - 0.5));
+    if dogs > 0.0 {
+        // Angles across (along the horizon, at the light's height) and up from the light.
+        let flat_light = normalize(light.xz);
+        let flat_dir = normalize(dir.xz);
+        let across = degrees(acos(clamp(dot(flat_dir, flat_light), -1.0, 1.0))) * length(light.xz);
+        let up = degrees(asin(clamp(dir.y, -1.0, 1.0)) - asin(clamp(light.y, -1.0, 1.0)));
+        // Taller than wide, with a faint tail away from the light.
+        let d = vec2(across - 22.0, up * 0.7);
+        let spot = exp(-dot(d, d) / 3.0) + 0.15 * exp(-(up * up) / 2.0) * smoothstep(22.0, 23.0, across) * exp(-(across - 22.0) / 6.0);
+        let low = 1.0 - smoothstep(0.3, 0.7, light.y);
+        glow += mix(vec3(1.0, 0.6, 0.45), vec3(1.0, 0.97, 0.9), saturate((across - 21.0) / 2.0)) * spot * 1.5 * dogs * (0.4 + 0.6 * low);
+    }
+    return glow;
+}
+
+// The aurora: curtains low over the northern horizon (north is -z), from about 10° to 60°
+// up, of fine vertical rays along folded ribbons that drift slowly, green at the bottom
+// fading to violet at the top. `t` is seconds.
+fn aurora(dir: vec3<f32>, t: f32) -> vec3<f32> {
+    let north = -dir.z / max(length(dir.xz), 1e-4);
+    if dir.y <= 0.0 || north < -0.3 {
+        return vec3(0.0);
+    }
+    let across = atan2(dir.x, -dir.z);
+    let up = degrees(asin(dir.y));
+    // Two ribbons, each folding back and forth along the horizon as it drifts.
+    var light = vec3(0.0);
+    for (var i = 0; i < 2; i++) {
+        let k = f32(i);
+        let fold = value_noise(vec2(across * 2.2 + t * 0.012 + k * 7.0, k * 3.1)) - 0.5;
+        let base = 11.0 + 7.0 * k + 9.0 * fold;
+        let rise = up - base;
+        if rise < -2.0 {
+            continue;
+        }
+        let height = 25.0 + 15.0 * value_noise(vec2(across * 3.0 - t * 0.008, 11.0 + k));
+        let foot = smoothstep(-2.0, 1.5, rise);
+        let fade = exp(-max(rise, 0.0) / height);
+        // Fine rays, flickering and drifting along the ribbon.
+        let rays = 0.35 + 0.65 * value_noise(vec2(across * 90.0 + fold * 30.0 + t * 0.15, k * 5.0 + t * 0.05));
+        let brightness = value_noise(vec2(across * 1.3 - t * 0.02, 20.0 + k)) * 1.4;
+        let colour = mix(vec3(0.2, 1.0, 0.45), vec3(0.6, 0.3, 1.0), smoothstep(0.0, 35.0, rise));
+        light += colour * foot * fade * rays * brightness * (1.0 - 0.4 * k);
+    }
+    return light * smoothstep(-0.3, 0.5, north) * 0.06;
+}
+
+// Falling stars: about two a second at `rate` 1 (a meteor shower), one every minute or so
+// at an ordinary night's 0.01, all streaking away from the night's one radiant: short-lived
+// streaks 5° to 15° long that brighten then fade. `t` is seconds, `night` the day's number
+// (a new radiant each night), `px` the angle a pixel spans.
+fn falling_stars(dir: vec3<f32>, t: f32, rate: f32, night: f32, px: f32) -> vec3<f32> {
+    // Slots of a quarter of a second, each holding a star or not; a star lasts at most 0.8 s,
+    // so it starts in one of the last four slots.
+    let slot = floor(t * 4.0);
+    var r = pcg(u32(night) * 7919u + 17u);
+    let radiant = normalize(vec3(unit(r) * 2.0 - 1.0, 0.4 + 0.6 * unit(pcg(r)), unit(pcg(pcg(r))) * 2.0 - 1.0));
+    var light = vec3(0.0);
+    for (var k = 0; k < 4; k++) {
+        let s = slot - f32(k);
+        var h = pcg(u32(i32(s)) * 2654435761u ^ pcg(u32(night)));
+        if unit(h) > rate * 0.5 {
+            continue;
+        }
+        h = pcg(h);
+        let start = s * 0.25 + unit(h) * 0.25;
+        h = pcg(h);
+        let life = 0.3 + 0.5 * unit(h);
+        let age = (t - start) / life;
+        if age < 0.0 || age > 1.0 {
+            continue;
+        }
+        // Where it begins: high in the sky, 20° to 80° from the radiant.
+        h = pcg(h);
+        let side = normalize(cross(radiant, vec3(unit(h) - 0.5, 0.3, unit(pcg(h)) - 0.5)));
+        h = pcg(pcg(h));
+        let off = radians(20.0 + 60.0 * unit(h));
+        let begin = normalize(radiant * cos(off) + side * sin(off));
+        if begin.y < 0.35 {
+            continue;
+        }
+        // It runs away from the radiant, along the great circle through both: `along` is
+        // that way at its start, `normal` the circle's axis.
+        let along = normalize(begin * dot(begin, radiant) - radiant);
+        let normal = cross(begin, along);
+        h = pcg(h);
+        let span = radians(5.0 + 10.0 * unit(h));
+        // How far behind the head the pixel's direction lies along the circle, and how far
+        // off it, as angles.
+        let back = span * age - atan2(dot(dir, along), dot(dir, begin));
+        let tail = span * min(age * 1.5, 0.6);
+        let across = abs(dot(dir, normal));
+        if back < -px * 2.0 || back > tail + px * 2.0 || dot(dir, begin) < 0.0 {
+            continue;
+        }
+        let width = across / px;
+        let fade = sin(3.14159 * age) * (1.0 - saturate(back / max(tail, 1e-4)));
+        light += vec3(0.9, 0.95, 1.0) * exp(-width * width * 0.8) * fade * 1.5;
+    }
+    return light;
+}
+
 // The high cloud, in premultiplied colour and opacity: an even sheet that spreads as the sky
 // clouds over, so gaps in the low cloud (a layer in the world, drawn by the volumetric
 // pass) show more cloud rather than blue sky, and wisps of cirrus streaked along the winds
@@ -437,9 +553,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Angle a pixel spans mid-screen, where pixels span the widest angle.
     let px = 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
     let up = max(dir.y, 0.0);
-    var color = mix(sky.horizon.rgb, sky.zenith.rgb, pow(up, 0.55));
+    // Warmer towards the low sun at dusk and dawn, cooler away from it.
+    let horizon = sky.horizon.rgb * dusk_tint(atmosphere, dir);
+    var color = mix(horizon, sky.zenith.rgb, pow(up, 0.55));
     if dir.y < 0.0 {
-        color = sky.horizon.rgb * mix(1.0, 0.7, min(-dir.y * 4.0, 1.0));
+        color = horizon * mix(1.0, 0.7, min(-dir.y * 4.0, 1.0));
     }
 
     let daylight = sky.sun.w;
@@ -488,7 +606,21 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let ringed = planet(p, sph, 140.0 + 25.0 * sin(days * TAU / 250.0 + 4.0), 14.0, 0.45, 2u, px_deg);
         let planets = red + blue + ringed;
         night_sky = night_sky * (1.0 - min(planets.w, 1.0)) + planets.rgb * dusk;
+        // The aurora and falling stars, in the sky's own frame.
+        if sky.optics.z > 0.0 && dark > 0.0 {
+            night_sky += aurora(dir, sky.clouds.x) * sky.optics.z * dark;
+        }
+        if sky.optics.w > 0.0 && dark > 0.0 {
+            night_sky += falling_stars(dir, sky.clouds.x, sky.optics.w, floor(sky.stars.y), px) * dark;
+        }
         color += night_sky * clear;
+    }
+
+    // A halo round the sun by day, fainter round the moon by night.
+    if sky.optics.y > 0.0 {
+        let light = select(-sky.sun.xyz, sky.sun.xyz, sky.sun.y > 0.0);
+        let bright = select(0.12 * night, daylight, sky.sun.y > 0.0);
+        color += halo(dir, light, sky.optics.y) * bright;
     }
 
     color += vec3(1.0, 0.8, 0.55) * glow * clamp(daylight * 2.0, 0.0, 1.0);
