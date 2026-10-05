@@ -88,13 +88,16 @@ food in hand to eat it. How warm you feel follows the air, water and any fire or
 nearby, and gives effects (Chilly, Freezing, Hot, Overheated, By the fire, Well fed, Hungry,
 Starving) that change how fast you heal and hunger, or hurt you. The HUD shows health and
 hunger as bars and the effects as chips above them. Every in-game screen lists the keys to
-the others under it.
+the others under it. A creature under the crosshair is named at the top of the screen with
+its level, coloured RuneScape-style against your combat level (green below, gold even, red
+above), and once you strike at it, a thin bar of its health; the one you are fighting stays
+there a few seconds after you look away.
 
 Farming, with RuneScape-style skills: right-click soil with seeds to sow them (carrots and
 potatoes are sown from themselves). Each crop needs a farming level, from wheat at 1 to
 saffron at 60 and the night-growing moonbloom at 75, and planting and harvesting earn
-experience, shown rising at the right of the screen; the inventory screen lists every
-skill's level (levels 1 to 99 on RuneScape's curve). Crops grow through three stages to
+experience, shown rising at the right of the screen, with a small plate above it when a
+level is reached; the character screen lists every skill's level (levels 1 to 99 on RuneScape's curve). Crops grow through three stages to
 ripe over real minutes, fastest inside their climate, in light, on fertile ground with water
 within four blocks; break a ripe one to harvest it, or right-click a ripe tomato, strawberry
 or chili to pick it and let it fruit again. Higher levels yield a little more, never grow

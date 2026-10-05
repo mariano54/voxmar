@@ -138,6 +138,14 @@ impl SkillRegistry {
         self.levels.get((level.max(1) - 1) as usize).copied().unwrap_or(u32::MAX)
     }
 
+    /// A player's combat level, RuneScape-style (docs/skills.md), from Attack, Defence and
+    /// Hitpoints; Hitpoints counts as at least 10, where it starts.
+    pub fn combat_level(&self, skills: &Skills) -> u8 {
+        let level = |name: &str| self.id(name).map_or(1.0, |id| self.level(skills.xp(id)) as f32);
+        let hitpoints = level("core:hitpoints").max(10.0);
+        ((level("core:defence") + hitpoints) / 4.0 + level("core:attack") * 0.65) as u8
+    }
+
     /// How far `xp` is through its level, 0..1 (1 at the highest level).
     pub fn progress(&self, xp: u32) -> f32 {
         let level = self.level(xp);
@@ -233,6 +241,18 @@ mod tests {
         assert_eq!([0, 999, 1000, 3999, 4000, 10_000, 99_999].map(|xp| skills.level(xp)), [1, 1, 2, 2, 3, 4, 4]);
         let mut bad = SkillRegistry::default();
         assert!(bad.extend("core", "(curve: Table([100, 50]))").is_err());
+    }
+
+    #[test]
+    fn combat_levels_start_at_three() {
+        let skills = registry(
+            r#"(curve: Table([100, 400, 1000]), skills: [(name: "attack", title: "Attack", description: ""), (name: "defence", title: "Defence", description: "")])"#,
+        );
+        let mut player = Skills::default();
+        // Hitpoints counts as 10 though this registry has none: (1 + 10) / 4 + 0.65.
+        assert_eq!(skills.combat_level(&player), 3);
+        player.grant(skills.id("core:attack").unwrap(), 10_000);
+        assert_eq!(skills.combat_level(&player), 5);
     }
 
     #[test]

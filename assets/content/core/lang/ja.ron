@@ -199,7 +199,7 @@
     "item.plants": "{crop}を植える・{skill} {level}",
 
     "skills.gained": "+{xp} {skill}",
-    "skills.level_up": "{skill} レベル{level}",
+    "skills.level_up": "レベル{level}",
     "skills.needs": "{skill} {level} が必要",
 
     "character.health": "体力",

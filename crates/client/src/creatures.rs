@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionTarget, REACH_CREATURE};
 use voxmar_engine::creature::brain::Pose;
-use voxmar_engine::creature::{self, EYE, Part, Swing};
+use voxmar_engine::creature::{self, CreatureId, EYE, Part, Swing};
 use voxmar_engine::physics::Aabb;
 use voxmar_protocol::{CreatureGone, CreatureView};
 
@@ -74,6 +74,8 @@ struct Shown {
     flash: f32,
     /// Seconds since it died, if it did.
     dying: Option<f32>,
+    /// Whether we have struck at it, so the target readout shows its health.
+    struck: bool,
     /// Smoothed head pitch and body crouch.
     nod: f32,
     crouch: f32,
@@ -93,6 +95,17 @@ pub struct Creatures {
     /// Blows of ours the server took since joining, and how many landed.
     pub blows: u32,
     pub landed: u32,
+    /// The creature we last struck at, and when, in seconds since startup.
+    fighting: Option<(u32, f32)>,
+}
+
+/// A creature as the target readout shows it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sighting {
+    pub species: CreatureId,
+    pub health: u16,
+    /// Whether we have struck at it: its health is shown only then, as in RuneScape.
+    pub struck: bool,
 }
 
 impl Creatures {
@@ -103,14 +116,31 @@ impl Creatures {
     }
 
     /// The server took a blow of ours at `id`: it landed for `damage`, or missed.
-    pub fn struck(&mut self, id: u32, damage: u16, _killed: bool) {
+    pub fn struck(&mut self, id: u32, damage: u16, _killed: bool, now: f32) {
         self.blows += 1;
+        self.fighting = Some((id, now));
+        if let Some(shown) = self.shown.get_mut(&id) {
+            shown.struck = true;
+        }
         if damage > 0 {
             self.landed += 1;
             if let Some(shown) = self.shown.get_mut(&id) {
                 shown.flash = FLASH;
             }
         }
+    }
+
+    /// Creature `id` as the target readout shows it; one dying still is, at no health.
+    pub fn sighting(&self, id: u32) -> Option<Sighting> {
+        let shown = self.shown.get(&id)?;
+        let health = if shown.dying.is_some() { 0 } else { shown.view.health };
+        Some(Sighting { species: shown.view.species, health, struck: shown.struck })
+    }
+
+    /// The creature we struck at in the last `within` seconds before `now`, while it is
+    /// still shown (alive, or falling).
+    pub fn fighting(&self, now: f32, within: f32) -> Option<u32> {
+        self.fighting.filter(|&(id, at)| now - at < within && self.shown.contains_key(&id)).map(|(id, _)| id)
     }
 
     /// How many creatures are shown, alive.
@@ -240,7 +270,7 @@ fn show(
             .collect();
         creatures.shown.insert(
             view.id,
-            Shown { view, told_at: now, position: view.position, yaw: view.yaw, entity, parts, materials: palette, stride: 0.0, flash: 0.0, dying: None, nod: 0.0, crouch: 0.0 },
+            Shown { view, told_at: now, position: view.position, yaw: view.yaw, entity, parts, materials: palette, stride: 0.0, flash: 0.0, dying: None, struck: false, nod: 0.0, crouch: 0.0 },
         );
     }
 

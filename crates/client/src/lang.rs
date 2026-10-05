@@ -16,6 +16,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::text::LineHeight;
 use voxmar_engine::block::{BlockDef, BlockRegistry};
+use voxmar_engine::creature::CreatureDef;
 use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, languages, title_from_id};
 use voxmar_engine::skill::SkillDef;
 use voxmar_engine::vitals::Effect;
@@ -56,6 +57,11 @@ impl Locale {
     /// What the block called `name` is called (see [`Locale::block`]).
     pub fn block_named(&self, blocks: &BlockRegistry, name: &str) -> String {
         blocks.id(name).map_or_else(|| title_from_id(name), |id| self.block(blocks.def(id)))
+    }
+
+    /// What a creature is called.
+    pub fn creature(&self, def: &CreatureDef) -> String {
+        self.get_or(&def_key("creature", &def.name), &def.title).to_owned()
     }
 
     /// What a skill is called.

@@ -194,6 +194,8 @@ struct Gate {
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
     blows_seen: u32,
+    /// Whether the target readout has shown the struck creature's health.
+    readout_seen: bool,
     failures: Vec<String>,
     passes: usize,
     /// Real frame times so far (milliseconds), and the longest in each step.
@@ -224,6 +226,7 @@ impl Gate {
             gorge: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
+            readout_seen: false,
             failures: Vec::new(),
             passes: 0,
             frame_ms: Vec::new(),
@@ -1009,6 +1012,15 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let creatures = world.resource::<crate::creatures::Creatures>();
                 (creatures.blows, creatures.landed)
             };
+            // Once a blow lands, the readout names it, with its level and health.
+            if landed > 0 && !gate.readout_seen {
+                let readout = world.resource::<crate::hud::target::Readout>();
+                if let Some(health) = readout.health.filter(|_| !readout.name.is_empty() && !readout.level.is_empty()) {
+                    let detail = format!("{} {}, {:.0}% health", readout.name, readout.level, health * 100.0);
+                    gate.readout_seen = true;
+                    gate.check("target readout", Ok(detail));
+                }
+            }
             if blows > gate.blows_seen {
                 gate.blows_seen = blows;
                 gate.phase_since = now;
@@ -1043,6 +1055,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    if !gate.readout_seen {
+                        gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
+                    }
                     gate.advance(now);
                 }
             }

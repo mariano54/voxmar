@@ -265,7 +265,7 @@ fn receive(
             ServerMessage::Died => player.dead = true,
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
-            ServerMessage::Struck { creature, damage, killed } => creatures.struck(creature, damage, killed),
+            ServerMessage::Struck { creature, damage, killed } => creatures.struck(creature, damage, killed, time.elapsed_secs()),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }
     }
