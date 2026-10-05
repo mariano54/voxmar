@@ -25,15 +25,16 @@ copied.
 
 ## Copied code (also in THIRD_PARTY_NOTICES.md)
 
-### Freesound recordists (rain, thunder, water)
+### Freesound recordists (rain, thunder, water, hail, caves, lava)
 
 - Authors: Garuda1982, Gustavo_C, dflee4, bruno.auzet, TRP, Pingel, cognito perceptu,
-  fran_marenco, kyles and Nox_Sound
+  fran_marenco, kyles, Nox_Sound, Tom_Kaszuba, qubodup, ecfike and Fission9
 - Link: https://freesound.org (each recording's page is in the notices)
 - Licence: CC0 1.0. **Copied**: field recordings, cut, filtered and levelled (see the
   notices for which recording became which file).
 - What we took: the sound of rain on leaves, a downpour, rain on a tarp, drops off trees, a
-  babbling creek, a lake lapping, close and distant thunder, swimming and splashes.
+  babbling creek, a lake lapping, a waterfall, hail, a tunnel's air, lava bubbling, close and
+  distant thunder, swimming and splashes.
 - Where: `assets/content/base/sounds/`, played by `ambience.ron` and `sounds.ron`.
 
 ### RoadWeaver
