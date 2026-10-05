@@ -122,7 +122,9 @@ done
 MAX_BUSY=300
 calm=0
 for ((i = 0; i < 120 && calm < 3; i++)); do
-  (($(busy_cpu) < MAX_BUSY)) && ((calm++)) || calm=0
+  # Not `((calm++)) || calm=0`: a post-increment from 0 is false, which reset the count,
+  # so no machine was ever quiet enough.
+  if (($(busy_cpu) < MAX_BUSY)); then calm=$((calm + 1)); else calm=0; fi
   sleep 2
 done
 if ((calm < 3)); then
