@@ -44,7 +44,11 @@
 //   fibre (cordage and cloth), thorny, glowing
 // Colours: white, light_gray, gray, black, brown, red, orange, yellow, lime, green, cyan,
 //   light_blue, blue, purple, magenta, pink
-// Fantasy: wonder (fantastical; more common where the aether field is high)
+// Fantasy: wonder (fantastical; more common where the aether field is high), supernatural
+//   (a plant tied to a creature or dish: docs/systems-web.md)
+// Creatures and buffs: feed:<creature> (what it eats or is lured by), bait, taming,
+//   nectar (bees), salt; alchemy also: night_sight, quiet_steps, mutation, hearty,
+//   invisibility, steady_hand, cleansing
 (
     templates: {
         // A wood: bark, the stripped log, bark on every side, planks, leaves and a sapling.
@@ -579,5 +583,26 @@
         (template: "flower", name: "paleroot", tags: ["root", "vegetable", "cave", "edible", "flavour:sweet", "forage"], all: (color: (220, 210, 190), rarity: Uncommon)),
         (template: "plant", name: "echo_bloom", tags: ["flower", "cave", "deep", "wonder", "glowing", "alchemy:aether", "alchemy:clarity", "dye:cyan", "forage"], all: (light: 6, color: (60, 200, 210), rarity: VeryRare)),
         (template: "plant", name: "prism_lily", tags: ["flower", "cave", "crystal", "wonder", "glowing", "gem", "alchemy:aether", "alchemy:featherfall", "forage"], all: (sound: Glass, light: 10, color: (200, 180, 255), rarity: Legendary)),
+        // Supernatural plants (docs/systems-web.md): rare, tied to creatures and dishes.
+        (template: "flower", name: "starwheat", tags: ["grain", "edible", "meadow", "temperate", "night", "alchemy:night_sight", "fibre", "wonder", "supernatural", "forage"], all: (color: (230, 220, 170), rarity: Rare)),
+        (template: "plant", name: "moonmelon", tags: ["fruit", "edible", "flavour:sweet", "meadow", "night", "temperate", "alchemy:cooling", "feed:moonhare", "wonder", "supernatural", "forage"], all: (light: 2, color: (170, 200, 230), rarity: VeryRare)),
+        (template: "flower", name: "ember_pepper", tags: ["spice", "edible", "flavour:spicy", "desert", "hot", "dry", "alchemy:warming", "alchemy:fire_resistance", "wonder", "supernatural", "forage"], all: (light: 2, color: (240, 110, 30), rarity: Rare)),
+        (template: "flower", name: "frost_turnip", tags: ["root", "vegetable", "edible", "tundra", "cold", "alchemy:cooling", "alchemy:frost_resistance", "feed:frost_stag", "wonder", "supernatural", "forage"], all: (color: (190, 220, 240), rarity: Rare)),
+        (template: "plant", name: "dreamberry_bush", tags: ["bush", "berry", "edible", "flavour:sweet", "forest_floor", "shade", "alchemy:calming", "alchemy:sleep", "alchemy:quiet_steps", "taming", "wonder", "supernatural", "forage"], all: (light: 1, color: (150, 80, 200), rarity: Rare)),
+        (template: "flower", name: "whisper_oats", tags: ["grain", "feed", "forest_floor", "shade", "alchemy:mutation", "alchemy:clarity", "wonder", "supernatural", "forage"], all: (color: (200, 210, 215), rarity: VeryRare)),
+        (template: "plant", name: "sky_lotus", tags: ["flower", "alpine", "cold", "riverbank", "alchemy:water_breathing", "dye:light_blue", "wonder", "supernatural", "forage"], all: (light: 2, color: (170, 190, 240), rarity: VeryRare)),
+        (template: "flower", name: "bloodroot", tags: ["root", "herb", "forest_floor", "shade", "alchemy:healing", "alchemy:hearty", "dye:red", "wonder", "supernatural", "forage"], all: (color: (140, 20, 30), rarity: Rare)),
+        (template: "flower", name: "sunpetal", tags: ["flower", "meadow", "steppe", "warm", "glowing", "light", "feed:sunwing", "dye:yellow", "wonder", "supernatural", "forage"], all: (light: 4, color: (250, 210, 60), rarity: Rare)),
+        (template: "flower", name: "crystal_moss", tags: ["groundcover", "cold", "crystal", "glowing", "salt", "feed:crystal_tortoise", "alchemy:clarity", "wonder", "supernatural", "forage"], all: (light: 1, color: (150, 150, 220), rarity: Rare)),
+        (template: "plant", name: "aether_truffle", tags: ["fungus", "edible", "spice", "forest_floor", "shade", "temperate", "alchemy:aether", "feed:pig", "wonder", "supernatural", "forage"], all: (light: 1, color: (90, 50, 120), rarity: Legendary)),
+        (template: "plant", name: "ghostcap", tags: ["fungus", "forest_floor", "shade", "cold", "glowing", "alchemy:invisibility", "wonder", "supernatural", "forage"], all: (light: 2, color: (210, 230, 240), rarity: Rare)),
+        (template: "plant", name: "thunderbloom", tags: ["flower", "alpine", "cold", "storm", "glowing", "alchemy:steady_hand", "dye:blue", "wonder", "supernatural", "forage"], all: (light: 2, color: (90, 130, 240), rarity: VeryRare)),
+        (template: "flower", name: "tidekelp", tags: ["plant", "shore", "edible", "flavour:savoury", "bait", "alchemy:water_breathing", "wonder", "supernatural", "forage"], all: (color: (40, 120, 90), rarity: Rare)),
+        (template: "plant", name: "wyrmroot", tags: ["root", "desert", "hot", "dry", "sandy", "bait", "feed:sand_wyrm", "wonder", "supernatural", "forage"], all: (color: (200, 160, 90), rarity: Rare)),
+        (template: "flower", name: "hearthgrain", tags: ["grain", "edible", "steppe", "cold", "alchemy:warming", "wonder", "supernatural", "forage"], all: (color: (200, 90, 40), rarity: Rare)),
+        (template: "flower", name: "honeydew_lily", tags: ["flower", "meadow", "nectar", "feed:bee", "alchemy:healing", "dye:yellow", "wonder", "supernatural", "forage"], all: (color: (250, 200, 60), rarity: Rare)),
+        (template: "plant", name: "lantern_gourd", tags: ["vegetable", "fruit", "edible", "wetland", "warm", "glowing", "light", "feed", "wonder", "supernatural", "forage"], all: (light: 4, color: (240, 140, 40), rarity: Rare)),
+        (template: "flower", name: "silvermint", tags: ["herb", "tea", "cold", "forest_floor", "flavour:aromatic", "alchemy:cleansing", "feed:silver_hart", "wonder", "supernatural", "forage"], all: (color: (200, 215, 225), rarity: Rare)),
+        (template: "flower", name: "cinder_moss", tags: ["groundcover", "desert", "hot", "dry", "glowing", "fuel", "feed:ember_salamander", "wonder", "supernatural", "forage"], all: (light: 1, color: (80, 50, 40), rarity: Rare)),
     ],
 )
