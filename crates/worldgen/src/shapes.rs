@@ -178,6 +178,12 @@ impl Shapes {
     }
 
     /// Whether a shape is a sea cliff, whose foot the waves notch.
+    /// Whether a shape stands on the land as a rock feature (towers, spires, arches), whose
+    /// rock is one stone however the land under it is dressed.
+    pub fn feature(&self, id: ShapeId) -> bool {
+        matches!(self.list[id.0 as usize].kind, ShapeKind::Towers { .. } | ShapeKind::Spires { .. } | ShapeKind::Arches { .. })
+    }
+
     pub fn sea_cliff(&self, id: ShapeId) -> bool {
         matches!(self.list[id.0 as usize].kind, ShapeKind::SeaCliffs { .. })
     }

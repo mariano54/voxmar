@@ -427,6 +427,12 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             // The window under an arch: open from its foot, leaving at least four blocks of
             // the fin (as the land eased it) over it, where no water beside it could pour in.
             let foot = geo.form.base.floor() as i32;
+            // A tower, spire or arch is one rock from its foot up: the rock province's beds
+            // (its main stone in shades), not whatever the surface rules of each column
+            // under it would pick, so it never reads as pieces of different stone. Its top
+            // keeps the ground's own cap.
+            let province_beds = &world.rocks.get(site.province).bands;
+            let feature_rock = height >= foot + 2 && !province_beds.is_empty() && geo.form.shape.is_some_and(|s| world.geology.shapes().feature(s));
             let window = (geo.form.window as i32).min(height - foot - 4);
             let beside_water = || sides_of(&geology, wx, wz).iter().any(|n| n.wet().is_some_and(|(_, top)| top > foot));
             let window = if window >= 3 && !geo.submerged() && !beside_water() { window } else { 0 };
@@ -449,7 +455,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                         continue;
                     }
                 }
-                let block = if y >= 4 && y < body {
+                let block = if feature_rock && y > foot && y < height && !hollow_at(y + 1) {
+                    terrain.band(province_beds, y, wx, wz)
+                } else if y >= 4 && y < body {
                     // A ledge under an overhang takes the surface's top, as the top does.
                     if hollow_at(y + 1) && !hollow_at(y - 1) { layers.top } else { stone(y) }
                 } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
