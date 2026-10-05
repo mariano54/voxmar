@@ -476,13 +476,20 @@ fn setup(
             texture.fill_transparent();
         }
     }
-    // Blocks that give off light glow by themselves, as brightly as the light they give.
+    // Blocks that give off light glow by themselves, as brightly as the light they give;
+    // opaque ones vary their textures from block to block as their data says.
     let mut layers = vec![LayerInfo::default(); block_textures.len()];
     for id in 0..registry.len() {
-        let info = registry.info(voxmar_engine::block::BlockId(id as u16));
+        let block = voxmar_engine::block::BlockId(id as u16);
+        let info = registry.info(block);
+        let variety = registry.def(block).texture_variety;
         for layer in info.layers {
-            let glow = &mut layers[layer as usize].glow;
-            *glow = glow.max(info.emission as f32 / 15.0);
+            let layer = &mut layers[layer as usize];
+            layer.glow = layer.glow.max(info.emission as f32 / 15.0);
+            if info.render == RenderKind::Opaque {
+                layer.variety.turn |= variety.turn;
+                layer.variety.mirror |= variety.mirror;
+            }
         }
     }
     // The untinted sides of an opaque block with a tinted top (a grass block) take the

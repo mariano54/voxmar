@@ -131,7 +131,7 @@
     blocks: [
         // Rock
         (name: "bedrock", textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
-        (name: "stone", textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
+        (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
         (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet"]),
         (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building"]),
@@ -141,7 +141,7 @@
         // Volcanic glass, where lava meets water.
         (name: "obsidian", sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep"]),
         // Soil
-        (name: "dirt", sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"]),
+        (name: "dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"]),
         (name: "coarse_dirt", sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"]),
         (name: "rooted_dirt", sound: Soil, textures: All("rooted_dirt"), hardness: 0.5, color: (144, 104, 77), tags: ["soil", "natural"]),
         (name: "mud", sound: Mud, textures: All("mud"), hardness: 0.5, color: (60, 57, 61), tags: ["soil", "wet", "natural", "surface"]),
@@ -155,7 +155,7 @@
             tags: ["soil", "acidic", "natural", "surface"],
         ),
         (
-            name: "grass_block", sound: Grass,
+            name: "grass_block", sound: Grass, texture_variety: (turn: true, mirror: true),
             textures: Sides(top: "grass_block_top", bottom: "dirt", side: "grass_block_side"),
             tint: Grass,
             tint_top_only: true,
@@ -178,7 +178,7 @@
         ),
         (name: "packed_earth", sound: Soil, textures: All("packed_earth"), hardness: 0.6, drops: "dirt", color: (150, 116, 80), tags: ["soil", "worn", "path", "surface"]),
         (name: "clay", sound: Soil, textures: All("clay"), hardness: 0.6, color: (160, 166, 179), tags: ["clay", "wet", "natural"]),
-        (name: "gravel", sound: Gravel, textures: All("gravel"), hardness: 0.6, color: (136, 126, 126), tags: ["gravel", "natural", "surface"]),
+        (name: "gravel", texture_variety: (turn: true, mirror: true), sound: Gravel, textures: All("gravel"), hardness: 0.6, color: (136, 126, 126), tags: ["gravel", "natural", "surface"]),
         (name: "loam", sound: Soil, textures: All("loam"), hardness: 0.5, color: (94, 71, 54), tags: ["soil", "fertile", "natural", "surface"]),
         (name: "peat", sound: Mud, textures: All("peat"), hardness: 0.5, color: (55, 42, 33), tags: ["soil", "wet", "acidic", "fuel", "natural", "surface", "wetland"]),
         (name: "red_earth", sound: Soil, textures: All("red_earth"), hardness: 0.5, color: (157, 74, 47), tags: ["soil", "dry", "natural", "surface", "tropical", "savanna"]),
@@ -198,7 +198,7 @@
         (name: "packed_ice", sound: Glass, textures: All("packed_ice"), hardness: 0.5, color: (141, 180, 250), tags: ["ice", "cold", "natural"]),
         (name: "blue_ice", sound: Glass, textures: All("blue_ice"), hardness: 2.8, color: (116, 167, 253), tags: ["ice", "cold", "natural"]),
         // Sand
-        (name: "sand", sound: Sand, textures: All("sand"), hardness: 0.5, color: (219, 207, 163), tags: ["sand", "natural", "surface"]),
+        (name: "sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("sand"), hardness: 0.5, color: (219, 207, 163), tags: ["sand", "natural", "surface"]),
         (name: "red_sand", sound: Sand, textures: All("red_sand"), hardness: 0.5, color: (190, 102, 33), tags: ["sand", "natural", "surface"]),
         (name: "terracotta", textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["terracotta", "clay", "natural", "building", "colour:brown"]),
         // Fluids. Each also makes its flowing and falling states (`water_flow_1` ..
