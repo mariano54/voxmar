@@ -128,6 +128,9 @@ enum Step {
     Weather,
     /// The sun by day, the moon and stars by night.
     Sky,
+    /// `/locate gorge` finds a river deep between walls, and the server's world there has
+    /// them.
+    Gorge,
     /// Leaving the world for the title screen.
     Leave,
     Done,
@@ -158,6 +161,8 @@ struct Gate {
     count_before: u32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
+    /// Where `/locate gorge` sent the player: the column, one block above its water.
+    gorge: IVec3,
     failures: Vec<String>,
     passes: usize,
 }
@@ -181,6 +186,7 @@ impl Gate {
             dug: Vec::new(),
             count_before: 0,
             highest: f32::MIN,
+            gorge: IVec3::ZERO,
             failures: Vec::new(),
             passes: 0,
         }
@@ -245,6 +251,8 @@ struct Observer {
     moved: bool,
     /// Where the server says the other players are.
     others: FxHashMap<PlayerId, Vec3>,
+    /// What the server answered the observer's commands.
+    replies: Vec<String>,
 }
 
 impl Observer {
@@ -253,7 +261,7 @@ impl Observer {
         net.server()?.connections().send(server_side).ok()?;
         connection.send(ClientMessage::Hello { name: "gate-observer".into(), protocol: PROTOCOL_VERSION, content });
         connection.send(ClientMessage::Settings { view_distance: 2, fly_speed: 1.0 });
-        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default() })
+        Some(Self { connection, world: VoxelWorld::default(), id: None, position: None, moved: false, others: default(), replies: Vec::new() })
     }
 
     /// Applies what the server sent, and keeps the observer floating where it was put.
@@ -278,6 +286,7 @@ impl Observer {
                             self.world.set_block(pos, block);
                         }
                     }
+                    ServerMessage::Chat { text, .. } => self.replies.push(text),
                     ServerMessage::Players { players } => {
                         self.others = players.iter().filter(|p| Some(p.id) != self.id).map(|p| (p.id, p.position)).collect();
                     }
@@ -504,6 +513,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Screens => screens(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
+        Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
                 world.resource_mut::<NextState<Screen>>().set(Screen::Title);
@@ -749,10 +759,111 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         8 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
-            gate.next(Step::Leave, now);
+            gate.next(Step::Gorge, now);
         }
         1 | 3 | 6 if in_phase > 5.0 => {
             gate.check("sky", Err(format!("the time of day did not change: {ticks:.0} ticks")));
+            gate.next(Step::Gorge, now);
+        }
+        _ => {}
+    }
+}
+
+/// How far `/locate gorge` looks from the test ground, in blocks.
+const GORGE_RADIUS: i32 = 3000;
+/// How high a gorge's walls must stand over its water on both sides, within a few blocks
+/// of it.
+const GORGE_WALLS: i32 = 6;
+
+/// `/locate gorge` (asked by the observer, which reads the answer) names the nearest river
+/// running deep in a slot gorge; the player goes there by day, and the server's world has
+/// water there with ground standing at least `GORGE_WALLS` over it on both sides, 3 to 8
+/// blocks off across it, straight or diagonally.
+fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    match gate.phase {
+        0 => {
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.replies.clear();
+                observer.connection.send(ClientMessage::Command { line: format!("locate gorge {GORGE_RADIUS}") });
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().find(|r| r.contains("gorge")).cloned()) else {
+                if in_phase > 20.0 {
+                    gate.check("gorge", Err("no answer to /locate gorge".into()));
+                    gate.next(Step::Leave, now);
+                }
+                return;
+            };
+            // "… /tp X Y Z goes there."
+            let at = reply.split("/tp ").nth(1).and_then(|rest| {
+                let n: Vec<i32> = rest.split_whitespace().take(3).filter_map(|v| v.parse().ok()).collect();
+                (n.len() == 3).then(|| IVec3::new(n[0], n[1], n[2]))
+            });
+            let Some(at) = at else {
+                gate.check("gorge", Err(format!("/locate gorge: {reply}")));
+                gate.next(Step::Leave, now);
+                return;
+            };
+            gate.gorge = at;
+            let net = world.resource::<Net>();
+            net.command("time set noon");
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
+            }
+            gate.advance(now);
+        }
+        2 => {
+            let at = gate.gorge;
+            // The columns around it on the server's side and the player's, meshed (the
+            // distance may still be loading; the check needs only these).
+            let held = gate.observer.as_ref().is_some_and(|o| columns_around(at).into_iter().all(|c| o.world.contains(c)));
+            let there = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2()) < 4.0;
+            let client = world.resource::<ClientWorld>();
+            let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
+            if !(held && there && shown && in_phase > 1.0) {
+                if in_phase > 25.0 {
+                    gate.check("gorge", Err(format!("the world around the gorge at {at} did not load")));
+                    gate.next(Step::Leave, now);
+                }
+                return;
+            }
+            look(world, 0.0, 25.0);
+            gate.advance(now);
+        }
+        3 if in_phase > 0.5 => {
+            if gate.shot(world, "gorge").is_none() {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let Some(observer) = gate.observer.as_ref() else { return };
+            let def = |p: IVec3| observer.world.block(p).map(|b| client.registry.def(b));
+            // Water in any of its states (a river's is mostly flowing).
+            let wet = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.fluid(b).is_some());
+            // The river's water, within a couple of blocks of the place named (which lies on
+            // its course; the water there may stand a block or two lower after a fall).
+            let named = gate.gorge - IVec3::Y;
+            let found = (-2..=2)
+                .flat_map(|dz| (-2..=2).flat_map(move |dx| (-3..=0).map(move |dy| named + IVec3::new(dx, dy, dz))))
+                .find(|&p| wet(p) && !wet(p + IVec3::Y));
+            let is_water = found.is_some();
+            let (at, water) = found.map_or((named, named.y), |p| (p, p.y));
+            // The ground's top in a column: its highest solid block, trees aside.
+            let ground = |x: i32, z: i32| {
+                (water..=water + 40).rev().find(|&y| {
+                    def(IVec3::new(x, y, z)).is_some_and(|d| d.solid && d.render != voxmar_engine::block::RenderKind::Leaves && !d.name.contains("log") && !d.name.contains("wood"))
+                })
+            };
+            let side = |dx: i32, dz: i32| (3..=8).filter_map(|k| ground(at.x + dx * k, at.z + dz * k)).max().unwrap_or(water) - water;
+            let walls = [(1, 0), (0, 1), (1, 1), (1, -1)].map(|(dx, dz)| side(dx, dz).min(side(-dx, -dz))).into_iter().max().unwrap_or(0);
+            let result = match (is_water, walls >= GORGE_WALLS) {
+                (true, true) => Ok(format!("water at {} {} {} between walls {walls} blocks high", at.x, water, at.z)),
+                (false, _) => Err(format!("no water within two blocks of {named}, where /locate gorge said")),
+                (true, false) => Err(format!("the walls by the water at {} {} {} stand only {walls} blocks high", at.x, water, at.z)),
+            };
+            gate.check("gorge", result);
             gate.next(Step::Leave, now);
         }
         _ => {}

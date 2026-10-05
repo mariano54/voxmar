@@ -61,6 +61,7 @@ changes don't move it, and checks:
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
 | weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
 | sky | looks at the morning sun, towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a sunset sky warmer towards the sun than away, stars |
+| gorge | `/locate gorge`, then goes there | the server's world has water there between walls standing six blocks over it on both sides, within eight blocks |
 | leave | quits to the title screen | the world closes cleanly |
 
 "The server" is a second player the gate connects to the same integrated server, floating

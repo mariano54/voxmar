@@ -1,5 +1,5 @@
 //! Finding the notable places water makes: a lake high in the hills, a waterfall, a
-//! confluence, a river's mouth, a tunnel, an island, a hot spring. Tools and tests use it
+//! confluence, a river's mouth, a tunnel, an island, a hot spring, a gorge. Tools and tests use it
 //! to look at them without knowing where a seed put them, and gameplay can use it to point
 //! players at them.
 
@@ -24,11 +24,14 @@ pub enum WaterSight {
     /// Ground inside a river, with river on both sides.
     RiverIsland,
     HotSpring,
+    /// A creek or river between walls at least 6 blocks high on both sides, within 6
+    /// blocks of it.
+    Gorge,
 }
 
 impl WaterSight {
-    pub const ALL: [Self; 7] =
-        [Self::HighlandLake, Self::Waterfall, Self::Confluence, Self::RiverMouth, Self::RiverTunnel, Self::RiverIsland, Self::HotSpring];
+    pub const ALL: [Self; 8] =
+        [Self::HighlandLake, Self::Waterfall, Self::Confluence, Self::RiverMouth, Self::RiverTunnel, Self::RiverIsland, Self::HotSpring, Self::Gorge];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -39,11 +42,20 @@ impl WaterSight {
             Self::RiverTunnel => "river tunnel",
             Self::RiverIsland => "river island",
             Self::HotSpring => "hot spring",
+            Self::Gorge => "gorge",
         }
     }
 }
 
 impl Overworld {
+    /// The nearest place within `radius` blocks of `centre` where a creek or river runs
+    /// deep in a slot gorge: the column, and the height of its top water block. Much
+    /// quicker over a wide area than `water_sights`, as it reads the rivers rather than the
+    /// ground.
+    pub fn locate_gorge(&self, centre: IVec2, radius: i32) -> Option<IVec3> {
+        self.rivers.locate_gorge(self.stages(), centre, radius)
+    }
+
     /// The best place of each kind within `range` blocks of `centre` (searched every two
     /// blocks), each as the column and the height of its water, preferring nearer ones.
     /// Kinds none of which lie within range are left out. Costs about a second for a
@@ -91,6 +103,12 @@ impl Overworld {
                 }
                 let channel = |o: GeoSample| o.submerged() && matches!(o.body, Body::Creek | Body::River);
                 if channel(g) {
+                    // Walls on both sides, across the water one way or the other.
+                    let wall = |o: GeoSample| if o.submerged() { 0 } else { o.height - g.water };
+                    let across = [(3, 0), (0, 3)].map(|(di, dj)| wall(at(i + di, j + dj)).min(wall(at(i - di, j - dj)))).into_iter().max().unwrap_or(0);
+                    if across >= 6 {
+                        consider(WaterSight::Gorge, across as f32);
+                    }
                     // Arms of water crossing a ring around the point.
                     let ring: Vec<bool> = (0..32)
                         .map(|k| {

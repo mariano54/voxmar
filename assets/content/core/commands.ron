@@ -82,8 +82,8 @@
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (
             name: "locate",
-            usage: "biome NAME [RADIUS]",
-            help: "Finds the nearest place of a biome, within 4000 blocks unless you say (up to 10000).",
+            usage: "biome NAME [RADIUS] | gorge [RADIUS]",
+            help: "Finds the nearest place of a biome, or of a river running deep in a gorge, within 4000 blocks unless you say (up to 10000).",
             permission: Admin,
             run: Locate,
         ),

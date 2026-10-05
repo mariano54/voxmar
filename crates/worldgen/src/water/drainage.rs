@@ -165,14 +165,14 @@ pub trait Ground: Sync {
 }
 
 /// Reads cells of any tile, keeping the tiles it has used.
-struct Reader<'a> {
+pub(super) struct Reader<'a> {
     size: i32,
     ground: &'a dyn Ground,
     tiles: FxHashMap<IVec2, Arc<Tile>>,
 }
 
 impl<'a> Reader<'a> {
-    fn new(tier: &Tier, ground: &'a dyn Ground) -> Self {
+    pub(super) fn new(tier: &Tier, ground: &'a dyn Ground) -> Self {
         Self { size: tier.tile, ground, tiles: FxHashMap::default() }
     }
 
@@ -182,7 +182,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Height and covering water at a cell.
-    fn at(&mut self, cell: IVec2) -> (f32, i32) {
+    pub(super) fn at(&mut self, cell: IVec2) -> (f32, i32) {
         let size = self.size;
         let local = cell.rem_euclid(IVec2::splat(size));
         let i = (local.y * size + local.x) as usize;

@@ -674,6 +674,39 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
 5. **Gorges and caves.** Slot gorges from rivers, random-walk ravines retired, cave
    entrances and aquifers on the density. *Done when:* gorge captures look like the
    reference creek gorge (`0740_rocky-gorge-creek.png`), caves stay contained.
+
+   *As built:* each river span records how far the ground at its two cells stands over
+   its water beyond the tier's usual incision (`Span::cut`): next to nothing along most
+   rivers, several blocks where a breach cuts through a rim. From 3 to 8 blocks of that,
+   the valley closes into a slot gorge (`water::channel::GORGE`): a ledge a block and a half
+   wide beside the water, then walls climbing 3.3 blocks per block out, wavering by under a
+   block, which the slope rules turn to the province's bare rock. Along most rivers nothing
+   changes (the profile is the same to the bit where there is no cut). On seeds 7 and 1,
+   one trunk span in five to eight and one stream span in sixteen cuts at least 3 blocks
+   deep; in the 16 km² around the origin, 15 trunk spans (about a kilometre of canyon) and
+   about 30 stream spans run more than half in a gorge. Trunk gorges are canyons twenty to
+   thirty blocks deep; creek gorges are the small kind in the reference, five to ten. `/locate gorge` finds the nearest (`Overworld::locate_gorge`,
+   which reads the rivers region by region, nearest first), `Overworld::water_sights` lists
+   one among the other sights (`WaterSight::Gorge`), and the landing gate goes to the
+   nearest and checks the server's world has water there between walls six blocks high.
+
+   The random-walk ravines are buried, all of them: a lens-shaped canyon under the lowest
+   ground along its path, never open to the sky. Caves already read the density's top as
+   the surface (a column's `height` is its highest solid block since step 3), so entrances
+   and the water tables needed no change.
+
+   Two notes from step 4 went in too. Arches are short, thick spans (10 to 25 blocks long,
+   6 to 10 thick, steep-sided) with a window through the middle
+   of the higher ones, a lintel of a third of their height and legs at both ends, and no
+   window under a tower an arch runs into. The spawn search checks that the ground is
+   level from the neighbours' heights before it samples a site.
+
+   Two tests that picked their worlds by seed now try a few seeds each, since a new
+   generator version reseeds every world: `decorations_rest_on_the_ground` takes each
+   biome on the first seed that has it near the origin, and `deserts_never_border_snow`
+   asks for a desert in one of its three worlds rather than in seed 3's. Cost: +0.3%
+   instructions for generation and +0.15% for the first column, against main d9e9779 on
+   the same world.
 6. **Comparison and tuning pass.** Captures beside Tectonic and Terralith screenshots and
    the hiking frames, before and after, for mountains, coasts, plains, plateaus, valleys,
    gorges and every biome; a performance pass.
