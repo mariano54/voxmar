@@ -160,6 +160,18 @@ pub struct Channels {
     lakes: Vec<LakeCell>,
 }
 
+impl Channels {
+    /// Places along the region's rivers that run deep in a slot gorge: a point near the
+    /// deeper end of each such edge, the height of its top water block, and how much of a
+    /// gorge it is there, 0 ..= 1.
+    pub fn gorges(&self) -> impl Iterator<Item = (Vec2, i32, f32)> + '_ {
+        self.edges.iter().filter(|e| !e.tunnel).map(|e| {
+            let t = if e.gorge[1] > e.gorge[0] { 0.75 } else { 0.25 };
+            (e.points[(t * SUB as f32) as usize], top_block(e.surface(t)), e.gorge(t))
+        })
+    }
+}
+
 impl Weigh for Channels {
     fn bytes(&self) -> usize {
         self.edges.capacity() * std::mem::size_of::<Edge>() + (self.starts.capacity() + self.items.capacity()) * 4 + self.lakes.capacity() * std::mem::size_of::<LakeCell>()

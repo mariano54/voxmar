@@ -48,6 +48,14 @@ impl WaterSight {
 }
 
 impl Overworld {
+    /// The nearest place within `radius` blocks of `centre` where a creek or river runs
+    /// deep in a slot gorge: the column, and the height of its top water block. Much
+    /// quicker over a wide area than `water_sights`, as it reads the rivers rather than the
+    /// ground.
+    pub fn locate_gorge(&self, centre: IVec2, radius: i32) -> Option<IVec3> {
+        self.rivers.locate_gorge(self.stages(), centre, radius)
+    }
+
     /// The best place of each kind within `range` blocks of `centre` (searched every two
     /// blocks), each as the column and the height of its water, preferring nearer ones.
     /// Kinds none of which lie within range are left out. Costs about a second for a

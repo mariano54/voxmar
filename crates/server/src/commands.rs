@@ -426,15 +426,17 @@ impl Server {
         )
     }
 
-    /// `/locate biome NAME [RADIUS]`: the nearest place of a biome.
+    /// `/locate biome NAME [RADIUS]`: the nearest place of a biome. `/locate gorge [RADIUS]`:
+    /// the nearest river running deep in a slot gorge.
     fn locate(&self, id: Source, args: &[String]) -> Reply {
+        let radius = |radius: &String| -> Result<i32, String> {
+            radius.parse().ok().filter(|r| (1..=MAX_LOCATE_RADIUS).contains(r)).ok_or_else(|| format!("The radius must be a number of blocks up to {MAX_LOCATE_RADIUS}."))
+        };
         let (name, radius) = match args {
+            [kind] if kind == "gorge" => return self.locate_gorge(id, LOCATE_RADIUS),
+            [kind, r] if kind == "gorge" => return self.locate_gorge(id, radius(r)?),
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
-            [kind, name, radius] if kind == "biome" => {
-                let radius: i32 = radius.parse().ok().filter(|r| (1..=MAX_LOCATE_RADIUS).contains(r))
-                    .ok_or_else(|| format!("The radius must be a number of blocks up to {MAX_LOCATE_RADIUS}."))?;
-                (name, radius)
-            }
+            [kind, name, r] if kind == "biome" => (name, radius(r)?),
             _ => return Err("Locate what?".into()),
         };
         if self.overworld.biomes().id(name).or_else(|| self.overworld.biomes().id(&format!("base:{name}"))).is_none() {
@@ -449,6 +451,19 @@ impl Server {
                 Ok(format!("The nearest {name} is at {} {}, {:.0} blocks away{way}. /tp {} {} goes there.", at.x, at.y, offset.length(), at.x, at.y))
             }
             None => Err(format!("No {name} within {radius} blocks.")),
+        }
+    }
+
+    fn locate_gorge(&self, id: Source, radius: i32) -> Reply {
+        let position = self.position_of(id);
+        let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
+        match self.overworld.locate_gorge(from, radius) {
+            Some(at) => {
+                let offset = (at.xz() - from).as_vec2();
+                let way = if offset.length() < 1.0 { String::new() } else { format!(" to the {}", compass(offset)) };
+                Ok(format!("The nearest gorge is at {} {}, its water at {}, {:.0} blocks away{way}. /tp {} {} {} goes there.", at.x, at.z, at.y, offset.length(), at.x, at.y + 1, at.z))
+            }
+            None => Err(format!("No gorge within {radius} blocks.")),
         }
     }
 
