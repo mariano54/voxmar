@@ -1,5 +1,7 @@
 //! The cover shown while joining a world, until the ground under the player has arrived
-//! and been meshed.
+//! and been meshed. Behind it plays a pre-rendered flight over a world, softened and tinted
+//! blue: `assets/ui/loading.png`, a sheet of frames (see `REEL`), crossfaded so a few
+//! frames a second move smoothly. Without the sheet the cover is plain.
 
 use bevy::prelude::*;
 use voxmar_engine::coords::ColumnPos;
@@ -15,7 +17,7 @@ pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(Screen::InGame), spawn).add_systems(Update, update.run_if(in_state(Screen::InGame)));
+        app.add_systems(OnEnter(Screen::InGame), spawn).add_systems(Update, (update, play_reel).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -29,11 +31,26 @@ struct Detail;
 #[derive(Component)]
 struct Pulse;
 
+/// The loading reel's sheet: frames left to right, then top to bottom, each this many
+/// pixels, shown this many a second.
+const REEL: &str = "ui/loading.png";
+const REEL_COLUMNS: u32 = 6;
+const REEL_FRAMES: u32 = 36;
+const REEL_FRAME: Vec2 = Vec2::new(320.0, 180.0);
+const REEL_FPS: f32 = 6.0;
+
+/// A layer of the reel: the frame it shows, or the next one fading in over it.
+#[derive(Component)]
+struct ReelLayer {
+    next: bool,
+}
+
 const BAR: f32 = 110.0 * PX;
 const PULSE: f32 = 30.0 * PX;
 
-fn spawn(mut commands: Commands, font: Res<UiFont>) {
+fn spawn(mut commands: Commands, font: Res<UiFont>, assets: Res<AssetServer>) {
     let font = &font.0;
+    let reel: Handle<Image> = if voxmar_server::assets_dir().join(REEL).is_file() { assets.load(REEL) } else { Handle::default() };
     let root = Node {
         position_type: PositionType::Absolute,
         width: Val::Percent(100.0),
@@ -47,6 +64,13 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     // Above the HUD and the settings panel, which may open meanwhile.
     let cover = (Cover, DespawnOnExit(Screen::InGame), root, BackgroundColor(Color::srgb(0.05, 0.055, 0.085)), GlobalZIndex(2));
     commands.spawn(cover).with_children(|cover| {
+        let full = || Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+        for next in [false, true] {
+            let image = ImageNode { image: reel.clone(), image_mode: NodeImageMode::Stretch, rect: Some(frame_rect(0)), ..default() };
+            cover.spawn((full(), image, ReelLayer { next }));
+        }
+        // A wash of night blue over the reel keeps the text readable.
+        cover.spawn((full(), BackgroundColor(Color::srgba(0.03, 0.05, 0.12, 0.45))));
         cover.spawn((Title, shadowed(font, "Joining", LARGE, GOLD)));
         cover.spawn((Detail, shadowed(font, "", BODY, MUTED)));
         let track = Node {
@@ -59,6 +83,25 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         let pulse = Node { width: Val::Px(PULSE), height: Val::Percent(100.0), ..default() };
         cover.spawn((track, Piece::Well.image())).with_child((Pulse, pulse, Piece::Bar.image()));
     });
+}
+
+/// Where frame `index` sits in the reel's sheet.
+fn frame_rect(index: u32) -> Rect {
+    let (column, row) = (index % REEL_COLUMNS, index / REEL_COLUMNS);
+    let min = Vec2::new(column as f32, row as f32) * REEL_FRAME;
+    Rect::from_corners(min, min + REEL_FRAME)
+}
+
+/// Plays the reel: each layer pair shows a frame and fades the next in over it.
+fn play_reel(time: Res<Time>, mut layers: Query<(&ReelLayer, &mut ImageNode)>) {
+    let at = time.elapsed_secs() * REEL_FPS;
+    let frame = at as u32 % REEL_FRAMES;
+    let fade = at.fract();
+    for (layer, mut image) in &mut layers {
+        let index = if layer.next { (frame + 1) % REEL_FRAMES } else { frame };
+        image.rect = Some(frame_rect(index));
+        image.color = Color::WHITE.with_alpha(if layer.next { fade } else { 1.0 });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
