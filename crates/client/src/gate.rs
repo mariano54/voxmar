@@ -834,26 +834,28 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     match gate.phase {
         0 => {
-            // Face open ground: air four blocks out with ground under it.
-            let feet = gate.feet;
-            let client = world.resource::<ClientWorld>();
-            let open = |dir: IVec3| {
-                let at = feet + dir * 4;
-                client.block(at).is_some_and(|b| b.is_air()) && client.block(at - IVec3::Y).is_some_and(|b| client.registry.info(b).solid)
-            };
-            let (yaw, _) = [(0.0, IVec3::NEG_Z), (180.0, IVec3::Z), (-90.0, IVec3::X), (90.0, IVec3::NEG_X)]
-                .into_iter()
-                .find(|&(_, dir)| open(dir))
-                .unwrap_or((0.0, IVec3::NEG_Z));
-            look(world, yaw, -20.0);
-            gate.count_before = item_count(world, CREATURE_DROP);
+            // A clear pad of its own beside the test ground: stone underfoot, air above, so
+            // nothing the earlier steps built stands between the player and the creatures.
+            let pad = gate.feet + IVec3::new(0, 0, 12);
+            let (x, y, z) = (pad.x, pad.y, pad.z);
             let net = world.resource::<Net>();
+            net.command(&format!("fill {} {} {} {} {} {} stone", x - 4, y - 1, z - 4, x + 4, y - 1, z + 4));
+            net.command(&format!("fill {} {y} {} {} {} {} air", x - 4, z - 4, x + 4, y + 3, z + 4));
+            net.command(&format!("tp {} {y} {}", x as f32 + 0.5, z as f32 + 3.5));
             net.command("time set noon");
-            net.command(&format!("summon {CREATURE}"));
-            net.command("summon mouflon 2");
             gate.advance(now);
         }
-        1 => {
+        1 if in_phase > 1.0 => {
+            // Facing the pad's middle, which is where /summon puts them (four blocks ahead).
+            look(world, 0.0, -25.0);
+            gate.count_before = item_count(world, CREATURE_DROP);
+            let net = world.resource::<Net>();
+            net.command(&format!("summon {CREATURE}"));
+            net.command("summon mouflon 2");
+            net.command("summon rabbit");
+            gate.advance(now);
+        }
+        2 => {
             let Some(view) = snail() else {
                 if in_phase > 10.0 {
                     gate.check("creatures", Err("a summoned creature never reached the client".into()));
@@ -871,7 +873,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
-        2 => {
+        3 => {
             // Strike it as a player would, a click every few frames, until it dies.
             match snail() {
                 Some(view) if in_phase < 20.0 => {
@@ -884,7 +886,9 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Some(_) => {
                     mouse(world, MouseButton::Left, false);
                     key(world, KeyCode::KeyW, false);
-                    gate.check("creature struck", Err("twenty seconds of blows did not kill it".into()));
+                    let aimed = world.resource::<crate::interact::Target>().creature.is_some();
+                    let distance = snail().map_or(0.0, |v| v.position.distance(world.resource::<LocalPlayer>().eye()));
+                    gate.check("creature struck", Err(format!("twenty seconds of blows did not kill it (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
                     gate.next(Step::Gorge, now);
                 }
                 None => {
@@ -897,7 +901,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
             }
         }
-        3 => {
+        4 => {
             if in_phase > 0.8 {
                 key(world, KeyCode::KeyW, false);
             }
