@@ -283,7 +283,8 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
-- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`) join the places worth walking
+- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`; laid only near settlements,
+  of which there are none yet, so `laid: NearSettlements` leaves them all out) join the places worth walking
   to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
   of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
   are joined into a sparse network (a Gabriel graph, with no two trails setting off side by
@@ -325,7 +326,7 @@ variants take shares of their parent along a field 8 km across; ecotones sit on 
 fantastical biomes claim cells where aether (12 km across) runs high. The scales of these
 fields are data (`scales` in `climate.ron`). Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
-lines such as game trails; shared sets in `surfaces.ron` break every soil slope up into
+lines such as game trails, which no biome uses for now; shared sets in `surfaces.ron` break every soil slope up into
 coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
 rock follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
 birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)

@@ -42,6 +42,9 @@ pub use crate::content::Ground;
 
 /// Chance that a tree grows on a 4×4 candidate cell where the forest is densest.
 pub const TREE_CHANCE: f32 = 0.6;
+/// The exponent a biome's `cover` is eased by: a meadow's 0.95 stays about 0.92, a
+/// forest's 0.75 becomes about 0.63.
+const COVER_EASE: f32 = 1.6;
 /// The share of a stand's trees of its own kind; the others grow among them.
 const STAND_PURITY: f32 = 0.9;
 /// Where the clearing field (evenly spread over 0 ..= 1) starts to open a clearing, and
@@ -541,7 +544,9 @@ impl Ecology {
             if total > 0.0 {
                 let meadow = 0.7 + 0.3 * smoothstep(-0.5, 0.4, self.meadows.get_noise_2d(x as f32, z as f32));
                 let lush = (meadow + 0.3 * site.clearing).min(1.0);
-                if take(flora.cover * site.vegetation * lush * thriving * fertile) {
+                // The biome's cover, eased so the lushest meadows keep theirs while
+                // ordinary ground is a little thinner.
+                if take(flora.cover.powf(COVER_EASE) * site.vegetation * lush * thriving * fertile) {
                     return Some(self.place(choose(&flora.carpet, total, second), third, snow));
                 }
             }
