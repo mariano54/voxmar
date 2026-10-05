@@ -19,9 +19,7 @@
 // Hanging growth (glow berries, hanging roots, hanging dripstone) grows from ceilings; other
 // plants from floors. Glowing things (lichen, berries, crystals, magma, gloomvein) are what
 // light caves, so most cave biomes have some, but rarely and in small clusters: caves read
-// dark, with the odd pool of light, never lit wall to wall. Gatherable cave flora (pale
-// caps, rimecaps, ember caps, cavern moss, paleroot, lumenwort, echo bloom, prism lily)
-// grows in loose patches, each in the caves that suit it, rarer the stranger it is.
+// dark, with the odd pool of light, never lit wall to wall.
 (
     biomes: [
         (
@@ -42,8 +40,6 @@
                 cliff: Stones,
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.01, block: Block("pale_cap"), when: [Patch((name: "pale_caps", scale: 10.0), 0.4)]),
-                (on: Floor, chance: 0.006, block: Block("lumenwort"), when: [Patch((name: "lumenwort", scale: 16.0), 0.55)]),
                 (on: Ceiling, chance: 0.006, block: Stones, length: (1, 2)),
                 (on: Floor, chance: 0.004, block: Mix([Name("brown_mushroom", 2.0), Name("red_mushroom", 1.0)])),
                 (on: Floor, chance: 0.006, block: Block("glow_lichen"), when: [Patch((name: "lichen", scale: 30.0), 0.3)]),
@@ -66,7 +62,6 @@
                 cliff: Block("dripstone_block"),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.008, block: Block("lumenwort"), when: [Patch((name: "lumenwort", scale: 16.0), 0.5)]),
                 (on: Ceiling, chance: 0.1, block: Block("dripstone_block"), length: (1, 6), tip: (Block("hanging_dripstone"), 1.0)),
                 (on: Ceiling, chance: 0.08, block: Block("hanging_dripstone")),
                 (on: Floor, chance: 0.06, block: Block("dripstone_block"), length: (1, 4), tip: (Block("pointed_dripstone"), 1.0)),
@@ -88,9 +83,6 @@
                 cliff: Mix([Name("moss_block", 3.0), Name("rooted_dirt", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.12, on_tags: ["soil"], block: Block("cavern_moss"), when: [Patch((name: "cavern_moss", scale: 9.0), 0.2)]),
-                (on: Floor, chance: 0.06, on_tags: ["soil"], block: Block("paleroot"), when: [Patch((name: "paleroots", scale: 8.0), 0.4)]),
-                (on: Floor, chance: 0.004, on_tags: ["soil"], block: Block("lumenwort")),
                 (on: Floor, chance: 0.25, on_tags: ["soil"], block: Block("moss_carpet")),
                 (on: Floor, chance: 0.2, on_tags: ["soil"], block: Block("short_grass")),
                 (on: Floor, chance: 0.08, on_tags: ["soil"], block: Block("fern")),
@@ -114,8 +106,6 @@
                 cliff: Mix([Name("rooted_dirt", 2.0), Name("brown_mushroom_block", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.08, block: Block("pale_cap"), when: [Patch((name: "pale_caps", scale: 8.0), 0.25)]),
-                (on: Floor, chance: 0.03, on_tags: ["soil"], block: Block("paleroot"), when: [Patch((name: "paleroots", scale: 8.0), 0.4)]),
                 (on: Floor, chance: 0.14, block: Block("brown_mushroom")),
                 (on: Floor, chance: 0.07, block: Block("red_mushroom")),
                 // Toadstools: a stem and a cap.
@@ -138,7 +128,6 @@
                 cliff: Block("packed_ice"),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.04, block: Block("rimecap"), when: [Patch((name: "rimecaps", scale: 9.0), 0.4)]),
                 (on: Ceiling, chance: 0.09, block: Block("ice"), length: (1, 4)),
                 (on: Floor, chance: 0.025, block: Block("packed_ice"), length: (1, 3)),
                 (on: Floor, chance: 0.004, block: Block("blue_ice"), length: (1, 2)),
@@ -160,7 +149,6 @@
                 cliff: Mix([Name("basalt", 4.0), Name("magma_block", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.03, block: Block("ember_cap"), when: [Patch((name: "ember_caps", scale: 9.0), 0.4)]),
                 (on: Ceiling, chance: 0.04, block: Block("basalt"), length: (1, 3), tip: (Block("magma_block"), 0.3)),
                 (on: Floor, chance: 0.03, block: Block("basalt"), length: (1, 3)),
             ],
@@ -206,7 +194,6 @@
                 cliff: Mix([Name("calcite", 2.0), Name("crystal_block", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.01, block: Block("prism_lily"), when: [Patch((name: "prism_lilies", scale: 18.0), 0.7)]),
                 (on: Floor, chance: 0.08, block: Block("crystal_cluster"), when: [Patch((name: "crystal_nests", scale: 7.0), 0.45)]),
                 (on: Floor, chance: 0.02, block: Block("crystal_block"), length: (1, 4), tip: (Block("crystal_cluster"), 1.0), when: [Patch((name: "crystal_nests", scale: 7.0), 0.45)]),
                 (on: Ceiling, chance: 0.02, block: Block("crystal_block"), length: (1, 3)),
@@ -229,10 +216,7 @@
                 underwater: (top: Mix([Name("sand", 2.0), Name("gravel", 1.0)]), depth: 2),
                 cliff: Mix([Name("mossy_cobblestone", 1.0), Name("stone", 2.0)]),
             ),
-            cave_decoration: [
-                (on: Ceiling, chance: 0.02, block: Block("hanging_roots")),
-                (on: Floor, chance: 0.05, block: Block("cavern_moss"), when: [Patch((name: "cavern_moss", scale: 9.0), 0.25)]),
-            ],
+            cave_decoration: [(on: Ceiling, chance: 0.02, block: Block("hanging_roots"))],
         ),
         (
             // The deepest caves: dark slate, still, lit only by threads of gloomvein.
@@ -249,7 +233,6 @@
                 cliff: Block("deepslate"),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.02, block: Block("echo_bloom"), when: [Patch((name: "echo_blooms", scale: 14.0), 0.6)]),
                 (on: Floor, chance: 0.02, block: Block("deepslate"), length: (1, 2)),
                 (on: Ceiling, chance: 0.01, block: Block("gloomvein")),
             ],
@@ -269,8 +252,6 @@
                 cliff: Block("rooted_dirt"),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.02, on_tags: ["soil"], block: Block("lumenwort"), when: [Patch((name: "lumenwort", scale: 10.0), 0.4)]),
-                (on: Floor, chance: 0.05, on_tags: ["soil"], block: Block("paleroot"), when: [Patch((name: "paleroots", scale: 8.0), 0.35)]),
                 (on: Ceiling, chance: 0.16, block: Block("hanging_roots"), length: (2, 7), tip: (Block("glow_berries"), 0.12)),
                 (on: Floor, chance: 0.12, on_tags: ["soil"], block: Block("glow_lichen"), when: [Patch((name: "lichen", scale: 12.0), 0.5)]),
                 (on: Floor, chance: 0.15, on_tags: ["soil"], block: Block("fern")),
@@ -291,7 +272,6 @@
                 cliff: Block("marble"),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.01, block: Block("prism_lily"), when: [Patch((name: "prism_lilies", scale: 12.0), 0.4)]),
                 (on: Ceiling, chance: 0.006, block: Block("sea_lantern")),
                 (on: Ceiling, chance: 0.02, block: Block("crystal_block"), length: (1, 3)),
                 (on: Floor, chance: 0.04, block: Block("crystal_cluster")),
