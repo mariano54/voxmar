@@ -337,12 +337,15 @@ pub struct Cells {
     pub round: f32,
     /// How far boundaries wander, in texels, so cells are not straight-edged polygons.
     pub warp: f32,
+    /// Stretches every cell across and down: (1, 3) makes tall strips (bark plates),
+    /// (3, 1) wide ones.
+    pub stretch: (f32, f32),
     pub seed: u32,
 }
 
 impl Default for Cells {
     fn default() -> Self {
-        Self { count: (3, 3), jitter: 0.8, value: 0.3, edge: -0.4, width: 1.0, bevel: 0.3, round: 0.0, warp: 0.0, seed: 0 }
+        Self { count: (3, 3), jitter: 0.8, value: 0.3, edge: -0.4, width: 1.0, bevel: 0.3, round: 0.0, warp: 0.0, stretch: (1.0, 1.0), seed: 0 }
     }
 }
 

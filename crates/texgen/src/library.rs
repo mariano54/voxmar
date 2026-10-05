@@ -19,6 +19,21 @@ pub struct Library {
 }
 
 impl Library {
+    /// Like [`Self::from_books`], but a book that cannot be read is left out (its error
+    /// returned) instead of failing them all, so one mistake in a pack, or a book written
+    /// for a newer texgen, costs only that book's textures.
+    pub fn from_books_lenient<'a>(books: impl IntoIterator<Item = (&'a str, &'a str)>) -> (Self, Vec<Error>) {
+        let (good, errors): (Vec<_>, Vec<_>) = books
+            .into_iter()
+            .map(|(origin, source)| options().from_str::<Book>(source).map(|_| (origin, source)).map_err(|e| Error(format!("{origin}: {e}"))))
+            .partition(Result::is_ok);
+        let errors: Vec<Error> = errors.into_iter().map(|e| e.unwrap_err()).collect();
+        match Self::from_books(good.into_iter().map(Result::unwrap)) {
+            Ok(library) => (library, errors),
+            Err(e) => (Library::default(), errors.into_iter().chain([e]).collect()),
+        }
+    }
+
     /// Merges recipe books, given as (name for errors, RON source). Texture and palette
     /// names must be unique across books; family textures give way to explicit ones.
     pub fn from_books<'a>(books: impl IntoIterator<Item = (&'a str, &'a str)>) -> Result<Self, Error> {
@@ -310,5 +325,10 @@ mod tests {
         assert!(Library::from_books([("a", "(textures: {\"x\": (base: \"x\")})")]).unwrap().render("x").unwrap().is_err());
         assert!(Library::from_books([("a", "(textures: {\"x\": (bogus: 1)})")]).is_err());
         assert!(Library::from_books([("a", "(textures: {\"x\": ()})"), ("b", "(textures: {\"x\": ()})")]).is_err());
+        // Leniently, a broken book costs only itself.
+        let (library, errors) = Library::from_books_lenient([("good", "(textures: {\"x\": ()})"), ("bad", "(textures: {\"y\": (bogus: 1)})")]);
+        assert!(library.contains("x") && !library.contains("y"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].0.starts_with("bad:"));
     }
 }
