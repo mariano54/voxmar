@@ -230,6 +230,29 @@
         (name: "zinnia", block: "zinnia", spread: Drifts, habitat: Open, comfort: (temperature: (18.0, 38.0), moisture: (0.20, 1.20))),
         (name: "bellflower", block: "bellflower", spread: Drifts, habitat: Open, comfort: (temperature: (-4.0, 18.0), moisture: (0.50, 1.80))),
         (name: "saxifrage", block: "saxifrage", spread: Drifts, habitat: Open, ground: [Soil, Snow], comfort: (temperature: (-12.0, 10.0), moisture: (0.30, 1.80))),
+
+        // Supernatural plants: tagged `wonder`, so biomes that list no wonders of their own
+        // take them where the climate suits, more often the higher the aether.
+        (name: "starwheat", block: "starwheat", spread: Drifts, habitat: Open, comfort: (temperature: (4.0, 24.0), moisture: (0.30, 1.40)), properties: (nutrition: 2.0)),
+        (name: "moonmelon", block: "moonmelon", spread: Alone, habitat: Open, comfort: (temperature: (4.0, 24.0), moisture: (0.50, 1.60)), properties: (nutrition: 4.0)),
+        (name: "ember_pepper", block: "ember_pepper", spread: Drifts, habitat: Open, ground: [Sand, Soil], comfort: (temperature: (24.0, 50.0), moisture: (0.00, 0.70)), properties: (nutrition: 1.0)),
+        (name: "frost_turnip", block: "frost_turnip", spread: Drifts, habitat: Open, ground: [Soil, Snow], comfort: (temperature: (-24.0, 4.0), moisture: (0.30, 2.00)), properties: (nutrition: 3.0)),
+        (name: "dreamberry_bush", block: "dreamberry_bush", spread: Alone, habitat: Shade, comfort: (temperature: (2.0, 22.0), moisture: (0.80, 2.50)), properties: (nutrition: 2.0)),
+        (name: "whisper_oats", block: "whisper_oats", spread: Drifts, habitat: Understory, comfort: (temperature: (0.0, 24.0), moisture: (0.80, 8.00)), properties: (nutrition: 1.0)),
+        (name: "sky_lotus", block: "sky_lotus", spread: Alone, habitat: Water, comfort: (temperature: (-6.0, 12.0))),
+        (name: "bloodroot", block: "bloodroot", spread: Drifts, habitat: Shade, comfort: (temperature: (0.0, 20.0), moisture: (0.80, 2.50)), properties: (nutrition: 1.0)),
+        (name: "sunpetal", block: "sunpetal", spread: Drifts, habitat: Open, comfort: (temperature: (14.0, 36.0), moisture: (0.20, 1.40))),
+        (name: "crystal_moss", block: "crystal_moss", spread: Drifts, habitat: Open, ground: [Soil, Snow], comfort: (temperature: (-30.0, 6.0))),
+        (name: "aether_truffle", block: "aether_truffle", spread: Alone, habitat: Shade, comfort: (temperature: (4.0, 22.0), moisture: (0.60, 2.20)), properties: (nutrition: 5.0)),
+        (name: "ghostcap", block: "ghostcap", spread: Alone, habitat: Shade, comfort: (temperature: (-6.0, 16.0), moisture: (0.50, 2.50))),
+        (name: "thunderbloom", block: "thunderbloom", spread: Alone, habitat: Open, comfort: (temperature: (-10.0, 12.0), moisture: (0.30, 2.00))),
+        (name: "tidekelp", block: "tidekelp", spread: Drifts, habitat: Shore, ground: [Sand], comfort: (temperature: (2.0, 32.0)), properties: (nutrition: 1.0)),
+        (name: "wyrmroot", block: "wyrmroot", spread: Alone, habitat: Open, ground: [Sand], comfort: (temperature: (20.0, 50.0), moisture: (0.00, 0.40))),
+        (name: "hearthgrain", block: "hearthgrain", spread: Drifts, habitat: Open, comfort: (temperature: (-8.0, 14.0), moisture: (0.20, 1.00)), properties: (nutrition: 2.0)),
+        (name: "honeydew_lily", block: "honeydew_lily", spread: Drifts, habitat: Open, comfort: (temperature: (6.0, 28.0), moisture: (0.40, 1.60))),
+        (name: "lantern_gourd", block: "lantern_gourd", spread: Alone, habitat: Water, comfort: (temperature: (14.0, 36.0), moisture: (1.00, 8.00)), properties: (nutrition: 2.0)),
+        (name: "silvermint", block: "silvermint", spread: Drifts, habitat: Anywhere, comfort: (temperature: (-6.0, 14.0), moisture: (0.60, 2.20))),
+        (name: "cinder_moss", block: "cinder_moss", spread: Drifts, habitat: Open, ground: [Sand, Soil], comfort: (temperature: (24.0, 50.0), moisture: (0.00, 0.60))),
     ],
 )
 

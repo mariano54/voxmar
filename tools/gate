@@ -152,8 +152,19 @@ for line in sys.stdin:
         print(os.path.dirname(m["manifest_path"]) + "\t" + m["executable"])' >"$out/tests.list" ||
     fail "building the tests ($out/tests-build.txt)"
 fi
-GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
+# The session keeps its settings in a directory of its own, and Mariano's own must not
+# change while it runs: a gate run once saved its settings over his.
+his_settings=$(if [[ $(uname -s) == Darwin ]]; then echo ~/Library/Application\ Support/voxmar/settings.ron; else echo "${XDG_CONFIG_HOME:-$HOME/.config}/voxmar/settings.ron"; fi)
+fingerprint() { [[ -e $his_settings ]] && shasum "$his_settings" | cut -d' ' -f1 || echo none; }
+his_before=$(fingerprint)
+mkdir -p "$out/config"
+VOXMAR_CONFIG=$out/config GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+if [[ $(fingerprint) != "$his_before" ]]; then
+  # His own game saves its settings too; only a change made without it counts.
+  ps -A -o args= | awk '{ n = split($1, p, "/") } p[n] == "voxmar" && !/--capture|--gate/ { found = 1 } END { exit !found }' ||
+    fail "Mariano's settings ($his_settings) changed during the run, and his game was not running"
+fi
 tests_failed=0
 for f in "$out"/test-*.status; do
   [[ -e $f ]] || continue
@@ -169,7 +180,7 @@ status=$(cat "$out/game.status" 2>/dev/null || echo 0)
 log=
 if ((session)); then
   log=$(sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt")
-  grep -E 'gate: FAILED' <<<"$log" | sed -E 's/.*gate: //'
+  grep -E 'gate: (FAILED|KNOWN|SKIPPED)' <<<"$log" | sed -E 's/.*gate: //'
   problems=$(grep -E ' ERROR |panicked' <<<"$log")
   warnings=$(grep ' WARN ' <<<"$log")
   for allowed in "${ALLOWED_WARNINGS[@]}"; do

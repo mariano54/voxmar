@@ -1109,7 +1109,7 @@
                 trees: [Name("birch", 1.0), Name("shrub", 0.5), Name("silverwood", 4.0)],
                 cover: 0.7, flowers: 0.3,
                 palette: (canopy: (150, 200, 220), flowers: (215, 225, 240)),
-                plants: [Tag("meadow", 1.0), Name("azure_bluet", 3.0), Name("oxeye_daisy", 2.0), Name("lily_of_the_valley", 2.0), Name("moonbloom", 20.0)],
+                plants: [Tag("meadow", 1.0), Name("azure_bluet", 3.0), Name("oxeye_daisy", 2.0), Name("lily_of_the_valley", 2.0), Name("moonbloom", 20.0), Name("moonmelon", 0.15)],
                 wonders: [Name("starlily", 1.0), Name("heartbloom", 1.0)],
             ),
             surface: (
@@ -1139,7 +1139,7 @@
                 trees: [Name("silverwood", 14.0), Name("birch", 0.6), Name("spruce", 0.4)],
                 cover: 0.7, flowers: 0.05,
                 palette: (canopy: (150, 200, 220)),
-                plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0)],
+                plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0), Name("silvermint", 0.5)],
                 wonders: [Name("starlily", 1.0), Name("crystal_bloom", 1.0)],
             ),
             surface: (
@@ -1192,7 +1192,7 @@
                 trees: [Name("emberwood", 14.0), Name("dead_tree", 0.3)],
                 cover: 0.15, flowers: 0.02,
                 palette: (canopy: (230, 100, 30)),
-                plants: [Name("emberbloom", 8.0), Name("dead_bush", 0.6), Name("bunchgrass", 0.5)],
+                plants: [Name("emberbloom", 8.0), Name("dead_bush", 0.6), Name("bunchgrass", 0.5), Name("ember_pepper", 0.4), Name("cinder_moss", 0.8)],
                 wonders: [Name("sunspire", 1.0)],
             ),
             surface: (
@@ -1218,9 +1218,9 @@
             flora: (
                 forest: 0.03,
                 trees: [Name("silverwood", 10.0)],
-                cover: 0.2, flowers: 0.0,
+                cover: 0.2, flowers: 0.03,
                 palette: (canopy: (150, 200, 220)),
-                plants: [Name("crystal_bloom", 60.0), Name("frostpetal", 15.0)],
+                plants: [Name("crystal_bloom", 60.0), Name("frostpetal", 15.0), Name("crystal_moss", 1.0)],
                 decorations: [Name("ice_crystals", 1.0), Tag("tundra", 0.3)],
             ),
             surface: (
@@ -1247,7 +1247,7 @@
                 forest: 0.04,
                 trees: [Name("oak", 1.0), Name("shrub", 0.5)],
                 cover: 0.8, flowers: 0.25,
-                plants: [Name("short_grass", 2.0), Name("wild_wheat", 1.0), Name("sunspire", 300.0), Name("starlily", 200.0), Name("marigold", 1.0), Name("goldenrod", 1.0)],
+                plants: [Name("short_grass", 2.0), Name("wild_wheat", 1.0), Name("sunspire", 300.0), Name("starlily", 200.0), Name("marigold", 1.0), Name("goldenrod", 1.0), Name("sunpetal", 0.4)],
                 wonders: [Name("heartbloom", 1.0)],
             ),
             surface: (
