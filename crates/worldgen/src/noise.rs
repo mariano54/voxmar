@@ -27,6 +27,8 @@
 use fastnoise_lite::{DomainWarpType, FastNoiseLite, FractalType, NoiseType, RotationType3D};
 
 /// Whether this module evaluates `noise` itself rather than leaving it to FastNoiseLite.
+// Only the NEON paths and the tests call it on other processors.
+#[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
 pub fn supported_3d(noise: &FastNoiseLite) -> bool {
     cfg!(target_arch = "aarch64")
         && noise.noise_type == NoiseType::OpenSimplex2
@@ -39,6 +41,8 @@ pub fn supported_3d(noise: &FastNoiseLite) -> bool {
 /// Whether this module evaluates the 2D `noise` itself: fractal OpenSimplex2 of three
 /// octaves or more (four side by side cost about as much as two one after the other, so
 /// fewer gain nothing).
+// Only the NEON paths and the tests call it on other processors.
+#[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
 pub fn supported_2d(noise: &FastNoiseLite) -> bool {
     cfg!(target_arch = "aarch64")
         && noise.noise_type == NoiseType::OpenSimplex2
@@ -101,6 +105,8 @@ fn fractal_2d(noise: &FastNoiseLite, x: f32, y: f32) -> f32 {
 
 /// Whether this module evaluates the 2D `noise` itself four points at a time: OpenSimplex2,
 /// plain or fractal (each lane sums its own octaves, so any number of octaves pays).
+// Only the NEON paths and the tests call it on other processors.
+#[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
 pub fn supported_2d_x4(noise: &FastNoiseLite) -> bool {
     cfg!(target_arch = "aarch64")
         && noise.noise_type == NoiseType::OpenSimplex2
@@ -147,6 +153,8 @@ pub fn octaves_2d_x4(octaves: &[(i32, f32, f32)], x: [f32; 4], y: [f32; 4]) -> O
 
 /// Whether this module warps with `warp` itself: OpenSimplex2 progressive domain warp,
 /// which is what the land is warped by.
+// Only the NEON paths and the tests call it on other processors.
+#[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
 pub fn supported_warp_2d(warp: &FastNoiseLite) -> bool {
     cfg!(target_arch = "aarch64") && warp.domain_warp_type == DomainWarpType::OpenSimplex2 && warp.fractal_type == FractalType::DomainWarpProgressive
 }
@@ -671,7 +679,7 @@ mod tests {
             [(37, 1.0 / 125.0, FractalType::FBm, 2), (23, 0.02, FractalType::None, 1), (40, 1.0 / 140.0, FractalType::FBm, 2), (42, 1.0 / 40.0, FractalType::None, 1), (9, 0.3, FractalType::FBm, 5)]
         {
             let n = noise(0x5eed + salt, salt as u32, frequency, fractal, octaves);
-            assert!(supported_3d(&n));
+            assert_eq!(supported_3d(&n), cfg!(target_arch = "aarch64"));
             let mut points: Vec<[f32; 3]> = (0..20_001).map(|_| [rng.range(-40_000, 40_000) as f32, rng.range(0, 384) as f32 * 1.3, rng.range(-40_000, 40_000) as f32]).collect();
             // Fractions and the far reaches too.
             points.extend((0..2000).map(|_| [rng.unit() * 1e6 - 5e5, rng.unit() * 500.0, rng.unit() * 77.7 - 40.0]));
@@ -770,7 +778,11 @@ mod tests {
         let kernel: Vec<(i32, f32, f32)> = noises.iter().map(|(n, a)| (n.seed, n.frequency, *a)).collect();
         for p in points_2d(&mut rng, 4000).chunks(4) {
             let (x, y): ([f32; 4], [f32; 4]) = (std::array::from_fn(|k| p[k].0), std::array::from_fn(|k| p[k].1));
-            let fast = super::octaves_2d_x4(&kernel, x, y).unwrap();
+            let Some(fast) = super::octaves_2d_x4(&kernel, x, y) else {
+                // Only NEON sums the octaves side by side; elsewhere callers sum them one by one.
+                assert!(!cfg!(target_arch = "aarch64"));
+                return;
+            };
             for k in 0..4 {
                 let mut sum = 0.0f32;
                 for (n, a) in &noises {

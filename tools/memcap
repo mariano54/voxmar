@@ -15,7 +15,9 @@
 #   pauses, until it goes. Once his game (voxmar not as a capture or gate, or Minecraft)
 #   has been seen, the flag is ignored 30 minutes after it last ran; until then, two hours
 #   after it was written.
-# - Runs everything muted (VOXMAR_MUTE=1): no run of ours ever plays a sound.
+# - Runs everything muted (VOXMAR_MUTE=1): no run of ours ever plays a sound; and with a
+#   configuration directory of its own (VOXMAR_CONFIG) unless one is given, so no run of
+#   ours ever writes Mariano's settings or worlds.
 # - Kills the command and everything it started once their resident memory together
 #   passes GB (default 20), and exits 137 with a message saying so.
 # - Defaults RUST_TEST_THREADS=4 unless already set. Cargo uses every core: a clean build
@@ -34,6 +36,13 @@ export RUST_TEST_THREADS=${RUST_TEST_THREADS:-4}
 # Nothing run through memcap ever makes a sound: games launched while developing would
 # otherwise play over whoever is at the machine.
 export VOXMAR_MUTE=1
+# Nor does it touch Mariano's own settings and worlds: unless a command names a
+# configuration directory, it gets a fresh one of its own, deleted afterwards. (A gate run
+# once saved its settings over his.)
+own_config=
+if [[ -z ${VOXMAR_CONFIG:-} ]]; then
+  own_config=$(mktemp -d "${TMPDIR:-/tmp}/voxmar-config.XXXXXX") && export VOXMAR_CONFIG=$own_config
+fi
 quiet_flag=${VOXMAR_QUIET_FLAG:-~/Projects/voxmar-wt/QUIET}
 play_flag=${VOXMAR_PLAY_FLAG:-~/Projects/voxmar-wt/PLAYING}
 
@@ -94,12 +103,24 @@ while quiet || playing; do
   sleep 2
 done
 
+# Takes the lock file $1 for this process, as macOS's shlock does: the file holds the
+# owner's pid, and a lock whose owner has died is stale and taken over. Linux has no shlock.
+take_lock() {
+  command -v shlock >/dev/null && { shlock -f "$1" -p $$; return; }
+  (set -o noclobber; echo $$ >"$1") 2>/dev/null && return 0
+  local owner
+  owner=$(cat "$1" 2>/dev/null)
+  [[ -n $owner ]] && kill -0 "$owner" 2>/dev/null && return 1
+  rm -f "$1"
+  (set -o noclobber; echo $$ >"$1") 2>/dev/null
+}
+
 slots=${VOXMAR_SLOTS:-4}
 lock=
 waited=0
 while [[ -z $lock ]]; do
   for i in $(seq 1 "$slots"); do
-    if shlock -f "/tmp/voxmar-heavy-$i.lock" -p $$; then lock=/tmp/voxmar-heavy-$i.lock; break; fi
+    if take_lock "/tmp/voxmar-heavy-$i.lock"; then lock=/tmp/voxmar-heavy-$i.lock; break; fi
   done
   if [[ -z $lock ]]; then
     ((waited++ % 30 == 0)) && echo "memcap: all $slots heavy slots busy, waiting" >&2
@@ -152,6 +173,7 @@ stop() {
   ((paused)) && [[ -n $pids ]] && kill -CONT $pids 2>/dev/null
   [[ -n $pids ]] && kill -9 $pids 2>/dev/null
   rm -f "$lock" "$lock.paused"
+  [[ -n $own_config ]] && rm -r "${own_config:?}"
 }
 trap 'stop; exit 143' TERM INT HUP
 
@@ -180,4 +202,5 @@ done
 wait "$child"
 status=$?
 rm -f "$lock" "$lock.paused"
+[[ -n $own_config ]] && rm -r "${own_config:?}"
 exit $status

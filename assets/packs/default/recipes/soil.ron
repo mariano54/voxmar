@@ -15,7 +15,7 @@
         "moss": ["#3c5420", "#476226", "#53702c", "#5f7e33", "#6b8b3b", "#789945"],
         "podzol": ["#4e3214", "#5e3d18", "#6e491d", "#7c5524", "#8a612c", "#996e35"],
         "loam": ["#3a2a1f", "#463326", "#523d2e", "#5e4736", "#6a513f", "#775c49"],
-        "peat": ["#231a14", "#2c211a", "#352820", "#3f3026", "#49382d", "#544135"],
+        "peat": ["#1b1411", "#251b16", "#30231b", "#3b2c21", "#473628", "#544131"],
         "red_earth": ["#6e2c1a", "#7f3520", "#8f3f27", "#9d4a2f", "#ab5638", "#b86343"],
         "silt": ["#8b8273", "#988f80", "#a49c8d", "#b0a899", "#bbb4a5", "#c6c0b2"],
         "root": ["#9a7a52", "#b8956a", "#cfae84"],
@@ -116,9 +116,28 @@
             Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 3, gain: 0.7, amount: 0.7), Speckle(chance: 0.15, amount: 0.3)], clean: true),
             Clusters(palette: "pebble", count: 2, size: (1, 2), spacing: 6.0, shade: 0, seed: 3),
         ]),
-        "block/peat": (palettes: {"main": "peat", "fibre": ["#5a4026", "#6f5030"]}, layers: [
-            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (2, 8), octaves: 2, amount: 0.6), Stripes(period: 4.0, width: 0.25, amount: -0.2, warp: 1.0)], clean: true),
-            Paint(palette: "fibre", base: 0.3, mask: [Ridge(cells: (2, 6), width: 0.15, amount: 1.0), Speckle(chance: 0.5, amount: 0.3)], above: 1.0),
+        // Dark, damp and fibrous: short level strands of half-rotted plant matter, each with
+        // a shadow under it, in a mottled black-brown mass.
+        "block/peat": (palettes: {"main": "peat", "fibre": ["#4e3a24", "#65492c", "#7c5c36"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (3, 6), octaves: 2, amount: 0.55, seed: 2), Grain(0.1)], clean: true),
+            Grid(legend: {'f': "fibre:1", 'g': "fibre:0", 's': "-1", 'd': "main:0"}, rows: [
+            "................",
+            "................",
+            ".fg.............",
+            "................",
+            "................",
+            "f............fff",
+            "s............sss",
+            "................",
+            ".........fffg...",
+            ".........ssss...",
+            "................",
+            "........g.....d.",
+            ".....fffs.......",
+            ".....sss........",
+            ".....ff....fff..",
+            ".....s.g....s.g.",
+            ]),
         ]),
         "block/red_earth": (palettes: {"main": "red_earth", "pebble": ["#4f1d10", "#c97a4d", "#dc9466"]}, layers: [
             Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 3, gain: 0.7, amount: 0.7), Speckle(chance: 0.1, amount: -0.3)], clean: true),

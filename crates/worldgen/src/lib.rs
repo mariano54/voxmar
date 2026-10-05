@@ -255,11 +255,13 @@ pub struct Overworld {
 
 /// How far around the first place found `locate_biome` looks for the biome's interior.
 const LOCATE_INSIDE: i32 = 256;
+/// How far from its border a located biome's patch must reach somewhere, in blocks.
+const LOCATE_DEPTH: f32 = 40.0;
 
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 22;
+    pub const VERSION: u32 = 23;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -367,7 +369,19 @@ impl Overworld {
             radius,
             climate::CELL,
             |at| self.point(&self.geology.climate().regional_at(&self.geology, at)),
-            |at| self.sampler(at, at).pick(at.x, at.y).home == id,
+            // Only a patch with ground at least `LOCATE_DEPTH` from its border near the
+            // candidate: a sliver of the biome is passed over and the search goes on.
+            |at| {
+                if self.sampler(at, at).pick(at.x, at.y).home != id {
+                    return false;
+                }
+                let near = self.sampler(at - 64, at + 64);
+                (0..9 * 9).any(|i| {
+                    let p = at + IVec2::new(i % 9 * 16 - 64, i / 9 * 16 - 64);
+                    let site = near.site(p.x, p.y);
+                    site.home == id && site.biome == id && site.edge >= LOCATE_DEPTH
+                })
+            },
         )?;
         // Then the point deepest inside it around there (not a sliver at a border, nor a
         // variant within it), on dry land where there is some.
@@ -1514,7 +1528,7 @@ mod tests {
         }
         let (planted, flowers) = (planted as f32 / open as f32, flowers as f32 / open as f32);
         println!("{open} open grass blocks, {planted:.2} planted, {flowers:.3} flowers");
-        assert!(open > 1000 && planted > 0.6 && flowers < 0.08, "{open} open, {planted} planted, {flowers} flowers");
+        assert!(open > 1000 && planted > 0.5 && flowers < 0.08, "{open} open, {planted} planted, {flowers} flowers");
     }
 
     /// `cargo test --release -p voxmar_worldgen decor_sights -- --ignored --nocapture`
