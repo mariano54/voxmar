@@ -21,7 +21,8 @@
 //! much longer, as on a busy machine (gate runs default to `gate::SERVER_LAG`).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
-//! `--fov DEGREES`, `--weather KIND[:INTENSITY]` (show that instead of the server's
+//! `--fov DEGREES`, `--language CODE` (`en`, `ja`; overrides the setting, and captures are in
+//! English without it), `--weather KIND[:INTENSITY]` (show that instead of the server's
 //! weather; the kinds are in `weather.ron`, intensities 0..1 or light|moderate|heavy|max), `--command LINE` (run a console command once in game, such as
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings. Captures are silent, and so is
@@ -36,6 +37,7 @@ mod gate;
 mod hud;
 mod interact;
 mod keys;
+mod lang;
 mod menu;
 mod music;
 mod net;
@@ -107,6 +109,7 @@ struct Options {
     windowed: bool,
     screen: Option<Screen>,
     music: bool,
+    language: Option<String>,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -142,6 +145,7 @@ fn parse_options() -> Result<Options, String> {
         windowed: false,
         screen: None,
         music: true,
+        language: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -160,6 +164,7 @@ fn parse_options() -> Result<Options, String> {
             }
             "--command" => options.commands.push(value()?),
             "--no-music" => options.music = false,
+            "--language" => options.language = Some(value()?),
             "--capture" => options.capture = Some(value()?.into()),
             "--gate" => options.gate = Some(value()?.into()),
             "--server-lag" => options.server_lag = Some(value()?.parse().map_err(|e| format!("--server-lag: {e}"))?),
@@ -235,6 +240,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
+    // Captures are in English unless asked otherwise, whatever the machine's language.
+    let default_language = if reproducible { voxmar_engine::lang::ENGLISH.to_owned() } else { settings.language.clone() };
+    settings.language = options.language.clone().unwrap_or(default_language);
     // Captures run the ambience without playing it, so its log shows what would play.
     if headless {
         settings.ambience_volume = 0;
@@ -292,13 +300,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         session::SessionPlugin,
         weather::WeatherPlugin,
         ui::UiPlugin,
-    ));
+    ))
+    .add_plugins(lang::LangPlugin);
     app.add_plugins(creatures::CreaturesPlugin);
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
     .insert_resource(Actions(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(shader_packs)
+    .insert_resource(lang::Locale::load(&assets.join("content"), &settings.language))
     .insert_resource(settings)
     .insert_resource(Registry { blocks: registry, world: world_content })
     .add_systems(Startup, setup);

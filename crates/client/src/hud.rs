@@ -13,6 +13,7 @@ use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::vitals::{Effect, MAX_HUNGER, Vitals};
 
+use crate::lang::Locale;
 use crate::Actions;
 use crate::interact::Target;
 use crate::menu::Screen;
@@ -279,12 +280,13 @@ fn update_vitals(
     children: Query<&Children>,
     mut texts: Query<&mut Text>,
     mut shown: Local<Option<(u8, Vitals)>>,
+    locale: Res<Locale>,
 ) {
     let state = (player.health, player.vitals.clone());
-    if shown.as_ref() == Some(&state) {
+    if shown.as_ref() == Some(&state) && !locale.is_changed() {
         return;
     }
-    let effects_changed = shown.as_ref().is_none_or(|(_, v)| v.effects != state.1.effects);
+    let effects_changed = locale.is_changed() || shown.as_ref().is_none_or(|(_, v)| v.effects != state.1.effects);
     *shown = Some(state);
     if let Ok(meter) = health.single() {
         set_meter(meter, player.health as f32 / MAX_HEALTH as f32, &format!("{}/{MAX_HEALTH}", player.health), &mut nodes, &children, &mut texts);
@@ -296,17 +298,17 @@ fn update_vitals(
     if effects_changed && let Ok(row) = chips.single() {
         commands.entity(row).despawn_children().with_children(|row| {
             for &effect in &player.vitals.effects {
-                spawn_effect_chip(row, &font.0, effect);
+                spawn_effect_chip(row, &font.0, &locale, effect);
             }
         });
     }
 }
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
-pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, effect: Effect) {
+pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, effect: Effect) {
     let chip = Node { padding: UiRect::new(Val::Px(3.0 * PX), Val::Px(3.0 * PX), Val::Px(PX), Val::Px(2.0 * PX)), ..default() };
     let color = if effect.is_buff() { ACCENT } else { ERROR };
-    parent.spawn((chip, Piece::Tooltip.image())).with_child(shadowed(font, effect.title(), BODY, color));
+    parent.spawn((chip, Piece::Tooltip.image())).with_child(shadowed(font, locale.effect(effect), BODY, color));
 }
 
 fn update_status(
@@ -315,8 +317,9 @@ fn update_status(
     mut status: Query<&mut Text, With<StatusText>>,
     mut bar: Query<(&mut Visibility, &Children), With<BreakBar>>,
     mut fill: Query<&mut Node>,
+    locale: Res<Locale>,
 ) {
-    let message = if player.dead { "You died. Press R to respawn." } else { "" };
+    let message = if player.dead { locale.get("hud.died") } else { "" };
     if let Ok(mut text) = status.single_mut()
         && text.0 != message
     {
@@ -344,6 +347,7 @@ fn show_held_name(
     time: Res<Time>,
     player: Res<LocalPlayer>,
     world: Res<ClientWorld>,
+    locale: Res<Locale>,
     mut name: Query<(&mut Text, &mut TextColor, &mut TextShadow), With<HeldName>>,
     mut last: Local<(Option<voxmar_engine::block::BlockId>, f32)>,
 ) {
@@ -352,7 +356,7 @@ fn show_held_name(
     let Ok((mut text, mut color, mut shadow)) = name.single_mut() else { return };
     if held != last.0 {
         *last = (held, now);
-        text.0 = held.map(|item| inventory::item_name(&world.registry.def(item).name)).unwrap_or_default();
+        text.0 = held.map(|item| locale.block(world.registry.def(item))).unwrap_or_default();
     }
     let alpha = ((last.1 + NAME_SECONDS - now) / NAME_FADE).clamp(0.0, 1.0);
     let base = held.map_or(TEXT, |item| inventory::rarity_color(world.registry.def(item).rarity));

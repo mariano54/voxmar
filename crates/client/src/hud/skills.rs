@@ -7,6 +7,7 @@
 use bevy::prelude::*;
 use voxmar_engine::skill::{SkillId, SkillRegistry};
 
+use crate::lang::Locale;
 use crate::menu::Screen;
 use crate::session::Launch;
 use crate::ui::skin::PX;
@@ -99,9 +100,9 @@ pub fn xp_text(tenths: u32) -> String {
 }
 
 /// A skill's level and progress to the next, for the inventory screen: "Farming 12 (34%)".
-pub fn summary(skills: &SkillRegistry, skill: SkillId, xp: u32) -> String {
+pub fn summary(locale: &Locale, skills: &SkillRegistry, skill: SkillId, xp: u32) -> String {
     let level = skills.level(xp);
-    let title = &skills.get(skill).title;
+    let title = locale.skill(skills.get(skill));
     if level >= skills.max_level() {
         format!("{title} {level}")
     } else {
@@ -138,6 +139,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
 fn show(
     time: Res<Time>,
     launch: Res<Launch>,
+    locale: Res<Locale>,
     mut toasts: ResMut<SkillToasts>,
     mut lines: Query<(&ToastLine, &mut Text, &mut TextColor, &mut TextShadow, &mut Node, &mut Visibility), Without<LevelText>>,
     mut level: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), With<LevelText>>,
@@ -152,7 +154,9 @@ fn show(
             continue;
         };
         let (words, base) = match &line.kind {
-            LineKind::Gain { skill, tenths } => (format!("+{} {}", xp_text(*tenths), skills.get(*skill).title), ACCENT),
+            LineKind::Gain { skill, tenths } => {
+                (locale.format("skills.gained", &[("xp", &xp_text(*tenths)), ("skill", &locale.skill(skills.get(*skill)))]), ACCENT)
+            }
             LineKind::Refused(why) => (why.clone(), ERROR),
         };
         if text.0 != words {
@@ -168,7 +172,7 @@ fn show(
     if let Ok((mut text, mut color, mut shadow, mut visibility)) = level.single_mut() {
         match toasts.level.filter(|&(_, _, at)| now - at < LEVEL_SECONDS) {
             Some((skill, reached, at)) => {
-                let words = format!("{} level {reached}", skills.get(skill).title);
+                let words = locale.format("skills.level_up", &[("skill", &locale.skill(skills.get(skill))), ("level", &reached)]);
                 if text.0 != words {
                     text.0 = words;
                 }

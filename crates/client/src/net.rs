@@ -10,6 +10,7 @@ use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::RenderKind;
 use voxmar_server::ServerHandle;
 
+use crate::lang::Locale;
 use crate::drops::Drops;
 use crate::hud::skills::SkillToasts;
 use crate::session::Launch;
@@ -143,7 +144,7 @@ fn receive(
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
-    (mut drops, mut toasts, launch, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, ResMut<crate::creatures::Creatures>),
+    (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
@@ -152,8 +153,8 @@ fn receive(
             Ok(Some(message)) => message,
             Ok(None) => break,
             Err(_) => {
-                let reason = if net.is_remote() { "Lost the connection to the server." } else { "The world stopped unexpectedly." };
-                notice.0 = Some(reason.into());
+                let reason = if net.is_remote() { "net.lost" } else { "net.world_stopped" };
+                notice.0 = Some(locale.get(reason).into());
                 next.set(menu);
                 break;
             }
@@ -172,7 +173,7 @@ fn receive(
                 player.joined = true;
             }
             ServerMessage::Rejected { reason } => {
-                notice.0 = Some(format!("The server turned you away: {reason}."));
+                notice.0 = Some(locale.format("net.rejected", &[("reason", &locale.render(&reason, &world.registry))]));
                 next.set(menu);
                 break;
             }
@@ -252,6 +253,7 @@ fn receive(
                 player.admin = admin;
             }
             ServerMessage::Chat { kind, text } => {
+                let text = locale.render(&text, &world.registry);
                 // Logged too, so the replies to a capture's `--command`s are on record.
                 debug!("chat: {text}");
                 console.push(kind, &text, time.elapsed_secs())

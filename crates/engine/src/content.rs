@@ -16,6 +16,7 @@ use crate::command::CommandRegistry;
 use crate::creature::CreatureRegistry;
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
+use crate::lang::{ENGLISH, Lang};
 use crate::movement::Tuning;
 use crate::skill::SkillRegistry;
 use crate::weather::WeatherTable;
@@ -35,6 +36,8 @@ pub struct Content {
     pub recipes: Arc<RecipeRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
+    /// The packages' words in English (`lang/en.ron`), for the server's log and console.
+    pub english: Arc<Lang>,
 }
 
 /// A definition file the engine leaves to another crate.
@@ -133,6 +136,7 @@ impl Content {
             creatures: Arc::new(creatures),
             recipes: Arc::new(recipes),
             files: Arc::new(files),
+            english: Arc::new(Lang::load(dir, ENGLISH)),
         })
     }
 

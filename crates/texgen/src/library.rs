@@ -188,6 +188,12 @@ impl Library {
                 resolved.stamps.insert(stamp.texture.clone(), image);
             }
         }
+        if let (None, None, Some(Layer::Stamp(stamp))) = (recipe.size, &recipe.base, recipe.layers.first())
+            && stamp.relative
+        {
+            let image = &resolved.stamps[&stamp.texture];
+            resolved.size = (image.width, image.height);
+        }
         let first = resolved.layers.len();
         resolved.layers.extend(recipe.layers.iter().cloned().enumerate().map(|(i, layer)| (Some(hash(own, (first + i) as i32, 0x1a7e)), layer)));
         Ok(resolved)

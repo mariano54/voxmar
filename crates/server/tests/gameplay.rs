@@ -144,7 +144,7 @@ impl Client {
                 self.weather = Some(weather);
                 self.quick = quick;
             }
-            ServerMessage::Chat { kind, text } => self.chat.push((kind, text)),
+            ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
             ServerMessage::Time { day, day_speed, .. } => self.day = Some((day, day_speed)),
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
@@ -294,7 +294,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
 
     // Grown ripe, then broken: its harvest pops out and its experience is earned.
-    assert_eq!(client.ok("/grow ripe"), "Grew 1 crops.");
+    assert_eq!(client.ok("/grow ripe"), "Grew 1 crop.");
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
@@ -447,8 +447,8 @@ fn game_mode_decides_flight_and_the_host_is_admin() {
         let mut client = Client::join_with(config());
         assert_eq!((client.allow_flight, client.admin), (creative, true), "{mode:?}");
         // An admin can switch modes, and the player keeps theirs.
-        let other = if creative { "survival" } else { "creative" };
-        assert_eq!(client.ok(&format!("/gamemode {other}")), format!("You are now in {other} mode."));
+        let (other, name) = if creative { ("survival", "Survival") } else { ("creative", "Creative") };
+        assert_eq!(client.ok(&format!("/gamemode {other}")), format!("You are now in {name} mode."));
         assert_eq!(client.allow_flight, !creative);
         drop(client);
         let client = Client::join_with(config());
@@ -583,7 +583,7 @@ fn water_flows_for_everyone_to_see() {
     client.pump_until(|c| c.world.block(IVec3::new(x + 5, y - 1, z)).and_then(|b| c.content.blocks.fluid(b)).is_some_and(|s| s.falling));
     // Give hands out blocks to place.
     let answer = client.ok("/give water 3");
-    assert!(answer.contains("Gave 3 base:water"), "{answer}");
+    assert!(answer.contains("Gave 3 Water"), "{answer}");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == water && s.count == 3));
     let errors = client.command("/setblock ~ ~ ~ no_such_block");
     assert_eq!(errors[0].0, ChatKind::Error);

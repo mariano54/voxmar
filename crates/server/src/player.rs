@@ -6,6 +6,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
+use voxmar_engine::lang::Words;
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
@@ -175,9 +176,9 @@ impl Server {
             return;
         }
         let reason = if protocol != PROTOCOL_VERSION {
-            Some(format!("protocol {protocol} is not supported (server speaks {PROTOCOL_VERSION})"))
+            Some(Words::key("net.rejected.protocol").with("theirs", Words::text(protocol)).with("ours", Words::text(PROTOCOL_VERSION)))
         } else if content != fingerprint {
-            Some("client and server content differ".to_owned())
+            Some(Words::key("net.rejected.content"))
         } else {
             None
         };

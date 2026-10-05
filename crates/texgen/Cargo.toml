@@ -13,3 +13,5 @@ serde.workspace = true
 ron.workspace = true
 png.workspace = true
 zip.workspace = true
+# Reads the Japanese pixel font (bevy_text already builds it).
+skrifa = { version = "0.44", default-features = false, features = ["std"] }

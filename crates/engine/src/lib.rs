@@ -20,6 +20,7 @@ pub mod dropped;
 pub mod field;
 pub mod fluid;
 pub mod inventory;
+pub mod lang;
 pub mod light;
 pub mod loot;
 pub mod mesh;
