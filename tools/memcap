@@ -10,9 +10,10 @@
 #   or game runs, which finish soon) until it goes. The timing run itself sets
 #   VOXMAR_TIMING=1 to go ahead; `tools/bench` does all of this for you.
 # - Waits for one of VOXMAR_SLOTS (default 4) slots shared by every thread and track.
-# - Gets out of Mariano's way completely while he plays (his voxmar game, any run of the
-#   game that is not a capture or gate, or Minecraft): nothing new starts, and whatever is
-#   running pauses, until he stops.
+# - Gets out of Mariano's way completely when he plays: while ~/Projects/voxmar-wt/PLAYING
+#   exists (written when he says he will play), nothing new starts and whatever is running
+#   pauses, until it goes. It is ignored once no game of his (voxmar not as a capture or
+#   gate, or Minecraft) has run for 30 minutes.
 # - Kills the command and everything it started once their resident memory together
 #   passes GB (default 20), and exits 137 with a message saying so.
 # - Defaults RUST_TEST_THREADS=4 unless already set. Cargo uses every core: a clean build
@@ -29,15 +30,29 @@ if [[ $1 =~ ^[0-9]+$ ]]; then cap_gb=$1; shift; fi
 
 export RUST_TEST_THREADS=${RUST_TEST_THREADS:-4}
 quiet_flag=${VOXMAR_QUIET_FLAG:-~/Projects/voxmar-wt/QUIET}
+play_flag=${VOXMAR_PLAY_FLAG:-~/Projects/voxmar-wt/PLAYING}
 
-# Whether Mariano is playing: a game that is not a capture or gate run (other runs are
-# silent captures, by the rules), or Minecraft.
-playing() {
+# Whether a game Mariano plays is running: voxmar not as a capture or gate run (other runs
+# are silent captures, by the rules), or Minecraft.
+game_running() {
   ps -A -o comm=,args= | awk '
     { n = split($1, path, "/"); exe = path[n] }
     exe == "voxmar" && !/--capture|--gate/ { found = 1 }
     exe == "java" && tolower($0) ~ /minecraft/ { found = 1 }
     END { exit !found }'
+}
+
+# Whether to hold for Mariano's playing: only while PLAYING exists, which the coordinator
+# writes when he says he will play (he wants work to go on otherwise, game open or not).
+# The flag is kept fresh while his game runs; once none has run for 30 minutes it is
+# stale and ignored, so a forgotten flag cannot stall everything.
+playing() {
+  [[ -e $play_flag ]] || return 1
+  if game_running; then
+    touch "$play_flag"
+    return 0
+  fi
+  [[ -n $(find "$play_flag" -mmin -30 2>/dev/null) ]]
 }
 
 # Whether the command runs the game (a capture, a gate, `cargo run` of the client), which

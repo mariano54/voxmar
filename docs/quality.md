@@ -112,16 +112,23 @@ and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/pla
 
 Every heavy command goes through `memcap`, which gets out of the way:
 
-- While Mariano plays (his voxmar game, any game run that is not a capture or gate, or
-  Minecraft), nothing new starts and whatever is running pauses, builds, tests and game
-  runs alike, until he stops. Our builds on every core gave him 40–140 ms frames and under
-  60 fps while flying.
+- When Mariano says he will play, the coordinator writes `~/Projects/voxmar-wt/PLAYING`.
+  While it exists nothing new starts and whatever is running pauses, builds, tests and
+  game runs alike, until it is removed when he is done. (Our builds on every core gave
+  him 40–140 ms frames and under 60 fps while flying.) He wants work to go on otherwise,
+  game open or not, so his game alone holds nothing. memcap keeps the flag fresh while
+  his game (voxmar not as a capture or gate, or Minecraft) runs, and ignores it once none
+  has run for 30 minutes, so a forgotten flag cannot stall everything.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or
   two, finish. A paused command leaves `/tmp/voxmar-heavy-N.lock.paused`.
 
-So a quiet window needs no announcement: `tools/bench` claims `QUIET` itself (waiting
-only for another timing run's), waits for the running tests and game runs to finish and
-the load to settle, and keeps the flag fresh until it is done. A thread timing something
-by hand does the same: write `QUIET`, run its own commands with `VOXMAR_TIMING=1`, and
-delete the flag when done (or let it go stale after 20 minutes).
+So a quiet window needs no announcement: `tools/bench` waits until his game is closed
+(numbers taken while it runs would be wrong, and it stops if he starts one), claims
+`QUIET` (waiting only for another timing run's), waits for the running tests and game
+runs to finish and for the machine to idle (under three cores busy, three samples in a
+row; it fails rather than time a busy machine), and keeps the flag fresh until it is done.
+It also fails when it cannot compute a ratio, and reports INCONCLUSIVE (exit 3) when the
+base's own rounds disagree by more than 1.5× (flights) or 15% (static views). A thread
+timing something by hand does the same: write `QUIET`, run its own commands with
+`VOXMAR_TIMING=1`, and delete the flag when done.
