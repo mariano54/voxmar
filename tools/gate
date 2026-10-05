@@ -10,8 +10,8 @@
 # 3. Runs every test in the workspace, and meanwhile
 # 4. plays a scripted session in the real game with its integrated server running behind
 #    (`voxmar --gate`, see crates/client/src/gate.rs): building, digging, drops, climbing out
-#    of water, the menu and inventory, storm and snow, the sun, moon and stars, leaving
-#    the world. It fails on any failed check, a crash, a panic, any ERROR line (wgpu
+#    of water, the menu and inventory, storm and snow, the sun, moon and stars, a gorge,
+#    leaving the world. It fails on any failed check, a crash, a panic, any ERROR line (wgpu
 #    validation errors among them) and any WARN line not listed in ALLOWED_WARNINGS.
 #
 # Every heavy step runs through ~/Projects/voxmar-wt/memcap. On a clean tree a pass is

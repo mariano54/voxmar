@@ -459,7 +459,7 @@ impl Server {
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
         match self.overworld.locate_gorge(from, radius) {
             Some(at) => {
-                let offset = (at.xz() - from).as_vec2();
+                let offset = (IVec2::new(at.x, at.z) - from).as_vec2();
                 let way = if offset.length() < 1.0 { String::new() } else { format!(" to the {}", compass(offset)) };
                 Ok(format!("The nearest gorge is at {} {}, its water at {}, {:.0} blocks away{way}. /tp {} {} {} goes there.", at.x, at.z, at.y, offset.length(), at.x, at.y + 1, at.z))
             }

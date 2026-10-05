@@ -685,7 +685,10 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
    about one trunk span in eight and one stream span in fifteen runs partly in a gorge: in
    16 km², 15 trunk spans (about a kilometre of canyon) and 30 stream spans. Trunk gorges
    are canyons twenty to thirty blocks deep; creek gorges are the small kind in the
-   reference, five to ten. `Overworld::water_sights` finds them (`WaterSight::Gorge`).
+   reference, five to ten. `/locate gorge` finds the nearest (`Overworld::locate_gorge`,
+   which reads the rivers region by region, nearest first), `Overworld::water_sights` lists
+   one among the other sights (`WaterSight::Gorge`), and the landing gate goes to the
+   nearest and checks the server's world has water there between walls six blocks high.
 
    The random-walk ravines are buried, all of them: a lens-shaped canyon under the lowest
    ground along its path, never open to the sky. Caves already read the density's top as

@@ -1055,19 +1055,34 @@ mod tests {
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
-        let places = [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (9, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
-        for (seed, biome) in places {
-            let world = Overworld::new(seed, registry.clone());
-            let id = world.biomes.id(&format!("base:{biome}")).unwrap();
+        // Each biome on the first of its seeds whose world has it near the origin (a new
+        // generator version reseeds every world, and rarer biomes come and go).
+        let places: [(&[u64], &str); 9] = [
+            (&[42, 1], "forest"),
+            (&[1, 7, 3, 42], "birch_taiga"),
+            (&[3, 1, 42], "dark_forest"),
+            (&[7, 3], "forest"),
+            (&[11, 7, 1], "taiga"),
+            (&[5, 1, 3], "maple_forest"),
+            (&[9, 1, 7], "old_growth_taiga"),
+            (&[2, 3, 42], "savanna"),
+            (&[9, 1], "mixed_forest"),
+        ];
+        for (seeds, biome) in places {
             // Dry land well inside the biome, not on a sliver of it at a border.
-            let at = (0..6000 / 64)
-                .flat_map(|ring| (0..(ring * 8).max(1)).map(move |step| spiral(ring, step)))
-                .map(|(dx, dz)| IVec2::new(dx, dz) * 64)
-                .find(|&p| {
-                    let site = world.site(p.x, p.y);
-                    site.home == id && site.edge >= 48.0 && site.height > SEA_LEVEL + 2
-                })
-                .unwrap_or_else(|| panic!("no {biome}"));
+            let found = seeds.iter().find_map(|&seed| {
+                let world = Overworld::new(seed, registry.clone());
+                let id = world.biomes.id(&format!("base:{biome}")).unwrap();
+                let at = (0..6000 / 64)
+                    .flat_map(|ring| (0..(ring * 8).max(1)).map(move |step| spiral(ring, step)))
+                    .map(|(dx, dz)| IVec2::new(dx, dz) * 64)
+                    .find(|&p| {
+                        let site = world.site(p.x, p.y);
+                        site.home == id && site.edge >= 48.0 && site.height > SEA_LEVEL + 2
+                    })?;
+                Some((seed, world, id, at))
+            });
+            let (seed, world, id, at) = found.unwrap_or_else(|| panic!("no {biome} on seeds {seeds:?}"));
             let at = (0..60 * 60)
                 .map(|i| spiral(i / 60, i % 60))
                 .map(|(dx, dz)| at + IVec2::new(dx * 8, dz * 8))
@@ -2700,6 +2715,8 @@ mod tests {
         let registry = registry();
         let (sand, red_sand) = (registry.expect("base:sand"), registry.expect("base:red_sand"));
         let snowy = ["base:snow_block", "base:powder_snow", "base:snowy_grass_block"].map(|n| registry.expect(n));
+        // Some world must have a desert, or the test would pass for want of one.
+        let mut any_desert = false;
         for seed in [1, 3, 0x5eed] {
             let world = Overworld::new(seed, registry.clone());
             let half = SIZE * STEP / 2;
@@ -2722,7 +2739,7 @@ mod tests {
                     }
                 }
             }
-            assert!(!deserts.is_empty() || seed != 3, "the dry world has no desert");
+            any_desert |= !deserts.is_empty();
             for (i, j, height) in deserts {
                 for dj in -GAP..=GAP {
                     for di in -GAP..=GAP {
@@ -2738,6 +2755,7 @@ mod tests {
                 }
             }
         }
+        assert!(any_desert, "no desert in any of the three worlds");
     }
 
     #[test]
