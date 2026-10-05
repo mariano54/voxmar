@@ -36,6 +36,31 @@ const AHEAD: f32 = 0.25;
 /// Seconds a struck creature flashes red, and a dead one takes to topple and go.
 const FLASH: f32 = 0.3;
 const DYING: f32 = 0.9;
+/// Hearts shown over a creature being tamed or ready to breed.
+const HEARTS: usize = 3;
+
+/// A heart of three boxes (two lobes over a point), about a fifth of a block across,
+/// facing +Z in its own frame.
+fn spawn_heart(commands: &mut Commands, cube: &Handle<Mesh>, material: &Handle<StandardMaterial>) -> (Entity, Vec<Entity>) {
+    let root = commands.spawn((Transform::default(), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
+    let lobe = Vec3::new(0.09, 0.09, 0.03);
+    let boxes = [
+        Transform::from_translation(Vec3::new(-0.045, 0.03, 0.0)).with_scale(lobe),
+        Transform::from_translation(Vec3::new(0.045, 0.03, 0.0)).with_scale(lobe),
+        Transform::from_translation(Vec3::new(0.0, -0.025, 0.0)).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)).with_scale(Vec3::new(0.1, 0.1, 0.03)),
+    ];
+    let boxes = boxes.into_iter().map(|t| commands.spawn((Mesh3d(cube.clone()), MeshMaterial3d(material.clone()), t, ChildOf(root))).id()).collect();
+    (root, boxes)
+}
+
+/// Removes a creature's model and its hearts.
+fn despawn(commands: &mut Commands, shown: &Shown) {
+    commands.entity(shown.entity).despawn();
+    for (heart, _) in &shown.hearts {
+        commands.entity(*heart).despawn();
+    }
+}
+
 /// Seconds between a player's blows (the server's own limit is a little shorter).
 const SWING: f32 = 0.55;
 /// Creatures further than this are not drawn.
@@ -51,7 +76,7 @@ impl Plugin for CreaturesPlugin {
             .add_systems(Update, show.run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut commands: Commands, mut creatures: ResMut<Creatures>| {
                 for shown in creatures.shown.values() {
-                    commands.entity(shown.entity).despawn();
+                    despawn(&mut commands, &shown);
                 }
                 *creatures = Creatures::default();
             });
@@ -79,6 +104,9 @@ struct Shown {
     /// Smoothed head pitch and body crouch.
     nod: f32,
     crouch: f32,
+    /// Hearts over it, made when first needed: trust filling while it is tamed, and all
+    /// red while a kept one is ready to breed. Each is a root with three boxes.
+    hearts: Vec<(Entity, Vec<Entity>)>,
 }
 
 /// Every creature the server has told us about.
@@ -90,6 +118,8 @@ pub struct Creatures {
     left: Vec<CreatureGone>,
     /// A cube with its faces shaded, shared by every part.
     cube: Option<Handle<Mesh>>,
+    /// The hearts' colours: full and empty.
+    heart: Option<(Handle<StandardMaterial>, Handle<StandardMaterial>)>,
     /// Creatures seen to die since joining.
     pub deaths: u32,
     /// Blows of ours the server took since joining, and how many landed.
@@ -212,6 +242,7 @@ fn show(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut transforms: Query<&mut Transform>,
+    mut looks: Query<&mut MeshMaterial3d<StandardMaterial>>,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -226,6 +257,17 @@ fn show(
             cube
         })
         .clone();
+    let (heart_full, heart_empty) = creatures
+        .heart
+        .get_or_insert_with(|| {
+            let full = materials.add(StandardMaterial { base_color: Color::srgb(0.92, 0.18, 0.25), unlit: true, ..default() });
+            let empty = materials.add(StandardMaterial { base_color: Color::srgb(0.35, 0.33, 0.36), unlit: true, ..default() });
+            // The same pipeline as the bodies', warmed with them; warmed again in case a
+            // future change gives hearts their own.
+            crate::render::warm::warm(&mut commands, cube.clone(), full.clone(), false, DespawnOnExit(Screen::InGame));
+            (full, empty)
+        })
+        .clone();
     let registry = &launch.content.creatures;
 
     let creatures = &mut *creatures;
@@ -236,7 +278,7 @@ fn show(
                 creatures.deaths += 1;
             }
             Some(shown) => {
-                commands.entity(shown.entity).despawn();
+                despawn(&mut commands, &shown);
                 creatures.shown.remove(&gone.id);
             }
             None => {}
@@ -282,7 +324,7 @@ fn show(
             .collect();
         creatures.shown.insert(
             view.id,
-            Shown { view, told_at: now, position: view.position, yaw: view.yaw, entity, parts, materials: palette, stride: 0.0, flash: 0.0, dying: None, struck: false, nod: 0.0, crouch: 0.0 },
+            Shown { view, told_at: now, position: view.position, yaw: view.yaw, entity, parts, materials: palette, stride: 0.0, flash: 0.0, dying: None, struck: false, nod: 0.0, crouch: 0.0, hearts: Vec::new() },
         );
     }
 
@@ -333,6 +375,31 @@ fn show(
             *transform = root;
         }
         let far = shown.position.distance(eye) > DRAWN_WITHIN;
+        // Hearts: trust filling while a wild one is being tamed, all full while a kept one
+        // is ready to breed, bobbing over it and turned to face the eye.
+        let filled = if shown.view.ready { HEARTS } else { (shown.view.trust as usize * HEARTS).div_ceil(100) };
+        let showing = (shown.view.ready || (!shown.view.kept && shown.view.trust > 0)) && shown.dying.is_none() && !far;
+        if showing && shown.hearts.is_empty() {
+            shown.hearts = (0..HEARTS).map(|_| spawn_heart(&mut commands, &cube, &heart_empty)).collect();
+        }
+        let above = shown.position + Vec3::Y * (def.body.size.1 * scale + 0.35 + (now * 3.0 + id as f32).sin() * 0.04);
+        let toward = (eye - above).with_y(0.0).normalize_or(Vec3::Z);
+        let facing = Quat::from_rotation_y(toward.x.atan2(toward.z));
+        let across = facing * Vec3::X;
+        for (i, (heart, boxes)) in shown.hearts.iter().enumerate() {
+            if let Ok(mut transform) = transforms.get_mut(*heart) {
+                let offset = (i as f32 - (HEARTS as f32 - 1.0) / 2.0) * 0.26;
+                *transform = Transform::from_translation(above + across * offset).with_rotation(facing).with_scale(Vec3::splat(if showing { 1.0 } else { 0.0 }));
+            }
+            let colour = if i < filled { &heart_full } else { &heart_empty };
+            for part in boxes {
+                if let Ok(mut look) = looks.get_mut(*part)
+                    && look.0 != *colour
+                {
+                    look.0 = colour.clone();
+                }
+            }
+        }
         let swing = (speed / (def.movement.walk.max(0.5) * 1.5)).min(1.0);
         for (child, part) in &shown.parts {
             let rotation = match part.swing {
@@ -370,7 +437,7 @@ fn show(
     }
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
-            commands.entity(shown.entity).despawn();
+            despawn(&mut commands, &shown);
         }
     }
 }

@@ -77,6 +77,8 @@ pub struct CapturePlugin {
     pub press: Option<MouseButton>,
     /// An item whose hotbar slot to select once the inventory has it (`--hold`).
     pub hold: Option<String>,
+    /// Click `press` over and over through the clip (`--repeat`).
+    pub repeat: bool,
     /// The creature to summon and strike before the shot (see the module docs).
     pub strike: Option<String>,
     /// The skill whose next level to note before the shot (see the module docs).
@@ -132,6 +134,7 @@ impl Plugin for CapturePlugin {
             clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
             press: self.press,
             hold: self.hold.clone(),
+            repeat: self.repeat,
             strike: self.strike.clone(),
             summoned: false,
             struck: false,
@@ -183,6 +186,7 @@ struct Capture {
     clip: Option<Clip>,
     press: Option<MouseButton>,
     hold: Option<String>,
+    repeat: bool,
     strike: Option<String>,
     summoned: bool,
     struck: bool,
@@ -294,7 +298,8 @@ fn press(state: Res<Capture>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut u
         player.yaw = yaw.to_radians();
         player.pitch = pitch.to_radians();
     }
-    let holding = state.clip.as_ref().is_some_and(|c| c.started && c.taken < PRESS_FRAMES);
+    // Held through the first second, or with `--repeat` clicked every 0.4 s of the clip.
+    let holding = state.clip.as_ref().is_some_and(|c| c.started && if state.repeat { c.taken % 12 < 2 } else { c.taken < PRESS_FRAMES });
     if holding {
         ui.cursor_locked = true;
         mouse.press(button);

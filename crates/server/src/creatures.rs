@@ -130,6 +130,7 @@ impl Live {
             owner: self.owner_id,
             young: self.grows_up.is_some(),
             ready: self.ready_until > 0,
+            trust: if self.owner.is_some() { 0 } else { (self.trust * 100.0).clamp(0.0, 100.0) as u8 },
         }
     }
 
@@ -143,6 +144,7 @@ impl Live {
             || last.owner != self.owner_id
             || last.young != self.grows_up.is_some()
             || last.ready != (self.ready_until > 0)
+            || last.trust != (if self.owner.is_some() { 0 } else { (self.trust * 100.0).clamp(0.0, 100.0) as u8 })
             || (last.scale - self.scale).abs() > 0.01
             || (last.velocity - self.body.velocity).length_squared() > 0.04
     }

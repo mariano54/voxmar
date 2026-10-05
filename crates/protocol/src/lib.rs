@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 17;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -155,6 +155,8 @@ pub struct CreatureView {
     pub young: bool,
     /// Ready to breed: fed, and looking for a mate.
     pub ready: bool,
+    /// How far a wild one has come to trust the player feeding it, in hundredths.
+    pub trust: u8,
 }
 
 /// A creature that is no longer there, and whether it died.

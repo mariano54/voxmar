@@ -392,4 +392,11 @@
     "command.creatures.none": "No creatures within 64 blocks.",
     "command.creatures.title": "Within 64 blocks:",
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",
+    "command.creatures.admins_only": "Only admins may tame, ready or hasten creatures with a command.",
+    "command.creatures.what": "Tame, ready or hasten?",
+    "command.creatures.done": "Done, for {count} creatures within 8 blocks.",
+    "command.skill.what": "Which skill, and what level?",
+    "command.skill.unknown": "There is no skill called `{name}`.",
+    "command.skill.level": "The level must be from 1 to the highest.",
+    "command.skill.done": "Your level is now {level}.",
 }
