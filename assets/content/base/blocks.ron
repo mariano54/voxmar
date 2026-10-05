@@ -266,9 +266,9 @@
         // Leaves turned for autumn, for groves that biomes want in colour.
         (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow"]),
         // Leaves of their own, on borrowed wood: an olive's grey-green, untinted, and a
-        // larch's soft needles, gold-green.
+        // larch's soft needles, a fresher green than a spruce's.
         (name: "olive_leaves", sound: Leaves, textures: All("olive_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (150, 160, 120), family: "acacia", tags: ["leaves", "natural", "broadleaf", "evergreen", "dry"]),
-        (name: "larch_leaves", sound: Leaves, textures: All("larch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (150, 170, 70), family: "spruce", tags: ["leaves", "natural", "conifer", "cold"]),
+        (name: "larch_leaves", sound: Leaves, textures: All("larch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (100, 140, 60), family: "spruce", tags: ["leaves", "natural", "conifer", "cold"]),
         (name: "russet_oak_leaves", sound: Leaves, textures: All("russet_oak_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (170, 90, 40), family: "oak", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
         (name: "amber_maple_leaves", sound: Leaves, textures: All("amber_maple_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (230, 150, 40), family: "maple", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
         (name: "azalea_leaves", sound: Leaves, textures: All("azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (90, 115, 45), tags: ["leaves", "natural", "broadleaf"]),

@@ -32,14 +32,14 @@ pub enum Shape {
     /// Points gather in `count` balls `radius` across set in the ellipsoid's shell, so the
     /// crown grows as billows of leaves on limbs with sky between them.
     Billows { count: usize, radius: f32 },
-    /// Points fill the cone.
-    Cone,
+    /// Points fill the cone in thin layers `spacing` apart, so limbs grow out in tiers.
+    Tiers { spacing: f32 },
 }
 
 impl Envelope {
     fn contains(&self, p: Vec3) -> bool {
         let o = p - self.centre;
-        if let Shape::Cone = self.shape {
+        if let Shape::Tiers { .. } = self.shape {
             let t = o.y / self.up;
             let r = self.radius * (1.0 - t);
             let d = (o.x * o.x + o.z * o.z).sqrt();
@@ -50,12 +50,12 @@ impl Envelope {
         d <= 1.0 && d >= self.hollow * self.hollow
     }
 
-    /// The volume the points fill: the billows', or the cone's.
+    /// The volume the points fill: the billows', or the cone's tiers'.
     fn volume(&self) -> f32 {
         use std::f32::consts::PI;
         match self.shape {
             Shape::Billows { count, radius } => count as f32 * 4.0 / 3.0 * PI * radius.powi(3),
-            Shape::Cone => PI * self.radius * self.radius * self.up / 3.0 * (1.0 - self.hollow * self.hollow),
+            Shape::Tiers { spacing } => PI * self.radius * self.radius * self.up / 3.0 * (1.0 - self.hollow * self.hollow) * (0.6 / spacing).min(1.0),
         }
     }
 }
@@ -118,9 +118,12 @@ pub fn colonise(stem: &[Vec3], envelope: &Envelope, habit: &Habit, rng: &mut Rng
                 }
             }
         }
-        Shape::Cone => {
+        Shape::Tiers { spacing } => {
             for _ in 0..wanted * 4 {
-                let p = envelope.centre + unit() * reach;
+                let mut p = envelope.centre + unit() * reach;
+                // Onto the nearest tier, within a fifth of a block of it.
+                let tier = ((p.y - envelope.centre.y) / spacing).round() * spacing;
+                p.y = envelope.centre.y + tier + unit().x * 0.2;
                 if points.len() < wanted && envelope.contains(p) {
                     points.push(p);
                 }
