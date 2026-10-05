@@ -224,6 +224,10 @@ pub(crate) struct WeatherState {
     pub hazards: HazardFields,
     /// Lightning that reached the ground lately, newest last (at most `STRIKES_KEPT`).
     pub strikes: VecDeque<StrikeEvent>,
+    /// What lay on the ground of cells no longer simulated (snow cover and wetness) and
+    /// when they were left, so they melt and dry on from there when a player returns
+    /// rather than snapping back to the climate's average.
+    lying: FxHashMap<IVec2, Lying>,
     sky: Sky,
     land: Arc<dyn Land>,
     places: FxHashMap<IVec2, Place>,
@@ -294,6 +298,7 @@ impl WeatherState {
             snow_cover: Field::with_cell_size("core:snow_cover", CELL, move |x, z| lasting_snow(cold.climate(x, z).0)),
             hazards: HazardFields::default(),
             strikes: VecDeque::new(),
+            lying: FxHashMap::default(),
             sky: Sky {
                 seed: mix(world_seed ^ 0x0077_6561_7468_6572), // "weather"
                 prevailing: wind.as_dvec2().normalize_or(DVec2::X),
@@ -384,6 +389,18 @@ impl WeatherState {
         self.wetness.reset(at.x, at.y);
         self.snow_cover.reset(at.x, at.y);
         self.hazards.reset(at);
+    }
+
+    /// Stops simulating a cell: what lies on its ground is kept for its return, and the
+    /// rest goes back to the climate.
+    fn leave(&mut self, cell: IVec2, tick: u64) {
+        let at = cell_center(cell);
+        let lying = Lying { snow_cover: self.snow_cover.sample(at.x, at.y), wetness: self.wetness.sample(at.x, at.y), tick };
+        if lying.snow_cover > self.snow_cover.baseline(at.x, at.y) + 0.01 || lying.wetness > 0.01 {
+            self.lying.insert(cell, lying);
+        }
+        self.reset(at);
+        self.active.remove(&cell);
     }
 
     /// Works out the hazards in every simulated cell from its weather now, and lets the
@@ -593,22 +610,33 @@ impl Weather {
     }
 }
 
-/// Brings one loaded column's lying snow up to date; see `Weather::settle_snow`.
+/// Brings one loaded column's lying snow up to date; see `Weather::settle_snow`. Each
+/// block whitens and melts at its own depth of cover, so snow comes and goes in patches
+/// over minutes as the cover changes, and lingers longest in shade: beside a wall or a
+/// step up, or under something.
 fn settle_column(server: &mut Server, pos: ColumnPos, snowy: &[(BlockId, BlockId)]) {
     let Some(column) = server.world.column(pos).cloned() else { return };
     let blocks = &server.content.blocks;
     let origin = pos.origin();
+    let size = CHUNK_SIZE as usize;
+    let tops: Vec<Option<(i32, BlockId)>> = (0..size * size).map(|i| top_block(&column, blocks, (i % size) as i32, (i / size) as i32)).collect();
     let mut changes = Vec::new();
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             let (wx, wz) = (origin.x + x, origin.z + z);
-            let Some((y, top)) = top_block(&column, blocks, x, z) else { continue };
+            let Some((y, top)) = tops[z as usize * size + x as usize] else { continue };
             let cover = server.weather.snow_cover.sample(wx, wz);
-            // Each block whitens at its own depth of cover, a little lower than it melts.
             let depth = 0.15 + 0.7 * unit(mix(mix(server.weather.sky.seed ^ SNOWFLAKES ^ wx as u64) ^ wz as u64)) as f32;
+            let shaded = [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().any(|(dx, dz)| {
+                let (nx, nz) = (x + dx, z + dz);
+                (0..CHUNK_SIZE).contains(&nx)
+                    && (0..CHUNK_SIZE).contains(&nz)
+                    && tops[nz as usize * size + nx as usize].is_some_and(|(ny, _)| ny >= y + 2)
+            });
+            let melts_at = depth - 0.1 - if shaded { SHADE_LINGERS } else { 0.0 };
             if let Some(&(_, white)) = snowy.iter().find(|&&(ground, _)| ground == top).filter(|_| cover > depth) {
                 changes.push((IVec3::new(wx, y, wz), white));
-            } else if let Some(&(ground, _)) = snowy.iter().find(|&&(_, white)| white == top).filter(|_| cover < depth - 0.1)
+            } else if let Some(&(ground, _)) = snowy.iter().find(|&&(_, white)| white == top).filter(|_| cover < melts_at)
                 // Where the climate keeps snow lying, the generator made it snowy: leave it.
                 && lasting_snow(server.temperature.sample(wx, wz)) < 0.05
             {
@@ -623,6 +651,9 @@ fn settle_column(server: &mut Server, pos: ColumnPos, snowy: &[(BlockId, BlockId
         server.set_block(at, block);
     }
 }
+
+/// How much less cover snow in shade still lies at.
+const SHADE_LINGERS: f32 = 0.25;
 
 /// The highest block in a column that rain or snow lands on, and its height: plants let
 /// it through to their ground. `x` and `z` are within the column.
@@ -651,7 +682,15 @@ impl WeatherState {
         let quick = QUICK * TICKS_PER_SECOND as u64;
         let released: Vec<Vec2> = self.changes.iter().filter(|c| c.release && c.tick + quick > tick).map(|c| c.center).collect();
         self.changes.retain(|c| c.tick + quick > tick && !c.release);
-        self.active.retain(|cell| released.iter().all(|&center| !Change { center, tick, release: true }.covers(cell_center(*cell).as_vec2())));
+        let released: Vec<IVec2> = self
+            .active
+            .iter()
+            .filter(|cell| released.iter().any(|&center| Change { center, tick, release: true }.covers(cell_center(**cell).as_vec2())))
+            .copied()
+            .collect();
+        for cell in released {
+            self.leave(cell, tick);
+        }
         self.forced.retain(|f| tick < f.until + FORCE_FADE * TICKS_PER_SECOND as u64);
 
         let mut cells = FxHashSet::default();
@@ -670,9 +709,9 @@ impl WeatherState {
         let stale = elapsed > CATCH_UP as u64 * TICKS_PER_SECOND as u64;
         let gone: Vec<IVec2> = self.active.iter().filter(|&cell| stale || !cells.contains(cell)).copied().collect();
         for cell in gone {
-            self.reset(cell * CELL);
-            self.active.remove(&cell);
+            self.leave(cell, tick);
         }
+        self.lying.retain(|_, lying| tick.saturating_sub(lying.tick) < (LYING_KEPT * TICKS_PER_SECOND as i64) as u64);
         let day_at = |t: i64| day_fraction(day - (tick as i64 - t) as f64);
         let mut strikes = Vec::new();
         let mut cells: Vec<IVec2> = cells.into_iter().collect();
@@ -692,13 +731,24 @@ impl WeatherState {
                 strikes.extend(self.sky.lightning(cell, state.precipitation, forced_lift(drivers.lift, forcing), tick));
                 state
             } else {
-                // Catch up from the climate's average state.
+                // Catch up from the climate's average state, but with what still lies on the
+                // ground from when it was last simulated, melting and drying over the time
+                // since (up to `LYING_CATCH_UP`).
                 let mut state = climate.average();
-                let start = tick as i64 - CATCH_UP * TICKS_PER_SECOND as i64;
-                for i in 1..=CATCH_UP / CATCH_UP_STEP {
+                let mut catch_up = CATCH_UP;
+                if let Some(lying) = self.lying.remove(&cell) {
+                    state.snow_cover = state.snow_cover.max(lying.snow_cover);
+                    state.wetness = lying.wetness;
+                    let away = (tick.saturating_sub(lying.tick) / TICKS_PER_SECOND as u64) as i64;
+                    catch_up = away.clamp(CATCH_UP_STEP, LYING_CATCH_UP) / CATCH_UP_STEP * CATCH_UP_STEP;
+                }
+                let start = tick as i64 - catch_up * TICKS_PER_SECOND as i64;
+                for i in 1..=catch_up / CATCH_UP_STEP {
                     let t = start + i * CATCH_UP_STEP * TICKS_PER_SECOND as i64;
                     let drivers = self.sky.drivers(at.as_dvec2(), t, day_at(t), climate.warmth());
-                    state = step(state, &drivers, &climate, day_at(t), None, CATCH_UP_STEP as f32);
+                    // Weather forced here meanwhile held it, as it would have.
+                    let forced = self.forcing(at.as_vec2(), t.max(0) as u64).map(|(preset, weight)| (preset.clone(), weight));
+                    state = step(state, &drivers, &climate, day_at(t), forced.as_ref().map(|(p, w)| (p, *w)), CATCH_UP_STEP as f32);
                 }
                 state
             };
@@ -984,6 +1034,19 @@ impl Sky {
 }
 
 /// The centre of a weather cell, in blocks.
+/// Snow and wetness left lying in a cell no longer simulated, and when it was left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Lying {
+    snow_cover: f32,
+    wetness: f32,
+    tick: u64,
+}
+
+/// Seconds what lay on the ground of a cell is remembered after its players leave, and
+/// at most how many seconds of melting and drying it catches up on when they return.
+const LYING_KEPT: i64 = 3 * 3600;
+const LYING_CATCH_UP: i64 = 3600;
+
 /// Lightning strikes kept in `WeatherState::strikes`.
 const STRIKES_KEPT: usize = 64;
 /// Seconds over which the memory of a strike in a cell (`core:lightning`) halves.
@@ -1181,7 +1244,9 @@ fn step(cell: Cell, drivers: &Drivers, climate: &Climate, day: f64, forcing: Opt
     let sunny = 1.0 - clouds;
     let half_life = DRYING / (1.0 + sunny * smoothstep(5.0, 30.0, air));
     let wetness = cell.wetness * (1.0 - (dt / half_life * std::f32::consts::LN_2).min(1.0)) + falling * (1.0 - snow) * 0.01 * dt;
-    let melt = (air - 0.5).max(0.0) * 0.0004 * (1.0 + sunny) * dt;
+    // A deep cover takes several minutes to melt in mild sunshine, twice as long under
+    // cloud, so it thins patch by patch rather than vanishing.
+    let melt = (air - 0.5).max(0.0) * 0.00012 * (1.0 + sunny) * dt;
     let snow_cover = cell.snow_cover + falling * snow * 0.004 * dt - melt;
     Cell {
         humidity: humidity.clamp(0.0, 1.0),
@@ -1513,6 +1578,35 @@ mod tests {
         let remembered = weather.hazards.lightning.sample(x, z);
         weather.update_hazards(&mut temperature, 20_100, 20_100.0, LIGHTNING_MEMORY);
         assert!((weather.hazards.lightning.sample(x, z) - remembered * (1.0 - LN_2)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn snow_lies_on_while_players_are_away_and_melts_gradually() {
+        let table = table();
+        let (mut weather, mut temperature) = setup(4, Vec2::X, 0);
+        let here = Vec2::new(10.0, 20.0);
+        let mut run = |weather: &mut WeatherState, s: u64, at: Vec2| {
+            let tick = 10_000 + s * SECOND;
+            weather.update(&mut temperature, &[at.as_ivec2()], tick, tick as f64);
+            weather.local(&mut temperature, here, tick, tick as f64).weather.snow_cover
+        };
+        run(&mut weather, 0, here);
+        weather.force(table.preset("blizzard").unwrap().at(1.0), here, 200, 10_000);
+        let deep = (1..200).map(|s| run(&mut weather, s, here)).last().unwrap();
+        assert!(deep > 0.7, "{deep}");
+        // The player walks far off for a minute, and comes back: the snow is still there,
+        // a little melted, not back to the mild climate's bare ground.
+        let away = Vec2::new(5000.0, 20.0);
+        for s in 200..260 {
+            run(&mut weather, s, away);
+        }
+        let back = run(&mut weather, 260, here);
+        assert!(back > 0.4 && back <= deep, "{deep} then {back}");
+        // From there it melts over minutes, never all at once.
+        let after: Vec<f32> = (261..1500).map(|s| run(&mut weather, s, here)).collect();
+        let steepest = after.windows(2).map(|w| w[0] - w[1]).fold(0.0f32, f32::max);
+        assert!(steepest < 0.02, "dropped {steepest} in a second");
+        assert!(after.last().unwrap() < &0.1, "{}", after.last().unwrap());
     }
 
     #[test]
