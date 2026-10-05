@@ -7,26 +7,24 @@
 (
     sets: [
         (
-            // Slopes of soil break up as they steepen: coarse dirt creeps onto the edges of
-            // gentle steps, gravel and coarse dirt onto steeper ones, then the province's
-            // rock in its beds, in patches tens of blocks across, until the steepest ground
-            // is bare cliff.
+            // Slopes of soil, by how steep the ground is around them (smooth from block to
+            // block): gentle slopes keep the biome's ground; steeper ones show patches of
+            // coarse dirt tens of blocks across; steeper still, outcrops of the province's
+            // rock in its beds, until the steepest ground is bare cliff. One material per
+            // patch, never a mix block by block.
             name: "soil_slopes",
             rules: [
-                (when: [Slope(2.0, 3.0), Patch((name: "slope_rock", scale: 22.0, octaves: 2), -0.3)], place: (top: Stones, filler: Stones)),
-                (when: [Slope(1.5, 2.5), Patch((name: "slope_gravel", scale: 10.0), 0.2)], place: (top: Block("gravel"), filler: Block("gravel"), depth: 2)),
-                (when: [Slope(1.0, 2.0), Patch((name: "slope_scree", scale: 12.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 3.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
-                (when: [Slope(0.5, 1.5), Patch((name: "slope_scree", scale: 12.0, octaves: 2), 0.5)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
-                (when: [Slope(0.5, 1.5), Patch((name: "slope_rock", scale: 22.0, octaves: 2), 0.62)], place: (top: Stones, filler: Stones)),
+                (when: [Slope(1.8, 2.6), Patch((name: "slope_rock", scale: 22.0, octaves: 2), -0.2)], place: (top: Stones, filler: Stones)),
+                (when: [Slope(1.3, 1.9), Patch((name: "slope_scree", scale: 18.0, octaves: 2), 0.35)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
             ],
         ),
         (
-            // High, stony ground: rock and scree take most slopes, grass keeps the flats.
+            // High, stony ground: rock outcrops on steep ground, patches of gravel on
+            // moderate slopes, the biome's ground on gentle ones.
             name: "rocky_slopes",
             rules: [
-                (when: [Slope(1.5, 2.5), Patch((name: "slope_rock", scale: 22.0, octaves: 2), -0.5)], place: (top: Stones, filler: Stones)),
-                (when: [Slope(1.0, 2.0), Patch((name: "slope_gravel", scale: 10.0), -0.1)], place: (top: Mix([Name("gravel", 3.0), Name("coarse_dirt", 1.0)]), filler: Block("gravel"), depth: 2)),
-                (when: [Slope(0.5, 1.5), Patch((name: "slope_scree", scale: 12.0, octaves: 2), 0.15)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("gravel", 1.0), Name("stone", 1.0)]), filler: Block("dirt"))),
+                (when: [Slope(1.4, 2.2), Patch((name: "slope_rock", scale: 22.0, octaves: 2), -0.4)], place: (top: Stones, filler: Stones)),
+                (when: [Slope(1.0, 1.6), Patch((name: "slope_gravel", scale: 16.0, octaves: 2), 0.25)], place: (top: Block("gravel"), filler: Block("gravel"), depth: 2)),
             ],
         ),
         (

@@ -243,8 +243,10 @@ pub enum Fill {
     Stones,
     /// The biome's strata, by height.
     Strata,
-    /// The rock province's bands, by height: bare rock.
+    /// The rock province's bands, by height: bare rock, its top included.
     Rock,
+    /// The rock province's bands under a top of the ground's own: grass over rock.
+    Beds,
 }
 
 /// What a column offers the rules.
@@ -414,7 +416,7 @@ impl SurfaceRules {
             Cond::Underwater => true,
             Cond::Deeper(a, b) => (site.water - site.height) as f32 > at(*a, *b),
             Cond::Water(bodies) => bodies.contains(&site.body),
-            Cond::Slope(a, b) => site.slope as f32 > at(*a, *b),
+            Cond::Slope(a, b) => site.steepness > at(*a, *b),
             Cond::Altitude(a, b) => above > at(*a, *b),
             Cond::Colder(a, b) => site.temperature < at(*a, *b),
             Cond::Warmer(a, b) => site.temperature > at(*a, *b),
