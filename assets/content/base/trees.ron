@@ -398,5 +398,32 @@
             ground: [Shallows, Soil],
             comfort: (temperature: (12.0, 32.0), moisture: (1.2, 8.0)),
         ),
+        (
+            // Tall and slender, of oases and hot dry land, its dates hanging under the fronds.
+            name: "date_palm", tags: ["gathering", "fruit", "hot", "dry", "desert"], rarity: Uncommon,
+            log: "palm_log", leaves: "palm_leaves", height: (8, 13), lean: 0.8,
+            fruit: (leaves: "dates_leaves", share: 0.1),
+            crown: Palm(fronds: (8, 11), length: (3.0, 4.2)),
+            ground: [Sand, Soil],
+            comfort: (temperature: (20.0, 45.0), moisture: (0.0, 0.8)),
+        ),
+        (
+            // A broad, dense crown of fine leaves, pods hanging beneath, in savanna and dry woods.
+            name: "tamarind", tags: ["gathering", "fruit", "savanna", "dry"], rarity: Uncommon,
+            log: "acacia_log", leaves: "acacia_leaves", height: (6, 9), lean: 0.6,
+            fruit: (leaves: "tamarind_leaves", share: 0.06),
+            crown: Round(reach: (2.4, 3.4), radius: (2.2, 2.8), squash: 0.75, start: 0.35),
+            comfort: (temperature: (20.0, 42.0), moisture: (0.05, 1.2)),
+        ),
+        (
+            // An umbrella of needles high on a bare trunk, of warm and alpine slopes; its
+            // cones hold pine nuts.
+            name: "stone_pine", tags: ["gathering", "nut", "dry", "mountain"], rarity: Rare,
+            log: "pine_log", leaves: "pine_leaves", height: (9, 14), lean: 0.8,
+            fruit: (leaves: "pine_nuts_leaves", share: 0.05),
+            crown: Umbrella(reach: (2.4, 3.6), radius: (2.4, 3.2), squash: 0.35, fork: 0.65),
+            ground: [Soil, Snow],
+            comfort: (temperature: (-6.0, 22.0), moisture: (0.1, 1.2)),
+        ),
     ],
 )
