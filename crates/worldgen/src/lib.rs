@@ -101,8 +101,9 @@ pub struct Site {
     pub temperature: f32,
     /// Annual precipitation, mm.
     pub precipitation: f32,
-    /// Precipitation over potential evaporation: around 0.1 in deserts, 1 where they
-    /// balance, 2 in rainforests.
+    /// The regional humidity, in the units of precipitation over potential evaporation:
+    /// around 0.1 in deserts, 1 where they balance, 2 in rainforests (see
+    /// `content::HumidityDef`).
     pub moisture: f32,
     /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland.
     pub continentalness: f32,
@@ -122,7 +123,7 @@ pub struct Site {
     pub aether: f32,
     /// How rich the soil is, evenly spread over 0 ..= 1.
     pub fertility: f32,
-    /// Evenly spread over 0 ..= 1, varying over a few hundred blocks: which sub-biome of a
+    /// Evenly spread over 0 ..= 1, varying over kilometres: which sub-biome of a
     /// biome grows here.
     pub variant: f32,
     /// 1 in a river or lake, falling to 0 at the edge of its valley or shore.
@@ -250,7 +251,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 16;
+    pub const VERSION: u32 = 17;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -447,11 +448,13 @@ impl Overworld {
         [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.height(x + dx, z + dz) - height).abs()).max().unwrap_or(0)
     }
 
-    /// Every set of bands (strata) the surface lays by height, of biomes and of terrain
-    /// shapes: what distant terrain blends to show a banded slope as it looks from afar.
+    /// Every set of bands (strata) the surface lays by height, of biomes, of terrain shapes
+    /// and of the rock provinces' bare rock: what distant terrain blends to show a banded
+    /// slope as it looks from afar.
     pub fn strata(&self) -> impl Iterator<Item = &[BlockId]> {
         let shapes = self.shape_surfaces.iter().flatten().map(|shape| shape.strata.as_slice());
-        self.biomes.strata().chain(shapes).filter(|strata| !strata.is_empty())
+        let rock = (0..self.rocks.len()).map(|i| self.rocks.get(ProvinceId(i as u8)).bands.as_slice());
+        self.biomes.strata().chain(shapes).chain(rock).filter(|strata| !strata.is_empty())
     }
 
     /// Samples many positions within the blocks from `min` to `max` (inclusive) far
@@ -471,7 +474,9 @@ impl Overworld {
         let mut sampler = Sampler { world: self, grid, picks: None };
         let (first, last) = (min.div_euclid(IVec2::splat(biome::CELL)), max.div_euclid(IVec2::splat(biome::CELL)));
         let size = last - first + 1;
-        let picks = (0..size.x * size.y).map(|i| sampler.pick_cell(first + IVec2::new(i % size.x, i / size.x))).collect();
+        let cells: Vec<IVec2> = (0..size.x * size.y).map(|i| first + IVec2::new(i % size.x, i / size.x)).collect();
+        let shores = sampler.shores(&cells);
+        let picks = cells.iter().zip(shores).map(|(&cell, shore)| sampler.pick_on(cell, shore)).collect();
         sampler.picks = Some(Picks { first, width: size.x, picks });
         sampler
     }
@@ -627,10 +632,43 @@ impl Sampler<'_> {
 
     /// Picks the biome of a cell from the fields at its centre.
     fn pick_cell(&self, cell: IVec2) -> Pick {
+        self.pick_on(cell, self.shores(&[cell])[0])
+    }
+
+    /// The land's own continentalness at the centre of each cell (the router's, exactly
+    /// there rather than the regional climate's), and whether its corner lies above the sea:
+    /// what keeps a coast's biomes to their side of the water line. All at once, as the
+    /// router works four positions at a time.
+    fn shores(&self, cells: &[IVec2]) -> Vec<(f32, bool)> {
+        let geology = &self.world.geology;
+        let at = |p: IVec2| (p.x as f32, p.y as f32);
+        let centres: Vec<(f32, f32)> = cells.iter().map(|&c| at(c * biome::CELL + biome::CELL / 2)).collect();
+        let corners: Vec<(f32, f32)> = cells.iter().map(|&c| at(c * biome::CELL)).collect();
+        let continental = geology.continentals(&centres);
+        let reliefs = geology.reliefs(&corners);
+        continental.iter().zip(reliefs).map(|(&c, relief)| (climate::continentalness(c), relief.elevation > SEA_LEVEL as f32)).collect()
+    }
+
+    /// Picks the biome of a cell from the fields at its centre, with continentalness its
+    /// shore's (see `shores`): the regional field moved to agree with it at the centre, so
+    /// its gradient still finds the borders, and on the dry side of zero where the cell is
+    /// land, the wet side where it is sea.
+    fn pick_on(&self, cell: IVec2, (continentalness, dry): (f32, bool)) -> Pick {
         let centre = cell * biome::CELL + biome::CELL / 2;
-        let point = |p: IVec2| self.world.point(&self.grid.at(p.x, p.y));
-        let around = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y].map(|d| point(centre + d * GRADIENT_STEP));
-        self.world.biomes.pick(&point(centre), &around)
+        let at = [IVec2::ZERO, IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y].map(|d| centre + d * GRADIENT_STEP);
+        let regional = at.map(|p| self.grid.at(p.x, p.y));
+        let shift = continentalness - regional[0].continentalness;
+        let point = |k: usize| {
+            let c = if k > 0 {
+                regional[k].continentalness + shift
+            } else if dry {
+                continentalness.max(0.0)
+            } else {
+                continentalness.min(-0.001)
+            };
+            self.world.point(&Regional { continentalness: c, ..regional[k] })
+        };
+        self.world.biomes.pick(&point(0), &[point(1), point(2), point(3), point(4)])
     }
 
     /// The site on already sampled geology.
@@ -644,7 +682,7 @@ impl Sampler<'_> {
             slope,
             temperature,
             precipitation: regional.precipitation,
-            moisture: climate::moisture(regional.precipitation, temperature),
+            moisture: regional.moisture(),
             continentalness: regional.continentalness,
             latitude: regional.latitude,
             mountain: geo.mountain,
@@ -1994,6 +2032,81 @@ mod tests {
         }
     }
 
+    /// `SEED=1,7,42 cargo test -p voxmar_worldgen biome_spread -- --ignored --nocapture`
+    /// prints the biome statistics of `map_preview` (region sizes, and the biomes within
+    /// 5 km of the middle, the sea's included) for its 8 km map around the origin, from the
+    /// land and the picker alone, without rivers or a picture: quick, for tuning biomes.
+    #[test]
+    #[ignore]
+    fn biome_spread() {
+        let seeds: Vec<u64> = std::env::var("SEED").ok().map_or(vec![7], |s| s.split(',').filter_map(|s| s.trim().parse().ok()).collect());
+        const SIZE: i32 = 1024;
+        // `SCALE=16` for a 16 km map, whose edges cut fewer regions short.
+        let scale_env: i32 = std::env::var("SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
+        let half = SIZE * scale_env / 2;
+        let mut sums = [0.0f32; 3];
+        let mut shares: rustc_hash::FxHashMap<String, usize> = Default::default();
+        for &seed in &seeds {
+            let world = Overworld::new(seed, registry());
+            let sampler = world.sampler(IVec2::splat(-half - scale_env), IVec2::splat(half + scale_env));
+            let mut homes = vec![u16::MAX; (SIZE * SIZE) as usize];
+            let mut bands = vec![[0u8; 4]; (SIZE * SIZE) as usize];
+            let mut near = vec![false; world.biomes.len()];
+            for i in 0..SIZE * SIZE {
+                let (x, z) = (i % SIZE * scale_env - half, i / SIZE * scale_env - half);
+                let home = sampler.pick(x, z).home;
+                bands[i as usize] = world.biomes.bands(&world.point(&sampler.grid.at(x, z)));
+                if x * x + z * z <= 5000 * 5000 {
+                    near[home.0 as usize] = true;
+                }
+                if world.geology.land(x, z).height > SEA_LEVEL as f32 {
+                    homes[i as usize] = world.biomes.parent_of(home).0;
+                    *shares.entry(world.biomes.get(home).name.trim_start_matches("base:").to_owned()).or_default() += 1;
+                }
+            }
+            let names: Vec<&str> = (0..near.len()).filter(|&i| near[i]).map(|i| world.biomes.get(BiomeId(i as u16)).name.trim_start_matches("base:")).collect();
+            let parents: std::collections::BTreeSet<u16> = (0..near.len()).filter(|&i| near[i]).map(|i| world.biomes.parent_of(BiomeId(i as u16)).0).collect();
+            println!("seed {seed}: {} biomes within 5 km of the middle ({} without variants and ecotones): {}", names.len(), parents.len(), names.join(", "));
+            let (median, big) = biome_sizes(&world, &homes, SIZE, scale_env);
+            borders(&world, &homes, &bands, SIZE);
+            if std::env::var("SMALL").is_ok() {
+                // A picture of the land in regions under a kilometre across (red, darker the
+                // smaller), the rest grey by biome, sea black.
+                let size = small_regions(&homes, SIZE, scale_env);
+                let mut file = format!("P6 {SIZE} {SIZE} 255\n").into_bytes();
+                for i in 0..homes.len() {
+                    file.extend(match homes[i] {
+                        u16::MAX => [0, 0, 40],
+                        _ if size[i] < 1000.0 => [(120.0 + 135.0 * size[i] / 1000.0) as u8, 30, 30],
+                        home => [(90 + home as u32 * 37 % 120) as u8; 3],
+                    });
+                }
+                std::fs::write(format!("{}/../../target/small_{seed}.ppm", env!("CARGO_MANIFEST_DIR")), file).unwrap();
+            }
+            if std::env::var("AXES").is_ok() {
+                // The regions of each axis' bands alone, and of the table's cells, on land.
+                for (name, key) in [("temperature", 0usize), ("moisture", 1), ("continentalness", 2), ("landform", 3), ("cell", 4)] {
+                    let ids: Vec<u16> = (0..homes.len())
+                        .map(|i| match homes[i] {
+                            u16::MAX => u16::MAX,
+                            _ if key == 4 => bands[i].iter().fold(0u16, |id, &b| id * 8 + b as u16),
+                            _ => bands[i][key] as u16,
+                        })
+                        .collect();
+                    print!("{name} bands alone: ");
+                    region_sizes(&ids, SIZE, scale_env, None);
+                }
+            }
+            sums = [sums[0] + median, sums[1] + big, sums[2] + names.len() as f32];
+        }
+        let total: usize = shares.values().sum::<usize>().max(1);
+        let mut shares: Vec<(String, usize)> = shares.into_iter().collect();
+        shares.sort_by_key(|s| std::cmp::Reverse(s.1));
+        println!("land by biome: {}", shares.iter().map(|(name, n)| format!("{name} {:.1}%", 100.0 * *n as f32 / total as f32)).collect::<Vec<_>>().join(", "));
+        let n = seeds.len().max(1) as f32;
+        println!("mean: median region {:.0} m, {:.0}% of land in regions ≥1 km, {:.1} biomes within 5 km", sums[0] / n, 100.0 * sums[1] / n, sums[2] / n);
+    }
+
     /// A colour per biome, from its name.
     fn biome_color(name: &str) -> [f32; 3] {
         let h = rarity::name_hash(name);
@@ -2218,14 +2331,21 @@ mod tests {
         let near: Vec<&str> = (0..near_spawn.len()).filter(|&i| near_spawn[i]).map(|i| world.biomes.get(BiomeId(i as u16)).name.as_str()).collect();
         println!("{} biomes within 5 km of spawn: {}\nwrote {path}", near.len(), near.join(", "));
         biome_sizes(&world, &homes, SIZE, scale);
+        borders(&world, &homes, &bands, SIZE);
+    }
+
+    /// Which axis of the biome table changes across the borders between biomes on a map of
+    /// `homes` (a biome per pixel, `u16::MAX` for sea) whose table bands are `bands`, and the
+    /// commonest borders of each kind.
+    fn borders(world: &Overworld, homes: &[u16], bands: &[[u8; 4]], size: i32) {
         // Which axis changes across each border between biomes (a border can count twice).
         let mut causes = [0usize; 5];
         let mut pairs: rustc_hash::FxHashMap<(u16, u16), usize> = Default::default();
         let mut crossing: [rustc_hash::FxHashMap<(u16, u16), usize>; 4] = Default::default();
-        for z in 0..SIZE - 1 {
-            for x in 0..SIZE - 1 {
-                let i = (z * SIZE + x) as usize;
-                for j in [i + 1, i + SIZE as usize] {
+        for z in 0..size - 1 {
+            for x in 0..size - 1 {
+                let i = (z * size + x) as usize;
+                for j in [i + 1, i + size as usize] {
                     if homes[i] == u16::MAX || homes[j] == u16::MAX || homes[i] == homes[j] {
                         continue;
                     }
@@ -2259,12 +2379,51 @@ mod tests {
             crossing.sort_by_key(|p| std::cmp::Reverse(p.1));
             println!("{axis} borders: {}", crossing.iter().take(10).map(|((a, b), n)| format!("{}|{} {}", name(*a), name(*b), n)).collect::<Vec<_>>().join(", "));
         }
-    }
+        }
 
     /// How large the land biomes' regions are on a map of `homes` (a biome per pixel,
     /// `u16::MAX` for sea), `scale` blocks per pixel: each region's size as the diameter of a
     /// circle of its area, and the share of land in regions at least a kilometre across.
-    fn biome_sizes(world: &Overworld, homes: &[u16], size: i32, scale: i32) {
+    fn biome_sizes(world: &Overworld, homes: &[u16], size: i32, scale: i32) -> (f32, f32) {
+        let (median, big) = region_sizes(homes, size, scale, Some(world));
+        (median, big)
+    }
+
+    /// The diameter of the region each pixel of `homes` lies in, in blocks.
+    fn small_regions(homes: &[u16], size: i32, scale: i32) -> Vec<f32> {
+        let mut out = vec![f32::MAX; homes.len()];
+        let mut seen = vec![false; homes.len()];
+        for start in 0..homes.len() {
+            if seen[start] || homes[start] == u16::MAX {
+                continue;
+            }
+            let (mut stack, mut members) = (vec![start], Vec::new());
+            seen[start] = true;
+            while let Some(i) = stack.pop() {
+                members.push(i);
+                let (x, z) = (i as i32 % size, i as i32 / size);
+                for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let (nx, nz) = (x + dx, z + dz);
+                    if (0..size).contains(&nx) && (0..size).contains(&nz) {
+                        let j = (nz * size + nx) as usize;
+                        if !seen[j] && homes[j] == homes[start] {
+                            seen[j] = true;
+                            stack.push(j);
+                        }
+                    }
+                }
+            }
+            let diameter = 2.0 * (members.len() as f32 * (scale * scale) as f32 / std::f32::consts::PI).sqrt();
+            for i in members {
+                out[i] = diameter;
+            }
+        }
+        out
+    }
+
+    /// Like `biome_sizes`, for any map of ids (`u16::MAX` for sea); `world` names biomes in
+    /// the breakdowns, which are left out without it.
+    fn region_sizes(homes: &[u16], size: i32, scale: i32, world: Option<&Overworld>) -> (f32, f32) {
         let mut seen = vec![false; homes.len()];
         let mut regions: Vec<(u16, usize)> = Vec::new();
         for start in 0..homes.len() {
@@ -2308,6 +2467,7 @@ mod tests {
             100.0 * mid as f32 / land.max(1) as f32,
             median.map_or(0.0, |r| r.0)
         );
+        let Some(world) = world else { return (median.map_or(0.0, |r| r.0), big as f32 / land.max(1) as f32) };
         // Which biomes hold the land in regions under 600 m across.
         let mut small: rustc_hash::FxHashMap<u16, usize> = Default::default();
         for r in regions.iter().filter(|r| diameter(r.1) < 600.0) {
@@ -2329,6 +2489,7 @@ mod tests {
             .collect();
         largest.sort_by(|a, b| b.0.total_cmp(&a.0));
         println!("largest region per biome: {}", largest.iter().map(|(d, n)| format!("{} {:.1} km", n.trim_start_matches("base:"), d / 1000.0)).collect::<Vec<_>>().join(", "));
+        (median.map_or(0.0, |r| r.0), big as f32 / land.max(1) as f32)
     }
 
     /// `SEED=1,2 cargo test --release -p voxmar_worldgen biomes_near_spawn -- --ignored
@@ -2505,15 +2666,13 @@ mod tests {
         let world = Overworld::new(5, registry());
         let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
         let sites: Vec<Site> = (0..150 * 150).map(|i| sampler.site(i % 150 * 80 - 6000, i / 150 * 80 - 6000)).collect();
-        // Evenly spread fields put a tenth of the land in each tenth of their range.
-        // Weirdness varies over many kilometres, so it is sampled over a wider area.
-        let weirdness: Vec<f32> = (0..100 * 100)
-            .map(|i| world.geology.climate().regional_at(&world.geology, IVec2::new(i % 100 * 600 - 30000, i / 100 * 600 - 30000)).weirdness)
-            .collect();
-        type Field = fn(&Site) -> f32;
-        let fields: [(&str, Field); 2] = [("fertility", |s| s.fertility), ("variant", |s| s.variant)];
-        let fields = fields.map(|(name, field)| (name, sites.iter().map(field).collect::<Vec<f32>>()));
-        for (name, values) in [("weirdness", weirdness)].into_iter().chain(fields) {
+        // Evenly spread fields put a tenth of the land in each tenth of their range. Those
+        // varying over many kilometres are sampled over a wider area.
+        let wide: Vec<Regional> = (0..100 * 100).map(|i| world.geology.climate().regional_at(&world.geology, IVec2::new(i % 100 * 600 - 30000, i / 100 * 600 - 30000))).collect();
+        let weirdness: Vec<f32> = wide.iter().map(|r| r.weirdness).collect();
+        let variant: Vec<f32> = wide.iter().map(|r| r.variant).collect();
+        let fertility: Vec<f32> = sites.iter().map(|s| s.fertility).collect();
+        for (name, values) in [("weirdness", weirdness), ("variant", variant), ("fertility", fertility)] {
             assert!(values.iter().all(|v| (0.0..=1.0).contains(v)), "{name} out of range");
             for decile in 0..10 {
                 let share = values.iter().filter(|&&v| (v * 10.0) as i32 == decile).count() as f32 / values.len() as f32;
@@ -2524,11 +2683,11 @@ mod tests {
             v.sort_by(f32::total_cmp);
             v[v.len() / 2]
         };
-        let aether = median(sites.iter().map(|s| s.aether).collect());
+        let aether = median(wide.iter().map(|r| r.aether).collect());
         assert!((aether - world.dials().fantasy).abs() < 0.1, "median aether {aether}, fantasy {}", world.dials().fantasy);
         assert!(sites.iter().all(|s| (-1.0..=1.0).contains(&s.continentalness) && (0.0..=1.0).contains(&s.erosion)));
         assert!(sites.iter().any(|s| s.continentalness < -0.5) && sites.iter().any(|s| s.continentalness > 0.5));
-        assert!(sites.iter().any(|s| s.erosion > 0.9) && sites.iter().any(|s| s.erosion < 0.05));
+        assert!(wide.iter().any(|r| r.erosion > 0.9) && wide.iter().any(|r| r.erosion < 0.05));
 
         // Block to block, nothing a biome is picked by jumps.
         for x in [-1500, 400] {
@@ -2619,7 +2778,7 @@ mod tests {
     fn the_air_follows_climate_and_biome() {
         // Deep in a dry, ordinary desert, low and away from water (high deserts are cooler
         // and fantastical ones violet), in the first of these worlds with one near the origin.
-        let (world, desert) = [3, 7, 42]
+        let (world, desert) = [3, 7, 42, 1, 2, 5, 9, 11, 13]
             .into_iter()
             .find_map(|seed| {
                 let world = Overworld::new(seed, registry());

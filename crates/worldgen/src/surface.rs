@@ -25,6 +25,9 @@ use crate::{SEA_LEVEL, Site};
 /// ground's, in noise units: such patches become rare and small.
 const PATCH_CONTRAST: f32 = 0.3;
 
+/// How well a block's colour must sit with the main block's to count as its family.
+const FAMILY: f32 = 0.3;
+
 /// Blocks chosen by weight from a uniform value.
 #[derive(Clone, Debug)]
 pub struct Palette {
@@ -53,6 +56,21 @@ impl Palette {
                 *weight *= crate::hue::harmony(shown(*block), anchor, crate::hue::GROUND_SPREAD);
             }
         }
+        Self::from_weights(named)
+    }
+
+    /// The family of the heaviest block's colour among `selects`: those whose colour sits
+    /// with it (`crate::hue`, lightness counting little), by weight, so they differ in shade
+    /// rather than hue. Clashing blocks are left out altogether.
+    pub(crate) fn family(selects: &[Select], registry: &BlockRegistry) -> Vec<(BlockId, f32)> {
+        let named = Self::selected(selects, registry);
+        let color = |block: BlockId| registry.def(block).color.map(f32::from);
+        let Some(&(main, _)) = named.iter().max_by(|a, b| a.1.total_cmp(&b.1)) else { return named };
+        named.into_iter().filter(|&(block, _)| crate::hue::harmony(color(block), color(main), crate::hue::GROUND_SPREAD) >= FAMILY).collect()
+    }
+
+    /// From blocks and their weights.
+    pub(crate) fn weighted(named: Vec<(BlockId, f32)>) -> Self {
         Self::from_weights(named)
     }
 
@@ -219,6 +237,8 @@ pub enum Fill {
     Stones,
     /// The biome's strata, by height.
     Strata,
+    /// The rock province's bands, by height: bare rock.
+    Rock,
 }
 
 /// What a column offers the rules.
@@ -233,6 +253,10 @@ pub struct Spot<'a> {
     pub mix: &'a dyn Fn() -> f32,
     /// Uniform per-column randomness.
     pub chance: f32,
+    /// The rock province's beds of bare rock here (see `crate::rocks::Province::bands`):
+    /// what rules placing the stones beneath lay, bed by bed; empty where the biome has
+    /// stones of its own.
+    pub bands: &'a [BlockId],
     /// Noise values already sampled here: rules often test one noise twice (a trail and
     /// its fringe, a patch and its rim).
     pub sampled: Sampled,
@@ -444,16 +468,31 @@ impl SurfaceRules {
         (!matches!(surface.cliff, Mat::Stones)).then(|| surface.cliff.pick((spot.mix)(), stones, strata, spot.site.height))
     }
 
-    /// Bare rock of steep slopes and exposed heights.
+    /// Bare rock of steep slopes and exposed heights. Banded cliffs show their bands all
+    /// the way down a riser, not just along its rim; where the cliff is the stones beneath
+    /// and the rock province lays them in beds, the beds (`Fill::Rock`, whose top the
+    /// caller sets by height).
     pub(crate) fn cliff(&self, surface: &Surface, spot: &Spot, stones: &Palette, strata: &[BlockId]) -> Layers {
-        // Banded cliffs show their bands all the way down a riser, not just along its rim.
-        let (filler, depth) = if matches!(surface.cliff, Mat::Strata) { (Mat::Strata, 24) } else { (Mat::Stones, 0) };
+        if matches!(surface.cliff, Mat::Stones) && !spot.bands.is_empty() {
+            return Layers { top: spot.bands[0], filler: Fill::Rock, depth: CLIFF_DEPTH };
+        }
+        let (filler, depth) = if matches!(surface.cliff, Mat::Strata) { (Mat::Strata, CLIFF_DEPTH) } else { (Mat::Stones, 0) };
         let rock = LayersRule { top: surface.cliff.clone(), filler, depth };
         resolve(&rock, spot, stones, strata)
     }
 }
 
+/// How far down a cliff's column its bands go: past the foot of most risers.
+const CLIFF_DEPTH: i32 = 24;
+/// How far down the beds of rock on a slope go: past the steps beside it.
+const ROCK_DEPTH: i32 = 4;
+
 fn resolve(rule: &LayersRule, spot: &Spot, stones: &Palette, strata: &[BlockId]) -> Layers {
+    // Bare rock is the province's beds, a few blocks down, whose top the caller sets by
+    // height (see `Fill::Rock`).
+    if matches!(rule.top, Mat::Stones) && !spot.bands.is_empty() {
+        return Layers { top: spot.bands[0], filler: Fill::Rock, depth: ROCK_DEPTH };
+    }
     let band = |y: i32| strata[y.rem_euclid(strata.len() as i32) as usize];
     let top = match &rule.top {
         Mat::Mix(p) => p.pick_with(spot.mix),

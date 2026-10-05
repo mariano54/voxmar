@@ -229,7 +229,7 @@ impl Geology {
         Self {
             router: Router::new(seed, dials, &program),
             vertical: 0.6 + 0.4 * dials.mountain_height / 140.0,
-            climate: Climate::new(seed, dials),
+            climate: Climate::new(seed, dials, &content.climate),
             shapes: Shapes::new(seed, dials, content, rocks),
             lattice: Cache::new(16 << 20),
             bases: Cache::new(4 << 20),
@@ -351,6 +351,19 @@ impl Geology {
                 let c = router.get(&mut lanes, &NoClimate, o.continental, k);
                 out.push((c, router.get(&mut lanes, &NoClimate, o.mountain, k)));
             }
+        }
+        out
+    }
+
+    /// The router's continentalness at each position, exactly there rather than from the
+    /// lattice: what puts a biome on the right side of the coast.
+    pub(crate) fn continentals(&self, points: &[(f32, f32)]) -> Vec<f32> {
+        let router = &self.router;
+        let mut lanes = router.lanes();
+        let mut out = Vec::with_capacity(points.len());
+        for four in points.chunks(4) {
+            router.start(&mut lanes, four);
+            out.extend((0..four.len()).map(|k| router.get(&mut lanes, &NoClimate, router.outputs.continental, k)));
         }
         out
     }
@@ -578,7 +591,7 @@ impl crate::router::Inputs for Geology {
     /// `T` and `H` for the router: the base climate's sea-level temperature and moisture.
     fn climate(&self, x: [f32; 4], z: [f32; 4], n: usize) -> ([f32; 4], [f32; 4]) {
         let bases = self.bases_at(x, z, n);
-        (bases.map(|b| b.sea_temperature), bases.map(|b| climate::moisture(b.precipitation, b.sea_temperature)))
+        (bases.map(|b| b.sea_temperature), bases.map(|b| b.humidity))
     }
 }
 

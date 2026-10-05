@@ -266,6 +266,10 @@ no two worlds share a rarity table. Everything else is a continuous field:
   over continents and ranges alone so climate zones are regions kilometres wide rather than
   stripes along every slope: wet coasts, drier interiors, rain shadows behind ranges, wet
   tropics and dry subtropics.
+- **Humidity**, what biomes and plants go by, weighs a slow wetness field (16 km) most and
+  the wind's rain and the latitude's belts a little (`humidity` in `climate.ron`), and leaves
+  out how much the local warmth evaporates: humidity that followed latitude as fast as
+  temperature does would cut every climate zone into thin bands of biomes.
 - **Rivers and lakes** (`worldgen/src/water/`) run where water would. Trunk rivers are routed on
   a 64-block grid over the land's broad shape and cut their valleys (and, rarely, tunnels
   through a ridge) into it; creeks and streams are routed on an 8-block grid from the hills to a
@@ -306,14 +310,16 @@ no two worlds share a rarity table. Everything else is a continuous field:
 
 **Biomes** are data in content packages (`assets/content/base/biomes.ron`, with the climate
 bands in `climate.ron` and rock provinces in `rocks.ron`), loaded like blocks, so a mod adds
-one the same way. The temperature, moisture, continentalness and landform bands form a table
+one the same way. The temperature, humidity, continentalness and landform bands form a table
 in which every cell belongs to some biome (checked at load); the picker sees temperature and
 landform averaged over a few hundred blocks, so a range, hill country or plain is one place
-rather than a scatter of hills and summits; commons share a cell along the slow weirdness
+rather than a scatter of hills and summits, and the land's own continentalness at each spot,
+so a coast's biomes keep to their side of the water line; commons share a cell along the slow weirdness
 field in the same slices wherever they meet, and rarer biomes take its extremes, so they
 appear in whole regions of some worlds and not in others;
-variants take shares of their parent; ecotones sit on borders; fantastical biomes claim cells
-where aether runs high. Borders blend over 16-48 blocks. Each biome's ground comes from
+variants take shares of their parent along a field 8 km across; ecotones sit on borders;
+fantastical biomes claim cells where aether (12 km across) runs high. The scales of these
+fields are data (`scales` in `climate.ron`). Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
 lines such as game trails; shared sets in `surfaces.ron` break every soil slope up into
 coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
@@ -404,7 +410,10 @@ and their region builds, trails and their planning, surface, caves, cave biomes,
 trees, decoration, packing), cold and warm, and reports lighting and meshing per column;
 `first_column` times a new world's spawn point, spawn column and first 9×9 columns, building
 regions on one core and on all, and `land_samples` the cost of one sample of the land on the
-rivers' grids. `land_heights` (with `SEED=1,2,3`) prints how high the land is, its share above
+rivers' grids. `biome_spread` (with `SEED=1,2,3`; `SCALE=16` for 16 km maps, `AXES=1` for
+the regions of each climate axis alone, `SMALL=1` for `target/small_N.ppm`, a picture of the
+land in regions under a kilometre across) prints the biome statistics of `map_preview` quickly,
+without rivers or a picture. `land_heights` (with `SEED=1,2,3`) prints how high the land is, its share above
 a few heights, and `climate_bands` how temperature and moisture spread over it, for tuning
 `land.ron` and `climate.ron`. `output_is_unchanged` and `light_is_unchanged` (ordinary tests)
 hash generated columns and their light on three seeds, so performance work cannot change a

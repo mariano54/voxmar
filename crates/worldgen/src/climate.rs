@@ -28,6 +28,7 @@ use rustc_hash::FxHashMap;
 use voxmar_engine::glam::IVec2;
 
 use crate::SEA_LEVEL;
+use crate::content::{ClimateDef, HumidityDef};
 use crate::dials::WorldDials;
 use crate::geology::{Geology, Relief, noise, smoothstep, spline};
 
@@ -63,13 +64,17 @@ pub struct Base {
     /// Annual precipitation, mm: wet coasts and windward ranges, dry interiors and rain
     /// shadows, at the scale of whole ranges and coasts.
     pub precipitation: f32,
+    /// The humidity biomes are placed by, in moisture's units (see `HumidityDef`).
+    pub humidity: f32,
 }
 
 impl Base {
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
+        let mix = |a: f32, b: f32| a + (b - a) * t;
         Self {
-            sea_temperature: self.sea_temperature + (other.sea_temperature - self.sea_temperature) * t,
-            precipitation: self.precipitation + (other.precipitation - self.precipitation) * t,
+            sea_temperature: mix(self.sea_temperature, other.sea_temperature),
+            precipitation: mix(self.precipitation, other.precipitation),
+            humidity: mix(self.humidity, other.humidity),
         }
     }
 }
@@ -88,8 +93,10 @@ pub struct Regional {
     /// Annual precipitation, mm.
     pub precipitation: f32,
     /// Precipitation without the extra rain of windward slopes, which changes from one
-    /// slope to the next: the regional wetness biomes are chosen by.
+    /// slope to the next.
     pub rainfall: f32,
+    /// The humidity biomes and plants go by, in moisture's units (see `HumidityDef`).
+    pub humidity: f32,
     /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland.
     pub continentalness: f32,
     /// 0 at the equator ..= 1 at a pole.
@@ -105,7 +112,7 @@ pub struct Regional {
     pub aether: f32,
     /// Evenly spread over 0 ..= 1: how rich the soil is.
     pub fertility: f32,
-    /// Evenly spread over 0 ..= 1, varying over a few hundred blocks: picks sub-biomes.
+    /// Evenly spread over 0 ..= 1, varying over kilometres: picks sub-biomes.
     pub variant: f32,
     /// Offset that warps rock province borders, in blocks.
     pub warp: [f32; 2],
@@ -118,10 +125,10 @@ impl Regional {
         self.sea_temperature - LAPSE_RATE * (self.elevation - SEA_LEVEL as f32).max(0.0)
     }
 
-    /// Precipitation over potential evaporation at the regional elevation, from the
-    /// regional rainfall: what biomes and terrain shapes are placed by.
+    /// The regional humidity, in moisture's units: what biomes and terrain shapes are
+    /// placed by.
     pub fn moisture(&self) -> f32 {
-        moisture(self.rainfall, self.temperature())
+        self.humidity
     }
 
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
@@ -130,6 +137,7 @@ impl Regional {
             sea_temperature: mix(self.sea_temperature, other.sea_temperature),
             precipitation: mix(self.precipitation, other.precipitation),
             rainfall: mix(self.rainfall, other.rainfall),
+            humidity: mix(self.humidity, other.humidity),
             continentalness: mix(self.continentalness, other.continentalness),
             latitude: mix(self.latitude, other.latitude),
             elevation: mix(self.elevation, other.elevation),
@@ -160,7 +168,7 @@ fn range(relief: &Relief) -> f32 {
 
 /// −1 over the deep ocean, 0 at the coast ..= 1 deep inland, from the router's
 /// continentalness. It changes fastest at the coast, so coastal biome borders are sharp.
-fn continentalness(continental: f32) -> f32 {
+pub(crate) fn continentalness(continental: f32) -> f32 {
     use crate::geology::COAST;
     let ease = |t: f32| t * (2.0 - t);
     if continental >= COAST {
@@ -168,6 +176,13 @@ fn continentalness(continental: f32) -> f32 {
     } else {
         -ease(((COAST - continental) / 0.46).min(1.0))
     }
+}
+
+/// Inverse of the standard normal distribution function, by a logistic fit that is
+/// accurate to a few percent over 0.05..0.95.
+fn probit(p: f32) -> f32 {
+    let p = p.clamp(0.01, 0.99);
+    (p / (1.0 - p)).ln() / 1.702
 }
 
 /// Spreads a two-octave noise value evenly over 0 ..= 1 through its measured distribution,
@@ -223,26 +238,30 @@ pub struct Climate {
     fertility: FastNoiseLite,
     variant: FastNoiseLite,
     warp: [FastNoiseLite; 2],
+    humidity: HumidityDef,
 }
 
 /// How far rock province borders are pushed around, in blocks.
 const PROVINCE_WARP: f32 = 450.0;
 
 impl Climate {
-    pub fn new(seed: u64, dials: &WorldDials) -> Self {
+    pub fn new(seed: u64, dials: &WorldDials, def: &ClimateDef) -> Self {
+        let scales = &def.scales;
         Self {
             dials: *dials,
             latitude_warp: noise(seed, 10, 0.8 / dials.pole_distance, FractalType::FBm, 2),
-            // Anomalies and wetness vary over many kilometres, so climate zones are large.
-            anomaly: noise(seed, 11, 1.0 / 8000.0, FractalType::FBm, 2),
-            wetness: noise(seed, 12, 1.0 / 6000.0, FractalType::FBm, 2),
-            // Slow, so that biomes sharing a climate split it into regions kilometres across.
-            weirdness: noise(seed, 13, 1.0 / 11000.0, FractalType::FBm, 2),
-            aether: noise(seed, 14, 1.0 / 2200.0, FractalType::FBm, 2),
+            // Anomalies and wetness vary over many kilometres, so climate zones are large;
+            // weirdness slowly, so that biomes sharing a climate split it into regions
+            // kilometres across, and variants too.
+            anomaly: noise(seed, 11, 1.0 / scales.anomaly, FractalType::FBm, 2),
+            wetness: noise(seed, 12, 1.0 / scales.wetness, FractalType::FBm, 2),
+            weirdness: noise(seed, 13, 1.0 / scales.weirdness, FractalType::FBm, 2),
+            aether: noise(seed, 14, 1.0 / scales.aether, FractalType::FBm, 2),
             aether_exponent: dials.fantasy.clamp(0.01, 0.99).ln() / 0.5f32.ln(),
-            fertility: noise(seed, 15, 1.0 / 700.0, FractalType::FBm, 2),
-            variant: noise(seed, 16, 1.0 / 800.0, FractalType::FBm, 2),
+            fertility: noise(seed, 15, 1.0 / scales.fertility, FractalType::FBm, 2),
+            variant: noise(seed, 16, 1.0 / scales.variant, FractalType::FBm, 2),
             warp: [noise(seed, 17, 1.0 / 1100.0, FractalType::FBm, 2), noise(seed, 18, 1.0 / 1100.0, FractalType::FBm, 2)],
+            humidity: def.humidity.clone(),
         }
     }
 
@@ -329,10 +348,23 @@ impl Climate {
                 }
                 let wander = self.latitude_warp.get_noise_2d(x, z);
                 let latitude = self.latitude(z, wander);
-                let wetness = (1.0 + 0.35 * self.wetness.get_noise_2d(x, z)).max(0.1);
+                let wet = self.wetness.get_noise_2d(x, z);
+                let wetness = (1.0 + 0.35 * wet).max(0.1);
+                let humid = self.dials.humidity;
+                // The humidity weighs the same three in standard units: the wetness field
+                // (evenly spread, then normal), the wind's water and the belts.
+                let h = &self.humidity;
+                let parts = [
+                    (h.wetness, probit(uniform(wet))),
+                    (h.wind, ((moisture - 0.5) / 0.25).clamp(-2.5, 2.5)),
+                    (h.belts, (circulation(latitude) - 0.6) / 0.25),
+                ];
+                let norm = parts.iter().map(|(w, _)| w * w).sum::<f32>().sqrt().max(1e-6);
+                let index = parts.iter().map(|(w, v)| w * v).sum::<f32>() / norm;
                 Base {
                     sea_temperature: self.sea_temperature(latitude, self.anomaly.get_noise_2d(x, z)),
-                    precipitation: 2600.0 * (0.55 + 0.9 * self.dials.humidity) * circulation(latitude) * (0.2 + 0.8 * moisture) * wetness,
+                    precipitation: 2600.0 * (0.55 + 0.9 * humid) * circulation(latitude) * (0.2 + 0.8 * moisture) * wetness,
+                    humidity: h.median * (0.55 + 0.9 * humid) * (h.spread * index).exp(),
                 }
             })
             .collect()
@@ -358,11 +390,13 @@ impl Climate {
             let reliefs = &around[k];
             let relief = reliefs[0];
             let latitude = self.latitude(z[k], wander[k]);
-            let precipitation = geology.base(x[k], z[k]).precipitation;
+            let base = geology.base(x[k], z[k]);
+            let precipitation = base.precipitation;
             *out = Regional {
                 sea_temperature: self.sea_temperature(latitude, anomaly[k]),
                 precipitation,
                 rainfall: precipitation,
+                humidity: base.humidity,
                 continentalness: continentalness(relief.continental),
                 latitude,
                 // Averaged over several hundred blocks, so a range's flanks share one

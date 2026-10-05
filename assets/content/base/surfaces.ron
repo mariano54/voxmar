@@ -9,23 +9,24 @@
         (
             // Slopes of soil break up as they steepen: coarse dirt creeps onto the edges of
             // gentle steps, gravel and coarse dirt onto steeper ones, then the province's
-            // rock in clumps, until the steepest ground is bare cliff.
+            // rock in its beds, in patches tens of blocks across, until the steepest ground
+            // is bare cliff.
             name: "soil_slopes",
             rules: [
-                (when: [Slope(2.0, 3.0), Patch((name: "slope_rock", scale: 6.0, octaves: 2), -0.3)], place: (top: Stones, filler: Stones)),
-                (when: [Slope(1.5, 2.5), Patch((name: "slope_gravel", scale: 4.0), 0.2)], place: (top: Block("gravel"), filler: Block("gravel"), depth: 2)),
-                (when: [Slope(1.0, 2.0), Patch((name: "slope_scree", scale: 5.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 3.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
-                (when: [Slope(0.5, 1.5), Patch((name: "slope_scree", scale: 5.0, octaves: 2), 0.5)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
-                (when: [Slope(0.5, 1.5), Patch((name: "slope_rock", scale: 6.0, octaves: 2), 0.62)], place: (top: Stones, filler: Stones)),
+                (when: [Slope(2.0, 3.0), Patch((name: "slope_rock", scale: 22.0, octaves: 2), -0.3)], place: (top: Stones, filler: Stones)),
+                (when: [Slope(1.5, 2.5), Patch((name: "slope_gravel", scale: 10.0), 0.2)], place: (top: Block("gravel"), filler: Block("gravel"), depth: 2)),
+                (when: [Slope(1.0, 2.0), Patch((name: "slope_scree", scale: 12.0, octaves: 2), 0.1)], place: (top: Mix([Name("coarse_dirt", 3.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
+                (when: [Slope(0.5, 1.5), Patch((name: "slope_scree", scale: 12.0, octaves: 2), 0.5)], place: (top: Block("coarse_dirt"), filler: Block("dirt"))),
+                (when: [Slope(0.5, 1.5), Patch((name: "slope_rock", scale: 22.0, octaves: 2), 0.62)], place: (top: Stones, filler: Stones)),
             ],
         ),
         (
             // High, stony ground: rock and scree take most slopes, grass keeps the flats.
             name: "rocky_slopes",
             rules: [
-                (when: [Slope(1.5, 2.5), Patch((name: "slope_rock", scale: 6.0, octaves: 2), -0.5)], place: (top: Stones, filler: Stones)),
-                (when: [Slope(1.0, 2.0), Patch((name: "slope_gravel", scale: 4.0), -0.1)], place: (top: Mix([Name("gravel", 3.0), Name("coarse_dirt", 1.0)]), filler: Block("gravel"), depth: 2)),
-                (when: [Slope(0.5, 1.5), Patch((name: "slope_scree", scale: 5.0, octaves: 2), 0.15)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("gravel", 1.0), Name("stone", 1.0)]), filler: Block("dirt"))),
+                (when: [Slope(1.5, 2.5), Patch((name: "slope_rock", scale: 22.0, octaves: 2), -0.5)], place: (top: Stones, filler: Stones)),
+                (when: [Slope(1.0, 2.0), Patch((name: "slope_gravel", scale: 10.0), -0.1)], place: (top: Mix([Name("gravel", 3.0), Name("coarse_dirt", 1.0)]), filler: Block("gravel"), depth: 2)),
+                (when: [Slope(0.5, 1.5), Patch((name: "slope_scree", scale: 12.0, octaves: 2), 0.15)], place: (top: Mix([Name("coarse_dirt", 2.0), Name("gravel", 1.0), Name("stone", 1.0)]), filler: Block("dirt"))),
             ],
         ),
         (

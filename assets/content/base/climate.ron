@@ -3,8 +3,10 @@
 // Each axis has one more band name than edges; `names[i]` lies below `edges[i]`.
 //
 // - temperature: °C at the land's regional elevation (hills and terrain features left out);
-// - moisture: precipitation over potential evaporation, 0.1 in deserts, 2 in rainforests;
-// - continentalness: −1 deep ocean, 0 at the coast, 1 deep inland;
+// - moisture: the humidity (see `humidity` below), in the units of precipitation over
+//   potential evaporation: 0.1 in deserts, 2 in rainforests;
+// - continentalness: −1 deep ocean, 0 at the coast, 1 deep inland (the land's own, so 0 is
+//   the water line);
 // - erosion: the landform class: 0 flat, 1/3 hills, 2/3 the slopes of a range, 1 its peaks.
 //
 // `remaps` can bend an axis for the biome picker only, to give a rare slot more land
@@ -14,6 +16,13 @@
     moisture: (names: ["arid", "dry", "moderate", "humid", "wet"], edges: [0.34, 0.6, 0.95, 1.35]),
     continentalness: (names: ["deep_ocean", "ocean", "coast", "inland", "far_inland"], edges: [-0.55, 0.0, 0.15, 0.55]),
     erosion: (names: ["flat", "hills", "slopes", "peaks"], edges: [0.17, 0.5, 0.83]),
+    // Wavelengths of the climate's own fields, in blocks (see `ScalesDef`): how large the
+    // regions they shape are.
+    scales: (anomaly: 12000.0, wetness: 16000.0, weirdness: 11000.0, aether: 12000.0, fertility: 700.0, variant: 8000.0),
+    // The humidity biomes go by (see `HumidityDef`): its median, the spread of its
+    // logarithm, and the weights of the slow wetness field, the wind's rain (wet coasts,
+    // dry interiors, rain shadows) and the latitude's wet and dry belts.
+    humidity: (median: 0.92, spread: 0.6, wetness: 1.0, wind: 0.3, belts: 0.2),
     frost: (
         snow: "snow_block",
         powder: "powder_snow",

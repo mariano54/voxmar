@@ -418,6 +418,11 @@ copied.
   landform roles. Read from Mojang's world-generation data through misode's mcmeta mirror
   (https://github.com/misode/mcmeta) and the Minecraft Wiki's noise router and density
   function pages (CC BY-NC-SA); techniques only.
+- Taken so far (terrain steps 1 and 2): the router itself (`crates/worldgen/src/router.rs`,
+  with Tectonic's splines in `land.ron`), the relief worked out on a 4-block lattice and
+  interpolated (`geology.rs`), and biomes picked by a humidity that does not follow
+  temperature, as vanilla's humidity noise is independent of its temperature noise
+  (`HumidityDef` in `content.rs`, `climate.rs`).
 
 ## The hiking video
 
