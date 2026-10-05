@@ -68,6 +68,8 @@ pub struct ClientAtmosphere {
     seed: Option<u64>,
     building: Option<Receiver<Arc<Overworld>>>,
     since_sample: f32,
+    /// A sample being taken off the main thread.
+    sampling: Option<Receiver<Air>>,
 }
 
 /// One set of ambient particles: how many, and how they look and move.
@@ -117,6 +119,7 @@ impl Default for ClientAtmosphere {
             seed: None,
             building: None,
             since_sample: SAMPLE_EVERY,
+            sampling: None,
         }
     }
 }
@@ -154,26 +157,40 @@ fn prepare(mut air: ResMut<ClientAtmosphere>, launch: Res<Launch>) {
     air.building = Some(receiver);
 }
 
-/// Samples the land's air where the player is now and then, and eases towards it.
+/// Samples the land's air where the player is now and then, and eases towards it. The
+/// sample is taken off the main thread: it looks up the land's climate, which took 20-36 ms
+/// at times while the world streamed in around a flight, a frame each time.
 fn sample(time: Res<Time>, mut air: ResMut<ClientAtmosphere>, player: Res<LocalPlayer>) {
     let air = &mut *air;
     air.since_sample += time.delta_secs();
+    if let Some(sampling) = &air.sampling
+        && let Ok(target) = sampling.try_recv()
+    {
+        air.target = target;
+        air.sampling = None;
+    }
     if let Some(generator) = &air.generator
         && player.joined
+        && air.sampling.is_none()
         && air.since_sample >= SAMPLE_EVERY
     {
         air.since_sample = 0.0;
         let at = player.position.floor().as_ivec3();
-        let sampled = generator.atmosphere_at(at.x, at.z);
-        let sets = generator.particle_sets();
-        air.target = Air {
-            haze: Vec3::from(sampled.haze),
-            haze_density: sampled.haze_density,
-            sky: Vec3::from(sampled.sky),
-            warmth: sampled.warmth,
-            saturation: sampled.saturation,
-            particles: sampled.particles.iter().map(|&(id, density)| (sets[id.0 as usize].clone(), density)).collect(),
-        };
+        let generator = generator.clone();
+        let (sender, receiver) = bounded(1);
+        rayon::spawn(move || {
+            let sampled = generator.atmosphere_at(at.x, at.z);
+            let sets = generator.particle_sets();
+            let _ = sender.send(Air {
+                haze: Vec3::from(sampled.haze),
+                haze_density: sampled.haze_density,
+                sky: Vec3::from(sampled.sky),
+                warmth: sampled.warmth,
+                saturation: sampled.saturation,
+                particles: sampled.particles.iter().map(|&(id, density)| (sets[id.0 as usize].clone(), density)).collect(),
+            });
+        });
+        air.sampling = Some(receiver);
     }
     let t = (time.delta_secs() / EASE).min(1.0);
     let (land, target) = (&mut air.land, &air.target);

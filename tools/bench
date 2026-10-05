@@ -17,6 +17,8 @@
 # Views (headless captures, seed 1, his config: 32 chunks and SMAA, VSync off):
 #   flight75   40 s flight at 2268x1473, his 75% resolution of a 3024x1964 screen
 #   flight100  40 s flight at 3024x1964, full resolution
+#   flightfast 40 s flight at 2268x1473 four times as fast (his fly speed), the world
+#              streaming in faster than it is made: p99 and worst frame matter most
 #   sea        the sea at spawn, 2268x1473
 #   forest     dense forest, 2268x1473
 # The numbers, the power mode and the load go to target/bench/report.txt.
@@ -42,18 +44,24 @@ config=$out/config
 mkdir -p "$config"
 # Mariano's settings, as he plays (2026-10-05).
 printf '(\n    view_distance: 32,\n    anti_aliasing: Smaa,\n    vsync: false,\n)\n' >"$config/settings.ron"
+# The same, flying four times as fast, as he does (fly speed 400%): the world streams in
+# faster than it is generated and meshed, which is where his frame rate fell under 60.
+fast=$out/config-fast
+mkdir -p "$fast"
+printf '(\n    view_distance: 32,\n    anti_aliasing: Smaa,\n    vsync: false,\n    fly_speed: 400,\n)\n' >"$fast/settings.ron"
 
 # The capture arguments of a view, into `view_args`.
 view_args() {
   case $1 in
     flight75) view_args=(--size 2268x1473 --weather clear --time 0.2 --flight 40) ;;
     flight100) view_args=(--size 3024x1964 --weather clear --time 0.2 --flight 40) ;;
+    flightfast) view_args=(--size 2268x1473 --weather clear --time 0.2 --flight 40) ;;
     sea) view_args=(--size 2268x1473 --pose 0,2,0,20,-5 --time 0.2 --wait 10) ;;
     forest) view_args=(--size 2268x1473 --weather clear --time 0.3 --command "/tp 384 1504" --pose 0,25,0,200,-30 --wait 10) ;;
     *) return 1 ;;
   esac
 }
-views=(flight75 flight100 sea forest)
+views=(flight75 flight100 flightfast sea forest)
 [[ -n $only ]] && IFS=, read -ra views <<<"$only"
 for view in "${views[@]}"; do view_args "$view" || { echo "bench: no view called $view" >&2; exit 2; }; done
 
@@ -130,7 +138,9 @@ run() {
   view_args "$view"
   touch "$quiet"
   game_running && { echo "bench: FAILED: Mariano started playing; no numbers taken now are trustworthy" >&2; exit 1; }
-  log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_CONFIG="$config" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  local settings=$config
+  [[ $view == flightfast ]] && settings=$fast
+  log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
   if [[ $view == flight* ]]; then
     sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log"
   else
