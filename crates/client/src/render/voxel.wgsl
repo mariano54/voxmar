@@ -326,8 +326,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.world_position = world_position(in);
     if face_of(w0) >= FACE_PLANT && (w0 & FLAG_INNER) != 0u {
         // Plants sink into the ground with distance, where they would only be a shimmer of
-        // sub-pixel blades. They cast no shadow that far out (the farthest sun cascade
-        // leaves them out, terrain.rs `last_of_many`).
+        // sub-pixel blades. Their shadows stay, which far away nobody can tell apart.
         let distance = length(out.world_position.xz - view.world_position.xz);
         out.world_position.y -= smoothstep(PLANT_FADE.x, PLANT_FADE.y, distance);
     }
