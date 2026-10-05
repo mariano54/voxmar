@@ -40,6 +40,9 @@ struct Client {
     chat: Vec<(ChatKind, String)>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
+    /// Creatures in sight, and how many were seen to die.
+    creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
+    deaths: u32,
     _server: ServerHandle,
 }
 
@@ -90,6 +93,8 @@ impl Client {
             quick: false,
             chat: Vec::new(),
             day: None,
+            creatures: Default::default(),
+            deaths: 0,
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -144,6 +149,15 @@ impl Client {
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
                 self.admin = admin;
+            }
+            ServerMessage::Creatures { changed, gone } => {
+                for view in changed {
+                    self.creatures.insert(view.id, view);
+                }
+                for gone in gone {
+                    self.creatures.remove(&gone.id);
+                    self.deaths += gone.died as u32;
+                }
             }
             ServerMessage::Items { changed, gone } => {
                 for view in changed {
@@ -617,4 +631,27 @@ fn walking_wears_a_path() {
     // Plants on the path are trampled away.
     let plant = client.world.block(feet).unwrap();
     assert!(plant.is_air() || plant == id("short_grass"), "{}", blocks.def(plant).name);
+}
+
+#[test]
+fn summoned_creatures_are_seen_struck_and_drop_their_loot() {
+    let mut client = Client::join();
+    let snail = client.content.creatures.find("lumen_snail").expect("a lumen snail in the content");
+    let slime = client.content.blocks.id("base:lumen_slime").unwrap();
+    client.ok("/summon lumen_snail 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
+    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == snail).unwrap();
+    let at = view.position;
+    // Stand beside it, and strike until it dies: four health, a hit in two at level 1.
+    client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while client.creatures.contains_key(&id) {
+        assert!(Instant::now() < deadline, "twenty seconds of blows did not kill it");
+        client.propose("core:attack", ActionTarget::Creature(id));
+        let until = Instant::now() + Duration::from_millis(600);
+        client.pump_until(|_| Instant::now() > until);
+    }
+    assert_eq!(client.deaths, 1);
+    // Its slime pops out beside us, and we pick it up.
+    client.pump_until(|c| (0..voxmar_engine::inventory::SLOTS).filter_map(|s| c.inventory.get(s)).any(|s| s.item == slime));
 }

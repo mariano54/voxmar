@@ -893,9 +893,10 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             look(world, 0.0, -25.0);
             gate.count_before = item_count(world, CREATURE_DROP);
             let net = world.resource::<Net>();
-            net.command(&format!("summon {CREATURE}"));
-            net.command("summon mouflon 2");
-            net.command("summon rabbit");
+            let pad = gate.feet + IVec3::new(0, 0, 12);
+            net.command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z));
+            net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 2, pad.y, pad.z - 2));
+            net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 2, pad.y, pad.z - 2));
             gate.advance(now);
         }
         2 => {

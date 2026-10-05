@@ -420,20 +420,27 @@ impl Server {
     /// `/summon <creature> [count]`: creatures on the ground a few blocks in front of the
     /// player.
     fn summon(&mut self, id: Source, args: &[String]) -> Reply {
-        let (name, count) = match args {
-            [name] => (name, 1),
-            [name, count] => (name, count.parse::<u32>().ok().filter(|c| (1..=16).contains(c)).ok_or("The count must be 1 to 16.")?),
+        let (name, count, at) = match args {
+            [name] => (name, "1", None),
+            [name, count] => (name, count.as_str(), None),
+            [name, count, x, y, z] => (name, count.as_str(), Some([x, y, z])),
             _ => return Err("Summon what?".into()),
         };
+        let count = count.parse::<u32>().ok().filter(|c| (1..=16).contains(c)).ok_or("The count must be 1 to 16.")?;
         let species = self.content.creatures.find(name).ok_or_else(|| format!("There is no creature called `{name}`."))?;
-        let (feet, look) = match id {
-            Source::Player(p) => {
-                let player = &self.players[&p];
-                (player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
+        let at = match at {
+            Some(words) => self.block_position(id, words)?.as_vec3() + Vec3::new(0.5, 0.0, 0.5),
+            None => {
+                let (feet, look) = match id {
+                    Source::Player(p) => {
+                        let player = &self.players[&p];
+                        (player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
+                    }
+                    Source::Console => (self.spawn, Vec3::NEG_Z),
+                };
+                feet + look * 4.0
             }
-            Source::Console => (self.spawn, Vec3::NEG_Z),
         };
-        let at = feet + look * 4.0;
         let mut placed = 0;
         for i in 0..count {
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
