@@ -11,7 +11,7 @@ use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::coords::{CHUNK_SIZE, COLUMN_CHUNKS, ChunkPos, ColumnPos};
 use voxmar_engine::light::{LIGHT_PAD, LitRegion, Neighborhood};
 use voxmar_engine::mesh::{ChunkMesh, MeshBuffers, mesh_chunk};
-use voxmar_engine::visibility::{Connectivity, visible_chunks};
+use voxmar_engine::visibility::{Connectivity, visible_among};
 use voxmar_engine::world::{Column, VoxelWorld};
 
 use crate::render::TerrainPass;
@@ -400,9 +400,9 @@ fn cull_chunks(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform, W
     // dark slab of sea floor at the edge of the loaded chunks.
     let camera_column = ColumnPos::of_block(eye);
     let radius = world.voxels.columns().map(|(pos, _)| (pos.0 - camera_column.0).abs().max_element()).max().unwrap_or(0);
-    let visible = visible_chunks(eye, radius.max(world.view_distance), |pos| world.chunks.get(&pos).map(|c| c.connectivity));
+    let visible = visible_among(eye, radius.max(world.view_distance), world.chunks.iter().map(|(&pos, c)| (pos, c.connectivity)));
     let (mut count, mut quads) = (0, 0);
-    for (pos, render) in &world.chunks {
+    for (&pos, render) in &world.chunks {
         if visible.contains(pos) {
             count += 1;
             quads += render.quads.iter().sum::<usize>();
