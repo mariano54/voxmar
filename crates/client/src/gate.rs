@@ -796,11 +796,17 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.shot(world, "gorge").is_none() {
                 return;
             }
-            let (at, water) = (gate.gorge, gate.gorge.y - 1);
             let client = world.resource::<ClientWorld>();
             let Some(observer) = gate.observer.as_ref() else { return };
             let def = |p: IVec3| observer.world.block(p).map(|b| client.registry.def(b));
-            let is_water = def(IVec3::new(at.x, water, at.z)).is_some_and(|d| d.name.ends_with("water"));
+            // The river's water, within a couple of blocks of the place named (which lies on
+            // its course; the water there may stand a block or two lower after a fall).
+            let named = gate.gorge - IVec3::Y;
+            let found = (-2..=2)
+                .flat_map(|dz| (-2..=2).flat_map(move |dx| (-3..=0).map(move |dy| named + IVec3::new(dx, dy, dz))))
+                .find(|&p| def(p).is_some_and(|d| d.name.ends_with("water")) && !def(p + IVec3::Y).is_some_and(|d| d.name.ends_with("water")));
+            let is_water = found.is_some();
+            let (at, water) = found.map_or((named, named.y), |p| (p, p.y));
             // The ground's top in a column: its highest solid block, trees aside.
             let ground = |x: i32, z: i32| {
                 (water..=water + 40).rev().find(|&y| {
@@ -811,7 +817,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let walls = [(1, 0), (0, 1)].map(|(dx, dz)| side(dx, dz).min(side(-dx, -dz))).into_iter().max().unwrap_or(0);
             let result = match (is_water, walls >= GORGE_WALLS) {
                 (true, true) => Ok(format!("water at {} {} {} between walls {walls} blocks high", at.x, water, at.z)),
-                (false, _) => Err(format!("no water at {} {} {}, where /locate gorge said", at.x, water, at.z)),
+                (false, _) => Err(format!("no water within two blocks of {named}, where /locate gorge said")),
                 (true, false) => Err(format!("the walls by the water at {} {} {} stand only {walls} blocks high", at.x, water, at.z)),
             };
             gate.check("gorge", result);
