@@ -894,12 +894,12 @@ struct Rebinding(Option<Binding>);
 #[derive(Resource, Default)]
 struct OpenSection(usize);
 
-const PANEL_WIDTH: f32 = 380.0 * PX;
+const PANEL_WIDTH: f32 = 430.0 * PX;
 const TAB_WIDTH: f32 = 72.0 * PX;
 const ROW: f32 = 18.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
-const VALUE_WIDTH: f32 = 50.0 * PX;
-const CONTROL_WIDTH: f32 = 100.0 * PX;
+const VALUE_WIDTH: f32 = 62.0 * PX;
+const CONTROL_WIDTH: f32 = 124.0 * PX;
 /// Lines of body text, at Bevy's default line height of 1.2 font sizes.
 const LINE: f32 = 1.2 * BODY;
 /// Lines kept for the hint at the foot of the panel: the longest hint wraps to two.

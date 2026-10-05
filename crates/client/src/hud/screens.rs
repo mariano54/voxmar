@@ -95,14 +95,7 @@ struct Hotkey(GameScreen);
 
 /// A bar of the in-game screens' keys, for the foot of `current`.
 pub fn spawn_hotkeys(parent: &mut ChildSpawnerCommands, current: GameScreen) -> Entity {
-    let bar = Node {
-        position_type: PositionType::Absolute,
-        bottom: Val::Px(6.0 * PX),
-        width: Val::Percent(100.0),
-        justify_content: JustifyContent::Center,
-        column_gap: Val::Px(8.0 * PX),
-        ..default()
-    };
+    let bar = Node { margin: UiRect::top(Val::Px(6.0 * PX)), justify_content: JustifyContent::Center, column_gap: Val::Px(8.0 * PX), ..default() };
     parent.spawn((HotkeyBar(current), bar)).id()
 }
 
