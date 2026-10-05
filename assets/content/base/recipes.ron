@@ -1,0 +1,21 @@
+// Recipes for the inventory's two-by-two crafting grid (engine/src/craft.rs).
+//
+// A recipe is a `pattern` (up to two rows of two item names, "" for an empty cell; it
+// matches wherever it fits in the grid) or `ingredients` (in any arrangement), and makes
+// `count` of `output`. A name with {name} in it makes one recipe for every name that fits
+// all of the recipe's blocks, so one line serves every wood.
+(
+    recipes: [
+        // Every log splits into four planks of its wood.
+        (ingredients: ["{name}_log"], output: "{name}_planks", count: 4),
+        // Four of a stone dress into four of its bricks or blocks.
+        (pattern: [["stone", "stone"], ["stone", "stone"]], output: "stone_bricks", count: 4),
+        (pattern: [["sand", "sand"], ["sand", "sand"]], output: "sandstone"),
+        (pattern: [["red_sand", "red_sand"], ["red_sand", "red_sand"]], output: "red_sandstone"),
+        // Moss grows over stonework.
+        (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks"),
+        (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone"),
+        // Two wheat side by side bake into bread, which fills more than the grain.
+        (pattern: [["wheat", "wheat"]], output: "bread"),
+    ],
+)

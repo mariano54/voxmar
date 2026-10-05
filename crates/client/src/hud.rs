@@ -55,6 +55,8 @@ pub struct HudImages {
     /// Item icon per block id.
     pub icons: Vec<Handle<Image>>,
     pub crosshair: Handle<Image>,
+    /// Icon per skill id.
+    pub skills: Vec<Handle<Image>>,
 }
 
 /// A slot's side: an item's 16 texels plus a 2-texel rim, in screen pixels.

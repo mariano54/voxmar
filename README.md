@@ -49,7 +49,7 @@ flight, Survival does not. Either way you are the world's admin, who can run com
 
 Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
-inventory, T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
+inventory, C character screen, T chat, / command, F3 debug overlay, Esc menu, R respawn, Z (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
 into a wall, and widens the view a little; sprint-jumping is fastest. Swimming up against a
@@ -63,7 +63,22 @@ the pointer; Shift-click moves a stack between the hotbar and the pack (Shift do
 every stack of it); 1-9 over a slot swaps it with that hotbar slot; Q over a slot throws one
 item (Ctrl+Q the stack), and clicking outside the panel throws the held stack (right click:
 one item). Hovering an item names it, coloured by rarity, with what it is good for. Esc or E
-closes it and puts back what you hold.
+closes it and puts back what you hold, and what is left in the crafting grid.
+
+Above the pack is a two-by-two crafting grid: put items in it as in any slot, and click
+what it makes to craft one onto the pointer (Shift-click: as many as fit into the
+inventory). Recipes are content (`recipes.ron`): a log makes four of its planks, four stone
+make stone bricks, four sand sandstone, moss and stonework mossy stonework, and two wheat a
+loaf of bread.
+
+The character screen (C) shows health, hunger, how warm you feel and the effects on you,
+and every skill with its icon, level and progress; click a skill for its guide, what each
+level opens up. Hunger empties slowly, faster while cold, and food fills it: right-click
+food in hand to eat it. How warm you feel follows the air, water and any fire or torch
+nearby, and gives effects (Chilly, Freezing, Hot, Overheated, By the fire, Well fed, Hungry,
+Starving) that change how fast you heal and hunger, or hurt you. The HUD shows health and
+hunger as bars and the effects as chips above them. Every in-game screen lists the keys to
+the others under it.
 
 Farming, with RuneScape-style skills: right-click soil with seeds to sow them (carrots and
 potatoes are sown from themselves). Each crop needs a farming level, from wheat at 1 to

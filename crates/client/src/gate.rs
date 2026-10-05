@@ -703,9 +703,40 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             key(world, KeyCode::KeyC, false);
             if !character && !inventory && locked {
                 gate.check("character: close", Ok("C closed it and gave the game the mouse back".into()));
-                gate.next(Step::Weather, now);
+                // A log to craft with.
+                world.resource::<Net>().command("give oak_log 1");
+                gate.advance(now);
             } else if in_phase > 3.0 {
                 gate.check("character: close", Err("C did not close the character screen".into()));
+                gate.next(Step::Weather, now);
+            }
+        }
+        // The log goes into the crafting grid and comes out as planks, as the inventory's
+        // clicks would do it; the server does the crafting.
+        6 => {
+            let log = world.resource::<crate::session::Launch>().content.blocks.id("base:oak_log");
+            let held = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| Some(s.item) == log));
+            if let Some(slot) = held {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                let net = world.resource::<Net>();
+                let target = voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: voxmar_engine::inventory::CRAFT as u8, count: 1 };
+                net.propose(actions.expect("core:transfer"), target);
+                net.propose(actions.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+                gate.advance(now);
+            } else if in_phase > 5.0 {
+                gate.check("craft", Err("the log to craft with never arrived".into()));
+                gate.next(Step::Weather, now);
+            }
+        }
+        7 => {
+            let planks = world.resource::<crate::session::Launch>().content.blocks.id("base:oak_planks");
+            let inventory = &world.resource::<LocalPlayer>().inventory;
+            let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
+            if count >= 4 {
+                gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
+                gate.next(Step::Weather, now);
+            } else if in_phase > 5.0 {
+                gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
                 gate.next(Step::Weather, now);
             }
         }

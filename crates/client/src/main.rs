@@ -408,6 +408,7 @@ fn setup(
     mut crack_materials: ResMut<Assets<render::cracks::CrackMaterial>>,
     world: Res<ClientWorld>,
     terrain: Res<render::terrain::Terrain>,
+    launch: Res<Launch>,
 ) {
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures);
@@ -529,7 +530,17 @@ fn setup(
         icons.push(images.add(ui_image(&icon)));
     }
     let crosshair = images.add(ui_image(&source.sprite("crosshair", (15, 15, [255, 255, 255, 0]))));
-    commands.insert_resource(HudImages { icons, crosshair });
+    // Each skill's icon, `ui/skill/<name>` in the packs, or the unknown skill's.
+    let skills = &launch.content.skills;
+    let unknown = source.read("ui/skill/unknown");
+    let skill_icons = skills
+        .ids()
+        .map(|id| {
+            let name = skills.get(id).name.rsplit(':').next().unwrap_or_default().to_owned();
+            source.read(&format!("ui/skill/{name}")).or_else(|| unknown.clone()).map(|art| images.add(ui_image(&art))).unwrap_or_default()
+        })
+        .collect();
+    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

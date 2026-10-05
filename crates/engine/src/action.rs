@@ -104,6 +104,9 @@ pub enum Effect {
     Pick,
     /// Eat one held item, filling the actor's hunger by its food value.
     EatHeld,
+    /// Craft what the actor's crafting grid holds: once onto the pointer
+    /// (`ActionTarget::Slot(1)`), or as many times as it can into the inventory (`Slot(0)`).
+    Craft,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

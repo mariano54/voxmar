@@ -242,6 +242,14 @@ impl Server {
                     player.changed(traits::VITALS);
                     player.connection.send(ServerMessage::Teleport { position: spawn });
                 }
+                (Effect::Craft, ActionTarget::Slot(times)) => {
+                    let recipes = self.content.recipes.clone();
+                    let player = self.players.get_mut(&agent).unwrap();
+                    let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| recipes.find(grid).map(|r| (r.output, r.count));
+                    if player.inventory.craft(recipe, times == 0) > 0 {
+                        player.changed(traits::INVENTORY);
+                    }
+                }
                 (Effect::EatHeld, _) => {
                     let blocks = self.content.blocks.clone();
                     let player = self.players.get_mut(&agent).unwrap();

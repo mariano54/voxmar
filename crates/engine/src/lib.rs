@@ -13,6 +13,7 @@ pub mod chunk;
 pub mod command;
 pub mod content;
 pub mod coords;
+pub mod craft;
 pub mod crop;
 pub mod dropped;
 pub mod field;

@@ -79,8 +79,11 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 let right = Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, min_width: Val::ZERO, ..default() };
                 columns.spawn(right).with_children(|right| {
                     let list = Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(2.0 * PX),
+                        display: Display::Grid,
+                        grid_template_columns: RepeatedGridTrack::flex(2, 1.0),
+                        row_gap: Val::Px(3.0 * PX),
+                        column_gap: Val::Px(3.0 * PX),
+                        align_content: AlignContent::Start,
                         height: Val::Px(LIST_HEIGHT),
                         overflow: Overflow::scroll_y(),
                         ..default()
@@ -149,15 +152,13 @@ fn draw_skills(
     launch: Res<Launch>,
     player: Res<LocalPlayer>,
     font: Res<UiFont>,
+    images: Res<super::HudImages>,
     mut list: Query<(Entity, &mut Node, Option<&Children>), With<SkillList>>,
-    meters: Query<(&SkillRow, &Meter)>,
-    mut nodes: Query<&mut Node, Without<SkillList>>,
-    children: Query<&Children>,
-    mut texts: Query<&mut Text>,
+    mut progress: Query<(&SkillProgress, &mut Node), Without<SkillList>>,
 ) {
     let Ok((entity, mut node, rows)) = list.single_mut() else { return };
     let shown = ui.character_open && guide.0.is_none();
-    let display = if shown { Display::Flex } else { Display::None };
+    let display = if shown { Display::Grid } else { Display::None };
     if node.display != display {
         node.display = display;
     }
@@ -166,26 +167,48 @@ fn draw_skills(
     }
     let skills = &launch.content.skills;
     if rows.is_none_or(|rows| rows.is_empty()) {
+        // A tile per skill: its icon, name and level, and a thin line of progress.
         commands.entity(entity).with_children(|list| {
             for id in skills.ids() {
-                let row = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(PX), padding: UiRect::axes(Val::Px(5.0 * PX), Val::Px(4.0 * PX)), flex_shrink: 0.0, ..default() };
+                let tile = Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(2.0 * PX),
+                    padding: UiRect::new(Val::Px(4.0 * PX), Val::Px(4.0 * PX), Val::Px(3.0 * PX), Val::Px(4.0 * PX)),
+                    ..default()
+                };
                 let button = spawn_button(list, &font.0, "", ButtonStyle::Secondary, SkillRow(id));
-                list.commands().entity(button).insert(row).despawn_children().with_children(|row| {
-                    row.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..default() }).with_children(|line| {
-                        line.spawn(shadowed(&font.0, skills.get(id).title.clone(), BODY, TEXT));
-                        line.spawn((text(&font.0, "", BODY, GOLD), SkillLevel(id)));
+                list.commands().entity(button).insert(tile).despawn_children().with_children(|tile| {
+                    tile.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() }).with_children(|line| {
+                        let icon = images.skills.get(id.0 as usize).cloned().unwrap_or_default();
+                        line.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), flex_shrink: 0.0, ..default() }, ImageNode::new(icon)));
+                        line.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|words| {
+                            words.spawn(shadowed(&font.0, skills.get(id).title.clone(), BODY, TEXT));
+                            words.spawn((text(&font.0, "", BODY, GOLD), SkillLevel(id)));
+                        });
                     });
-                    spawn_meter(row, &font.0, Piece::Bar, Val::Percent(100.0), SkillRow(id));
+                    let track = Node { height: Val::Px(3.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
+                    tile.spawn((track, Piece::Well.image())).with_child((
+                        Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() },
+                        Piece::Bar.image(),
+                        SkillProgress(id),
+                    ));
                 });
             }
         });
         return;
     }
-    for (row, meter) in &meters {
-        let (_, share, label) = standing(skills, player.skills.xp(row.0));
-        set_meter(meter, share, &label, &mut nodes, &children, &mut texts);
+    for (bar, mut node) in &mut progress {
+        let (_, share, _) = standing(skills, player.skills.xp(bar.0));
+        let width = Val::Percent(share * 100.0);
+        if node.width != width {
+            node.width = width;
+        }
     }
 }
+
+/// The thin line of progress to a skill's next level.
+#[derive(Component)]
+struct SkillProgress(SkillId);
 
 /// A skill's level in its row.
 #[derive(Component)]

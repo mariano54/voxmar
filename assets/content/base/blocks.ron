@@ -477,6 +477,8 @@
         (template: "flower", name: "dreamshade", tags: ["fungus", "cave", "forest_floor", "shade", "wonder", "glowing", "dye:purple", "alchemy:sleep", "alchemy:night_sight"], all: (light: 3, color: (120, 60, 160), rarity: Rare)),
         (template: "plant", name: "heartbloom", tags: ["flower", "meadow", "forest_edge", "wonder", "glowing", "dye:red", "alchemy:regeneration", "alchemy:healing"], all: (light: 4, color: (230, 40, 70), rarity: Legendary)),
         // Crops (crops.ron), most of them rare. Tags on the produce say what it is good for.
+        // Food made in the crafting grid (recipes.ron).
+        (name: "bread", render: Plant, solid: false, item: true, textures: All("bread"), hardness: 0.0, color: (200, 140, 70), tags: ["food:6", "edible", "baked", "flavour:savoury"]),
         (template: "crop", name: "wheat", members: {"wheat": (tags: ["grain", "edible", "fibre"]), "wheat_seeds": (tags: ["grain"])}),
         (template: "root_crop", name: "carrot", members: {"carrot": (tags: ["edible", "flavour:sweet", "dye:orange"])}),
         (template: "root_crop", name: "potato", all: (rarity: Uncommon), members: {"potato": (tags: ["edible", "flavour:savoury"])}),
