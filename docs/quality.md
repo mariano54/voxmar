@@ -38,7 +38,9 @@ change it takes well under a minute.
    on a busy machine (`gate::SERVER_LAG`: 60 ms more a tick, a 400 ms stall every ninth
    with messages waiting, and a 600 ms stall as every other action is proposed). It also
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
-   first break once compiled three pipelines on the spot). It fails on any failed
+   first break once compiled three pipelines on the spot); on a machine asked for more
+   than all its cores (load average over the core count), a long frame says nothing about
+   the game, so that check is reported as SKIPPED instead. It fails on any failed
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
@@ -85,7 +87,38 @@ into the code under test. Each check gives a reason when it fails. Keep the sess
 (about half a minute now): poll for what a step waits on rather than sleeping, and never
 add a fixed wait of more than a second.
 
-## The performance gate: `tools/bench`
+## The FPS benchmark: `tools/bench fps`
+
+For optimising frame rate, and for anyone (Mariano included) who wants to know where it
+stands: one command, silent, through memcap and its own quiet window.
+
+```
+tools/bench fps [--repeats N] [--only flight75,dig]
+tools/bench history [SCENE]
+```
+
+It builds this tree with `--release` and runs six fixed scenes, seed 1 at Mariano's
+settings (32 chunks, SMAA, VSync off, 2268×1473: 75% of his 3024×1964 screen), each N
+times (default 3), reporting the median of the runs: `flight75` (a 40 s flight), `flightfast` (the same at his 400% fly
+speed, the world streaming in faster than it is made), `forest`, `mountains`,
+`night_rain` (still views measured for 13 s), and `dig` (15 s digging a shaft, holding the
+button: breaking, particles, drops, remeshing). For each it prints the average FPS, the 1%
+low (the mean of the slowest 1% of frames, as FPS), the p99 and worst frame in ms (by the
+wall clock), and the spread of the runs' FPS around their mean, which says how far to
+trust a difference. Every result goes to `~/Projects/voxmar-wt/bench-history.jsonl` with
+the commit, the machine (platform, and on a Mac the power mode and AC), so `tools/bench
+history` shows each scene over time. Compare only rows of the same machine and power mode.
+
+Where benchmarks run (Mariano, 2026-10-05): until the Linux GPU box is set up, on his Mac
+whatever else it is doing; the benchmark waits a minute at most for the machine to idle,
+then times anyway, with the load recorded in every history row, and judges by the median
+of its runs. Once the box is up, all benchmarks run there and its rows are the reference
+baseline; Mac rows stay only for absolute sign-off on his own hardware.
+
+Frame times come from captures (`--flight`, `--dig`, and for still views the last
+seconds before the shot), which now log `N frames, median, p99, max, …, mean (fps), 1% low`.
+
+
 
 For changes that can cost frame time (anything under `client/src/render`, meshing,
 lighting, worldgen, streaming, per-frame client code), and after any change the landing
@@ -131,8 +164,9 @@ Every heavy command goes through `memcap`, which gets out of the way:
 So a quiet window needs no announcement: `tools/bench` waits until his game is closed
 (numbers taken while it runs would be wrong, and it stops if he starts one), claims
 `QUIET` (waiting only for another timing run's), waits for the running tests and game
-runs to finish and for the machine to idle (under three cores busy, three samples in a
-row; it fails rather than time a busy machine), and keeps the flag fresh until it is done.
+runs to finish and up to a minute for the machine to idle (under three cores busy, three
+samples in a row; past that it times anyway and records the load), and keeps the flag
+fresh until it is done.
 It also fails when it cannot compute a ratio, and reports INCONCLUSIVE (exit 3) when the
 base's own rounds disagree by more than 1.5× (flights) or 15% (static views). A thread
 timing something by hand does the same: write `QUIET`, run its own commands with

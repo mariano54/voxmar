@@ -1,8 +1,16 @@
 #!/bin/bash
-# The performance gate: this tree's frame times against a baseline's (main unless given),
-# at Mariano's settings, on a quiet machine. See docs/quality.md.
+# Frame-time benchmarks at Mariano's settings, on a quiet machine. See docs/quality.md.
 #
+#   tools/bench fps [--repeats N] [--only NAME[,NAME]]
+#       The FPS benchmark, for optimising: this tree's frame rate in fixed scenes (a fixed
+#       seed and scripted camera), each run N times (default 3). Prints the median of the
+#       runs' average FPS, 1% low,
+#       p99 and worst frame per scene, with the spread between runs, and adds the results
+#       to ~/Projects/voxmar-wt/bench-history.jsonl by commit and power mode.
+#   tools/bench history [SCENE]
+#       The recorded results, oldest first, to see the effect of changes over time.
 #   tools/bench [--rounds N] [--only NAME[,NAME]] [BASE]
+#       The performance gate: this tree against a base (main unless given), below.
 #
 # Builds both with --release, then runs each view alternately (base, this, base, this…)
 # for N rounds (default 2), all within one quiet window: it holds ~/Projects/voxmar-wt/QUIET
@@ -21,6 +29,11 @@
 #              streaming in faster than it is made: p99 and worst frame matter most
 #   sea        the sea at spawn, 2268x1473
 #   forest     dense forest, 2268x1473
+#   mountains  a mountain range with spruce forest, 2268x1473
+#   night_rain the land at midnight in rain, 2268x1473
+#   dig        digging a shaft for 15 s, holding the button: breaking, particles, drops,
+#              remeshing, 2268x1473
+# Scenes of the FPS benchmark: flight75 flightfast forest mountains night_rain dig.
 # The numbers, the power mode and the load go to target/bench/report.txt.
 
 set -uo pipefail
@@ -58,13 +71,50 @@ self_check() {
   return $failed
 }
 
-rounds=2 only= base=main
+history=~/Projects/voxmar-wt/bench-history.jsonl
+
+# The machine, so results from different ones (a Mac, a Linux box) are never compared:
+# the platform, and on a Mac its power mode (Low Power Mode swings GPU clocks 2x) and
+# whether it runs on AC.
+platform() { echo "$(uname -s)-$(uname -m)"; }
+power_mode() {
+  if command -v pmset >/dev/null; then
+    pmset -g | awk '/powermode/ { print ($2 == 1 ? "low" : $2 == 2 ? "high" : "normal") }'
+  else
+    echo n/a
+  fi
+}
+on_ac_power() {
+  if command -v pmset >/dev/null; then pmset -g batt | head -1 | grep -q 'AC Power' && echo ac || echo battery; else echo n/a; fi
+}
+load_avg() { if [[ -r /proc/loadavg ]]; then awk '{ print $1 }' /proc/loadavg; else sysctl -n vm.loadavg | awk '{ print $2 }'; fi; }
+# A copy-on-write copy where the filesystem has one (APFS, btrfs, XFS).
+clone_dir() { if [[ $(uname -s) == Darwin ]]; then cp -cR "$1" "$2"; else cp -R --reflink=auto "$1" "$2"; fi; }
+rounds=2 only= base=main mode=compare repeats=3
+case ${1:-} in
+  fps) mode=fps; shift ;;
+  history)
+    # One line per run and scene: when, commit, power mode, and the numbers.
+    [[ -e $history ]] || { echo "bench: no results recorded yet" >&2; exit 1; }
+    python3 - "$history" "${2:-}" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+scene = sys.argv[2]
+print(f"{'when (UTC)':17} {'commit':9} {'machine':14} {'power':6} {'scene':11} {'fps':>6} {'1% low':>7} {'p99 ms':>7} {'worst':>7} {'spread':>7}")
+for r in rows:
+    if scene and r["scene"] != scene:
+        continue
+    print(f"{r['t'][:16]:17} {r['commit'][:9]:9} {r.get('platform', '?'):14} {r['power']:6} {r['scene']:11} {r['fps']:6.0f} {r['low']:7.0f} {r['p99']:7.2f} {r['worst']:7.1f} {r['spread']*100:6.1f}%")
+PY
+    exit 0 ;;
+esac
 while (($#)); do
   case $1 in
     --self-check) self_check; exit $? ;;
+    --repeats) repeats=$2; shift 2 ;;
     --rounds) rounds=$2; shift 2 ;;
     --only) only=$2; shift 2 ;;
-    -*) echo "usage: tools/bench [--rounds N] [--only NAME[,NAME]] [BASE]" >&2; exit 2 ;;
+    -*) echo "usage: tools/bench fps [--repeats N] [--only NAME,...] | tools/bench history [SCENE] | tools/bench [--rounds N] [--only NAME,...] [BASE]" >&2; exit 2 ;;
     *) base=$1; shift ;;
   esac
 done
@@ -90,25 +140,34 @@ view_args() {
     flightfast) view_args=(--size 2268x1473 --weather clear --time 0.2 --flight 40) ;;
     sea) view_args=(--size 2268x1473 --pose 0,2,0,20,-5 --time 0.2 --wait 10) ;;
     forest) view_args=(--size 2268x1473 --weather clear --time 0.3 --command "/tp 384 1504" --pose 0,25,0,200,-30 --wait 10) ;;
+    mountains) view_args=(--size 2268x1473 --weather clear --time 0.25 --command "/tp 352 -448" --pose 0,30,0,0,-15 --wait 10) ;;
+    night_rain) view_args=(--size 2268x1473 --weather rain --time 0.75 --pose 0,10,0,90,-5 --wait 10) ;;
+    dig) view_args=(--size 2268x1473 --weather clear --time 0.3 --command "/tp 288 -384" --dig 15) ;;
     *) return 1 ;;
   esac
 }
 views=(flight75 flight100 flightfast sea forest)
+[[ $mode == fps ]] && views=(flight75 flightfast forest mountains night_rain dig)
 [[ -n $only ]] && IFS=, read -ra views <<<"$only"
 for view in "${views[@]}"; do view_args "$view" || { echo "bench: no view called $view" >&2; exit 2; }; done
 
 # The base, built in its own worktree (its target seeded from ours, so only what changed
-# is rebuilt).
+# is rebuilt). The FPS benchmark has none.
 base_rev=$(git rev-parse --verify "$base^{commit}") || exit 2
 base_dir=$out/base
-if [[ ! -e $base_dir/.git ]]; then
+if [[ $mode == fps ]]; then
+  echo "bench: building this tree with --release"
+  $memcap -- cargo build --release >"$out/build.txt" 2>&1 || { tail -20 "$out/build.txt"; exit 1; }
+elif [[ ! -e $base_dir/.git ]]; then
   git worktree add --detach "$base_dir" "$base_rev" >/dev/null || exit 1
-  [[ -d target/release ]] && mkdir -p "$base_dir/target" && cp -cR target/release "$base_dir/target/release"
+  [[ -d target/release ]] && mkdir -p "$base_dir/target" && clone_dir target/release "$base_dir/target/release"
 fi
-git -C "$base_dir" checkout -q --detach "$base_rev" || exit 1
-echo "bench: building this tree and the base ($(git log -1 --format='%h %s' "$base_rev")) with --release"
-$memcap -- cargo build --release >"$out/build.txt" 2>&1 || { tail -20 "$out/build.txt"; exit 1; }
-(cd "$base_dir" && $memcap -- cargo build --release) >"$out/build-base.txt" 2>&1 || { tail -20 "$out/build-base.txt"; exit 1; }
+if [[ $mode == compare ]]; then
+  git -C "$base_dir" checkout -q --detach "$base_rev" || exit 1
+  echo "bench: building this tree and the base ($(git log -1 --format='%h %s' "$base_rev")) with --release"
+  $memcap -- cargo build --release >"$out/build.txt" 2>&1 || { tail -20 "$out/build.txt"; exit 1; }
+  (cd "$base_dir" && $memcap -- cargo build --release) >"$out/build-base.txt" 2>&1 || { tail -20 "$out/build-base.txt"; exit 1; }
+fi
 
 # Whether a game Mariano plays is running (voxmar not as a capture or gate, or Minecraft):
 # numbers taken then would be wrong, so nothing is timed.
@@ -151,19 +210,21 @@ done
 # Idle: under MAX_BUSY (percent of a core, of 1800; his own apps take 100-200) for three
 # samples in a row. Anything heavier would show in the frame times; better no numbers than
 # wrong ones.
+# Mariano's rule (2026-10-05): until the Linux box is the benchmark machine, benchmarks
+# run on his Mac however busy it is, with the load recorded beside the numbers and more
+# runs judged by their median. So this waits a minute at most for the machine to idle.
 calm=0
-for ((i = 0; i < 120 && calm < 3; i++)); do
+for ((i = 0; i < 30 && calm < 3; i++)); do
   # Not `((calm++)) || calm=0`: a post-increment from 0 is false, which reset the count,
   # so no machine was ever quiet enough. `--self-check` guards this.
   calm=$(calm_after "$calm" "$(busy_cpu)")
   sleep 2
 done
 if ((calm < 3)); then
-  echo "bench: FAILED: the machine stayed busy ($(busy_cpu)% of a core); the busiest:" >&2
-  ps -A -o pcpu=,comm= | sort -rn | head -5 >&2
-  exit 1
+  echo "bench: the machine is busy ($(busy_cpu)% of a core, load $(load_avg)); timing anyway, with the load recorded"
+else
+  echo "bench: quiet after $((i * 2))s ($(busy_cpu)% of a core busy, load $(load_avg))"
 fi
-echo "bench: quiet after $((i * 2))s ($(busy_cpu)% of a core busy, load $(sysctl -n vm.loadavg | awk '{ print $2 }'))"
 export VOXMAR_TIMING=1
 
 # One run of `view` by the binary in `dir`: its numbers, as "median p99 max" (flights) or
@@ -176,19 +237,54 @@ run() {
   local settings=$config
   [[ $view == flightfast ]] && settings=$fast
   log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
-  if [[ $view == flight* ]]; then
+  if [[ $mode == fps ]]; then
+    # "fps 1%-low p99 worst" from the run's frame statistics, whatever kind of scene.
+    sed -nE 's/.*(flight|dig|steady): [0-9]+ frames, median [0-9.]+ ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms, .*\(([0-9]+) fps\), 1% low ([0-9]+) fps.*/\4 \5 \2 \3/p' <<<"$log"
+  elif [[ $view == flight* ]]; then
     sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log"
   else
     sed -nE 's/.*capture: [0-9]+ fps \(([0-9.]+) ms\).*/\1/p' <<<"$log"
   fi
 }
 
+if [[ $mode == fps ]]; then
+  commit=$(git rev-parse --short HEAD)$([[ -n $(git status --porcelain --untracked-files=no) ]] && echo '+changes')
+  power=$(power_mode) on_ac=$(on_ac_power) machine=$(platform)
+  {
+    echo "fps $(date -u +%FT%TZ): $commit on $machine, power $power on $on_ac, load $(load_avg), $repeats runs a scene"
+    printf '%-11s %7s %7s %8s %8s %8s\n' scene fps "1% low" "p99 ms" "worst" spread
+  } | tee "$report"
+  for view in "${views[@]}"; do
+    runs=() load_during=$(load_avg)
+    for ((r = 1; r <= repeats; r++)); do
+      numbers=$(run . "$view") || exit 1
+      [[ $(wc -w <<<"$numbers") -eq 4 ]] || { echo "bench: FAILED: $view gave no frame statistics; see a run by hand" | tee -a "$report"; exit 1; }
+      runs+=("$numbers")
+    done
+    # The median of the runs for each number (robust to a run disturbed by a busy
+    # machine), the worst of their worst frames, and the runs' FPS spread around the median.
+    line=$(printf '%s\n' "${runs[@]}" | sort -n | awk -v scene="$view" '
+      { fps[NR] = $1; low[NR] = $2; p99[NR] = $3; if ($4 > worst) worst = $4 }
+      function median(a, n,   i, j, t) {
+        for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (a[j] < a[i]) { t = a[i]; a[i] = a[j]; a[j] = t }
+        return n % 2 ? a[(n + 1) / 2] : (a[n / 2] + a[n / 2 + 1]) / 2
+      }
+      END { n = NR; lo = fps[1]; hi = fps[n]; m = median(fps, n); printf "%s %.1f %.1f %.2f %.1f %.4f\n", scene, m, median(low, n), median(p99, n), worst, (hi - lo) / m }')
+    read -r _ fps low p99 worst spread <<<"$line"
+    printf '%-11s %7.0f %7.0f %8.2f %8.1f %7.1f%%\n' "$view" "$fps" "$low" "$p99" "$worst" "$(awk -v s="$spread" 'BEGIN { print s * 100 }')" | tee -a "$report"
+    printf '{"t":"%s","commit":"%s","platform":"%s","power":"%s","ac":"%s","load":"%s","scene":"%s","repeats":%d,"fps":%s,"low":%s,"p99":%s,"worst":%s,"spread":%s,"runs":"%s"}\n' \
+      "$(date -u +%FT%TZ)" "$commit" "$machine" "$power" "$on_ac" "$load_during" "$view" "$repeats" "$fps" "$low" "$p99" "$worst" "$spread" "$(IFS=';'; echo "${runs[*]}")" >>"$history"
+  done
+  echo "bench: done; results added to $history (tools/bench history)"
+  exit 0
+fi
+
 {
   echo "bench $(date -u +%FT%TZ): $(git rev-parse --short HEAD)$([[ -n $(git status --porcelain --untracked-files=no) ]] && echo '+changes') against $(git rev-parse --short "$base_rev")"
-  echo "power: $(pmset -g | grep -i powermode | xargs) ($(pmset -g batt | head -1 | sed "s/.*'\(.*\)'.*/\1/")), load $(sysctl -n vm.loadavg)"
+  echo "machine: $(platform), power $(power_mode) on $(on_ac_power), load $(load_avg)"
 } | tee "$report"
 failed=0 inconclusive=0
-on_ac=$(pmset -g batt | head -1 | grep -c 'AC Power')
+on_ac=$([[ $(on_ac_power) == ac ]] && echo 1 || echo 0)
 number='^[0-9]+([.][0-9]+)?$'
 for view in "${views[@]}"; do
   worse=0 worst_fail=0 base_low= base_high=
