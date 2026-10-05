@@ -23,6 +23,8 @@
         "ui_slate_down": ["#0a0c13", "#11141f", "#1d2134", "#272d45", "#3a4363"],
         "ui_gold": ["#6b4b1f", "#b08236", "#e8c164", "#fff1b8"],
         "ui_teal": ["#17504b", "#3fb3a5", "#a6fff2"],
+        "ui_blood": ["#5a0f18", "#c22a3a", "#ff8d93"],
+        "ui_amber": ["#5e3a0c", "#c98a26", "#ffd27a"],
         "ui_teal_body": ["#0a2a29", "#103f3c", "#175a55", "#1f7770", "#3aa79b"],
         "ui_teal_body_hover": ["#0c3331", "#134b47", "#1c6b65", "#258c83", "#4cc4b6"],
         "ui_red_body": ["#2c0b10", "#4a121a", "#6b1b25", "#8a2632", "#b8404d"],
@@ -123,6 +125,9 @@
         "ui/bar": (size: (4, 4), palettes: {"glow": "ui_teal"}, layers: [
             Grid(rows: ["TTTT", "tttt", "tttt", "qqqq"]),
         ]),
+        // Health and hunger meters fill with these.
+        "ui/bar_health": (base: "ui/bar", palettes: {"glow": "ui_blood"}),
+        "ui/bar_hunger": (base: "ui/bar", palettes: {"glow": "ui_amber"}),
         // A slider's knob, drawn whole at two pixels per texel.
         "ui/knob": (size: (6, 9), palettes: {"frame": "ui_gold"}, layers: [
             Grid(rows: [

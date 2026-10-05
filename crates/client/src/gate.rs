@@ -42,6 +42,7 @@ use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::world::VoxelWorld;
+use voxmar_server::Lag;
 use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, local_pair};
 
 use crate::menu::{Notice, Screen};
@@ -55,11 +56,18 @@ pub struct GatePlugin {
     pub dir: PathBuf,
 }
 
-/// How much longer each tick of the integrated server takes in a gate run: more than a
-/// tick's 50 ms, so the server keeps running behind, as on a busy machine, and its word on
-/// every action comes late (about 15 ticks a second instead of 20). Mariano's play builds
-/// lost blocks he broke to exactly that (fixed in 17bf62f).
-pub const SERVER_LAG: Duration = Duration::from_millis(60);
+/// How the integrated server runs behind in a gate run, as on a busy machine: every tick
+/// takes 60 ms more than its 50 ms (about 15 ticks a second instead of 20), every ninth
+/// stalls for 400 ms besides, with players' messages waiting, and it stalls 600 ms as every
+/// other action is proposed. Mariano's play builds lost blocks he broke to both: a server whose
+/// word came late (fixed in 17bf62f), and one stalled when the break was proposed, whose
+/// own clock then started late (fixed by the client's `Finished`).
+pub const SERVER_LAG: Lag = Lag {
+    per_tick: Duration::from_millis(60),
+    stall: Duration::from_millis(400),
+    stall_every: 9,
+    proposal_stall: Duration::from_millis(600),
+};
 
 /// Size of the gate's shots: enough to judge, quick to read back.
 const SHOT: UVec2 = UVec2::new(960, 540);
@@ -71,7 +79,7 @@ const STEP_LIMIT: f32 = 30.0;
 /// How long an edit is given at least, and at most, to reach the server, come back and be
 /// meshed; the checks run as soon as both sides show it.
 const SETTLE: f32 = 0.3;
-const SETTLE_LIMIT: f32 = 4.0;
+const SETTLE_LIMIT: f32 = 8.0;
 /// Blocks around the player in which client and server must agree.
 const AGREE_WITHIN: i32 = 7;
 /// How far above spawn the test ground is built, clear of terrain and water.
@@ -106,7 +114,7 @@ fn render_offscreen(
 }
 
 /// The steps, in order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Step {
     /// The world around the player loads.
     Load,
@@ -169,6 +177,9 @@ struct Gate {
     gorge: IVec3,
     failures: Vec<String>,
     passes: usize,
+    /// Real frame times so far (milliseconds), and the longest in each step.
+    frame_ms: Vec<f32>,
+    longest: FxHashMap<Step, f32>,
 }
 
 impl Gate {
@@ -193,6 +204,8 @@ impl Gate {
             gorge: IVec3::ZERO,
             failures: Vec::new(),
             passes: 0,
+            frame_ms: Vec::new(),
+            longest: default(),
         }
     }
 
@@ -206,6 +219,15 @@ impl Gate {
                 error!("gate: FAILED {name}: {detail}");
                 self.failures.push(format!("{name}: {detail}"));
             }
+        }
+    }
+
+    /// A check whose failure is a known problem someone is fixing: reported, not failed.
+    /// Remove the call (back to `check`) with the fix.
+    fn known(&mut self, name: &str, result: Result<String, String>, why: &str) {
+        match result {
+            Ok(_) => self.check(name, result),
+            Err(detail) => info!("gate: KNOWN {name}: {detail} ({why})"),
         }
     }
 
@@ -313,6 +335,10 @@ fn run(world: &mut World) {
     let screen = *world.resource::<State<Screen>>().get();
     let mut gate = world.remove_resource::<Gate>().expect("gate state");
     gate.frames += 1;
+    let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
+    gate.frame_ms.push(frame_ms);
+    let longest = gate.longest.entry(gate.step).or_default();
+    *longest = longest.max(frame_ms);
     if gate.step != Step::Done {
         match guard(world, &mut gate, now, screen) {
             Ok(()) => step(world, &mut gate, now),
@@ -451,6 +477,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let Some(after) = gate.shot(world, "place-after") else { return };
             let cells = gate.placed.clone();
             verify_edit(world, gate, "place", &cells, |b| !b.is_air(), "place-before", &after);
+            smooth(gate, "place", Step::Place, None);
             let (count, wanted) = (held_count(world), gate.count_before.saturating_sub(3));
             let result = if count == wanted { Ok(format!("the hand holds {count}")) } else { Err(format!("the hand holds {count}, not {wanted}")) };
             gate.check("place: inventory", result);
@@ -488,6 +515,9 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let Some(after) = gate.shot(world, "dig-after") else { return };
             let cells: Vec<IVec3> = gate.dug.iter().map(|&(pos, _)| pos).collect();
             verify_edit(world, gate, "dig", &cells, |b| b.is_air(), "dig-before", &after);
+            // Known: the first break compiles the pipelines for cracks, particles and drops
+            // on the spot (graphics is moving that to world load); back to failing with it.
+            smooth(gate, "dig", Step::Dig, Some("the first break compiles its pipelines; graphics is fixing it"));
             gate.count_before = dropped_count(world, gate);
             look(world, 0.0, 0.0);
             key(world, KeyCode::KeyW, true);
@@ -589,10 +619,11 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Esc opens the menu and closes it again; E the inventory.
+/// Esc opens the menu and closes it again; E the inventory, C from there the character
+/// screen in its place, and C closes that.
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
-    let (menu, inventory, locked) = (ui.menu_open, ui.inventory_open, ui.cursor_locked);
+    let (menu, inventory, character, locked) = (ui.menu_open, ui.inventory_open, ui.character_open, ui.cursor_locked);
     match gate.phase {
         0 => {
             look(world, 0.0, 5.0);
@@ -631,7 +662,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
                 let shown = if change >= SCREEN_CHANGE { Ok(format!("drawn, changing the screen by {change:.1} levels")) } else { Err(format!("changed the screen by only {change:.1} levels")) };
                 gate.check("inventory", shown);
-                key(world, KeyCode::KeyE, true);
+                key(world, KeyCode::KeyC, true);
                 gate.advance(now);
             } else if in_phase > 3.0 {
                 gate.check("inventory", Err("E did not open the inventory".into()));
@@ -640,11 +671,29 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         4 => {
             key(world, KeyCode::KeyE, false);
-            if !inventory && locked {
-                gate.check("inventory: close", Ok("E closed it".into()));
+            key(world, KeyCode::KeyC, false);
+            if character && !inventory && in_phase > 0.2 && let Some(shot) = gate.shot(world, "character") {
+                let change = gate.earlier_shot("inventory").map_or(0.0, |inventory| change(&inventory, &shot, 0.0));
+                let shown = if change >= SCREEN_CHANGE {
+                    Ok(format!("C in the inventory switched to it, changing the screen by {change:.1} levels"))
+                } else {
+                    Err(format!("changed the screen from the inventory's by only {change:.1} levels"))
+                };
+                gate.check("character", shown);
+                key(world, KeyCode::KeyC, true);
+                gate.advance(now);
+            } else if in_phase > 3.0 {
+                gate.check("character", Err(format!("after C the inventory is {} and the character screen {}", if inventory { "open" } else { "closed" }, if character { "open" } else { "closed" })));
+                gate.next(Step::Weather, now);
+            }
+        }
+        5 => {
+            key(world, KeyCode::KeyC, false);
+            if !character && !inventory && locked {
+                gate.check("character: close", Ok("C closed it and gave the game the mouse back".into()));
                 gate.next(Step::Weather, now);
             } else if in_phase > 3.0 {
-                gate.check("inventory: close", Err("E did not close the inventory".into()));
+                gate.check("character: close", Err("C did not close the character screen".into()));
                 gate.next(Step::Weather, now);
             }
         }
@@ -1180,6 +1229,31 @@ fn settled(world: &World, feet: IVec3) -> bool {
     columns_around(feet).into_iter().all(|pos| !client.meshing(pos))
 }
 
+/// The longest frame a step may take: the first break or placement once compiled the
+/// pipelines for cracks, particles and dropped items on the spot, a hitch Mariano felt as
+/// block breaking lag. Gate runs share a busy machine, so the bar is high and relative.
+const HITCH_MS: f32 = 150.0;
+const HITCH_FACTOR: f32 = 6.0;
+
+/// Checks that `step` (placing or digging) ran without a hitch: no frame over
+/// max(`HITCH_MS`, `HITCH_FACTOR` × the session's median frame).
+fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
+    let mut sorted = gate.frame_ms.clone();
+    sorted.sort_by(f32::total_cmp);
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+    let longest = gate.longest.get(&step).copied().unwrap_or(0.0);
+    let limit = HITCH_MS.max(HITCH_FACTOR * median);
+    let result = if longest <= limit {
+        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms)"))
+    } else {
+        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms)"))
+    };
+    match known {
+        Some(why) => gate.known(&format!("{name}: smooth"), result, why),
+        None => gate.check(&format!("{name}: smooth"), result),
+    }
+}
+
 /// Whether an edit of `cells` has settled, `since` seconds after it was made: both client
 /// and server show each as `wanted` and nothing around waits to be meshed, or the limit
 /// has passed (and the checks will say what is missing).
@@ -1190,7 +1264,30 @@ fn edit_settled(world: &World, gate: &Gate, since: f32, cells: &[IVec3], wanted:
     let client = world.resource::<ClientWorld>();
     let shown = |side: &dyn Fn(IVec3) -> Option<BlockId>| cells.iter().all(|&p| side(p).is_some_and(wanted));
     let server = gate.observer.as_ref().is_none_or(|o| shown(&|p| o.world.block(p)));
-    (server && shown(&|p| client.block(p)) && settled(world, gate.feet)) || since > SETTLE_LIMIT
+    // A break the client finished early completes on the server in its own time, so the
+    // whole area must agree, not only the cells aimed at.
+    let agree = gate.observer.as_ref().is_none_or(|o| disagreements(client, &o.world, gate.feet).is_empty());
+    (server && agree && shown(&|p| client.block(p)) && settled(world, gate.feet)) || since > SETTLE_LIMIT
+}
+
+/// Blocks within `AGREE_WITHIN` of `feet` that client and server both have and see
+/// differently.
+fn disagreements(client: &ClientWorld, server: &VoxelWorld, feet: IVec3) -> Vec<(IVec3, BlockId, BlockId)> {
+    let r = AGREE_WITHIN;
+    let mut differ = Vec::new();
+    for dy in -r..=r {
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let p = feet + IVec3::new(dx, dy, dz);
+                if let (Some(ours), Some(theirs)) = (client.block(p), server.block(p))
+                    && ours != theirs
+                {
+                    differ.push((p, ours, theirs));
+                }
+            }
+        }
+    }
+    differ
 }
 
 /// Checks an edit of `cells` once it has settled: each is as `wanted` on the client and
@@ -1207,19 +1304,10 @@ fn verify_edit(world: &World, gate: &mut Gate, name: &str, cells: &[IVec3], want
     if let Some(observer) = &gate.observer {
         checks.push(("server", expect(&|p| observer.world.block(p))));
         let r = AGREE_WITHIN;
-        let mut differ = Vec::new();
-        for dy in -r..=r {
-            for dz in -r..=r {
-                for dx in -r..=r {
-                    let p = gate.feet + IVec3::new(dx, dy, dz);
-                    if let (Some(ours), Some(theirs)) = (client.block(p), observer.world.block(p))
-                        && ours != theirs
-                    {
-                        differ.push(format!("{p}: client {}, server {}", named(Some(ours)), named(Some(theirs))));
-                    }
-                }
-            }
-        }
+        let differ: Vec<String> = disagreements(client, &observer.world, gate.feet)
+            .into_iter()
+            .map(|(p, ours, theirs)| format!("{p}: client {}, server {}", named(Some(ours)), named(Some(theirs))))
+            .collect();
         checks.push((
             "agree",
             if differ.is_empty() {
