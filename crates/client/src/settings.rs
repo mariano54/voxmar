@@ -785,6 +785,10 @@ const ROW: f32 = 18.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
 const VALUE_WIDTH: f32 = 50.0 * PX;
 const CONTROL_WIDTH: f32 = 100.0 * PX;
+/// Lines of body text, at Bevy's default line height of 1.2 font sizes.
+const LINE: f32 = 1.2 * BODY;
+/// Lines kept for the hint at the foot of the panel: the longest hint wraps to two.
+const HINT_LINES: usize = 2;
 
 fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -820,7 +824,8 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
                 });
             });
             spawn_rule(panel, 4.0 * PX);
-            let hint = Node { min_height: Val::Px(10.0 * PX), ..default() };
+            // As tall as the longest hint, so the panel keeps its height as the pointer moves.
+            let hint = Node { height: Val::Px(HINT_LINES as f32 * LINE), overflow: Overflow::clip(), ..default() };
             panel.spawn(hint).with_child((HintText, text(font, "", BODY, MUTED)));
             panel.spawn(button_row(4.0 * PX)).with_children(|row| {
                 spawn_button(row, font, "Back to game", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
@@ -1278,6 +1283,36 @@ fn sync_server(settings: Res<Settings>, net: Res<Net>, mut player: ResMut<LocalP
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voxmar_texgen::font::{EM_PIXELS, PixelFont};
+
+    /// The panel reserves room for the hint, so a longer one would spill out of it.
+    #[test]
+    fn every_hint_fits_the_room_kept_for_it() {
+        let font = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/font.txt")).unwrap();
+        let font = PixelFont::parse(&font).unwrap();
+        // Glyphs get one font pixel of space after them; body text draws each font pixel
+        // `scale` screen pixels wide, inside the panel's padding.
+        let advance = |c: char| font.glyphs.get(&c).map_or(EM_PIXELS, |glyph| glyph.width) as f32 + 1.0;
+        let scale = BODY / EM_PIXELS as f32;
+        let room = (PANEL_WIDTH - 28.0 * PX) / scale;
+        for (_, controls) in SECTIONS {
+            for &control in controls.iter() {
+                let hint = control.hint();
+                let (mut lines, mut width) = (1, 0.0);
+                for word in hint.split(' ') {
+                    let word_width: f32 = word.chars().map(advance).sum();
+                    let with_space = if width == 0.0 { word_width } else { width + advance(' ') + word_width };
+                    if with_space > room {
+                        lines += 1;
+                        width = word_width;
+                    } else {
+                        width = with_space;
+                    }
+                }
+                assert!(lines <= HINT_LINES, "{lines} lines: {hint}");
+            }
+        }
+    }
 
     #[test]
     fn settings_file_round_trips_and_tolerates_old_or_edited_files() {
