@@ -46,6 +46,7 @@ pub mod scale;
 pub mod precipitation;
 pub mod terrain;
 pub mod volumetric;
+pub mod warm;
 pub mod water;
 pub mod wind;
 
@@ -85,6 +86,7 @@ impl Plugin for RenderPlugin {
             cloud_map::CloudMapPlugin,
             bolts::BoltPlugin,
         ))
+            .add_plugins(warm::WarmPlugin)
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
             .init_resource::<Quality>()

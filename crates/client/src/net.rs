@@ -1,6 +1,7 @@
 //! Connection to the (local or remote) server: applies replicated state and sends the
 //! player's input and actions. Present while in game.
 
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_protocol::{
@@ -300,7 +301,8 @@ fn input(player: &LocalPlayer) -> PlayerInput {
     }
 }
 
-/// Other players are drawn as simple boxes.
+/// Other players are drawn as simple boxes, which cast no shadow. Their pipelines compile as
+/// the world loads (`render::warm`), not when the first other player comes into view.
 fn sync_remote_players(
     mut commands: Commands,
     mut remote: ResMut<RemotePlayers>,
@@ -312,10 +314,10 @@ fn sync_remote_players(
     let (mesh, material) = look
         .get_or_insert_with(|| {
             let size = voxmar_engine::physics::player::WIDTH;
-            (
-                meshes.add(Cuboid::new(size, voxmar_engine::physics::player::HEIGHT, size)),
-                materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.35, 0.3), unlit: true, ..default() }),
-            )
+            let mesh = meshes.add(Cuboid::new(size, voxmar_engine::physics::player::HEIGHT, size));
+            let material = materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.35, 0.3), unlit: true, ..default() });
+            crate::render::warm::warm(&mut commands, mesh.clone(), material.clone(), false, DespawnOnExit(Screen::InGame));
+            (mesh, material)
         })
         .clone();
     for (view, entity) in remote.players.values_mut() {
@@ -328,7 +330,7 @@ fn sync_remote_players(
                 }
             }
             None => {
-                let body = (Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform, DespawnOnExit(Screen::InGame));
+                let body = (Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform, NotShadowCaster, DespawnOnExit(Screen::InGame));
                 *entity = Some(commands.spawn(body).id());
             }
         }

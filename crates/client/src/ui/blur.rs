@@ -24,6 +24,7 @@ use bevy::render::render_resource::{
     ShaderType, TextureFormat, TextureSampleType,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
+use bevy::render::camera::ExtractedCamera;
 use bevy::render::view::{ExtractedView, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
@@ -152,14 +153,12 @@ fn prepare(
     fullscreen: Res<FullscreenShader>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
-    views: Query<(Entity, &ExtractedView, Option<&MenuBlur>)>,
+    views: Query<(Entity, &ExtractedView, Option<&MenuBlur>), (With<ExtractedCamera>, With<Camera3d>)>,
 ) {
     pipeline.uniforms.clear();
     for (entity, view, blur) in &views {
-        let Some(blur) = blur else {
-            commands.entity(entity).remove::<PreparedBlur>();
-            continue;
-        };
+        // Asked for before any menu opens, so it compiles as the game starts rather than in
+        // the frame the first menu opens (on Metal, Bevy compiles on the render thread).
         let format = view.target_format;
         let BlurPipeline { layout, shader, pipelines, .. } = &mut *pipeline;
         let id = *pipelines.entry(format).or_insert_with(|| {
@@ -175,6 +174,10 @@ fn prepare(
                 ..default()
             })
         });
+        let Some(blur) = blur else {
+            commands.entity(entity).remove::<PreparedBlur>();
+            continue;
+        };
         let offsets = [Vec2::X, Vec2::Y].map(|direction| pipeline.uniforms.push(&PassUniform { direction, sigma: blur.sigma }));
         commands.entity(entity).insert(PreparedBlur { pipeline: id, offsets });
     }

@@ -213,7 +213,17 @@ fn show(
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    let cube = creatures.cube.get_or_insert_with(|| meshes.add(shaded_cube())).clone();
+    // Their pipelines compile as the world loads (`render::warm`), not when the first
+    // creature comes into view.
+    let cube = creatures
+        .cube
+        .get_or_insert_with(|| {
+            let cube = meshes.add(shaded_cube());
+            let material = materials.add(StandardMaterial { unlit: true, ..default() });
+            crate::render::warm::warm(&mut commands, cube.clone(), material, true, DespawnOnExit(Screen::InGame));
+            cube
+        })
+        .clone();
     let registry = &launch.content.creatures;
 
     let creatures = &mut *creatures;

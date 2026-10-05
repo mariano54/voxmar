@@ -417,6 +417,9 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             if loaded(world) {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
                 land(world, gate);
+                // From here on, anything first drawn compiles its pipeline in that frame
+                // unless it was warmed at load (render::warm); `pipelines` lists any.
+                world.resource::<crate::render::warm::PipelineWatch>().start();
                 gate.next(Step::Build, now);
             }
         }
@@ -606,6 +609,13 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
+                let late: Vec<String> = world.resource::<crate::render::warm::PipelineWatch>().stop().into_iter().filter(|l| !GATE_PIPELINES.contains(&l.as_str())).collect();
+                let result = if late.is_empty() {
+                    Ok("none compiled while playing".to_owned())
+                } else {
+                    Err(format!("compiled while playing, each a hitch the frame it was first needed: {}", late.join(", ")))
+                };
+                gate.check("pipelines", result);
                 world.resource_mut::<NextState<Screen>>().set(Screen::Title);
                 gate.advance(now);
             } else {
@@ -1220,6 +1230,9 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         _ => {}
     }
 }
+
+/// Pipelines only the gate's own work compiles (its shots), which `pipelines` allows.
+const GATE_PIPELINES: [&str; 1] = ["screenshot-to-screen"];
 
 /// How far `/locate gorge` looks from the test ground, in blocks.
 const GORGE_RADIUS: i32 = 3000;
