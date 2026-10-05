@@ -118,6 +118,8 @@ pub struct Form {
     /// Height of the land without the features that stand on it (towers, spires): what the
     /// climate cools with. Volcanoes, mesas, dunes and canyons are part of it.
     pub base: f32,
+    /// How high a window opens over `base` under the features, in whole blocks (an arch's).
+    pub window: f32,
 }
 
 /// The land before rivers and lakes cut into it.
@@ -429,7 +431,8 @@ impl Geology {
             let (ground, shaped) = (grounds[k].height, &shaped[k]);
             let base = sea + ease(ground + shaped.terrain - sea, ceiling);
             let height = sea + ease(ground + shaped.terrain + shaped.features - sea, ceiling);
-            *out = Landform { height, mountain: reliefs[k].mountain, crag: reliefs[k].crag, form: Form { shape: shaped.shape, strength: shaped.strength, base } };
+            let form = Form { shape: shaped.shape, strength: shaped.strength, base, window: shaped.window };
+            *out = Landform { height, mountain: reliefs[k].mountain, crag: reliefs[k].crag, form };
         }
     }
 
@@ -593,10 +596,21 @@ impl<'a> GeoGrid<'a> {
         }
     }
 
+    /// The height of the ground at (x, z), without copying the rest of its sample.
+    fn height(&self, x: i32, z: i32) -> i32 {
+        let (i, j) = (x - self.min.0, z - self.min.1);
+        if (0..self.size).contains(&i) && (0..self.size).contains(&j) { self.samples[(j * self.size + i) as usize].height } else { self.get(x, z).height }
+    }
+
+    /// How steep the ground is at (x, z) (see `Site::steepness`).
+    pub fn steepness(&self, x: i32, z: i32) -> f32 {
+        crate::steepness(|dx, dz| self.height(x + dx, z + dz))
+    }
+
     /// Steepest height step from (x, z) to its four neighbours, in blocks.
     pub fn slope(&self, x: i32, z: i32) -> i32 {
-        let height = self.get(x, z).height;
-        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.get(x + dx, z + dz).height - height).abs()).max().unwrap_or(0)
+        let height = self.height(x, z);
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.height(x + dx, z + dz) - height).abs()).max().unwrap_or(0)
     }
 }
 
@@ -711,13 +725,6 @@ mod tests {
             std::hint::black_box(geology.climate.regional(geology, x as f32, z as f32));
         }
         println!("climate    {:.0} ns per regional point", (crate::perf::thread_time() - start).as_nanos() as f64 / (points.len() / 10) as f64);
-        let start = crate::perf::thread_time();
-        let mut pieces = 0;
-        for i in 0..400 {
-            let corner = voxmar_engine::glam::IVec2::new(i % 20 * 32 - 320, i / 20 * 32 - 320);
-            pieces += world.pieces(corner, corner + voxmar_engine::coords::CHUNK_SIZE - 1).len();
-        }
-        println!("pieces     {:.1} µs per column ({pieces} pieces)", (crate::perf::thread_time() - start).as_secs_f64() * 1e6 / 400.0);
     }
 
     /// `cargo test -p voxmar_worldgen noise_spreads -- --ignored --nocapture` prints how the

@@ -143,8 +143,6 @@ pub struct Area<'a> {
     pub sampler: &'a crate::Sampler<'a>,
     pub geology: &'a GeoGrid<'a>,
     pub caves: &'a crate::caves::CaveColumn<'a>,
-    /// The arches and leaning spires within `features::ROCK_REACH` of the column.
-    pub pieces: &'a [crate::shapes::Piece],
     pub trees: &'a Trees,
 }
 

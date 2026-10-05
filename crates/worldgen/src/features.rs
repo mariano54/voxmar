@@ -5,7 +5,7 @@
 //! another column would still draw. Each candidate holds at most one tree or decoration,
 //! decided by one roll from pure height and climate functions, so a feature straddling two
 //! columns is generated identically by both, and every column places them in the same
-//! order. Trees keep clear of arches and leaning spires for the same reason.
+//! order.
 //!
 //! Leaves take their colour from their own tree's trunk (see `tint`), so a crown is one
 //! colour all through.
@@ -20,7 +20,6 @@ use crate::decor::{Area, DecorId, Probe, Stage};
 use crate::ecology::Ground;
 use crate::geology::{GeoGrid, GeoSample};
 use crate::rng::Rng;
-use crate::shapes::Piece;
 use crate::stage;
 use crate::terrain::Blocks;
 use crate::trees::{TreeId, TreeParts, Trees};
@@ -35,10 +34,6 @@ const TINT: u64 = 0x7147;
 pub const CELL: i32 = 4;
 /// Furthest a feature reaches from its candidate position, horizontally.
 pub const REACH: i32 = crate::trees::REACH;
-/// How far from a column the arches and leaning spires that trees keep clear of must be
-/// known: trees reach `REACH` from candidates up to `REACH` outside the column, and
-/// decorations ask about trunks up to a log's length further out.
-pub const ROCK_REACH: i32 = 3 * REACH;
 
 pub struct Features {
     trees: Trees,
@@ -91,7 +86,7 @@ impl Features {
         if geo.water - geo.height > 2 || geo.trail.is_some_and(|t| t.clear) {
             return None;
         }
-        let site = area.sampler.site_on(&geo, x, z, 0);
+        let site = area.sampler.site_on(&geo, x, z, 0, 0.0);
         let roll = rng.unit();
         // Nothing grows over a cave mouth.
         if area.caves.surface_open(x, z, &geo) {
@@ -110,26 +105,17 @@ impl Features {
             return (None, upper);
         }
         // Only now find the ground, which needs the slope.
-        let site = Site { slope: area.geology.slope(c.x, c.z), ..c.site };
+        let site = Site { slope: area.geology.slope(c.x, c.z), steepness: area.geology.steepness(c.x, c.z), ..c.site };
         let ground = self.ground(area, &site, c);
         ecology.tree_chances(&site, Some(ground), c.x, c.z, chances);
         let mut left = c.roll;
         for &(tree, chance) in chances.iter() {
             if left < chance {
-                return (Self::clear_of_rock(area, c).then_some((tree, site)), upper);
+                return (Some((tree, site)), upper);
             }
             left -= chance;
         }
         (None, upper)
-    }
-
-    /// Whether no arch or leaning spire stands within a tree's reach of a candidate, where
-    /// a limb running into the rock would leave its far end hanging in the air.
-    fn clear_of_rock(area: &Area, c: &Candidate) -> bool {
-        let y = c.geo.height;
-        area.pieces.iter().all(|p| {
-            p.extent(y - 4, y + 52).is_none_or(|(lo, hi)| hi.x < c.x - REACH || lo.x > c.x + REACH || hi.y < c.z - REACH || lo.y > c.z + REACH)
-        })
     }
 
     /// What the ground at a candidate offers.
@@ -157,12 +143,11 @@ impl Features {
         sampler: &Sampler,
         geology: &GeoGrid,
         caves: &CaveColumn,
-        pieces: &[Piece],
         pos: ColumnPos,
         blocks: &mut Blocks,
         colors: &mut [[[u8; 3]; 3]],
     ) {
-        let area = Area { world, sampler, geology, caves, pieces, trees: &self.trees };
+        let area = Area { world, sampler, geology, caves, trees: &self.trees };
         let ground = |x: i32, z: i32| geology.get(x, z).height;
         let decor = &world.decor;
         let origin = pos.origin();
@@ -201,7 +186,7 @@ impl Features {
                 }
                 let probe = &mut Probe { rules: &world.rules, x: c.x, z: c.z, slope: &mut slope_of };
                 let Some(id) = decor.choose_placed(&c.site, c.roll - upper, probe) else { continue };
-                let site = Site { slope: slope_of(), ..c.site };
+                let site = Site { slope: slope_of(), steepness: area.geology.steepness(c.x, c.z), ..c.site };
                 if decor.stands_on(id, self.ground(&area, &site, &c)) {
                     planned.push(Planned { holds: Holds::Decoration(id), base, site, rng: c.rng });
                 }
