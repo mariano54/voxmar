@@ -99,7 +99,7 @@ tools/bench history [SCENE]
 
 It builds this tree with `--release` and runs six fixed scenes, seed 1 at Mariano's
 settings (32 chunks, SMAA, VSync off, 2268×1473: 75% of his 3024×1964 screen), each N
-times (default 2): `flight75` (a 40 s flight), `flightfast` (the same at his 400% fly
+times (default 3), reporting the median of the runs: `flight75` (a 40 s flight), `flightfast` (the same at his 400% fly
 speed, the world streaming in faster than it is made), `forest`, `mountains`,
 `night_rain` (still views measured for 13 s), and `dig` (15 s digging a shaft, holding the
 button: breaking, particles, drops, remeshing). For each it prints the average FPS, the 1%
@@ -108,6 +108,12 @@ wall clock), and the spread of the runs' FPS around their mean, which says how f
 trust a difference. Every result goes to `~/Projects/voxmar-wt/bench-history.jsonl` with
 the commit, the machine (platform, and on a Mac the power mode and AC), so `tools/bench
 history` shows each scene over time. Compare only rows of the same machine and power mode.
+
+Where benchmarks run (Mariano, 2026-10-05): until the Linux GPU box is set up, on his Mac
+whatever else it is doing; the benchmark waits a minute at most for the machine to idle,
+then times anyway, with the load recorded in every history row, and judges by the median
+of its runs. Once the box is up, all benchmarks run there and its rows are the reference
+baseline; Mac rows stay only for absolute sign-off on his own hardware.
 
 Frame times come from captures (`--flight`, `--dig`, and for still views the last
 seconds before the shot), which now log `N frames, median, p99, max, …, mean (fps), 1% low`.
@@ -158,8 +164,9 @@ Every heavy command goes through `memcap`, which gets out of the way:
 So a quiet window needs no announcement: `tools/bench` waits until his game is closed
 (numbers taken while it runs would be wrong, and it stops if he starts one), claims
 `QUIET` (waiting only for another timing run's), waits for the running tests and game
-runs to finish and for the machine to idle (under three cores busy, three samples in a
-row; it fails rather than time a busy machine), and keeps the flag fresh until it is done.
+runs to finish and up to a minute for the machine to idle (under three cores busy, three
+samples in a row; past that it times anyway and records the load), and keeps the flag
+fresh until it is done.
 It also fails when it cannot compute a ratio, and reports INCONCLUSIVE (exit 3) when the
 base's own rounds disagree by more than 1.5× (flights) or 15% (static views). A thread
 timing something by hand does the same: write `QUIET`, run its own commands with
