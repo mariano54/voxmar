@@ -735,7 +735,7 @@ impl Sampler<'_> {
             trail: geo.trail.map_or(0.0, |t| t.tread),
         };
         let pick = self.pick(x, z);
-        let share = Biomes::blend(pick.edge, regional.fertility);
+        let share = self.world.biomes.blend_between(pick.home, pick.neighbour, pick.edge, regional.fertility);
         if !geo.submerged() {
             site.vegetation = ecology::ground_cover(temperature, site.soil_moisture());
             site.forest = self.world.ecology.forest(site.stand, site.clearing, pick.home, pick.neighbour, share, regional.fertility, temperature, site.soil_moisture());
@@ -1113,7 +1113,7 @@ mod tests {
             (&[7, 3], "forest"),
             (&[11, 7, 1], "taiga"),
             (&[5, 1, 3], "maple_forest"),
-            (&[9, 1, 7], "old_growth_taiga"),
+            (&[1, 7, 9], "old_growth_taiga"),
             (&[2, 3, 42], "savanna"),
             (&[9, 1], "mixed_forest"),
         ];
