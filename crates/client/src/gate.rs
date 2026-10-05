@@ -769,21 +769,34 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let at = light_on_screen(world);
             gate.check("sky: sun", disc(&shot, at, "sun"));
             gate.check("sky: day", gradient(&shot));
+            // Up above the top of the world, as a flying player can go.
+            let mut player = world.resource_mut::<LocalPlayer>();
+            player.flying = true;
+            player.position.y = ABOVE_THE_WORLD;
+            player.pitch = 0.2;
+            gate.advance(now);
+        }
+        3 if in_phase > 0.5 => {
+            let Some(shot) = gate.shot(world, "above the world") else { return };
+            gate.check("sky: above the world", sky_lit(&shot));
+            let mut player = world.resource_mut::<LocalPlayer>();
+            player.position.y = gate.feet.y as f32;
+            player.flying = false;
             world.resource::<Net>().command(&format!("time set {SUNSET}"));
             gate.advance(now);
         }
         // At sunset, the sky above the horizon towards the sun, then away from it.
-        3 if at(SUNSET) && in_phase > 0.5 => {
+        4 if at(SUNSET) && in_phase > 0.5 => {
             aim_at_light(world);
             world.resource_mut::<LocalPlayer>().pitch = 0.15;
             gate.advance(now);
         }
-        4 if in_phase > 0.3 => {
+        5 if in_phase > 0.3 => {
             let Some(_) = gate.shot(world, "sunset towards") else { return };
             world.resource_mut::<LocalPlayer>().yaw += std::f32::consts::PI;
             gate.advance(now);
         }
-        5 if in_phase > 0.3 => {
+        6 if in_phase > 0.3 => {
             let Some(away) = gate.shot(world, "sunset away") else { return };
             let towards = gate.earlier_shot("sunset towards");
             let result = towards.ok_or_else(|| "no shot towards the sunset".to_owned()).and_then(|towards| sunset(&towards, &away));
@@ -791,11 +804,11 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource::<Net>().command(&format!("time set {MIDNIGHT}"));
             gate.advance(now);
         }
-        6 if at(MIDNIGHT) && in_phase > 0.5 => {
+        7 if at(MIDNIGHT) && in_phase > 0.5 => {
             aim_at_light(world);
             gate.advance(now);
         }
-        7 if in_phase > 0.3 => {
+        8 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "moon") else { return };
             let at = light_on_screen(world);
             gate.check("sky: moon", disc(&shot, at, "moon"));
@@ -805,12 +818,12 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             player.pitch = 1.0;
             gate.advance(now);
         }
-        8 if in_phase > 0.3 => {
+        9 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
             gate.next(Step::Tree, now);
         }
-        1 | 3 | 6 if in_phase > 5.0 => {
+        1 | 4 | 7 if in_phase > 5.0 => {
             gate.check("sky", Err(format!("the time of day did not change: {ticks:.0} ticks")));
             gate.next(Step::Tree, now);
         }
@@ -991,6 +1004,27 @@ fn gradient(shot: &Image) -> Result<String, String> {
         Ok(format!("the sky's top differs from lower down by {difference:.0} levels"))
     } else {
         Err(format!("the sky is flat: top and lower down differ by {difference:.0} levels"))
+    }
+}
+
+/// Where the gate flies to look at the sky from above the world's top (384).
+const ABOVE_THE_WORLD: f32 = 450.0;
+
+/// A day sky seen from high above the world is lit: the top fifth of the shot is not dark.
+fn sky_lit(shot: &Image) -> Result<String, String> {
+    let (w, h, data) = pixels(shot)?;
+    let mut sum = 0u64;
+    for y in 0..h / 5 {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            sum += (data[i] as u64 * 54 + data[i + 1] as u64 * 183 + data[i + 2] as u64 * 19) / 256;
+        }
+    }
+    let mean = sum as f32 / (w * (h / 5)) as f32;
+    if mean >= 80.0 {
+        Ok(format!("the sky from above the world is lit, {mean:.0} levels"))
+    } else {
+        Err(format!("the sky from above the world is dark, {mean:.0} levels"))
     }
 }
 

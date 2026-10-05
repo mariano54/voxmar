@@ -256,7 +256,9 @@ enum Drops {
     Falling,
     Dust,
     Motes,
-    Ambient,
+    /// One ambient particle set (of `AMBIENT_SETS`), drawn only while that set shows: most
+    /// places have one or two.
+    Ambient(u8),
     Splashes,
     /// One drop, always drawn (and in fair weather hidden by the shader), so the drops'
     /// pipeline is built with the world rather than when the first rain starts: where
@@ -265,14 +267,27 @@ enum Drops {
 }
 
 impl Drops {
-    const ALL: [Drops; 6] = [Drops::Falling, Drops::Dust, Drops::Motes, Drops::Ambient, Drops::Splashes, Drops::Warm];
+    const ALL: [Drops; 5 + AMBIENT_SETS] = [
+        Drops::Falling,
+        Drops::Dust,
+        Drops::Motes,
+        Drops::Ambient(0),
+        Drops::Ambient(1),
+        Drops::Ambient(2),
+        Drops::Ambient(3),
+        Drops::Splashes,
+        Drops::Warm,
+    ];
 
     fn range(self) -> std::ops::Range<u32> {
         match self {
             Drops::Falling => 0..AIRBORNE,
             Drops::Dust => AIRBORNE..AIRBORNE + DUST,
             Drops::Motes => AIRBORNE + DUST..AIRBORNE + DUST + MOTES,
-            Drops::Ambient => AIRBORNE + DUST + MOTES..DROPS - SPLASHES,
+            Drops::Ambient(set) => {
+                let start = AIRBORNE + DUST + MOTES + set as u32 * AMBIENT;
+                start..start + AMBIENT
+            }
             Drops::Splashes => DROPS - SPLASHES..DROPS,
             Drops::Warm => 0..1,
         }
@@ -422,7 +437,12 @@ fn update(
             Drops::Falling => shown.precipitation > 0.01 || drips > 0.0 || shown.dust > 0.01,
             Drops::Dust => shown.dust > 0.01,
             Drops::Motes => motes > 0.0,
-            Drops::Ambient => !air.particles.is_empty() || glints > 0.01 || mist > 0.01,
+            // The land's sets fill the first slots, the weather's (glints, mist) the last.
+            Drops::Ambient(set) => {
+                let weather_sets = usize::from(glints > 0.01) + usize::from(mist > 0.01);
+                let set = *set as usize;
+                set < air.particles.len().min(AMBIENT_SETS) || set >= AMBIENT_SETS - weather_sets
+            }
             Drops::Splashes => shown.precipitation > 0.01,
             Drops::Warm => true,
         };

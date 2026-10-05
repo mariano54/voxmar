@@ -128,7 +128,9 @@ impl Plugin for CapturePlugin {
         .add_systems(Update, press.before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
-            (apply_pose.run_if(in_state(Screen::InGame)), hold_time.before(crate::render::update_environment)).before(TransformSystems::Propagate),
+            (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
+                .before(crate::render::update_environment)
+                .before(TransformSystems::Propagate),
         );
     }
 }
