@@ -9,13 +9,13 @@
 // all its bands), so dunes rise where deserts lie and mesas where badlands do, with the same
 // edges; the terrain never asks which biome won. Each fades in over a short ramp inside its
 // boxes. `rarity` keeps a shape to some regions of its climate (common: all of it), or for
-// volcanoes, which stand alone, sets how many there are; `province` keeps it
+// volcanoes and arches, which stand alone, sets how many there are; `province` keeps it
 // over rock provinces with that name or tag; `surface` (with `strata` for its `Strata`)
 // replaces the biome's ground where the shape stands tallest.
 //
 // Sizes are in blocks. Kinds: Hills, Dunes, Mesas, Canyons, Towers, Spires, Volcanoes,
 // Arches, SeaCliffs and Fjords (see `ShapeKind` in crates/worldgen/src/content.rs). Every
-// shape's outline follows its noises; only volcanoes stand around a centre.
+// shape's outline follows its noises; volcanoes and arch sites stand around a centre.
 (
     shapes: [
         (

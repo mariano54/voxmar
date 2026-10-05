@@ -1130,8 +1130,9 @@ pub enum ShapeKind {
     /// Cones with a breached crater, gathered in volcanic fields, as many and as tall as
     /// the world's volcanism allows.
     Volcanoes { height: f32, radius: f32 },
-    /// Natural arches: short, thick spans of rock about `span` blocks long along their
-    /// lines, each with a window through its middle.
+    /// Natural arches: short, thick spans of rock up to about `span` blocks long, each with
+    /// a window through its middle, one at a site (sometimes two or three, very rarely a
+    /// field of them), sites standing alone like volcanoes.
     Arches { span: f32, height: f32 },
     /// Cliffs where upland meets the sea, undercut at the waterline, with stacks offshore.
     SeaCliffs { height: f32 },
