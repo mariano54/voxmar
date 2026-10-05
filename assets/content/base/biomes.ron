@@ -440,6 +440,8 @@
             // heath in places.
             name: "steppe",
             tags: ["grassland", "dry", "open"],
+            // Dry grass, straw-olive.
+            colors: (grass: (164, 164, 100)),
             climate: [
                 (temperature: ("cool", "temperate"), moisture: ("dry", "dry"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes")),
                 (temperature: ("temperate", "temperate"), moisture: ("arid", "arid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes")),
@@ -985,6 +987,8 @@
             name: "wooded_badlands",
             inherit: "badlands",
             tags: ["desert", "hot", "dry", "mesa", "groves"],
+            // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
+            colors: (grass: (178, 166, 88), foliage: (164, 154, 62)),
             flora: (
                 forest: 0.2,
                 trees: [Name("acacia", 1.0), Name("dead_tree", 0.15), Name("shrub", 0.8), Name("olive", 0.2), Name("almond", 0.3), Name("fig", 0.2), Name("date_palm", 0.1), Name("tamarind", 0.3), Name("stone_pine", 0.3)],
@@ -1006,6 +1010,8 @@
         (
             name: "savanna",
             tags: ["grassland", "hot", "dry", "open", "savanna"],
+            // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
+            colors: (grass: (184, 174, 92), foliage: (170, 160, 64)),
             climate: [
                 (temperature: ("warm", "hot"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills")),
                 (temperature: ("warm", "hot"), moisture: ("moderate", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("slopes", "peaks")),
@@ -1014,7 +1020,7 @@
                 forest: 0.14,
                 trees: [Name("acacia", 1.0), Name("shrub", 0.4), Name("palm", 1.0), Name("baobab", 0.5), Name("marula", 0.7), Name("fig", 0.3), Name("tamarind", 0.5)],
                 cover: 0.75, flowers: 0.02,
-                // Grass under the climate's dry tint, one warm surface; pampas plumes and wild
+                // Straw-coloured grass, one warm surface; pampas plumes and wild
                 // wheat only in drifts.
                 plants: [Name("short_grass", 3.0), Name("tall_grass", 0.55), Name("dune_grass", 1.0), Name("pampas_grass", 1.0), Name("wild_wheat", 1.0), Name("dead_bush", 0.3), Tag("wild_crop", 0.4), Tag("forage", 0.02), Name("wild_millet", 0.4), Name("zinnia", 0.3), Name("lemongrass", 0.3), Name("wild_melon", 0.2)],
             ),
@@ -1033,6 +1039,8 @@
             name: "baobab_savanna",
             inherit: "savanna",
             tags: ["grassland", "hot", "dry", "open", "savanna", "giant"],
+            // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
+            colors: (grass: (190, 172, 90), foliage: (174, 158, 62)),
             rarity: Uncommon,
             flora: (
                 forest: 0.12,
