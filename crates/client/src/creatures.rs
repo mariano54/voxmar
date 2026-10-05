@@ -86,6 +86,8 @@ pub struct Creatures {
     left: Vec<CreatureGone>,
     /// A cube with its faces shaded, shared by every part.
     cube: Option<Handle<Mesh>>,
+    /// Creatures seen to die since joining.
+    pub deaths: u32,
 }
 
 impl Creatures {
@@ -171,7 +173,10 @@ fn show(
     let creatures = &mut *creatures;
     for gone in std::mem::take(&mut creatures.left) {
         match creatures.shown.get_mut(&gone.id) {
-            Some(shown) if gone.died => shown.dying = Some(0.0),
+            Some(shown) if gone.died => {
+                shown.dying = Some(0.0);
+                creatures.deaths += 1;
+            }
             Some(shown) => {
                 commands.entity(shown.entity).despawn();
                 creatures.shown.remove(&gone.id);

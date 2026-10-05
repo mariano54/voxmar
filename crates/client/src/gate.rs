@@ -140,6 +140,9 @@ enum Step {
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
     Tree,
+    /// A creature summoned on the test ground reaches the client and draws; struck until
+    /// it dies, it drops its loot.
+    Creatures,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
@@ -548,6 +551,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
+        Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -789,10 +793,129 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the tree barely shows: the view changed by {change:.1} levels")),
             };
             gate.check("tree", result);
-            gate.next(Step::Gorge, now);
+            gate.next(Step::Creatures, now);
         }
         _ => {}
     }
+}
+
+/// The species the gate summons and strikes: slow and fearless, so it stays to be struck.
+const CREATURE: &str = "base:lumen_snail";
+/// What it always drops.
+const CREATURE_DROP: &str = "base:lumen_slime";
+
+/// A lumen snail and a few grazers are summoned on open test ground: they must reach the
+/// client and draw, and the snail, struck with left clicks as a player would, must die
+/// and drop its slime, which walking over it picks up.
+fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let species = world.resource::<Launch>().content.creatures.find(CREATURE);
+    let Some(species) = species else {
+        gate.check("creatures", Err(format!("no `{CREATURE}` in the content")));
+        gate.next(Step::Gorge, now);
+        return;
+    };
+    let snail = || {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        creatures.views().find(|v| v.species == species).copied()
+    };
+    match gate.phase {
+        0 => {
+            // Face open ground: air four blocks out with ground under it.
+            let feet = gate.feet;
+            let client = world.resource::<ClientWorld>();
+            let open = |dir: IVec3| {
+                let at = feet + dir * 4;
+                client.block(at).is_some_and(|b| b.is_air()) && client.block(at - IVec3::Y).is_some_and(|b| client.registry.info(b).solid)
+            };
+            let (yaw, _) = [(0.0, IVec3::NEG_Z), (180.0, IVec3::Z), (-90.0, IVec3::X), (90.0, IVec3::NEG_X)]
+                .into_iter()
+                .find(|&(_, dir)| open(dir))
+                .unwrap_or((0.0, IVec3::NEG_Z));
+            look(world, yaw, -20.0);
+            gate.count_before = item_count(world, CREATURE_DROP);
+            let net = world.resource::<Net>();
+            net.command("time set noon");
+            net.command(&format!("summon {CREATURE}"));
+            net.command("summon mouflon 2");
+            gate.advance(now);
+        }
+        1 => {
+            let Some(view) = snail() else {
+                if in_phase > 10.0 {
+                    gate.check("creatures", Err("a summoned creature never reached the client".into()));
+                    gate.next(Step::Gorge, now);
+                }
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            if in_phase < 1.0 {
+                return;
+            }
+            if gate.shot(world, "creatures").is_some() {
+                let shown = world.resource::<crate::creatures::Creatures>().alive();
+                gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                gate.advance(now);
+            }
+        }
+        2 => {
+            // Strike it as a player would, a click every few frames, until it dies.
+            match snail() {
+                Some(view) if in_phase < 20.0 => {
+                    // Close in to striking reach, then strike.
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
+                    key(world, KeyCode::KeyW, far);
+                    aim_at(world, view.position + Vec3::Y * 0.2);
+                    mouse(world, MouseButton::Left, gate.frames % 4 == 0);
+                }
+                Some(_) => {
+                    mouse(world, MouseButton::Left, false);
+                    key(world, KeyCode::KeyW, false);
+                    gate.check("creature struck", Err("twenty seconds of blows did not kill it".into()));
+                    gate.next(Step::Gorge, now);
+                }
+                None => {
+                    mouse(world, MouseButton::Left, false);
+                    let deaths = world.resource::<crate::creatures::Creatures>().deaths;
+                    gate.check("creature struck", if deaths > 0 { Ok(format!("killed in {in_phase:.1}s")) } else { Err("it went without dying".into()) });
+                    look(world, world.resource::<LocalPlayer>().yaw.to_degrees(), 0.0);
+                    key(world, KeyCode::KeyW, true);
+                    gate.advance(now);
+                }
+            }
+        }
+        3 => {
+            if in_phase > 0.8 {
+                key(world, KeyCode::KeyW, false);
+            }
+            let count = item_count(world, CREATURE_DROP);
+            if count > gate.count_before || in_phase > 8.0 {
+                key(world, KeyCode::KeyW, false);
+                let result = if count > gate.count_before {
+                    Ok(format!("picked up {} {CREATURE_DROP}", count - gate.count_before))
+                } else {
+                    Err(format!("no {CREATURE_DROP} picked up after the kill"))
+                };
+                gate.check("creature drops", result);
+                gate.next(Step::Gorge, now);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Turns the player to look at a point.
+fn aim_at(world: &mut World, at: Vec3) {
+    let mut player = world.resource_mut::<LocalPlayer>();
+    let to = at - player.eye();
+    player.yaw = (-to.x).atan2(-to.z);
+    player.pitch = to.y.atan2(to.xz().length());
+}
+
+/// How many of an item the inventory holds.
+fn item_count(world: &World, name: &str) -> u32 {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    let Some(item) = client.registry.id(name) else { return 0 };
+    (0..voxmar_engine::inventory::SLOTS).filter_map(|slot| player.inventory.get(slot)).filter(|s| s.item == item).map(|s| s.count as u32).sum()
 }
 
 /// The sun low in the morning sky, a bright disc in a sky that darkens upwards; at night
