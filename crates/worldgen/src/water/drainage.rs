@@ -88,7 +88,8 @@ pub struct Tier {
     /// height than `min_area`, are breached rather than filled.
     pub min_depth: f32,
     pub min_area: usize,
-    /// How far below the ground a river's surface lies, in blocks.
+    /// How far a river's surface lies below the ground's (the top of its top block), in
+    /// blocks.
     pub incision: f32,
     /// Whether wet basins may fill as lakes. Without, a river breaches or tunnels out of
     /// any basin it can, and a basin it cannot leave stays dry.
@@ -126,9 +127,9 @@ impl Tier {
         cell * self.cell + self.cell / 2
     }
 
-    /// The river's surface, in eighths, over ground of this height.
+    /// The river's surface, in eighths, over ground whose top block is at `height`.
     pub fn target(&self, height: f32) -> i32 {
-        (((height - self.incision) * 8.0).floor() as i32).max(SEA_SURFACE)
+        (((height + 1.0 - self.incision) * 8.0).floor() as i32).max(SEA_SURFACE)
     }
 }
 
