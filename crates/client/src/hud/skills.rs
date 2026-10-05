@@ -1,8 +1,8 @@
 //! Skills on the HUD, RuneScape-style: each bit of experience earned rises at the right of
 //! the screen as "+18 Farming" and fades (gains close together add up into one line), a
-//! new level is announced in the middle of the screen, and an action refused for want of
-//! a level says what it needs. The inventory screen lists every skill's level and how far
-//! it is to the next.
+//! new level is noted in a small plate above them with the skill's icon, and an action
+//! refused for want of a level says what it needs. The character screen lists every
+//! skill's level and how far it is to the next.
 
 use bevy::prelude::*;
 use voxmar_engine::skill::{SkillId, SkillRegistry};
@@ -10,8 +10,8 @@ use voxmar_engine::skill::{SkillId, SkillRegistry};
 use crate::lang::Locale;
 use crate::menu::Screen;
 use crate::session::Launch;
-use crate::ui::skin::PX;
-use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, LARGE, SHADOW, UiFont, shadowed};
+use crate::ui::skin::{PX, Piece};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, SHADOW, TEXT, UiFont, shadowed};
 
 /// Seconds a line stays, the last of them fading out as it rises.
 const LINE_SECONDS: f32 = 2.5;
@@ -20,8 +20,9 @@ const FADE: f32 = 0.6;
 const MERGE: f32 = 1.2;
 /// How far a line rises over its life, in HUD pixels.
 const RISE: f32 = 10.0;
-/// Seconds a new level is announced for.
-const LEVEL_SECONDS: f32 = 3.5;
+/// Seconds a new level is noted for, and how long its plate takes to appear.
+const LEVEL_SECONDS: f32 = 4.0;
+const APPEAR: f32 = 0.2;
 /// Lines shown at once at most.
 const LINES: usize = 6;
 
@@ -112,8 +113,15 @@ pub fn summary(locale: &Locale, skills: &SkillRegistry, skill: SkillId, xp: u32)
 
 #[derive(Component)]
 struct ToastLine(usize);
+/// The plate noting a new level, and its parts.
 #[derive(Component)]
-struct LevelText;
+struct LevelPlate;
+#[derive(Component)]
+struct LevelIcon;
+#[derive(Component)]
+struct LevelSkill;
+#[derive(Component)]
+struct LevelReached;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -131,18 +139,37 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             column.spawn((Node::default(), shadowed(font, "", BODY, ACCENT), ToastLine(i), Visibility::Hidden));
         }
     });
-    let level = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), top: Val::Percent(24.0), justify_content: JustifyContent::Center, ..default() };
-    commands.spawn((level, GlobalZIndex(1))).with_child((shadowed(font, "", LARGE, GOLD), LevelText, Visibility::Hidden));
+    // Just above the experience lines, so the two read as one quiet corner.
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(8.0 * PX), bottom: Val::Percent(63.0), ..default() };
+    let plate = Node {
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(3.0 * PX),
+        padding: UiRect::new(Val::Px(3.0 * PX), Val::Px(4.0 * PX), Val::Px(2.0 * PX), Val::Px(2.0 * PX)),
+        ..default()
+    };
+    commands.spawn((corner, GlobalZIndex(1))).with_children(|corner| {
+        corner.spawn((plate, Piece::Tooltip.image(), LevelPlate, Visibility::Hidden)).with_children(|plate| {
+            plate.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::default(), LevelIcon));
+            plate.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|lines| {
+                lines.spawn((shadowed(font, "", BODY, GOLD), LevelSkill));
+                lines.spawn((shadowed(font, "", BODY, TEXT), LevelReached));
+            });
+        });
+    });
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show(
     time: Res<Time>,
     launch: Res<Launch>,
     locale: Res<Locale>,
+    images: Option<Res<super::HudImages>>,
     mut toasts: ResMut<SkillToasts>,
-    mut lines: Query<(&ToastLine, &mut Text, &mut TextColor, &mut TextShadow, &mut Node, &mut Visibility), Without<LevelText>>,
-    mut level: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), With<LevelText>>,
+    mut lines: Query<(&ToastLine, &mut Text, &mut TextColor, &mut TextShadow, &mut Node, &mut Visibility), Without<LevelPlate>>,
+    mut plate: Query<(&mut Visibility, &mut ImageNode), (With<LevelPlate>, Without<LevelIcon>)>,
+    mut icon: Query<&mut ImageNode, (With<LevelIcon>, Without<LevelPlate>)>,
+    mut skill_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelSkill>, Without<ToastLine>, Without<LevelReached>)>,
+    mut reached_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelReached>, Without<ToastLine>, Without<LevelSkill>)>,
 ) {
     let now = time.elapsed_secs();
     let skills = &launch.content.skills;
@@ -169,23 +196,36 @@ fn show(
         node.top = Val::Px(-RISE * PX * (since / LINE_SECONDS));
         visibility.set_if_neq(Visibility::Inherited);
     }
-    if let Ok((mut text, mut color, mut shadow, mut visibility)) = level.single_mut() {
-        match toasts.level.filter(|&(_, _, at)| now - at < LEVEL_SECONDS) {
-            Some((skill, reached, at)) => {
-                let words = locale.format("skills.level_up", &[("skill", &locale.skill(skills.get(skill))), ("level", &reached)]);
-                if text.0 != words {
-                    text.0 = words;
-                }
-                let alpha = fade(now - at, LEVEL_SECONDS);
-                color.set_if_neq(TextColor(GOLD.with_alpha(alpha)));
-                shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
-                visibility.set_if_neq(Visibility::Inherited);
-            }
-            None => {
-                visibility.set_if_neq(Visibility::Hidden);
-            }
+    let Ok((mut visibility, mut backing)) = plate.single_mut() else { return };
+    let Some((skill, reached, at)) = toasts.level.filter(|&(_, _, at)| now - at < LEVEL_SECONDS) else {
+        visibility.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    // In quickly, out slowly.
+    let since = now - at;
+    let alpha = (since / APPEAR).min(1.0) * fade(since, LEVEL_SECONDS);
+    backing.color = Color::WHITE.with_alpha(alpha);
+    if let Ok(mut icon) = icon.single_mut() {
+        if let Some(image) = images.as_ref().and_then(|images| images.skills.get(skill.0 as usize))
+            && icon.image != *image
+        {
+            icon.image = image.clone();
         }
+        icon.color = Color::WHITE.with_alpha(alpha);
     }
+    let words = [
+        (locale.skill(skills.get(skill)), GOLD),
+        (locale.format("skills.level_up", &[("level", &reached)]), TEXT),
+    ];
+    for (query_text, (words, base)) in [skill_text.single_mut().ok(), reached_text.single_mut().ok()].into_iter().zip(words) {
+        let Some((mut text, mut color, mut shadow)) = query_text else { continue };
+        if text.0 != words {
+            text.0 = words;
+        }
+        color.set_if_neq(TextColor(base.with_alpha(alpha)));
+        shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
+    }
+    visibility.set_if_neq(Visibility::Inherited);
 }
 
 #[cfg(test)]

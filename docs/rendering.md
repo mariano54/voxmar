@@ -913,8 +913,10 @@ days. Nothing shows every night:
 - Outer planets creep along the sun's path and meet it every 110 to 200 days, lost in
   its glare for a while; the pale blue planet, when a world has it, never strays more
   than 24° to 46° from the sun and shows only after sunset or before sunrise.
-- The moon goes through its phases every 10 days (`MONTH_DAYS`), full on day 0 and
-  rising later each night. It is the night's light: moonlight scales with how much of it
+- The moon goes through its phases every 10 days, full on day 0 and rising later each
+  night. The phase is the engine's (`voxmar_engine::calendar::moon_phase` and
+  `moon_lit`, from days elapsed), so the server's creatures, drops and plants can follow
+  the same moon the sky shows. It is the night's light: moonlight scales with how much of it
   is lit (to the power 1.5), and the sky and skylight are 0.6 of a full moon's without
   it (`MOONLESS`). Its dark side hides the stars behind it.
 - Comets stay five to nine days, brightening and fading, a tail streaming away from the

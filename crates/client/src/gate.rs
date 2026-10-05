@@ -153,6 +153,8 @@ enum Step {
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
     /// over picks up.
     Strike,
+    /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory.
+    Cook,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
@@ -194,6 +196,8 @@ struct Gate {
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
     blows_seen: u32,
+    /// Whether the target readout has shown the struck creature's health.
+    readout_seen: bool,
     failures: Vec<String>,
     passes: usize,
     /// Real frame times so far (milliseconds), and the longest in each step.
@@ -224,6 +228,7 @@ impl Gate {
             gorge: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
+            readout_seen: false,
             failures: Vec::new(),
             passes: 0,
             frame_ms: Vec::new(),
@@ -414,6 +419,9 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             if loaded(world) {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
                 land(world, gate);
+                // From here on, anything first drawn compiles its pipeline in that frame
+                // unless it was warmed at load (render::warm); `pipelines` lists any.
+                world.resource::<crate::render::warm::PipelineWatch>().start();
                 gate.next(Step::Build, now);
             }
         }
@@ -600,9 +608,17 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
+        Step::Cook => cook(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
+                let late: Vec<String> = world.resource::<crate::render::warm::PipelineWatch>().stop().into_iter().filter(|l| !GATE_PIPELINES.contains(&l.as_str())).collect();
+                let result = if late.is_empty() {
+                    Ok("none compiled while playing".to_owned())
+                } else {
+                    Err(format!("compiled while playing, each a hitch the frame it was first needed: {}", late.join(", ")))
+                };
+                gate.check("pipelines", result);
                 world.resource_mut::<NextState<Screen>>().set(Screen::Title);
                 gate.advance(now);
             } else {
@@ -1034,6 +1050,15 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let creatures = world.resource::<crate::creatures::Creatures>();
                 (creatures.blows, creatures.landed)
             };
+            // Once a blow lands, the readout names it, with its level and health.
+            if landed > 0 && !gate.readout_seen {
+                let readout = world.resource::<crate::hud::target::Readout>();
+                if let Some(health) = readout.health.filter(|_| !readout.name.is_empty() && !readout.level.is_empty()) {
+                    let detail = format!("{} {}, {:.0}% health", readout.name, readout.level, health * 100.0);
+                    gate.readout_seen = true;
+                    gate.check("target readout", Ok(detail));
+                }
+            }
             if blows > gate.blows_seen {
                 gate.blows_seen = blows;
                 gate.phase_since = now;
@@ -1068,6 +1093,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    if !gate.readout_seen {
+                        gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
+                    }
                     gate.advance(now);
                 }
             }
@@ -1089,7 +1117,62 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("no {CREATURE_DROP} picked up after the kill"))
                 };
                 gate.check("creature drops", result);
+                gate.next(Step::Cook, now);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
+/// comes back as cooked rabbit or, at a low Cooking level, sometimes burnt.
+fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let fire = gate.feet + IVec3::new(0, 0, 14);
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
+            net.command("give raw_rabbit 3");
+            gate.advance(now);
+        }
+        1 => {
+            let client = world.resource::<ClientWorld>();
+            let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:campfire")) else {
+                gate.check("cook", Err("no raw rabbit or campfire in the content".into()));
                 gate.next(Step::Gorge, now);
+                return;
+            };
+            let lit = client.block(fire) == Some(campfire);
+            let slot = {
+                let player = world.resource::<LocalPlayer>();
+                (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == raw))
+            };
+            match (lit, slot) {
+                (true, Some(slot)) => {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                    gate.count_before = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+                    gate.advance(now);
+                }
+                _ if in_phase > 10.0 => {
+                    gate.check("cook", Err(format!("the campfire ({lit}) or raw rabbit in the hotbar ({slot:?}) never came")));
+                    gate.next(Step::Gorge, now);
+                }
+                _ => {}
+            }
+        }
+        2 => {
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let cooked = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+            if cooked > gate.count_before {
+                mouse(world, MouseButton::Right, false);
+                gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
+                gate.next(Step::Gorge, now);
+            } else if in_phase > 15.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
+                gate.next(Step::Gorge, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
         _ => {}
@@ -1205,6 +1288,9 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         _ => {}
     }
 }
+
+/// Pipelines only the gate's own work compiles (its shots), which `pipelines` allows.
+const GATE_PIPELINES: [&str; 1] = ["screenshot-to-screen"];
 
 /// How far `/locate gorge` looks from the test ground, in blocks.
 const GORGE_RADIUS: i32 = 3000;

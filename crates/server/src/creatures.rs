@@ -177,13 +177,10 @@ impl Server {
         self.players.get(&player).map_or(1, |p| self.content.skills.level(p.skills.xp(skill)))
     }
 
-    /// A player's combat level, RuneScape-style (docs/skills.md): Hitpoints counts as at
-    /// least 10, where it starts.
+    /// A player's combat level, RuneScape-style (see `SkillRegistry::combat_level`).
     pub(crate) fn combat_level(&self, player: PlayerId) -> u8 {
-        let attack = self.level(player, self.skill("core:attack")) as f32;
-        let defence = self.level(player, self.skill("core:defence")) as f32;
-        let hitpoints = (self.level(player, self.skill("core:hitpoints")) as f32).max(10.0);
-        ((defence + hitpoints) / 4.0 + attack * 0.65) as u8
+        let skills = &self.content.skills;
+        self.players.get(&player).map_or_else(|| skills.combat_level(&Default::default()), |p| skills.combat_level(&p.skills))
     }
 
     /// Daylight now, 0..=1.

@@ -9,9 +9,11 @@
 
 pub mod action;
 pub mod block;
+pub mod calendar;
 pub mod chunk;
 pub mod command;
 pub mod content;
+pub mod cooking;
 pub mod coords;
 pub mod creature;
 pub mod craft;

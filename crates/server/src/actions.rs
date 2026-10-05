@@ -95,6 +95,10 @@ impl ActionContext for Context<'_> {
         self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
 
+    fn cooking(&self) -> Option<&voxmar_engine::cooking::CookingRegistry> {
+        Some(&self.server.content.cooking)
+    }
+
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
         self.server.creatures.reach_box(id)
     }
@@ -204,6 +208,7 @@ impl Server {
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
                 (Effect::Pick, ActionTarget::Block { block, .. }) => self.pick(agent, block),
                 (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
+                (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {
@@ -262,6 +267,12 @@ impl Server {
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     let food = blocks.info(item).food;
                     player.vitals.hunger = (player.vitals.hunger + food).min(voxmar_engine::vitals::MAX_HUNGER);
+                    // Cooked food also heals at once (docs/food-and-cooking.md, decision 2).
+                    let heal = blocks.def(item).tags.iter().find_map(|tag| tag.strip_prefix("heal:")?.parse::<u8>().ok()).unwrap_or(0);
+                    if heal > 0 && player.health.alive() {
+                        player.health.heal(heal);
+                        player.changed(traits::HEALTH);
+                    }
                     player.changed(traits::INVENTORY);
                     player.changed(traits::VITALS);
                 }

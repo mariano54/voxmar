@@ -211,7 +211,7 @@
     "item.plants": "Plants {crop} · {skill} {level}",
 
     "skills.gained": "+{xp} {skill}",
-    "skills.level_up": "{skill} level {level}",
+    "skills.level_up": "Level {level}",
     "skills.needs": "Needs {skill} {level}",
 
     "character.health": "Health",

@@ -76,6 +76,10 @@ pub enum Requirement {
     Ripe,
     /// The target creature is alive and within the actor's reach.
     CreatureInReach,
+    /// The target block is a station that cooks what the actor holds.
+    Cookable,
+    /// The actor's Cooking level is at least what the held item's recipe there needs.
+    CookingLevel,
     /// The actor holds something it can eat.
     HoldingFood,
     /// The actor has room for food.
@@ -105,6 +109,8 @@ pub enum Effect {
     StowCursor,
     /// Strike the target creature with what the actor holds.
     Strike,
+    /// Cook one held item at the target station: its recipe's food, or burnt.
+    Cook,
     /// Restore the actor's health and return it to spawn.
     Respawn,
     /// Sow one held seed on top of the target, and grant the crop's planting experience.
@@ -205,6 +211,10 @@ pub trait ActionContext {
     }
     /// Whether any agent's body overlaps the cell.
     fn occupied(&self, cell: IVec3) -> bool;
+    /// The cooking recipes, where the context knows them.
+    fn cooking(&self) -> Option<&crate::cooking::CookingRegistry> {
+        None
+    }
     /// The box of a living creature, if there is one with that id.
     fn creature_box(&self, _id: u32) -> Option<crate::physics::Aabb> {
         None
@@ -286,6 +296,16 @@ impl ActionDef {
                 ctx.block(block)
                     .and_then(|b| crops.stage_of(b))
                     .is_some_and(|(crop, stage)| stage == crops.get(crop).ripe_stage() && crops.get(crop).def.regrow.is_some())
+            }
+            Requirement::Cookable | Requirement::CookingLevel => {
+                let (block, _) = block_target()?;
+                let station = ctx.block(block).map(|b| ctx.blocks().def(b).tags.as_slice()).unwrap_or(&[]);
+                let recipe = ctx.actor_held().zip(ctx.cooking()).and_then(|(item, cooking)| cooking.for_item(item, station));
+                match (requirement, recipe) {
+                    (Requirement::Cookable, recipe) => recipe.is_some(),
+                    (_, Some(recipe)) => ctx.cooking().and_then(|c| c.skill).is_none_or(|skill| ctx.actor_level(skill) >= recipe.def.level),
+                    (_, None) => true,
+                }
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };

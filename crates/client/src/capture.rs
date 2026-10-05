@@ -16,6 +16,10 @@
 //! `--clip SECONDS` records motion instead: every frame of that much game time at 30 fps,
 //! as `OUT-000.png` on, for checking how things move (wind, water, weather).
 //!
+//! `--strike CREATURE` summons one beside the player and strikes it once, a moment before
+//! the shot, to show the target readout with its health; `--level-up SKILL` notes that skill's
+//! next level as reached just before the shot, to show how a new level is announced.
+//!
 //! `--press left|right` holds that mouse button through the first second of a clip,
 //! aimed where `--pose` looks, as a player would: a real break or place, through the server,
 //! to check edits show.
@@ -71,6 +75,10 @@ pub struct CapturePlugin {
     pub clip: Option<f32>,
     /// A mouse button to hold at the start of the clip (see the module docs).
     pub press: Option<MouseButton>,
+    /// The creature to summon and strike before the shot (see the module docs).
+    pub strike: Option<String>,
+    /// The skill whose next level to note before the shot (see the module docs).
+    pub level_up: Option<String>,
     /// Width and height of the shot, in pixels.
     pub size: UVec2,
     /// Render to a real window and shoot that, rather than an offscreen image: slower to
@@ -121,6 +129,10 @@ impl Plugin for CapturePlugin {
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
             clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
             press: self.press,
+            strike: self.strike.clone(),
+            summoned: false,
+            struck: false,
+            level_up: self.level_up.clone(),
             size: self.size,
             windowed: self.windowed,
         })
@@ -133,7 +145,7 @@ impl Plugin for CapturePlugin {
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
-        .add_systems(Update, (press, dig).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
+        .add_systems(Update, (press, dig, showcase).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
@@ -167,6 +179,10 @@ struct Capture {
     flicker: Option<Flicker>,
     clip: Option<Clip>,
     press: Option<MouseButton>,
+    strike: Option<String>,
+    summoned: bool,
+    struck: bool,
+    level_up: Option<String>,
     size: UVec2,
     windowed: bool,
 }
@@ -287,6 +303,69 @@ fn dig(state: Res<Capture>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut ui:
         mouse.press(MouseButton::Left);
     } else if mouse.pressed(MouseButton::Left) {
         mouse.release(MouseButton::Left);
+    }
+}
+
+/// Seconds before a still shot that `--strike` summons its creature, that it strikes it,
+/// and that `--level-up` notes its level: long enough for the server's answers, short
+/// enough that nothing has wandered off or faded.
+const SUMMON_LEAD: f32 = 1.2;
+const SHOWCASE_LEAD: f32 = 0.6;
+
+/// Summons and strikes a creature for `--strike`, as a player clicking on it, and notes a
+/// new level for `--level-up`, just before the shot.
+#[allow(clippy::too_many_arguments)]
+fn showcase(
+    time: Res<Time>,
+    launch: Res<crate::session::Launch>,
+    creatures: Res<crate::creatures::Creatures>,
+    mut state: ResMut<Capture>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut ui: ResMut<UiState>,
+    mut player: ResMut<LocalPlayer>,
+    mut toasts: ResMut<crate::hud::skills::SkillToasts>,
+    mut console: ResMut<crate::hud::console::Console>,
+) {
+    let Some(settled) = state.settled_at else { return };
+    let now = time.elapsed_secs();
+    if state.strike.is_some() && mouse.pressed(MouseButton::Left) {
+        mouse.release(MouseButton::Left);
+    }
+    let until_shot = 4.0 + state.wait - (now - settled);
+    if state.taken_at.is_some() || until_shot > SUMMON_LEAD {
+        return;
+    }
+    if let Some(name) = &state.strike
+        && !state.summoned
+    {
+        console.run_when_joined(vec![format!("/summon {name} 1 ~ ~ ~-2")]);
+        state.summoned = true;
+    }
+    if until_shot > SHOWCASE_LEAD {
+        return;
+    }
+    if let Some(name) = state.level_up.take() {
+        let skills = &launch.content.skills;
+        match skills.id(&name).or_else(|| skills.id(&format!("core:{name}"))) {
+            Some(id) => toasts.level_up(id, (skills.level(player.skills.xp(id)) + 1).min(skills.max_level()), now),
+            None => warn!("--level-up: no skill called `{name}`"),
+        }
+    }
+    if state.strike.is_some() && !state.struck {
+        state.struck = true;
+        let eye = player.eye();
+        let Some(nearest) = creatures.views().min_by(|a, b| a.position.distance_squared(eye).total_cmp(&b.position.distance_squared(eye))) else {
+            warn!("--strike: no creature in sight");
+            return;
+        };
+        info!("--strike: {} at {:.1} blocks", launch.content.creatures.get(nearest.species).def.name, nearest.position.distance(eye));
+        // Its upper body, above the grass.
+        let height = launch.content.creatures.get(nearest.species).def.body.size.1 * nearest.scale;
+        let to = nearest.position + Vec3::Y * height * 0.75 - eye;
+        player.yaw = (-to.x).atan2(-to.z);
+        player.pitch = to.y.atan2(to.xz().length());
+        ui.cursor_locked = true;
+        mouse.press(MouseButton::Left);
     }
 }
 

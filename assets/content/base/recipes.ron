@@ -15,6 +15,8 @@
         // Moss grows over stonework.
         (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks"),
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone"),
+        // Two logs over two cobblestones make a campfire, which cooks (cooking.ron).
+        (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire"),
         // Two wheat side by side bake into bread, which fills more than the grain.
         (pattern: [["wheat", "wheat"]], output: "bread"),
     ],
