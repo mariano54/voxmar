@@ -61,7 +61,11 @@ ALLOWED_WARNINGS=(
 
 # Tests too slow for every landing, run by the full gate only: `crate test_name` pairs
 # (test names as `cargo test` filters take them).
+# Measured alone on 2026-10-05: the next slowest took 7 s.
 SLOW_TESTS=(
+  voxmar_worldgen fluids_are_contained          # 177 s
+  voxmar_worldgen decorations_rest_on_the_ground # 23 s
+  voxmar_worldgen wood_never_floats             # 17 s
 )
 
 started=$(date +%s)
