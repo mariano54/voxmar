@@ -74,7 +74,7 @@
             name: "dark_oak", tags: ["broadleaf", "temperate", "dense"],
             log: "dark_oak_log", leaves: "dark_oak_leaves", height: (6, 9), thick: true, lean: 0.8,
             crown: Round(reach: (2.2, 3.4), radius: (2.2, 3.0), squash: 0.6, start: 0.45),
-            comfort: (temperature: (12.0, 22.0), moisture: (1.2, 8.0)),
+            comfort: (temperature: (8.0, 24.0), moisture: (1.2, 8.0)),
         ),
         (
             name: "cherry", tags: ["broadleaf", "blossom", "temperate"], rarity: Uncommon,

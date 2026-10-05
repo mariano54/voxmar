@@ -253,6 +253,9 @@ pub struct Overworld {
     seed: u64,
 }
 
+/// How far around the first place found `locate_biome` looks for the biome's interior.
+const LOCATE_INSIDE: i32 = 256;
+
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
@@ -358,14 +361,26 @@ impl Overworld {
     /// blocks outwards. `None` if there is no such biome or none is that close.
     pub fn locate_biome(&self, name: &str, from: IVec2, radius: i32) -> Option<IVec2> {
         let id = self.biomes.id(name).or_else(|| self.biomes.id(&format!("base:{name}")))?;
-        self.biomes.locate(
+        let found = self.biomes.locate(
             id,
             from,
             radius,
             climate::CELL,
             |at| self.point(&self.geology.climate().regional_at(&self.geology, at)),
             |at| self.sampler(at, at).pick(at.x, at.y).home == id,
-        )
+        )?;
+        // Then the point deepest inside it around there (not a sliver at a border, nor a
+        // variant within it), on dry land where there is some.
+        let area = self.sampler(found - LOCATE_INSIDE, found + LOCATE_INSIDE);
+        let steps = 2 * LOCATE_INSIDE / 16 + 1;
+        let best = (0..steps * steps)
+            .map(|i| found + IVec2::new(i % steps * 16 - LOCATE_INSIDE, i / steps * 16 - LOCATE_INSIDE))
+            .filter_map(|p| {
+                let site = area.site(p.x, p.y);
+                (site.home == id && site.biome == id).then(|| (p, site.edge + if site.height > site.water { 64.0 } else { 0.0 }))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        Some(best.map_or(found, |b| b.0))
     }
 
     /// The biome picker's fields from the regional climate.
@@ -1098,6 +1113,21 @@ mod tests {
             println!("{biome} at {at}: cover {cover:.2} of {on_grass}, tall {share:.2}");
             assert!((0.1..0.9).contains(&cover), "{biome} at {at}: a plant on {:.0}% of {on_grass} grass", 100.0 * cover);
             assert!(share < 0.3, "{biome} at {at}: tall grass {:.0}% of {planted} plants", 100.0 * share);
+        }
+    }
+
+    /// `/locate biome` lands well inside the named biome, not on a sliver at its border or
+    /// in a variant within it (on seed 24301 dark forest once sent players to cherry trees).
+    #[test]
+    fn locate_lands_inside_the_biome() {
+        let world = Overworld::new(24301, registry());
+        let spawn = world.spawn_point();
+        for name in ["dark_forest", "forest", "taiga"] {
+            let Some(at) = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 4000) else { continue };
+            let site = world.site(at.x, at.y);
+            let id = world.biomes.id(&format!("base:{name}")).unwrap();
+            assert!(site.home == id && site.biome == id, "{name} at {at}: {}", world.biomes.get(site.biome).name);
+            assert!(site.edge >= 32.0, "{name} at {at}: only {:.0} blocks from its border", site.edge);
         }
     }
 
