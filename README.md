@@ -39,10 +39,14 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 (a number, or any text, which is hashed; empty means random) and a game mode: Creative allows
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
-Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
+Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
 inventory, T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
+Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
+into a wall, and widens the view a little; sprint-jumping is fastest. Swimming up against a
+bank and holding jump hops you out onto it, up to a block above the water. The speeds, jump
+and gravity are content (`content/core/movement.ron`), which client and server both read.
 
 The inventory works as Minecraft's: click picks up, puts down, merges or swaps a stack;
 right click (or Control-click) takes half or puts down one; dragging a held stack spreads it
@@ -98,10 +102,11 @@ line explaining the setting under the pointer; a choice steps forward on click a
 right click, and the wheel moves a slider. The settings: render distance, far detail (Balanced, Fast or Full: how soon
 distant chunks merge two or four columns into one, which draws far terrain much faster),
 resolution (75%, 50% or Full: how many pixels the world is drawn at before it is stretched over
-the window; menus and text stay sharp), field of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
+the window; menus and text stay sharp), field of view, FOV effects (the view widening while
+sprinting), shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
 broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
-HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key
+HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
 smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
 to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
@@ -208,7 +213,8 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 How the design primitives map to the code today:
 
 - **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`),
-  console commands (`content/core/commands.ron`) and kinds of weather (`content/base/weather.ron`),
+  console commands (`content/core/commands.ron`), kinds of weather (`content/base/weather.ron`)
+  and how players move (`content/core/movement.ron`),
   namespaced per package (`base:stone`, `core:mine`; `core:air` is built in).
 - **Action**: the only way discrete changes happen. Every action goes through one lifecycle on
   the server (propose, validate, schedule one completion, re-validate, commit or cancel) and
@@ -285,7 +291,8 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
-- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`) join the places worth walking
+- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`; laid only near settlements,
+  of which there are none yet, so `laid: NearSettlements` leaves them all out) join the places worth walking
   to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
   of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
   are joined into a sparse network (a Gabriel graph, with no two trails setting off side by
@@ -327,7 +334,7 @@ variants take shares of their parent along a field 8 km across; ecotones sit on 
 fantastical biomes claim cells where aether (12 km across) runs high. The scales of these
 fields are data (`scales` in `climate.ron`). Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
-lines such as game trails; shared sets in `surfaces.ron` break every soil slope up into
+lines such as game trails, which no biome uses for now; shared sets in `surfaces.ron` break every soil slope up into
 coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
 rock follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
 birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
@@ -457,7 +464,10 @@ heavy downpour under strong updrafts is a thunderstorm: each second it may, rare
 lightning strike somewhere in the cell (a few flashes a minute in the heart of the fiercest
 storm), which nearby clients see as a flash and a bolt and hear as thunder once the sound has
 travelled: a crack, boom and roll close by, a muffled rip and roll farther off, only a low
-roll from far away. A cell coming into range first catches up on its last ten minutes, so
+roll from far away. What the weather would do to machines and buildings left out in it is
+worked out in the same cells as hazard fields (hail's impact, the wind's load, corrosion,
+frost, heat and recent strikes) with lightning strikes kept as events, for gameplay to come
+(docs/weather-effects.md, "Hazards"). A cell coming into range first catches up on its last ten minutes, so
 the weather at a place does not depend on when anyone arrived, and cells left behind return to
 their baseline. The process uses only exact arithmetic on seeded hash streams, so it is
 deterministic on every machine. It runs on the simulation clock, so it carries on when the

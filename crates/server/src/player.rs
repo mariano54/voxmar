@@ -209,9 +209,10 @@ impl Server {
         let elapsed = ((tick - player.last_input_tick) as f32 / TICKS_PER_SECOND as f32).clamp(0.05, 1.0);
         let delta = input.position - player.position;
         let flying = input.flying && allow_flight;
-        let fly_speed = dims::FLY_SPRINT_SPEED * player.fly_speed;
-        let max_horizontal = if flying { fly_speed } else { dims::SPRINT_SPEED } * 1.5 * elapsed + 0.5;
-        let max_vertical = if flying { fly_speed } else { dims::TERMINAL_VELOCITY } * 1.5 * elapsed + 1.5;
+        let tuning = &self.content.movement;
+        let fly_speed = tuning.fly_sprint_speed * player.fly_speed;
+        let max_horizontal = if flying { fly_speed } else { tuning.top_ground_speed() } * 1.5 * elapsed + 0.5;
+        let max_vertical = if flying { fly_speed } else { tuning.terminal_velocity } * 1.5 * elapsed + 1.5;
         let aabb = Aabb::standing(input.position, dims::WIDTH * 0.9, dims::HEIGHT * 0.95);
         let inside_wall = aabb.intersects(|p| self.is_solid(p));
         let plausible = delta.with_y(0.0).length() <= max_horizontal && delta.y.abs() <= max_vertical && !inside_wall;

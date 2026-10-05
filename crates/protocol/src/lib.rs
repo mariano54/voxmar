@@ -28,6 +28,8 @@ pub const TICKS_PER_SECOND: u32 = 20;
 pub const TICKS_PER_DAY: u64 = 24_000;
 /// Blocks across a cell of the weather's simulation.
 pub const WEATHER_CELL: i32 = 128;
+/// Thunder is heard from lightning closer than this many blocks; beyond, a flash is silent.
+pub const THUNDER_HEARD: f32 = 1300.0;
 /// Highest flight speed multiplier an admin may choose.
 pub const MAX_FLY_SPEED: f32 = 4.0;
 /// Longest console line, in characters, a server accepts.

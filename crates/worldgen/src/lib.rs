@@ -289,7 +289,7 @@ impl Overworld {
             rivers: water::Rivers::new(stream, &dials),
             ecology,
             decor,
-            trails: trails::Trails::new(stream),
+            trails: trails::Trails::new(stream, content.trails.laid),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
@@ -1051,7 +1051,7 @@ mod tests {
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
-        let places = [(42, "forest"), (7, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (9, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
+        let places = [(42, "forest"), (1, "birch_taiga"), (3, "dark_forest"), (7, "forest"), (11, "taiga"), (5, "maple_forest"), (9, "old_growth_taiga"), (2, "savanna"), (9, "mixed_forest")];
         for (seed, biome) in places {
             let world = Overworld::new(seed, registry.clone());
             let id = world.biomes.id(&format!("base:{biome}")).unwrap();

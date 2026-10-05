@@ -4,18 +4,12 @@ use glam::{IVec3, Vec3};
 
 use crate::coords::Face;
 
-/// Shared player dimensions and movement constants (blocks, seconds).
+/// Shared player dimensions (blocks). How fast players move is content: see
+/// [`crate::movement::Tuning`].
 pub mod player {
     pub const WIDTH: f32 = 0.6;
     pub const HEIGHT: f32 = 1.8;
     pub const EYE_HEIGHT: f32 = 1.62;
-    pub const GRAVITY: f32 = 32.0;
-    pub const TERMINAL_VELOCITY: f32 = 78.0;
-    pub const JUMP_VELOCITY: f32 = 9.0;
-    pub const WALK_SPEED: f32 = 4.3;
-    pub const SPRINT_SPEED: f32 = 5.6;
-    pub const FLY_SPEED: f32 = 12.0;
-    pub const FLY_SPRINT_SPEED: f32 = 32.0;
     pub const REACH: f32 = 5.0;
 }
 

@@ -11,6 +11,10 @@
 //! Cairns mark them above the treeline and stand on summits, old waymarkers stand at
 //! trailheads, and summits and viewpoints keep a clearing free of trees.
 //!
+//! Trails lead to and between settlements, so they are only laid near one
+//! ([`crate::content::TrailsWhere`]); with no settlements in the world yet, none are by
+//! default.
+//!
 //! Everything is a pure function of the seed and the land, worked out by region on
 //! demand and kept in caches bounded by bytes: places by region, the trails each region
 //! owns (those whose lower end lies in it), and the stamps over 64-block tiles that
@@ -31,6 +35,7 @@ use voxmar_engine::glam::{IVec2, Vec2};
 pub use self::sites::{Kind, Poi};
 use self::path::{Path, Paths, Stamp};
 use self::sites::{CELL, CELLS, Cell, Grid, REGION};
+pub use crate::content::TrailsWhere;
 use crate::geology::GeoSample;
 use crate::rng;
 use crate::stage::{self, Stage};
@@ -81,6 +86,8 @@ const MB: usize = 1 << 20;
 /// The trails of a world.
 pub struct Trails {
     seed: u64,
+    /// Where trails are laid.
+    laid: TrailsWhere,
     grids: Cache<IVec2, Arc<Grid>>,
     places: Cache<IVec2, Arc<[Poi]>>,
     routes: Cache<IVec2, Arc<Routes>>,
@@ -135,10 +142,11 @@ thread_local! {
 }
 
 impl Trails {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, laid: TrailsWhere) -> Self {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
             seed: rng::mix(seed ^ 0x7a11_5eed),
+            laid,
             grids: Cache::new(48 * MB),
             places: Cache::new(MB),
             routes: Cache::new(8 * MB),
@@ -197,6 +205,9 @@ impl Trails {
         for rz in first.y..=last.y {
             for rx in first.x..=last.x {
                 let region = IVec2::new(rx, rz);
+                if !self.laid_in(region) {
+                    continue;
+                }
                 for path in self.paths(land, region).0.iter() {
                     let kind = |c: &path::Centre| match c.crossing {
                         path::Crossing::Ground => 0,
@@ -325,6 +336,15 @@ impl Trails {
         });
     }
 
+    /// Whether trails are laid in the region `region`: everywhere, or within reach of a
+    /// settlement (there are none yet).
+    fn laid_in(&self, _region: IVec2) -> bool {
+        match self.laid {
+            TrailsWhere::Everywhere => true,
+            TrailsWhere::NearSettlements => false,
+        }
+    }
+
     fn tile(&self, land: &dyn Land, key: IVec2) -> Arc<Tile> {
         let found = RECENT.with(|recent| {
             let mut recent = recent.borrow_mut();
@@ -340,6 +360,9 @@ impl Trails {
         let tile = self.tiles.get(key, || {
             let _stage = stage::enter(Stage::TrailPlans);
             let region = (key * TILE).div_euclid(IVec2::splat(REGION));
+            if !self.laid_in(region) {
+                return Arc::new(Tile { stamps: None, markers: Vec::new() });
+            }
             self.prepare(land, region);
             let owners: Vec<Arc<Paths>> =
                 (-1..=1).flat_map(|dz| (-1..=1).map(move |dx| IVec2::new(dx, dz))).map(|d| self.paths(land, region + d)).collect();
@@ -394,9 +417,13 @@ mod tests {
     use super::*;
     use crate::Overworld;
 
+    /// A world with trails laid everywhere, as they will be near settlements.
     fn world(seed: u64) -> Overworld {
         let source = include_str!("../../../../assets/content/base/blocks.ron");
-        Overworld::new(seed, std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap()))
+        let registry = std::sync::Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", source).unwrap());
+        let mut content = crate::content::WorldContent::base(&registry).unwrap();
+        content.trails.laid = TrailsWhere::Everywhere;
+        Overworld::with_content(seed, registry, &content)
     }
 
     /// The ground along a trail is the same whichever region, tile or column is asked for
@@ -438,7 +465,7 @@ mod tests {
             }
         }
         println!("64 grids in {:.1?}", started.elapsed());
-        let again = Trails::new(1);
+        let again = Trails::new(1, TrailsWhere::Everywhere);
         let started = std::time::Instant::now();
         for rz in -4..4 {
             for rx in -4..4 {

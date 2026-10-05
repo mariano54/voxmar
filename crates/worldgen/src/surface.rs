@@ -61,9 +61,15 @@ impl Palette {
 
     /// The family of the heaviest block's colour among `selects`: those whose colour sits
     /// with it (`crate::hue`, lightness counting little), by weight, so they differ in shade
-    /// rather than hue. Clashing blocks are left out altogether.
+    /// rather than hue. Clashing blocks are left out altogether, and so are stones that
+    /// do not belong at the surface: deep stone (tagged `deep` and not `cliff`, such as
+    /// deepslate and tuff) and cobbled or crafted blocks.
     pub(crate) fn family(selects: &[Select], registry: &BlockRegistry) -> Vec<(BlockId, f32)> {
-        let named = Self::selected(selects, registry);
+        let surface = |block: BlockId| {
+            let def = registry.def(block);
+            !(def.has_tag("deep") && !def.has_tag("cliff")) && !["cobbled", "building", "polished", "bricks"].iter().any(|t| def.has_tag(t))
+        };
+        let named: Vec<(BlockId, f32)> = Self::selected(selects, registry).into_iter().filter(|&(block, _)| surface(block)).collect();
         let color = |block: BlockId| registry.def(block).color.map(f32::from);
         let Some(&(main, _)) = named.iter().max_by(|a, b| a.1.total_cmp(&b.1)) else { return named };
         named.into_iter().filter(|&(block, _)| crate::hue::harmony(color(block), color(main), crate::hue::GROUND_SPREAD) >= FAMILY).collect()
