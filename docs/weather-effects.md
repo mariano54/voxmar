@@ -67,8 +67,8 @@ captures log the weather and air they show. Every kind: `/weather list`.
 - Snow lying on the ground: the server turns grass blocks snowy as the snow cover deepens
   and back as it melts (`snow_cover` in weather.rs; data in `weather.ron`).
 - Cloud cover, heaped and layered cloud, cirrus, storm gloom. The low cloud is a layer in
-  the world (graphics thread, volumetric.wgsl): its base comes down from 170 blocks over sea
-  level in fair weather to 95 in rain, it heaps up with convection, darkens in storms and is
+  the world (graphics thread, volumetric.wgsl): its base comes down from 135 blocks over sea
+  level in fair weather to 85 in rain, its clouds float higher or lower by drifts, it heaps up with convection, darkens in storms and is
   lit by lightning; the sky dome keeps the high sheet and cirrus.
 - Fog, mist, whiteout, rain murk and dust haze (graphics thread, render/atmosphere.rs and
   atmosphere.wgsl): the weather's `fog`, `dust` and falling rain and snow are an extinction

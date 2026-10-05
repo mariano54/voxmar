@@ -69,9 +69,10 @@ const RAY_ISOTROPIC: f32 = 0.015;
 const RAY_CLEAR_AIR: f32 = 10.0;
 /// The low cloud: its base over sea level in fair and in wet weather, its depth as flat
 /// layers and as heaped cloud, steps through it in the volumetric pass, and how far it is
-/// drawn. High peaks stand in it; in rain it comes down onto the hills.
-const CLOUD_BASE: [f32; 2] = [170.0, 95.0];
-const CLOUD_DEPTH: [f32; 2] = [28.0, 100.0];
+/// drawn. High peaks stand in it; in rain it comes down onto the hills. Its clouds float
+/// above and below these, by up to 0.6 of its depth (`cloud_lift` in atmosphere.wgsl).
+const CLOUD_BASE: [f32; 2] = [135.0, 85.0];
+const CLOUD_DEPTH: [f32; 2] = [32.0, 150.0];
 const CLOUD_STEPS: f32 = 16.0;
 const CLOUD_FAR: f32 = 6000.0;
 /// The widest shadow penumbra, in blocks, and how far shadow lookups step off a surface,
@@ -406,8 +407,8 @@ mod tests {
         let fair = cloud(Weather { cover: 0.4, ..Weather::NONE });
         let rain = cloud(Weather { cover: 1.0, precipitation: 1.0, ..Weather::NONE });
         assert!(fair.cloud_look.z > 0.0);
-        assert!(fair.cloud_shape.x > SEA_LEVEL + 150.0, "fair-weather cloud lies above the hills: {}", fair.cloud_shape.x);
-        assert!(rain.cloud_shape.x < fair.cloud_shape.x - 50.0, "rain cloud comes down onto them");
+        assert!(fair.cloud_shape.x > SEA_LEVEL + 120.0, "fair-weather cloud lies above most hills: {}", fair.cloud_shape.x);
+        assert!(rain.cloud_shape.x < fair.cloud_shape.x - 40.0, "rain cloud comes down onto them");
         assert!(rain.cloud_shape.y > rain.cloud_shape.x && rain.cloud_shape.w > fair.cloud_shape.w);
     }
 

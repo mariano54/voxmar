@@ -14,7 +14,7 @@
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 #import bevy_pbr::mesh_view_bindings::{view, lights, directional_shadow_textures, directional_shadow_textures_comparison_sampler}
 #import bevy_pbr::utils::interleaved_gradient_noise
-#import voxmar::atmosphere::{Atmosphere, air_along, cloud_density, cloud_light, sun_glow, weather_fog_density}
+#import voxmar::atmosphere::{Atmosphere, air_along, cloud_density, cloud_height, cloud_lift, cloud_lift_range, cloud_light, sun_glow, weather_fog_density}
 #import voxmar::clouds::{pcg, unit, value_noise, value_noise3}
 
 #ifdef MULTISAMPLED
@@ -200,8 +200,9 @@ fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f3
     if least == 0u {
         return out;
     }
-    let base = a.cloud_shape.x;
-    let top = a.cloud_shape.y;
+    // The layer's slab, as far as its clouds are raised or sunk (`cloud_lift`).
+    let base = a.cloud_shape.x - cloud_lift_range(a);
+    let top = a.cloud_shape.y + cloud_lift_range(a);
     // The stretch of the ray inside the layer.
     var start = 0.0;
     var end = min(distance, a.cloud_look.w);
@@ -249,7 +250,7 @@ fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f3
         let density = cloud_density(a, p, eye, billows) * far;
         if density > 0.0 {
             let alpha = 1.0 - exp(-density * CLOUD_EXTINCTION * step);
-            let h = saturate((p.y - base) / (top - base));
+            let h = saturate(cloud_height(a, p, cloud_lift(a, p.xz - eye.xz)));
             // How much cloud lies towards the sun, from two looks along the way: sunlit
             // faces and tops are bright, the far side and the cores shaded, and near the eye
             // each billow shades the next.

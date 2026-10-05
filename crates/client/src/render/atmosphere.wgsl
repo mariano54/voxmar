@@ -9,7 +9,7 @@
 
 #define_import_path voxmar::atmosphere
 
-#import voxmar::clouds::{cloud_body, cloud_detail, cloud_threshold, value_noise3}
+#import voxmar::clouds::{cloud_body, cloud_detail, cloud_threshold, value_noise, value_noise3}
 #import voxmar::water::{absorption, scattering}
 
 struct Atmosphere {
@@ -270,6 +270,32 @@ const LAYER_SCALE: f32 = 1.1;
 const CLOUD_DETAIL: f32 = 7.0;
 // Size of the 3D puffs of the low cloud near the eye, in blocks.
 const BILLOW_SIZE: f32 = 22.0;
+// The low cloud does not lie at one height: its clouds float higher or lower in drifts
+// about CLOUD_UNIT / LIFT_SCALE blocks across, by up to LIFT_SHARE of the layer's depth
+// either way (a little for flat layers, a lot for heaped cloud), so they meet the hills at
+// different heights.
+const LIFT_SCALE: f32 = 0.35;
+const LIFT_SHARE: f32 = 0.6;
+
+// How far the low cloud's layer is raised (or, below 0, sunk) at `offset` (x, z) from the
+// eye, in blocks, within `cloud_lift_range` either way.
+fn cloud_lift(a: Atmosphere, offset: vec2<f32>) -> f32 {
+    let at = (a.clouds.xy + offset / CLOUD_UNIT) * LIFT_SCALE + vec2(31.7, -12.3);
+    return (value_noise(at) - 0.5) * 2.0 * cloud_lift_range(a);
+}
+
+// The most the low cloud's layer is raised or sunk anywhere, in blocks: its clouds lie
+// between its base less this and its top plus this.
+fn cloud_lift_range(a: Atmosphere) -> f32 {
+    return LIFT_SHARE * (a.cloud_shape.y - a.cloud_shape.x);
+}
+
+// Height through the low cloud's layer (0 at its base, 1 at its top) of `p`, where the
+// layer is raised by `lift` (`cloud_lift`).
+fn cloud_height(a: Atmosphere, p: vec3<f32>, lift: f32) -> f32 {
+    return (p.y - lift - a.cloud_shape.x) / (a.cloud_shape.y - a.cloud_shape.x);
+}
+
 // The low cloud's 2D body (clouds.wgsl) at `offset` (x, z) from the eye, before the
 // layer's profile shapes it.
 fn cloud_body_at(a: Atmosphere, offset: vec2<f32>) -> f32 {
@@ -330,8 +356,12 @@ fn cloud_edge(a: Atmosphere) -> f32 {
 // `billows` (0..1, for samples near enough to show them) lets 3D puffs eat into its edges
 // and tops, so heaped cloud is lumpy rather than smooth.
 fn cloud_density(a: Atmosphere, p: vec3<f32>, eye: vec3<f32>, billows: f32) -> f32 {
-    let h = (p.y - a.cloud_shape.x) / (a.cloud_shape.y - a.cloud_shape.x);
-    if a.clouds.z < 0.005 || h <= 0.0 || h >= 1.0 {
+    let range = cloud_lift_range(a);
+    if a.clouds.z < 0.005 || p.y <= a.cloud_shape.x - range || p.y >= a.cloud_shape.y + range {
+        return 0.0;
+    }
+    let h = cloud_height(a, p, cloud_lift(a, p.xz - eye.xz));
+    if h <= 0.0 || h >= 1.0 {
         return 0.0;
     }
     var core = cloud_core(a, p.xz - eye.xz, h);
