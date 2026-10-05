@@ -61,6 +61,7 @@ changes don't move it, and checks:
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
 | weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
 | sky | looks at the morning sun, then the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, stars |
+| tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
 | leave | quits to the title screen | the world closes cleanly |
 
 "The server" is a second player the gate connects to the same integrated server, floating

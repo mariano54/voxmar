@@ -769,7 +769,7 @@ mod tests {
         let registry = registry();
         // A mod's two trees, both broadleaf: one green-leaved, one red.
         let tree = |name: &str, leaves: &str| {
-            format!("(name: \"{name}\", tags: [\"broadleaf\", \"temperate\"], log: \"base:oak_log\", leaves: \"base:{leaves}\", height: (4, 7), crown: Round(branches: (2, 4), reach: (1.5, 2.5), radius: (2.0, 2.8), squash: 0.8), comfort: (temperature: (7.0, 23.0)))")
+            format!("(name: \"{name}\", tags: [\"broadleaf\", \"temperate\"], log: \"base:oak_log\", leaves: \"base:{leaves}\", height: (4, 7), crown: Round(reach: (1.5, 2.5), radius: (2.0, 2.8), squash: 0.8), comfort: (temperature: (7.0, 23.0)))")
         };
         let trees = format!("(trees: [{}, {}])", tree("green_ash", "oak_leaves"), tree("red_ash", "maple_leaves"));
         let content = content(&[("trees.ron", &trees)], &registry);

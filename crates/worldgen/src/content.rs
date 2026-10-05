@@ -23,7 +23,7 @@ use std::fmt;
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use voxmar_engine::block::BlockRegistry;
+use voxmar_engine::block::{BlockRegistry, RenderKind};
 use voxmar_engine::content::{Content, ContentFile};
 
 use crate::rarity::Rarity;
@@ -557,39 +557,33 @@ pub struct Comfort {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub enum Crown {
-    /// Clumps of leaves at the ends of limbs climbing the trunk from `start` (a fraction of
-    /// it, a half when left out), and one on top. `squash` flattens the clumps.
+    /// A broadleaf dome grown by space colonisation (see `growth`): limbs leave the trunk
+    /// from `start` (a fraction of it, a half when left out) and branch out to fill a crown
+    /// as wide as they `reach` plus the billows of leaves at their ends, which are `radius`
+    /// across; `squash` flattens the crown and its billows.
     Round {
-        branches: (i32, i32),
         reach: (f32, f32),
         radius: (f32, f32),
         squash: f32,
         #[serde(default = "half")]
         start: f32,
     },
-    /// Tiers of lobed whorls narrowing to a spike, from `start` (a fraction of the trunk)
-    /// up. `ragged` (0 ..= 1, 0.3 when left out) is how deeply the whorls are lobed and how
-    /// often the tiers part.
-    Conical {
-        radius: (f32, f32),
-        start: f32,
-        #[serde(default = "ragged")]
-        ragged: f32,
-    },
-    /// Pads of needles on upswept limbs high on a bare trunk, from `start` (a fraction of
-    /// it) up, under a flattish dome; `radius` is how far the lowest limbs and their pads
-    /// reach, the pads up to two blocks past the limbs' ends.
+    /// A cone of drooping limbs carrying needles, from `start` (a fraction of the trunk) to
+    /// a spike over its top, `radius` across at its foot.
+    Conical { radius: (f32, f32), start: f32 },
+    /// A few billowed pads of needles on upswept limbs high on a bare trunk, from `start`
+    /// (a fraction of it) up; `radius` is how far the pads reach from the trunk.
     Pine { radius: (f32, f32), start: f32 },
     /// A narrow flame of leaves from `start` (a fraction of the trunk) to well above its
     /// top, widest a third of the way up (cypresses).
     Spire { radius: (f32, f32), start: f32 },
     /// A domed cap with a hanging rim, on a stem (giant mushrooms).
     Cap { radius: (f32, f32) },
-    /// Flat pads of leaves on a few long limbs that fork off the trunk from `fork` (a
-    /// fraction of it, 0.45 when left out) up. `squash` is how thick the pads are against
-    /// their width (0.4 when left out).
+    /// A wide, flat crown of billows on limbs that fork off the trunk from `fork` (a
+    /// fraction of it, 0.45 when left out) and spread as far as they `reach` plus the
+    /// billows' `radius`. `squash` is how thick the crown is against its width (0.4 when
+    /// left out).
     Umbrella {
-        branches: (i32, i32),
         reach: (f32, f32),
         radius: (f32, f32),
         #[serde(default = "pads")]
@@ -621,10 +615,6 @@ pub enum Crown {
 
 fn half() -> f32 {
     0.5
-}
-
-fn ragged() -> f32 {
-    0.3
 }
 
 fn pads() -> f32 {
@@ -687,6 +677,9 @@ pub struct TreeDef {
     /// The log when left out.
     #[serde(default)]
     pub root_block: Option<String>,
+    /// A fruiting kind of its leaves, for this share of the crown's outer leaves.
+    #[serde(default)]
+    pub fruit: Option<Fruit>,
     /// Trunk height, blocks.
     pub height: (i32, i32),
     /// A 2×2 trunk.
@@ -710,6 +703,16 @@ pub struct TreeDef {
     /// cores, shrubs at the edges. Everywhere when left out.
     #[serde(default)]
     pub stand: Option<(f32, f32)>,
+}
+
+/// Fruit on a tree: a leaf block bearing it (`leaves`, rendered as leaves, whose regrowth
+/// the game handles), for a `share` of the crown's outer leaves, most of them on its
+/// underside and rim, where fruit hangs and can be reached.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Fruit {
+    pub leaves: String,
+    pub share: f32,
 }
 
 /// What a plant is good for, read by cooking, alchemy and dyeing (later). Left out, each
@@ -1496,6 +1499,7 @@ impl WorldContent {
                             leaves: t.leaves.as_deref().map(q),
                             alternate: t.alternate.as_ref().map(|(n, share)| (q(n), *share)),
                             root_block: t.root_block.as_deref().map(q),
+                            fruit: t.fruit.as_ref().map(|f| Fruit { leaves: q(&f.leaves), share: f.share }),
                             ..t
                         }
                     }));
@@ -1789,7 +1793,7 @@ impl WorldContent {
             }
         }
 
-        self.check_flora(&block, &file_of)?;
+        self.check_flora(registry, &block, &file_of)?;
         self.check_decorations(&block, &blocks)?;
         for set in &self.rule_sets {
             let at = || format!("surfaces.ron: rule set `{}`", set.name);
@@ -1850,7 +1854,7 @@ impl WorldContent {
         plant.tags.iter().chain(block).map(String::as_str)
     }
 
-    fn check_flora(&self, block: &BlockCheck<'_, str>, file_of: &dyn Fn(&str) -> String) -> Result<(), ContentError> {
+    fn check_flora(&self, registry: &BlockRegistry, block: &BlockCheck<'_, str>, file_of: &dyn Fn(&str) -> String) -> Result<(), ContentError> {
         let comfort = |at: &dyn Fn() -> String, c: &Comfort| {
             for (what, range) in [("temperature", c.temperature), ("moisture", c.moisture)] {
                 if let Some((lo, hi)) = range
@@ -1869,6 +1873,15 @@ impl WorldContent {
             block(&at, &tree.log)?;
             for name in tree.leaves.iter().chain(tree.alternate.as_ref().map(|a| &a.0)).chain(&tree.root_block) {
                 block(&at, name)?;
+            }
+            if let Some(fruit) = &tree.fruit {
+                block(&at, &fruit.leaves)?;
+                if registry.id(&fruit.leaves).is_some_and(|id| registry.info(id).render != RenderKind::Leaves) {
+                    return Err(ContentError(format!("{}: its fruit `{}` is not a kind of leaves", at(), fruit.leaves)));
+                }
+                if !(fruit.share > 0.0 && fruit.share <= 0.5) || tree.leaves.is_none() {
+                    return Err(ContentError(format!("{}: fruit needs leaves, and a share in (0, 0.5]", at())));
+                }
             }
             if tree.leaves.is_none() && !matches!(tree.crown, Crown::Dead { .. } | Crown::Bare) {
                 return Err(ContentError(format!("{}: its crown needs leaves", at())));

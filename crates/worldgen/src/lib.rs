@@ -24,6 +24,7 @@ mod dials;
 mod ecology;
 mod features;
 mod geology;
+mod growth;
 mod hue;
 mod lattice;
 mod noise;
@@ -1531,6 +1532,153 @@ mod tests {
                 "{name} ({biome}, stand {:.2}, forest {:.2}, slope {}) at {x},{z}: --pose {:.1},{:.1},{:.1},45,-12  above: --pose {:.1},{:.1},{:.1},45,-35",
                 site.stand, site.forest, site.slope, stand.x, stand.y, stand.z, above.x, above.y, above.z
             );
+        }
+    }
+
+    /// `cargo test --profile iter -p voxmar_worldgen tree_sights -- --ignored --nocapture`
+    /// (with `SEED` and `BIOMES=forest,taiga`) prints, for the biggest tree near the middle
+    /// of each biome, the `/tp` command and `--pose` arguments of three views of it: from
+    /// under its crown looking up, from a dozen blocks away and from above, so the same
+    /// trees can be compared however they are grown.
+    #[test]
+    #[ignore]
+    fn tree_sights() {
+        use voxmar_engine::block::RenderKind;
+        use voxmar_engine::coords::{CHUNK_SIZE, WORLD_HEIGHT};
+        use voxmar_engine::glam::Vec3;
+        let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(42);
+        let registry = registry();
+        let world = Overworld::new(seed, registry.clone());
+        let spawn = world.spawn_point();
+        let names = std::env::var("BIOMES").unwrap_or_else(|_| "forest".into());
+        for name in names.split(',') {
+            let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
+            let centre = IVec2::new(spawn.x, spawn.z);
+            let dry = |s: &Site| s.height > s.water && s.river < 0.2;
+            let Some(at) = world.locate_biome(name, centre, 12000).and_then(|at| {
+                let sampler = world.sampler(at - 256, at + 256);
+                (0..64 * 64)
+                    .map(|i| at + IVec2::new(i % 64 * 8 - 256, i / 64 * 8 - 256))
+                    .map(|p| (p, sampler.site(p.x, p.y)))
+                    .filter(|(_, site)| site.home == id && dry(site) && site.slope <= 1)
+                    .max_by(|a, b| (a.1.edge.min(60.0) + 40.0 * a.1.forest).total_cmp(&(b.1.edge.min(60.0) + 40.0 * b.1.forest)))
+                    .map(|(p, _)| p)
+            }) else {
+                println!("{name}: not found");
+                continue;
+            };
+            let size = 3;
+            let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+            let columns = generate_area(&world, first, size);
+            let origin = first.origin();
+            let span = size * CHUNK_SIZE;
+            let block = |p: IVec3| {
+                let inside = (0..span).contains(&(p.x - origin.x)) && (0..span).contains(&(p.z - origin.z)) && (0..WORLD_HEIGHT).contains(&p.y);
+                if inside {
+                    columns[(((p.z - origin.z) >> 5) * size + ((p.x - origin.x) >> 5)) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31))
+                } else {
+                    BlockId::AIR
+                }
+            };
+            let log = |b: BlockId| registry.def(b).name.ends_with("_log");
+            let leaf = |b: BlockId| registry.info(b).render == RenderKind::Leaves;
+            let open = |b: BlockId| b.is_air() || registry.info(b).render == RenderKind::Plant;
+            // The top of the ground (not wood or leaves) at x, z.
+            let ground = |x: i32, z: i32| (1..WORLD_HEIGHT).rev().find(|&y| {
+                let b = block(IVec3::new(x, y, z));
+                !open(b) && !log(b) && !leaf(b)
+            });
+            // Trunks standing on the ground in the middle column, by how many leaves their
+            // crown holds within five blocks.
+            let mut best: Option<(IVec3, usize)> = None;
+            for z in origin.z + 32..origin.z + 64 {
+                for x in origin.x + 32..origin.x + 64 {
+                    let Some(g) = ground(x, z) else { continue };
+                    let base = IVec3::new(x, g + 1, z);
+                    if !log(block(base)) {
+                        continue;
+                    }
+                    let mut leaves = 0;
+                    for dy in 2..30 {
+                        for dz in -5..=5 {
+                            for dx in -5..=5 {
+                                leaves += usize::from(leaf(block(base + IVec3::new(dx, dy, dz))));
+                            }
+                        }
+                    }
+                    if best.is_none_or(|b| leaves > b.1) {
+                        best = Some((base, leaves));
+                    }
+                }
+            }
+            let Some((base, _)) = best else {
+                println!("{name}: no tree near {at}");
+                continue;
+            };
+            // Where the crown is: the middle of its leaves above the trunk.
+            let mut sum = Vec3::ZERO;
+            let mut n = 0.0;
+            for dy in 2..30 {
+                for dz in -5..=5 {
+                    for dx in -5..=5 {
+                        let p = base + IVec3::new(dx, dy, dz);
+                        if leaf(block(p)) {
+                            sum += p.as_vec3() + 0.5;
+                            n += 1.0;
+                        }
+                    }
+                }
+            }
+            let crown = if n > 0.0 { sum / n } else { base.as_vec3() + Vec3::new(0.5, 6.0, 0.5) };
+            let look = |from: Vec3, to: Vec3| {
+                let d = to - from;
+                let yaw = (-d.x).atan2(-d.z).to_degrees();
+                let pitch = d.y.atan2(Vec3::new(d.x, 0.0, d.z).length()).to_degrees();
+                (yaw, pitch)
+            };
+            // A standing eye at x, z, with what the player's eye is at after `/tp x z`.
+            let eye = |x: i32, z: i32| ground(x, z).map(|g| Vec3::new(x as f32 + 0.5, g as f32 + 2.62, z as f32 + 0.5));
+            // Teleported onto the ground at x, z (`/tp` with a height, as `/tp x z` would
+            // land on the crown above), so poses are relative to that eye.
+            let pose = |tp: IVec3, from: Vec3, to: Vec3| {
+                let player = eye(tp.x, tp.z).unwrap();
+                let (yaw, pitch) = look(from, to);
+                let o = from - player;
+                let feet = player - Vec3::Y * 1.62;
+                format!("\"{} {} {}\" {:.1},{:.1},{:.1},{:.0},{:.0}", feet.x, feet.y, feet.z, o.x, o.y, o.z, yaw, pitch)
+            };
+            // How clear the line from an eye to the crown is: blocks in the way.
+            let blocked = |from: Vec3, to: Vec3| (1..40).filter(|&i| !open(block((from + (to - from) * (i as f32 / 40.0)).floor().as_ivec3()))).count();
+            let headings: Vec<IVec2> = (0..16).map(|i| {
+                let a = i as f32 / 16.0 * std::f32::consts::TAU;
+                IVec2::new((a.cos() * 18.0).round() as i32, (a.sin() * 18.0).round() as i32)
+            }).collect();
+            // Under the crown: two blocks out from the trunk, looking up into it.
+            let under = [IVec2::new(2, 1), IVec2::new(-2, 1), IVec2::new(1, -2), IVec2::new(-1, 2)]
+                .into_iter()
+                .map(|d| IVec3::new(base.x + d.x, 0, base.z + d.y))
+                .find(|p| eye(p.x, p.z).is_some_and(|e| open(block(e.floor().as_ivec3())) && open(block(e.floor().as_ivec3() - IVec3::Y))))
+                .unwrap_or(base);
+            let under_eye = eye(under.x, under.z).unwrap();
+            println!("{name} tree at {base}, crown {crown:.0}");
+            println!("  under: {}", pose(under, under_eye, crown + Vec3::Y * 2.0));
+            // From eighteen blocks away and a little up, as from a rise, where the view of the
+            // crown is clearest.
+            let (mid, mid_eye) = headings
+                .iter()
+                .filter_map(|d| {
+                    let p = IVec3::new(base.x + d.x, 0, base.z + d.y);
+                    eye(p.x, p.z).map(|e| (p, e + Vec3::Y * 4.0))
+                })
+                .min_by_key(|(_, e)| blocked(*e, crown))
+                .unwrap();
+            println!("  mid:   {}", pose(mid, mid_eye, crown - Vec3::Y * 1.5));
+            // From above and further back along the same line.
+            let back = (mid_eye - crown).with_y(0.0).normalize();
+            let high = crown + back * 30.0 + Vec3::Y * 22.0;
+            println!("  hill:  {}", pose(mid, high, crown - Vec3::Y * 4.0));
+            let far = crown + back * 70.0 + Vec3::Y * 45.0;
+            println!("  far:   {}", pose(mid, far, crown + back * 10.0 - Vec3::Y * 10.0));
         }
     }
 

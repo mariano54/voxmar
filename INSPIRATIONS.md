@@ -248,9 +248,12 @@ copied.
   against the sun, cloud shadows, wet ground and puddles. Water is drawn in its own pass over
   the finished scene, as Complementary's is, and can take one wave slope per texel of the
   block so it reads as pixels up close. The world plan's shader-pack system and clouds were
-  also planned against these packs.
-- Where: `assets/shaderpacks/verdant.ron`, `crates/client/src/render/lighting.wgsl`,
-  `render/pack.rs`, `render/water.rs` and `water_surface.wgsl`.
+  also planned against these packs. Leaves (judged from the hiking video's frames, not
+  their code): light that reaches leaves in a crown's shade where little lies between them
+  and the sun, and leaves a lighter, yellower green than the biome colour alone gives.
+- Where: `assets/shaderpacks/verdant.ron`, `crates/client/src/render/lighting.wgsl`
+  (`shade_normal`, leaves included), `render/pack.rs`, `render/water.rs`,
+  `water_surface.wgsl` and `voxel.wgsl` (`biome_colour`, the leaves' colour).
 
 ### Distant Horizons
 
@@ -291,11 +294,14 @@ copied.
   https://github.com/TeamMidnightDust/BetterLeavesLite
 - Licences: custom terms (CC-BY-NC 4.0 per our research) for Bushy Leaves; MIT for Better
   Leaves Lite. Ideas only; none of their images copied.
-- What we took: leaves that reach past their block (Bushy Leaves), drawn as crossed cards
-  on the outside of every crown; and leaf sprites baked the way Better Leaves Lite bakes
-  them, the leaf tile repeated 3×3 on a doubled canvas and cut to a ragged round cluster.
-- Where: the fringe pass in `crates/engine/src/mesh.rs` and `crates/client/src/render/`,
-  and the `_bushy` recipes in `assets/packs/default/recipes/wood.ron`.
+- What we took: leaves that reach past their block (Bushy Leaves); Better Leaves Lite's
+  shape for them, two crossed cards two blocks wide and 1.75 tall at the texture's own
+  16 texels a block, the leaf texture running on past the block and cut to a ragged
+  round cluster (we cut it in the shader, with our own outline, rather than baking a
+  sprite), turned at fixed angles rather than at random.
+- Where: the fringe pass in `crates/engine/src/mesh.rs` (`emit_fringe`) and
+  `crates/client/src/render/voxel.wgsl` (`card_vertex`, `card_mask`), and the `_bushy`
+  recipes in `assets/packs/default/recipes/wood.ron`.
 
 ### Grassier Grass
 
@@ -541,6 +547,9 @@ General techniques we use under their usual names, credited where they appear in
 - Catmull-Rom curves for trails and river channels: `trails/path.rs` and `water/channel.rs`.
 - Pink noise from white with Paul Kellet's economical filter (musicdsp.org), and the
   resonance of an air bubble in water after Minnaert (1933): `crates/client/src/sfx/dsp.rs`.
+- Space colonisation for branching, after Runions, Lane and Prusinkiewicz, "Modeling Trees
+  with a Space Colonization Algorithm" (Eurographics Workshop on Natural Phenomena, 2007):
+  grown tree crowns in `crates/worldgen/src/growth.rs`, used by `trees.rs`.
 - The Oklab colour space, after Björn Ottosson (2020), for shading texture palettes and for
   how well colours sit together when biomes choose their trees, plants and ground blocks:
   `crates/texgen/src/colour.rs` and `crates/worldgen/src/hue.rs`.

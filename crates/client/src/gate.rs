@@ -128,6 +128,8 @@ enum Step {
     Weather,
     /// The sun by day, the moon and stars by night.
     Sky,
+    /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
+    Tree,
     /// Leaving the world for the title screen.
     Leave,
     Done,
@@ -503,6 +505,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
+        Step::Tree => tree(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -687,6 +690,50 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// A small tree grows on the test ground: a trunk under a crown of leaves with an apple
+/// among them. It must reach the client, and its leaves, their cards and the fruit must
+/// draw (any pipeline that fails validation fails the gate) and change the view.
+fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let trunk = gate.feet + IVec3::new(-4, 0, -4);
+    let apple = trunk + IVec3::new(1, 3, 0);
+    match gate.phase {
+        0 => {
+            world.resource::<Net>().command("time set noon");
+            gate.advance(now);
+        }
+        1 if in_phase > 0.5 => {
+            aim(world, trunk + IVec3::Y * 2);
+            if gate.shot(world, "tree-before").is_some() {
+                let (x, y, z) = (trunk.x, trunk.y, trunk.z);
+                for line in [
+                    format!("fill {} {} {} {} {} {} oak_leaves", x - 2, y + 3, z - 2, x + 2, y + 5, z + 2),
+                    format!("fill {x} {y} {z} {x} {} {z} oak_log", y + 4),
+                    format!("fill {} {} {} {} {} {} apple_leaves", apple.x, apple.y, apple.z, apple.x, apple.y, apple.z),
+                ] {
+                    world.resource::<Net>().command(&line);
+                }
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let grown = world.resource::<ClientWorld>().block(apple).is_some_and(|b| !b.is_air());
+            if !(grown && settled(world, trunk) && in_phase > SETTLE) && in_phase < STEP_LIMIT - 1.0 {
+                return;
+            }
+            let Some(shot) = gate.shot(world, "tree") else { return };
+            let change = gate.earlier_shot("tree-before").map_or(0.0, |before| change(&before, &shot, 0.25));
+            let result = match (grown, change >= SCREEN_CHANGE) {
+                (true, true) => Ok(format!("a tree with an apple drawn, changing the view by {change:.1} levels")),
+                (false, _) => Err("the tree's fruit never reached the client".into()),
+                (true, false) => Err(format!("the tree barely shows: the view changed by {change:.1} levels")),
+            };
+            gate.check("tree", result);
+            gate.next(Step::Leave, now);
+        }
+        _ => {}
+    }
+}
+
 /// The sun low in the morning sky, a bright disc in a sky that darkens upwards; at night
 /// the moon, opposite the sun, and stars around it.
 fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -729,11 +776,11 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         5 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
-            gate.next(Step::Leave, now);
+            gate.next(Step::Tree, now);
         }
         1 | 3 if in_phase > 5.0 => {
             gate.check("sky", Err(format!("the time of day did not change: {ticks:.0} ticks")));
-            gate.next(Step::Leave, now);
+            gate.next(Step::Tree, now);
         }
         _ => {}
     }

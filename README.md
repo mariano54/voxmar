@@ -460,7 +460,10 @@ edge, a clearing, a meadow, a slope, a cold forest, dry grassland and snow near 
 (or, with `BIOMES=a,b`, the nearest place well inside each named biome); `tree_preview`
 (optionally `TREES=oak,birch`, `SAMPLES=n`, `VIGOUR=0..1`) draws every tree species a few times
 over, at the ages they happen to draw, in isometric views to `target/trees_N.ppm`;
-`column_timing` reports generation time per column, and `river_speed` the cost of building a
+`tree_sights` (with `SEED` and `BIOMES=forest,taiga`) prints the `/tp` command and `--pose`
+of views of the biggest tree near the middle of each biome, from under its crown, from a
+rise eighteen blocks off, from above and from far off, so the same trees can be compared
+however they are grown; `column_timing` reports generation time per column, and `river_speed` the cost of building a
 region's rivers apart from the columns generated after (all `-- --ignored --nocapture`).
 `generation_stages` breaks generation time per column down by stage (climate, biomes, rivers
 and their region builds, trails and their planning, surface, caves, cave biomes, fill, ores,
