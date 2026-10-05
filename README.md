@@ -36,9 +36,10 @@ between the shots (the sun and wind moving), as shadows and leaves flicker over 
 DIR, and `--server-lag MS` makes every tick of the integrated server take that much longer,
 as on a busy machine (see docs/quality.md).
 
-Before landing on main, run `tools/gate` (build, tests and that session; about two minutes
-warm); for changes that can cost frame time, `tools/bench` compares frame times with main's
-on a quiet machine. Both are described in docs/quality.md.
+Before landing on main, run `tools/gate` (a quick gate: the build, the tests the change can
+reach and that session in a small world); play builds pass `tools/gate --full`. For changes
+that can cost frame time, `tools/bench` compares frame times with main's on a quiet
+machine. All are described in docs/quality.md.
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;

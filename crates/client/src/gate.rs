@@ -61,8 +61,10 @@ const TIME_LIMIT: f32 = 300.0;
 const LOAD_LIMIT: f32 = 180.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
-/// How long an edit is given to reach the server, come back and be meshed.
-const SETTLE: f32 = 1.5;
+/// How long an edit is given at least, and at most, to reach the server, come back and be
+/// meshed; the checks run as soon as both sides show it.
+const SETTLE: f32 = 0.3;
+const SETTLE_LIMIT: f32 = 4.0;
 /// Blocks around the player in which client and server must agree.
 const AGREE_WITHIN: i32 = 7;
 /// How far above spawn the test ground is built, clear of terrain and water.
@@ -382,7 +384,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             } else if gate.frames == 3 {
                 mouse(world, MouseButton::Left, false);
             }
-            if since > 2.0 && settled(world, feet) {
+            if since > 0.5 && settled(world, feet) {
                 let locked = world.resource::<UiState>().cursor_locked;
                 gate.check("arrive", if locked { Ok(format!("standing on the test ground at {feet}")) } else { Err("a click did not grab the mouse".into()) });
                 aim(world, feet + IVec3::new(0, -1, 2));
@@ -418,7 +420,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::PlaceSettle => {
-            if since < SETTLE || !settled(world, feet) {
+            if !edit_settled(world, gate, since, &gate.placed.clone(), |b| !b.is_air()) {
                 return;
             }
             let Some(after) = gate.shot(world, "place-after") else { return };
@@ -454,7 +456,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::DigSettle => {
-            if since < SETTLE || !settled(world, feet) {
+            let dug: Vec<IVec3> = gate.dug.iter().map(|&(pos, _)| pos).collect();
+            if !edit_settled(world, gate, since, &dug, |b| b.is_air()) {
                 return;
             }
             let Some(after) = gate.shot(world, "dig-after") else { return };
@@ -493,8 +496,11 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             if gate.phase == 0 {
                 world.resource_mut::<NextState<Screen>>().set(Screen::Title);
                 gate.advance(now);
-            } else if in_phase > 1.0 {
+            } else {
                 let screen = *world.resource::<State<Screen>>().get();
+                if screen != Screen::Title && in_phase < 3.0 {
+                    return;
+                }
                 let result = if screen == Screen::Title {
                     Ok("back at the title screen, the world closed".to_owned())
                 } else {
@@ -539,8 +545,11 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.next(Step::Screens, now);
             }
         }
-        2 if in_phase > 1.0 => {
+        2 => {
             let server = gate.observer.as_ref().and_then(|o| o.others.values().next().copied());
+            if server.is_none_or(|at| at.distance(position) >= 1.0) && in_phase < 3.0 {
+                return;
+            }
             let result = match server {
                 Some(at) if at.distance(position) < 1.0 => Ok(format!("the server has the player within {:.2} blocks", at.distance(position))),
                 Some(at) => Err(format!("the server has the player at {at}, the client at {position}")),
@@ -567,7 +576,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             key(world, KeyCode::Escape, false);
-            if menu && in_phase > 0.5 && let Some(shot) = gate.shot(world, "menu") {
+            if menu && in_phase > 0.2 && let Some(shot) = gate.shot(world, "menu") {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
                 let shown = if change >= SCREEN_CHANGE { Ok(format!("drawn, changing the screen by {change:.1} levels")) } else { Err(format!("changed the screen by only {change:.1} levels")) };
                 gate.check("menu", shown.and_then(|s| if locked { Err("the mouse stayed grabbed".into()) } else { Ok(s) }));
@@ -591,7 +600,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         3 => {
             key(world, KeyCode::KeyE, false);
-            if inventory && in_phase > 0.5 && let Some(shot) = gate.shot(world, "inventory") {
+            if inventory && in_phase > 0.2 && let Some(shot) = gate.shot(world, "inventory") {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
                 let shown = if change >= SCREEN_CHANGE { Ok(format!("drawn, changing the screen by {change:.1} levels")) } else { Err(format!("changed the screen by only {change:.1} levels")) };
                 gate.check("inventory", shown);
@@ -642,7 +651,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             // Let it fill the air before the shot.
-            if in_phase < 3.0 {
+            if in_phase < 1.0 {
                 return;
             }
             let Some(shot) = gate.shot(world, name) else { return };
@@ -844,6 +853,19 @@ fn columns_around(feet: IVec3) -> Vec<ColumnPos> {
 fn settled(world: &World, feet: IVec3) -> bool {
     let client = world.resource::<ClientWorld>();
     columns_around(feet).into_iter().all(|pos| !client.meshing(pos))
+}
+
+/// Whether an edit of `cells` has settled, `since` seconds after it was made: both client
+/// and server show each as `wanted` and nothing around waits to be meshed, or the limit
+/// has passed (and the checks will say what is missing).
+fn edit_settled(world: &World, gate: &Gate, since: f32, cells: &[IVec3], wanted: fn(BlockId) -> bool) -> bool {
+    if since < SETTLE {
+        return false;
+    }
+    let client = world.resource::<ClientWorld>();
+    let shown = |side: &dyn Fn(IVec3) -> Option<BlockId>| cells.iter().all(|&p| side(p).is_some_and(wanted));
+    let server = gate.observer.as_ref().is_none_or(|o| shown(&|p| o.world.block(p)));
+    (server && shown(&|p| client.block(p)) && settled(world, gate.feet)) || since > SETTLE_LIMIT
 }
 
 /// Checks an edit of `cells` once it has settled: each is as `wanted` on the client and

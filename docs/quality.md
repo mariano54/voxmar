@@ -17,21 +17,35 @@ Each slipped between checks that tested one side at a time, in quiet conditions.
 answer is one gate that every landing passes, which plays the real game, client and
 server together, as he does, under load, and judges it by what reaches the screen.
 
-## The landing gate: `tools/gate`
+## The gates: `tools/gate`
 
-Run it from the root of your worktree, after merging main and before
-`git -C ~/Projects/voxmar merge --ff-only <branch>`. It takes about two minutes when the
-build is warm (most of it the workspace's tests and loading the world), and runs every
-heavy step through `memcap`.
+Two gates share one script. Forced checks must be quick, or they slow every thread down,
+so the one every landing passes runs only what the change can reach; the full one, which
+every play build passes, runs everything.
+
+`tools/gate`, before every landing: run it from the root of your worktree, after merging
+main and committing, then `git -C ~/Projects/voxmar merge --ff-only <branch>`. On a typical
+change it takes well under a minute.
 
 1. Hygiene: `git diff main --check` and no conflict markers.
-2. Builds the workspace, tests included (`--profile iter`); any warning fails.
-3. Runs every test in the workspace.
-4. Plays a scripted session in the real game (`voxmar --gate DIR`, crates/client/src/
-   gate.rs), headless and silent, with the integrated server made to run behind
-   (`--server-lag`, 60 ms more a tick, as on a busy machine), and fails on any failed
+2. An incremental build of the workspace, tests included (`--profile iter`); any warning
+   fails.
+3. The tests of the crates the change can reach, worked out from the files it touches
+   against main (a client change runs the client's; an engine change everything's),
+   less the few slow ones listed in the script's `SLOW_TESTS`, and meanwhile
+4. a scripted session in the real game (`voxmar --gate DIR`, crates/client/src/gate.rs) in
+   a small world, headless and silent, with the integrated server made to run behind
+   (`--server-lag`, 60 ms more a tick, as on a busy machine). It fails on any failed
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
+
+A change that touches only docs or tools skips 3 and 4. A tree that already passed is not
+gated again, so merging or rebasing without changing anything costs nothing.
+
+`tools/gate --full`, before every play build: every test and the session at the normal
+view distance, a few minutes. A scheduled full run on main also reports any failure to
+the coordinator, so a miss of the quick gate is caught within hours, and always before
+Mariano plays.
 
 The session builds its own test ground high above spawn with commands, so terrain
 changes don't move it, and checks:
@@ -53,16 +67,18 @@ changes don't move it, and checks:
 out of the way: its copy of the world is what the server sends everyone. The shots, the
 game's log and the report stay in `target/gate/`; look at them when something fails.
 
-On a clean tree a pass is recorded against the commit (in the repository's common git
-directory); `tools/gate --passed [REV]` tells whether a commit passed.
+On a clean tree a pass is recorded against the tree (in the repository's common git
+directory); `tools/gate --passed [--full] [REV]` tells whether a commit passed (the full
+gate).
 
 ### Adding to it
 
 A change a player can see or do needs a step in the gate, written the same way: drive the
 game only through its inputs (keys, buttons, where the player looks, console commands),
 and judge it by what the player would see and what the server holds, never by reaching
-into the code under test. Each check gives a reason when it fails. Keep the whole session
-under a minute or so: threads run it before every landing only if it is quick.
+into the code under test. Each check gives a reason when it fails. Keep the session quick
+(about half a minute now): poll for what a step waits on rather than sleeping, and never
+add a fixed wait of more than a second.
 
 ## The performance gate: `tools/bench`
 
@@ -84,10 +100,11 @@ worst 13–18 ms. With other threads building (load around 50): p99 37–46 ms, 
 
 ## Play builds
 
-Mariano plays only commits that passed the gate: `tools/gate --passed <commit>` must
-succeed before a play build is made, and the play binary is built fresh from that commit
-in `~/Projects/voxmar-wt/play` (`cargo build --release`), never copied from another
-worktree, so the binary and its `assets/` always match.
+Mariano plays only commits that passed the full gate: `tools/gate --passed --full
+<commit>` must succeed before a play build is made (run `tools/gate --full` on it first),
+and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/play`
+(`cargo build --release`), never copied from another worktree, so the binary and its
+`assets/` always match.
 
 ## Staying out of his way
 
