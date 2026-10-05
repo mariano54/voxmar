@@ -711,6 +711,18 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
    the hiking frames, before and after, for mountains, coasts, plains, plateaus, valleys,
    gorges and every biome; a performance pass.
 
+   *As built (first pass):* the crags got their dramatic tuning: up to fourteen blocks on
+   the spines of ranges (was nine), eight on their slopes, three on foothills, with a
+   shorter wavelength (48 blocks), faster change upwards (squash 1.7) and density falling
+   more slowly above the surface (0.45), so ranges carry more tors, buttresses and
+   overhangs. Natural arches became a rare find: sites on a jittered 512-block grid, one
+   per eight or nine square kilometres of their climate at very rare, gathered into arch
+   country; a site holds one arch, sometimes two or three within 40 blocks, and one in
+   thirty-odd a field of six to nine. Each arch is a rounded oblong of rock 10 to 25 blocks
+   long, its window under a lintel a third of its height. Whole-rebuild views (old
+   terrain at f4d64c8 against this) are `step6_rebuild_*` in the shots folder. Side-by-side
+   captures with Tectonic itself are still missing: we have its source, not screenshots.
+
 Steps 1 and 3 are the big ones. Step 2 touches `biomes.ron` claims only (not palettes), to
 stay clear of the decor track's colour work.
 
