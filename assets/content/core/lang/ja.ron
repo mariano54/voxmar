@@ -88,6 +88,7 @@
     "settings.value.low": "低",
     "settings.value.medium": "中",
     "settings.value.high": "高",
+    "settings.value.ultra": "最高",
     "settings.value.chunks": "{count}チャンク",
     "settings.value.pixels": "{count}px",
 
