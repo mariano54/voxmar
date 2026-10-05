@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -128,6 +128,9 @@ pub enum ServerMessage {
     /// Creatures near the player that appeared or changed, and those that went: died, or
     /// out of range.
     Creatures { changed: Vec<CreatureView>, gone: Vec<CreatureGone> },
+    /// The player's blow at a creature landed for `damage` (0: it missed), and whether it
+    /// killed. Every blow the server takes is answered, so the client can show it.
+    Struck { creature: u32, damage: u16, killed: bool },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between
