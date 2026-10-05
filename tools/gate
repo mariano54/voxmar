@@ -69,7 +69,7 @@ SLOW_TESTS=(
 )
 
 started=$(date +%s)
-out=target/gate
+out=$PWD/target/gate
 rm -rf "$out" && mkdir -p "$out"
 fail() {
   echo "gate: FAILED: $*" >&2
@@ -128,24 +128,43 @@ if ((!full)); then
   for p in ${packages[@]+"${packages[@]}"}; do test_args+=(-p "$p"); done
   for ((i = 0; i + 1 < ${#SLOW_TESTS[@]}; i += 2)); do skips+=(--skip "${SLOW_TESTS[i + 1]}"); done
 fi
-tests=
+# The test binaries (already built) and the session run side by side, under one memcap
+# (one heavy slot, held as a game run's: `--gate` names the script), rather than one after another as `cargo test` runs them; each test
+# binary runs from its crate's directory as cargo would.
+run='
+  out=$1 session=$2; shift 2
+  if [[ $session == 1 ]]; then
+    (VOXMAR_MUTE=1 target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
+  fi
+  while IFS=$(printf "\t") read -r dir exe; do
+    (cd "$dir" && "$exe" "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
+  done <"$out/tests.list"
+  wait'
+: >"$out/tests.list"
 if ((${#test_args[@]})); then
-  RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} $memcap -- cargo test --profile iter "${test_args[@]}" -- ${skips[@]+"${skips[@]}"} >"$out/tests.txt" 2>&1 &
-  tests=$!
+  cargo test --profile iter "${test_args[@]}" --no-run --message-format=json 2>"$out/tests-build.txt" |
+    python3 -c '
+import json, os, sys
+for line in sys.stdin:
+    m = json.loads(line)
+    if m.get("reason") == "compiler-artifact" and m.get("executable") and m["profile"]["test"]:
+        print(os.path.dirname(m["manifest_path"]) + "\t" + m["executable"])' >"$out/tests.list" ||
+    fail "building the tests ($out/tests-build.txt)"
 fi
-status=0
-if ((session)); then
-  size=()
-  ((full)) || size=(--view-distance 4)
-  VOXMAR_MUTE=1 $memcap 12 -- target/iter/voxmar --gate "$out" ${size[@]+"${size[@]}"} >"$out/game.txt" 2>&1
-  status=$?
+GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
+  $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+tests_failed=0
+for f in "$out"/test-*.status; do
+  [[ -e $f ]] || continue
+  cat "${f%.status}.txt" >>"$out/tests.txt"
+  [[ $(cat "$f") == 0 ]] || tests_failed=1
+done
+if ((tests_failed)); then
+  grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
+  fail "tests (all output in $out/tests.txt)"
 fi
-if [[ -n $tests ]]; then
-  wait "$tests" || {
-    grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
-    fail "tests (all output in $out/tests.txt)"
-  }
-fi
+status=$(cat "$out/game.status" 2>/dev/null || echo 0)
+((session)) && [[ ! -e $out/game.status ]] && fail "the session never ran ($out/run.txt)"
 log=
 if ((session)); then
   log=$(sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt")
@@ -162,7 +181,7 @@ if ((session)); then
 fi
 
 checks=$(grep -c 'gate: ok' <<<"$log")
-ran=$([[ -n $tests ]] && grep -h '^test result' "$out/tests.txt" | awk '{ p += $4 } END { print p + 0 }' || echo 0)
+ran=$(grep -h '^test result' "$out/tests.txt" 2>/dev/null | awk '{ p += $4 } END { print p + 0 }')
 summary="$level passed $(date -u +%FT%TZ) in $(($(date +%s) - started))s: $checks game checks, $ran tests"
 if ((clean)); then
   mkdir -p "$passed_dir" && echo "$summary" >>"$passed_dir/$tree"
