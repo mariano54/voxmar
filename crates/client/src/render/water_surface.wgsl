@@ -16,7 +16,7 @@
 #define_import_path voxmar::water_surface
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, air_between, reflected_cloud}
+#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, sun_unclouded, air_between, reflected_cloud}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct Water {
@@ -481,13 +481,13 @@ fn shade_water(
         }
     }
 
-    // The sun's glint off the waves, as far as the sun reaches the surface (looked up only
-    // near the glint, where it can show).
+    // The sun's glint off the waves, as far as the sun reaches the surface and shows past
+    // the cloud (looked up only near the glint, where it can show).
     let toward_sun = max(dot(reflect(-to_eye, waves), sun_direction()), 0.0);
     var glint = 0.0;
     if toward_sun > 0.95 && open > 0.0 {
         glint = (pow(toward_sun, GLINT.x) * GLINT_STRENGTH.x + pow(toward_sun, GLINT.y) * GLINT_STRENGTH.y)
-            * open * sun_shadow(world, normal, false) * water.strengths.x;
+            * open * sun_shadow(world, normal, false) * sun_unclouded(world) * water.strengths.x;
     }
     var color = mix(seen, reflected, reflectance) + sun_color() * glint * air.through;
 
