@@ -674,6 +674,29 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
 5. **Gorges and caves.** Slot gorges from rivers, random-walk ravines retired, cave
    entrances and aquifers on the density. *Done when:* gorge captures look like the
    reference creek gorge (`0740_rocky-gorge-creek.png`), caves stay contained.
+
+   *As built:* each river span records how far the ground at its two cells stands over
+   its water beyond the tier's usual incision (`Span::cut`): next to nothing along most
+   rivers, several blocks where a breach cuts through a rim. From 3 to 8 blocks of that,
+   the valley closes into a slot gorge (`water::channel::GORGE`): a ledge a block and a half
+   wide beside the water, then walls climbing 3.3 blocks per block out, wavering by under a
+   block, which the slope rules turn to the province's bare rock. Along most rivers nothing
+   changes (the profile is the same to the bit where there is no cut). On seeds 7 and 1,
+   about one trunk span in eight and one stream span in fifteen runs partly in a gorge: in
+   16 km², 15 trunk spans (about a kilometre of canyon) and 30 stream spans. Trunk gorges
+   are canyons twenty to thirty blocks deep; creek gorges are the small kind in the
+   reference, five to ten. `Overworld::water_sights` finds them (`WaterSight::Gorge`).
+
+   The random-walk ravines are buried, all of them: a lens-shaped canyon under the lowest
+   ground along its path, never open to the sky. Caves already read the density's top as
+   the surface (a column's `height` is its highest solid block since step 3), so entrances
+   and the water tables needed no change.
+
+   Two notes from step 4 went in too. Arches are short, thick spans (10 to 25 blocks long,
+   6 to 10 thick, steep-sided) with a window through the middle
+   of the higher ones, a lintel of a third of their height and legs at both ends, and no
+   window under a tower an arch runs into. The spawn search checks that the ground is
+   level from the neighbours' heights before it samples a site.
 6. **Comparison and tuning pass.** Captures beside Tectonic and Terralith screenshots and
    the hiking frames, before and after, for mountains, coasts, plains, plateaus, valleys,
    gorges and every biome; a performance pass.

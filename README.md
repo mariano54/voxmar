@@ -317,7 +317,9 @@ no two worlds share a rarity table. Everything else is a continuous field:
   through a ridge) into it; creeks and streams are routed on an 8-block grid from the hills to a
   trunk, a lake or the sea, joining as they go. Each river is as big as the rain on its whole
   catchment. Shallow pits are breached; deeper ones fill as lakes at their own height, lower
-  and without outlet in dry climates, down to salt flats. Water steps down in whole blocks,
+  and without outlet in dry climates, down to salt flats. Where a breach cuts deep through
+  high ground, the valley closes into a slot gorge: a ledge beside the water and steep,
+  ragged rock walls. Water steps down in whole blocks,
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
@@ -341,7 +343,7 @@ no two worlds share a rarity table. Everything else is a continuous field:
 - **Caves** (`worldgen/src/caves.rs`) come in kinds of very different rarity: winding tunnels
   everywhere, more tangled with depth, opening to the surface as entrances in some places;
   cavern regions with pillared cheese caverns; thin noodle tunnels; rare multi-floor
-  labyrinths, ravines (30–70 deep, some open to the sky, a few a kilometre long) and
+  labyrinths, buried ravines (30–70 deep, never open to the sky, a few a kilometre long) and
   sinkholes; and very rare giant cavern systems, most holding one great lake. Water tables
   per 16×16×12 cell (as in Minecraft 1.18) flood some caves at their own levels, with sea
   level near the surface so caves under the sea are flooded rather than draining it, and lava

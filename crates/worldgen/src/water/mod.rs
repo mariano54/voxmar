@@ -31,7 +31,7 @@ use voxmar_engine::glam::IVec2;
 
 use self::cache::Cache;
 use self::channel::{Carved, Channels, Span, Style, carve, top_block};
-use self::drainage::{Budget, DIRS, Drainage, Ground, Tier, Tile, TunnelRule};
+use self::drainage::{Budget, DIRS, Drainage, Ground, Reader, Tier, Tile, TunnelRule};
 use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
 use fastnoise_lite::FractalType;
@@ -318,6 +318,10 @@ impl Rivers {
             None => drainage.exit_total(ground, c),
         };
         let mut spans = Vec::new();
+        // How far the ground at a cell's centre stands over its river, beyond the tier's
+        // incision: next to nothing, except where a breach cuts through a rim.
+        let mut reader = Reader::new(tier, ground);
+        let mut cut = |cell: IVec2| reader.at(cell).0 + 1.0 - tier.incision - basin.level(cell) as f32 / 8.0;
         for i in 0..side * side {
             let from = origin + IVec2::new(i % side, i / side);
             let q = totals[i as usize];
@@ -350,6 +354,7 @@ impl Rivers {
                 before: before.map(|(_, c)| c),
                 after,
                 levels: (basin.level(from), basin.level(to)),
+                cut: (cut(from), cut(to)),
                 width: self.width(q),
                 tunnel: basin.tunnel(from),
             });

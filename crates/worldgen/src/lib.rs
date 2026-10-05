@@ -255,7 +255,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 20;
+    pub const VERSION: u32 = 21;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -2936,25 +2936,6 @@ mod tests {
         let sampler = world.sampler(IVec2::new(-300, 200), IVec2::new(100, 700));
         for (x, z) in [(-300, 200), (-1, 450), (37, 699), (100, 700)] {
             assert_eq!(sampler.site(x, z), world.site(x, z));
-        }
-    }
-
-    /// TEMPARCH
-    #[test]
-    #[ignore]
-    fn arch_windows() {
-        for seed in [1u64, 3, 7, 42] {
-            let world = Overworld::new(seed, registry());
-            let mut found: Vec<(f32, i32, i32)> = Vec::new();
-            for z in (-6000..6000).step_by(6) {
-                for x in (-6000..6000).step_by(6) {
-                    let land = world.geology.land(x, z);
-                    if land.form.window >= 6.0 && !found.iter().any(|f| (f.1 - x).abs() < 200 && (f.2 - z).abs() < 200) {
-                        found.push((land.form.window, x, z));
-                    }
-                }
-            }
-            println!("seed {seed}: {} arches with windows: {:?}", found.len(), &found[..found.len().min(6)]);
         }
     }
 

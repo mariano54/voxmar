@@ -1,5 +1,5 @@
 //! Finding the notable places water makes: a lake high in the hills, a waterfall, a
-//! confluence, a river's mouth, a tunnel, an island, a hot spring. Tools and tests use it
+//! confluence, a river's mouth, a tunnel, an island, a hot spring, a gorge. Tools and tests use it
 //! to look at them without knowing where a seed put them, and gameplay can use it to point
 //! players at them.
 
@@ -24,11 +24,14 @@ pub enum WaterSight {
     /// Ground inside a river, with river on both sides.
     RiverIsland,
     HotSpring,
+    /// A creek or river between walls at least 6 blocks high on both sides, within 6
+    /// blocks of it.
+    Gorge,
 }
 
 impl WaterSight {
-    pub const ALL: [Self; 7] =
-        [Self::HighlandLake, Self::Waterfall, Self::Confluence, Self::RiverMouth, Self::RiverTunnel, Self::RiverIsland, Self::HotSpring];
+    pub const ALL: [Self; 8] =
+        [Self::HighlandLake, Self::Waterfall, Self::Confluence, Self::RiverMouth, Self::RiverTunnel, Self::RiverIsland, Self::HotSpring, Self::Gorge];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -39,6 +42,7 @@ impl WaterSight {
             Self::RiverTunnel => "river tunnel",
             Self::RiverIsland => "river island",
             Self::HotSpring => "hot spring",
+            Self::Gorge => "gorge",
         }
     }
 }
@@ -91,6 +95,12 @@ impl Overworld {
                 }
                 let channel = |o: GeoSample| o.submerged() && matches!(o.body, Body::Creek | Body::River);
                 if channel(g) {
+                    // Walls on both sides, across the water one way or the other.
+                    let wall = |o: GeoSample| if o.submerged() { 0 } else { o.height - g.water };
+                    let across = [(3, 0), (0, 3)].map(|(di, dj)| wall(at(i + di, j + dj)).min(wall(at(i - di, j - dj)))).into_iter().max().unwrap_or(0);
+                    if across >= 6 {
+                        consider(WaterSight::Gorge, across as f32);
+                    }
                     // Arms of water crossing a ring around the point.
                     let ring: Vec<bool> = (0..32)
                         .map(|k| {

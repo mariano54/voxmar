@@ -31,6 +31,12 @@ const SUB: usize = 4;
 pub const MAP: i32 = 8;
 /// Index cells per map cell side for edges.
 const INDEX: i32 = 16;
+/// Where a river breaching a rim cuts this far under the ground beyond its tier's usual
+/// incision (blocks, from none to full), its valley closes into a slot gorge: a ledge
+/// beside the water and walls climbing `GORGE_WALL` blocks out per block up, wavering by
+/// under a block every dozen or so.
+const GORGE: (f32, f32) = (3.0, 8.0);
+const GORGE_WALL: f32 = 0.3;
 
 /// What kind of water lies nearest a column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
@@ -85,6 +91,8 @@ pub struct Edge {
     body: Body,
     /// Blocks of drop per block of length, for currents and rapids.
     slope: f32,
+    /// How much of a slot gorge the river runs in at each end, 0 ..= 1 (see `GORGE`).
+    gorge: [f32; 2],
 }
 
 impl Edge {
@@ -115,6 +123,11 @@ impl Edge {
 
     fn length(&self) -> f32 {
         self.points.windows(2).map(|w| w[0].distance(w[1])).sum()
+    }
+
+    /// How much of a slot gorge the river runs in at `t` along the edge, 0 ..= 1.
+    fn gorge(&self, t: f32) -> f32 {
+        self.gorge[0] + (self.gorge[1] - self.gorge[0]) * t.clamp(0.0, 1.0)
     }
 }
 
@@ -161,6 +174,9 @@ pub struct Span {
     pub before: Option<IVec2>,
     pub after: Option<IVec2>,
     pub levels: (i32, i32),
+    /// How far the ground stands over the river at each end, in blocks: deep where the
+    /// river breaches a rim.
+    pub cut: (f32, f32),
     pub width: f32,
     pub tunnel: bool,
 }
@@ -212,6 +228,7 @@ impl Channels {
                     tunnel: span.tunnel,
                     body: if span.width >= style.river_width { Body::River } else { Body::Creek },
                     slope: 0.0,
+                    gorge: [span.cut.0, span.cut.1].map(|cut| smoothstep(GORGE.0, GORGE.1, cut)),
                 };
                 edge.slope = drop / edge.length().max(1.0);
                 edge
@@ -436,12 +453,21 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
             continue;
         }
         // The valley: a shore level with the water at its edge, climbing its first block
-        // gently across a floodplain, then a wall up to the land.
+        // gently across a floodplain, then a wall up to the land. Where the river breaches
+        // high ground, a slot gorge instead: a narrow ledge, then steep, ragged walls.
         let rise = land - top;
         if rise > 0.0 {
-            let shore = edge.half * (1.0 + style.floodplain) + style.shore_run;
-            let valley = (shore + (rise - 1.0).max(0.0) * style.wall).min(edge.reach);
-            let profile = if d < shore { smoothstep(edge.half, shore, d) } else { 1.0 + (rise - 1.0).max(0.0) * smoothstep(shore, valley, d) };
+            let gorge = edge.gorge(t);
+            let lerp = |a: f32, b: f32| a + (b - a) * gorge;
+            let shore = lerp(edge.half * (1.0 + style.floodplain) + style.shore_run, edge.half + 1.5);
+            let valley = (shore + (rise - 1.0).max(0.0) * lerp(style.wall, GORGE_WALL)).min(edge.reach);
+            let d = if gorge > 0.0 { d + gorge * 0.7 * style.islands.get_noise_2d(x as f32 * 2.5 + 311.0, z as f32 * 2.5) } else { d };
+            let profile = if d < shore {
+                smoothstep(edge.half, shore, d)
+            } else {
+                let s = ((d - shore) / (valley - shore).max(1e-3)).clamp(0.0, 1.0);
+                1.0 + (rise - 1.0).max(0.0) * lerp(smoothstep(0.0, 1.0, s), s)
+            };
             if d < valley.max(shore) {
                 ground = ground.min(top + profile.min(rise));
             }
