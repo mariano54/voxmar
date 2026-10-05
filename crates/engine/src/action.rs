@@ -26,6 +26,9 @@ pub enum ActionTarget {
     /// how many items to move.
     Slots { from: u8, to: u8, count: u8 },
     Slot(u8),
+    /// Up to `count` items of the stack in one slot ([`crate::inventory::CURSOR`] for the
+    /// pointer's).
+    Stack { slot: u8, count: u8 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,8 +62,13 @@ pub enum Requirement {
 /// Engine-owned effects that actions compile down to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
-    /// Give the actor what the target block drops.
+    /// Give the actor what the target block drops, straight into its inventory.
     GiveDrop,
+    /// Pop what the target block and the plants it holds up drop out into the world, as
+    /// dropped items (see [`crate::dropped`]).
+    DropLoot,
+    /// Throw the target stack's items from the actor's hand into the world.
+    Throw,
     /// Turn the target block into air, and the plant standing on it if there is one.
     ClearTarget,
     /// Take one held item and put it into the placement cell of the target.

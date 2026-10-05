@@ -183,7 +183,8 @@ fn cells(c: &Cells, size: Size, seed: u32, field: &mut [f32]) {
             let mut best = (f32::MAX, 0, (0.0, 0.0));
             for (k, &(cx, cy)) in centres.iter().enumerate() {
                 let (dx, dy) = (wrapped(cx, px, w), wrapped(cy, py, h));
-                let d = dx * dx + dy * dy;
+                let (sx, sy) = (dx / c.stretch.0.max(0.1), dy / c.stretch.1.max(0.1));
+                let d = sx * sx + sy * sy;
                 if d < best.0 {
                     best = (d, k, (dx, dy));
                 }

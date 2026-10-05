@@ -13,14 +13,14 @@ use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec3, Vec3};
-use voxmar_engine::inventory::Inventory;
+use voxmar_engine::inventory::{Inventory, ItemStack};
 use voxmar_engine::traits::Health;
 use voxmar_engine::world::Column;
 
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -111,6 +111,27 @@ pub enum ServerMessage {
     /// so every client draws the same one.
     Lightning { at: Vec3, seed: u32, cloud: bool },
     Died,
+    /// Dropped items near the player that appeared or changed, and those that went: picked
+    /// up (by `collector`), merged into another, despawned, or out of range.
+    Items { changed: Vec<ItemView>, gone: Vec<ItemGone> },
+}
+
+/// A dropped item as players see it. Its velocity lets clients carry it on smoothly
+/// between updates.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ItemView {
+    pub id: u32,
+    pub stack: ItemStack,
+    /// Bottom centre.
+    pub position: Vec3,
+    pub velocity: Vec3,
+}
+
+/// A dropped item that is no longer there, and who picked it up, if anyone did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemGone {
+    pub id: u32,
+    pub collector: Option<PlayerId>,
 }
 
 /// How hard it rains or snows around the player: in each of the 5×5 weather cells

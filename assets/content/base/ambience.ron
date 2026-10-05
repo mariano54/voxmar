@@ -2,8 +2,9 @@
 //
 // groups: kinds of block counted around the player by a flood fill from the eye, nearer
 //   ones counting more (10 within 5 blocks, 5 within 10, 2 within 15, 1 up to 24). Each
-//   group is selected by block tags or materials and is an axis of its own, 0 below the
-//   first number of its range and 1 above the second.
+//   group is selected by block tags or materials (`falling: true`: only fluid pouring
+//   down) and is an axis of its own, 0 below the first number of its range and 1 above
+//   the second. A block counts for the first group that selects it.
 // beds: continuous layers, synthesized (`sound`) or recorded (`recording`: three segments in
 //   this package, eight seconds each, fading in and out over their first and last second
 //   and a half, as the mixer crossfades them). `volume` at full strength; `when` holds soft ranges on axes,
@@ -28,6 +29,9 @@
     groups: [
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
+        // Lava and falling water sound like water to the step, so they come first.
+        (name: "lava", tags: ["lava"], range: (4, 80)),
+        (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
         // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
         // Before grass, as a block counts for the first group that selects it.
@@ -78,7 +82,7 @@
         ),
         // Ice falling: hail rattling on everything, sleet's fine patter.
         (
-            name: "hail", sound: Hail, volume: 0.6, fade: 2,
+            name: "hail", recording: ["sounds/hail_1.mp3", "sounds/hail_2.mp3", "sounds/hail_3.mp3"], volume: 0.55, fade: 2,
             when: {"hail": (min: 0.25, fade: 0.25)},
         ),
         (
@@ -136,10 +140,22 @@
             when: {"water": (min: 0.4, fade: 0.4), "continentalness": (max: 0.05, fade: 0.15), "height": (max: 12, fade: 25), "sky": (min: 0.4, fade: 0.4)},
             duck: {"rain": 0.3},
         ),
-        // The still air of caves.
+        // The still air of caves, recorded in a quarry tunnel: a slight room tone with drips
+        // far off.
         (
-            name: "cave", sound: Cave, volume: 0.2, fade: 5,
-            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 8, fade: 8), "air": (min: 0.02, fade: 0.05)},
+            name: "cave", recording: ["sounds/cave_1.mp3", "sounds/cave_2.mp3", "sounds/cave_3.mp3"], volume: 0.45, fade: 5,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05)},
+        ),
+        // Lava seething and bubbling, near it.
+        (
+            name: "lava", recording: ["sounds/lava_1.mp3", "sounds/lava_2.mp3", "sounds/lava_3.mp3"], volume: 0.42, fade: 2,
+            when: {"lava": (min: 0.35, fade: 0.3)},
+        ),
+        // A waterfall's roar, from the curtain of water pouring down.
+        (
+            name: "waterfall", recording: ["sounds/waterfall_1.mp3", "sounds/waterfall_2.mp3", "sounds/waterfall_3.mp3"], volume: 0.4, fade: 3,
+            when: {"falls": (min: 0.5, fade: 0.45), "air": (min: 0.05, fade: 0.1)},
+            duck: {"stream": 0.6},
         ),
     ],
     sounds: [
@@ -239,14 +255,26 @@
         ),
         // Drips and distant rumbles underground; the reverb comes from the cave itself.
         (
-            name: "drip", sound: Drip, volume: 0.45, at: Block("rock"), per_minute: 6, cooldown: 2,
+            name: "drip", sound: Drip, volume: 0.3, at: Block("rock"), per_minute: 4, cooldown: 3,
             pitch: (0.8, 1.25), reach: 10,
             when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6)},
         ),
         (
-            name: "rumble", sound: Rumble, volume: 0.45, at: Listener, per_minute: 0.3, cooldown: 120,
+            name: "rumble", sound: Rumble, volume: 0.35, at: Listener, per_minute: 0.3, cooldown: 120,
             pitch: (0.8, 1.1),
-            when: {"sky": (max: 0.02, fade: 0.1), "depth": (min: 25, fade: 20)},
+            when: {"sky": (max: 0.02, fade: 0.1), "depth": (min: 15, fade: 12)},
+        ),
+        // Far drips in a cave, echoing from somewhere off in the dark.
+        (
+            name: "far_drip", sound: Drip, volume: 0.15, at: Around(distance: (14, 30), height: (-4, 6)), per_minute: 1.5, cooldown: 10,
+            pitch: (0.7, 1.0), reach: 10,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "reverb": (min: 0.3, fade: 0.3)},
+        ),
+        // Lava bursting a bubble now and then.
+        (
+            name: "lava_pop", sound: LavaPop, volume: 0.35, at: Block("lava"), per_minute: 5, cooldown: 4,
+            pitch: (0.8, 1.15), reach: 10,
+            when: {"lava": (min: 0.3, fade: 0.3)},
         ),
     ],
 )

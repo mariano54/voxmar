@@ -121,6 +121,12 @@ impl Server {
                     player.inventory.add(drop, count);
                     player.changed(traits::INVENTORY);
                 }
+                (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
+                    let plants = supported_by(&Context { server: self, agent }, block);
+                    let cells: Vec<IVec3> = std::iter::once(block).chain(plants).collect();
+                    self.drop_loot(&cells);
+                }
+                (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {

@@ -100,6 +100,9 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "light_rain", &["grassland", "temperate", "open"], &[("grass", 1.0), ("rain", 0.3), ("raining", 0.3), ("cover", 0.9)]),
         scene(ambience, "porch_in_rain", &["forest", "temperate"], &[("air", 0.6), ("sky", 0.0), ("rain", 0.2), ("raining", 0.7), ("cover", 1.0)]),
         scene(ambience, "forest_after_rain", &forest_tags, &[&forest[..], &[("wetness", 0.9), ("cover", 0.6)]].concat()),
+        scene(ambience, "lava_cave", &["mountain"], &[("rock", 1.0), ("lava", 0.8), ("sky", 0.0), ("air", 0.3), ("reverb", 0.7), ("depth", 30.0)]),
+        scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
+        scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
     ]
 }
 
@@ -144,6 +147,10 @@ fn each_place_has_its_own_sound() {
             "light_rain" => (&["rain"], &["downpour", "rain_on_roof"]),
             "porch_in_rain" => (&["rain_on_roof"], &["downpour"]),
             "forest_after_rain" => (&["dripping_trees"], &["rain", "downpour"]),
+            "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall"]),
+            "waterfall" => (&["waterfall"], &["lava", "cave"]),
+            // Wind on heights even on a quiet day.
+            "quiet_peak" => (&["high_wind"], &["leaves", "warbler"]),
             "summit" => (&["high_wind", "gust"], &["leaves", "warbler", "crickets", "meadow"]),
             "cave" => (&["cave", "drip"], &["breeze", "high_wind", "leaves", "warbler"]),
             "hailstorm" => (&["hail", "gusty"], &["sandstorm", "sleet", "meadow"]),

@@ -26,6 +26,7 @@
 mod ambience;
 mod breaking;
 mod capture;
+mod drops;
 mod hud;
 mod interact;
 mod keys;
@@ -239,6 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         player::PlayerPlugin,
         interact::InteractPlugin,
         breaking::BreakingPlugin,
+        drops::DropsPlugin,
         net::NetPlugin,
         hud::HudPlugin,
         sfx::SfxPlugin,

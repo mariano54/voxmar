@@ -280,7 +280,7 @@ fn ground_below(world: &ClientWorld, position: Vec3) -> f32 {
 /// them: sky light falls straight down, losing what water and leaves take and stopping at
 /// solid blocks, then spreads sideways one level a block. Close enough to light a few
 /// particles like the terrain around them.
-fn sky_light(world: &ClientWorld, cell: IVec3) -> u8 {
+pub(crate) fn sky_light(world: &ClientWorld, cell: IVec3) -> u8 {
     let column = |x: i32, z: i32| {
         let mut level = 15u8;
         for dy in 0..SKY_SCAN {

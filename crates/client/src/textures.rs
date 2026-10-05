@@ -134,10 +134,10 @@ impl Pack {
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let mut files = Files::open(path)?;
         let books = files.recipe_books();
-        let recipes = Library::from_books(books.iter().map(|(n, s)| (n.as_str(), s.as_str()))).unwrap_or_else(|e| {
-            bevy::log::warn!("texture pack {name}: {e}; using its images only");
-            Library::default()
-        });
+        let (recipes, errors) = Library::from_books_lenient(books.iter().map(|(n, s)| (n.as_str(), s.as_str())));
+        for e in errors {
+            bevy::log::warn!("texture pack {name}: {e}; leaving that book out");
+        }
         Ok(Self { name, files, recipes, served: 0 })
     }
 

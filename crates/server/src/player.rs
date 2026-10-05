@@ -32,6 +32,7 @@ pub struct Player {
     pub fly_speed: f32,
     pub position: Vec3,
     pub yaw: f32,
+    pub pitch: f32,
     pub selected: usize,
     pub flying: bool,
     pub health: Health,
@@ -42,6 +43,8 @@ pub struct Player {
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
     pub sent: FxHashSet<ColumnPos>,
+    /// Dropped items this player has been told about.
+    pub items_seen: FxHashSet<u32>,
 }
 
 impl Player {
@@ -57,6 +60,7 @@ impl Player {
             fly_speed: 1.0,
             position: spawn,
             yaw: 0.0,
+            pitch: 0.0,
             selected: 0,
             flying: false,
             health: Health::full(MAX_HEALTH),
@@ -65,6 +69,7 @@ impl Player {
             last_input_tick: 0,
             dirty: vec![traits::HEALTH, traits::INVENTORY],
             sent: FxHashSet::default(),
+            items_seen: FxHashSet::default(),
         }
     }
 
@@ -78,6 +83,12 @@ impl Player {
 
     pub fn eye(&self) -> Vec3 {
         self.position + Vec3::Y * dims::EYE_HEIGHT
+    }
+
+    /// Where the player looks.
+    pub fn look(&self) -> Vec3 {
+        let (yaw, pitch) = (self.yaw, self.pitch);
+        Vec3::new(-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos())
     }
 
     pub fn held(&self) -> Option<BlockId> {
@@ -219,6 +230,7 @@ impl Server {
 
         let player = self.players.get_mut(&id).unwrap();
         player.yaw = input.yaw;
+        player.pitch = if input.pitch.is_finite() { input.pitch.clamp(-1.6, 1.6) } else { 0.0 };
         player.flying = flying;
         player.selected = (input.selected_slot as usize).min(HOTBAR_SLOTS - 1);
         if plausible {

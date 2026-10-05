@@ -50,6 +50,8 @@ pub enum Run {
     Fill,
     /// Gives the player blocks.
     Give,
+    /// Drops a stack of items into the world.
+    Drop,
     /// Names the biome the player stands in.
     Biome,
     /// Finds the nearest place of a kind, such as a biome.

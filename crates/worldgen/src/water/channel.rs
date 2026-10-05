@@ -6,9 +6,9 @@
 //! staircase of small steps that reads as flowing water and rapids, or, where it drops
 //! three blocks or more, as a waterfall onto a plunge pool. Every column then takes the
 //! nearest river: inside the channel the bed lies under the surface, deeper in the middle
-//! (where wide, calm rivers sometimes part around an island); outside, the valley rises
-//! from the bank to the land, and a low berm keeps the water in where the land between
-//! cells dips below it.
+//! (where wide, calm rivers sometimes part around an island); outside, the shore starts
+//! level with the water and climbs its first block gently, then the valley rises to the
+//! land, and a low berm keeps the water in where the land between cells dips below it.
 //!
 //! Lakes are drawn on a grid of 8-block cells: every column in the lake's cells whose
 //! ground lies under the lake's surface holds water, so the shore follows the real land.
@@ -54,6 +54,8 @@ pub struct Style {
     /// many blocks out the wall reaches per block it climbs.
     pub floodplain: f32,
     pub wall: f32,
+    /// How far, in blocks, the shore takes to climb its first block from the water.
+    pub shore_run: f32,
     /// Furthest a valley reaches beyond its bank, in blocks.
     pub valley: f32,
     /// How far node points are jittered off cell centres, in blocks.
@@ -433,11 +435,15 @@ pub fn carve(style: &Style, regions: &[Option<Arc<Channels>>], x: i32, z: i32, b
             wet = 1.0;
             continue;
         }
-        // The valley: a floor beyond the bank, then a wall up to the land.
-        if excess > 0.0 {
-            let valley = (edge.half * (1.0 + style.floodplain) + 1.5 + excess * style.wall).min(edge.reach);
-            if d < valley {
-                ground = ground.min(top + 1.0 + excess * smoothstep(edge.half * (1.0 + style.floodplain), valley, d));
+        // The valley: a shore level with the water at its edge, climbing its first block
+        // gently across a floodplain, then a wall up to the land.
+        let rise = land - top;
+        if rise > 0.0 {
+            let shore = edge.half * (1.0 + style.floodplain) + style.shore_run;
+            let valley = (shore + (rise - 1.0).max(0.0) * style.wall).min(edge.reach);
+            let profile = if d < shore { smoothstep(edge.half, shore, d) } else { 1.0 + (rise - 1.0).max(0.0) * smoothstep(shore, valley, d) };
+            if d < valley.max(shore) {
+                ground = ground.min(top + profile.min(rise));
             }
         }
         // The bank holds the water a few blocks upstream too, which around a waterfall
