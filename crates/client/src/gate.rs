@@ -636,6 +636,10 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 
 /// Esc opens the menu and closes it again; E the inventory, C from there the character
 /// screen in its place, and C closes that.
+/// How long a screen is given to open, close or be shot: on a machine loaded far past its
+/// cores a shot alone can take seconds.
+const SCREEN_WAIT: f32 = 10.0;
+
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
     let (menu, inventory, character, locked) = (ui.menu_open, ui.inventory_open, ui.character_open, ui.cursor_locked);
@@ -667,7 +671,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("menu", shown.and_then(|s| if locked { Err("the mouse stayed grabbed".into()) } else { Ok(s) }));
                 set_language(world, "ja");
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if !menu && in_phase > SCREEN_WAIT {
                 gate.check("menu", Err("Esc did not open the menu".into()));
                 gate.next(Step::Weather, now);
             }
@@ -707,7 +711,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("menu: close", Ok("Esc closed it and gave the game the mouse back".into()));
                 key(world, KeyCode::KeyE, true);
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("menu: close", Err(format!("after Esc the menu is {} and the mouse {}", if menu { "open" } else { "closed" }, if locked { "grabbed" } else { "free" })));
                 gate.next(Step::Weather, now);
             }
@@ -720,7 +724,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("inventory", shown);
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("inventory", Err("E did not open the inventory".into()));
                 gate.next(Step::Weather, now);
             }
@@ -738,7 +742,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("character", shown);
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("character", Err(format!("after C the inventory is {} and the character screen {}", if inventory { "open" } else { "closed" }, if character { "open" } else { "closed" })));
                 gate.next(Step::Weather, now);
             }
@@ -750,7 +754,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 // A log to craft with.
                 world.resource::<Net>().command("give oak_log 1");
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("character: close", Err("C did not close the character screen".into()));
                 gate.next(Step::Weather, now);
             }
@@ -809,6 +813,10 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [("storm", "storm", |w| w.precipitation > 0.3 && w.snow < 0.5), ("snow", "snow", |w| w.precipitation > 0.3 && w.snow > 0.5)];
     match gate.phase {
         0 => {
+            // A screen left open by a failed step before would cover every view after it,
+            // failing all of them: close them all (as Esc would, one by one).
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
             look(world, 0.0, 5.0);
             if gate.shot(world, "clear").is_some() {
                 world.resource::<Net>().command(&format!("weather {} 120", kinds[0].0));
