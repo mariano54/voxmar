@@ -757,8 +757,8 @@ const GORGE_WALLS: i32 = 6;
 
 /// `/locate gorge` (asked by the observer, which reads the answer) names the nearest river
 /// running deep in a slot gorge; the player goes there by day, and the server's world has
-/// water there with ground standing at least `GORGE_WALLS` over it on both sides, 3 to 6
-/// blocks off across one way or the other.
+/// water there with ground standing at least `GORGE_WALLS` over it on both sides, 3 to 8
+/// blocks off across it, straight or diagonally.
 fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
@@ -836,8 +836,8 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     def(IVec3::new(x, y, z)).is_some_and(|d| d.solid && d.render != voxmar_engine::block::RenderKind::Leaves && !d.name.contains("log") && !d.name.contains("wood"))
                 })
             };
-            let side = |dx: i32, dz: i32| (3..=6).filter_map(|k| ground(at.x + dx * k, at.z + dz * k)).max().unwrap_or(water) - water;
-            let walls = [(1, 0), (0, 1)].map(|(dx, dz)| side(dx, dz).min(side(-dx, -dz))).into_iter().max().unwrap_or(0);
+            let side = |dx: i32, dz: i32| (3..=8).filter_map(|k| ground(at.x + dx * k, at.z + dz * k)).max().unwrap_or(water) - water;
+            let walls = [(1, 0), (0, 1), (1, 1), (1, -1)].map(|(dx, dz)| side(dx, dz).min(side(-dx, -dz))).into_iter().max().unwrap_or(0);
             let result = match (is_water, walls >= GORGE_WALLS) {
                 (true, true) => Ok(format!("water at {} {} {} between walls {walls} blocks high", at.x, water, at.z)),
                 (false, _) => Err(format!("no water within two blocks of {named}, where /locate gorge said")),
