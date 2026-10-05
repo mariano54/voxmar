@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::creature::CreatureId;
+use voxmar_engine::creature::brain::Pose;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::{Inventory, ItemStack};
 use voxmar_engine::skill::{SkillId, Skills};
@@ -21,7 +23,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -120,6 +122,33 @@ pub enum ServerMessage {
     /// Dropped items near the player that appeared or changed, and those that went: picked
     /// up (by `collector`), merged into another, despawned, or out of range.
     Items { changed: Vec<ItemView>, gone: Vec<ItemGone> },
+    /// Creatures near the player that appeared or changed, and those that went: died, or
+    /// out of range.
+    Creatures { changed: Vec<CreatureView>, gone: Vec<CreatureGone> },
+}
+
+/// A creature as players see it. Its velocity lets clients carry it on smoothly between
+/// updates; its seed picks the small differences between individuals (size, shade).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CreatureView {
+    pub id: u32,
+    pub species: CreatureId,
+    /// Feet, centred.
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub yaw: f32,
+    pub pose: Pose,
+    pub health: u16,
+    /// Its size against its species', from its genes.
+    pub scale: f32,
+    pub seed: u32,
+}
+
+/// A creature that is no longer there, and whether it died.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatureGone {
+    pub id: u32,
+    pub died: bool,
 }
 
 /// A dropped item as players see it. Its velocity lets clients carry it on smoothly

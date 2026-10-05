@@ -29,7 +29,7 @@ impl Plugin for InteractPlugin {
         app.init_resource::<Target>()
             .add_systems(
                 Update,
-                (select_slot.after(player::zoom), find_target, pick_block, break_and_place, draw_target)
+                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, draw_target)
                     .chain()
                     .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),
@@ -44,6 +44,8 @@ pub struct InteractSystems;
 #[derive(Resource, Default)]
 pub struct Target {
     pub hit: Option<RayHit>,
+    /// The creature under the crosshair, nearer than any block (see `creatures::aim`).
+    pub creature: Option<u32>,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
     mining_seconds: f32,

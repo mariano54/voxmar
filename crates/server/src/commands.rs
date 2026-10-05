@@ -163,6 +163,8 @@ impl Server {
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
             Run::Locate => self.locate(id, args),
+            Run::Summon => self.summon(id, args),
+            Run::Creatures => Ok(self.creatures_about(id)),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {text}", def.short_name());
@@ -415,6 +417,64 @@ impl Server {
     }
 
     /// The biome the player stands in, and what makes it.
+    /// `/summon <creature> [count]`: creatures on the ground a few blocks in front of the
+    /// player.
+    fn summon(&mut self, id: Source, args: &[String]) -> Reply {
+        let (name, count) = match args {
+            [name] => (name, 1),
+            [name, count] => (name, count.parse::<u32>().ok().filter(|c| (1..=16).contains(c)).ok_or("The count must be 1 to 16.")?),
+            _ => return Err("Summon what?".into()),
+        };
+        let species = self.content.creatures.find(name).ok_or_else(|| format!("There is no creature called `{name}`."))?;
+        let (feet, look) = match id {
+            Source::Player(p) => {
+                let player = &self.players[&p];
+                (player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
+            }
+            Source::Console => (self.spawn, Vec3::NEG_Z),
+        };
+        let at = feet + look * 4.0;
+        let mut placed = 0;
+        for i in 0..count {
+            let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
+            let cell = (at + offset).floor().as_ivec3();
+            let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
+            if self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), self.tick ^ i as u64).is_some() {
+                placed += 1;
+            }
+        }
+        let title = &self.content.creatures.get(species).def.title;
+        match placed {
+            0 => Err(format!("There is no room for a {} there.", title.to_lowercase())),
+            1 => Ok(format!("A {} appears.", title.to_lowercase())),
+            n => Ok(format!("{n} {} appear.", title.to_lowercase())),
+        }
+    }
+
+    /// `/creatures`: the creatures within 64 blocks.
+    fn creatures_about(&self, id: Source) -> String {
+        let at = self.position_of(id);
+        let mut counts: std::collections::BTreeMap<String, (usize, f32, &'static str)> = Default::default();
+        for creature in self.creatures.live.values() {
+            let distance = creature.body.position.distance(at);
+            if distance > 64.0 {
+                continue;
+            }
+            let species = self.content.creatures.get(creature.species);
+            let doing = creature.mind.doing.map_or("resting", |i| species.modules[i].0.name());
+            let entry = counts.entry(species.def.title.clone()).or_insert((0, f32::MAX, doing));
+            entry.0 += 1;
+            if distance < entry.1 {
+                *entry = (entry.0, distance, doing);
+            }
+        }
+        if counts.is_empty() {
+            return "No creatures within 64 blocks.".into();
+        }
+        let lines: Vec<String> = counts.iter().map(|(title, (n, d, doing))| format!("{n} × {title}, nearest {d:.0} blocks away ({doing})")).collect();
+        format!("Within 64 blocks:\n{}", lines.join("\n"))
+    }
+
     fn biome(&self, id: Source) -> String {
         let at = self.position_of(id).floor().as_ivec3();
         let site = self.overworld.site(at.x, at.z);

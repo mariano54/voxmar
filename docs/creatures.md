@@ -1,6 +1,6 @@
 # Creatures: animals and monsters
 
-Oct 5, 2026. What creatures are, where they live, what they give, and the first bestiary.
+Oct 6, 2026. What creatures are, where they live, what they give, and the first bestiary.
 Part of the creatures, food and breeding design:
 
 - [creature-ai.md](creature-ai.md): how they behave, and how behaviours are generated
@@ -155,9 +155,11 @@ Farming level. See [breeding.md](breeding.md), "Condition".
 
 ## The first bestiary
 
-48 species, 11 supernatural (*italic*). Levels are the creature's combat level. "Hunter"
-is the level to tame it, "Farming" the level to keep and breed it (see
-[skills.md](skills.md)). Diets name real plants and items from plants.ron, crops.ron and
+48 species, 11 supernatural (*italic*). "Hunter" is the level to tame it, "Farming" the
+level to keep and breed it (see [skills.md](skills.md)). The first set tops out at level
+50, with the commonest animals at level 1 so a new player starts easily (Mariano,
+2026-10-06); creatures' own combat levels stay at 30 and under in the first set (the
+brown bear, 28, is the toughest). Diets name real plants and items from plants.ron, crops.ron and
 trees.ron.
 
 ### Farm and grazing animals
@@ -165,30 +167,30 @@ trees.ron.
 | Species | Lives | Eats | Drops (on death) | Products | Temperament | Hunter / Farming |
 | --- | --- | --- | --- | --- | --- | --- |
 | Junglefowl (hen) | meadow, plains, forest steppe, jungle edge; 8–32 °C | seeds, wheat, insects | raw chicken, feathers | eggs | skittish, flock | 1 / 1 |
-| Rabbit | meadow, plains, steppe, heath, tundra (white coat in snow) | clover, dandelion, carrot, wild carrot | raw rabbit, rabbit hide, rabbit's foot (rare) | manure | skittish, hops | 1 / 5 |
-| Mallard | rivers, swamp, bayou, lakes | seeds, water plants, insects | raw duck, feathers, down (shears) | eggs | skittish, swims | 5 / 8 |
-| Mouflon (sheep) | meadow, alpine meadow, heath, mountains | grass, clover, heather | mutton, bone | wool (thicker in cold), milk | flock, timid | 10 / 10 |
-| Wild boar (pig) | forests with nuts: oak, chestnut, hazel, mixed | hazelnuts, chestnuts, roots, mushrooms | pork, hide, lard, bristles | truffles (rooting), manure | neutral; charges when hurt or near piglets | 20 / 12 |
-| Ibex (goat) | mountains, rocky peaks, alpine meadow, mediterranean | heather, juniper, sagebrush, gorse | chevon, hide | milk, horn (shed) | curious, climbs cliffs | 15 / 15 |
-| Aurochs (cattle) | plains, forest steppe, meadow; zebu in savanna | grass, clover, wheat, oats | beef, hide, bone | milk, manure | herd; bulls defend | 25 / 20 |
-| Alpaca | alpine meadow, mountains, cloud forest | grass, bunchgrass | meat | fleece | spits when annoyed | 25 / 25 |
-| Steppe horse | plains, steppe, savanna, forest steppe | grass, oats, apples, carrots | hide | (mount) | herd, flighty | 30 / 30 |
-| Reindeer | tundra, snowy taiga; south in winter | lichen, cotton grass, cloudberry | venison, hide | milk, antlers (shed) | herd, migrates | 40 / 32 |
-| Donkey | mediterranean, badlands, savanna | dry shrubs, thistle | hide | (pack animal) | stubborn | 30 / 35 |
-| Camel | desert, dune sea, outback | saltbush, dead bush, prickly pear | meat, hide | milk | spits, patient | 40 / 35 |
-| Bee swarm | flower meadow, lavender fields, meadow, orchards | nectar of flowers within 16 blocks | wax | honey, wax; pollination | neutral; stings if the hive is struck | 1 / 18 |
+| Rabbit | meadow, plains, steppe, heath, tundra (white coat in snow) | clover, dandelion, carrot, wild carrot | raw rabbit, rabbit hide, rabbit's foot (rare) | manure | skittish, hops | 1 / 1 |
+| Mallard | rivers, swamp, bayou, lakes | seeds, water plants, insects | raw duck, feathers, down (shears) | eggs | skittish, swims | 3 / 3 |
+| Mouflon (sheep) | meadow, alpine meadow, heath, mountains | grass, clover, heather | mutton, bone | wool (thicker in cold), milk | flock, timid | 5 / 5 |
+| Wild boar (pig) | forests with nuts: oak, chestnut, hazel, mixed | hazelnuts, chestnuts, roots, mushrooms | pork, hide, lard, bristles | truffles (rooting), manure | neutral; charges when hurt or near piglets | 10 / 8 |
+| Ibex (goat) | mountains, rocky peaks, alpine meadow, mediterranean | heather, juniper, sagebrush, gorse | chevon, hide | milk, horn (shed) | curious, climbs cliffs | 8 / 10 |
+| Aurochs (cattle) | plains, forest steppe, meadow; zebu in savanna | grass, clover, wheat, oats | beef, hide, bone | milk, manure | herd; bulls defend | 12 / 15 |
+| Alpaca | alpine meadow, mountains, cloud forest | grass, bunchgrass | meat | fleece | spits when annoyed | 12 / 18 |
+| Steppe horse | plains, steppe, savanna, forest steppe | grass, oats, apples, carrots | hide | (mount) | herd, flighty | 16 / 20 |
+| Reindeer | tundra, snowy taiga; south in winter | lichen, cotton grass, cloudberry | venison, hide | milk, antlers (shed) | herd, migrates | 22 / 22 |
+| Donkey | mediterranean, badlands, savanna | dry shrubs, thistle | hide | (pack animal) | stubborn | 16 / 25 |
+| Camel | desert, dune sea, outback | saltbush, dead bush, prickly pear | meat, hide | milk | spits, patient | 22 / 25 |
+| Bee swarm | flower meadow, lavender fields, meadow, orchards | nectar of flowers within 16 blocks | wax | honey, wax; pollination | neutral; stings if the hive is struck | 1 / 12 |
 
 ### Wild animals
 
 | Species | Lives | Eats | Drops | Temperament | Hunter |
 | --- | --- | --- | --- | --- | --- |
-| Red deer | forests: broadleaf, mixed, maple, old growth, taiga edge | grass, leaves, berries, apples | venison, hide, antler (stags) | skittish; stags spar in autumn rut | 55 (lure) |
+| Red deer | forests: broadleaf, mixed, maple, old growth, taiga edge | grass, leaves, berries, apples | venison, hide, antler (stags) | skittish; stags spar in autumn rut | 25 (lure) |
 | Moose | taiga, bog, northern swamp | willow, water plants | meat, hide, antler | neutral; territorial in rut | — |
 | Bison | steppe, plains, sagebrush steppe | grass | meat, hide, horn | herd; stampedes when spooked (thunder) | — |
-| Fox | forest, taiga, steppe; arctic coat in snow, fennec ears in desert | rabbits, eggs, berries | fur | crepuscular; pounces; steals eggs | 35 |
-| Wolf | taiga, forest, snowy taiga, mountains | deer, sheep, rabbits | pelt, fang | pack; howls at night; bolder when hungry in winter | 35 |
-| Lynx | taiga, birch taiga, mountains | rabbits, junglefowl | pelt | shy stalker: freeze, creep, pounce | 45 |
-| Brown bear | forest, old growth, taiga, mountains | berries, honey (raids hives), trout, meat | pelt, bear fat, claw | neutral; fierce near cubs; hibernates in winter | 65 |
+| Fox | forest, taiga, steppe; arctic coat in snow, fennec ears in desert | rabbits, eggs, berries | fur | crepuscular; pounces; steals eggs | 20 |
+| Wolf | taiga, forest, snowy taiga, mountains | deer, sheep, rabbits | pelt, fang | pack; howls at night; bolder when hungry in winter | 20 |
+| Lynx | taiga, birch taiga, mountains | rabbits, junglefowl | pelt | shy stalker: freeze, creep, pounce | 25 |
+| Brown bear | forest, old growth, taiga, mountains | berries, honey (raids hives), trout, meat | pelt, bear fat, claw | neutral; fierce near cubs; hibernates in winter | 35 |
 | Polar bear | glacier, snowy tundra, icy shores | fish | pelt, fat | aggressive when hungry | — |
 | Marsh crocodile | swamp, bayou, mangrove swamp, jungle rivers | fish, ducks, whatever comes to drink | scaled hide, meat, tooth | ambushes from water; ignores you far from it | — |
 | Adder | heath, desert, badlands, sagebrush | mice, eggs | venom sac, snakeskin | warns at 5 blocks, strikes at 2 | — |
@@ -225,14 +227,14 @@ skill is left for later; nets and traps (Hunter) and spears (Attack) catch them 
 
 | Species | Lives (aether high) | Eats | Gives | Behaviour | Hunter / Farming |
 | --- | --- | --- | --- | --- | --- |
-| *Moonhare* | moonlit meadow; any meadow at night | moonbloom, clover | glowing pelt, moon dust (rare) | blinks a few blocks away when fleeing | 50 / 50 |
-| *Lumen snail* | glowcap forest, glowing caves | glowcap, fungi | lumen slime (light, alchemy) | slow; trails glow for a minute | 50 / 55 |
-| *Ember salamander* | ember wastes, by lava | emberbloom, emberfruit | ember scale (fuel, fire resistance) | swims in lava; burns what touches it | 60 / 62 |
-| *Crystal tortoise* | crystal expanse, crystal caves | crystal bloom | shell crystal (mined from the living animal, Mining 60) | very slow; lives for centuries | 60 / 70 |
-| *Frost stag* | crystal expanse, glacier, snowy taiga | frostpetal | frost antler (shed), frost pelt | flees; leaves frost that freezes water | 72 / 75 |
-| *Sunwing* | sunspire downs | sunspire seeds, insects | sun feathers (long-burning fuel), egg | circles high at noon, roosts at dusk | 78 / 80 |
-| *Griffin* | mountains, rocky peaks, sunspire downs | mouflon, ibex | griffin feather, talon | defends its nest; a mount when tamed | 85 / 88 |
-| *Silver hart* | silverwood glade (legendary) | aether orchid, silverwood leaves | shed silver antler, a blessing when befriended | never fights; killing one curses you for a day | 90 / 92 |
+| *Moonhare* | moonlit meadow; any meadow at night | moonbloom, clover | glowing pelt, moon dust (rare) | blinks a few blocks away when fleeing | 28 / 28 |
+| *Lumen snail* | glowcap forest, glowing caves | glowcap, fungi | lumen slime (light, alchemy) | slow; trails glow for a minute | 28 / 30 |
+| *Ember salamander* | ember wastes, by lava | emberbloom, emberfruit | ember scale (fuel, fire resistance) | swims in lava; burns what touches it | 32 / 35 |
+| *Crystal tortoise* | crystal expanse, crystal caves | crystal bloom | shell crystal (mined from the living animal, Mining 60) | very slow; lives for centuries | 32 / 40 |
+| *Frost stag* | crystal expanse, glacier, snowy taiga | frostpetal | frost antler (shed), frost pelt | flees; leaves frost that freezes water | 40 / 44 |
+| *Sunwing* | sunspire downs | sunspire seeds, insects | sun feathers (long-burning fuel), egg | circles high at noon, roosts at dusk | 44 / 46 |
+| *Griffin* | mountains, rocky peaks, sunspire downs | mouflon, ibex | griffin feather, talon | defends its nest; a mount when tamed | 47 / 48 |
+| *Silver hart* | silverwood glade (legendary) | aether orchid, silverwood leaves | shed silver antler, a blessing when befriended | never fights; killing one curses you for a day | 50 / 50 |
 | *Wisp* | anywhere aether is high, at night | — | aether mote | drifts toward the nearest wonder, waits for you, fades at dawn | — |
 | *Walking mandrake* | where mandrake grows | — | mandrake root | uproots and runs when approached at night; its scream stuns | — |
 | *Shambler* (above) | | | | | |

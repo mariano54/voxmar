@@ -1,9 +1,8 @@
 # Taming, husbandry and breeding
 
-Oct 5, 2026. How wild animals become yours, how you keep them, and how breeding works,
+Oct 6, 2026. How wild animals become yours, how you keep them, and how breeding works,
 from Minecraft-simple to deep genetics. Breeding is part of the **Farming** skill
-(Mariano); taming is part of the proposed **Hunter** skill, or Farming if he prefers (see
-[skills.md](skills.md)). Part of the creatures, food and breeding design (see
+(Mariano); taming is part of the **Hunter** skill, which Mariano chose (see [skills.md](skills.md)). Part of the creatures, food and breeding design (see
 [creatures.md](creatures.md)).
 
 ## Decisions
@@ -20,7 +19,12 @@ from Minecraft-simple to deep genetics. Breeding is part of the **Farming** skil
 
 ## Taming
 
-Each species names a method and the Hunter level it takes:
+Each species names a method and the Hunter level it takes (levels in
+[skills.md](skills.md); the first set tops out at 50). Trust is a meter that can decay and
+backfire: it fades over days scaled by the species' wildness (RimWorld), a failed attempt
+can turn the animal on you (RimWorld's manhunter chance, a grizzly's 30%), and how you
+treated it as trust filled shapes what it becomes (Don't Starve's beefalo: fed, ridden or
+fought).
 
 | Method | How | Species |
 | --- | --- | --- |
@@ -114,7 +118,7 @@ What players do with it:
   mule (strong, sure-footed, sterile); red deer × frost stag = rimehart (supernatural,
   rare); junglefowl × sunwing = emberhen (lays warm eggs that hatch nothing but cook
   themselves). Hybrid fertility is data.
-- **Inbreeding.** The studbook (Farming 30) records parents. A child's inbreeding
+- **Inbreeding.** The studbook (Farming 20) records parents. A child's inbreeding
   coefficient from shared ancestors lowers fertility and condition and makes hidden bad
   recessives show. New blood comes from taming wild animals (Hunter) or trading, which
   keeps the two skills tied.
@@ -139,9 +143,9 @@ animals, at the cost of building where aether is high or bringing aether feed fr
 
 ## Inspecting
 
-The inspect action shows more with Farming level: condition and age at 1; visible genes
-in words ("long wool, calm") at 20; hidden alleles and carriers at 40; exact numbers and
-the inbreeding coefficient at 60; mutation odds at the pen at 75. This is the seed
+The inspect action shows more with Farming level: condition, age and personality in words
+at 1; visible genes in words ("long wool, calm") at 15; hidden alleles and carriers at 30;
+exact numbers and the inbreeding coefficient at 40; mutation odds at the pen at 50. This is the seed
 analysis idea from farming research, applied to animals: information is progression.
 
 ## Crops share it

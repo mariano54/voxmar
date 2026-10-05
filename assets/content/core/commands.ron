@@ -105,5 +105,18 @@
         ("night", 13000),
         ("midnight", 18000),
         ("dawn", 23500),
+        (
+            name: "summon",
+            usage: "<creature> [count]",
+            help: "Puts creatures of a species (rabbit, wolf, moonhare…) on the ground in front of you, one unless you say, up to 16.",
+            permission: Admin,
+            run: Summon,
+        ),
+        (
+            name: "creatures",
+            usage: "",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing.",
+            run: Creatures,
+        ),
     ],
 )

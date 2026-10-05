@@ -78,7 +78,9 @@ impl Content {
                 let file = path.join(&name);
                 let source = std::fs::read_to_string(&file).map_err(|e| read_error(&file, e))?;
                 match name.as_str() {
-                    "blocks.ron" => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
+                    // `blocks.ron`, and `blocks_<topic>.ron` for families of blocks a system
+                    // owns (what creatures drop), each read the same way.
+                    name if name.starts_with("blocks") => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
                     "actions.ron" => actions.extend(package, &source)?,
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,

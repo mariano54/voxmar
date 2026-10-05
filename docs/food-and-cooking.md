@@ -1,6 +1,6 @@
 # Food and cooking
 
-Oct 5, 2026. Ingredients, recipes, stations, preservation and the Cooking skill, built on
+Oct 6, 2026. Ingredients, recipes, stations, preservation and the Cooking skill, built on
 the hunger and warmth the Game UI thread added (`engine::vitals`). Part of the creatures,
 food and breeding design (see [creatures.md](creatures.md)).
 
@@ -76,16 +76,16 @@ Named dishes (data) match exact ingredients and override the name and add an eff
 | Station | Technique | Needs | Level |
 | --- | --- | --- | --- |
 | Campfire | roast | fuel | 1 |
-| Pot (on a fire) | boil, stew, soup, porridge, jam | water | 5 |
-| Quern | mill grain to flour | | 8 |
-| Oven | bake bread, pies, cakes | fuel | 15 |
-| Pan (on a fire) | fry | a fat (butter, lard, bear fat, olive oil) | 18 |
-| Churn | butter, cream | milk | 22 |
-| Smoker | smoke meat and fish; hours | wood (oak, cherry, maple, juniper, pine each flavour differently) | 33 |
-| Cheese press and cellar | fresh then aged cheese; days to weeks | milk, rennet or a herb; a cool place (temperature 4–15 °C) | 35, 50 |
-| Drying rack | jerky, dried fruit, dried herbs; hours | dry air (moisture field low, no rain) and warmth | 42 |
-| Crock | ferment: sauerkraut, pickles, sauces, cider; days | a cool place | 45 |
-| Table | banquet: dishes set out together, shared effects | | 99 |
+| Pot (on a fire) | boil, stew, soup, porridge, jam | water | 3 |
+| Quern | mill grain to flour | | 5 |
+| Oven | bake bread, pies, cakes | fuel | 10 |
+| Pan (on a fire) | fry | a fat (butter, lard, bear fat, olive oil) | 12 |
+| Churn | butter, cream | milk | 15 |
+| Smoker | smoke meat and fish; hours | wood (oak, cherry, maple, juniper, pine each flavour differently) | 23 |
+| Cheese press and cellar | fresh then aged cheese; days to weeks | milk, rennet or a herb; a cool place (temperature 4–15 °C) | 25, 35 |
+| Drying rack | jerky, dried fruit, dried herbs; hours | dry air (moisture field low, no rain) and warmth | 31 |
+| Crock | ferment: sauerkraut, pickles, sauces, cider; days | a cool place | 33 |
+| Table | banquet: dishes set out together, shared effects | | 50 |
 
 Long techniques (smoking, drying, fermenting, ageing) are due-time events, like crop
 stages, computed from the conditions where the station stands and recomputed only when
@@ -136,10 +136,10 @@ and gives the preserving stations their reason.
 
 ## Food for animals and traps
 
-- **Feed** (Cooking 12): mash, seed mix and hay, from grain, roots and greens. Each species
+- **Feed** (Cooking 8): mash, seed mix and hay, from grain, roots and greens. Each species
   prefers feed matching its diet; feed is its breeding food and raises its condition (see
   [breeding.md](breeding.md)).
-- **Treats** (Cooking 38): honey cakes, fish bits and the like, used for taming by feeding.
+- **Treats** (Cooking 27): honey cakes, fish bits and the like, used for taming by feeding.
 - **Bait** (any level): spoiled meat for scavengers and traps, fruit for bats, grain for
   birds, wyrmroot for sand wyrms (Hunter).
 
@@ -153,37 +153,37 @@ All from real items. Levels are Cooking levels; effects as above.
 | Roast fish (any) | 1 | campfire | 1 fish | heals |
 | Roast egg / root / mushroom | 1 | campfire | 1 egg, root or fungus | heals |
 | Herb tea | 1 | campfire | 1 herb, water | Steady hand (short) |
-| Baked potato | 3 | campfire | potato | heals |
-| Boiled eggs | 5 | pot | 2 eggs, water | heals |
-| Porridge | 5 | pot | oats or millet, water or milk | Warm meal (short) |
-| Flatbread | 8 | campfire | flour, water | heals |
-| Jam | 10 | pot | 3 fruit or berries, honey | Steady hand |
-| Mash | 12 | pot | grain, root, greens | animal feed |
-| Bread | 15 | oven | 2 flour, water | heals |
-| Omelette | 18 | pan | 2 eggs, fat, optional herb | heals |
-| Vegetable stew | 20 | pot | 2 vegetable or root, herb, water | Warm meal |
-| Butter | 22 | churn | milk | (ingredient: fat) |
-| Meat stew | 25 | pot | meat, 2 vegetable or root, water | Warm meal |
-| Hunter's stew | 25 | pot | venison, juniper, root | Warm meal, Quiet steps |
-| Fish soup | 28 | pot | fish, onion or leek, herb | Deep breath |
-| Fruit pie | 30 | oven | flour, butter, 2 fruit | heals well |
-| Mushroom pie | 30 | oven | flour, butter, 2 fungi | heals well |
-| Smoked fish or meat | 33 | smoker | fish or meat | keeps; heals |
-| Fresh cheese | 35 | press | milk, sorrel or nettle | Hearty (short) |
-| Honey cake | 38 | oven | flour, honey, egg | taming treat; heals |
-| Curry | 40 | pot | chili, cumin or coriander, meat or legume, rice | Warm meal (strong) |
-| Jerky / dried fruit | 42 | drying rack | meat or fruit | keeps |
-| Sauerkraut, pickles | 45 | crock | cabbage or cucumber, salt | keeps; Nourished counts double |
-| Roast fowl feast | 48 | oven | whole bird, 2 roots, herb | heals a lot |
-| Aged cheese | 50 | cellar | fresh cheese, weeks | Hearty |
-| Saffron rice | 52 | pot | rice, saffron, butter | Steady hand (long) |
-| Glowcap broth | 55 | pot | glowcap, any fungus, water | Dark sight |
-| Chocolate | 58 | pot | cacao, honey or sugar, milk | Steady hand, Warm meal |
-| Emberfruit stew | 60 | pot | emberfruit, chili, meat | Fire ward, Warm meal |
-| Frostpetal sorbet | 65 | churn | frostpetal, fruit, honey | Cool meal (strong) |
-| Moonhare stew | 70 | pot | moonhare, moonbloom, root | Quiet steps (long), Dark sight |
-| Starlily tea | 75 | pot | starlily, honey | Aether sight |
-| Crystal-salt feast | 80 | table | crystal salt, 3 dishes | their effects together, longer |
-| Sunwing-egg soufflé | 85 | oven | sunwing egg, butter, cheese | Warm meal, Hearty |
-| Heartbloom pie | 90 | oven | heartbloom, flour, butter, honey | Hearty (strong) |
-| Banquet | 99 | table | 5 different dishes | every effect, shared with all who eat |
+| Baked potato | 2 | campfire | potato | heals |
+| Boiled eggs | 3 | pot | 2 eggs, water | heals |
+| Porridge | 3 | pot | oats or millet, water or milk | Warm meal (short) |
+| Flatbread | 5 | campfire | flour, water | heals |
+| Jam | 6 | pot | 3 fruit or berries, honey | Steady hand |
+| Mash | 8 | pot | grain, root, greens | animal feed |
+| Bread | 10 | oven | 2 flour, water | heals |
+| Omelette | 12 | pan | 2 eggs, fat, optional herb | heals |
+| Vegetable stew | 14 | pot | 2 vegetable or root, herb, water | Warm meal |
+| Butter | 15 | churn | milk | (ingredient: fat) |
+| Meat stew | 17 | pot | meat, 2 vegetable or root, water | Warm meal |
+| Hunter's stew | 17 | pot | venison, juniper, root | Warm meal, Quiet steps |
+| Fish soup | 19 | pot | fish, onion or leek, herb | Deep breath |
+| Fruit pie | 21 | oven | flour, butter, 2 fruit | heals well |
+| Mushroom pie | 21 | oven | flour, butter, 2 fungi | heals well |
+| Smoked fish or meat | 23 | smoker | fish or meat | keeps; heals |
+| Fresh cheese | 25 | press | milk, sorrel or nettle | Hearty (short) |
+| Honey cake | 27 | oven | flour, honey, egg | taming treat; heals |
+| Curry | 29 | pot | chili, cumin or coriander, meat or legume, rice | Warm meal (strong) |
+| Jerky / dried fruit | 31 | drying rack | meat or fruit | keeps |
+| Sauerkraut, pickles | 33 | crock | cabbage or cucumber, salt | keeps; Nourished counts double |
+| Roast fowl feast | 35 | oven | whole bird, 2 roots, herb | heals a lot |
+| Aged cheese | 35 | cellar | fresh cheese, weeks | Hearty |
+| Saffron rice | 37 | pot | rice, saffron, butter | Steady hand (long) |
+| Glowcap broth | 37 | pot | glowcap, any fungus, water | Dark sight |
+| Chocolate | 39 | pot | cacao, honey or sugar, milk | Steady hand, Warm meal |
+| Emberfruit stew | 41 | pot | emberfruit, chili, meat | Fire ward, Warm meal |
+| Frostpetal sorbet | 43 | churn | frostpetal, fruit, honey | Cool meal (strong) |
+| Moonhare stew | 45 | pot | moonhare, moonbloom, root | Quiet steps (long), Dark sight |
+| Starlily tea | 45 | pot | starlily, honey | Aether sight |
+| Crystal-salt feast | 47 | table | crystal salt, 3 dishes | their effects together, longer |
+| Sunwing-egg soufflé | 47 | oven | sunwing egg, butter, cheese | Warm meal, Hearty |
+| Heartbloom pie | 49 | oven | heartbloom, flour, butter, honey | Hearty (strong) |
+| Banquet | 50 | table | 5 different dishes | every effect, shared with all who eat |

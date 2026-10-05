@@ -16,6 +16,10 @@ use crate::skill::SkillId;
 use crate::glam::{IVec3, Vec3};
 use crate::physics::player::REACH;
 
+/// How far a player reaches to strike a creature, from the eye to its box (Minecraft's 3,
+/// with a little slack for a server running behind).
+pub const REACH_CREATURE: f32 = 3.6;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ActionId(pub u16);
 
@@ -31,6 +35,8 @@ pub enum ActionTarget {
     /// Up to `count` items of the stack in one slot ([`crate::inventory::CURSOR`] for the
     /// pointer's).
     Stack { slot: u8, count: u8 },
+    /// A creature, by its id.
+    Creature(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -68,6 +74,8 @@ pub enum Requirement {
     SkillLevel,
     /// The target is a ripe crop that fruits again when picked.
     Ripe,
+    /// The target creature is alive and within the actor's reach.
+    CreatureInReach,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -91,6 +99,8 @@ pub enum Effect {
     QuickMove,
     /// Put the stack on the pointer back into the inventory.
     StowCursor,
+    /// Strike the target creature with what the actor holds.
+    Strike,
     /// Restore the actor's health and return it to spawn.
     Respawn,
     /// Sow one held seed on top of the target, and grant the crop's planting experience.
@@ -182,6 +192,10 @@ pub trait ActionContext {
     fn actor_held(&self) -> Option<BlockId>;
     /// Whether any agent's body overlaps the cell.
     fn occupied(&self, cell: IVec3) -> bool;
+    /// The box of a living creature, if there is one with that id.
+    fn creature_box(&self, _id: u32) -> Option<crate::physics::Aabb> {
+        None
+    }
 }
 
 /// Where a block placed against `face` of `block` goes: into `block` itself when it can
@@ -257,6 +271,13 @@ impl ActionDef {
                 ctx.block(block)
                     .and_then(|b| crops.stage_of(b))
                     .is_some_and(|(crop, stage)| stage == crops.get(crop).ripe_stage() && crops.get(crop).def.regrow.is_some())
+            }
+            Requirement::CreatureInReach => {
+                let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                ctx.creature_box(id).is_some_and(|aabb| {
+                    let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
+                    ctx.actor_eye().distance(nearest) <= REACH_CREATURE
+                })
             }
             Requirement::Replaceable => {
                 let (block, face) = block_target()?;

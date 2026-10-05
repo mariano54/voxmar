@@ -23,6 +23,8 @@
         // Throwing items from the hand (Q, or Ctrl+Q for the whole stack), or the stack on
         // the pointer by clicking outside the inventory.
         (name: "drop", duration: Instant, requires: [Alive], effects: [Throw]),
+        // Striking a creature with what is in hand (left click on it).
+        (name: "attack", duration: Instant, requires: [Alive, CreatureInReach], effects: [Strike]),
         (name: "respawn", duration: Instant, requires: [Dead], effects: [Respawn]),
     ],
 )

@@ -1,0 +1,50 @@
+// What creatures give (creatures.ron): meat, hides, fur, feathers and stranger things.
+// All are only ever items, drawn as sprites (packs/default/recipes/creature_drops.ron).
+// Tags say what each is to other systems, never which creature it came from: `meat` and
+// `raw` for cooking (docs/food-and-cooking.md), `food:N` for how much it fills (vitals),
+// `hide`, `fur`, `bone` and the like for crafting to come, `knife` and friends on tools.
+// Supernatural drops carry `aether`.
+(
+    templates: {
+        // An item that is only ever an item: `{name}` with its own sprite.
+        "drop": [
+            (name: "{name}", render: Plant, solid: false, item: true, textures: All("{name}"), hardness: 0.0, color: (180, 140, 120)),
+        ],
+    },
+    families: [
+        // Meat: fills a little raw, more once cooking comes.
+        (template: "drop", name: "raw_rabbit", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury"], all: (color: (220, 120, 120))),
+        (template: "drop", name: "raw_chicken", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury"], all: (color: (235, 170, 150))),
+        (template: "drop", name: "raw_duck", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury", "fat"], all: (color: (200, 110, 100))),
+        (template: "drop", name: "raw_mutton", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury"], all: (color: (200, 80, 80))),
+        (template: "drop", name: "raw_pork", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury", "fat"], all: (color: (240, 150, 150))),
+        (template: "drop", name: "raw_beef", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury"], all: (color: (190, 50, 50))),
+        (template: "drop", name: "raw_venison", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury", "game"], all: (color: (150, 40, 40))),
+        (template: "drop", name: "raw_bear", tags: ["meat", "raw", "edible", "food:4", "flavour:savoury", "game", "fat"], all: (color: (130, 40, 40))),
+        // Skins and fur.
+        (template: "drop", name: "rabbit_hide", tags: ["hide", "fur", "small"], all: (color: (170, 140, 110))),
+        (template: "drop", name: "hide", tags: ["hide", "leather"], all: (color: (140, 95, 60))),
+        (template: "drop", name: "fox_fur", tags: ["hide", "fur", "warm"], all: (color: (210, 110, 40), rarity: Uncommon)),
+        (template: "drop", name: "wolf_pelt", tags: ["hide", "fur", "warm"], all: (color: (130, 130, 135), rarity: Uncommon)),
+        (template: "drop", name: "bear_pelt", tags: ["hide", "fur", "warm", "thick"], all: (color: (100, 70, 45), rarity: Rare)),
+        (template: "drop", name: "wool", tags: ["fibre", "wool", "warm"], all: (color: (235, 232, 222))),
+        (template: "drop", name: "feather", tags: ["feather", "light"], all: (color: (240, 240, 235))),
+        // Parts.
+        (template: "drop", name: "bone", tags: ["bone", "fertiliser"], all: (color: (230, 225, 205))),
+        (template: "drop", name: "fang", tags: ["tooth", "sharp", "trophy"], all: (color: (240, 236, 220), rarity: Uncommon)),
+        (template: "drop", name: "claw", tags: ["claw", "sharp", "trophy"], all: (color: (60, 50, 45), rarity: Uncommon)),
+        (template: "drop", name: "antler", tags: ["antler", "bone", "trophy"], all: (color: (205, 185, 150), rarity: Uncommon)),
+        (template: "drop", name: "rabbit_foot", tags: ["trophy", "charm", "alchemy:luck"], all: (color: (200, 175, 140), rarity: Rare)),
+        (template: "drop", name: "lard", tags: ["fat", "cooking", "fuel"], all: (color: (245, 240, 225))),
+        (template: "drop", name: "bear_fat", tags: ["fat", "cooking", "fuel", "warm"], all: (color: (240, 225, 190), rarity: Uncommon)),
+        // From monsters.
+        (template: "drop", name: "silk", tags: ["fibre", "silk", "string"], all: (color: (230, 230, 240))),
+        (template: "drop", name: "venom_sac", tags: ["alchemy:poison", "venom"], all: (color: (120, 190, 80), rarity: Uncommon)),
+        (template: "drop", name: "rotten_flesh", tags: ["meat", "rotten", "bait", "edible", "food:1"], all: (color: (120, 130, 80))),
+        // Supernatural.
+        (template: "drop", name: "moonhare_pelt", tags: ["hide", "fur", "aether", "glowing", "alchemy:luminous"], all: (color: (190, 215, 250), rarity: Rare)),
+        (template: "drop", name: "moon_dust", tags: ["aether", "dust", "alchemy:luminous", "alchemy:night_sight"], all: (color: (210, 225, 255), rarity: VeryRare)),
+        (template: "drop", name: "lumen_slime", tags: ["aether", "slime", "glowing", "alchemy:luminous", "alchemy:night_sight"], all: (color: (110, 240, 210), rarity: Uncommon)),
+        (template: "drop", name: "aether_mote", tags: ["aether", "alchemy:aether"], all: (color: (230, 200, 255), rarity: Rare)),
+    ],
+)
