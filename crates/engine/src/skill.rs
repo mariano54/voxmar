@@ -24,6 +24,18 @@ pub struct SkillDef {
     pub title: String,
     /// One line on what it covers.
     pub description: String,
+    /// What the skill opens up as it rises, beyond what content says for itself (each
+    /// crop's level is listed from crops.ron): shown in the skill's guide.
+    #[serde(default)]
+    pub guide: Vec<GuideStep>,
+}
+
+/// A line of a skill's guide: something open from `level` on.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuideStep {
+    pub level: u8,
+    pub text: String,
 }
 
 /// How much experience each level takes.

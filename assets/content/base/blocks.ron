@@ -570,5 +570,14 @@
         (template: "flower", name: "zinnia", tags: ["flower", "savanna", "steppe", "hot", "dye:red", "forage"], all: (color: (230, 60, 50), rarity: Uncommon)),
         (template: "flower", name: "bellflower", tags: ["flower", "meadow", "alpine", "cold", "dye:purple", "forage"], all: (color: (140, 110, 220), rarity: Uncommon)),
         (template: "flower", name: "saxifrage", tags: ["flower", "alpine", "tundra", "cold", "dye:pink", "alchemy:frost_resistance", "forage"], all: (color: (240, 180, 200), rarity: Uncommon)),
+        // Gatherable cave flora.
+        (template: "flower", name: "pale_cap", tags: ["fungus", "cave", "edible", "flavour:savoury", "forage"], all: (color: (220, 216, 206), rarity: Uncommon)),
+        (template: "plant", name: "ember_cap", tags: ["fungus", "cave", "hot", "glowing", "alchemy:fire_resistance", "alchemy:warming", "dye:orange", "forage"], all: (light: 5, color: (240, 120, 30), rarity: Rare)),
+        (template: "plant", name: "rimecap", tags: ["fungus", "cave", "cold", "edible", "alchemy:frost_resistance", "alchemy:cooling", "forage"], all: (color: (180, 210, 230), rarity: Rare)),
+        (template: "plant", name: "cavern_moss", tags: ["groundcover", "cave", "wet", "alchemy:healing", "alchemy:regeneration", "dye:cyan", "forage"], all: (color: (50, 110, 100), rarity: Uncommon)),
+        (template: "plant", name: "lumenwort", tags: ["herb", "cave", "glowing", "alchemy:night_sight", "alchemy:luminous", "forage"], all: (light: 9, color: (110, 230, 200), rarity: Rare)),
+        (template: "flower", name: "paleroot", tags: ["root", "vegetable", "cave", "edible", "flavour:sweet", "forage"], all: (color: (220, 210, 190), rarity: Uncommon)),
+        (template: "plant", name: "echo_bloom", tags: ["flower", "cave", "deep", "wonder", "glowing", "alchemy:aether", "alchemy:clarity", "dye:cyan", "forage"], all: (light: 6, color: (60, 200, 210), rarity: VeryRare)),
+        (template: "plant", name: "prism_lily", tags: ["flower", "cave", "crystal", "wonder", "glowing", "gem", "alchemy:aether", "alchemy:featherfall", "forage"], all: (sound: Glass, light: 10, color: (200, 180, 255), rarity: Legendary)),
     ],
 )

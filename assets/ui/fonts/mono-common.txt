@@ -1,0 +1,475 @@
+// What every monospace font shares: punctuation, symbols, marks and the accented letters
+// made with them, each fitting the five-pixel cell. A font includes this after drawing its
+// letters and digits (`include mono-common.txt`), so the accents land on its own letters.
+
+= space 5
+
+= !
+..#..
+..#..
+..#..
+..#..
+..#..
+.....
+..#..
+= ¡
+.....
+.....
+..#..
+.....
+..#..
+..#..
+..#..
+..#..
+..#..
+= "
+.#.#.
+.#.#.
+= “
+.#.#.
+.#.#.
+= ”
+.#.#.
+.#.#.
+= #
+.#.#.
+.#.#.
+#####
+.#.#.
+#####
+.#.#.
+.#.#.
+= $
+..#..
+.####
+#.#..
+.###.
+..#.#
+####.
+..#..
+= %
+##..#
+##.#.
+...#.
+..#..
+.#...
+.#.##
+#..##
+= &
+.##..
+#..#.
+#.#..
+.#...
+#.#.#
+#..#.
+.##.#
+= '
+..#..
+..#..
+= ‘
+..#..
+..#..
+= ’
+..#..
+..#..
+= (
+...#.
+..#..
+.#...
+.#...
+.#...
+..#..
+...#.
+= )
+.#...
+..#..
+...#.
+...#.
+...#.
+..#..
+.#...
+= *
+.....
+..#..
+#.#.#
+.###.
+#.#.#
+..#..
+= +
+.....
+..#..
+..#..
+#####
+..#..
+..#..
+= ,
+.....
+.....
+.....
+.....
+.....
+..#..
+..#..
+.#...
+= -
+.....
+.....
+.....
+.###.
+= –
+.....
+.....
+.....
+#####
+= —
+.....
+.....
+.....
+#####
+= .
+.....
+.....
+.....
+.....
+.....
+.....
+..#..
+= /
+....#
+....#
+...#.
+..#..
+.#...
+#....
+#....
+= :
+.....
+.....
+..#..
+.....
+.....
+.....
+..#..
+= ;
+.....
+.....
+..#..
+.....
+.....
+.....
+..#..
+..#..
+.#...
+= <
+...#.
+..#..
+.#...
+#....
+.#...
+..#..
+...#.
+= =
+.....
+.....
+#####
+.....
+#####
+= >
+.#...
+..#..
+...#.
+....#
+...#.
+..#..
+.#...
+= ?
+.###.
+#...#
+....#
+...#.
+..#..
+.....
+..#..
+= ¿
+..#..
+.....
+..#..
+.#...
+#....
+#...#
+.###.
+= @
+.###.
+#...#
+#.###
+#.#.#
+#.###
+#....
+.###.
+= [
+.###.
+.#...
+.#...
+.#...
+.#...
+.#...
+.###.
+= \
+#....
+#....
+.#...
+..#..
+...#.
+....#
+....#
+= ]
+.###.
+...#.
+...#.
+...#.
+...#.
+...#.
+.###.
+= ^
+..#..
+.#.#.
+#...#
+= _
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+#####
+= `
+.#...
+..#..
+= {
+...##
+..#..
+..#..
+.#...
+..#..
+..#..
+...##
+= |
+..#..
+..#..
+..#..
+..#..
+..#..
+..#..
+..#..
+..#..
+..#..
+= }
+##...
+..#..
+..#..
+...#.
+..#..
+..#..
+##...
+= ~
+.....
+.....
+.....
+.##.#
+#.##.
+= °
+.#...
+#.#..
+.#...
+= ×
+.....
+.....
+#...#
+.#.#.
+..#..
+.#.#.
+#...#
+= ·
+.....
+.....
+.....
+..#..
+= …
+.....
+.....
+.....
+.....
+.....
+.....
+#.#.#
+= •
+.....
+.....
+.###.
+.###.
+.###.
+= ◆
+.....
+..#..
+.###.
+#####
+.###.
+..#..
+= ◇
+.....
+..#..
+.#.#.
+#...#
+.#.#.
+..#..
+= ▸
+.....
+.#...
+.##..
+.###.
+.##..
+.#...
+= ◂
+.....
+...#.
+..##.
+.###.
+..##.
+...#.
+= ▴
+.....
+.....
+..#..
+.###.
+#####
+= ▾
+.....
+.....
+#####
+.###.
+..#..
+= ←
+.....
+.....
+..#..
+.#...
+#####
+.#...
+..#..
+= →
+.....
+.....
+..#..
+...#.
+#####
+...#.
+..#..
+= ↑
+..#..
+.###.
+#.#.#
+..#..
+..#..
+..#..
+..#..
+= ↓
+..#..
+..#..
+..#..
+..#..
+#.#.#
+.###.
+..#..
+= ↔
+.....
+.....
+.#.#.
+#...#
+#####
+#...#
+.#.#.
+= ♥
+.....
+.#.#.
+#####
+#####
+.###.
+..#..
+
+// Marks, and the accented letters made with them.
+mark acute
+..#
+.#.
+mark grave
+#..
+.#.
+mark circumflex
+.#.
+#.#
+mark tilde
+.##.#
+#.##.
+mark diaeresis
+...
+#.#
+mark ring
+.#.
+#.#
+mark cedilla below
+.#.
+#..
+
+compose á a acute
+compose à a grave
+compose â a circumflex
+compose ã a tilde
+compose ä a diaeresis
+compose å a ring
+compose é e acute
+compose è e grave
+compose ê e circumflex
+compose ë e diaeresis
+compose í ı acute
+compose ì ı grave
+compose î ı circumflex
+compose ï ı diaeresis
+compose ó o acute
+compose ò o grave
+compose ô o circumflex
+compose õ o tilde
+compose ö o diaeresis
+compose ú u acute
+compose ù u grave
+compose û u circumflex
+compose ü u diaeresis
+compose ñ n tilde
+compose ý y acute
+compose ÿ y diaeresis
+compose ç c cedilla
+compose Á A acute
+compose À A grave
+compose Â A circumflex
+compose Ã A tilde
+compose Ä A diaeresis
+compose Å A ring
+compose É E acute
+compose È E grave
+compose Ê E circumflex
+compose Ë E diaeresis
+compose Í I acute
+compose Ì I grave
+compose Î I circumflex
+compose Ï I diaeresis
+compose Ó O acute
+compose Ò O grave
+compose Ô O circumflex
+compose Õ O tilde
+compose Ö O diaeresis
+compose Ú U acute
+compose Ù U grave
+compose Û U circumflex
+compose Ü U diaeresis
+compose Ñ N tilde
+compose Ý Y acute
+compose Ç C cedilla

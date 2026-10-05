@@ -377,3 +377,56 @@ fn draw_fields(
         }
     }
 }
+
+/// A recessed meter that fills with `piece` and reads "15/20" in the middle: health,
+/// hunger, a skill's progress. Set it with [`set_meter`].
+#[derive(Component)]
+pub struct Meter {
+    fill: Entity,
+    label: Entity,
+}
+
+/// A meter `width` screen pixels wide.
+pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece: Piece, width: Val, marker: impl Bundle) -> Entity {
+    let well = Node { width, height: Val::Px(10.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
+    let mut meter = parent.spawn((well, Piece::Well.image(), marker));
+    let (mut fill, mut label) = (Entity::PLACEHOLDER, Entity::PLACEHOLDER);
+    meter.with_children(|well| {
+        fill = well.spawn((Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() }, piece.image())).id();
+        let centre = Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        };
+        label = well.spawn(centre).with_children(|centre| {
+            centre.spawn(shadowed(font, "", BODY, TEXT));
+        }).id();
+    });
+    meter.insert(Meter { fill, label });
+    meter.id()
+}
+
+/// Fills a meter to `share` (0..1) and writes `text` over it.
+pub fn set_meter<F: bevy::ecs::query::QueryFilter>(
+    meter: &Meter,
+    share: f32,
+    text_value: &str,
+    nodes: &mut Query<&mut Node, F>,
+    children: &Query<&Children>,
+    texts: &mut Query<&mut Text>,
+) {
+    if let Ok(mut node) = nodes.get_mut(meter.fill) {
+        let width = Val::Percent(share.clamp(0.0, 1.0) * 100.0);
+        if node.width != width {
+            node.width = width;
+        }
+    }
+    if let Some(mut text) = children.get(meter.label).ok().and_then(|c| c.first()).and_then(|&t| texts.get_mut(t).ok())
+        && text.0 != text_value
+    {
+        text_value.clone_into(&mut text.0);
+    }
+}
