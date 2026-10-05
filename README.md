@@ -32,6 +32,13 @@ stepping the camera 4 cm sideways, logs the share of pixels that changed by more
 levels, and marks them in red in `OUT-flicker.png`.
 `--flicker-still` instead keeps the camera still and lets the game run on one 60 fps frame
 between the shots (the sun and wind moving), as shadows and leaves flicker over time.
+`--gate DIR` plays a scripted session headless and checks it, saving its shots and report in
+DIR, and `--server-lag MS` makes every tick of the integrated server take that much longer,
+as on a busy machine (see docs/quality.md).
+
+Before landing on main, run `tools/gate` (build, tests and that session; about two minutes
+warm); for changes that can cost frame time, `tools/bench` compares frame times with main's
+on a quiet machine. Both are described in docs/quality.md.
 
 The title screen, over a slowly turning view of a demo world, leads to Singleplayer (saved
 worlds, most recently played first, to play, create or delete), Multiplayer (join by address;

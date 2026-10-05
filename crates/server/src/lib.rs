@@ -52,11 +52,22 @@ pub struct ServerConfig {
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
     /// only.
     pub world: Option<PathBuf>,
+    /// Extra time every tick takes, to see how clients cope with a server that runs
+    /// behind, as on a busy machine. Zero but in tests.
+    pub tick_lag: Duration,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { seed: 0x5eed, view_distance: 32, allow_flight: true, local_admin: true, admins: Vec::new(), world: None }
+        Self {
+            seed: 0x5eed,
+            view_distance: 32,
+            allow_flight: true,
+            local_admin: true,
+            admins: Vec::new(),
+            world: None,
+            tick_lag: Duration::ZERO,
+        }
     }
 }
 
@@ -359,6 +370,7 @@ impl Server {
             let now = Instant::now();
             if now >= next_tick {
                 self.tick();
+                std::thread::sleep(self.config.tick_lag);
                 next_tick += tick_length;
                 if now > next_tick + tick_length * 10 {
                     tracing::warn!("server is running behind, skipping ticks");

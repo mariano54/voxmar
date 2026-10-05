@@ -14,7 +14,10 @@
 //! (draw to a real window and shoot that, for what only a window has, such as the render
 //! scale; with the saved settings when `VOXMAR_CONFIG` is set), `--flicker` or
 //! `--flicker-still` (measure shimmer; see capture.rs) or
-//! `--screen title|worlds|create|join|settings` (capture a menu screen instead).
+//! `--screen title|worlds|create|join|settings` (capture a menu screen instead). `--gate DIR`
+//! plays a scripted session headless and checks it (see gate.rs), saving its shots and
+//! report in DIR. `--server-lag MS` makes every tick of the integrated server take that
+//! much longer, as on a busy machine (gate runs default to `gate::SERVER_LAG`).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
 //! `--fov DEGREES`, `--weather KIND[:INTENSITY]` (show that instead of the server's
@@ -27,6 +30,7 @@ mod ambience;
 mod breaking;
 mod capture;
 mod drops;
+mod gate;
 mod hud;
 mod interact;
 mod keys;
@@ -78,6 +82,8 @@ struct Options {
     weather: Option<String>,
     commands: Vec<String>,
     capture: Option<std::path::PathBuf>,
+    gate: Option<std::path::PathBuf>,
+    server_lag: Option<u64>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
     wait: f32,
@@ -108,6 +114,8 @@ fn parse_options() -> Result<Options, String> {
         weather: None,
         commands: Vec::new(),
         capture: None,
+        gate: None,
+        server_lag: None,
         pose: None,
         flight: None,
         wait: 0.0,
@@ -141,6 +149,8 @@ fn parse_options() -> Result<Options, String> {
             "--command" => options.commands.push(value()?),
             "--no-music" => options.music = false,
             "--capture" => options.capture = Some(value()?.into()),
+            "--gate" => options.gate = Some(value()?.into()),
+            "--server-lag" => options.server_lag = Some(value()?.parse().map_err(|e| format!("--server-lag: {e}"))?),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
             "--wait" => options.wait = value()?.parse().map_err(|e| format!("--wait: {e}"))?,
             "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
@@ -179,6 +189,8 @@ fn parse_options() -> Result<Options, String> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = parse_options()?;
+    // A gate run is a capture that plays and checks a session rather than taking a shot.
+    let headless = options.capture.is_some() || options.gate.is_some();
     // Leave a core for the main and render threads; worldgen, lighting and meshing share
     // the rest, at a lower priority so bursts of streaming never delay a frame.
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(2).max(2));
@@ -197,13 +209,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.
-    let reproducible = options.capture.is_some() && std::env::var_os("VOXMAR_CONFIG").is_none();
+    let reproducible = headless && std::env::var_os("VOXMAR_CONFIG").is_none();
     let mut settings = if reproducible { Settings::default() } else { Settings::load() };
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
     // Captures run the ambience without playing it, so its log shows what would play.
-    if options.capture.is_some() {
+    if headless {
         settings.ambience_volume = 0;
     }
     let settings = settings.clamped();
@@ -217,7 +229,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Captures make no sound, nor does any run with VOXMAR_MUTE set: games launched while
     // developing would otherwise play over whoever is at the machine. Such runs never open
     // an audio device at all (see `silence`).
-    let muted = options.capture.is_some() || std::env::var_os("VOXMAR_MUTE").is_some();
+    let muted = headless || std::env::var_os("VOXMAR_MUTE").is_some();
     // Our few Bevy meshes (the sky, rain, cracks, other players) are batched on the CPU:
     // building their instances on the GPU takes four compute passes and two checks of
     // indirect draws a frame, and every pass costs about 0.2 ms on Metal however little it
@@ -228,7 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if muted {
         plugins = plugins.disable::<bevy::audio::AudioPlugin>();
     }
-    if options.capture.is_some() && !options.windowed {
+    if headless && !options.windowed {
         // Headless: render offscreen as fast as possible, independent of any display.
         app.add_plugins((
             plugins
@@ -279,23 +291,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else if let Some(address) = &options.connect {
         app.insert_resource(menu::connect(address));
         Screen::Join
-    } else if options.world.is_some() || options.capture.is_some() {
+    } else if options.world.is_some() || headless {
         let world = match &options.world {
             Some(name) => Some(menu::worlds_dir().ok_or("no configuration directory to keep worlds in")?.join(name)),
             None => None,
         };
-        let config = ServerConfig { seed: options.seed, world, ..ServerConfig::default() };
+        let gate_lag = options.gate.as_ref().map(|_| gate::SERVER_LAG);
+        let tick_lag = options.server_lag.map(Duration::from_millis).or(gate_lag).unwrap_or_default();
+        let config = ServerConfig { seed: options.seed, world, tick_lag, ..ServerConfig::default() };
         app.insert_resource(launch.singleplayer(config)?);
         Screen::InGame
     } else {
         Screen::Title
     };
     app.insert_resource(FirstScreen(first)).insert_resource(launch);
-    if options.music && options.capture.is_none() {
+    if options.music && !headless {
         app.add_plugins(music::MusicPlugin);
     }
     app.add_plugins(ambience::AmbiencePlugin);
-    if let Some(path) = options.capture {
+    if let Some(dir) = options.gate {
+        std::fs::create_dir_all(&dir)?;
+        app.add_plugins(gate::GatePlugin { dir });
+    } else if let Some(path) = options.capture {
         app.add_plugins(capture::CapturePlugin {
             path,
             pose: options.pose,
@@ -312,7 +329,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             windowed: options.windowed,
         });
     }
-    app.run();
+    // An error exit (a failed gate, or wgpu reporting a rendering error, which Bevy quits
+    // on) must reach whoever ran the game.
+    if let AppExit::Error(code) = app.run() {
+        std::process::exit(code.get().into());
+    }
     Ok(())
 }
 

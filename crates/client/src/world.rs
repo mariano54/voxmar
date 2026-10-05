@@ -232,6 +232,35 @@ impl ClientWorld {
         self.block(pos).is_none_or(|b| self.registry.info(b).solid)
     }
 
+    /// Whether `pos` waits to be meshed, or is being meshed.
+    pub fn meshing(&self, pos: ColumnPos) -> bool {
+        self.dirty.contains(&pos) || self.in_flight.contains(&pos)
+    }
+
+    /// Checks that the renderer has `pos` as its blocks are now: no remesh is waiting or
+    /// running, and meshing it again gives exactly what was handed over. `--gate` runs this
+    /// after edits, to catch an edit the client knows of that never reaches the screen.
+    pub fn check_meshed(&self, pos: ColumnPos) -> Result<(), String> {
+        if self.meshing(pos) {
+            return Err(format!("column {:?} is still waiting to be meshed", pos.0));
+        }
+        let columns = self.neighborhood(pos).ok_or_else(|| format!("column {:?} lacks neighbours to mesh with", pos.0))?;
+        let detail = *self.details.get(&pos).ok_or_else(|| format!("column {:?} was never meshed", pos.0))?;
+        let region = LitRegion::compute(&self.registry, &columns);
+        for cy in 0..COLUMN_CHUNKS {
+            let fresh = ChunkResult::new(mesh_chunk(&self.registry, &region, &columns[4], cy, detail));
+            let shown = self.chunks.get(&pos.chunk(cy)).ok_or_else(|| format!("chunk {cy} of column {:?} has no mesh", pos.0))?;
+            let stale = PASSES.iter().zip(&fresh.passes).zip(shown.hashes).find(|((_, fresh), shown)| fresh.hash != *shown);
+            if let Some(((pass, _), _)) = stale {
+                return Err(format!("chunk {cy} of column {:?} shows an old {pass:?} mesh", pos.0));
+            }
+            if fresh.blades_hash != shown.blades_hash {
+                return Err(format!("chunk {cy} of column {:?} shows old grass blades", pos.0));
+            }
+        }
+        Ok(())
+    }
+
     fn neighborhood(&self, pos: ColumnPos) -> Option<Neighborhood> {
         let mut columns = Vec::with_capacity(9);
         for dz in -1..=1 {
