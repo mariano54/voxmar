@@ -280,7 +280,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
 
     // Grown ripe, then broken: its harvest pops out and its experience is earned.
-    assert_eq!(client.ok("/grow ripe"), "Grew 1 crops.");
+    assert_eq!(client.ok("/grow ripe"), "Grew 1 crop.");
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
@@ -433,8 +433,8 @@ fn game_mode_decides_flight_and_the_host_is_admin() {
         let mut client = Client::join_with(config());
         assert_eq!((client.allow_flight, client.admin), (creative, true), "{mode:?}");
         // An admin can switch modes, and the player keeps theirs.
-        let other = if creative { "survival" } else { "creative" };
-        assert_eq!(client.ok(&format!("/gamemode {other}")), format!("You are now in {other} mode."));
+        let (other, name) = if creative { ("survival", "Survival") } else { ("creative", "Creative") };
+        assert_eq!(client.ok(&format!("/gamemode {other}")), format!("You are now in {name} mode."));
         assert_eq!(client.allow_flight, !creative);
         drop(client);
         let client = Client::join_with(config());

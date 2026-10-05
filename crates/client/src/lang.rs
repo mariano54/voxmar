@@ -174,6 +174,17 @@ mod tests {
                 names.push((def.name.clone(), locale.block(def)));
             }
         }
+        // Biomes, and the kinds of weather, effects and winds, as the console names them.
+        let world = voxmar_worldgen::WorldContent::load(content).unwrap();
+        let mut own: Vec<(String, String)> =
+            world.biomes.iter().filter(|biome| first_party(&biome.name)).map(|biome| (def_key("biome", &biome.name), biome.name.clone())).collect();
+        let weather = &content.weather;
+        let named = weather.presets().iter().map(|p| ("kind", p.short_name())).chain(weather.winds().iter().map(|w| ("wind", w.short_name())));
+        own.extend(named.chain(weather.effects().iter().map(|e| ("effect", e.short_name()))).map(|(what, name)| (format!("weather.{what}.{name}"), name.replace('_', " "))));
+        for (key, name) in own {
+            let words = voxmar_engine::lang::Words::Own(key.clone(), name);
+            names.push((key, locale.render(&words, blocks)));
+        }
         for id in content.skills.ids() {
             let def = content.skills.get(id);
             names.push((def.name.clone(), locale.skill(def)));
