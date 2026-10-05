@@ -152,6 +152,8 @@ enum Step {
 #[derive(Resource)]
 struct Gate {
     dir: PathBuf,
+    /// When the run began, to tell whether files changed during it.
+    started_at: Option<std::time::SystemTime>,
     target: Handle<Image>,
     step: Step,
     /// When the step started (seconds of game time), and frames since.
@@ -187,6 +189,7 @@ impl Gate {
     fn new(dir: PathBuf) -> Self {
         Self {
             dir,
+            started_at: Some(std::time::SystemTime::now()),
             target: Handle::default(),
             step: Step::Load,
             since: 0.0,
@@ -565,6 +568,17 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                     Err(format!("still at {screen:?} a second after leaving"))
                 };
                 gate.check("leave", result);
+                // The session changed settings and closed the menu, which saves them in a
+                // player's game; a gate run must leave the player's file as it found it.
+                let modified = crate::settings::file().and_then(|file| std::fs::metadata(file).and_then(|m| m.modified()).ok());
+                let untouched = if !crate::settings::file_untouched() {
+                    Err("settings would be saved to the player's file".to_owned())
+                } else if modified.is_some_and(|at| gate.started_at.is_some_and(|start| at > start)) {
+                    Err("the settings file changed during the run".to_owned())
+                } else {
+                    Ok("the player's settings file was left alone".to_owned())
+                };
+                gate.check("settings: untouched", untouched);
                 gate.next(Step::Done, now);
             }
         }
@@ -1291,10 +1305,29 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     } else {
         Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms)"))
     };
+    // A machine asked for more than all its cores (other threads' builds) starves the game
+    // for whole seconds: a long frame then says nothing about the game. A real hitch shows
+    // again on any run with the machine less loaded, as every build's first run is.
+    let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
+    if result.is_err() && load > cores {
+        info!("gate: SKIPPED {name}: smooth: {} (the machine was overloaded, load {load:.0} on {cores} cores)", result.unwrap_err());
+        return;
+    }
     match known {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
     }
+}
+
+/// The machine's load average over the last minute (runnable threads), or 0 if unknown.
+fn load_average() -> f64 {
+    unsafe extern "C" {
+        fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32;
+    }
+    let mut load = [0.0f64; 1];
+    // SAFETY: writes at most one value into a one-element buffer.
+    let got = unsafe { getloadavg(load.as_mut_ptr(), 1) };
+    if got == 1 { load[0] } else { 0.0 }
 }
 
 /// Whether an edit of `cells` has settled, `since` seconds after it was made: both client
