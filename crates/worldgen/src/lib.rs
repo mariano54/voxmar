@@ -255,7 +255,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 17;
+    pub const VERSION: u32 = 20;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -1530,19 +1530,25 @@ mod tests {
             let middle = &columns[4];
             let origin = first.offset(1, 1).origin();
             let area = world.geo_area(origin.x, origin.z, 32);
-            let mut solid_tops = 0;
+            // Columns a cave mouth, sinkhole or ravine opens to the sky are not counted.
+            let geology = crate::geology::GeoGrid::new(&world, (origin.x - 2, origin.z - 2), 36);
+            let caves = world.caves.column(&geology, origin, voxmar_engine::coords::WORLD_HEIGHT - 1);
+            let (mut solid_tops, mut counted) = (0, 0);
             for z in 0..32 {
                 for x in 0..32 {
                     let (wx, wz) = (origin.x + x, origin.z + z);
                     let top = area[(z * 32 + x) as usize].height;
                     let alone = world.geo(wx, wz);
                     assert_eq!(top, alone.height, "seed {seed}: the top at ({wx}, {wz}): {:?} alone, {:?} in the area", alone.crag, area[(z * 32 + x) as usize].crag);
-                    solid_tops += !middle.block(IVec3::new(x, top, z)).is_air() as usize;
+                    if !caves.surface_open(wx, wz, &alone) {
+                        counted += 1;
+                        solid_tops += !middle.block(IVec3::new(x, top, z)).is_air() as usize;
+                    }
                     let solid = |y: i32| !middle.block(IVec3::new(x, y, z)).is_air();
                     overhangs += (top - 8..top).any(|y| !solid(y) && solid(y + 1)) as usize;
                 }
             }
-            assert!(solid_tops > 32 * 32 * 95 / 100, "seed {seed}: {solid_tops} columns with their top block in place");
+            assert!(solid_tops > counted * 95 / 100, "seed {seed}: {solid_tops} of {counted} columns with their top block in place");
         }
         assert!(overhangs > 0, "no overhangs on any range");
     }
@@ -3013,7 +3019,7 @@ mod tests {
             );
         }
         let mut kinds: Vec<_> = kinds.into_iter().collect();
-        kinds.sort_by(|a, b| b.1.cmp(&a.1));
+        kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
         println!("lonely: {:?}", &kinds[..kinds.len().min(12)]);
         if env("MAP").is_some() {
             for (k, b) in legend.iter().enumerate() {

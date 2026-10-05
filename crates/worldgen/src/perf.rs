@@ -243,7 +243,7 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0xb0027b83b39c4c10, 0xc54a7e8d3ea33ea0, 0x79441ebcb8e205c3];
+const EXPECTED: [u64; 3] = [0x100ed37035f7925c, 0xaf504c0c7031796e, 0x219976cd3f59c6c5];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -268,7 +268,7 @@ fn output_is_unchanged() {
 }
 
 /// The hash of the light over three 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
-const LIGHT: u64 = 0xa9c8f9a5df406ee3;
+const LIGHT: u64 = 0x6171315d22b1fc91;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
 /// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on

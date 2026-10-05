@@ -596,15 +596,21 @@ impl<'a> GeoGrid<'a> {
         }
     }
 
+    /// The height of the ground at (x, z), without copying the rest of its sample.
+    fn height(&self, x: i32, z: i32) -> i32 {
+        let (i, j) = (x - self.min.0, z - self.min.1);
+        if (0..self.size).contains(&i) && (0..self.size).contains(&j) { self.samples[(j * self.size + i) as usize].height } else { self.get(x, z).height }
+    }
+
     /// How steep the ground is at (x, z) (see `Site::steepness`).
     pub fn steepness(&self, x: i32, z: i32) -> f32 {
-        crate::steepness(|dx, dz| self.get(x + dx, z + dz).height)
+        crate::steepness(|dx, dz| self.height(x + dx, z + dz))
     }
 
     /// Steepest height step from (x, z) to its four neighbours, in blocks.
     pub fn slope(&self, x: i32, z: i32) -> i32 {
-        let height = self.get(x, z).height;
-        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.get(x + dx, z + dz).height - height).abs()).max().unwrap_or(0)
+        let height = self.height(x, z);
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.height(x + dx, z + dz) - height).abs()).max().unwrap_or(0)
     }
 }
 

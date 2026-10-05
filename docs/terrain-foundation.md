@@ -635,6 +635,42 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
 4. **Shapes into the router.** Every shape as a gated term (section 6.4); `Piece`, `sculpt`
    and the standalone radial code are deleted. *Done when:* the `SHAPES=1` preview shows no
    circular outline, and each shape has a capture next to its reference.
+
+   *As built:* the 3D pieces are gone (`Piece`, `Anchors`, `sculpt`, `Overworld::pieces`,
+   leaning spires, the lone mountain), and every shape is a term of the land. Towers, spires
+   and sea stacks rise where a warped noise passes a threshold that falls in clusters, so
+   each outline is ragged and some merge into ridges. Arches are fins along the zero line
+   of a noise, full height from halfway into their climate, with a window under them where
+   a second noise rises (`Shaped::window`): generation opens it from the fin's foot and
+   always leaves four blocks of fin above it, as the land eased the fin, and never beside
+   water. Volcanoes are the one shape still placed around a centre, as a volcano is: on a
+   jittered grid, only on land, gathered into volcanic fields (regions of the same kind of
+   mask the rarer shapes use, about one cone per fifteen square kilometres overall in a
+   moderately volcanic world), with breached craters and shallow gullies. Their distance
+   from the vent is measured through a domain warp a third of their radius deep, which
+   bends the outline into irregular lobes. (The old outline wandered with the angle, which
+   drew a starburst on the relief map.) Fields of cones on terrain shaped by the router's
+   rarity fields (R in section 6.1) are left for step 6.
+
+   Surfaces in the same step, after the step-3 captures showed gentle range slopes as a
+   checkerboard of pale rock, grass and dirt: slope rules read `Site::steepness`, the
+   gradient over four blocks averaged across three rows, instead of the largest single step,
+   so a stepped slope reads as the even slope it is; the per-block share of the dither and
+   mix values fell from 45% and 20% to 4% and 3%, so materials meet along ragged edges of
+   patches tens of blocks across; soil slopes break into coarse dirt and rock only past
+   steepness 1.3 and 1.8; and the risers of steep, stepped soil show the province's rock
+   beds (`Fill::Beds`) under a lip of the biome's ground. Cliffs go by steepness too.
+   Measured with `surface_patches` on gentle ground (steepness under 0.7) of the three
+   step-3 range views of seed 7, the share of top blocks unlike three or four of their
+   neighbours fell from 22.5% to 2.8% (over the ridge), 18.3% to 2.6% (along the spine) and
+   13.2% to 7.9% (below the crest), and of neighbours that differ from 22–34% to 10–15%.
+   The speckle left is mostly the biomes' own mixed grounds (podzol with coarse or rooted
+   dirt), which is content.
+   Cost, in instructions against main 80eb200 on the same world: +3.9% for generation
+   (`generation_stages`) and +6.0% for the first column (`first_column`). Most of it is
+   steepness, which reads a two-block border around each column, and the exact 5 × 5
+   neighbourhood `Sampler::site` now samples, which the spawn search calls thousands of
+   times.
 5. **Gorges and caves.** Slot gorges from rivers, random-walk ravines retired, cave
    entrances and aquifers on the density. *Done when:* gorge captures look like the
    reference creek gorge (`0740_rocky-gorge-creek.png`), caves stay contained.

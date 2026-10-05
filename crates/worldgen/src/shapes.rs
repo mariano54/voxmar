@@ -418,10 +418,18 @@ impl Shapes {
         if dx.abs() >= reach || dz.abs() >= reach || dx.hypot(dz) >= reach {
             return None;
         }
+        // Outside the shape's regions (a volcano's fields), before the dearer climate.
+        let region = match &shape.region {
+            Some((noise, share)) => shape.region_share(*share, noise.get_noise_2d(centre[0], centre[1])),
+            None => 1.0,
+        };
+        if region <= 0.0 {
+            return None;
+        }
         let regional = (ground.regional)(centre[0] as i32, centre[1] as i32);
         let fields = [regional.temperature(), regional.moisture(), regional.continentalness, regional.erosion];
         // On land: a cone rising from the sea would show as a ring of reefs.
-        let weight = shape.weight(centre[0], centre[1], &fields, &regional) * smoothstep(0.05, 0.25, regional.continentalness);
+        let weight = region * shape.climate_weight(centre[0], centre[1], &fields, &regional) * smoothstep(0.05, 0.25, regional.continentalness);
         (weight > 0.2).then_some(Standalone { centre, cell: [cx, cz], units, weight })
     }
 
@@ -496,7 +504,8 @@ impl Shape {
     }
 
     /// How strongly the shape rises at a position, 0 ..= 1, from its climate gates, rock
-    /// province and rarity.
+    /// province and rarity. (Generation weighs them apart, the cheaper first.)
+    #[cfg(test)]
     fn weight(&self, x: f32, z: f32, fields: &[f32; 4], regional: &Regional) -> f32 {
         let weight = self.climate_weight(x, z, fields, regional);
         match &self.region {
