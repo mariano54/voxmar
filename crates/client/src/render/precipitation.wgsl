@@ -132,10 +132,15 @@ fn dust_tint() -> vec3<f32> {
     return mix(vec3(1.0), color, 0.45);
 }
 
+// The least light rain and snow catch: on a dark night the land goes nearly black, but
+// falling water still shows against it, as it does to the eye, lit by what little light
+// there is from everywhere at once.
+const NIGHT_GLOW = vec3(0.022, 0.026, 0.034);
+
 // The colour of rain: the light it falls in, cooled, and half the haze, so it matches
-// the sky it falls from.
+// the sky it falls from; never darker than `NIGHT_GLOW`.
 fn rain_color() -> vec3<f32> {
-    return mix(params.light.rgb * vec3(1.15, 1.2, 1.3), params.haze.rgb * 1.1, 0.5);
+    return max(mix(params.light.rgb * vec3(1.15, 1.2, 1.3), params.haze.rgb * 1.1, 0.5), NIGHT_GLOW);
 }
 
 fn project(world: vec3<f32>) -> vec4<f32> {
@@ -657,7 +662,7 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
         top = tall;
         opacity = strength * radius / drawn;
         // Ice stays white even under a storm's gloom.
-        out.color = vec4(select(params.light.rgb * tint * brightness, max(params.light.rgb * brightness, vec3(0.8)), hailstone), 0.0);
+        out.color = vec4(select(max(params.light.rgb, NIGHT_GLOW) * tint * brightness, max(params.light.rgb * brightness, vec3(0.8)), hailstone), 0.0);
         out.kind = kind;
     } else {
         // Raindrops; and drizzle, finer, slower and blown further by the wind.
