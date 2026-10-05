@@ -115,6 +115,8 @@ impl LocalPlayer {
 #[derive(Resource, Default)]
 pub struct UiState {
     pub inventory_open: bool,
+    /// The character screen: skills, health, hunger and effects.
+    pub character_open: bool,
     /// The settings menu.
     pub menu_open: bool,
     /// The chat and command line.
@@ -122,7 +124,7 @@ pub struct UiState {
     pub cursor_locked: bool,
 }
 
-/// Esc closes the console or the inventory, or toggles the menu. The mouse is free while a
+/// Esc closes the console, the inventory or the character screen, or toggles the menu. The mouse is free while a
 /// screen is open, grabbed again when it closes, and grabbed by clicking into the window.
 /// Without a window (`--gate`) all of it works the same, but for grabbing the pointer.
 fn grab_cursor(
@@ -136,13 +138,14 @@ fn grab_cursor(
     if keys.just_pressed(KeyCode::Escape) {
         if ui.console_open {
             ui.console_open = false;
-        } else if ui.inventory_open {
+        } else if ui.inventory_open || ui.character_open {
             ui.inventory_open = false;
+            ui.character_open = false;
         } else {
             ui.menu_open = !ui.menu_open;
         }
     }
-    let screen_open = ui.inventory_open || ui.menu_open || ui.console_open || player.dead;
+    let screen_open = ui.inventory_open || ui.character_open || ui.menu_open || ui.console_open || player.dead;
     let want_locked = !screen_open && (ui.cursor_locked || *screen_was_open || mouse.just_pressed(MouseButton::Left));
     *screen_was_open = screen_open;
     let changed = want_locked != ui.cursor_locked;
