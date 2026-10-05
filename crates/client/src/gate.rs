@@ -928,12 +928,13 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         0 => {
             // A clear pad of its own beside the test ground: stone underfoot, air above, so
             // nothing the earlier steps built stands between the player and the creatures.
-            let pad = gate.feet + IVec3::new(0, 0, 12);
+            let pad = gate.feet + IVec3::new(0, 0, 14);
             let (x, y, z) = (pad.x, pad.y, pad.z);
             let net = world.resource::<Net>();
-            net.command(&format!("fill {} {} {} {} {} {} stone", x - 4, y - 1, z - 4, x + 4, y - 1, z + 4));
-            net.command(&format!("fill {} {y} {} {} {} {} air", x - 4, z - 4, x + 4, y + 3, z + 4));
-            net.command(&format!("tp {} {y} {}", x as f32 + 0.5, z as f32 + 3.5));
+            // Walled two high, so nothing wanders off the edge.
+            net.command(&format!("fill {} {} {} {} {} {} stone", x - 6, y - 1, z - 6, x + 6, y + 1, z + 6));
+            net.command(&format!("fill {} {y} {} {} {} {} air", x - 5, z - 5, x + 5, y + 3, z + 5));
+            net.command(&format!("tp {} {y} {}", x as f32 + 0.5, z as f32 + 4.5));
             net.command("time set noon");
             gate.advance(now);
         }
@@ -942,10 +943,10 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             look(world, 0.0, -25.0);
             gate.count_before = item_count(world, CREATURE_DROP);
             let net = world.resource::<Net>();
-            let pad = gate.feet + IVec3::new(0, 0, 12);
-            net.command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z));
-            net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 2, pad.y, pad.z - 2));
-            net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 2, pad.y, pad.z - 2));
+            let pad = gate.feet + IVec3::new(0, 0, 14);
+            net.command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z + 1));
+            net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 3, pad.y, pad.z - 4));
+            net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 3, pad.y, pad.z - 4));
             gate.advance(now);
         }
         2 => {
