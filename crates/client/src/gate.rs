@@ -153,6 +153,8 @@ enum Step {
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
     /// over picks up.
     Strike,
+    /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory.
+    Cook,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
@@ -606,6 +608,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
+        Step::Cook => cook(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -1114,7 +1117,62 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("no {CREATURE_DROP} picked up after the kill"))
                 };
                 gate.check("creature drops", result);
+                gate.next(Step::Cook, now);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
+/// comes back as cooked rabbit or, at a low Cooking level, sometimes burnt.
+fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let fire = gate.feet + IVec3::new(0, 0, 14);
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
+            net.command("give raw_rabbit 3");
+            gate.advance(now);
+        }
+        1 => {
+            let client = world.resource::<ClientWorld>();
+            let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:campfire")) else {
+                gate.check("cook", Err("no raw rabbit or campfire in the content".into()));
                 gate.next(Step::Gorge, now);
+                return;
+            };
+            let lit = client.block(fire) == Some(campfire);
+            let slot = {
+                let player = world.resource::<LocalPlayer>();
+                (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == raw))
+            };
+            match (lit, slot) {
+                (true, Some(slot)) => {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                    gate.count_before = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+                    gate.advance(now);
+                }
+                _ if in_phase > 10.0 => {
+                    gate.check("cook", Err(format!("the campfire ({lit}) or raw rabbit in the hotbar ({slot:?}) never came")));
+                    gate.next(Step::Gorge, now);
+                }
+                _ => {}
+            }
+        }
+        2 => {
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let cooked = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+            if cooked > gate.count_before {
+                mouse(world, MouseButton::Right, false);
+                gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
+                gate.next(Step::Gorge, now);
+            } else if in_phase > 15.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
+                gate.next(Step::Gorge, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
         _ => {}

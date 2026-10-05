@@ -3,6 +3,7 @@
 
 mod actions;
 mod commands;
+mod cooking;
 mod creatures;
 mod farm;
 mod fluids;

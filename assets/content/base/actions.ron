@@ -5,5 +5,7 @@
     actions: [
         (name: "plant", duration: Instant, requires: [Alive, InReach, HoldingSeed, Plantable, SkillLevel], effects: [Plant]),
         (name: "pick", duration: Instant, requires: [Alive, InReach, Ripe], effects: [Pick]),
+        // Cooking what is in hand on a station that cooks it (cooking.ron).
+        (name: "cook", duration: Instant, requires: [Alive, InReach, Cookable, CookingLevel], effects: [Cook]),
     ],
 )
