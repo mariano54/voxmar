@@ -36,6 +36,7 @@ use crate::climate::{self, Climate, LAPSE_RATE, Regional};
 use crate::dials::WorldDials;
 use fastnoise_lite::FractalType;
 
+use crate::density::Crag;
 use crate::geology::{Corners, GeoSample, Geology, Landform, noise, smoothstep};
 use crate::stage::{self, Stage};
 use crate::{SEA_LEVEL, rng};
@@ -464,6 +465,13 @@ impl Rivers {
                 body: if height < SEA_LEVEL && carved.water.is_none() { Body::Sea } else { body },
                 current: if submerged { carved.current } else { None },
                 cavity: carved.cavity,
+                // Rock breaks up into crags only away from water, which the hollows would
+                // drain, and over the sea and the water nearby.
+                crag: Crag {
+                    surface: carved.ground,
+                    amplitude: if carved.near.is_some() || carved.wet > 0.0 || carved.cavity.is_some() { 0.0 } else { ground.crag },
+                    floor: water.max(SEA_LEVEL) + 1,
+                },
                 form: ground.form,
                 trail: None,
             },
@@ -471,12 +479,17 @@ impl Rivers {
         }
     }
 
-    /// The geology of one column, with its rivers and lakes.
-    pub fn sample(&self, land: Stages, x: i32, z: i32) -> GeoSample {
+    /// The geology of one column, with its rivers and lakes; with `crags`, a crag's height
+    /// is the top of its density rather than its preliminary surface.
+    pub fn sample(&self, land: Stages, x: i32, z: i32, crags: bool) -> GeoSample {
         let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
         let mut corners = Corners::default();
         let ground = land.geology.lands_with(&[(x, z)], &mut corners)[0];
-        self.sealed(land, &tiers, x, z, ground, &mut corners)
+        let mut sample = [self.sealed(land, &tiers, x, z, ground, &mut corners)];
+        if crags {
+            crag_tops(land.geology, &mut sample, |_| (x, z));
+        }
+        sample[0]
     }
 
     /// One column with both tiers carved in and sealed: the same whatever the columns
@@ -497,7 +510,7 @@ impl Rivers {
     }
 
     /// The geology of the `size`×`size` columns `step` blocks apart from `origin`, row by
-    /// row: the same as sampling each, finding the rivers near them once.
+    /// row: the same as sampling each without crags, finding the rivers near them once.
     pub fn grid(&self, land: Stages, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
         let (min, max) = (origin - 1, origin + (size - 1) * step + 1);
         let regions = ((max + TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) - (min - TRUNK_MARGIN).div_euclid(IVec2::splat(REGION)) + 1).element_product();
@@ -524,7 +537,7 @@ impl Rivers {
         let at = |i: i32| (min.x - 1 + i % wide, min.y - 1 + i / wide);
         let grounds = land.geology.lands(&(0..wide * wide).map(at).collect::<Vec<_>>());
         let columns: Vec<Column> = (0..wide * wide).map(|i| self.unsealed(&tiers, at(i).0, at(i).1, grounds[i as usize])).collect();
-        (0..size * size)
+        let mut samples: Vec<GeoSample> = (0..size * size)
             .map(|i| {
                 let (x, z) = (i % size + 1, i / size + 1);
                 let column = &columns[(z * wide + x) as usize];
@@ -534,7 +547,9 @@ impl Rivers {
                 let neighbours = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| columns[((z + dz) * wide + x + dx) as usize].sample);
                 settle(column.sample, &neighbours)
             })
-            .collect()
+            .collect();
+        crag_tops(land.geology, &mut samples, |i| (min.x + i as i32 % size, min.y + i as i32 / size));
+        samples
     }
 }
 
@@ -597,6 +612,20 @@ impl Near {
 struct Column {
     sample: GeoSample,
     near: bool,
+}
+
+/// Raises or lowers each sample with a crag to the top of its density (`crate::density`),
+/// all at once, as neighbours share the noise's lattice points. Sealing never reads a crag's
+/// height (crags keep away from water), so this comes after it.
+fn crag_tops(geology: &Geology, samples: &mut [GeoSample], at: impl Fn(usize) -> (i32, i32)) {
+    let crags: Vec<usize> = (0..samples.len()).filter(|&i| samples[i].crag.amplitude > 0.0).collect();
+    if crags.is_empty() {
+        return;
+    }
+    let columns: Vec<(i32, i32, Crag)> = crags.iter().map(|&i| (at(i).0, at(i).1, samples[i].crag)).collect();
+    for (&i, top) in crags.iter().zip(geology.density().tops(&columns)) {
+        samples[i].height = top;
+    }
 }
 
 /// Shapes a column so its water is a fixed point of the fluid rule (see "Generated water"

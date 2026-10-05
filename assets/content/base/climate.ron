@@ -18,6 +18,9 @@
     erosion: (names: ["flat", "hills", "slopes", "peaks"], edges: [0.17, 0.5, 0.83]),
     // Wavelengths of the climate's own fields, in blocks (see `ScalesDef`): how large the
     // regions they shape are.
+    // From the equator to a pole, in blocks: how wide the climate zones are (each world's
+    // own is within a tenth of this).
+    zones: 10000.0,
     scales: (anomaly: 12000.0, wetness: 16000.0, weirdness: 11000.0, aether: 12000.0, fertility: 700.0, variant: 8000.0),
     // The humidity biomes go by (see `HumidityDef`): its median, the spread of its
     // logarithm, and the weights of the slow wetness field, the wind's rain (wet coasts,

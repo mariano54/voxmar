@@ -19,6 +19,7 @@ mod caves;
 mod climate;
 mod content;
 mod decor;
+mod density;
 mod dials;
 mod ecology;
 mod features;
@@ -74,7 +75,6 @@ use crate::geology::{GeoSample, Geology, smoothstep};
 use crate::rocks::Rocks;
 use crate::stage::Stage;
 use crate::surface::SurfaceRules;
-use crate::trails::Land;
 
 /// Something that produces world columns. Generators are identified by a stable id that
 /// is mixed into their random streams.
@@ -251,7 +251,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 17;
+    pub const VERSION: u32 = 18;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -263,7 +263,8 @@ impl Overworld {
     /// A generator with the world content of loaded packages ([`WorldContent::load`]).
     pub fn with_content(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, Self::VERSION);
-        let dials = WorldDials::sample(stream);
+        let mut dials = WorldDials::sample(stream);
+        dials.pole_distance *= content.climate.zones / WorldDials::POLE_DISTANCE;
         let rocks = Rocks::new(stream, content, &registry, &dials.featured);
         let mut rules = SurfaceRules::new(stream, content, &registry);
         let biomes = Biomes::new(content, &registry, &mut rules, &rocks, &dials.featured);
@@ -395,7 +396,12 @@ impl Overworld {
     /// Surface height only; cheap enough to sample on coarse grids. Trails, which change
     /// it by a few blocks along a narrow line, are left out (see [`Overworld::site`]).
     pub fn height(&self, x: i32, z: i32) -> i32 {
-        self.land().sample(x, z).height
+        self.ground(x, z).height
+    }
+
+    /// The ground at one position with its rivers and lakes, its crags to their tops.
+    fn ground(&self, x: i32, z: i32) -> GeoSample {
+        self.rivers.sample(self.stages(), x, z, true)
     }
 
     fn stages(&self) -> water::Stages<'_> {
@@ -404,13 +410,12 @@ impl Overworld {
 
     /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
-        let land = self.land();
         let sample = {
             let _stage = stage::enter(Stage::Rivers);
-            land.sample(x, z)
+            self.ground(x, z)
         };
         let _stage = stage::enter(Stage::Trails);
-        self.trails.apply(&land, sample, x, z)
+        self.trails.apply(&self.land(), sample, x, z)
     }
 
     /// The ground over the `size`×`size` positions from (x, z), row by row.
@@ -502,7 +507,9 @@ impl Overworld {
     }
 }
 
-/// The ground with rivers and lakes, as trails see it.
+/// The ground with rivers and lakes, as trails see it: crags are left at their preliminary
+/// surface, which is near enough for planning routes that keep off them anyway (and a
+/// trail's own ground is whole, see `Trails::apply`).
 struct RiverLand<'a> {
     rivers: &'a water::Rivers,
     stages: water::Stages<'a>,
@@ -510,7 +517,7 @@ struct RiverLand<'a> {
 
 impl trails::Land for RiverLand<'_> {
     fn sample(&self, x: i32, z: i32) -> GeoSample {
-        self.rivers.sample(self.stages, x, z)
+        self.rivers.sample(self.stages, x, z, false)
     }
 
     fn grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
@@ -536,13 +543,13 @@ struct Picks {
 impl Sampler<'_> {
     /// The parameters of the surface at a position inside the sampler's area.
     pub fn site(&self, x: i32, z: i32) -> Site {
-        let geo = self.world.land().sample(x, z);
+        let geo = self.world.ground(x, z);
         self.site_on(&geo, x, z, self.world.slope(x, z, geo.height))
     }
 
     /// What the surface looks like from far away; see [`Overworld::surface_sample`].
     pub fn surface(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
-        let geo = GeoSample { height, ..self.world.land().sample(x, z) };
+        let geo = GeoSample { height, ..self.world.ground(x, z) };
         let site = self.site_on(&geo, x, z, slope);
         let (ground, water) = self.world.surface_blocks(&site, x, z);
         let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
@@ -749,7 +756,8 @@ impl Generator for Overworld {
                 let site = self.site(x, z);
                 let pleasant = (8.0..20.0).contains(&site.temperature) && (0.6..1.6).contains(&site.soil_moisture());
                 let open = site.slope == 0 && site.forest < 0.35 && site.river < 0.1;
-                if pleasant && open && self.terrain.is_grass(self.surface_layers(&site, x, z).top) {
+                // Not on a trail, whose tread is no grass (sites leave trails out).
+                if pleasant && open && self.terrain.is_grass(self.surface_layers(&site, x, z).top) && self.geo(x, z).trail.is_none() {
                     return IVec3::new(x, height + 1, z);
                 }
             }
@@ -1486,6 +1494,40 @@ mod tests {
     /// except the air over lower water that a waterfall drops into; water never touches
     /// lava, and lava lies only at the bottom of the world. Checked across column borders,
     /// so it also shows the columns agree with each other, and around rivers.
+    /// On the spines of ranges the density breaks the rock into crags: there are overhangs
+    /// (air under rock within a few blocks of a column's top), and every column's top is the
+    /// same however it is asked for, alone or with its area, and holds its top block.
+    #[test]
+    fn crags_overhang_and_keep_their_tops() {
+        let registry = registry();
+        let mut overhangs = 0;
+        for seed in [7, 3, 42] {
+            let world = Overworld::new(seed, registry.clone());
+            let Some(at) = (0..160 * 160).map(|i| IVec2::new(i % 160 * 50 - 4000, i / 160 * 50 - 4000)).find(|p| world.geo(p.x, p.y).crag.amplitude > 6.0) else {
+                continue;
+            };
+            let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+            let columns = generate_area(&world, first, 3);
+            let middle = &columns[4];
+            let origin = first.offset(1, 1).origin();
+            let area = world.geo_area(origin.x, origin.z, 32);
+            let mut solid_tops = 0;
+            for z in 0..32 {
+                for x in 0..32 {
+                    let (wx, wz) = (origin.x + x, origin.z + z);
+                    let top = area[(z * 32 + x) as usize].height;
+                    let alone = world.geo(wx, wz);
+                    assert_eq!(top, alone.height, "seed {seed}: the top at ({wx}, {wz}): {:?} alone, {:?} in the area", alone.crag, area[(z * 32 + x) as usize].crag);
+                    solid_tops += !middle.block(IVec3::new(x, top, z)).is_air() as usize;
+                    let solid = |y: i32| !middle.block(IVec3::new(x, y, z)).is_air();
+                    overhangs += (top - 8..top).any(|y| !solid(y) && solid(y + 1)) as usize;
+                }
+            }
+            assert!(solid_tops > 32 * 32 * 95 / 100, "seed {seed}: {solid_tops} columns with their top block in place");
+        }
+        assert!(overhangs > 0, "no overhangs on any range");
+    }
+
     #[test]
     fn fluids_are_contained() {
         let registry = registry();

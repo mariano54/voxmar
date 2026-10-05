@@ -78,6 +78,10 @@ pub struct ClimateDef {
     /// How far the regional climate's own fields vary, in blocks.
     #[serde(default)]
     pub scales: ScalesDef,
+    /// The typical distance from the equator to a pole, in blocks: how wide the climate
+    /// zones are. Each world's own lies within a tenth of it.
+    #[serde(default = "default_zones")]
+    pub zones: f32,
     /// What the humidity biomes are placed by is made of.
     #[serde(default)]
     pub humidity: HumidityDef,
@@ -125,6 +129,10 @@ impl Default for HumidityDef {
     fn default() -> Self {
         Self { median: 0.72, spread: 0.6, wetness: 0.8, wind: 0.5, belts: 0.33 }
     }
+}
+
+fn default_zones() -> f32 {
+    10000.0
 }
 
 impl Default for ScalesDef {
@@ -1173,6 +1181,30 @@ pub struct LandDef {
     /// Heights more than `knee` blocks above the sea ease towards `knee + room` instead of
     /// rising further, so peaks round off under the top of the world.
     pub ceiling: (f32, f32),
+    /// The 3D noise the field `crag` moves the ground by (see `crate::density`).
+    #[serde(default)]
+    pub density: DensityDef,
+}
+
+/// The 3D noise of the land's density.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DensityDef {
+    /// Wavelength of its first octave, in blocks.
+    pub wavelength: f32,
+    pub octaves: i32,
+    /// Heights are multiplied by this before sampling: above 1, the noise changes faster up
+    /// than across, so rock breaks into ledges; below 1, into buttresses.
+    pub squash: f32,
+    /// How much more slowly the density falls above the surface than below it: the smaller,
+    /// the further rock reaches out over air.
+    pub above: f32,
+}
+
+impl Default for DensityDef {
+    fn default() -> Self {
+        Self { wavelength: 40.0, octaves: 2, squash: 1.5, above: 0.35 }
+    }
 }
 
 /// A domain warp: positions are moved by up to `amplitude` blocks by a smooth noise.

@@ -59,6 +59,10 @@ pub struct WorldDials {
 }
 
 impl WorldDials {
+    /// The middle of the range `pole_distance` is drawn from, which worlds scale to their
+    /// climate's zones (`ClimateDef::zones`).
+    pub const POLE_DISTANCE: f32 = 10000.0;
+
     /// Samples the dials from a generator's stream seed.
     pub fn sample(seed: u64) -> Self {
         let mut rng = Rng::new(seed, PURPOSE, 0, 0);
@@ -81,7 +85,7 @@ impl WorldDials {
         Self {
             mean_temperature: 8.0 + 7.0 * warmth,
             latitude_gradient: 26.0 + 12.0 * unit(),
-            pole_distance: 9000.0 + 2000.0 * unit(),
+            pole_distance: Self::POLE_DISTANCE * (0.9 + 0.2 * unit()),
             ocean_fraction,
             continent_size: 1400.0 + 1800.0 * unit(),
             humidity,

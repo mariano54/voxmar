@@ -614,6 +614,21 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
    and floors; caves combined with `min`; exact `height()`. *Done when:* overhangs and
    ledges in mountains, clean river cuts, `fluids_are_contained` and the purity tests pass,
    the budget in section 7 holds.
+
+   *As built* (`crate::density`): the router's `crag` field gives each column an amplitude
+   in blocks (up to nine on the spines of ranges, a few on foothills, none on lowland), and
+   the density is `(s − y)·k + a·n` around the preliminary surface `s`, with `k` 1 below it
+   and `above` (0.5) over it and `n` a 3D noise (56 blocks, two octaves, faster up than
+   across) on a lattice 4 blocks across and 8 up. A column's height is its highest solid
+   block, the same for single samples, areas and generation (batched, sharing lattice
+   points), and generation hollows the band under it; ledges under an overhang take the
+   surface's top, undersides are rock. The density is zero near water, in river tunnels,
+   under trails and at or below the water beside a column, so rivers, lakes and the sea keep
+   their banks; trails plan over the preliminary surface. Caves carve as before. The result
+   is tors, crags, ledges and some overhangs along the crests rather than a sheer 3D
+   fill everywhere: the factor and roughness splines and 3D surface rules beyond ledges and
+   undersides are left for step 6, where captures beside Tectonic's will say how far to go.
+   Cost: +2% instructions on main 03811fb for the first column and for generation.
 4. **Shapes into the router.** Every shape as a gated term (section 6.4); `Piece`, `sculpt`
    and the standalone radial code are deleted. *Done when:* the `SHAPES=1` preview shows no
    circular outline, and each shape has a capture next to its reference.

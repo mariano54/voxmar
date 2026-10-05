@@ -252,6 +252,10 @@ no two worlds share a rarity table. Everything else is a continuous field:
   apart over most of them. Heights over the sea are scaled with the
   world's mountains, stretched by their square and eased under a ceiling; the deep sea floor
   has trench and ridge lines. The relief is worked out on a 4-block lattice and interpolated.
+  On the spines of ranges a 3D density (`crag` and `density` in `land.ron`,
+  `worldgen/src/density.rs`) moves the ground by up to nine blocks, so rock breaks into tors,
+  crags, ledges and overhangs; it never hollows the ground beside water, under trails or at
+  the sea, and a column's height is the top of its density however it is asked for.
 - **Terrain shapes** (`terrain.ron`, `worldgen/src/shapes.rs`) rise where the climate calls
   for them, on the same bands as the biome table and never by asking which biome won:
   wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
@@ -260,8 +264,8 @@ no two worlds share a rarity table. Everything else is a continuous field:
   where valleys meet cold coasts. Rarer shapes take only some regions of their climate. Towers and
   spires do not cool the climate on their tops.
 - **Temperature** falls towards the poles (latitude repeats along z every 9–11 km from pole
-  to equator, colder to the north, so hot, temperate and cold land always lie in that order,
-  with anomalies kilometres wide) and with altitude.
+  to equator, `zones` in `climate.ron`, colder to the north, so hot, temperate and cold land
+  always lie in that order, with anomalies kilometres wide) and with altitude.
 - **Precipitation** follows moisture the prevailing wind carries in from the sea, worked out
   over continents and ranges alone so climate zones are regions kilometres wide rather than
   stripes along every slope: wet coasts, drier interiors, rain shadows behind ranges, wet

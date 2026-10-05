@@ -341,6 +341,19 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         Lattice::noise(&terrain.rock, origin, low, top, lattice::STEP, 1.0)
     };
     let mut rock_profile = Profile::default();
+    // The density's noise over the band of the column's crags, below their tops, which
+    // geology has already found (`crate::density`).
+    let density = world.geology.density();
+    let crag_band = geology
+        .samples()
+        .iter()
+        .filter(|g| g.crag.amplitude > 0.0)
+        .map(|g| (g.crag.band(density.above).0, g.height))
+        .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+        .filter(|band| band.0 <= band.1);
+    let crags = crag_band.map(|(low, high)| Lattice::noise(&density.noise, origin, low, high, crate::density::STEP_Y, density.squash));
+    let mut crag_profile = Profile::default();
+    let mut hollow: Vec<bool> = Vec::new();
     let mut settled = Vec::new();
     let mut cave = Vec::with_capacity(WORLD_HEIGHT as usize);
 
@@ -398,9 +411,28 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             // Below this the ground is that stone (from bedrock up): the bulk of the column,
             // taken first.
             let body = height - if layers.filler != Fill::Stones { layers.depth } else { 0 };
+            // Where the density hollows the column under its top: never down to the water
+            // beside it, in the open or in a river's tunnel.
+            let hollow_from = match (&crags, geo.crag.amplitude > 0.0) {
+                (Some(crags), true) => {
+                    crags.profile(x, z, &mut crag_profile);
+                    let beside = sides_of(&geology, wx, wz).iter().filter_map(|n| n.wet().map(|(_, top)| top)).max().unwrap_or(i32::MIN);
+                    let low = geo.crag.band(density.above).0.max(beside.saturating_add(2));
+                    density.hollows(&geo.crag, &crag_profile, low, height, &mut hollow);
+                    low
+                }
+                _ => {
+                    hollow.clear();
+                    height + 1
+                }
+            };
+            let hollow_at = |y: i32| y >= hollow_from && hollow.get((y - hollow_from) as usize).copied().unwrap_or(false);
 
             for y in 0..=height {
                 let below_surface = height - y;
+                if hollow_at(y) {
+                    continue;
+                }
                 match cave[y as usize] {
                     Cave::Rock => {}
                     Cave::Air => continue,
@@ -414,10 +446,14 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     }
                 }
                 let block = if y >= 4 && y < body {
-                    stone(y)
+                    // A ledge under an overhang takes the surface's top, as the top does.
+                    if hollow_at(y + 1) && !hollow_at(y - 1) { layers.top } else { stone(y) }
                 } else if y == 0 || (y < 4 && hash3(world.seed, wx, y, wz) % 4 >= y as u64) {
                     ids.bedrock
-                } else if below_surface == 0 {
+                } else if hollow_at(y - 1) {
+                    // The underside of an overhang is rock: nothing loose hangs.
+                    stone(y)
+                } else if below_surface == 0 || hollow_at(y + 1) {
                     layers.top
                 } else if below_surface <= layers.depth && layers.filler != Fill::Stones {
                     match layers.filler {
@@ -981,6 +1017,11 @@ pub(crate) fn earth(registry: &BlockRegistry, block: BlockId) -> bool {
     let def = registry.def(block);
     let wooden = ["_log", "_wood", "_stem", "_roots", "_leaves", "_cap"].iter().any(|s| def.name.ends_with(s)) || def.name.ends_with("cactus");
     def.solid && def.render != voxmar_engine::block::RenderKind::Plant && !wooden && registry.fluid(block).is_none()
+}
+
+/// The four neighbours of (x, z).
+fn sides_of(geology: &GeoGrid, x: i32, z: i32) -> [crate::geology::GeoSample; 4] {
+    [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| geology.get(x + dx, z + dz))
 }
 
 /// The band of `strata` at height `y`, shifted by its wobble.

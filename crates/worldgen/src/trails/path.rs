@@ -334,7 +334,7 @@ mod tests {
                 80..=86 => (height - 3, height - 1),
                 _ => (height, height),
             };
-            GeoSample { height, mountain: 0.0, river: 0.0, water, top: 8, body: Body::River, current: None, cavity: None, trail: None, form: Default::default() }
+            GeoSample { height, mountain: 0.0, river: 0.0, water, top: 8, body: Body::River, current: None, cavity: None, crag: Default::default(), trail: None, form: Default::default() }
         }
     }
 

@@ -457,7 +457,7 @@ fn walking_wears_a_path() {
     let blocks = client.content.blocks.clone();
     let id = |name: &str| blocks.expect(&format!("base:{name}"));
     let worn = [id("worn_grass_block"), id("packed_earth"), id("coarse_dirt")];
-    assert_eq!(before, id("grass_block"), "spawn is on grass");
+    assert_eq!(before, id("grass_block"), "spawn is on {}, not grass", blocks.def(before).name);
     // Each crossing is a step onto the other block: forty steps on each.
     let (here, there) = (start + step.as_vec3() * 0.3, start + step.as_vec3() * 0.7);
     for i in 0..80 {

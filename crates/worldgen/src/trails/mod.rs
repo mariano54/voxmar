@@ -156,7 +156,12 @@ impl Trails {
         let stamp = stamps[(local.y * TILE + local.x) as usize];
         let Some(mark) = stamp.mark() else { return sample };
         if sample.submerged() {
-            if mark.stone && sample.water - sample.height <= route::FORD_DEPTH {
+            // A ford's stones fill the water up to its surface, unless a fall pours in
+            // beside them: its water must land in water.
+            let fall = || {
+                [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().any(|(dx, dz)| land.sample(x + dx, z + dz).wet().is_some_and(|(_, top)| top >= sample.water + 2))
+            };
+            if mark.stone && sample.water - sample.height <= route::FORD_DEPTH && !fall() {
                 sample.height = sample.water;
             }
         } else if sample.cavity.is_none() && stamp.weight > 0.0 {
@@ -165,6 +170,8 @@ impl Trails {
             sample.height = (blended.round() as i32).max(sample.water);
         }
         sample.trail = Some(mark);
+        // A trail's ground stays whole under it.
+        sample.crag.amplitude = 0.0;
         sample
     }
 

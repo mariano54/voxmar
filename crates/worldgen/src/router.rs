@@ -84,6 +84,9 @@ pub struct Outputs {
     pub roughness: Field,
     /// 1 on the floor of a valley of the ridge network, falling to 0 beyond its sides.
     pub valley: Field,
+    /// How far the 3D density moves the ground, in blocks (see `crate::density`), where the
+    /// land defines it.
+    pub crag: Option<Field>,
 }
 
 /// A field, by its slot.
@@ -134,6 +137,7 @@ impl Program {
                 peak: Field(0),
                 roughness: Field(0),
                 valley: Field(0),
+                crag: None,
             },
             vertical_scale: def.vertical_scale,
             elevation_boost: def.elevation_boost,
@@ -175,6 +179,7 @@ impl Program {
             peak: field("peak")?,
             roughness: field("roughness")?,
             valley: field("valley")?,
+            crag: field("crag").ok(),
         };
         if program.depends_on_climate(program.outputs.mountain) || program.depends_on_climate(program.outputs.continental) {
             return Err(err("`C` and `mountain` must not read `T` or `H`: the climate's rain shadows read them".into()));

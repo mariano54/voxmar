@@ -37,6 +37,7 @@ use crate::dials::WorldDials;
 use crate::rocks::Rocks;
 use crate::shapes::{Ground, ShapeId, Shapes};
 use crate::water::cache::Cache;
+use crate::density::{Crag, Density};
 use crate::water::{Body, Cavity, Current};
 use crate::{Overworld, SEA_LEVEL};
 
@@ -61,6 +62,9 @@ pub struct GeoSample {
     pub current: Option<Current>,
     /// A cave a river runs through under the ground.
     pub cavity: Option<Cavity>,
+    /// What the 3D density makes of the column (see `crate::density`): `height` is already
+    /// its top; generation hollows the band below it.
+    pub crag: Crag,
     /// What the terrain shapes made of the column.
     pub form: Form,
     /// What a trail does here.
@@ -77,6 +81,7 @@ impl Relief {
             peak: mix(self.peak, other.peak),
             roughness: mix(self.roughness, other.roughness),
             valley: mix(self.valley, other.valley),
+            crag: mix(self.crag, other.crag),
         }
     }
 }
@@ -122,6 +127,8 @@ pub struct Landform {
     pub height: f32,
     /// 0 on flat land, towards 1 on mountain ranges.
     pub mountain: f32,
+    /// How far the 3D density moves the ground here, in blocks (see `crate::density`).
+    pub crag: f32,
     pub form: Form,
 }
 
@@ -142,6 +149,8 @@ pub struct Relief {
     pub roughness: f32,
     /// 1 on the floor of a valley of the ridge network, falling to 0 beyond its sides.
     pub valley: f32,
+    /// How far the 3D density moves the ground here, in blocks (see `crate::density`).
+    pub crag: f32,
 }
 
 /// Lattice tiles a thread used last, by world and tile.
@@ -171,6 +180,8 @@ pub struct Corners {
 
 pub struct Geology {
     router: Router,
+    /// The 3D density the land's crags take.
+    density: Density,
     /// The world's scale for heights above the sea, from its mountain height.
     vertical: f32,
     climate: Climate,
@@ -228,6 +239,7 @@ impl Geology {
         let program = Program::compile(&content.land).expect("land.ron is checked at load");
         Self {
             router: Router::new(seed, dials, &program),
+            density: Density::new(seed, &content.land.density),
             vertical: 0.6 + 0.4 * dials.mountain_height / 140.0,
             climate: Climate::new(seed, dials, &content.climate),
             shapes: Shapes::new(seed, dials, content, rocks),
@@ -333,6 +345,7 @@ impl Geology {
                 peak: get(o.peak),
                 roughness: get(o.roughness),
                 valley: get(o.valley),
+                crag: o.crag.map_or(0.0, |crag| get(crag).max(0.0)),
             };
         }
         out
@@ -366,6 +379,11 @@ impl Geology {
             out.extend((0..four.len()).map(|k| router.get(&mut lanes, &NoClimate, router.outputs.continental, k)));
         }
         out
+    }
+
+    /// The 3D density the land's crags take.
+    pub(crate) fn density(&self) -> &Density {
+        &self.density
     }
 
     /// The land at (x, z), before rivers and lakes.
@@ -411,7 +429,7 @@ impl Geology {
             let (ground, shaped) = (grounds[k].height, &shaped[k]);
             let base = sea + ease(ground + shaped.terrain - sea, ceiling);
             let height = sea + ease(ground + shaped.terrain + shaped.features - sea, ceiling);
-            *out = Landform { height, mountain: reliefs[k].mountain, form: Form { shape: shaped.shape, strength: shaped.strength, base } };
+            *out = Landform { height, mountain: reliefs[k].mountain, crag: reliefs[k].crag, form: Form { shape: shaped.shape, strength: shaped.strength, base } };
         }
     }
 
