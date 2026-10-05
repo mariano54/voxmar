@@ -26,6 +26,7 @@ use voxmar_engine::block::{BlockDef, Rarity};
 use voxmar_engine::inventory::{CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK, SLOTS};
 
 use super::{SLOT, slot_contents};
+use crate::lang::{Locale, Localized};
 use crate::Actions;
 use crate::menu::Screen;
 use crate::net::Net;
@@ -109,7 +110,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         card.0.align_items = AlignItems::Center;
         root.spawn((card, InventoryCard, RelativeCursorPosition::default())).with_children(|card| {
             card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() })
-                .with_children(|heading| spawn_heading(heading, font, "Inventory"));
+                .with_children(|heading| spawn_heading(heading, font, "screen.inventory"));
             let grid = |top: f32| Node {
                 display: Display::Grid,
                 grid_template_columns: RepeatedGridTrack::px(HOTBAR_SLOTS as u16, SLOT),
@@ -125,8 +126,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
-            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack · 1-9: swap · Q: throw";
-            let help = (text(font, help, BODY, MUTED), TextLayout::justify(Justify::Center));
+            let help = (Localized("inventory.help"), text(font, "", BODY, MUTED), TextLayout::justify(Justify::Center));
             card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
             let skills = (text(font, "", BODY, SOFT), TextLayout::justify(Justify::Center), SkillsLine);
             card.spawn((Node { margin: UiRect::top(Val::Px(3.0 * PX)), ..default() }, skills));
@@ -430,20 +430,6 @@ fn tap(ui: Res<UiState>, player: Res<LocalPlayer>, mut sounds: MessageWriter<UiS
     }
 }
 
-/// An item's name for people: `base:oak_log` is "Oak Log".
-pub fn item_name(name: &str) -> String {
-    let local = name.rsplit(':').next().unwrap_or(name);
-    local
-        .split('_')
-        .filter(|word| !word.is_empty())
-        .map(|word| {
-            let mut chars = word.chars();
-            chars.next().map(|first| first.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// The colour an item's name is written in, from its rarity.
 pub fn rarity_color(rarity: Rarity) -> Color {
     match rarity {
@@ -457,33 +443,34 @@ pub fn rarity_color(rarity: Rarity) -> Color {
 
 /// The lines of an item's tooltip after its name: its rarity, what it is good for (from
 /// its tags), and the package it comes from.
-fn details(def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
+fn details(locale: &Locale, def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
     let mut lines = Vec::new();
     let rarity = match def.rarity {
         Rarity::Common => None,
-        Rarity::Uncommon => Some("Uncommon"),
-        Rarity::Rare => Some("Rare"),
-        Rarity::VeryRare => Some("Very rare"),
-        Rarity::Legendary => Some("Legendary"),
+        Rarity::Uncommon => Some("rarity.uncommon"),
+        Rarity::Rare => Some("rarity.rare"),
+        Rarity::VeryRare => Some("rarity.very_rare"),
+        Rarity::Legendary => Some("rarity.legendary"),
     };
     if let Some(rarity) = rarity {
-        lines.push((rarity.to_owned(), rarity_color(def.rarity)));
+        lines.push((locale.get(rarity).to_owned(), rarity_color(def.rarity)));
     }
     let mut uses: Vec<String> = Vec::new();
     for tag in &def.tags {
         match tag.as_str() {
-            "edible" => uses.push("Edible".into()),
-            "fuel" => uses.push("Fuel".into()),
-            "light" => uses.push("Gives light".into()),
+            "edible" => uses.push(locale.get("item.edible").into()),
+            "fuel" => uses.push(locale.get("item.fuel").into()),
+            "light" => uses.push(locale.get("item.light").into()),
             _ => {
                 if let Some(property) = tag.strip_prefix("alchemy:") {
-                    uses.push(format!("Alchemy: {}", property.replace('_', " ")));
+                    let name = locale.get_or(&format!("alchemy.{property}"), &property.replace('_', " ")).to_owned();
+                    uses.push(locale.format("item.alchemy", &[("property", &name)]));
                 }
             }
         }
     }
     if !uses.is_empty() {
-        lines.push((uses.join(" · "), SOFT));
+        lines.push((uses.join(locale.get("language.dot")), SOFT));
     }
     let package = def.name.split(':').next().unwrap_or("");
     lines.push((if ids { def.name.clone() } else { package.to_owned() }, MUTED));
@@ -491,20 +478,27 @@ fn details(def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
 }
 
 /// For a seed, what it plants and the level that takes, red while the player is below it.
-fn seed_line(content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+fn seed_line(
+    locale: &Locale,
+    content: &voxmar_engine::content::Content,
+    player: &LocalPlayer,
+    item: voxmar_engine::block::BlockId,
+) -> Option<(String, Color)> {
     let crop = content.crops.get(content.crops.planted_by(item)?);
-    let skill = &content.skills.get(crop.skill).title;
+    let skill = locale.skill(content.skills.get(crop.skill));
     let ready = content.skills.level(player.skills.xp(crop.skill)) >= crop.def.level;
-    Some((format!("Plants {} · {skill} {}", item_name(&crop.def.name), crop.def.level), if ready { SOFT } else { ERROR }))
+    let words = locale.format("item.plants", &[("crop", &locale.block_named(&content.blocks, &crop.def.name)), ("skill", &skill), ("level", &crop.def.level)]);
+    Some((words, if ready { SOFT } else { ERROR }))
 }
 
 /// Lists every skill's level under the slots, as it changes.
-fn show_skills(player: Res<LocalPlayer>, launch: Res<Launch>, mut line: Query<&mut Text, With<SkillsLine>>) {
-    if !player.is_changed() {
+fn show_skills(player: Res<LocalPlayer>, launch: Res<Launch>, locale: Res<Locale>, mut line: Query<&mut Text, With<SkillsLine>>) {
+    if !player.is_changed() && !locale.is_changed() {
         return;
     }
     let skills = &launch.content.skills;
-    let words = skills.ids().map(|id| super::skills::summary(skills, id, player.skills.xp(id))).collect::<Vec<_>>().join(" · ");
+    let words = skills.ids().map(|id| super::skills::summary(&locale, skills, id, player.skills.xp(id))).collect::<Vec<_>>();
+    let words = words.join(locale.get("language.dot"));
     if let Ok(mut text) = line.single_mut()
         && text.0 != words
     {
@@ -527,6 +521,7 @@ fn tooltip(
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
     mut shown: Local<Option<(voxmar_engine::block::BlockId, bool)>>,
     launch: Res<Launch>,
+    locale: Res<Locale>,
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
@@ -539,12 +534,13 @@ fn tooltip(
         return;
     };
     let key = (item, settings.debug_overlay);
-    if *shown != Some(key) {
+    if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
         commands.entity(entity).despawn_children().with_children(|lines| {
-            lines.spawn(shadowed(&font.0, item_name(&def.name), BODY, rarity_color(def.rarity)));
-            for (line, color) in seed_line(&launch.content, &player, item).into_iter().chain(details(def, settings.debug_overlay)) {
+            lines.spawn(shadowed(&font.0, locale.block(def), BODY, rarity_color(def.rarity)));
+            let lines_after = seed_line(&locale, &launch.content, &player, item).into_iter().chain(details(&locale, def, settings.debug_overlay));
+            for (line, color) in lines_after {
                 lines.spawn(text(&font.0, line, BODY, color));
             }
         });
@@ -567,13 +563,6 @@ mod tests {
     use voxmar_engine::block::BlockId;
 
     use super::*;
-
-    #[test]
-    fn names_read_naturally() {
-        assert_eq!(item_name("base:oak_log"), "Oak Log");
-        assert_eq!(item_name("glowcap"), "Glowcap");
-        assert_eq!(item_name("bees:honey__comb"), "Honey Comb");
-    }
 
     fn held(count: u8) -> Inventory {
         let mut inventory = Inventory::default();

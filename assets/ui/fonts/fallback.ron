@@ -1,0 +1,8 @@
+// Fonts for the characters our own fonts don't draw, Japanese above all, tried in order.
+// Each is a pixel-outline TrueType or OpenType file shipped unmodified with its licence
+// beside it. The game reads its glyphs once at startup and merges them under the chosen
+// font, on the same baseline (see `voxmar_texgen::font::import`), so only what that font
+// lacks comes from here. `pixels_per_em` is the pixel grid the font is drawn on.
+[
+    (file: "japanese/fusion-pixel-10px-monospaced-ja.ttf", pixels_per_em: 10),
+]

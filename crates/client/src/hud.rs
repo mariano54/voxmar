@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::action::ActionTarget;
 
+use crate::lang::Locale;
 use crate::Actions;
 use crate::interact::Target;
 use crate::menu::Screen;
@@ -276,8 +277,9 @@ fn update_status(
     mut status: Query<&mut Text, With<StatusText>>,
     mut bar: Query<(&mut Visibility, &Children), With<BreakBar>>,
     mut fill: Query<&mut Node>,
+    locale: Res<Locale>,
 ) {
-    let message = if player.dead { "You died. Press R to respawn." } else { "" };
+    let message = if player.dead { locale.get("hud.died") } else { "" };
     if let Ok(mut text) = status.single_mut()
         && text.0 != message
     {
@@ -305,6 +307,7 @@ fn show_held_name(
     time: Res<Time>,
     player: Res<LocalPlayer>,
     world: Res<ClientWorld>,
+    locale: Res<Locale>,
     mut name: Query<(&mut Text, &mut TextColor, &mut TextShadow), With<HeldName>>,
     mut last: Local<(Option<voxmar_engine::block::BlockId>, f32)>,
 ) {
@@ -313,7 +316,7 @@ fn show_held_name(
     let Ok((mut text, mut color, mut shadow)) = name.single_mut() else { return };
     if held != last.0 {
         *last = (held, now);
-        text.0 = held.map(|item| inventory::item_name(&world.registry.def(item).name)).unwrap_or_default();
+        text.0 = held.map(|item| locale.block(world.registry.def(item))).unwrap_or_default();
     }
     let alpha = ((last.1 + NAME_SECONDS - now) / NAME_FADE).clamp(0.0, 1.0);
     let base = held.map_or(TEXT, |item| inventory::rarity_color(world.registry.def(item).rarity));

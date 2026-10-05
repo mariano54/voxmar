@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use voxmar_server::ServerConfig;
 use voxmar_server::save::{GameMode, WorldMeta, WorldSave};
 
+use crate::lang::Locale;
 use crate::ui::skin::PX;
 use crate::ui::widgets::{
     BODY, ButtonStyle, ERROR, MUTED, Pressed, SCRIM, Selected, TextField, UiFont, button_row, label, panel, spawn_heading,
@@ -42,25 +43,25 @@ struct ModeHint;
 #[derive(Component)]
 struct ErrorText;
 
-fn spawn(mut commands: Commands, font: Res<UiFont>) {
+fn spawn(mut commands: Commands, font: Res<UiFont>, locale: Res<Locale>) {
     let font = &font.0;
     commands.spawn((DespawnOnExit(Screen::CreateWorld), screen(SCRIM))).with_children(|root| {
         root.spawn(panel(260.0 * PX)).with_children(|panel| {
-            spawn_heading(panel, font, "Create world");
-            panel.spawn(label(font, "World name"));
-            spawn_text_field(panel, font, "New world", "World name", 32, 0, true, NameField);
-            panel.spawn(label(font, "Seed"));
-            spawn_text_field(panel, font, "", "Leave empty for a random seed", 40, 1, false, SeedField);
-            panel.spawn(label(font, "Game mode"));
+            spawn_heading(panel, font, "create.title");
+            panel.spawn(label(font, "create.name"));
+            spawn_text_field(panel, font, locale.get("create.default_name"), "create.name", 32, 0, true, NameField);
+            panel.spawn(label(font, "create.seed"));
+            spawn_text_field(panel, font, "", "create.seed.placeholder", 40, 1, false, SeedField);
+            panel.spawn(label(font, "create.mode"));
             panel.spawn(button_row(0.0)).with_children(|row| {
-                spawn_button(row, font, "Survival", ButtonStyle::Secondary, Action::Mode(GameMode::Survival));
-                spawn_button(row, font, "Creative", ButtonStyle::Secondary, Action::Mode(GameMode::Creative));
+                spawn_button(row, font, "mode.survival", ButtonStyle::Secondary, Action::Mode(GameMode::Survival));
+                spawn_button(row, font, "mode.creative", ButtonStyle::Secondary, Action::Mode(GameMode::Creative));
             });
             panel.spawn((ModeHint, Node { margin: UiRect::top(Val::Px(4.0 * PX)), ..default() }, text(font, "", BODY, MUTED)));
             panel.spawn((ErrorText, Node { margin: UiRect::top(Val::Px(4.0 * PX)), ..default() }, text(font, "", BODY, ERROR)));
             panel.spawn(button_row(6.0 * PX)).with_children(|row| {
-                spawn_button(row, font, "Create world", ButtonStyle::Primary, Action::Create);
-                spawn_button(row, font, "Back", ButtonStyle::Secondary, Action::Back);
+                spawn_button(row, font, "create.create", ButtonStyle::Primary, Action::Create);
+                spawn_button(row, font, "menu.back", ButtonStyle::Secondary, Action::Back);
             });
         });
     });
@@ -76,6 +77,7 @@ fn click(
     name: Query<&TextField, With<NameField>>,
     seed: Query<&TextField, With<SeedField>>,
     launch: Res<Launch>,
+    locale: Res<Locale>,
     mut errors: Query<&mut Text, With<ErrorText>>,
     mut next: ResMut<NextState<Screen>>,
 ) {
@@ -89,7 +91,7 @@ fn click(
             Action::Back => next.set(Screen::Worlds),
             Action::Create => {
                 let (Ok(name), Ok(seed)) = (name.single(), seed.single()) else { continue };
-                let created = create(name.value.trim(), parse_seed(&seed.value).unwrap_or_else(random_seed), mode.0)
+                let created = create(&locale, name.value.trim(), parse_seed(&seed.value).unwrap_or_else(random_seed), mode.0)
                     .and_then(|dir| launch.singleplayer(ServerConfig { world: Some(dir), ..ServerConfig::default() }));
                 match created {
                     Ok(net) => session::play(&mut commands, &mut next, net),
@@ -105,19 +107,27 @@ fn click(
 }
 
 /// Creates the world's directory and `world.ron`.
-fn create(name: &str, seed: u64, mode: GameMode) -> Result<PathBuf, String> {
+fn create(locale: &Locale, name: &str, seed: u64, mode: GameMode) -> Result<PathBuf, String> {
     if name.is_empty() {
-        return Err("Give your world a name.".into());
+        return Err(locale.get("create.error.no_name").into());
     }
-    let root = worlds_dir().ok_or("There is no configuration directory to save worlds in.")?;
+    let root = worlds_dir().ok_or_else(|| locale.get("create.error.no_directory").to_owned())?;
     let dir = new_world_dir(&root, name);
-    WorldSave::new(&dir).create(&WorldMeta::new(name, seed, mode)).map_err(|e| format!("Could not create the world: {e}"))?;
+    WorldSave::new(&dir)
+        .create(&WorldMeta::new(name, seed, mode))
+        .map_err(|e| locale.format("create.error.failed", &[("error", &e)]))?;
     info!("created world {name} in {}", dir.display());
     Ok(dir)
 }
 
 /// Marks the chosen mode and explains it.
-fn show_mode(mut commands: Commands, mode: Res<Mode>, buttons: Query<(Entity, &Action)>, mut hint: Query<&mut Text, With<ModeHint>>) {
+fn show_mode(
+    mut commands: Commands,
+    mode: Res<Mode>,
+    locale: Res<Locale>,
+    buttons: Query<(Entity, &Action)>,
+    mut hint: Query<&mut Text, With<ModeHint>>,
+) {
     if !mode.is_changed() {
         return;
     }
@@ -130,11 +140,12 @@ fn show_mode(mut commands: Commands, mode: Res<Mode>, buttons: Query<(Entity, &A
         }
     }
     if let Ok(mut hint) = hint.single_mut() {
-        hint.0 = match mode.0 {
-            GameMode::Survival => "Explore, mine and build on foot. Falls hurt.",
-            GameMode::Creative => "Fly anywhere, as fast as you like.",
-        }
-        .into();
+        hint.0 = locale
+            .get(match mode.0 {
+                GameMode::Survival => "mode.survival.hint",
+                GameMode::Creative => "mode.creative.hint",
+            })
+            .into();
     }
 }
 

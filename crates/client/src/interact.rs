@@ -13,6 +13,7 @@ use voxmar_engine::skill::SkillId;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, SLOTS};
 use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
 
+use crate::lang::Locale;
 use crate::Actions;
 use crate::breaking::{BlockBroken, shows_breaking};
 use crate::hud::skills::SkillToasts;
@@ -182,7 +183,7 @@ fn break_and_place(
     mut target: ResMut<Target>,
     mut cues: MessageWriter<SoundCue>,
     mut broken: MessageWriter<BlockBroken>,
-    (launch, mut toasts): (Res<Launch>, ResMut<SkillToasts>),
+    (launch, mut toasts, locale): (Res<Launch>, ResMut<SkillToasts>, Res<Locale>),
 ) {
     target.place_cooldown -= time.delta_secs();
     target.mine_cooldown -= time.delta_secs();
@@ -261,8 +262,9 @@ fn break_and_place(
                 }
                 Some(Err(Rejection::Unmet(Requirement::SkillLevel))) => {
                     if let Some(crop) = held.and_then(|item| content.crops.planted_by(item)).map(|id| content.crops.get(id)) {
-                        let skill = &content.skills.get(crop.skill).title;
-                        toasts.refused(format!("Needs {skill} {}", crop.def.level), time.elapsed_secs());
+                        let skill = locale.skill(content.skills.get(crop.skill));
+                        let words = locale.format("skills.needs", &[("skill", &skill), ("level", &crop.def.level)]);
+                        toasts.refused(words, time.elapsed_secs());
                     }
                 }
                 _ => {}

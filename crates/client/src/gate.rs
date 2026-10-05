@@ -45,6 +45,7 @@ use voxmar_engine::world::VoxelWorld;
 use voxmar_server::Lag;
 use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, local_pair};
 
+use crate::lang::{Locale, Localized};
 use crate::menu::{Notice, Screen};
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
@@ -281,7 +282,7 @@ struct Observer {
     /// Where the server says the other players are.
     others: FxHashMap<PlayerId, Vec3>,
     /// What the server answered the observer's commands.
-    replies: Vec<String>,
+    replies: Vec<voxmar_engine::lang::Words>,
 }
 
 impl Observer {
@@ -652,7 +653,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
                 let shown = if change >= SCREEN_CHANGE { Ok(format!("drawn, changing the screen by {change:.1} levels")) } else { Err(format!("changed the screen by only {change:.1} levels")) };
                 gate.check("menu", shown.and_then(|s| if locked { Err("the mouse stayed grabbed".into()) } else { Ok(s) }));
-                key(world, KeyCode::Escape, true);
+                set_language(world, "ja");
                 gate.advance(now);
             } else if in_phase > 3.0 {
                 gate.check("menu", Err("Esc did not open the menu".into()));
@@ -660,6 +661,35 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         2 => {
+            // The open menu, rewritten in Japanese and back again.
+            if in_phase > 0.2 && let Some(shot) = gate.shot(world, "menu-ja") {
+                let words = localized_text(world, "menu.quit_game");
+                let japanese = world.resource::<Locale>().get("menu.quit_game").to_owned();
+                let change = gate.earlier_shot("menu").map_or(0.0, |menu| change(&menu, &shot, 0.0));
+                gate.check(
+                    "language",
+                    if words.as_deref() != Some(japanese.as_str()) || japanese == "Quit game" {
+                        Err(format!("the menu still reads {words:?} in Japanese"))
+                    } else if change < 1.0 {
+                        Err(format!("Japanese changed the screen by only {change:.1} levels"))
+                    } else {
+                        Ok(format!("the menu reads {japanese}, changing the screen by {change:.1} levels"))
+                    },
+                );
+                set_language(world, "en");
+                gate.advance(now);
+            }
+        }
+        3 => {
+            if in_phase > 0.2 {
+                let words = localized_text(world, "menu.quit_game");
+                let back = if words.as_deref() == Some("Quit game") { Ok("back in English".into()) } else { Err(format!("reads {words:?} after switching back")) };
+                gate.check("language: English", back);
+                key(world, KeyCode::Escape, true);
+                gate.advance(now);
+            }
+        }
+        4 => {
             key(world, KeyCode::Escape, false);
             if !menu && locked {
                 gate.check("menu: close", Ok("Esc closed it and gave the game the mouse back".into()));
@@ -670,7 +700,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.next(Step::Weather, now);
             }
         }
-        3 => {
+        5 => {
             key(world, KeyCode::KeyE, false);
             if inventory && in_phase > 0.2 && let Some(shot) = gate.shot(world, "inventory") {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
@@ -683,7 +713,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.next(Step::Weather, now);
             }
         }
-        4 => {
+        6 => {
             key(world, KeyCode::KeyE, false);
             key(world, KeyCode::KeyC, false);
             if character && !inventory && in_phase > 0.2 && let Some(shot) = gate.shot(world, "character") {
@@ -701,7 +731,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.next(Step::Weather, now);
             }
         }
-        5 => {
+        7 => {
             key(world, KeyCode::KeyC, false);
             if !character && !inventory && locked {
                 gate.check("character: close", Ok("C closed it and gave the game the mouse back".into()));
@@ -713,6 +743,19 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         _ => {}
     }
+}
+
+/// Switches the interface to language `code`, as the setting does, without writing the
+/// player's settings.
+fn set_language(world: &mut World, code: &str) {
+    let content = voxmar_server::assets_dir().join("content");
+    world.insert_resource(Locale::load(&content, code));
+}
+
+/// What the text written from language key `key` reads now.
+fn localized_text(world: &mut World, key: &str) -> Option<String> {
+    let mut texts = world.query::<(&Localized, &Text)>();
+    texts.iter(world).find(|(localized, _)| localized.0 == key).map(|(_, text)| text.0.clone())
 }
 
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
@@ -924,7 +967,9 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         1 => {
-            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().find(|r| r.contains("gorge")).cloned()) else {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("gorge"))) else {
                 if in_phase > 20.0 {
                     gate.check("gorge", Err("no answer to /locate gorge".into()));
                     gate.next(Step::Leave, now);

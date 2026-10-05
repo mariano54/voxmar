@@ -9,6 +9,7 @@ use voxmar_engine::command::{self, CommandDef, Lookup, Permission, Run};
 use voxmar_engine::weather::{INTENSITIES, parse_intensity};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::inventory::{ItemStack, MAX_STACK};
+use voxmar_engine::lang::Words;
 use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
 use voxmar_protocol::{ChatKind, MAX_LINE, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
@@ -34,8 +35,8 @@ const TICKS_PER_HOUR: u64 = TICKS_PER_DAY / 24;
 const MAX_FILL: i64 = 32_768;
 const MAX_FILL_SIDE: i32 = 128;
 
-/// What a command says back: a line for the console, or why it could not run.
-type Reply = Result<String, String>;
+/// What a command says back: words for the console, or why it could not run.
+type Reply = Result<Words, Words>;
 
 /// Who runs a command: a player, or the dedicated server's own console, which is an admin
 /// and stands at the world's spawn.
@@ -58,8 +59,8 @@ impl Server {
     pub(crate) fn console(&mut self, line: &str) {
         let line: String = line.chars().filter(|c| !c.is_control()).take(MAX_LINE).collect();
         if let Some(text) = line.trim().strip_prefix("say ") {
-            let text = format!("[Server] {}", text.trim());
-            tracing::info!("{text}");
+            let text = Words::key("chat.server").with("text", text.trim());
+            tracing::info!("{}", self.english(&text));
             self.broadcast(ServerMessage::Chat { kind: ChatKind::Chat, text });
         } else {
             self.run_line(Source::Console, &line, 0);
@@ -73,23 +74,27 @@ impl Server {
         if text.is_empty() {
             return;
         }
-        let line = format!("<{}> {text}", self.players[&id].name);
-        tracing::info!("{line}");
+        let line = Words::key("chat.player").with("name", self.players[&id].name.as_str()).with("text", text);
+        tracing::info!("{}", self.english(&line));
         self.broadcast(ServerMessage::Chat { kind: ChatKind::Chat, text: line });
     }
 
     /// Tells whoever ran a command something, in their console.
-    pub(crate) fn tell(&self, to: Source, kind: ChatKind, text: impl Into<String>) {
-        let text = text.into();
+    pub(crate) fn tell(&self, to: Source, kind: ChatKind, text: Words) {
         match to {
             Source::Player(id) => {
                 if let Some(player) = self.players.get(&id) {
                     player.connection.send(ServerMessage::Chat { kind, text });
                 }
             }
-            Source::Console if kind == ChatKind::Error => text.lines().for_each(|line| tracing::warn!("{line}")),
-            Source::Console => text.lines().for_each(|line| tracing::info!("{line}")),
+            Source::Console if kind == ChatKind::Error => self.english(&text).lines().for_each(|line| tracing::warn!("{line}")),
+            Source::Console => self.english(&text).lines().for_each(|line| tracing::info!("{line}")),
         }
+    }
+
+    /// Words in English, for the server's own log and console.
+    pub(crate) fn english(&self, words: &Words) -> String {
+        self.content.english.render(words, &self.content.blocks)
     }
 
     fn is_admin(&self, source: Source) -> bool {
@@ -100,10 +105,10 @@ impl Server {
     }
 
     /// The name others are told did something.
-    fn name_of(&self, source: Source) -> String {
+    fn name_of(&self, source: Source) -> Words {
         match source {
-            Source::Player(id) => self.players.get(&id).map_or_else(String::new, |p| p.name.clone()),
-            Source::Console => "The server".into(),
+            Source::Player(id) => self.players.get(&id).map_or_else(|| Words::text(""), |p| Words::text(&p.name)),
+            Source::Console => Words::key("command.the_server"),
         }
     }
 
@@ -116,10 +121,10 @@ impl Server {
     }
 
     /// The player a command acts on when it names none: whoever ran it.
-    fn me(source: Source) -> Result<PlayerId, String> {
+    fn me(source: Source) -> Result<PlayerId, Words> {
         match source {
             Source::Player(id) => Ok(id),
-            Source::Console => Err("The console is nobody; name a player.".into()),
+            Source::Console => Err(Words::key("command.error.console_is_nobody")),
         }
     }
 
@@ -128,19 +133,19 @@ impl Server {
         let Some((name, args)) = words.split_first() else { return };
         let def = match self.content.commands.find(name) {
             Ok(def) => def.clone(),
-            Err(Lookup::Unknown) => return self.tell(id, ChatKind::Error, format!("There is no /{name}. /help lists the commands.")),
+            Err(Lookup::Unknown) => return self.tell(id, ChatKind::Error, Words::key("command.error.unknown").with("command", name.as_str())),
             Err(Lookup::Ambiguous(names)) => {
-                let names = names.iter().map(|n| format!("/{n}")).collect::<Vec<_>>().join(", ");
-                return self.tell(id, ChatKind::Error, format!("Several packages add /{name}: use one of {names}."));
+                let names = Words::List(names.iter().map(|n| Words::text(format!("/{n}"))).collect());
+                return self.tell(id, ChatKind::Error, Words::key("command.error.ambiguous").with("command", name.as_str()).with("names", names));
             }
         };
         if def.permission == Permission::Admin && !self.is_admin(id) {
-            return self.tell(id, ChatKind::Error, format!("Only admins may use /{}.", def.short_name()));
+            return self.tell(id, ChatKind::Error, Words::key("command.error.admins_only").with("command", def.short_name()));
         }
         let reply = match &def.run {
             Run::Alias(lines) => {
                 if depth >= MAX_DEPTH {
-                    Err(format!("/{} runs too many commands inside each other.", def.short_name()))
+                    Err(Words::key("command.error.too_deep").with("command", def.short_name()))
                 } else {
                     for line in command::expand(lines, args) {
                         self.run_line(id, &line, depth + 1);
@@ -150,7 +155,7 @@ impl Server {
             }
             Run::Help => self.help(id, args),
             Run::List => Ok(self.list()),
-            Run::Seed => Ok(format!("Seed: {}", self.meta.seed)),
+            Run::Seed => Ok(Words::key("command.seed").with("seed", Words::text(self.meta.seed))),
             Run::Time => self.time(args),
             Run::Weather => self.weather_command(id, args),
             Run::Wind => self.wind_command(id, args),
@@ -165,11 +170,10 @@ impl Server {
             Run::Locate => self.locate(id, args),
         };
         let (Ok(text) | Err(text)) = &reply;
-        tracing::debug!("/{}: {text}", def.short_name());
+        tracing::debug!("/{}: {}", def.short_name(), self.english(text));
         match reply {
-            Ok(text) if !text.is_empty() => self.tell(id, ChatKind::Info, text),
-            Ok(_) => {}
-            Err(why) => self.tell(id, ChatKind::Error, format!("{why}\nUsage: {}", def.usage_line())),
+            Ok(text) => self.tell(id, ChatKind::Info, text),
+            Err(why) => self.tell(id, ChatKind::Error, Words::key("command.error.usage").with("why", why).with("usage", def.usage_line())),
         }
     }
 
@@ -179,23 +183,24 @@ impl Server {
         if let Some(name) = args.first() {
             let name = name.trim_start_matches('/');
             return match self.content.commands.find(name) {
-                Ok(def) if allowed(def) => Ok(format!("{}\n{}", def.usage_line(), def.help)),
-                Ok(def) => Ok(format!("{}\n{} (admins only)", def.usage_line(), def.help)),
-                Err(_) => Err(format!("There is no /{name}.")),
+                Ok(def) if allowed(def) => Ok(Words::Lines(vec![Words::text(def.usage_line()), help(def)])),
+                Ok(def) => Ok(Words::Lines(vec![Words::text(def.usage_line()), Words::key("command.help.admins_only").with("help", help(def))])),
+                Err(_) => Err(Words::key("command.error.no_such_command").with("command", name)),
             };
         }
-        let mut lines = vec!["Commands (/help NAME explains one):".to_owned()];
+        let mut lines = vec![Words::key("command.help.title")];
         for def in self.content.commands.iter().filter(|def| allowed(def)) {
             let summary = def.help.split_inclusive(". ").next().unwrap_or(&def.help).trim();
-            lines.push(format!("/{} — {summary}", def.short_name()));
+            let key = format!("{}.summary", help_key(def));
+            lines.push(Words::key("command.help.line").with("command", def.short_name()).with("summary", Words::Own(key, summary.to_owned())));
         }
-        Ok(lines.join("\n"))
+        Ok(Words::Lines(lines))
     }
 
-    fn list(&self) -> String {
+    fn list(&self) -> Words {
         let mut names: Vec<&str> = self.players.values().filter(|p| p.joined).map(|p| p.name.as_str()).collect();
         names.sort_unstable();
-        format!("{} online: {}", names.len(), names.join(", "))
+        Words::key("command.list").with("count", Words::text(names.len())).with("names", Words::List(names.into_iter().map(Words::from).collect()))
     }
 
     fn time(&mut self, args: &[String]) -> Reply {
@@ -205,43 +210,55 @@ impl Server {
             ["set", time] => {
                 let target = match self.content.commands.time_of_day(time) {
                     Some(ticks) => ticks,
-                    None => time.parse::<u64>().map_err(|_| format!("`{time}` is not a time of day."))?,
+                    None => time.parse::<u64>().map_err(|_| Words::key("command.error.not_a_time").with("word", *time))?,
                 } % TICKS_PER_DAY;
                 let now = self.day.floor() as u64;
                 self.day = (now + (target + TICKS_PER_DAY - now % TICKS_PER_DAY) % TICKS_PER_DAY) as f64;
             }
-            ["add", amount] => self.day += parse_duration(amount).ok_or_else(|| format!("`{amount}` is not an amount of time."))? as f64,
+            ["add", amount] => {
+                self.day += parse_duration(amount).ok_or_else(|| Words::key("command.error.not_an_amount_of_time").with("word", *amount))? as f64
+            }
             ["speed", speed] => {
-                let speed: f32 = speed.parse().map_err(|_| format!("`{speed}` is not a number."))?;
+                let speed: f32 = speed.parse().map_err(|_| Words::key("command.error.not_a_number").with("word", *speed))?;
                 if !(0.0..=MAX_DAY_SPEED).contains(&speed) {
-                    return Err(format!("The speed must be between 0 and {MAX_DAY_SPEED}."));
+                    return Err(Words::key("command.error.speed_range").with("max", Words::text(MAX_DAY_SPEED)));
                 }
                 self.day_speed = speed;
             }
             ["freeze"] => self.day_speed = 0.0,
             ["resume"] => self.day_speed = 1.0,
-            _ => return Err("That is not something /time does.".into()),
+            _ => return Err(Words::key("command.error.time_cannot")),
         }
         self.broadcast(self.time_message());
         Ok(self.describe_time())
     }
 
     /// `Day 3, 14:30, running normally`.
-    fn describe_time(&self) -> String {
+    fn describe_time(&self) -> Words {
         let ticks = self.day.floor() as u64;
         let of_day = ticks % TICKS_PER_DAY;
         // Tick 0 is sunrise, at six in the morning.
         let hours = (of_day / TICKS_PER_HOUR + 6) % 24;
         let minutes = of_day % TICKS_PER_HOUR * 60 / TICKS_PER_HOUR;
         let pace = match self.day_speed {
-            0.0 => "frozen".to_owned(),
-            1.0 => "running normally".to_owned(),
+            0.0 => Words::key("command.time.frozen"),
+            1.0 => Words::key("command.time.normal"),
             speed => {
                 let minutes = TICKS_PER_DAY as f32 / TICKS_PER_SECOND as f32 / 60.0 / speed;
-                format!("running {speed}× as fast ({} per day)", if minutes >= 1.0 { format!("{minutes:.1} minutes") } else { format!("{:.0} seconds", minutes * 60.0) })
+                let day = if minutes >= 1.0 {
+                    Words::key("command.time.minutes").with("minutes", Words::text(format!("{minutes:.1}")))
+                } else {
+                    Words::key("command.time.seconds").with("seconds", Words::text(format!("{:.0}", minutes * 60.0)))
+                };
+                Words::key("command.time.fast").with("speed", Words::text(speed)).with("day", day)
             }
         };
-        format!("Day {}, {hours:02}:{minutes:02} (tick {of_day} of {TICKS_PER_DAY}), {pace}.", ticks / TICKS_PER_DAY + 1)
+        Words::key("command.time")
+            .with("day", Words::text(ticks / TICKS_PER_DAY + 1))
+            .with("clock", Words::text(format!("{hours:02}:{minutes:02}")))
+            .with("tick", Words::text(of_day))
+            .with("ticks", Words::text(TICKS_PER_DAY))
+            .with("pace", pace)
     }
 
     fn teleport(&mut self, id: Source, args: &[String]) -> Reply {
@@ -253,7 +270,7 @@ impl Server {
             [x, y, z] if coordinate(x) => (Self::me(id)?, Place::At(x.clone(), y.clone(), z.clone())),
             [name, x, z] => (self.find_player(name)?, Place::Ground(x.clone(), z.clone())),
             [name, x, y, z] => (self.find_player(name)?, Place::At(x.clone(), y.clone(), z.clone())),
-            _ => return Err("Where to?".into()),
+            _ => return Err(Words::key("command.error.where_to")),
         };
         let from = self.players[&who].position;
         let position = match place {
@@ -268,7 +285,8 @@ impl Server {
             }
         };
         if position.x.abs().max(position.z.abs()) > MAX_COORDINATE || !(-64.0..WORLD_HEIGHT as f32 + 512.0).contains(&position.y) {
-            return Err(format!("{:.1} {:.1} {:.1} is too far out.", position.x, position.y, position.z));
+            let at = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
+            return Err(Words::key("command.error.too_far").with("place", at));
         }
         let tick = self.tick;
         let player = self.players.get_mut(&who).unwrap();
@@ -279,10 +297,10 @@ impl Server {
         let name = player.name.clone();
         let place = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
         if id == Source::Player(who) {
-            Ok(format!("Teleported to {place}."))
+            Ok(Words::key("command.tp.you").with("place", place))
         } else {
-            self.tell(Source::Player(who), ChatKind::Info, format!("{} teleported you to {place}.", self.name_of(id)));
-            Ok(format!("Teleported {name} to {place}."))
+            self.tell(Source::Player(who), ChatKind::Info, Words::key("command.tp.by").with("who", self.name_of(id)).with("place", place.as_str()));
+            Ok(Words::key("command.tp.them").with("name", name).with("place", place))
         }
     }
 
@@ -299,24 +317,24 @@ impl Server {
         let (mode, who) = match args {
             [mode] => (mode, Self::me(id)?),
             [mode, name] => (mode, self.find_player(name)?),
-            _ => return Err("Which mode?".into()),
+            _ => return Err(Words::key("command.error.which_mode")),
         };
         let mode = match mode.to_ascii_lowercase().as_str() {
             "survival" | "s" | "0" => GameMode::Survival,
             "creative" | "c" | "1" => GameMode::Creative,
-            other => return Err(format!("There is no `{other}` mode.")),
+            other => return Err(Words::key("command.error.no_such_mode").with("mode", other)),
         };
         let player = self.players.get_mut(&who).unwrap();
         player.allow_flight = mode == GameMode::Creative;
         player.flying &= player.allow_flight;
         player.fall_start = None;
         player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin: player.admin });
-        let (name, mode) = (player.name.clone(), if player.allow_flight { "creative" } else { "survival" });
+        let (name, mode) = (player.name.clone(), Words::key(if player.allow_flight { "mode.creative" } else { "mode.survival" }));
         if id == Source::Player(who) {
-            Ok(format!("You are now in {mode} mode."))
+            Ok(Words::key("command.gamemode.you").with("mode", mode))
         } else {
-            self.tell(Source::Player(who), ChatKind::Info, format!("You are now in {mode} mode."));
-            Ok(format!("{name} is now in {mode} mode."))
+            self.tell(Source::Player(who), ChatKind::Info, Words::key("command.gamemode.you").with("mode", mode.clone()));
+            Ok(Words::key("command.gamemode.them").with("name", name).with("mode", mode))
         }
     }
 
@@ -328,53 +346,61 @@ impl Server {
             None => {
                 let report = self.weather.local(&mut self.temperature, at, tick, day);
                 let weather = report.weather;
-                let effects: Vec<String> = report
+                let effects: Vec<Words> = report
                     .effects
                     .iter()
                     .filter(|&&(_, strength)| strength >= 0.05)
-                    .map(|&(i, strength)| format!("{} {:.0}%", self.weather.table().effects()[i].short_name(), strength * 100.0))
+                    .map(|&(i, strength)| share(weather_name("effect", self.weather.table().effects()[i].short_name()), strength))
                     .collect();
-                let effects = if effects.is_empty() { String::new() } else { format!("\nEffects: {}.", effects.join(", ")) };
-                let forced = match self.weather.forced_at(at, tick) {
-                    Some((preset, 0)) => format!(", easing back from {}", preset.short_name()),
-                    Some((preset, left)) => format!(", {} for {}", preset.short_name(), minutes(left)),
-                    None => String::new(),
-                };
-                Ok(format!("{}{forced}: {}.{effects}", weather.describe(), weather.summary()))
+                let mut report = vec![{
+                    let state = Words::key(&format!("weather.state.{}", weather.describe().replace(' ', "_")));
+                    let state = match self.weather.forced_at(at, tick) {
+                        Some((preset, 0)) => Words::key("command.weather.easing").with("state", state).with("kind", weather_name("kind", preset.short_name())),
+                        Some((preset, left)) => Words::key("command.weather.forced")
+                            .with("state", state)
+                            .with("kind", weather_name("kind", preset.short_name()))
+                            .with("time", minutes(left)),
+                        None => state,
+                    };
+                    Words::key("command.weather.report").with("state", state).with("numbers", weather_numbers(&weather))
+                }];
+                if !effects.is_empty() {
+                    report.push(Words::key("command.weather.effects").with("effects", Words::List(effects)));
+                }
+                Ok(Words::Lines(report))
             }
             Some("list") => {
-                let names: Vec<&str> = self.content.weather.presets().iter().map(|p| p.short_name()).collect();
-                Ok(format!("Kinds of weather: {}, and natural.", names.join(", ")))
+                let names = self.content.weather.presets().iter().map(|p| Words::text(p.short_name())).collect();
+                Ok(Words::key("command.weather.list").with("kinds", Words::List(names)))
             }
             Some("natural") => {
                 if args.len() > 1 {
-                    return Err("`natural` takes no time.".into());
+                    return Err(Words::key("command.error.natural_takes_no_time"));
                 }
-                Ok(if self.weather.release(at, tick) { "The natural weather is back." } else { "The weather here is already natural." }.into())
+                Ok(Words::key(if self.weather.release(at, tick) { "command.weather.natural" } else { "command.weather.already_natural" }))
             }
             Some(name) => {
-                let preset = self.content.weather.preset(name).ok_or_else(|| format!("There is no weather called `{name}`; /weather list names them."))?;
+                let preset = self.content.weather.preset(name).ok_or_else(|| Words::key("command.error.no_such_weather").with("kind", name))?;
                 // An intensity (a name, or a fraction such as 0.3), then seconds.
                 let mut rest = &args[1..];
                 let intensity = match rest.first().filter(|w| w.contains('.') || *w == "0" || *w == "1" || w.parse::<f32>().is_err()) {
                     Some(word) => {
                         rest = &rest[1..];
-                        parse_intensity(word).ok_or_else(|| format!("`{word}` is not an intensity: light, moderate, heavy, max or 0 to 1."))?
+                        parse_intensity(word).ok_or_else(|| Words::key("command.error.not_an_intensity").with("word", word.as_str()))?
                     }
                     None => preset.intensity,
                 };
                 if rest.len() > 1 {
-                    return Err("Too many words.".into());
+                    return Err(Words::key("command.error.too_many_words"));
                 }
                 let seconds = weather_seconds(rest.first())?;
                 let how = INTENSITIES.iter().rev().find(|&&(_, v)| intensity >= v - 0.125).map_or("faint", |&(n, _)| n);
                 let how = if how == "full" { "max" } else { how };
-                let reply = format!(
-                    "Bringing {how} {} ({:.0}%) to the land around you for {}.",
-                    preset.short_name().replace('_', " "),
-                    intensity * 100.0,
-                    minutes(seconds as u64)
-                );
+                let reply = Words::key("command.weather.bringing")
+                    .with("intensity", Words::key(&format!("weather.intensity.{how}")))
+                    .with("kind", weather_name("kind", preset.short_name()))
+                    .with("percent", Words::text(format!("{:.0}", intensity * 100.0)))
+                    .with("time", minutes(seconds as u64));
                 self.weather.force(preset.at(intensity), at, seconds, tick);
                 Ok(reply)
             }
@@ -388,26 +414,33 @@ impl Server {
         match args.first().map(String::as_str) {
             None => {
                 let wind = self.weather.local(&mut self.temperature, at, tick, day).weather;
-                let from = if wind.wind.length() < 0.05 { "nowhere".to_owned() } else { format!("the {}", compass(-wind.wind)) };
-                Ok(format!("Wind {:.1} blocks/s from {from}, gusting {:.0}%.", wind.wind.length(), wind.gusts * 100.0))
+                let key = if wind.wind.length() < 0.05 { "command.wind.still" } else { "command.wind.report" };
+                Ok(Words::key(key)
+                    .with("speed", Words::text(format!("{:.1}", wind.wind.length())))
+                    .with("from", compass(-wind.wind))
+                    .with("gusts", Words::text(format!("{:.0}", wind.gusts * 100.0))))
             }
             Some("list") => {
-                let names: Vec<&str> = self.content.weather.winds().iter().map(|w| w.short_name()).collect();
-                Ok(format!("Winds: {}.", names.join(", ")))
+                let names = self.content.weather.winds().iter().map(|w| Words::text(w.short_name())).collect();
+                Ok(Words::key("command.wind.list").with("winds", Words::List(names)))
             }
             Some(name) => {
-                let mut wind = self.content.weather.wind(name).ok_or_else(|| format!("There is no wind called `{name}`; /wind list names them."))?.clone();
+                let mut wind = self.content.weather.wind(name).ok_or_else(|| Words::key("command.error.no_such_wind").with("wind", name))?.clone();
                 let mut rest = &args[1..];
                 if let Some(from) = rest.first().and_then(|word| direction_from(word)) {
                     wind.direction = Some(-from);
                     rest = &rest[1..];
                 }
                 if rest.len() > 1 {
-                    return Err("Too many words.".into());
+                    return Err(Words::key("command.error.too_many_words"));
                 }
                 let seconds = weather_seconds(rest.first())?;
-                let from = wind.direction.map_or(String::new(), |d| format!(" from the {}", compass(-d)));
-                let reply = format!("Bringing a {}{from} to the land around you for {}.", wind.short_name(), minutes(seconds as u64));
+                let reply = match wind.direction {
+                    Some(d) => Words::key("command.wind.bringing_from").with("from", compass(-d)),
+                    None => Words::key("command.wind.bringing"),
+                }
+                .with("wind", weather_name("wind", wind.short_name()))
+                .with("time", minutes(seconds as u64));
                 self.weather.force_wind(&wind, at, seconds, tick);
                 Ok(reply)
             }
@@ -415,42 +448,56 @@ impl Server {
     }
 
     /// The biome the player stands in, and what makes it.
-    fn biome(&self, id: Source) -> String {
+    fn biome(&self, id: Source) -> Words {
         let at = self.position_of(id).floor().as_ivec3();
         let site = self.overworld.site(at.x, at.z);
         let biome = self.overworld.biome_at(at.x, at.z);
-        let tags = if biome.tags.is_empty() { String::new() } else { format!(" ({})", biome.tags.join(", ")) };
-        format!(
-            "{}{tags}, {:?}. {:.1} °C mean, {:.0} mm of rain a year, aether {:.2}.",
-            biome.name, biome.rarity, site.temperature, site.precipitation, site.aether
-        )
+        let rarity = format!("{:?}", biome.rarity);
+        let rarity = Words::Own(format!("rarity.{}", snake(&rarity)), rarity);
+        Words::key("command.biome")
+            .with("biome", Words::Own(voxmar_engine::lang::def_key("biome", &biome.name), biome.name.clone()))
+            .with("tags", Words::text(biome.tags.join(", ")))
+            .with("rarity", rarity)
+            .with("temperature", Words::text(format!("{:.1}", site.temperature)))
+            .with("rain", Words::text(format!("{:.0}", site.precipitation)))
+            .with("aether", Words::text(format!("{:.2}", site.aether)))
     }
 
     /// `/locate biome NAME [RADIUS]`: the nearest place of a biome. `/locate gorge [RADIUS]`:
     /// the nearest river running deep in a slot gorge.
     fn locate(&self, id: Source, args: &[String]) -> Reply {
-        let radius = |radius: &String| -> Result<i32, String> {
-            radius.parse().ok().filter(|r| (1..=MAX_LOCATE_RADIUS).contains(r)).ok_or_else(|| format!("The radius must be a number of blocks up to {MAX_LOCATE_RADIUS}."))
+        let radius = |radius: &String| -> Result<i32, Words> {
+            radius
+                .parse()
+                .ok()
+                .filter(|r| (1..=MAX_LOCATE_RADIUS).contains(r))
+                .ok_or_else(|| Words::key("command.error.radius").with("max", Words::text(MAX_LOCATE_RADIUS)))
         };
         let (name, radius) = match args {
             [kind] if kind == "gorge" => return self.locate_gorge(id, LOCATE_RADIUS),
             [kind, r] if kind == "gorge" => return self.locate_gorge(id, radius(r)?),
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
             [kind, name, r] if kind == "biome" => (name, radius(r)?),
-            _ => return Err("Locate what?".into()),
+            _ => return Err(Words::key("command.error.locate_what")),
         };
-        if self.overworld.biomes().id(name).or_else(|| self.overworld.biomes().id(&format!("base:{name}"))).is_none() {
-            return Err(format!("There is no biome called `{name}`."));
-        }
+        let Some(biome) = self.overworld.biomes().id(name).or_else(|| self.overworld.biomes().id(&format!("base:{name}"))) else {
+            return Err(Words::key("command.error.no_such_biome").with("biome", name.as_str()));
+        };
+        let full = self.overworld.biomes().get(biome).name.clone();
+        let biome_name = Words::Own(voxmar_engine::lang::def_key("biome", &full), name.clone());
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
         match self.overworld.locate_biome(name, from, radius) {
             Some(at) => {
                 let offset = (at - from).as_vec2();
-                let way = if offset.length() < 1.0 { String::new() } else { format!(" to the {}", compass(offset)) };
-                Ok(format!("The nearest {name} is at {} {}, {:.0} blocks away{way}. /tp {} {} goes there.", at.x, at.y, offset.length(), at.x, at.y))
+                Ok(Words::key(if offset.length() < 1.0 { "command.locate.here" } else { "command.locate.biome" })
+                    .with("biome", biome_name)
+                    .with("place", format!("{} {}", at.x, at.y))
+                    .with("distance", Words::text(format!("{:.0}", offset.length())))
+                    .with("way", compass(offset))
+                    .with("tp", format!("/tp {} {}", at.x, at.y)))
             }
-            None => Err(format!("No {name} within {radius} blocks.")),
+            None => Err(Words::key("command.error.biome_not_near").with("biome", biome_name).with("radius", Words::text(radius))),
         }
     }
 
@@ -460,34 +507,39 @@ impl Server {
         match self.overworld.locate_gorge(from, radius) {
             Some(at) => {
                 let offset = (IVec2::new(at.x, at.z) - from).as_vec2();
-                let way = if offset.length() < 1.0 { String::new() } else { format!(" to the {}", compass(offset)) };
-                Ok(format!("The nearest gorge is at {} {}, its water at {}, {:.0} blocks away{way}. /tp {} {} {} goes there.", at.x, at.z, at.y, offset.length(), at.x, at.y + 1, at.z))
+                Ok(Words::key("command.locate.gorge")
+                    .with("place", format!("{} {}", at.x, at.z))
+                    .with("water", Words::text(at.y))
+                    .with("distance", Words::text(format!("{:.0}", offset.length())))
+                    .with("way", compass(offset))
+                    .with("tp", format!("/tp {} {} {}", at.x, at.y + 1, at.z)))
             }
-            None => Err(format!("No gorge within {radius} blocks.")),
+            None => Err(Words::key("command.error.gorge_not_near").with("radius", Words::text(radius))),
         }
     }
 
     /// The online player called `name`, ignoring case if no name matches exactly.
     fn set_block_command(&mut self, source: Source, args: &[String]) -> Reply {
-        let [x, y, z, name] = args else { return Err("Which block, and where?".into()) };
+        let [x, y, z, name] = args else { return Err(Words::key("command.error.which_block_where")) };
         let at = self.block_position(source, [x, y, z])?;
         let block = self.find_block(name)?;
         if !(0..WORLD_HEIGHT).contains(&at.y) {
-            return Err(format!("{} is outside the world, which is 0 to {} high.", at.y, WORLD_HEIGHT - 1));
+            return Err(Words::key("command.error.outside_world").with("y", Words::text(at.y)).with("top", Words::text(WORLD_HEIGHT - 1)));
         }
         self.load_area(at, at);
         self.set_blocks(&[(at, block)]);
-        Ok(format!("Put {} at {} {} {}.", self.content.blocks.def(block).name, at.x, at.y, at.z))
+        let block = Words::Block(self.content.blocks.def(block).name.clone());
+        Ok(Words::key("command.setblock").with("block", block).with("place", format!("{} {} {}", at.x, at.y, at.z)))
     }
 
     fn fill(&mut self, source: Source, args: &[String]) -> Reply {
-        let [x1, y1, z1, x2, y2, z2, name] = args else { return Err("Which box, and what with?".into()) };
+        let [x1, y1, z1, x2, y2, z2, name] = args else { return Err(Words::key("command.error.which_box")) };
         let (a, b) = (self.block_position(source, [x1, y1, z1])?, self.block_position(source, [x2, y2, z2])?);
         let block = self.find_block(name)?;
         let (min, max) = (a.min(b).with_y(a.y.min(b.y).max(0)), a.max(b).with_y(a.y.max(b.y).min(WORLD_HEIGHT - 1)));
         let size = (max - min + 1).max(IVec3::ZERO);
         if size.x as i64 * size.y as i64 * size.z as i64 > MAX_FILL || size.x.max(size.z) > MAX_FILL_SIDE {
-            return Err(format!("That box holds more than {MAX_FILL} blocks or is more than {MAX_FILL_SIDE} across."));
+            return Err(Words::key("command.error.box_too_big").with("max", Words::text(MAX_FILL)).with("side", Words::text(MAX_FILL_SIDE)));
         }
         self.load_area(min, max);
         let mut changes = Vec::new();
@@ -502,20 +554,28 @@ impl Server {
             }
         }
         self.set_blocks(&changes);
-        Ok(format!("Filled {} blocks with {}.", changes.len(), self.content.blocks.def(block).name))
+        let block = Words::Block(self.content.blocks.def(block).name.clone());
+        Ok(Words::key("command.fill").with("count", Words::text(changes.len())).with("block", block))
     }
 
     fn give(&mut self, source: Source, args: &[String]) -> Reply {
         let (name, count) = match args {
             [name] => (name, 64),
-            [name, count] => (name, count.parse::<u16>().ok().filter(|c| (1..=2304).contains(c)).ok_or_else(|| format!("`{count}` is not a count from 1 to 2304."))?),
-            _ => return Err("Give what?".into()),
+            [name, count] => (
+                name,
+                count
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|c| (1..=2304).contains(c))
+                    .ok_or_else(|| Words::key("command.error.not_a_count").with("word", count.as_str()).with("max", Words::text(2304)))?,
+            ),
+            _ => return Err(Words::key("command.error.give_what")),
         };
         let block = self.find_block(name)?;
         if block.is_air() {
-            return Err("Air cannot be held.".into());
+            return Err(Words::key("command.error.air_held"));
         }
-        let player = self.players.get_mut(&Self::me(source)?).ok_or("Nobody to give to.")?;
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
         let mut left = count;
         while left > 0 {
             let batch = left.min(u8::MAX as u16) as u8;
@@ -535,33 +595,37 @@ impl Server {
             self.items.spawn(ItemStack { item: block, count }, body, 0.0);
             spilled -= count as u16;
         }
-        let name = &self.content.blocks.def(block).name;
-        if left > 0 { Ok(format!("Gave {count} {name}; {left} did not fit and dropped at your feet.")) } else { Ok(format!("Gave {count} {name}.")) }
+        let gave = Words::key("command.give").with("count", Words::text(count)).with("block", Words::Block(self.content.blocks.def(block).name.clone()));
+        if left > 0 { Ok(Words::key("command.give.spilled").with("gave", gave).with("left", Words::text(left))) } else { Ok(gave) }
     }
 
     fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {
         let stages = match args {
             [] => 1,
             [word] if word == "ripe" => u8::MAX,
-            [count] => count.parse::<u8>().ok().filter(|&c| c > 0).ok_or_else(|| format!("`{count}` is not a number of stages."))?,
-            _ => return Err("Grow by how many stages?".into()),
+            [count] => count.parse::<u8>().ok().filter(|&c| c > 0).ok_or_else(|| Words::key("command.error.not_stages").with("word", count.as_str()))?,
+            _ => return Err(Words::key("command.error.grow_how_much")),
         };
         let grown = self.grow_around(self.position_of(source), 8.0, stages);
-        Ok(format!("Grew {grown} crops."))
+        Ok(Words::key("command.grow").with("count", Words::text(grown)))
     }
 
     fn drop_command(&mut self, source: Source, args: &[String]) -> Reply {
-        let (name, rest) = args.split_first().ok_or("Drop what?")?;
+        let (name, rest) = args.split_first().ok_or_else(|| Words::key("command.error.drop_what"))?;
         let (count, at) = match rest {
             [] => ("1", None),
             [count] => (count.as_str(), None),
             [count, x, y, z] => (count.as_str(), Some([x, y, z])),
-            _ => return Err("Give a count, then x y z if not at your feet.".into()),
+            _ => return Err(Words::key("command.error.drop_count_then_place")),
         };
-        let count = count.parse::<u8>().ok().filter(|c| (1..=MAX_STACK).contains(c)).ok_or_else(|| format!("`{count}` is not a count from 1 to {MAX_STACK}."))?;
+        let count = count
+            .parse::<u8>()
+            .ok()
+            .filter(|c| (1..=MAX_STACK).contains(c))
+            .ok_or_else(|| Words::key("command.error.not_a_count").with("word", count).with("max", Words::text(MAX_STACK)))?;
         let block = self.find_block(name)?;
         if block.is_air() {
-            return Err("Air cannot be dropped.".into());
+            return Err(Words::key("command.error.air_dropped"));
         }
         let position = match at {
             Some(words) => {
@@ -573,7 +637,10 @@ impl Server {
         };
         let body = voxmar_engine::dropped::Loose::new(position, Vec3::ZERO);
         self.items.spawn(ItemStack { item: block, count }, body, voxmar_engine::dropped::PICKUP_DELAY);
-        Ok(format!("Dropped {count} {} at {:.1} {:.1} {:.1}.", self.content.blocks.def(block).name, position.x, position.y, position.z))
+        Ok(Words::key("command.drop")
+            .with("count", Words::text(count))
+            .with("block", Words::Block(self.content.blocks.def(block).name.clone()))
+            .with("place", format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z)))
     }
 
     /// Loads the columns under a box, so commands can build anywhere, not only where
@@ -594,11 +661,11 @@ impl Server {
 
     /// A block position typed as three coordinates: numbers, or `~` (where the player's
     /// feet are, or spawn for the console) plus an optional offset.
-    fn block_position(&self, source: Source, words: [&String; 3]) -> Result<IVec3, String> {
+    fn block_position(&self, source: Source, words: [&String; 3]) -> Result<IVec3, Words> {
         let feet = self.position_of(source).floor().as_ivec3();
         let mut at = IVec3::ZERO;
         for (axis, word) in words.into_iter().enumerate() {
-            let error = || format!("`{word}` is not a block coordinate.");
+            let error = || Words::key("command.error.not_a_block_coordinate").with("word", word.as_str());
             at[axis] = match word.strip_prefix('~') {
                 Some("") => feet[axis],
                 Some(offset) => feet[axis] + offset.parse::<i32>().map_err(|_| error())?,
@@ -606,14 +673,14 @@ impl Server {
             };
         }
         if at.x.abs().max(at.z.abs()) as f32 > MAX_COORDINATE {
-            return Err(format!("{} {} {} is too far out.", at.x, at.y, at.z));
+            return Err(Words::key("command.error.too_far").with("place", format!("{} {} {}", at.x, at.y, at.z)));
         }
         Ok(at)
     }
 
     /// A block by its full name (`base:water`) or, when only one package has it, its short
     /// name (`water`); `air` is air.
-    fn find_block(&self, name: &str) -> Result<voxmar_engine::block::BlockId, String> {
+    fn find_block(&self, name: &str) -> Result<voxmar_engine::block::BlockId, Words> {
         let blocks = &self.content.blocks;
         if let Some(block) = blocks.id(name) {
             return Ok(block);
@@ -622,12 +689,12 @@ impl Server {
         let mut found = (0..blocks.len()).map(|i| voxmar_engine::block::BlockId(i as u16)).filter(|&b| blocks.def(b).name.ends_with(&suffix));
         match (found.next(), found.next()) {
             (Some(block), None) => Ok(block),
-            (Some(_), Some(_)) => Err(format!("Several packages have `{name}`; say which, as in base:{name}.")),
-            _ => Err(format!("There is no block called `{name}`.")),
+            (Some(_), Some(_)) => Err(Words::key("command.error.ambiguous_block").with("block", name)),
+            _ => Err(Words::key("command.error.no_such_block").with("block", name)),
         }
     }
 
-    fn find_player(&self, name: &str) -> Result<PlayerId, String> {
+    fn find_player(&self, name: &str) -> Result<PlayerId, Words> {
         let joined = || self.players.values().filter(|p| p.joined);
         if let Some(player) = joined().find(|p| p.name == name) {
             return Ok(player.id);
@@ -635,7 +702,7 @@ impl Server {
         let mut similar = joined().filter(|p| p.name.eq_ignore_ascii_case(name));
         match (similar.next(), similar.next()) {
             (Some(player), None) => Ok(player.id),
-            _ => Err(format!("Nobody called {name} is online.")),
+            _ => Err(Words::key("command.error.no_such_player").with("name", name)),
         }
     }
 }
@@ -650,8 +717,8 @@ enum Place {
 
 /// One teleport coordinate: a number, or `~` (the player's) plus an optional offset.
 /// Whole numbers along x and z mean the middle of that block.
-fn axis(word: &str, current: f32, horizontal: bool) -> Result<f32, String> {
-    let error = || format!("`{word}` is not a coordinate.");
+fn axis(word: &str, current: f32, horizontal: bool) -> Result<f32, Words> {
+    let error = || Words::key("command.error.not_a_coordinate").with("word", word);
     let value = match word.strip_prefix('~') {
         Some("") => current,
         Some(offset) => current + offset.parse::<f32>().map_err(|_| error())?,
@@ -681,21 +748,78 @@ fn direction_from(word: &str) -> Option<Vec2> {
     Some(Vec2::new(sin, -cos))
 }
 
-/// The compass point nearest a direction (x, z): `north-east`.
-fn compass(direction: Vec2) -> &'static str {
-    const POINTS: [&str; 8] = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+/// The compass point nearest a direction (x, z): `north_east`, the end of its key.
+fn compass_point(direction: Vec2) -> &'static str {
+    const POINTS: [&str; 8] = ["north", "north_east", "east", "south_east", "south", "south_west", "west", "north_west"];
     let degrees = direction.x.atan2(-direction.y).to_degrees().rem_euclid(360.0);
     POINTS[((degrees + 22.5) / 45.0) as usize % 8]
 }
 
+/// The compass point nearest a direction, in words.
+fn compass(direction: Vec2) -> Words {
+    Words::key(&format!("compass.{}", compass_point(direction)))
+}
+
 /// `5 minutes`, `90 seconds`.
-fn minutes(seconds: u64) -> String {
+fn minutes(seconds: u64) -> Words {
     match seconds {
-        1 => "a second".into(),
-        s if s < 120 => format!("{s} seconds"),
-        s if s % 60 == 0 => format!("{} minutes", s / 60),
-        s => format!("{:.1} minutes", s as f32 / 60.0),
+        s if s < 120 => Words::key("time.seconds").with("count", Words::text(s)),
+        s if s % 60 == 0 => Words::key("time.minutes").with("count", Words::text(s / 60)),
+        s => Words::key("time.minutes_part").with("minutes", Words::text(format!("{:.1}", s as f32 / 60.0))),
     }
+}
+
+/// A command's help, in the player's language where it has one.
+fn help(def: &CommandDef) -> Words {
+    Words::Own(help_key(def), def.help.clone())
+}
+
+/// The key of a command's help: `command.core.time.help`.
+fn help_key(def: &CommandDef) -> String {
+    format!("{}.help", voxmar_engine::lang::def_key("command", &def.name))
+}
+
+/// A weather name (`kind`, `effect`, `wind` or `channel`) in words, or as named.
+fn weather_name(what: &str, name: &str) -> Words {
+    Words::Own(format!("weather.{what}.{name}"), name.replace('_', " "))
+}
+
+/// `name 40%`.
+fn share(name: Words, value: f32) -> Words {
+    Words::key("command.weather.share").with("name", name).with("percent", Words::text(format!("{:.0}", value * 100.0)))
+}
+
+/// The numbers behind the weather: temperature, cloud, rain, wind and what else shows.
+fn weather_numbers(weather: &voxmar_engine::weather::Weather) -> Words {
+    let mut numbers = Words::key("command.weather.numbers")
+        .with("temperature", Words::text(format!("{:.1}", weather.temperature)))
+        .with("cloud", Words::text(format!("{:.0}", weather.cover * 100.0)))
+        .with("heaped", Words::text(format!("{:.0}", weather.convection * 100.0)))
+        .with("cirrus", Words::text(format!("{:.0}", weather.cirrus * 100.0)))
+        .with("humidity", Words::text(format!("{:.0}", weather.humidity * 100.0)))
+        .with("falling", Words::key(if weather.snow > 0.5 { "weather.channel.snow" } else { "weather.channel.rain" }))
+        .with("precipitation", Words::text(format!("{:.0}", weather.precipitation * 100.0)))
+        .with("wind", Words::text(format!("{:.1}", weather.wind.length())))
+        .with("visibility", Words::text(format!("{:.0}", weather.visibility())));
+    // The effects' channels, from gusts on.
+    let channels: Vec<Words> =
+        weather.fractions()[7..].iter().filter(|(_, value)| *value >= 0.05).map(|&(name, value)| share(weather_name("channel", name), value)).collect();
+    if !channels.is_empty() {
+        numbers = Words::key("command.weather.numbers_and").with("numbers", numbers).with("channels", Words::List(channels));
+    }
+    numbers
+}
+
+/// `VeryRare` as `very_rare`.
+fn snake(name: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in name.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
 }
 
 /// An amount of time in ticks: `100` or `100t` ticks, `30s` seconds, `2h` in-game hours,
@@ -714,11 +838,11 @@ fn parse_duration(word: &str) -> Option<u64> {
 }
 
 /// Seconds forced weather should last: `seconds` if given and sensible.
-fn weather_seconds(seconds: Option<&String>) -> Result<u32, String> {
+fn weather_seconds(seconds: Option<&String>) -> Result<u32, Words> {
     let Some(word) = seconds else { return Ok(WEATHER_SECONDS) };
     match word.parse::<u32>() {
         Ok(seconds) if (1..=MAX_WEATHER_SECONDS).contains(&seconds) => Ok(seconds),
-        _ => Err(format!("`{word}` is not a number of seconds from 1 to {MAX_WEATHER_SECONDS}.")),
+        _ => Err(Words::key("command.error.not_seconds").with("word", word.as_str()).with("max", Words::text(MAX_WEATHER_SECONDS))),
     }
 }
 
@@ -743,9 +867,9 @@ mod tests {
         let north = direction_from("n").unwrap();
         assert!((north - Vec2::new(0.0, -1.0)).length() < 1e-6);
         assert!((direction_from("90").unwrap() - Vec2::X).length() < 1e-6);
-        assert_eq!(compass(north), "north");
-        assert_eq!(compass(direction_from("sw").unwrap()), "south-west");
-        assert_eq!(compass(direction_from("100").unwrap()), "east");
+        assert_eq!(compass_point(north), "north");
+        assert_eq!(compass_point(direction_from("sw").unwrap()), "south_west");
+        assert_eq!(compass_point(direction_from("100").unwrap()), "east");
         assert!(direction_from("up").is_none());
     }
 
