@@ -61,9 +61,10 @@ const OPEN_WATER_SHIFT: u32 = 14u;
 const FLAG_FALLING: u32 = 1u << 24u;
 const FLAG_FRINGE: u32 = 1u << 27u;
 const FLAG_NEEDLES: u32 = 1u << 28u;
-// Leaf fringes shrink back into their block between these distances, in blocks (the
-// renderer stops drawing them a little beyond).
-const FRINGE_FADE = vec2(56.0, 88.0);
+const FLAG_FLAT: u32 = 1u << 24u;
+// Leaf cards shrink back into their block between these distances, in blocks (the renderer
+// stops drawing them a little beyond, terrain.rs `CARD_DISTANCE`).
+const CARD_FADE = vec2(40.0, 60.0);
 const AO_CURVE = array<f32, 4>(0.45, 0.65, 0.84, 1.0);
 // Plants sink away between these distances, in blocks; terrain.rs stops drawing them
 // beyond (PLANT_DISTANCE).
@@ -112,21 +113,23 @@ fn tufts(p: vec2<f32>) -> f32 {
     return mix(mix(at.x, at.y, w.x), mix(at.z, at.w, w.x), w.y);
 }
 
+// Where a plant quad's vertex lies across its cell, from its corner: (0, 0) to (1, 1) along
+// one diagonal, (1, 0) to (0, 1) along the other.
+fn plant_across(w0: u32) -> vec2<f32> {
+    let corner = (w0 >> 21u) & 3u;
+    let far = corner == 1u || corner == 2u;
+    if face_of(w0) == FACE_PLANT {
+        return select(vec2(0.0), vec2(1.0), far);
+    }
+    return select(vec2(1.0, 0.0), vec2(0.0, 1.0), far);
+}
+
 // A plant's vertex, with the plant placed as a whole from a hash of its cell, much as
 // Rainbow's Foliage varies its models: turned up to 40° either way, shifted and sunk a
 // little, and taller or shorter, in tufts across a meadow. It bends from its base with the
 // wind and away from the player.
 fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
-    let corner = (w0 >> 21u) & 3u;
-    let far = corner == 1u || corner == 2u;
-    var across = select(vec2(0.0), vec2(1.0), far);
-    if face_of(w0) != FACE_PLANT {
-        across = select(vec2(1.0, 0.0), vec2(0.0, 1.0), far);
-    }
-    if (w0 & FLAG_FRINGE) != 0u {
-        let world = fringe_position(w0, origin, across);
-        return world + leaf_flutter(world);
-    }
+    let across = plant_across(w0);
     let up = f32((w0 >> 23u) & 1u) + f32((w0 >> PLANT_STACK_SHIFT) & 3u);
     // The corner of the cell the whole plant stands in.
     let base = origin + local_position(w0) - vec3(across.x, up, across.y);
@@ -155,33 +158,74 @@ fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
     return vec3(centre.x + turned.x + shift.x + bend.x, base.y + lowered - sink, centre.z + turned.y + shift.y + bend.y);
 }
 
-// A leaf fringe's vertex: two crossed quads through the leaf block, turned at random, grown
-// past the block and leaning, so crowns look bushy rather than cubic. A conifer's needles
-// grow small sprigs that droop a little instead, so its tiers keep their shape.
-fn fringe_position(w0: u32, origin: vec3<f32>, across: vec2<f32>) -> vec3<f32> {
+// A leaf card's vertex. Leaf blocks on the outside of a crown carry two crossed upright
+// cards (bushy leaves, after Better Leaves Lite, MIT; see INSPIRATIONS.md), each two blocks
+// wide and 1.75 tall, so the leaf texture runs on past the block at its own 16 texels a
+// block and `card_mask` cuts it to a ragged round cluster; leaves open to the sky also
+// carry a flat card, tilted a little, so a crown seen from above is as bushy as from the
+// side. The pair is turned in steps of 22.5° and set a little off the block's centre, so
+// neighbouring blocks' cards never line up into streaks. A conifer's needles grow smaller
+// cards that droop a little, so a spruce's tiers keep their shape.
+struct Card {
+    world: vec3<f32>,
+    uv: vec2<f32>,
+    // Varies the outline of the cluster from card to card.
+    seed: u32,
+}
+
+const CARD_SIZE = vec2(2.0, 1.75);
+const NEEDLE_SIZE = vec2(1.6, 1.35);
+
+fn card_vertex(w0: u32, origin: vec3<f32>) -> Card {
+    let across = plant_across(w0);
     let needles = (w0 & FLAG_NEEDLES) != 0u;
     let top = f32((w0 >> 23u) & 1u);
     let corner = origin + local_position(w0) - vec3(across.x, top, across.y);
-    let centre = corner + 0.5;
-    let a = pcg3d(vec3<u32>(vec3<i32>(floor(centre))));
-    let b = pcg3d(vec3<u32>(vec3<i32>(floor(centre)) + vec3(0, 577, 0)));
-    var size = select(1.45 + 0.45 * a.y, 1.25 + 0.2 * a.y, needles);
-#ifndef PREPASS_PIPELINE
-    size = mix(size, 0.8, smoothstep(FRINGE_FADE.x, FRINGE_FADE.y, distance(centre, view.world_position)));
-#endif
-    // The second quad crosses the first at right angles.
-    let angle = a.x * 6.2832 + select(0.0, 1.5708, face_of(w0) != FACE_PLANT);
-    let along = vec2(cos(angle), sin(angle));
-    let offset = (across.x - 0.5) * size;
-    var up = (top - 0.5) * size;
-    let tilt = select(0.9, 0.4, needles);
-    let lean = vec2(-along.y, along.x) * up * (a.z - 0.5) * tilt;
-    let jitter = (b - 0.5) * select(0.2, 0.1, needles);
-    if needles {
-        // Sprigs hang a little: the top edge lower, so the card slopes down.
-        up -= top * 0.2 * size;
+    let cell = vec3<i32>(floor(corner + 0.5));
+    let a = pcg3d(vec3<u32>(cell));
+    let b = pcg3d(vec3<u32>(cell + vec3(0, 577, 0)));
+    var size = select(CARD_SIZE, NEEDLE_SIZE, needles);
+    // Far off the cards shrink back into their block.
+    size = mix(size, vec2(1.0), smoothstep(CARD_FADE.x, CARD_FADE.y, distance(corner + 0.5, view.world_position)));
+    // The second card crosses the first at 90° ± 22.5°.
+    var angle = floor(a.x * 8.0) * 0.3927;
+    if face_of(w0) != FACE_PLANT {
+        angle += 1.5708 + select(-0.3927, 0.3927, a.y < 0.5);
     }
-    return centre + vec3(along.x * offset + lean.x, up, along.y * offset + lean.y) + jitter;
+    let along = vec2(cos(angle), sin(angle));
+    let offset = (across.x - 0.5) * size.x;
+    var card: Card;
+    card.seed = u32(face_of(w0) * 2u) + select(0u, 1u, (w0 & FLAG_FLAT) != 0u) + u32(a.z * 4096.0) * 8u;
+    if (w0 & FLAG_FLAT) != 0u {
+        // Flat and square, tilted up to 30° about its own axis.
+        let tilt = (b.x - 0.5) * 1.05;
+        let side = vec3(-along.y, 0.0, along.x) * cos(tilt) + vec3(0.0, sin(tilt), 0.0);
+        size.y = size.x;
+        card.world = corner + 0.5 + vec3(along.x * offset, 0.2 + 0.3 * b.y, along.y * offset) + side * (top - 0.5) * size.y;
+    } else {
+        var up = (top - 0.5) * size.y;
+        if needles {
+            // Sprigs hang a little: the top edge lower, so the card slopes down.
+            up -= top * 0.2 * size.y;
+        }
+        let centre = corner + 0.5 + vec3(a.z - 0.5, b.y - 0.5, b.z - 0.5) * vec3(0.25, 0.15, 0.25);
+        card.world = centre + vec3(along.x * offset, up, along.y * offset);
+    }
+    card.uv = vec2(0.5 + (across.x - 0.5) * size.x, 0.5 - (top - 0.5) * size.y);
+    return card;
+}
+
+// Whether a leaf card is solid at `uv`: inside a round cluster the size of the card, its
+// edge ragged in lobes a few texels across and single texels, as a pixel artist would cut
+// it (the shapes, not the images, of Better Leaves Lite's masks), and different on every
+// card. Once a texel is smaller than a pixel the edge is smooth, so it does not sparkle.
+fn card_mask(uv: vec2<f32>, seed: u32, footprint: f32) -> bool {
+    let texel = vec2<i32>(floor(uv * 16.0));
+    let lobe = pcg3d(vec3<u32>(vec3(texel / 3, i32(seed)))).x;
+    let grain = pcg3d(vec3<u32>(vec3(texel, i32(seed) + 77))).x;
+    let rough = select(0.14 * lobe + 0.1 * grain, 0.12, footprint > 1.0);
+    let at = select((vec2<f32>(texel) + 0.5) / 16.0, uv, footprint > 1.0) - 0.5;
+    return length(at / (CARD_SIZE * 0.5)) < 1.0 - rough;
 }
 
 // World position, with leaves fluttering and plants bending in the wind. Shared by every
@@ -309,6 +353,9 @@ struct VertexOutput {
     @location(5) @interpolate(flat) covered: u32,
     // Where the chunk's column colours start in `column_colours`.
     @location(6) @interpolate(flat) colours: u32,
+#ifdef FRINGE
+    @location(10) @interpolate(flat) card: u32,
+#endif
 #ifdef TRANSLUCENT
     // Water's flow, blocks per second along x and z, whether it is falling, and how much
     // open water is around (0..1).
@@ -323,7 +370,14 @@ fn vertex(in: Vertex) -> VertexOutput {
     let w0 = in.packed.x;
     let w1 = in.packed.y;
     var out: VertexOutput;
+#ifdef FRINGE
+    // The fringe pass draws only leaf cards.
+    let card = card_vertex(w0, vec3<f32>(chunk_of(in).xyz));
+    out.world_position = card.world + leaf_flutter(card.world) * motion_near(card.world);
+    out.card = card.seed;
+#else
     out.world_position = world_position(in);
+#endif
     if face_of(w0) >= FACE_PLANT && (w0 & FLAG_INNER) != 0u {
         // Plants sink into the ground with distance, where they would only be a shimmer of
         // sub-pixel blades. They cast no shadow that far out (the farthest sun cascade
@@ -334,6 +388,9 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
     out.face = face_of(w0);
     out.uv = face_uv(local_position(w0), out.face);
+#ifdef FRINGE
+    out.uv = card.uv;
+#endif
     // Plants have no ambient occlusion; their AO bits hold the corner, and water's its flow.
     let water = tint_kind(w1) == TINT_WATER;
     let ao = select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, face_of(w0) >= FACE_PLANT || water);
@@ -373,7 +430,16 @@ fn biome_colour(kind: u32, colours: u32, world: vec3<f32>, face: u32) -> vec3<f3
     }
     let cell = vec2<u32>(vec2<i32>(floor(inside.xz)) & vec2(31));
     let word = column_colours[colours + (cell.y * 32u + cell.x) * 3u + kind - 1u];
-    return srgb_to_linear(unpack4x8unorm(word).rgb);
+    let colour = srgb_to_linear(unpack4x8unorm(word).rgb);
+    if kind == TINT_FOLIAGE {
+        // Leaves take the place's foliage colour a little lighter, yellower and less
+        // saturated, as sunlit leaves read in the shader-pack screenshots we aim for: the
+        // climates' foliage colours are saturated enough that, times a leaf texture, a
+        // canopy read as one dark, pure green.
+        let grey = dot(colour, vec3(0.2126, 0.7152, 0.0722));
+        return mix(colour, grey * vec3(1.25, 1.2, 0.75), 0.35) * 1.15;
+    }
+    return colour;
 }
 
 @fragment
@@ -393,6 +459,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let uv_dy = dpdy(in.uv);
 #endif
     let kind = tint_kind(in.surface);
+#ifdef FRINGE
+    if !card_mask(in.uv, in.card, length(fwidth(in.uv)) * 16.0) {
+        discard;
+    }
+#endif
 #ifdef ALPHA_TO_COVERAGE
     // Sharpened so a texel edge stays crisp up close; once the texture is minified the
     // alpha spreads over a few samples instead of flickering between pass and fail.
@@ -415,7 +486,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #ifndef TRANSLUCENT
     // A tinted overlay, as the fringe of grass on a grass block's side has, takes the
     // biome colour the top has.
-    let overlay = u32(entry.r * 255.0 + 0.5) | (u32(entry.g * 255.0 + 0.5) << 8u);
+    var overlay = u32(entry.r * 255.0 + 0.5) | (u32(entry.g * 255.0 + 0.5) << 8u);
+#ifdef FRINGE
+    // A card shows its block's overlay (fruit among the leaves) only over the block itself,
+    // not repeated across the cluster around it.
+    if any(in.uv < vec2(0.0)) || any(in.uv > vec2(1.0)) {
+        overlay = 0u;
+    }
+#endif
     if overlay != 0u {
         let over = textureSampleGrad(block_textures, block_sampler, in.uv, i32(overlay - 1u), uv_dx, uv_dy);
         let tint = biome_colour(u32(entry.b * 255.0 + 0.5), in.colours, in.world_position, in.face);

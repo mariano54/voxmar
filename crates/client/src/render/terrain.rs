@@ -67,18 +67,19 @@ const VERTEX_BLOCK: u32 = 64;
 const TILE_PAGE_VERTICES: u32 = 1 << 20;
 const PASSES: [TerrainPass; 5] =
     [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Inner, TerrainPass::Translucent, TerrainPass::Fringe];
-/// Only these passes cast shadows: leaf crowns' shells already shade, and water would
-/// shadow itself.
-const SHADOW_PASSES: [TerrainPass; 3] = [TerrainPass::Opaque, TerrainPass::Cutout, TerrainPass::Fringe];
-/// Leaf fringes are drawn for chunks this close to the camera, in blocks; further out they
-/// would be sub-pixel.
-const FRINGE_DISTANCE: f32 = 96.0;
+/// Only these passes cast shadows: leaf crowns' shells already shade (a leaf card's
+/// shadow is the crown's own, blurred by a few texels, for a card's whole vertex cost in
+/// every cascade), and water would shadow itself.
+const SHADOW_PASSES: [TerrainPass; 2] = [TerrainPass::Opaque, TerrainPass::Cutout];
+/// Leaf cards are drawn for chunks this close to the camera, in blocks; they shrink into
+/// their blocks before it (voxel.wgsl `CARD_FADE`).
+const CARD_DISTANCE: f32 = 64.0;
 /// Leaf faces inside crowns (`TerrainPass::Inner`) are drawn for chunks this close: they
 /// fill what shows through the holes in a crown's leaves, which further out no capture
 /// tells apart from the crown without them, and in a dense forest they were the dearest
 /// faces of all (a sixth of the terrain's vertex work and a seventh of its pixels).
 const INNER_DISTANCE: f32 = 64.0;
-/// Only this many nearest sun cascades draw plants and leaf fringes: further out their
+/// Only this many nearest sun cascades draw plants: further out their
 /// shadows are specks and fuzz no capture tells apart from none, and in a forest they were
 /// most of the third cascade's work.
 const DETAILED_CASCADES: usize = 2;
@@ -1154,7 +1155,7 @@ fn cull(
         let light = is_light.then(|| view.world_from_view.forward().as_vec3());
         let casters = light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer));
         let farthest = light_entity.is_some_and(|light| last_of_many(light, &lights));
-        // Whether plants and leaf fringes are drawn: in cameras and the nearest cascades.
+        // Whether plants and leaf cards are drawn: in cameras and the nearest cascades.
         let detailed = match light_entity {
             Some(LightEntity::Directional { cascade_index, .. }) => *cascade_index < DETAILED_CASCADES,
             _ => true,
@@ -1179,7 +1180,7 @@ fn cull(
             }
             let facing = facing(min, max, eye, light);
             for &pass in passes {
-                if (pass == TerrainPass::Fringe && (distance >= FRINGE_DISTANCE || !detailed))
+                if (pass == TerrainPass::Fringe && (distance >= CARD_DISTANCE || !detailed))
                     || (pass == TerrainPass::Inner && distance >= INNER_DISTANCE)
                 {
                     continue;
@@ -1314,8 +1315,8 @@ impl Casters {
 /// Whether a view is the farthest of three or more sun cascades. Its texels are larger
 /// than a leaf's holes, so it draws leaves and other cut-out blocks as solid casters
 /// without the alpha test, which on Apple GPUs is what makes them expensive (no hidden
-/// surface removal); the nearer cascades keep the dappled shade under trees. (Plants and
-/// leaf fringes are left out of every cascade past `DETAILED_CASCADES`.)
+/// surface removal); the nearer cascades keep the dappled shade under trees. (Plants are
+/// left out of every cascade past `DETAILED_CASCADES`.)
 fn last_of_many(light: &LightEntity, lights: &Query<&ExtractedDirectionalLight>) -> bool {
     let LightEntity::Directional { light_entity, cascade_index } = *light else { return false };
     let Ok(light) = lights.get(light_entity) else { return false };
@@ -1505,7 +1506,7 @@ fn pass_setup(pass: TerrainPass) -> (&'static [&'static str], Option<Face>) {
         // Water is visible from below too.
         TerrainPass::Translucent => (&["TRANSLUCENT"], None),
         // Both windings are meshed.
-        TerrainPass::Fringe => (&["CUTOUT"], Some(Face::Back)),
+        TerrainPass::Fringe => (&["CUTOUT", "FRINGE"], Some(Face::Back)),
     }
 }
 

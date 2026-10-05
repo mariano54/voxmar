@@ -107,11 +107,24 @@ fn shade_normal(
     let bounce = sun_color() * max(to_sun.y, 0.0) * GROUND_ALBEDO * 0.5 * (1.0 - normal.y) * open * ao
         * atmosphere.ground.w;
     var light = ambient + bounce + direct * mix(1.0, ao, 0.3) + torch + floor;
-    if foliage && sunlit > 0.0 {
-        // Sunlight through leaves and blades, brightest looking towards the sun.
-        let to_eye = normalize(view.world_position - world);
-        let through = pow(max(dot(-to_eye, to_sun), 0.0), 4.0);
-        light += sun_color() * sunlit * atmosphere.surface.z * (0.15 + through);
+    if foliage && open > 0.0 && atmosphere.surface.z > 0.0 {
+        // Sunlight through leaves and blades, brightest looking towards the sun. A leaf in
+        // the shade of the crown it belongs to still glows where only a leaf or so lies
+        // between it and the sun, as Complementary's leaves do: its shadow is looked up a
+        // block and a quarter towards the sun, past the leaves in front of it, so the rim
+        // and underside of a crown glow green against the light and its heart stays dark.
+        var glow = sunlit;
+        if sunlit < 0.5 {
+            let through = 0.6 * open * sun_shadow(world + to_sun * 1.25, to_sun, false);
+            if through > glow {
+                glow = through * cloud_light(atmosphere, view.world_position, world, to_sun);
+            }
+        }
+        if glow > 0.0 {
+            let to_eye = normalize(view.world_position - world);
+            let through = pow(max(dot(-to_eye, to_sun), 0.0), 4.0);
+            light += sun_color() * glow * atmosphere.surface.z * (0.15 + through);
+        }
     }
     return albedo * light;
 }

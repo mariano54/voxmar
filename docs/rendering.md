@@ -346,12 +346,6 @@ which plants do not use) and how many plant cells it stands on (bits 25..27), so
 vertex data is needed. Model variants with their own textures can come from block data
 later; the placement already varies every plant.
 
-Leaf blocks on the outside of a crown also get a fringe (bushy leaves): two crossed quads
-through the block, turned at random, grown 1.45–1.9× and leaning, in their own pass
-(`TerrainPass::Fringe`, mesh bit 27). Chunks farther than 96 blocks skip that pass, and
-within that the sprigs shrink back into their block from 56 blocks, so they cost nothing
-in the distance.
-
 Grass blocks open to the air also grow blades, in the spirit of the Grassier Grass mod.
 The mesher records one 4-byte seed per such block (`ChunkMesh::blades`: position in the
 chunk and the light above it), and all seeds share one storage buffer. Chunks within 34
@@ -364,6 +358,35 @@ survive at its nearest point, so distant grass costs little: at view distance 32
 blades went from about 2.5 ms of GPU vertex time to a fraction of that. They are darker
 at the root and lighter at the tip, receive shadows but cast none, and part around the
 player's feet.
+
+## Leaves
+
+What made the shader-pack screenshots' trees look better than ours was mostly the leaves'
+texture and colour, then their light; their bushy geometry was the smaller part.
+
+- **Texture.** A leaf block's texture is single leaves drawn as small sprites, lit along
+  their upper edges, in a few shapes and both ways round, over shadowed depths, with holes
+  cut only in the depths between leaves (texgen's `Cut` with `darker_than`), so the sky
+  shows between leaves rather than through them. The old one, per-texel grain with random
+  holes, read as static.
+- **Colour.** Leaves take the place's foliage colour a little lighter, yellower and less
+  saturated (`biome_colour` in voxel.wgsl): the climates' foliage colours are saturated
+  enough that a canopy read as one dark, pure green.
+- **Light through the crown.** A leaf in its own crown's shade still glows where only a
+  leaf or so lies between it and the sun: its shadow is looked up again a block and a
+  quarter towards the sun (`shade_normal`), only for leaves less than half lit.
+- **Cards.** Leaf blocks on the outside of a crown carry two crossed upright cards, two
+  blocks wide and 1.75 tall, and leaves open to the sky a flat one, tilted, in their own
+  pass (`TerrainPass::Fringe`, mesh bit 27, flag 2 for the flat card). The texture runs on
+  past the block at its own 16 texels a block, cut to a ragged round cluster (after Better
+  Leaves Lite), different on every card, and a card shows its block's overlay (fruit) only
+  over the block itself. Cards shrink into their block from 40 blocks and are drawn to 64.
+  They cast no shadow: a card's shadow is the crown's own blurred by a few texels, and in
+  a dense forest the cards in the shadow cascades were most of their cost.
+
+Measured in a dense forest from a hill and inside it (release, 1920×1080 at 75%):
+cards casting shadows cost 1.2–1.5 ms over none; casting none, they were within the
+noise of main in every interleaved round.
 
 ## Biome colours
 

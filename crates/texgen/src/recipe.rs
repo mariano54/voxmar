@@ -149,6 +149,8 @@ pub struct Grid {
     pub at: Vec<(i32, i32)>,
     /// Draw the grid mirrored left to right.
     pub mirror: bool,
+    /// Wrap what runs past an edge round to the opposite one, so the texture still tiles.
+    pub wrap: bool,
 }
 
 /// Another texture drawn over this one at each offset (its clear texels leave what is
@@ -222,13 +224,16 @@ impl Default for Shift {
 }
 
 /// Makes texels transparent where the sum of `mask` is above `above` (or, with `below`,
-/// below it).
+/// below it). With `darker_than`, only painted texels of a shade below it are cut: the dark
+/// gaps between a leaf texture's clusters, so its holes open between leaves, not through
+/// them.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Cut {
     pub mask: Vec<Term>,
     pub above: Option<f32>,
     pub below: Option<f32>,
+    pub darker_than: Option<u8>,
 }
 
 /// A scalar value per texel. Every pattern tiles seamlessly.

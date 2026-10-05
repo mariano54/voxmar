@@ -200,7 +200,10 @@ fn draw_grid(canvas: &mut Canvas, grid: &Grid) -> Result<(), Error> {
             let chars: Vec<char> = line.chars().collect();
             for (column, ch) in chars.iter().enumerate() {
                 let column = if grid.mirror { chars.len() - 1 - column } else { column };
-                let (x, y) = (ox + column as i32, oy + row as i32);
+                let (mut x, mut y) = (ox + column as i32, oy + row as i32);
+                if grid.wrap {
+                    (x, y) = (x.rem_euclid(size.w as i32), y.rem_euclid(size.h as i32));
+                }
                 if x < 0 || y < 0 || x >= size.w as i32 || y >= size.h as i32 {
                     continue;
                 }
@@ -338,7 +341,12 @@ fn draw_cut(canvas: &mut Canvas, cut: &Cut, seed: u32) {
     let size = canvas.size;
     let values = field::sum(&cut.mask, size, hash(seed, 1, 1));
     for (i, v) in values.into_iter().enumerate() {
-        if cut.above.is_some_and(|a| v > a) || cut.below.is_some_and(|b| v < b) {
+        let dark = match (cut.darker_than, canvas.texels[i]) {
+            (None, _) => true,
+            (Some(limit), Texel::Shade(_, shade)) => shade < limit,
+            _ => false,
+        };
+        if dark && (cut.above.is_some_and(|a| v > a) || cut.below.is_some_and(|b| v < b)) {
             canvas.texels[i] = Texel::Clear;
         }
     }

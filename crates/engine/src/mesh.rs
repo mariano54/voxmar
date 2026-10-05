@@ -21,7 +21,8 @@
 //! the one that sways in the wind. Plants carry no ambient occlusion: their `ao` bits hold the
 //! vertex's corner (0..=3, in the order the quad is built), and bits 25..27 how many plant
 //! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`).
-//! Bit 27 marks the same crossed quads used as a leaf fringe (`ChunkMesh::fringe`).
+//! Bit 27 marks the same quads used as leaf cards (`ChunkMesh::fringe`), with flag 2 for a
+//! flat card and bit 28 for a conifer's needles; their top edge is flag 1, as on a plant.
 //!
 //! Faces of translucent fluids (water) carry the fluid's state instead of ambient
 //! occlusion, which their shading has no use for:
@@ -65,8 +66,10 @@ pub const PLANT_DIAGONAL: u32 = 6;
 pub const PLANT_ANTIDIAGONAL: u32 = 7;
 /// Vertex flag 1 (see the module docs).
 const FLAG_INNER: u32 = 1 << 23;
-/// Marks the crossed quads of a leaf fringe, which the shader grows out of the leaf block.
+/// Marks the quads of a leaf card, which the shader grows out of the leaf block.
 const FLAG_FRINGE: u32 = 1 << 27;
+/// On a fringe: the card lies flat rather than upright (flag 2).
+const FLAG_FLAT: u32 = 1 << 24;
 /// On a fringe: the leaves are a conifer's needles, whose sprigs the shader keeps small and
 /// drooping, so a spruce's tiers stay neat rather than bristling.
 const FLAG_NEEDLES: u32 = 1 << 28;
@@ -108,7 +111,7 @@ pub struct ChunkMesh {
     /// crown's shell already does.
     pub inner: MeshBuffers,
     pub translucent: MeshBuffers,
-    /// Leafy sprigs sticking out of crowns (bushy leaves), only worth drawing nearby.
+    /// Leaf cards on the outside of crowns (bushy leaves), only worth drawing nearby.
     pub fringe: MeshBuffers,
     /// One seed per grass block open to the air, from which the renderer grows a tuft of
     /// blades, packed by `blade_seed`.
@@ -1076,19 +1079,18 @@ fn quantise_flow(flow: Vec2) -> (u8, u8) {
     (level as u8, ((turn * 16.0).round().rem_euclid(16.0)) as u8 % 16)
 }
 
-/// A sprig of leaves out of a leaf block on the outside of a crown: two crossed quads
-/// through the block, which the shader turns and grows beyond it (`voxel.wgsl`), lit by the
-/// open side. `padded` is the block's position in the padded cells.
+/// Leaf cards for a leaf block on the outside of a crown: two crossed upright quads
+/// through the block, and a flat one if it is open to the sky, which the shader turns,
+/// grows past the block and cuts to a round cluster (`voxel.wgsl`), lit by the open side.
+/// `padded` is the block's position in the padded cells.
 fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], padded: IVec3) {
     let cell = |p: IVec3| &cells[pidx(p.x as usize, p.y as usize, p.z as usize)];
-    let open: Vec<&Cell> = Face::ALL
-        .iter()
-        .map(|face| cell(padded + face.normal()))
-        .filter(|c| !c.occludes && registry.info(c.block).render != RenderKind::Leaves)
-        .collect();
+    let clear = |c: &Cell| !c.occludes && registry.info(c.block).render != RenderKind::Leaves;
+    let open: Vec<&Cell> = Face::ALL.iter().map(|face| cell(padded + face.normal())).filter(|c| clear(c)).collect();
     if open.is_empty() {
         return;
     }
+    let flat = clear(cell(padded + IVec3::Y));
     let sky = open.iter().map(|c| c.light >> 4).max().unwrap_or(0);
     let block = open.iter().map(|c| c.light & 15).max().unwrap_or(0);
     let pos = padded - 1;
@@ -1097,12 +1099,13 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], 
     let needles = if registry.def(leaf).has_tag("conifer") { FLAG_NEEDLES } else { 0 };
     let tint = info.tints[Face::PosY as usize];
     let w1 = info.layers[Face::PosY as usize] as u32 | (tint as u32) << 12 | ((sky << 4 | block) as u32) << 24;
-    for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
+    let cards = [(PLANT_DIAGONAL, (0, 0), (1, 1), 0), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1), 0), (PLANT_DIAGONAL, (0, 0), (1, 1), FLAG_FLAT)];
+    for (face, (x0, z0), (x1, z1), shape) in cards.into_iter().take(if flat { 3 } else { 2 }) {
         let base = out.vertices.len() as u32;
         for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
             let p = pos + IVec3::new(dx, top, dz);
             let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | face << 18 | (corner as u32) << 21 | (top as u32) << 23;
-            out.vertices.push([w0 | FLAG_FRINGE | needles, w1]);
+            out.vertices.push([w0 | FLAG_FRINGE | needles | shape, w1]);
         }
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
     }
