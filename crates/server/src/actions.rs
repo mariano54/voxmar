@@ -6,8 +6,11 @@
 //! (a broken block vanishes at once). When the server runs behind (a busy machine, or
 //! ticks skipped to catch up), its completion comes later than the client's, and the
 //! client's next proposal (the block behind) must not cancel an action the player saw
-//! finish: an action that has had most of its time by the clock when it is replaced is
-//! completed then, as Minecraft accepts a block broken once most of its time has passed.
+//! finish. The client says when it shows one done (`Finished`): if most of its time has
+//! passed by the server's clock it completes then, as Minecraft accepts a block broken once
+//! most of its time has passed; otherwise it completes in its own time, whatever the
+//! player starts next. A server stalled when the proposal came (streaming, a slow tick)
+//! starts its clock late, and judged by that clock alone the break was lost.
 
 use std::time::Instant;
 
@@ -41,6 +44,8 @@ pub struct Executor {
     /// Each agent performs at most one timed action at a time: its event, when it started
     /// by the clock, and how long it takes.
     in_progress: FxHashMap<PlayerId, (EventId, Instant, f32)>,
+    /// Actions proposed so far, for `Lag::proposal_stall`.
+    proposals: u64,
 }
 
 /// Validation view of the world from one agent's point of view.
@@ -93,6 +98,11 @@ impl Server {
     }
 
     pub(crate) fn propose(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
+        self.executor.proposals += 1;
+        let stall = self.config.lag.proposal_stall;
+        if !stall.is_zero() && self.executor.proposals % 2 == 1 {
+            std::thread::sleep(stall);
+        }
         self.supersede_action(agent);
         let Some(def) = self.action_def(action) else { return };
         let context = Context { server: self, agent };
@@ -113,6 +123,18 @@ impl Server {
     pub(crate) fn cancel_action(&mut self, agent: PlayerId) {
         if let Some((id, ..)) = self.executor.in_progress.remove(&agent) {
             self.executor.scheduler.cancel(id);
+        }
+    }
+
+    /// The player's client shows the action in progress done: it completes now if most of
+    /// its time has passed by the clock, otherwise at its own completion tick, no longer
+    /// in the way of (or cancelled by) the player's next action.
+    pub(crate) fn finished_action(&mut self, agent: PlayerId) {
+        let Some((id, started, seconds)) = self.executor.in_progress.remove(&agent) else { return };
+        if started.elapsed().as_secs_f32() >= seconds * MOSTLY_DONE
+            && let Some(pending) = self.executor.scheduler.cancel(id)
+        {
+            self.finish(pending);
         }
     }
 
