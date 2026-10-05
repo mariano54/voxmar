@@ -6,7 +6,7 @@
 //! - `columns/<x>.<z>.bin`: each column players have edited, as zlib-compressed postcard
 //!   together with the names of the blocks it uses, so saves survive content changes that
 //!   renumber blocks. Untouched columns are not stored: generation recreates them exactly.
-//! - `players/<name>.ron`: each player's position, game mode, health and inventory.
+//! - `players/<name>.ron`: each player's position, game mode, health, hunger and inventory.
 //! - `items.ron`: the dropped items lying about, by item name.
 //! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
 //!   their next is due.
@@ -112,9 +112,16 @@ pub struct SavedPlayer {
     pub mode: Option<GameMode>,
     pub flying: bool,
     pub health: Health,
+    /// Hunger points (see `voxmar_engine::vitals`).
+    pub hunger: u8,
     pub inventory: Inventory,
     /// Experience in tenths, by skill name.
     pub skills: Vec<(String, u32)>,
+}
+
+/// Players saved before hunger existed come back full.
+fn full() -> u8 {
+    voxmar_engine::vitals::MAX_HUNGER
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -126,6 +133,8 @@ struct PlayerFile {
     mode: Option<GameMode>,
     flying: bool,
     health: Health,
+    #[serde(default = "full")]
+    hunger: u8,
     inventory: Vec<Option<(String, u8)>>,
     #[serde(default)]
     skills: Vec<(String, u32)>,
@@ -264,7 +273,8 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills }))
+        let hunger = file.hunger.min(voxmar_engine::vitals::MAX_HUNGER);
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, hunger, inventory, skills: file.skills }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -283,6 +293,7 @@ impl WorldSave {
             mode: player.mode,
             flying: player.flying,
             health: player.health,
+            hunger: player.hunger,
             inventory,
             skills: player.skills.clone(),
         };
@@ -490,6 +501,7 @@ mod tests {
             mode: Some(GameMode::Creative),
             flying: true,
             health: Health { current: 13, max: 20 },
+            hunger: 7,
             inventory,
             skills: vec![("core:farming".into(), 1234)],
         };

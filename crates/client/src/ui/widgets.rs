@@ -410,13 +410,13 @@ pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece
 }
 
 /// Fills a meter to `share` (0..1) and writes `text` over it.
-pub fn set_meter<F: bevy::ecs::query::QueryFilter>(
+pub fn set_meter<F: bevy::ecs::query::QueryFilter, G: bevy::ecs::query::QueryFilter>(
     meter: &Meter,
     share: f32,
     text_value: &str,
     nodes: &mut Query<&mut Node, F>,
     children: &Query<&Children>,
-    texts: &mut Query<&mut Text>,
+    texts: &mut Query<&mut Text, G>,
 ) {
     if let Ok(mut node) = nodes.get_mut(meter.fill) {
         let width = Val::Percent(share.clamp(0.0, 1.0) * 100.0);

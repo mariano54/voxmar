@@ -19,12 +19,16 @@
         // and putting what the pointer holds back when the screen closes.
         (name: "transfer", duration: Instant, requires: [Alive], effects: [MoveItems]),
         (name: "quick_move", duration: Instant, requires: [Alive], effects: [QuickMove]),
+        // The crafting grid: once onto the pointer, or (shift) as many as fit.
+        (name: "craft", duration: Instant, requires: [Alive], effects: [Craft]),
         (name: "stow", duration: Instant, effects: [StowCursor]),
         // Throwing items from the hand (Q, or Ctrl+Q for the whole stack), or the stack on
         // the pointer by clicking outside the inventory.
         (name: "drop", duration: Instant, requires: [Alive], effects: [Throw]),
         // Striking a creature with what is in hand (left click on it).
         (name: "attack", duration: Instant, requires: [Alive, CreatureInReach], effects: [Strike]),
+        // Eating what you hold, if you have room for it.
+        (name: "eat", duration: Seconds(1.2), requires: [Alive, HoldingFood, Hungry], effects: [EatHeld]),
         (name: "respawn", duration: Instant, requires: [Dead], effects: [Respawn]),
     ],
 )

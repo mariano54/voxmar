@@ -14,6 +14,7 @@ use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::creature::CreatureRegistry;
+use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
 use crate::movement::Tuning;
 use crate::skill::SkillRegistry;
@@ -30,6 +31,8 @@ pub struct Content {
     pub skills: Arc<SkillRegistry>,
     pub crops: Arc<CropRegistry>,
     pub creatures: Arc<CreatureRegistry>,
+    /// What the inventory's crafting grid makes.
+    pub recipes: Arc<RecipeRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
 }
@@ -64,6 +67,7 @@ impl Content {
         let mut skills = SkillRegistry::default();
         let mut crops = Vec::new();
         let mut creatures = Vec::new();
+        let mut recipes = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -94,6 +98,11 @@ impl Content {
                         creatures.extend(CreatureRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "recipes.ron" => {
+                        recipes.extend(RecipeRegistry::read(package, &source)?);
+                        // Kept with the other files too, so the fingerprint covers it.
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "movement.ron" => {
                         if movement.replace(Tuning::from_ron(&source)?).is_some() {
                             return Err(RegistryError(format!("{package}/movement.ron: another package already sets movement")));
@@ -112,6 +121,7 @@ impl Content {
         let blocks = BlockRegistry::new(blocks)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
+        let recipes = RecipeRegistry::new(recipes, &blocks)?;
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -121,6 +131,7 @@ impl Content {
             skills: Arc::new(skills),
             crops: Arc::new(crops),
             creatures: Arc::new(creatures),
+            recipes: Arc::new(recipes),
             files: Arc::new(files),
         })
     }
