@@ -313,23 +313,20 @@ impl Settings {
 
     /// The settings in `source`, and the names of the fields it could not read.
     fn parse(source: &str) -> (Self, Vec<String>) {
-        use ron::Value;
         if let Ok(settings) = ron::from_str::<Settings>(source) {
             return (settings.clamped(), Vec::new());
         }
-        let Ok(Value::Map(saved)) = ron::from_str::<Value>(source) else { return (Self::default(), vec!["everything".into()]) };
-        // Lay each saved field over what loaded so far, keeping it only if it still reads.
-        let mut settings = Self::default();
+        // Add the file's fields one at a time, keeping each only if the settings still read.
+        let mut kept: Vec<&str> = Vec::new();
         let mut skipped = Vec::new();
-        for (key, value) in saved.iter() {
-            let Value::String(name) = key else { continue };
-            let Ok(Value::Map(mut fields)) = ron::from_str::<Value>(&ron::to_string(&settings).unwrap_or_default()) else { break };
-            fields.insert(key.clone(), value.clone());
-            match Value::Map(fields).into_rust::<Settings>() {
-                Ok(next) => settings = next,
-                Err(_) => skipped.push(name.clone()),
+        for field in top_level_fields(source) {
+            kept.push(field);
+            if ron::from_str::<Settings>(&format!("({})", kept.join(", "))).is_err() {
+                kept.pop();
+                skipped.push(field.split(':').next().unwrap_or(field).trim().to_owned());
             }
         }
+        let settings = ron::from_str::<Settings>(&format!("({})", kept.join(", "))).unwrap_or_default();
         (settings.clamped(), skipped)
     }
 
@@ -360,6 +357,30 @@ impl Settings {
         }
         self
     }
+}
+
+/// The `name: value` fields of a RON struct, split at its top-level commas (outside any
+/// brackets and strings).
+fn top_level_fields(source: &str) -> Vec<&str> {
+    let body = source.trim();
+    let Some(body) = body.find('(').and_then(|open| body.rfind(')').map(|close| &body[open + 1..close])) else { return Vec::new() };
+    let (mut fields, mut depth, mut start, mut in_string, mut escaped) = (Vec::new(), 0i32, 0, false, false);
+    for (i, c) in body.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '(' | '[' | '{' if !in_string => depth += 1,
+            ')' | ']' | '}' if !in_string => depth -= 1,
+            ',' if !in_string && depth == 0 => {
+                fields.push(body[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    fields.push(body[start..].trim());
+    fields.into_iter().filter(|f| !f.is_empty() && !f.starts_with("//")).collect()
 }
 
 /// `voxmar/settings.ron` in the platform's configuration directory.
@@ -1523,31 +1544,36 @@ mod tests {
     use super::*;
     use voxmar_texgen::font::{EM_PIXELS, PixelFont};
 
-    /// The panel reserves room for the hint, so a longer one would spill out of it.
+    /// The panel reserves room for the hint, so a longer one would spill out of it, in any
+    /// of the fonts a player can choose.
     #[test]
     fn every_hint_fits_the_room_kept_for_it() {
-        let font = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/font.txt")).unwrap();
-        let font = PixelFont::parse(&font).unwrap();
-        // Glyphs get one font pixel of space after them; body text draws each font pixel
-        // `scale` screen pixels wide, inside the panel's padding.
-        let advance = |c: char| font.glyphs.get(&c).map_or(EM_PIXELS, |glyph| glyph.width) as f32 + 1.0;
-        let scale = BODY / EM_PIXELS as f32;
-        let room = (PANEL_WIDTH - 28.0 * PX) / scale;
-        for (_, controls) in SECTIONS {
-            for &control in controls.iter() {
-                let hint = control.hint();
-                let (mut lines, mut width) = (1, 0.0);
-                for word in hint.split(' ') {
-                    let word_width: f32 = word.chars().map(advance).sum();
-                    let with_space = if width == 0.0 { word_width } else { width + advance(' ') + word_width };
-                    if with_space > room {
-                        lines += 1;
-                        width = word_width;
-                    } else {
-                        width = with_space;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/fonts");
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+        for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
+            let font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
+            // Glyphs get one font pixel of space after them; body text draws each font pixel
+            // `scale` screen pixels wide, inside the panel's padding.
+            let cell = font.monospace.unwrap_or(0);
+            let advance = |c: char| font.glyphs.get(&c).map_or(EM_PIXELS, |glyph| glyph.width).max(cell) as f32 + 1.0;
+            let scale = BODY / EM_PIXELS as f32;
+            let room = (PANEL_WIDTH - 28.0 * PX) / scale;
+            for (_, controls) in SECTIONS {
+                for &control in controls.iter() {
+                    let hint = control.hint();
+                    let (mut lines, mut width) = (1, 0.0);
+                    for word in hint.split(' ') {
+                        let word_width: f32 = word.chars().map(advance).sum();
+                        let with_space = if width == 0.0 { word_width } else { width + advance(' ') + word_width };
+                        if with_space > room {
+                            lines += 1;
+                            width = word_width;
+                        } else {
+                            width = with_space;
+                        }
                     }
+                    assert!(lines <= HINT_LINES, "{file}: {lines} lines: {hint}");
                 }
-                assert!(lines <= HINT_LINES, "{lines} lines: {hint}");
             }
         }
     }
@@ -1560,5 +1586,10 @@ mod tests {
         // Missing fields take their defaults and out-of-range values are clamped.
         let edited: Settings = ron::from_str("(view_distance: 99, music_volume: -5)").unwrap();
         assert_eq!(edited.clamped(), Settings { view_distance: 32, music_volume: 0, ..Settings::default() });
+        // A value an older game wrote that no longer reads keeps its default, and only it.
+        let (old, skipped) = Settings::parse("(fov: 80, resolution: Balanced, zoom_key: \"KeyC\")");
+        assert_eq!((old.fov, old.resolution, skipped), (80, 50, vec!["resolution".to_owned()]));
+        // Zoom on C made way for the character screen.
+        assert_eq!(old.zoom_key, Key(KeyCode::KeyZ));
     }
 }
