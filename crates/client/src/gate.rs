@@ -685,7 +685,8 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         2 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "sun") else { return };
-            gate.check("sky: sun", disc(&shot, "sun"));
+            let at = light_on_screen(world);
+            gate.check("sky: sun", disc(&shot, at, "sun"));
             gate.check("sky: day", gradient(&shot));
             world.resource::<Net>().command(&format!("time set {MIDNIGHT}"));
             gate.advance(now);
@@ -696,7 +697,8 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         4 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "moon") else { return };
-            gate.check("sky: moon", disc(&shot, "moon"));
+            let at = light_on_screen(world);
+            gate.check("sky: moon", disc(&shot, at, "moon"));
             // Away from the moon, high up.
             let mut player = world.resource_mut::<LocalPlayer>();
             player.yaw += 1.6;
@@ -716,37 +718,54 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Turns the player towards the light of the moment: the sun by day, the moon by night.
-fn aim_at_light(world: &mut World) {
+/// The direction to the light of the moment: the sun by day, the moon by night.
+fn to_light(world: &mut World) -> Option<Vec3> {
     let mut query = world.query_filtered::<&Transform, With<crate::render::Sun>>();
-    let Ok(light) = query.single(world) else { return };
-    let to_light = light.back().as_vec3();
+    query.single(world).ok().map(|light| light.back().as_vec3())
+}
+
+/// Turns the player to have the light of the moment high in the view, clear of the
+/// crosshair and the console's lines.
+fn aim_at_light(world: &mut World) {
+    let Some(to_light) = to_light(world) else { return };
     let mut player = world.resource_mut::<LocalPlayer>();
     player.yaw = (-to_light.x).atan2(-to_light.z);
-    player.pitch = to_light.y.atan2(to_light.xz().length());
+    player.pitch = to_light.y.atan2(to_light.xz().length()) - 12f32.to_radians();
+}
+
+/// Where the light of the moment is in the shot, in pixels.
+fn light_on_screen(world: &mut World) -> Option<Vec2> {
+    let to_light = to_light(world)?;
+    let mut cameras = world.query_filtered::<(&Camera, &GlobalTransform), With<Camera3d>>();
+    let (camera, transform) = cameras.single(world).ok()?;
+    camera.world_to_viewport(transform, transform.translation() + to_light * 1000.0).ok()
 }
 
 /// Least mean change (levels of 255) across the screen for a menu or weather to count as
 /// shown.
 const SCREEN_CHANGE: f32 = 6.0;
 
-/// A bright disc in the middle of a shot aimed at the sun or moon, far brighter than the
-/// sky in the corners. It is sampled along the diagonals, clear of the crosshair.
-fn disc(shot: &Image, what: &str) -> Result<String, String> {
+/// Least levels the sun or moon's disc stands out from the sky a little way off.
+const DISC_CONTRAST: u32 = 20;
+
+/// A bright disc in a shot where the sun or moon should be (`at`): near white, and
+/// brighter than the sky to either side, beyond the sun's glow.
+fn disc(shot: &Image, at: Option<Vec2>, what: &str) -> Result<String, String> {
     let (w, h, data) = pixels(shot)?;
-    let luminance = |x: usize, y: usize| {
+    let at = at.ok_or_else(|| format!("the {what} is not in view"))?;
+    let (cx, cy) = (at.x.round() as i32, at.y.round() as i32);
+    let luminance = |(x, y): (i32, i32)| {
+        let (x, y) = (x.clamp(0, w as i32 - 1) as usize, y.clamp(0, h as i32 - 1) as usize);
         let i = (y * w + x) * 4;
         (data[i] as u32 * 54 + data[i + 1] as u32 * 183 + data[i + 2] as u32 * 19) / 256
     };
-    let (cx, cy) = (w / 2, h / 2);
-    let inside = [3, 5].into_iter().flat_map(|d| [(cx - d, cy - d), (cx + d, cy - d), (cx - d, cy + d), (cx + d, cy + d)]);
-    let dimmest = inside.map(|(x, y)| luminance(x, y)).min().unwrap_or(0);
-    let corners = [(w / 10, h / 10), (w * 9 / 10, h / 10)];
-    let around = corners.iter().map(|&(x, y)| luminance(x, y)).max().unwrap_or(0);
-    if dimmest >= 170 && dimmest >= around + 40 {
-        Ok(format!("a {what} disc at {dimmest} levels against the sky's {around}"))
+    let ring = |r: i32| [(cx - r, cy), (cx + r, cy), (cx, cy - r), (cx, cy + r), (cx - r, cy - r), (cx + r, cy + r), (cx - r, cy + r), (cx + r, cy - r)];
+    let dimmest = std::iter::once((cx, cy)).chain(ring(2)).map(luminance).min().unwrap_or(0);
+    let around = luminance((cx - 150, cy)).max(luminance((cx + 150, cy)));
+    if dimmest >= 220 && dimmest >= around + DISC_CONTRAST {
+        Ok(format!("a {what} disc at {dimmest} levels against the sky's {around} nearby"))
     } else {
-        Err(format!("no {what} disc: {dimmest} levels where it should be, the sky {around} around"))
+        Err(format!("no {what} disc: {dimmest} levels where it should be, the sky {around} nearby"))
     }
 }
 
@@ -775,7 +794,7 @@ fn gradient(shot: &Image) -> Result<String, String> {
 }
 
 /// A night sky away from the moon shows stars: small points much brighter than the dark
-/// around them.
+/// around them, in the top two fifths of the shot, above the console's lines.
 fn stars(shot: &Image) -> Result<String, String> {
     let (w, h, data) = pixels(shot)?;
     let luminance = |x: usize, y: usize| {
@@ -783,17 +802,17 @@ fn stars(shot: &Image) -> Result<String, String> {
         (data[i] as i32 * 54 + data[i + 1] as i32 * 183 + data[i + 2] as i32 * 19) / 256
     };
     let mut count = 0;
-    for y in (2..h / 2).step_by(1) {
+    for y in 2..h * 2 / 5 {
         for x in 2..w - 2 {
             let here = luminance(x, y);
             let dark = [luminance(x - 2, y), luminance(x + 2, y), luminance(x, y - 2), luminance(x, y + 2)].into_iter().max().unwrap_or(0);
             count += (here >= 60 && here >= dark + 30) as usize;
         }
     }
-    if count >= 10 {
-        Ok(format!("{count} star pixels in the upper half"))
+    if count >= 40 {
+        Ok(format!("{count} star pixels"))
     } else {
-        Err(format!("only {count} star pixels in the upper half"))
+        Err(format!("only {count} star pixels"))
     }
 }
 
