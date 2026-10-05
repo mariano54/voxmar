@@ -103,12 +103,24 @@ while quiet || playing; do
   sleep 2
 done
 
+# Takes the lock file $1 for this process, as macOS's shlock does: the file holds the
+# owner's pid, and a lock whose owner has died is stale and taken over. Linux has no shlock.
+take_lock() {
+  command -v shlock >/dev/null && { shlock -f "$1" -p $$; return; }
+  (set -o noclobber; echo $$ >"$1") 2>/dev/null && return 0
+  local owner
+  owner=$(cat "$1" 2>/dev/null)
+  [[ -n $owner ]] && kill -0 "$owner" 2>/dev/null && return 1
+  rm -f "$1"
+  (set -o noclobber; echo $$ >"$1") 2>/dev/null
+}
+
 slots=${VOXMAR_SLOTS:-4}
 lock=
 waited=0
 while [[ -z $lock ]]; do
   for i in $(seq 1 "$slots"); do
-    if shlock -f "/tmp/voxmar-heavy-$i.lock" -p $$; then lock=/tmp/voxmar-heavy-$i.lock; break; fi
+    if take_lock "/tmp/voxmar-heavy-$i.lock"; then lock=/tmp/voxmar-heavy-$i.lock; break; fi
   done
   if [[ -z $lock ]]; then
     ((waited++ % 30 == 0)) && echo "memcap: all $slots heavy slots busy, waiting" >&2

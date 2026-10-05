@@ -11,9 +11,9 @@
         "calcite": ["#b9bcb8", "#c8cbc6", "#d6d8d3", "#e1e3de", "#ebede8", "#f6f6f2"],
         "deepslate": ["#2e2e34", "#38383f", "#43434a", "#4e4e56", "#5a5a62", "#67676f"],
         "marble": ["#b4b3b0", "#c6c5c1", "#d5d4d0", "#e2e1dc", "#edece7", "#f8f7f3"],
-        "marble_vein": ["#8a919b", "#9fa6af", "#b4bac2"],
+        "marble_vein": ["#7c818c", "#979ba4", "#b3b6bc"],
         "limestone": ["#a1977e", "#b1a78d", "#c0b79c", "#cdc5aa", "#d9d2b8", "#e5dfc6"],
-        "slate": ["#2a3038", "#333a43", "#3d454f", "#48505a", "#535c66", "#5f6872"],
+        "slate": ["#252a36", "#2f3541", "#39414d", "#444c58", "#505864", "#5e6670"],
         "basalt": ["#16171e", "#21222a", "#2c2d35", "#38383f", "#46454b", "#57545a"],
         "chalk": ["#c6c5bd", "#d3d2cb", "#dedcd6", "#e8e7e1", "#f0efea", "#f9f8f4"],
         "sandstone": ["#b39f6e", "#c3af7e", "#d1be8d", "#dcca9b", "#e5d5a8", "#eee0b7"],
@@ -116,9 +116,29 @@
         "block/deepslate_top": (palettes: {"main": "deepslate"}, layers: [
             Paint(palette: "main", base: 0.6, shade: [Cells(count: (3, 3), jitter: 0.8, value: 0.3, edge: -0.4, bevel: 0.15), Noise(cells: (8, 8), amount: 0.3)], clean: true),
         ]),
+        // Soft clouded white with a few thin grey veins that fork and break off, drawn by
+        // hand: noise ridges made rings and dots, not veins. The pale texels beside the main
+        // vein are its halo.
         "block/marble": (palettes: {"main": "marble", "vein": "marble_vein"}, layers: [
-            Paint(palette: "main", base: 0.65, shade: [Noise(cells: (3, 3), octaves: 3, amount: 0.45)], clean: true),
-            Paint(palette: "vein", base: 0.3, shade: [Noise(cells: (4, 4), amount: 0.8)], mask: [Ridge(cells: (2, 2), octaves: 1, width: 0.3, amount: 1.0)], above: 0.6),
+            Paint(palette: "main", base: 0.66, shade: [Noise(cells: (3, 3), octaves: 2, amount: 0.4, seed: 5)], clean: true),
+            Grid(legend: {'v': "vein:1", 'h': "-2", 'f': "main:1"}, rows: [
+            ".........vv....v",
+            "v......vv.......",
+            "................",
+            "................",
+            ".............ff.",
+            "..........fff...",
+            "................",
+            "................",
+            "................",
+            "................",
+            "........hh......",
+            "........vvh.....",
+            "..........v.....",
+            "...........v....",
+            "............vh..",
+            "...........v.vvh",
+            ]),
         ]),
         "block/limestone": (palettes: {"main": "limestone"}, layers: [
             Paint(palette: "main", base: 0.6, shade: [
@@ -127,12 +147,10 @@
                 Speckle(chance: 0.05, amount: -0.35),
             ], clean: true),
         ]),
+        // Thin beds dipping gently, each with a pale cleaved edge here and there.
         "block/slate": (palettes: {"main": "slate"}, layers: [
-            Paint(palette: "main", base: 0.55, shade: [
-                Noise(cells: (1, 8), octaves: 2, amount: 0.7),
-                Stripes(period: 3.0, width: 0.34, amount: -0.2, warp: 0.6),
-                Noise(cells: (16, 16), amount: 0.12),
-            ], clean: true),
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (2, 8), octaves: 2, amount: 0.5), Stripes(period: 4.0, width: 0.25, amount: -0.25, warp: 1.0, slope: 0.25)], clean: true),
+            Paint(palette: "main", base: 0.9, mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, warp: 1.0, slope: 0.25, phase: 1.0), Noise(cells: (4, 2), amount: 0.8)], above: 1.1),
         ]),
         // Rough columns: tall cells split by dark joints, streaked up and down, with a few
         // gas pores.

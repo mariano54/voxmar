@@ -13,6 +13,15 @@ cargo run --release -- --host               # also open singleplayer worlds on t
 cargo run --release -p voxmar_server        # dedicated server on port 25665, world in ./world
 ```
 
+macOS and Windows need only Rust. Linux also needs the development packages for ALSA
+(sound), udev (gamepads), Wayland and xkbcommon, and a Vulkan driver; on Debian or Ubuntu:
+
+```bash
+sudo apt install pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers
+```
+
+The dedicated server needs none of them.
+
 While developing, use `--profile iter` in place of `--release` (for `run`, `build` and `test`):
 it rebuilds in seconds rather than minutes after an edit and runs nearly as fast. Keep
 `--release` for performance measurements.
