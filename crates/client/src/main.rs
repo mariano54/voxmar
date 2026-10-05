@@ -44,6 +44,7 @@ mod render;
 mod session;
 mod settings;
 mod sfx;
+mod slow_frames;
 mod textures;
 mod ui;
 mod weather;
@@ -310,14 +311,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => None,
         };
         let gate_lag = options.gate.as_ref().map(|_| gate::SERVER_LAG);
-        let tick_lag = options.server_lag.map(Duration::from_millis).or(gate_lag).unwrap_or_default();
-        let config = ServerConfig { seed: options.seed, world, tick_lag, ..ServerConfig::default() };
+        let asked = options.server_lag.map(|ms| voxmar_server::Lag { per_tick: Duration::from_millis(ms), ..default() });
+        let lag = asked.or(gate_lag).unwrap_or_default();
+        let config = ServerConfig { seed: options.seed, world, lag, ..ServerConfig::default() };
         app.insert_resource(launch.singleplayer(config)?);
         Screen::InGame
     } else {
         Screen::Title
     };
     app.insert_resource(FirstScreen(first)).insert_resource(launch);
+    // Slow frames of real play are recorded for later (see slow_frames.rs); captures and
+    // gate runs, which run on a busy machine by design, are not.
+    // The renderer's part of a slow frame's record is always there to be set.
+    app.init_resource::<slow_frames::SlowFrameExtra>();
+    if !headless {
+        app.add_plugins(slow_frames::SlowFramesPlugin);
+    }
     if options.music && !headless {
         app.add_plugins(music::MusicPlugin);
     }

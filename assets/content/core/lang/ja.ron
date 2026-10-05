@@ -164,6 +164,7 @@
     "settings.font.hint": "メニュー、HUD、チャットに使うピクセルフォント。",
     "settings.ui_sounds": "操作音",
     "settings.ui_sounds.hint": "ボタンやインベントリの音。",
+    "settings.ui_sounds.micro_switch": "マイクロスイッチ",
     "settings.ui_sounds.haptic": "ハプティック",
     "settings.ui_sounds.glass": "グラス",
     "settings.ui_sounds.blip": "ブリップ",

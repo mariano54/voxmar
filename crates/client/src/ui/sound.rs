@@ -39,11 +39,14 @@ pub enum UiSound {
 pub struct Silent;
 
 /// The sets of interface sounds a player can choose from: clean, short and a little
-/// futuristic.
+/// futuristic. Micro switch is recorded (Kenney's UI Audio, CC0, in `assets/ui/sounds`);
+/// the rest are synthesized.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiSounds {
-    /// A short low thump under a tiny bright tick, like a phone's haptic click.
+    /// Very short, bright switches, almost a tick. Mariano's pick.
     #[default]
+    MicroSwitch,
+    /// A short low thump under a tiny bright tick, like a phone's haptic click.
     Haptic,
     /// A high, pure tick with its octave, gone almost at once.
     Glass,
@@ -59,12 +62,21 @@ pub enum UiSounds {
 }
 
 impl UiSounds {
-    pub const ALL: [UiSounds; 7] =
-        [UiSounds::Haptic, UiSounds::Glass, UiSounds::Blip, UiSounds::Pulse, UiSounds::Signal, UiSounds::Tap, UiSounds::Off];
+    pub const ALL: [UiSounds; 8] = [
+        UiSounds::MicroSwitch,
+        UiSounds::Blip,
+        UiSounds::Haptic,
+        UiSounds::Glass,
+        UiSounds::Pulse,
+        UiSounds::Signal,
+        UiSounds::Tap,
+        UiSounds::Off,
+    ];
 
     /// The key of its name in the settings (see `lang`).
     pub fn key(self) -> &'static str {
         match self {
+            UiSounds::MicroSwitch => "settings.ui_sounds.micro_switch",
             UiSounds::Haptic => "settings.ui_sounds.haptic",
             UiSounds::Glass => "settings.ui_sounds.glass",
             UiSounds::Blip => "settings.ui_sounds.blip",
@@ -75,7 +87,15 @@ impl UiSounds {
         }
     }
 
-    /// The click and the item tap, or `None` for silence.
+    /// The recorded click and item sound, in `assets/ui/sounds`.
+    fn files(self) -> Option<[&'static str; 2]> {
+        match self {
+            UiSounds::MicroSwitch => Some(["micro_switch_click.ogg", "micro_switch_item.ogg"]),
+            _ => None,
+        }
+    }
+
+    /// The synthesized click and item tap, or `None` for silence or a recorded set.
     fn recipe(self) -> Option<[Sound; 2]> {
         const PLAIN: Sound = Sound { partials: &[], seconds: 0.05, attack: 0.001, glide: 0.0, fm: None, noise: None, echo: None };
         Some(match self {
@@ -103,7 +123,7 @@ impl UiSounds {
                 Sound { partials: &[(2600.0, 2600.0, 0.12, 0.004)], seconds: 0.03, noise: Some((1.0, 0.0028, 0.5)), ..PLAIN },
                 Sound { partials: &[(1700.0, 1700.0, 0.12, 0.005)], seconds: 0.04, noise: Some((1.0, 0.0038, 0.35)), ..PLAIN },
             ],
-            UiSounds::Off => return None,
+            UiSounds::Off | UiSounds::MicroSwitch => return None,
         })
     }
 }
@@ -184,6 +204,12 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
     let clips = UiSounds::ALL
         .iter()
         .filter_map(|&set| {
+            if let Some(files) = set.files() {
+                let dir = voxmar_server::assets_dir().join("ui/sounds");
+                let read = |name: &str| std::fs::read(dir.join(name)).map_err(|e| warn!("cannot read {}: {e}", dir.join(name).display())).ok();
+                let [click, item] = files.map(read);
+                return Some((set, [sources.add(AudioSource { bytes: Arc::from(click?) }), sources.add(AudioSource { bytes: Arc::from(item?) })]));
+            }
             let [click, item] = set.recipe()?;
             let mut add = |sound: &Sound, seed| sources.add(AudioSource { bytes: Arc::from(wav(&sound.render(seed))) });
             Some((set, [add(&click, 7), add(&item, 11)]))
@@ -224,10 +250,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recorded_sets_are_shipped() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/sounds");
+        for set in UiSounds::ALL {
+            for file in set.files().into_iter().flatten() {
+                assert!(dir.join(file).is_file(), "{set:?}: no {file}");
+            }
+        }
+    }
+
+    #[test]
     fn every_set_but_off_sounds_and_ends_quietly() {
         for set in UiSounds::ALL {
             let Some(strikes) = set.recipe() else {
-                assert_eq!(set, UiSounds::Off);
+                assert!(set == UiSounds::Off || set.files().is_some(), "{set:?} has no sound");
                 continue;
             };
             for sound in strikes {

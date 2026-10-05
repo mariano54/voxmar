@@ -176,6 +176,7 @@
     "settings.font.hint": "The pixel font menus, the HUD and chat are written in.",
     "settings.ui_sounds": "Interface sounds",
     "settings.ui_sounds.hint": "What buttons and the inventory sound like.",
+    "settings.ui_sounds.micro_switch": "Micro switch",
     "settings.ui_sounds.haptic": "Haptic",
     "settings.ui_sounds.glass": "Glass",
     "settings.ui_sounds.blip": "Blip",

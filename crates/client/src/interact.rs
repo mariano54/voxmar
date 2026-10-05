@@ -214,9 +214,11 @@ fn break_and_place(
                 }
                 let progress = progress + step;
                 if progress >= 1.0 {
-                    // The server commits at the same moment; predict it, and wait
-                    // Minecraft's five ticks before starting on the next block.
+                    // The server commits at the same moment; predict it, tell the server it
+                    // shows done here (so starting on the next block cannot cancel it if
+                    // the server runs behind), and wait Minecraft's five ticks.
                     target.mine_cooldown = 0.25;
+                    net.finished();
                     predict_break(&mut world, &player, &launch.content, hit.block, &mut broken);
                     target.breaking = None;
                 } else {

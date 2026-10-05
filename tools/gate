@@ -83,6 +83,7 @@ if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)' -- '*.rs' '*.ron' '*.md' '*.wgsl' '*.t
   cat "$out/hygiene.txt"
   fail "conflict markers"
 fi
+tools/bench --self-check || fail "tools/bench's self-check"
 [[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0
 tree=$(git rev-parse HEAD^{tree})
 if ((clean)) && passed "$tree"; then

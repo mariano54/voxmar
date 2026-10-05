@@ -18,7 +18,8 @@
 //
 // Hanging growth (glow berries, hanging roots, hanging dripstone) grows from ceilings; other
 // plants from floors. Glowing things (lichen, berries, crystals, magma, gloomvein) are what
-// light caves, so most cave biomes have some.
+// light caves, so most cave biomes have some, but rarely and in small clusters: caves read
+// dark, with the odd pool of light, never lit wall to wall.
 (
     biomes: [
         (
@@ -87,7 +88,7 @@
                 (on: Floor, chance: 0.08, on_tags: ["soil"], block: Block("fern")),
                 (on: Floor, chance: 0.04, on_tags: ["soil"], block: Block("azalea_leaves"), length: (1, 2)),
                 (on: Floor, chance: 0.015, on_tags: ["soil"], block: Block("flowering_azalea_leaves"), length: (1, 2)),
-                (on: Ceiling, chance: 0.1, block: Block("glow_berries"), length: (1, 6)),
+                (on: Ceiling, chance: 0.06, block: Block("glow_berries"), length: (1, 4), when: [Patch((name: "berry_vines", scale: 9.0), 0.45)]),
                 (on: Ceiling, chance: 0.04, block: Block("hanging_roots"), length: (1, 2)),
             ],
         ),
@@ -193,9 +194,9 @@
                 cliff: Mix([Name("calcite", 2.0), Name("crystal_block", 1.0)]),
             ),
             cave_decoration: [
-                (on: Floor, chance: 0.12, block: Block("crystal_cluster")),
-                (on: Floor, chance: 0.05, block: Block("crystal_block"), length: (1, 4), tip: (Block("crystal_cluster"), 1.0)),
-                (on: Ceiling, chance: 0.06, block: Block("crystal_block"), length: (1, 3)),
+                (on: Floor, chance: 0.08, block: Block("crystal_cluster"), when: [Patch((name: "crystal_nests", scale: 7.0), 0.45)]),
+                (on: Floor, chance: 0.02, block: Block("crystal_block"), length: (1, 4), tip: (Block("crystal_cluster"), 1.0), when: [Patch((name: "crystal_nests", scale: 7.0), 0.45)]),
+                (on: Ceiling, chance: 0.02, block: Block("crystal_block"), length: (1, 3)),
             ],
         ),
         (
@@ -208,7 +209,7 @@
             climate: [(continentalness: ("ocean", "coast"), depth: (0.0, 40.0))],
             surface: (
                 rules: [
-                    (when: [Underwater, Chance(0.012)], place: (top: Block("sea_lantern"), depth: 0)),
+                    (when: [Underwater, Chance(0.003)], place: (top: Block("sea_lantern"), depth: 0)),
                     (when: [Underwater, Patch((name: "cave_clay", scale: 18.0), 0.2)], place: (top: Block("clay"), depth: 1)),
                 ],
                 ground: (top: Mix([Name("sand", 2.0), Name("gravel", 1.0)]), depth: 1),
@@ -245,14 +246,14 @@
             rarity: Rare,
             climate: [(temperature: ("cool", "hot"), moisture: ("moderate", "wet"), aether: (0.6, 1.0), depth: (6.0, 100.0))],
             surface: (
-                rules: [(when: [Underwater, Patch((name: "glow_pools", scale: 6.0), 0.35)], place: (top: Block("sea_lantern"), depth: 0))],
+                rules: [(when: [Underwater, Patch((name: "glow_pools", scale: 6.0), 0.65)], place: (top: Block("sea_lantern"), depth: 0))],
                 ground: (top: Block("moss_block"), filler: Block("rooted_dirt"), depth: 2),
                 underwater: (top: Block("clay"), depth: 1),
                 cliff: Block("rooted_dirt"),
             ),
             cave_decoration: [
-                (on: Ceiling, chance: 0.16, block: Block("hanging_roots"), length: (2, 7), tip: (Block("glow_berries"), 0.5)),
-                (on: Floor, chance: 0.2, on_tags: ["soil"], block: Block("glow_lichen")),
+                (on: Ceiling, chance: 0.16, block: Block("hanging_roots"), length: (2, 7), tip: (Block("glow_berries"), 0.12)),
+                (on: Floor, chance: 0.12, on_tags: ["soil"], block: Block("glow_lichen"), when: [Patch((name: "lichen", scale: 12.0), 0.5)]),
                 (on: Floor, chance: 0.15, on_tags: ["soil"], block: Block("fern")),
                 (on: Floor, chance: 0.04, on_tags: ["soil"], block: Block("flowering_azalea_leaves"), length: (1, 2)),
             ],
@@ -271,7 +272,7 @@
                 cliff: Block("marble"),
             ),
             cave_decoration: [
-                (on: Ceiling, chance: 0.03, block: Block("sea_lantern")),
+                (on: Ceiling, chance: 0.006, block: Block("sea_lantern")),
                 (on: Ceiling, chance: 0.02, block: Block("crystal_block"), length: (1, 3)),
                 (on: Floor, chance: 0.04, block: Block("crystal_cluster")),
             ],

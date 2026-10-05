@@ -130,6 +130,7 @@ impl Server {
             ClientMessage::Input(input) => self.input(id, input),
             ClientMessage::Propose { action, target } => self.propose(id, action, target),
             ClientMessage::Cancel => self.cancel_action(id),
+            ClientMessage::Finished => self.finished_action(id),
             ClientMessage::Settings { view_distance, fly_speed } => self.settings(id, view_distance, fly_speed),
             ClientMessage::Command { line } => self.command(id, &line),
             ClientMessage::Chat { text } => self.chat(id, &text),
