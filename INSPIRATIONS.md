@@ -456,6 +456,9 @@ the other research notes). Ideas only: no code, numbers tables or art were copie
 - What we took: a crop's growth rate as a product of separate environment factors
   (climate, soil, water, light), a few visual stages with the time held in hidden progress,
   and the idea of tiers gating what grows where (`crates/engine/src/crop.rs`, `rate`).
+- Also: a long list of plants, each with properties other systems read, rather than a
+  handful of decorative flowers: every foraging plant carries nutrition, alchemy and dye
+  tags (`blocks.ron`) for cooking and alchemy to use.
 
 ### Farmer's Delight
 
@@ -464,6 +467,8 @@ the other research notes). Ideas only: no code, numbers tables or art were copie
 - Licence: MIT. Techniques only.
 - What we took: wild crops placed by climate as the first source of a crop's seeds
   (`wild` and `forage` in `content/base/crops.ron`, `CropRegistry::wild_form`).
+- Also: wild crops in small clumps of one kind rather than single plants scattered
+  evenly, which is how the foraging plants grow (`spread: Drifts` in `plants.ron`).
 
 ### AgriCraft
 
@@ -481,6 +486,11 @@ the other research notes). Ideas only: no code, numbers tables or art were copie
 - What we took: picking a ripe crop by hand keeps the plant, which goes back to an
   earlier stage to fruit again (`regrow` in `crops.ron`, `Server::pick` in
   `crates/server/src/farm.rs`).
+- Also: the breadth of a forager's world. A garden in every climate with a dozen kinds of
+  wild vegetable, herb, spice and berry, so walking somewhere new turns up something new
+  to gather: the foraging plants in `content/base/plants.ron` (wild onion, turnip, beans,
+  rice, rosemary, cumin, cranberry and the rest), drawn in our own art in
+  `assets/packs/default/recipes/forage.ron`.
 
 ### Croptopia and Fruitful Fun
 
@@ -492,6 +502,9 @@ the other research notes). Ideas only: no code, numbers tables or art were copie
   block of its own hung in the tree (the `fruit_leaves` template in `blocks.ron`, fruit
   crops in `crops.ron`, the untinted fruit overlay over tinted leaves in
   `crates/client/src/main.rs`).
+- Also (Croptopia): crops and fruit bushes spread by climate, tropical produce such as
+  pineapple, coffee and vanilla alongside temperate ones, which shaped the foraging list's
+  climate spread in `content/base/plants.ron`.
 
 ### RuneScape (Old School)
 
