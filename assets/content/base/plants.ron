@@ -132,8 +132,9 @@
         // Wild crops: the ripe plant of a crop (crops.ron) gone wild, where its seeds are first
         // found. Biomes take them only by the `wild_crop` tag (not by habitat tags such as
         // `meadow`, which would bring them in wherever meadow flowers grow), Rare as a rule,
-        // so with Tag("wild_crop", 1.0) a fitting biome has about one in a chunk, fewer where
-        // the climate or habitat suits it less. Their habitat and comfort decide which grows
+        // so with Tag("wild_crop", 0.4) a fitting biome has one in a few chunks, a few in a
+        // chunk in a world that features the crop, and fewer where the climate or habitat
+        // suits it less. Their habitat and comfort decide which grows
         // where: potatoes in the open, cabbages on banks, strawberries under trees, tomatoes
         // where it is warm, saffron where it is dry. The wild forms of wheat, carrot, chili
         // and moonbloom are above.

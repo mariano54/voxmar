@@ -1476,8 +1476,13 @@ mod tests {
                 };
                 // Poses are relative to the eye of the player the command takes there.
                 let forest = world.site(at.x, at.y).forest > 0.3;
-                let (back, up) = if forest { (20.0, 26.0) } else { (14.0, 11.0) };
-                println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,45,-8  above: --pose {back},{up},{back},45,-36", at.x, at.y, at.x, at.y);
+                let (back, up) = if forest { (20.0f32, 26.0f32) } else { (14.0, 11.0) };
+                // Above every hill between the player and the camera, and a little beyond.
+                let here = world.height(at.x, at.y);
+                let reach = back as i32 + 6;
+                let highest = (0..=reach).step_by(2).flat_map(|a| (0..=reach).step_by(2).map(move |b| (a, b))).map(|(a, b)| world.height(at.x + a, at.y + b)).max().unwrap_or(here);
+                let up = up.max((highest - here) as f32 + if forest { 24.0 } else { 9.0 });
+                println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,45,-8  above: --pose {back},{up:.0},{back},45,-36", at.x, at.y, at.x, at.y);
             }
             return;
         }
