@@ -38,6 +38,7 @@ pub mod cloud_map;
 pub mod cracks;
 pub mod items;
 pub mod lod;
+pub mod night;
 pub mod pack;
 pub mod particles;
 pub mod post;
@@ -242,8 +243,11 @@ pub struct SkyParams {
     /// x: seconds of game time, y: low cloud cover, z: how heaped it is, w: cirrus.
     pub clouds: Vec4,
     /// x: fraction of the day, which turns the night sky with the sun; y: days elapsed
-    /// (wrapped every 1000 days), for the slow drift of the planets.
+    /// (wrapped every 1000 days), for the planets and comets; z: fraction of the year,
+    /// which turns the stars against the sun (see `night`).
     pub stars: Vec4,
+    /// xyz: direction towards the moon, w: how much of it is lit, 0 (new) to 1 (full).
+    pub moon: Vec4,
     /// xy: the cloud layer's offset over the camera in cloud units, z: precipitation,
     /// w: lightning flash.
     pub weather: Vec4,
@@ -263,6 +267,9 @@ pub struct SkyMaterial {
     /// The terrain's air, so fog hides the sky as it hides the land.
     #[uniform(1)]
     pub atmosphere: atmosphere::Atmosphere,
+    /// The world's night sky.
+    #[uniform(2)]
+    pub layout: night::SkyLayout,
 }
 
 impl Material for SkyMaterial {
@@ -334,7 +341,7 @@ pub fn setup(
     let textures = images.add(array_image(block_textures, true, ImageAddressMode::Repeat, &blended));
     let layers = images.add(layer_table(layers));
     commands.insert_resource(terrain::TerrainTextures { textures, layers });
-    let sky = sky_materials.add(SkyMaterial { params: SkyParams::default(), atmosphere: default() });
+    let sky = sky_materials.add(SkyMaterial { params: SkyParams::default(), atmosphere: default(), layout: default() });
     commands.insert_resource(SkyHandle(sky.clone()));
     commands.spawn((
         SkyDome,
@@ -578,6 +585,8 @@ pub fn ui_image(texture: &Rgba) -> Image {
 /// Sun position, light colours and sky colours for a time of day (0..1, 0 = sunrise).
 struct Environment {
     to_sun: Vec3,
+    /// Towards the moon, and in w how much of it is lit.
+    to_moon: Vec4,
     daylight: f32,
     /// How strongly the side of the sky towards the low sun is warmer than the side away
     /// (see `atmosphere::Light::dusk`).
@@ -591,10 +600,13 @@ struct Environment {
 
 // Noon and midnight. A sunlit top face gets about 1.0 in all, so textures keep their own
 // colours in daylight; shade is lit by the cooler sky alone. Night is a few dozen times
-// darker than day: a faint blue moon and sky, which torches and glowstone easily outshine.
+// darker than day: a faint blue full moon and sky, which torches and glowstone easily
+// outshine, and darker still as the moon wanes (`MOONLESS`).
 const SUN: Vec3 = Vec3::new(0.72, 0.68, 0.62);
 const LOW_SUN: Vec3 = Vec3::new(0.72, 0.45, 0.25);
-const MOON: Vec3 = Vec3::new(0.026, 0.034, 0.06);
+const MOON: Vec3 = Vec3::new(0.021, 0.028, 0.05);
+/// The night's sky and skylight without a moon, against a full moon's.
+const MOONLESS: f32 = 0.6;
 const DAY_AMBIENT: Vec3 = Vec3::new(0.40, 0.45, 0.55);
 const NIGHT_AMBIENT: Vec3 = Vec3::new(0.008, 0.011, 0.02);
 const DAY_ZENITH: Vec3 = Vec3::new(0.22, 0.45, 0.95);
@@ -632,25 +644,33 @@ fn light_time(day_fraction: f32) -> f32 {
 }
 
 impl Environment {
-    fn at(day_fraction: f32) -> Self {
+    /// The light `days` days after the world began.
+    fn at(days: f64) -> Self {
+        let day_fraction = days.fract() as f32;
         let to_sun = sun_path(day_fraction);
         let daylight = smoothstep(-0.2, 0.15, to_sun.y);
         let dusk = (1.0 - (to_sun.y.abs() * 4.0).min(1.0)) * smoothstep(-0.25, 0.0, to_sun.y);
+        let (to_moon, lit) = night::moon(days, sun_path);
 
-        // One shadow-casting light: the sun by day, the moon (opposite it) by night. Both
-        // fade to zero at the horizon, so swapping between them is invisible. Its direction
-        // moves in steps; its colour and the sky change smoothly.
-        let stepped = sun_path(light_time(day_fraction));
+        // One shadow-casting light: the sun by day, the moon by night, as much of it as is
+        // lit. Each fades to nothing at the horizon, and the moon until dusk has gone, so
+        // swapping between them is invisible. Its direction moves in steps; its colour and
+        // the sky change smoothly.
         let (light_direction, light_color) = if to_sun.y > 0.0 {
+            let stepped = sun_path(light_time(day_fraction));
             (stepped, LOW_SUN.lerp(SUN, smoothstep(0.0, 0.35, to_sun.y)) * smoothstep(0.0, 0.2, to_sun.y))
         } else {
-            (-stepped, MOON * smoothstep(0.0, 0.2, -to_sun.y))
+            let stepped = night::moon(days.floor() + light_time(day_fraction) as f64, sun_path).0;
+            let up = smoothstep(0.0, 0.2, to_moon.y) * smoothstep(0.0, 0.15, -to_sun.y);
+            (stepped, MOON * lit.powf(1.5) * up)
         };
+        // A moonlit night's sky is brighter than a moonless one's.
+        let moonlit = MOONLESS + (1.0 - MOONLESS) * lit * smoothstep(-0.1, 0.3, to_moon.y);
 
-        let zenith = fade(NIGHT_ZENITH, DAY_ZENITH, daylight);
-        let horizon = tint(fade(NIGHT_HORIZON, DAY_HORIZON, daylight), DUSK_HORIZON, dusk * 0.9);
-        let ambient = tint(fade(NIGHT_AMBIENT, DAY_AMBIENT, daylight), DUSK_AMBIENT, dusk * 0.5);
-        Self { to_sun, daylight, dusk, light_direction, light_color, ambient, zenith, horizon }
+        let zenith = fade(NIGHT_ZENITH * moonlit, DAY_ZENITH, daylight);
+        let horizon = tint(fade(NIGHT_HORIZON * moonlit, DAY_HORIZON, daylight), DUSK_HORIZON, dusk * 0.9);
+        let ambient = tint(fade(NIGHT_AMBIENT * moonlit, DAY_AMBIENT, daylight), DUSK_AMBIENT, dusk * 0.5);
+        Self { to_sun, to_moon: to_moon.extend(lit), daylight, dusk, light_direction, light_color, ambient, zenith, horizon }
     }
 
     /// The same light under cloud: a full layer hides the sun or moon, and the sky and
@@ -705,6 +725,7 @@ pub(crate) fn update_environment(
     mut clear: ResMut<ClearColor>,
     (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
     (generator, mut water_column, mut hail_lying): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>, Local<f32>),
+    (player, mut sky_of): (Option<Res<crate::player::LocalPlayer>>, Local<Option<u64>>),
 ) {
     let Some(sky_handle) = sky_handle else { return };
     // The camera's own transform (it has no parent), as this frame moved it: the global one
@@ -714,7 +735,7 @@ pub(crate) fn update_environment(
     let days = cycle.ticks / TICKS_PER_DAY as f64;
     let shown = &weather.current;
     let flash = weather.flash();
-    let mut env = Environment::at(days.fract() as f32).under(shown, flash);
+    let mut env = Environment::at(days).under(shown, flash);
     env.light_color *= pack.sun * pack.sun_tint;
     env.ambient *= pack.ambient * pack.shade_tint;
     // The place's sky tint, as far as the pack lets it show.
@@ -802,11 +823,18 @@ pub(crate) fn update_environment(
             horizon: horizon.extend(1.0),
             sun: env.to_sun.extend(env.daylight),
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
-            stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
+            stars: Vec4::new(days.fract() as f32, (days % night::SKY_DAYS) as f32, (days / night::YEAR_DAYS).fract() as f32, 0.0),
+            moon: env.to_moon,
             weather: layer.extend(shown.precipitation).extend(flash),
             optics: Vec4::new(shown.rainbow, shown.halo, shown.aurora, shown.falling_stars),
         };
         sky.atmosphere = air;
+        // The world's own night sky, laid out once it is known.
+        let seed = player.as_ref().filter(|p| p.joined).map_or(0, |p| p.seed);
+        if *sky_of != Some(seed) {
+            *sky_of = Some(seed);
+            sky.layout = night::SkyLayout::of_world(seed);
+        }
     }
 }
 

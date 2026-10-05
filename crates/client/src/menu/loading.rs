@@ -55,7 +55,7 @@ const PULSE: f32 = 30.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>, assets: Res<AssetServer>) {
     let font = &font.0;
-    let reel: Handle<Image> = if voxmar_server::assets_dir().join(REEL).is_file() { assets.load(REEL) } else { Handle::default() };
+    let reel: Option<Handle<Image>> = voxmar_server::assets_dir().join(REEL).is_file().then(|| assets.load(REEL));
     let root = Node {
         position_type: PositionType::Absolute,
         width: Val::Percent(100.0),
@@ -70,8 +70,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, assets: Res<AssetServer>) {
     let cover = (Cover, DespawnOnExit(Screen::InGame), root, BackgroundColor(Color::srgb(0.05, 0.055, 0.085)), GlobalZIndex(2));
     commands.spawn(cover).with_children(|cover| {
         let full = || Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
-        for next in [false, true] {
-            let image = ImageNode { image: reel.clone(), image_mode: NodeImageMode::Stretch, rect: Some(frame_rect(0)), ..default() };
+        for next in [false, true].into_iter().filter(|_| reel.is_some()) {
+            let image = ImageNode { image: reel.clone().unwrap_or_default(), image_mode: NodeImageMode::Stretch, rect: Some(frame_rect(0)), ..default() };
             cover.spawn((full(), image, ReelLayer { next }));
         }
         // A wash of night blue over the reel keeps the text readable.

@@ -165,19 +165,19 @@
             shows: [Halo(0.7), Fog(0.1)], minutes: 60.0,
         ),
         (
-            name: "aurora", rarity: Uncommon, tags: ["wonder", "night"],
+            name: "aurora", rarity: Rare, tags: ["wonder", "night"],
             when: [(Latitude, 0.72, 0.85), (Night, 0.6, 0.95), (Cover, 0.6, 0.3)],
             shows: [Aurora(1.0)], minutes: 60.0,
         ),
         (
-            name: "low_aurora", rarity: Rare, tags: ["wonder", "night"],
+            name: "low_aurora", rarity: VeryRare, tags: ["wonder", "night"],
             when: [(Latitude, 0.5, 0.62), (Night, 0.8, 1.0), (Cover, 0.4, 0.15)],
             shows: [Aurora(0.6)], minutes: 45.0,
         ),
         (
             name: "shooting_stars", tags: ["night"],
             when: [(Night, 0.85, 1.0), (Cover, 0.3, 0.1)],
-            shows: [FallingStars(0.01)], minutes: 30.0,
+            shows: [FallingStars(0.004)], minutes: 30.0,
         ),
         (
             name: "meteor_shower", rarity: VeryRare, tags: ["wonder", "night"],

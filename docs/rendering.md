@@ -896,6 +896,42 @@ the zenith and a top face take neither side) and `d` how strongly dusk shows (fr
 height, none under thick cloud). The sky's horizon, the haze the land fades into, the sky
 water mirrors and the sky light on walls all take it, so they agree.
 
+## Night, dawn and dusk
+
+Mariano's playtest of 2026-10-05: nights too bright, stars too shiny, comets and aurora too
+common and too short, the same constellations and planets every night, and a sunrise
+that showed nothing until the sun came up. Things in the sky should be rare.
+
+The night sky is laid out for each world from its seed (`render/night.rs`, drawn by
+sky.wgsl): ten constellations of our own (stick figures of five to eleven stars, one in
+ten a tight cluster), one to three planets, the Milky Way's path, three galaxies, two
+nebulae and two dwarf galaxies, and two or three comet visits in the sky clock's 1000
+days. Nothing shows every night:
+
+- The stars turn once against the sun every 100 days (`YEAR_DAYS`), so each season has
+  its own constellations at midnight.
+- Outer planets creep along the sun's path and meet it every 110 to 200 days, lost in
+  its glare for a while; the pale blue planet, when a world has it, never strays more
+  than 24° to 46° from the sun and shows only after sunset or before sunrise.
+- The moon goes through its phases every 10 days (`MONTH_DAYS`), full on day 0 and
+  rising later each night. It is the night's light: moonlight scales with how much of it
+  is lit (to the power 1.5), and the sky and skylight are 0.6 of a full moon's without
+  it (`MOONLESS`). Its dark side hides the stars behind it.
+- Comets stay five to nine days, brightening and fading, a tail streaming away from the
+  sun. Falling stars last one to two seconds; an ordinary clear night's rate is 0.004
+  (one every few minutes), meteor showers stay very rare, and the aurora is four to five
+  times rarer than it was: rare at high latitudes, very rare lower down
+  (assets/content/base/weather.ron).
+
+Every period divides the 1000 days after which the sky's day count wraps, so the wrap
+never shows. Stars are dimmer than before and their halo fainter.
+
+With the sun low, a wide warm glow surrounds it, wider once it has risen; with it still
+under the horizon, the glow stands over where it will rise, in faint rays fanning up
+from behind the land. The other way the sky dims, and in twilight the earth's shadow
+rises from the horizon under a faint pink band. Rain and snow never go darker than a
+dark night's own faint glow (`NIGHT_GLOW` in precipitation.wgsl), so they show at night.
+
 ## Fluid state
 
 Water and lava flow (`engine/src/fluid.rs`). Each state of a fluid is its own block, made
