@@ -306,8 +306,9 @@ pub struct OneShot {
 #[derive(Clone, Debug, Default)]
 pub struct Ambience {
     pub groups: Vec<Group>,
-    /// Which blocks each group counts: tags and materials, matched against the registry.
-    selectors: Vec<(Vec<String>, Vec<Material>)>,
+    /// Which blocks each group counts: tags and materials, matched against the registry,
+    /// and whether only falling fluid of them (a waterfall's curtain).
+    selectors: Vec<(Vec<String>, Vec<Material>, bool)>,
     pub beds: Vec<Bed>,
     pub sounds: Vec<OneShot>,
 }
@@ -331,6 +332,9 @@ struct GroupDef {
     tags: Vec<String>,
     #[serde(default)]
     materials: Vec<Material>,
+    /// Only falling fluid (water pouring down: a waterfall).
+    #[serde(default)]
+    falling: bool,
     range: (f32, f32),
 }
 
@@ -418,7 +422,7 @@ impl Ambience {
                     return Err(format!("{package}/{FILE}: group {} is defined twice", group.name));
                 }
                 ambience.groups.push(Group { name: group.name, range: group.range });
-                ambience.selectors.push((group.tags, group.materials));
+                ambience.selectors.push((group.tags, group.materials, group.falling));
             }
         }
         // Beds next, so sounds and beds can be ducked by any bed.
@@ -512,7 +516,10 @@ impl Ambience {
                 let (def, info) = (registry.def(id), registry.info(id));
                 self.selectors
                     .iter()
-                    .position(|(tags, materials)| tags.iter().any(|t| def.has_tag(t)) || materials.contains(&info.sound))
+                    .position(|(tags, materials, falling)| {
+                        let pours = info.fluid.is_some_and(|f| f.falling);
+                        (tags.iter().any(|t| def.has_tag(t)) || materials.contains(&info.sound)) && (!falling || pours)
+                    })
                     .map(|g| g as u8)
             })
             .collect()
