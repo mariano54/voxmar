@@ -48,8 +48,8 @@ pub struct Target {
     pub breaking: Option<(IVec3, f32)>,
     mining_seconds: f32,
     place_cooldown: f32,
-    /// Seconds until the next block may be mined after one that broke at once, as
-    /// Minecraft's five ticks, so sweeping across a meadow does not mow it flat.
+    /// Seconds until the next block may be mined after one breaks, as Minecraft's five
+    /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
 }
 
@@ -213,7 +213,9 @@ fn break_and_place(
                 }
                 let progress = progress + step;
                 if progress >= 1.0 {
-                    // The server commits at the same moment; predict it.
+                    // The server commits at the same moment; predict it, and wait
+                    // Minecraft's five ticks before starting on the next block.
+                    target.mine_cooldown = 0.25;
                     predict_break(&mut world, &player, &launch.content, hit.block, &mut broken);
                     target.breaking = None;
                 } else {
@@ -222,7 +224,7 @@ fn break_and_place(
             }
             _ if target.mine_cooldown <= 0.0 && def.validate(&context, action_target).is_ok() => {
                 target.mining_seconds = def.seconds(&context, action_target);
-                net.propose(mine, action_target);
+                net.propose_from(&player, mine, action_target);
                 // Plants and other blocks that break at once go now, as on the server,
                 // whose word would otherwise arrive before a predicted break.
                 if target.mining_seconds <= 0.0 {
@@ -251,7 +253,7 @@ fn break_and_place(
         if let Some(action) = pick.or(own) {
             match valid(action) {
                 Some(Ok(())) => {
-                    net.propose(action, action_target);
+                    net.propose_from(&player, action, action_target);
                     let effects = actions.0.get(action).map_or(Vec::new(), |def| def.effects.clone());
                     predict_use(&mut world, &mut player, content, &effects, hit.block, &mut cues);
                 }
@@ -269,7 +271,7 @@ fn break_and_place(
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
         if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);
-            net.propose(place, action_target);
+            net.propose_from(&player, place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
             world.set_block(cell, item);
             let selected = player.selected;

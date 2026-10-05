@@ -61,6 +61,15 @@ impl Net {
         self.connection.send(ClientMessage::Propose { action, target });
     }
 
+    /// Proposes an action aimed into the world (mining, placing, throwing), telling the
+    /// server where the player is and looks first: inputs go only twenty times a second,
+    /// and the server judges reach and aim from the last it heard, which while sprinting or
+    /// flying could be well behind.
+    pub fn propose_from(&self, player: &LocalPlayer, action: ActionId, target: ActionTarget) {
+        self.connection.send(ClientMessage::Input(input(player)));
+        self.propose(action, target);
+    }
+
     pub fn cancel(&self) {
         self.connection.send(ClientMessage::Cancel);
     }
@@ -262,13 +271,18 @@ fn send_input(time: Res<Time>, mut net: ResMut<Net>, player: Res<LocalPlayer>) {
         return;
     }
     net.input_timer %= interval;
-    net.connection.send(ClientMessage::Input(PlayerInput {
+    net.connection.send(ClientMessage::Input(input(&player)));
+}
+
+/// The player's state as the server is told it.
+fn input(player: &LocalPlayer) -> PlayerInput {
+    PlayerInput {
         position: player.position,
         yaw: player.yaw,
         pitch: player.pitch,
         selected_slot: player.selected as u8,
         flying: player.flying,
-    }));
+    }
 }
 
 /// Other players are drawn as simple boxes.
