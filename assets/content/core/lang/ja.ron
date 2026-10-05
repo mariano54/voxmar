@@ -272,6 +272,12 @@
     "skill.core.building.description": "壁や屋根、その間のすべてを建てる。",
     "skill.core.exploring": "探検",
     "skill.core.exploring.description": "新しいバイオーム、名所、驚異を見つける。",
+    "skill.core.attack": "攻撃",
+    "skill.core.attack.description": "強く、何度も打つ。",
+    "skill.core.defence": "防御",
+    "skill.core.defence.description": "攻撃をかわし、鎧を着こなす。",
+    "skill.core.hitpoints": "ヒットポイント",
+    "skill.core.hitpoints.description": "どれだけの痛手に耐えられるか。",
 
     // コンソール: チャットと、コマンドの返事
     "chat.player": "<{name}> {text}",

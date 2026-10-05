@@ -84,6 +84,7 @@
     "block.base.glass": "ガラス",
     "block.base.glowstone": "グロウストーン",
     "block.base.sea_lantern": "シーランタン",
+    "block.base.bread": "パン",
 
     "block.base.{name}_log": "{name}の原木",
     "block.base.stripped_{name}_log": "樹皮を剥いだ{name}の原木",

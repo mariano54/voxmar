@@ -757,7 +757,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // The log goes into the crafting grid and comes out as planks, as the inventory's
         // clicks would do it; the server does the crafting.
-        6 => {
+        8 => {
             let log = world.resource::<crate::session::Launch>().content.blocks.id("base:oak_log");
             let held = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| Some(s.item) == log));
             if let Some(slot) = held {
@@ -772,7 +772,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.next(Step::Weather, now);
             }
         }
-        7 => {
+        9 => {
             let planks = world.resource::<crate::session::Launch>().content.blocks.id("base:oak_planks");
             let inventory = &world.resource::<LocalPlayer>().inventory;
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
