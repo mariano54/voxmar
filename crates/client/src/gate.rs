@@ -527,9 +527,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let Some(after) = gate.shot(world, "dig-after") else { return };
             let cells: Vec<IVec3> = gate.dug.iter().map(|&(pos, _)| pos).collect();
             verify_edit(world, gate, "dig", &cells, |b| b.is_air(), "dig-before", &after);
-            // Known: the first break compiles the pipelines for cracks, particles and drops
-            // on the spot (graphics is moving that to world load); back to failing with it.
-            smooth(gate, "dig", Step::Dig, Some("the first break compiles its pipelines; graphics is fixing it"));
+            smooth(gate, "dig", Step::Dig, None);
             gate.count_before = dropped_count(world, gate);
             look(world, 0.0, 0.0);
             key(world, KeyCode::KeyW, true);
