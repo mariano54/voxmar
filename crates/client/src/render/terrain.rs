@@ -11,6 +11,7 @@
 //! Grass blades (grass.wgsl) are drawn from the same records: every chunk's blade seeds
 //! live in one storage buffer, and chunks near the camera draw a tuft per seed.
 
+use std::collections::VecDeque;
 use std::ops::Range;
 
 use bevy::core_pipeline::core_3d::{AlphaMask3d, CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey};
@@ -163,6 +164,30 @@ enum Message {
     RemoveTile(TileKey),
     RealColumns(i32),
     Clear,
+}
+
+/// What a message changes, so the messages about one chunk or tile keep their order when
+/// some wait for a later frame.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Subject {
+    Chunk(ChunkPos),
+    Tile(TileKey),
+}
+
+impl Message {
+    fn subject(&self) -> Option<Subject> {
+        match self {
+            Message::Upload { chunk, .. } | Message::Remove { chunk, .. } | Message::Blades { chunk, .. } => Some(Subject::Chunk(*chunk)),
+            Message::UploadTile(tile) => Some(Subject::Tile(tile.key)),
+            Message::RemoveTile(key) => Some(Subject::Tile(*key)),
+            _ => None,
+        }
+    }
+
+    /// Whether taking it in writes vertex data, the work the upload budget paces.
+    fn heavy(&self) -> bool {
+        matches!(self, Message::Upload { .. } | Message::Blades { .. } | Message::UploadTile(_))
+    }
 }
 
 impl Terrain {
@@ -602,6 +627,8 @@ pub(super) struct TerrainGpu {
     real_columns: i32,
     /// Where the camera is this frame.
     camera: Vec3,
+    /// Messages past a frame's upload budget, in the order they came, for the next frames.
+    pending: VecDeque<Message>,
     free_slots: Vec<u32>,
     /// Origin of each slot's mesh; for tiles, w is the cell size.
     origins: Vec<IVec4>,
@@ -645,6 +672,7 @@ impl Default for TerrainGpu {
             visible: VisibleChunks::default(),
             real_columns: 0,
             camera: Vec3::ZERO,
+            pending: VecDeque::new(),
             free_slots: Vec::new(),
             origins: Vec::new(),
             origins_buffer: None,
@@ -965,11 +993,15 @@ impl TerrainGpu {
     }
 }
 
-/// Applies the main world's messages: writes and frees mesh data, updates the origin table.
-#[allow(clippy::too_many_arguments)]
 /// Longest a frame spends taking in new meshes and tiles on the render thread.
 const UPLOAD_BUDGET: std::time::Duration = std::time::Duration::from_micros(1500);
+/// Chunks within this many chunks of the camera's (across the land) are taken in at once,
+/// past the budget: what the player builds or digs, and the ground around them, never wait
+/// behind the far world streaming in.
+const NEAR_CHUNKS: i32 = 2;
 
+/// Applies the main world's messages: writes and frees mesh data, updates the origin table.
+#[allow(clippy::too_many_arguments)]
 fn receive(
     mut gpu: ResMut<TerrainGpu>,
     inbox: Res<TerrainInbox>,
@@ -983,12 +1015,33 @@ fn receive(
 ) {
     let layout = pipeline_cache.get_bind_group_layout(&pipelines.chunks_layout);
     gpu.ensure_arenas(&device, &queue);
+    let camera = cameras.iter().next().map(|camera| camera.world_from_view.translation());
+    let eye = camera.map(|camera| camera.floor().as_ivec3().div_euclid(IVec3::splat(CHUNK_SIZE)));
+    let near = |message: &Message| match (message.subject(), eye) {
+        (Some(Subject::Chunk(chunk)), Some(eye)) => (chunk.0 - eye).xz().abs().max_element() <= NEAR_CHUNKS,
+        _ => false,
+    };
     // While the world streams in (a fast flight), more meshes can arrive in a frame than
-    // it should spend uploading: past the budget the rest wait for the next frames.
+    // it should spend uploading: past the budget the far ones wait for the next frames,
+    // and with them anything after them about the same chunk or tile, so each is changed
+    // in the order it was sent. Near chunks go in at once.
     let start = std::time::Instant::now();
-    while start.elapsed() < UPLOAD_BUDGET
-        && let Ok(message) = inbox.0.try_recv()
-    {
+    let mut messages = std::mem::take(&mut gpu.pending);
+    messages.extend(inbox.0.try_iter());
+    let mut waiting: rustc_hash::FxHashSet<Subject> = rustc_hash::FxHashSet::default();
+    for message in messages {
+        if matches!(message, Message::Clear) {
+            // Everything before it is gone anyway.
+            gpu.pending.clear();
+            waiting.clear();
+        } else {
+            let behind = message.subject().is_some_and(|subject| waiting.contains(&subject));
+            if behind || (message.heavy() && !near(&message) && start.elapsed() >= UPLOAD_BUDGET) {
+                waiting.extend(message.subject());
+                gpu.pending.push_back(message);
+                continue;
+            }
+        }
         match message {
             Message::Upload { chunk, pass, mesh } => gpu.upload(&device, &queue, &layout, chunk, pass, &mesh),
             Message::Remove { chunk, pass } => gpu.release(chunk, pass),
@@ -1004,8 +1057,7 @@ fn receive(
     }
     gpu.write_origins(&device, &queue);
     gpu.write_wind(&device, &queue, breeze.as_deref().copied().unwrap_or_default());
-    if let Some(camera) = cameras.iter().next() {
-        let position = camera.world_from_view.translation();
+    if let Some(position) = camera {
         gpu.camera = position;
         gpu.write_coverage(&device, &queue, position, water.map_or([Vec4::ZERO; 2], |w| w.sky()));
     }

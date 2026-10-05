@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
+use crate::creature::CreatureRegistry;
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
 use crate::lang::{ENGLISH, Lang};
@@ -30,6 +31,7 @@ pub struct Content {
     pub movement: Arc<Tuning>,
     pub skills: Arc<SkillRegistry>,
     pub crops: Arc<CropRegistry>,
+    pub creatures: Arc<CreatureRegistry>,
     /// What the inventory's crafting grid makes.
     pub recipes: Arc<RecipeRegistry>,
     /// Every other definition file, by package then file name.
@@ -67,6 +69,7 @@ impl Content {
         let mut movement = None;
         let mut skills = SkillRegistry::default();
         let mut crops = Vec::new();
+        let mut creatures = Vec::new();
         let mut recipes = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
@@ -82,7 +85,9 @@ impl Content {
                 let file = path.join(&name);
                 let source = std::fs::read_to_string(&file).map_err(|e| read_error(&file, e))?;
                 match name.as_str() {
-                    "blocks.ron" => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
+                    // `blocks.ron`, and `blocks_<topic>.ron` for families of blocks a system
+                    // owns (what creatures drop), each read the same way.
+                    name if name.starts_with("blocks") => blocks.push((package.clone(), BlockRegistry::read(package, &source)?)),
                     "actions.ron" => actions.extend(package, &source)?,
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,
@@ -90,6 +95,10 @@ impl Content {
                     "crops.ron" => {
                         crops.extend(CropRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "creatures.ron" => {
+                        creatures.extend(CreatureRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "recipes.ron" => {
@@ -114,6 +123,7 @@ impl Content {
         skills.validate()?;
         let blocks = BlockRegistry::new(blocks)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
+        let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks)?;
         Ok(Self {
             blocks: Arc::new(blocks),
@@ -123,6 +133,7 @@ impl Content {
             movement: Arc::new(movement),
             skills: Arc::new(skills),
             crops: Arc::new(crops),
+            creatures: Arc::new(creatures),
             recipes: Arc::new(recipes),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),

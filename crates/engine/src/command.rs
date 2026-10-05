@@ -58,6 +58,10 @@ pub enum Run {
     Biome,
     /// Finds the nearest place of a kind, such as a biome.
     Locate,
+    /// Puts creatures of a species beside the player.
+    Summon,
+    /// Lists the creatures about the player.
+    Creatures,
     /// Runs these command lines in order. `$1`, `$2`, … stand for this command's
     /// arguments and `$*` for all of them.
     Alias(Vec<String>),
