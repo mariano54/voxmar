@@ -78,7 +78,7 @@ const LIGHTNING_REACH: f32 = 1500.0;
 /// Blocks above the ground (or the sea) a flash within a cloud lights it.
 const CLOUD_FLASH_HEIGHT: i32 = 160;
 /// Strikes per second near a player at full `lightning` from effects.
-const EFFECT_LIGHTNING: f32 = 1.0 / 60.0;
+const EFFECT_LIGHTNING: f32 = 1.0 / 15.0;
 /// Forced weather covers this many blocks around where it was asked for, then fades out
 /// over `FORCE_EDGE` more; when its time is up it fades over `FORCE_FADE` seconds.
 const FORCE_RADIUS: f32 = 1024.0;
@@ -1420,7 +1420,7 @@ mod tests {
         assert_eq!(storm, flashes(1.0, 1.0));
         // Effects' lightning strikes around the player, as often as the channel says.
         let near: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, false, s * SECOND)).collect();
-        assert!((700..1300).contains(&near.len()), "{} strikes", near.len());
+        assert!((3000..5000).contains(&near.len()), "{} strikes", near.len());
         assert!(near.iter().all(|s| (149.0..901.0).contains(&s.at.length())));
         // Heat lightning, with no storm overhead, flashes too far off to be heard.
         let dry: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, true, s * SECOND)).collect();

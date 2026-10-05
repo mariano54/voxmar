@@ -1053,6 +1053,54 @@ mod tests {
         }
     }
 
+    /// Mariano asked for less grass and less tall grass: in the ordinary grassy biomes a
+    /// plant stands on well under all of the grass, and tall grass is a minority of them
+    /// (the lush meadow aside). One column well inside each biome, found by locating it, so
+    /// it does not move when spawn does.
+    #[test]
+    fn grass_is_kept_in_check() {
+        let registry = registry();
+        let grass = registry.expect("base:grass_block");
+        let world = Overworld::new(42, registry.clone());
+        for biome in ["plains", "forest", "savanna"] {
+            let id = world.biomes.id(&format!("base:{biome}")).unwrap();
+            let at = world.locate_biome(biome, IVec2::ZERO, 8000).unwrap_or_else(|| panic!("no {biome}"));
+            let at = (0..60 * 60)
+                .map(|i| spiral(i / 60, i % 60))
+                .map(|(dx, dz)| at + IVec2::new(dx * 8, dz * 8))
+                .find(|p| {
+                    let site = world.site(p.x, p.y);
+                    world.biomes.parent_of(site.home) == id && site.height > site.water + 2
+                })
+                .unwrap_or_else(|| panic!("no dry {biome}"));
+            let pos = ColumnPos::of_block(IVec3::new(at.x, 0, at.y));
+            let column = world.generate(pos);
+            let origin = pos.origin();
+            let (mut on_grass, mut planted, mut tall) = (0, 0, 0);
+            for z in 0..32 {
+                for x in 0..32 {
+                    let h = world.height(origin.x + x, origin.z + z);
+                    if column.block(IVec3::new(x, h, z)) != grass {
+                        continue;
+                    }
+                    on_grass += 1;
+                    let above = column.block(IVec3::new(x, h + 1, z));
+                    if registry.info(above).render == voxmar_engine::block::RenderKind::Plant {
+                        planted += 1;
+                        tall += usize::from(registry.def(above).name.contains("tall_grass"));
+                    }
+                }
+            }
+            if on_grass < 200 {
+                continue;
+            }
+            let (cover, share) = (planted as f32 / on_grass as f32, tall as f32 / planted.max(1) as f32);
+            println!("{biome} at {at}: cover {cover:.2} of {on_grass}, tall {share:.2}");
+            assert!((0.1..0.9).contains(&cover), "{biome} at {at}: a plant on {:.0}% of {on_grass} grass", 100.0 * cover);
+            assert!(share < 0.3, "{biome} at {at}: tall grass {:.0}% of {planted} plants", 100.0 * share);
+        }
+    }
+
     #[test]
     fn decorations_rest_on_the_ground() {
         let registry = registry();
