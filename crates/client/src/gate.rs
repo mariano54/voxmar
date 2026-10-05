@@ -379,7 +379,9 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 // at the sky, so the click mines nothing.
                 look(world, 0.0, 80.0);
                 mouse(world, MouseButton::Left, true);
-            } else if gate.frames == 3 {
+            } else {
+                // Let go the next frame, however late the observer was ready: a button left
+                // held would mine whatever the next steps aim at.
                 mouse(world, MouseButton::Left, false);
             }
             if since > 2.0 && settled(world, feet) {
