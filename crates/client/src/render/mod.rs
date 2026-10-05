@@ -139,12 +139,13 @@ pub enum ShadowQuality {
 impl ShadowQuality {
     pub const ALL: [ShadowQuality; 4] = [ShadowQuality::Off, ShadowQuality::Low, ShadowQuality::Medium, ShadowQuality::High];
 
-    pub fn label(self) -> &'static str {
+    /// The key of its name in the settings (see `lang`).
+    pub fn key(self) -> &'static str {
         match self {
-            ShadowQuality::Off => "Off",
-            ShadowQuality::Low => "Low",
-            ShadowQuality::Medium => "Medium",
-            ShadowQuality::High => "High",
+            ShadowQuality::Off => "settings.value.off",
+            ShadowQuality::Low => "settings.value.low",
+            ShadowQuality::Medium => "settings.value.medium",
+            ShadowQuality::High => "settings.value.high",
         }
     }
 

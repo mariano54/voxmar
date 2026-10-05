@@ -62,15 +62,16 @@ impl UiSounds {
     pub const ALL: [UiSounds; 7] =
         [UiSounds::Haptic, UiSounds::Glass, UiSounds::Blip, UiSounds::Pulse, UiSounds::Signal, UiSounds::Tap, UiSounds::Off];
 
-    pub fn label(self) -> &'static str {
+    /// The key of its name in the settings (see `lang`).
+    pub fn key(self) -> &'static str {
         match self {
-            UiSounds::Haptic => "Haptic",
-            UiSounds::Glass => "Glass",
-            UiSounds::Blip => "Blip",
-            UiSounds::Pulse => "Pulse",
-            UiSounds::Signal => "Signal",
-            UiSounds::Tap => "Tap",
-            UiSounds::Off => "Off",
+            UiSounds::Haptic => "settings.ui_sounds.haptic",
+            UiSounds::Glass => "settings.ui_sounds.glass",
+            UiSounds::Blip => "settings.ui_sounds.blip",
+            UiSounds::Pulse => "settings.ui_sounds.pulse",
+            UiSounds::Signal => "settings.ui_sounds.signal",
+            UiSounds::Tap => "settings.ui_sounds.tap",
+            UiSounds::Off => "settings.value.off",
         }
     }
 

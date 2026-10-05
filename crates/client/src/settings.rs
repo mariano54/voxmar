@@ -16,6 +16,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_protocol::MAX_FLY_SPEED;
 
 use crate::keys::Key;
+use crate::lang::{Locale, Localized};
 use crate::menu::Screen;
 use crate::ui::skin::{InterfaceFont, PX, Piece};
 use crate::ui::sound::{Silent, UiSounds};
@@ -55,7 +56,9 @@ impl Plugin for SettingsPlugin {
                     show_section,
                     click_dropdowns,
                     hover_options,
-                    sync_controls.run_if(resource_changed::<Settings>.or_eager(resource_changed::<Rebinding>)),
+                    sync_controls.run_if(
+                        resource_changed::<Settings>.or_eager(resource_changed::<Rebinding>).or_eager(resource_changed::<Locale>),
+                    ),
                     show_menu,
                 )
                     .chain(),
@@ -132,6 +135,8 @@ pub struct Settings {
     pub inventory_key: Key,
     /// Key that opens and closes the character screen (skills and how you are).
     pub character_key: Key,
+    /// The language's code (`en`, `ja`), or empty to follow the system's.
+    pub language: String,
 }
 
 /// The resolutions the world can be drawn at, in percent of the window's width and
@@ -159,11 +164,11 @@ pub enum FarDetail {
 impl FarDetail {
     const ALL: [FarDetail; 3] = [FarDetail::Full, FarDetail::Balanced, FarDetail::Fast];
 
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            FarDetail::Full => "Full",
-            FarDetail::Balanced => "Balanced",
-            FarDetail::Fast => "Fast",
+            FarDetail::Full => "settings.far_detail.full",
+            FarDetail::Balanced => "settings.far_detail.balanced",
+            FarDetail::Fast => "settings.far_detail.fast",
         }
     }
 
@@ -191,10 +196,10 @@ pub enum TextureOrder {
 }
 
 impl TextureOrder {
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            TextureOrder::Minecraft => "Minecraft first",
-            TextureOrder::Voxmar => "Voxmar",
+            TextureOrder::Minecraft => "settings.textures.minecraft",
+            TextureOrder::Voxmar => "settings.textures.voxmar",
         }
     }
 }
@@ -219,12 +224,12 @@ pub enum AntiAliasing {
 impl AntiAliasing {
     const ALL: [AntiAliasing; 4] = [AntiAliasing::Off, AntiAliasing::Fxaa, AntiAliasing::Smaa, AntiAliasing::Msaa4];
 
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            AntiAliasing::Off => "Off",
-            AntiAliasing::Fxaa => "FXAA",
-            AntiAliasing::Smaa => "SMAA",
-            AntiAliasing::Msaa4 => "MSAA 4×",
+            AntiAliasing::Off => "settings.value.off",
+            AntiAliasing::Fxaa => "settings.anti_aliasing.fxaa",
+            AntiAliasing::Smaa => "settings.anti_aliasing.smaa",
+            AntiAliasing::Msaa4 => "settings.anti_aliasing.msaa4",
         }
     }
 }
@@ -241,11 +246,11 @@ pub enum ParticleAmount {
 impl ParticleAmount {
     const ALL: [ParticleAmount; 3] = [ParticleAmount::All, ParticleAmount::Fewer, ParticleAmount::Off];
 
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            ParticleAmount::All => "All",
-            ParticleAmount::Fewer => "Fewer",
-            ParticleAmount::Off => "Off",
+            ParticleAmount::All => "settings.particles.all",
+            ParticleAmount::Fewer => "settings.particles.fewer",
+            ParticleAmount::Off => "settings.value.off",
         }
     }
 
@@ -293,6 +298,7 @@ impl Default for Settings {
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
+            language: String::new(),
         }
     }
 }
@@ -432,17 +438,17 @@ impl Slider {
         Slider::Zoom,
     ];
 
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            Slider::ViewDistance => "Render distance",
-            Slider::Fov => "Field of view",
-            Slider::Sensitivity => "Mouse sensitivity",
-            Slider::Music => "Music",
-            Slider::Sounds => "Sound effects",
-            Slider::Ambience => "Ambience",
-            Slider::FlySpeed => "Fly speed",
-            Slider::Zoom => "Zoom",
-            Slider::HudRaise => "Raise HUD",
+            Slider::ViewDistance => "settings.render_distance",
+            Slider::Fov => "settings.fov",
+            Slider::Sensitivity => "settings.sensitivity",
+            Slider::Music => "settings.music",
+            Slider::Sounds => "settings.sounds",
+            Slider::Ambience => "settings.ambience",
+            Slider::FlySpeed => "settings.fly_speed",
+            Slider::Zoom => "settings.zoom",
+            Slider::HudRaise => "settings.hud_raise",
         }
     }
 
@@ -487,15 +493,14 @@ impl Slider {
         } = value;
     }
 
-    fn text(self, value: i32) -> String {
+    fn text(self, value: i32, locale: &Locale) -> String {
         match self {
-            Slider::ViewDistance => format!("{value} chunks"),
+            Slider::ViewDistance => locale.format("settings.value.chunks", &[("count", &value)]),
             Slider::Fov => format!("{value}°"),
-            Slider::Music | Slider::Sounds | Slider::Ambience if value == 0 => "Off".into(),
+            Slider::Music | Slider::Sounds | Slider::Ambience | Slider::HudRaise if value == 0 => locale.get("settings.value.off").into(),
             Slider::Sensitivity | Slider::Music | Slider::Sounds | Slider::Ambience => format!("{value}%"),
             Slider::FlySpeed | Slider::Zoom => format!("{}×", value as f32 / 100.0),
-            Slider::HudRaise if value == 0 => "Off".into(),
-            Slider::HudRaise => format!("{value} px"),
+            Slider::HudRaise => locale.format("settings.value.pixels", &[("count", &value)]),
         }
     }
 }
@@ -513,15 +518,15 @@ enum Toggle {
 }
 
 impl Toggle {
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            Toggle::Vsync => "VSync",
-            Toggle::VolumetricLight => "Light shafts",
-            Toggle::DebugOverlay => "Debug overlay",
-            Toggle::CinematicZoom => "Cinematic zoom",
-            Toggle::ZoomInSurvival => "Zoom in survival",
-            Toggle::DoubleTapSprint => "Double-tap sprint",
-            Toggle::FovEffects => "FOV effects",
+            Toggle::Vsync => "settings.vsync",
+            Toggle::VolumetricLight => "settings.light_shafts",
+            Toggle::DebugOverlay => "settings.debug_overlay",
+            Toggle::CinematicZoom => "settings.cinematic_zoom",
+            Toggle::ZoomInSurvival => "settings.zoom_in_survival",
+            Toggle::DoubleTapSprint => "settings.double_tap_sprint",
+            Toggle::FovEffects => "settings.fov_effects",
         }
     }
 
@@ -562,40 +567,50 @@ enum Choice {
     Particles,
     Font,
     UiSounds,
+    Language,
 }
 
 impl Choice {
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            Choice::FarDetail => "Far detail",
-            Choice::Font => "Font",
-            Choice::UiSounds => "Interface sounds",
-            Choice::AntiAliasing => "Anti-aliasing",
-            Choice::ShaderPack => "Shader pack",
-            Choice::Shadows => "Shadows",
-            Choice::Water => "Water",
-            Choice::Textures => "Textures (on restart)",
-            Choice::Particles => "Particles",
+            Choice::FarDetail => "settings.far_detail",
+            Choice::Font => "settings.font",
+            Choice::UiSounds => "settings.ui_sounds",
+            Choice::AntiAliasing => "settings.anti_aliasing",
+            Choice::ShaderPack => "settings.shader_pack",
+            Choice::Shadows => "settings.shadows",
+            Choice::Water => "settings.water",
+            Choice::Textures => "settings.textures",
+            Choice::Particles => "settings.particles",
+            Choice::Language => "settings.language",
         }
     }
 
-    fn text(self, settings: &Settings, packs: &ShaderPacks) -> String {
+    fn text(self, settings: &Settings, packs: &ShaderPacks, locale: &Locale) -> String {
+        let words = |key: &str| locale.get(key).to_owned();
         match self {
-            Choice::FarDetail => settings.far_detail.label().into(),
+            Choice::FarDetail => words(settings.far_detail.key()),
+            // Fonts and packs go by their names.
             Choice::Font => settings.font.label().into(),
-            Choice::UiSounds => settings.ui_sounds.label().into(),
-            Choice::AntiAliasing => settings.anti_aliasing.label().into(),
+            Choice::UiSounds => words(settings.ui_sounds.key()),
+            Choice::AntiAliasing => words(settings.anti_aliasing.key()),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
-            Choice::Shadows => settings.shadows.label().into(),
-            Choice::Water => settings.water_quality.label().into(),
-            Choice::Textures => settings.textures.label().into(),
-            Choice::Particles => settings.particles.label().into(),
+            Choice::Shadows => words(settings.shadows.key()),
+            Choice::Water => words(settings.water_quality.key()),
+            Choice::Textures => words(settings.textures.key()),
+            Choice::Particles => words(settings.particles.key()),
+            // Each language by its own name, so a player can find theirs from any other.
+            Choice::Language => locale.language_name(locale.code()).to_owned(),
         }
     }
 
     /// Moves to the next option, or the previous one.
-    fn step(self, settings: &mut Settings, packs: &ShaderPacks, forward: bool) {
+    fn step(self, settings: &mut Settings, packs: &ShaderPacks, locale: &Locale, forward: bool) {
         match self {
+            Choice::Language => {
+                let codes: Vec<&str> = locale.languages.iter().map(|language| language.code.as_str()).collect();
+                settings.language = cycle(&codes, locale.code(), forward).to_owned();
+            }
             Choice::FarDetail => settings.far_detail = cycle(&FarDetail::ALL, settings.far_detail, forward),
             Choice::Font => settings.font = cycle(&InterfaceFont::ALL, settings.font, forward),
             Choice::UiSounds => settings.ui_sounds = cycle(&UiSounds::ALL, settings.ui_sounds, forward),
@@ -645,13 +660,13 @@ enum Binding {
 }
 
 impl Binding {
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            Binding::Sprint => "Sprint key",
-            Binding::Zoom => "Zoom key",
-            Binding::Chat => "Chat key",
-            Binding::Inventory => "Inventory key",
-            Binding::Character => "Character key",
+            Binding::Sprint => "settings.key.sprint",
+            Binding::Zoom => "settings.key.zoom",
+            Binding::Chat => "settings.key.chat",
+            Binding::Inventory => "settings.key.inventory",
+            Binding::Character => "settings.key.character",
         }
     }
 
@@ -692,9 +707,9 @@ enum Dropdown {
 }
 
 impl Dropdown {
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            Dropdown::Resolution => "Resolution",
+            Dropdown::Resolution => "settings.resolution",
         }
     }
 
@@ -732,59 +747,29 @@ impl Dropdown {
 }
 
 impl Control {
-    fn label(self) -> &'static str {
+    /// The key of the setting's name; its hint's is the same with `.hint` after it.
+    fn key(self) -> &'static str {
         match self {
-            Control::Slider(slider) => slider.label(),
-            Control::Switch(toggle) => toggle.label(),
-            Control::Choice(choice) => choice.label(),
-            Control::Key(binding) => binding.label(),
-            Control::Dropdown(dropdown) => dropdown.label(),
+            Control::Slider(slider) => slider.key(),
+            Control::Switch(toggle) => toggle.key(),
+            Control::Choice(choice) => choice.key(),
+            Control::Key(binding) => binding.key(),
+            Control::Dropdown(dropdown) => dropdown.key(),
         }
     }
 
-    /// What the setting does, shown at the foot of the panel while the pointer is on it.
-    fn hint(self) -> &'static str {
-        match self {
-            Control::Slider(Slider::ViewDistance) => "How far the world is built in full around you. Distant terrain goes on beyond it.",
-            Control::Slider(Slider::Fov) => "How wide you see.",
-            Control::Slider(Slider::Sensitivity) => "How fast the view follows the mouse.",
-            Control::Slider(Slider::Music) => "The music's volume.",
-            Control::Slider(Slider::Sounds) => "Footsteps, blocks breaking and everything else you do.",
-            Control::Slider(Slider::Ambience) => "Wind, birds and water, as a share of the sound effects.",
-            Control::Slider(Slider::FlySpeed) => "How fast you fly. Only admins may fly faster than normal.",
-            Control::Slider(Slider::Zoom) => "How much holding the zoom key magnifies.",
-            Control::Slider(Slider::HudRaise) => "Lifts the hotbar and hearts off the bottom edge, clear of rounded corners.",
-            Control::Switch(Toggle::Vsync) => "Waits for the display between frames: no tearing, frame rate capped.",
-            Control::Switch(Toggle::VolumetricLight) => "Shafts of sunlight through trees, haze and mist.",
-            Control::Switch(Toggle::DebugOverlay) => "Frame rate, position and what you look at, top left. F3 also toggles it.",
-            Control::Switch(Toggle::CinematicZoom) => "The view follows the mouse smoothly while zoomed.",
-            Control::Switch(Toggle::ZoomInSurvival) => "Lets the zoom key work in survival, not only in creative.",
-            Control::Switch(Toggle::DoubleTapSprint) => "Tapping forward twice quickly starts a sprint, as the sprint key does.",
-            Control::Switch(Toggle::FovEffects) => "The view widens a little while you sprint.",
-            Control::Choice(Choice::FarDetail) => "How soon far chunks merge blocks. Fast suits slower machines and huge distances.",
-            Control::Dropdown(Dropdown::Resolution) => "How many pixels the world is drawn at; menus and text stay sharp. Lower is faster.",
-            Control::Choice(Choice::Font) => "The pixel font menus, the HUD and chat are written in.",
-            Control::Choice(Choice::UiSounds) => "What buttons and the inventory sound like.",
-            Control::Key(Binding::Inventory) => "Opens and closes the inventory.",
-            Control::Key(Binding::Character) => "Opens and closes the character screen: your skills, and how you are.",
-            Control::Choice(Choice::AntiAliasing) => "How edges are smoothed. MSAA also smooths leaves and plants.",
-            Control::Choice(Choice::ShaderPack) => "The look of light, sky, water and colour.",
-            Control::Choice(Choice::Shadows) => "How sun shadows are drawn: higher is softer and reaches further.",
-            Control::Choice(Choice::Water) => "Waves and reflections of the land in water.",
-            Control::Choice(Choice::Textures) => "Which texture pack comes first. Takes effect when the game next starts.",
-            Control::Choice(Choice::Particles) => "How many particles effects such as breaking blocks show.",
-            Control::Key(Binding::Chat) => "Opens the chat line. / always opens it for a command.",
-            Control::Key(Binding::Zoom) => "Hold to zoom in.",
-            Control::Key(Binding::Sprint) => "Starts a sprint, which lasts while you keep moving forward.",
-        }
+    /// The key of what the setting does, shown at the foot of the panel while the pointer is
+    /// on it.
+    fn hint(self) -> String {
+        format!("{}.hint", self.key())
     }
 }
 
-/// The panel's tabs, each a page of settings. A new setting goes into the page where
-/// players would look for it.
+/// The panel's tabs (by the keys of their names), each a page of settings. A new setting
+/// goes into the page where players would look for it.
 const SECTIONS: [(&str, &[Control]); 6] = [
     (
-        "Video",
+        "settings.tab.video",
         &[
             Control::Slider(Slider::ViewDistance),
             Control::Choice(Choice::FarDetail),
@@ -797,7 +782,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         ],
     ),
     (
-        "Graphics",
+        "settings.tab.graphics",
         &[
             Control::Choice(Choice::ShaderPack),
             Control::Choice(Choice::Shadows),
@@ -806,9 +791,9 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Choice(Choice::Particles),
         ],
     ),
-    ("Audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds), Control::Slider(Slider::Ambience)]),
+    ("settings.tab.audio", &[Control::Slider(Slider::Music), Control::Slider(Slider::Sounds), Control::Slider(Slider::Ambience)]),
     (
-        "Controls",
+        "settings.tab.controls",
         &[
             Control::Slider(Slider::Sensitivity),
             Control::Switch(Toggle::DoubleTapSprint),
@@ -819,7 +804,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         ],
     ),
     (
-        "Keys",
+        "settings.tab.keys",
         &[
             Control::Key(Binding::Inventory),
             Control::Key(Binding::Character),
@@ -829,8 +814,9 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         ],
     ),
     (
-        "Interface",
+        "settings.tab.interface",
         &[
+            Control::Choice(Choice::Language),
             Control::Choice(Choice::Font),
             Control::Choice(Choice::UiSounds),
             Control::Slider(Slider::HudRaise),
@@ -872,9 +858,12 @@ struct SectionPage(usize);
 /// A row of the panel, which shows its hint while the pointer is on it.
 #[derive(Component)]
 struct SettingRow(Control);
-/// Where the hovered row's hint shows.
+/// Where the hovered row's hint shows, and the box around it, as tall as the longest
+/// hint in the player's language.
 #[derive(Component)]
 struct HintText;
+#[derive(Component)]
+struct HintBox;
 /// The draggable area of a slider.
 #[derive(Component)]
 struct SliderTrack(Slider);
@@ -921,8 +910,6 @@ const ROW: f32 = 18.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
 const VALUE_WIDTH: f32 = 62.0 * PX;
 const CONTROL_WIDTH: f32 = 124.0 * PX;
-/// Lines of body text, at Bevy's default line height of 1.2 font sizes.
-const LINE: f32 = 1.2 * BODY;
 /// Lines kept for the hint at the foot of the panel: the longest hint wraps to two.
 const HINT_LINES: usize = 2;
 
@@ -934,7 +921,7 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
             let title = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
             panel.spawn(title).with_children(|row| {
                 row.spawn(shadowed(font, "◆", BODY, ACCENT));
-                row.spawn((MenuTitle, shadowed(font, "Settings", LARGE, GOLD)));
+                row.spawn((MenuTitle, shadowed(font, "", LARGE, GOLD)));
                 row.spawn(shadowed(font, "◆", BODY, ACCENT));
             });
             spawn_rule(panel, 4.0 * PX);
@@ -960,16 +947,16 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
                 });
             });
             spawn_rule(panel, 4.0 * PX);
-            // As tall as the longest hint, so the panel keeps its height as the pointer moves.
-            let hint = Node { height: Val::Px(HINT_LINES as f32 * LINE), overflow: Overflow::clip(), ..default() };
-            panel.spawn(hint).with_child((HintText, text(font, "", BODY, MUTED)));
+            let hint = Node { overflow: Overflow::clip(), ..default() };
+            panel.spawn((HintBox, hint)).with_child((HintText, text(font, "", BODY, MUTED)));
             panel.spawn(button_row(4.0 * PX)).with_children(|row| {
-                spawn_button(row, font, "Back to game", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
-                spawn_button(row, font, "Done", ButtonStyle::Primary, (MenuButton::Done, ShownWhen::OnTitle));
+                spawn_button(row, font, "menu.back_to_game", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
+                spawn_button(row, font, "menu.done", ButtonStyle::Primary, (MenuButton::Done, ShownWhen::OnTitle));
             });
             panel.spawn((button_row(4.0 * PX), ShownWhen::InGame)).with_children(|row| {
-                spawn_button(row, font, "Save and quit to title", ButtonStyle::Secondary, MenuButton::QuitToTitle);
-                spawn_button(row, font, "Quit game", ButtonStyle::Secondary, MenuButton::Quit);
+                // Its words depend on the game: see `show_menu`.
+                spawn_button(row, font, "", ButtonStyle::Secondary, MenuButton::QuitToTitle);
+                spawn_button(row, font, "menu.quit_game", ButtonStyle::Secondary, MenuButton::Quit);
             });
         });
         let bar = crate::hud::screens::spawn_hotkeys(root, crate::hud::screens::GameScreen::Menu);
@@ -985,7 +972,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
         row.insert(ShownWhen::Admin);
     }
     row.with_children(|row| {
-        row.spawn(text(font, control.label(), BODY, TEXT));
+        row.spawn((Localized(control.key()), text(font, "", BODY, TEXT)));
         match control {
             Control::Slider(slider) => spawn_slider(row, font, slider),
             Control::Switch(toggle) => spawn_switch(row, toggle),
@@ -1200,6 +1187,7 @@ fn click_switches(mut settings: ResMut<Settings>, switches: Query<(&Switch, &Int
 fn click_choices(
     mut settings: ResMut<Settings>,
     packs: Res<ShaderPacks>,
+    locale: Res<Locale>,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     choices: Query<(&ChoiceButton, &Interaction)>,
@@ -1209,7 +1197,7 @@ fn click_choices(
         let pressed = *interaction == Interaction::Pressed && mouse.just_pressed(MouseButton::Left);
         if pressed || (back_click && *interaction == Interaction::Hovered) {
             let control = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-            choice.0.step(&mut settings, &packs, pressed && !control);
+            choice.0.step(&mut settings, &packs, &locale, pressed && !control);
         }
     }
 }
@@ -1264,7 +1252,16 @@ fn show_section(
     mut pages: Query<(&SectionPage, &mut Node)>,
     rows: Query<(&SettingRow, &Interaction)>,
     mut hint: Query<&mut Text, With<HintText>>,
+    mut hint_box: Query<&mut Node, (With<HintBox>, Without<SectionPage>)>,
+    locale: Res<Locale>,
 ) {
+    if let Ok(mut node) = hint_box.single_mut() {
+        // As tall as the longest hint, so the panel keeps its height as the pointer moves.
+        let height = Val::Px(HINT_LINES as f32 * locale.line_height() * BODY);
+        if node.height != height {
+            node.height = height;
+        }
+    }
     for (entity, tab, selected) in &tabs {
         if (tab.0 == open.0) != selected {
             if selected {
@@ -1280,7 +1277,8 @@ fn show_section(
             node.display = display;
         }
     }
-    let hovered = rows.iter().find(|(_, interaction)| **interaction != Interaction::None).map_or("", |(row, _)| row.0.hint());
+    let hovered = rows.iter().find(|(_, interaction)| **interaction != Interaction::None).map(|(row, _)| row.0.hint());
+    let hovered = hovered.as_deref().map_or("", |key| locale.get(key));
     if let Ok(mut text) = hint.single_mut()
         && text.0 != hovered
     {
@@ -1327,6 +1325,7 @@ fn sync_controls(
     window: Query<&Window, With<PrimaryWindow>>,
     rebinding: Res<Rebinding>,
     packs: Res<ShaderPacks>,
+    locale: Res<Locale>,
 ) {
     // Choice, key and dropdown buttons show their value as one text, replaced when it
     // changes.
@@ -1335,13 +1334,13 @@ fn sync_controls(
     };
     for (entity, key) in &keys {
         if rebinding.0 == Some(key.0) {
-            show(entity, "Press a key".into(), ACCENT);
+            show(entity, locale.get("settings.press_a_key").into(), ACCENT);
         } else {
-            show(entity, key.0.get(&settings).label().into(), TEXT);
+            show(entity, key.0.get(&settings).name(&locale), TEXT);
         }
     }
     for (entity, choice) in &choices {
-        show(entity, format!("◂ {} ▸", choice.0.text(&settings, &packs)), TEXT);
+        show(entity, format!("◂ {} ▸", choice.0.text(&settings, &packs, &locale)), TEXT);
     }
     let size = window.single().ok().map(|w| w.physical_size());
     for (entity, dropdown) in &dropdowns {
@@ -1356,7 +1355,7 @@ fn sync_controls(
         node.width = Val::Percent((fill.0.get(&settings) - min) as f32 / (max - min) as f32 * 100.0);
     }
     for (value, mut text) in &mut values {
-        text.0 = value.0.text(value.0.get(&settings));
+        text.0 = value.0.text(value.0.get(&settings), &locale);
     }
     for (switch, mut node, mut image) in &mut switches {
         let on = switch.0.get(&settings);
@@ -1382,6 +1381,7 @@ fn show_menu(
     mut title: Query<&mut Text, With<MenuTitle>>,
     mut texts: Query<&mut Text, Without<MenuTitle>>,
     mut rebinding: ResMut<Rebinding>,
+    locale: Res<Locale>,
 ) {
     let in_game = *screen.get() == Screen::InGame;
     let open = (in_game && ui.menu_open) || *screen.get() == Screen::Settings;
@@ -1397,7 +1397,7 @@ fn show_menu(
         return;
     }
     if let Ok(mut text) = title.single_mut() {
-        let heading = if in_game { "Game paused" } else { "Settings" };
+        let heading = locale.get(if in_game { "settings.paused" } else { "settings.title" });
         if text.0 != heading {
             heading.clone_into(&mut text.0);
         }
@@ -1414,7 +1414,7 @@ fn show_menu(
         }
     }
     // Leaving a server saves nothing of ours, so say what it does.
-    let label = if net.is_some_and(|net| net.is_remote()) { "Disconnect" } else { "Save and quit to title" };
+    let label = locale.get(if net.is_some_and(|net| net.is_remote()) { "menu.disconnect" } else { "menu.save_and_quit" });
     for (button, children) in &quit_to_title {
         if matches!(button, MenuButton::QuitToTitle)
             && let Some(mut text) = children.first().and_then(|&child| texts.get_mut(child).ok())
@@ -1545,34 +1545,48 @@ mod tests {
     use voxmar_texgen::font::{EM_PIXELS, PixelFont};
 
     /// The panel reserves room for the hint, so a longer one would spill out of it, in any
-    /// of the fonts a player can choose.
+    /// of the fonts a player can choose and any language.
     #[test]
     fn every_hint_fits_the_room_kept_for_it() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/fonts");
+        let content = voxmar_server::assets_dir().join("content");
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
         for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
-            let font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
+            let mut font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
+            font.fill_from(crate::ui::skin::fallback());
             // Glyphs get one font pixel of space after them; body text draws each font pixel
             // `scale` screen pixels wide, inside the panel's padding.
             let cell = font.monospace.unwrap_or(0);
             let advance = |c: char| font.glyphs.get(&c).map_or(EM_PIXELS, |glyph| glyph.width).max(cell) as f32 + 1.0;
             let scale = BODY / EM_PIXELS as f32;
             let room = (PANEL_WIDTH - 28.0 * PX) / scale;
-            for (_, controls) in SECTIONS {
-                for &control in controls.iter() {
-                    let hint = control.hint();
-                    let (mut lines, mut width) = (1, 0.0);
-                    for word in hint.split(' ') {
-                        let word_width: f32 = word.chars().map(advance).sum();
-                        let with_space = if width == 0.0 { word_width } else { width + advance(' ') + word_width };
-                        if with_space > room {
-                            lines += 1;
-                            width = word_width;
-                        } else {
-                            width = with_space;
+            for language in voxmar_engine::lang::languages(&content) {
+                let locale = voxmar_engine::lang::Lang::load(&content, &language.code);
+                for (_, controls) in SECTIONS {
+                    for &control in controls.iter() {
+                        let hint = locale.get(&control.hint()).to_owned();
+                        // Lines break between words, and anywhere between kanji and kana.
+                        let units = hint.split(' ').flat_map(|word| {
+                            if word.chars().any(|c| c as u32 >= 0x3000) {
+                                word.chars().map(String::from).collect::<Vec<_>>()
+                            } else {
+                                vec![word.to_owned()]
+                            }
+                        });
+                        let (mut lines, mut width) = (1, 0.0);
+                        for unit in units {
+                            let unit_width: f32 = unit.chars().map(advance).sum();
+                            let spaced = width != 0.0 && unit.chars().all(|c| (c as u32) < 0x3000);
+                            let with_space = if spaced { width + advance(' ') + unit_width } else { width + unit_width };
+                            if with_space > room {
+                                lines += 1;
+                                width = unit_width;
+                            } else {
+                                width = with_space;
+                            }
                         }
+                        assert!(lines <= HINT_LINES, "{file}, {}: {lines} lines: {hint}", language.code);
                     }
-                    assert!(lines <= HINT_LINES, "{file}: {lines} lines: {hint}");
                 }
             }
         }

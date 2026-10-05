@@ -114,6 +114,22 @@ impl Lang {
         fill(self.get(key), args)
     }
 
+    /// The text for a count of something, `{count}` and `args` filled in: `key.one` for
+    /// one where the language has it ("1 minute ago"), `key.other` otherwise ("5 minutes
+    /// ago"; Japanese needs only this one).
+    pub fn count(&self, key: &str, count: u64, args: &[(&str, &dyn Display)]) -> String {
+        let (one, other) = (format!("{key}.one"), format!("{key}.other"));
+        let own = if self.code == ENGLISH { &self.english } else { &self.strings };
+        fn pick<'a>(table: &'a FxHashMap<String, String>, one: Option<&str>, other: &str) -> Option<&'a String> {
+            one.and_then(|one| table.get(one)).or_else(|| table.get(other))
+        }
+        let one = (count == 1).then_some(one.as_str());
+        let text = pick(own, one, &other).or_else(|| pick(&self.english, one, &other)).map_or(other.as_str(), String::as_str);
+        let mut all: Vec<(&str, &dyn Display)> = vec![("count", &count)];
+        all.extend_from_slice(args);
+        fill(text, &all)
+    }
+
     /// Every key this language or English defines.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.english.keys().chain(self.strings.keys().filter(|key| !self.english.contains_key(*key))).map(String::as_str)
@@ -280,6 +296,17 @@ mod tests {
         assert_eq!(fill("{{literal}} {x}}", &[("x", &1)]), "{literal} 1}");
         assert_eq!(fill("unclosed {x", &[("x", &1)]), "unclosed {x");
         assert_eq!(arguments("{b} {a} {{c}} {a}"), ["a", "b"]);
+    }
+
+    #[test]
+    fn counts_take_the_form_their_language_needs() {
+        let en = r#"{ "ago.one": "{count} minute ago", "ago.other": "{count} minutes ago" }"#;
+        let (english, _) = Lang::from_files("en", [("core", "en", en)]);
+        assert_eq!(english.count("ago", 1, &[]), "1 minute ago");
+        assert_eq!(english.count("ago", 5, &[]), "5 minutes ago");
+        let (japanese, _) = Lang::from_files("ja", [("core", "en", en), ("core", "ja", r#"{ "ago.other": "{count}分前" }"#)]);
+        assert_eq!(japanese.count("ago", 1, &[]), "1分前");
+        assert_eq!(japanese.count("missing", 2, &[]), "missing.other");
     }
 
     #[test]

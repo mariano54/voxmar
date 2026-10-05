@@ -10,6 +10,7 @@ use bevy::text::FontSmoothing;
 use bevy::ui::RelativeCursorPosition;
 
 use super::skin::{FONT, PX, Piece, font_size};
+use crate::lang::Localized;
 
 pub struct WidgetsPlugin;
 
@@ -59,12 +60,13 @@ pub fn shadowed(font: &Handle<Font>, value: impl Into<String>, size: f32, color:
     (text, font, color, TextShadow { offset: Vec2::splat(px / font_size(1)), color: SHADOW })
 }
 
-/// A panel's title, in gold between two teal diamonds, over a gold rule.
-pub fn spawn_heading(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, value: &str) {
+/// A panel's title, in gold between two teal diamonds, over a gold rule. `key` names its
+/// words in the player's language (see `lang`), as for every widget with a label.
+pub fn spawn_heading(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, key: &'static str) {
     let row = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
     parent.spawn(row).with_children(|row| {
         row.spawn(shadowed(font, "◆", BODY, ACCENT));
-        row.spawn(shadowed(font, value, LARGE, GOLD));
+        row.spawn((Localized(key), shadowed(font, "", LARGE, GOLD)));
         row.spawn(shadowed(font, "◆", BODY, ACCENT));
     });
     spawn_rule(parent, 4.0 * PX);
@@ -80,10 +82,10 @@ pub fn spawn_rule(parent: &mut ChildSpawnerCommands, margin: f32) {
 }
 
 /// A small label above a group of controls.
-pub fn label(font: &Handle<Font>, value: &str) -> (Node, Text, TextFont, TextColor) {
+pub fn label(font: &Handle<Font>, key: &'static str) -> (Node, Localized, Text, TextFont, TextColor) {
     let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(7.0 * PX), Val::Px(3.0 * PX));
-    let (text, font, color) = text(font, value, BODY, MUTED);
-    (Node { margin, ..default() }, text, font, color)
+    let (text, font, color) = text(font, "", BODY, MUTED);
+    (Node { margin, ..default() }, Localized(key), text, font, color)
 }
 
 /// A full-screen layer that centres its content, over a tinted backdrop.
@@ -150,11 +152,12 @@ pub type Pressed = (Changed<Interaction>, Without<Disabled>);
 /// Height of a button.
 pub const BUTTON: f32 = 20.0 * PX;
 
-/// A button taking an equal share of its row, carrying `action` to identify it.
+/// A button taking an equal share of its row, carrying `action` to identify it. An empty
+/// `key` leaves the label for its screen to write.
 pub fn spawn_button(
     parent: &mut ChildSpawnerCommands,
     font: &Handle<Font>,
-    label: &str,
+    key: &'static str,
     style: ButtonStyle,
     action: impl Bundle,
 ) -> Entity {
@@ -166,7 +169,13 @@ pub fn spawn_button(
         align_items: AlignItems::Center,
         ..default()
     };
-    parent.spawn((Button, style, node, style.pieces()[0].image(), action)).with_child(shadowed(font, label, BODY, TEXT)).id()
+    let mut button = parent.spawn((Button, style, node, style.pieces()[0].image(), action));
+    if key.is_empty() {
+        button.with_child(shadowed(font, "", BODY, TEXT));
+    } else {
+        button.with_child((Localized(key), shadowed(font, "", BODY, TEXT)));
+    }
+    button.id()
 }
 
 /// Draws each button for its state: the hover piece under the pointer, the pressed piece
@@ -258,7 +267,7 @@ pub fn spawn_text_field(
     parent: &mut ChildSpawnerCommands,
     font: &Handle<Font>,
     value: &str,
-    placeholder: &str,
+    placeholder: &'static str,
     max_chars: usize,
     order: u8,
     focused: bool,
@@ -280,7 +289,7 @@ pub fn spawn_text_field(
         text_entity = field.spawn(text(font, value, BODY, TEXT)).id();
         let caret_node = Node { width: Val::Px(PX), height: Val::Px(8.0 * PX), margin: UiRect::left(Val::Px(PX)), ..default() };
         caret = field.spawn((caret_node, BackgroundColor(ACCENT))).id();
-        placeholder_entity = field.spawn(text(font, placeholder, BODY, MUTED.with_alpha(0.7))).id();
+        placeholder_entity = field.spawn((Localized(placeholder), text(font, "", BODY, MUTED.with_alpha(0.7)))).id();
     });
     field.insert(TextField {
         value: value.to_owned(),
