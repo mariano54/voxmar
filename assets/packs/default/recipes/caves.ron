@@ -203,9 +203,27 @@
         ])]),
         // Gloomvein: the deep dark's living crust, shot through with faintly glowing veins.
         "block/gloomvein": (palettes: {"main": "gloom", "vein": "gloom_glow"}, layers: [
-            Paint(palette: "main", base: 0.45, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.6), Grain(0.3)], clean: true),
-            Paint(palette: "vein", base: 0.1, shade: [Noise(cells: (8, 8), amount: 0.8)], mask: [Ridge(cells: (2, 2), octaves: 1, width: 0.07, amount: 1.0), Noise(cells: (4, 4), amount: 0.8)], above: 0.75),
-            Paint(palette: "vein", base: 0.9, mask: [Speckle(chance: 0.025, amount: 1.0, seed: 3)]),
+            Paint(palette: "main", base: 0.42, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.55, seed: 10), Grain(0.12)], clean: true),
+            // Threads that branch and wander diagonally, a lifted crust beside them and bright
+            // nodes where they meet; drawn by hand, as noise ridges came out as rows of dashes.
+            Grid(legend: {'v': "vein:1", 'w': "vein:2", 'h': "main:4"}, rows: [
+                "................",
+                "................",
+                "................",
+                "................",
+                ".......v.h......",
+                ".......vvv......",
+                "........hvv.vh..",
+                ".......wv.vvvh..",
+                ".....hvwh.hhvvh.",
+                "......vh.....vv.",
+                "...hvvvv......vv",
+                "h..hv..hv......v",
+                "v...wvvhhvh...hv",
+                "vvh.h.v..h......",
+                "......h.........",
+                "................",
+            ]),
         ]),
         "block/brown_mushroom_block": (palettes: {"main": "brown_cap"}, layers: [
             Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.4), Grain(0.35), Border(width: 1, amount: -0.15)], clean: true),
