@@ -235,7 +235,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let world_normal = turn(normal, item.angle);
     let sky = f32(item.flags >> 28u) / 15.0;
     let block = f32((item.flags >> 24u) & 15u) / 15.0;
+    // Sprites (plants) are lit as thin and translucent, as the plants they came from are.
     // Hard-edged shadows: an item is too small to show a penumbra.
-    let lit = shade_normal(albedo, in.world_position, world_normal, ambient_shade(world_normal), sky, block, 1.0, false, false);
+    let lit = shade_normal(albedo, in.world_position, world_normal, ambient_shade(world_normal), sky, block, 1.0, sprite, false);
     return vec4(apply_fog(lit, in.world_position), 1.0);
 }
