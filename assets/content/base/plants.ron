@@ -128,6 +128,30 @@
         (name: "crystal_bloom", block: "crystal_bloom", spread: Alone, habitat: Open, comfort: (temperature: (-30.0, 0.0)), ground: [Snow, Soil]),
         (name: "dreamshade", block: "dreamshade", spread: Alone, habitat: Shade, comfort: (temperature: (4.0, 24.0), moisture: (0.9, 8.0))),
         (name: "heartbloom", block: "heartbloom", spread: Alone, habitat: Open, comfort: (temperature: (6.0, 24.0), moisture: (0.6, 1.6))),
+
+        // Wild crops: the ripe plant of a crop (crops.ron) gone wild, where its seeds are first
+        // found. Biomes take them by the `wild_crop` tag, a few at most and only where the
+        // climate fits; the wild forms of wheat, carrot, chili and moonbloom are above.
+        (
+            name: "wild_potato", block: "potato_crop", spread: Alone, habitat: Open, rarity: Uncommon, tags: ["wild_crop", "meadow"],
+            comfort: (temperature: (0.0, 18.0), moisture: (0.6, 1.8)), properties: (nutrition: 3.0),
+        ),
+        (
+            name: "wild_cabbage", block: "cabbage_crop", spread: Alone, habitat: Shore, rarity: Uncommon, tags: ["wild_crop", "shore"],
+            comfort: (temperature: (2.0, 18.0), moisture: (0.6, 2.0)), properties: (nutrition: 2.0),
+        ),
+        (
+            name: "wild_tomato", block: "tomato_crop", spread: Alone, habitat: Open, rarity: Rare, tags: ["wild_crop", "tropical"],
+            comfort: (temperature: (16.0, 30.0), moisture: (0.5, 1.4)), properties: (nutrition: 2.0),
+        ),
+        (
+            name: "wild_strawberry", block: "strawberry_crop", spread: Alone, habitat: Shade, rarity: Rare, tags: ["wild_crop", "forest_floor"],
+            comfort: (temperature: (6.0, 22.0), moisture: (0.7, 1.8)), properties: (nutrition: 2.0),
+        ),
+        (
+            name: "wild_saffron", block: "saffron_crop", spread: Alone, habitat: Open, rarity: VeryRare, tags: ["wild_crop", "alpine"],
+            comfort: (temperature: (6.0, 24.0), moisture: (0.15, 0.8)),
+        ),
     ],
 )
 
