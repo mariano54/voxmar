@@ -10,7 +10,7 @@
 
 use bevy::prelude::*;
 use voxmar_engine::weather::{GUST_WRAP, WeatherTable, advance_gusts, gust, parse_intensity, pcg};
-use voxmar_protocol::{Nearby, TICKS_PER_SECOND, WEATHER_CELL, Weather};
+use voxmar_protocol::{Nearby, THUNDER_HEARD, TICKS_PER_SECOND, WEATHER_CELL, Weather};
 
 use crate::menu::Screen;
 
@@ -383,7 +383,10 @@ fn ease(
         strike.age += dt;
         if !strike.heard && strike.age >= strike.distance / SOUND_SPEED {
             strike.heard = true;
-            thunder.write(Thunder { distance: strike.distance });
+            // Lightning too far off is seen but not heard (heat lightning).
+            if strike.distance < THUNDER_HEARD {
+                thunder.write(Thunder { distance: strike.distance });
+            }
         }
     }
     weather.strikes.retain(|s| !s.heard || s.age < 1.0);

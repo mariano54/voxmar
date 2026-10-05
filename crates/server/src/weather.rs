@@ -46,7 +46,7 @@ use voxmar_engine::glam::{DVec2, IVec2, IVec3, Vec2, Vec3};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::weather::{Input, Inputs, Preset, WeatherTable, advance_gusts, ramp};
 use voxmar_worldgen::{Featured, Overworld, SEA_LEVEL, Tier as _};
-use voxmar_protocol::{Nearby, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND, WEATHER_CELL, Weather as LocalWeather};
+use voxmar_protocol::{Nearby, PlayerId, ServerMessage, THUNDER_HEARD, TICKS_PER_DAY, TICKS_PER_SECOND, WEATHER_CELL, Weather as LocalWeather};
 
 use crate::Server;
 use crate::process::Process;
@@ -469,7 +469,8 @@ impl Process for Weather {
             let offset = self.gusts.entry(id).or_default();
             *offset = advance_gusts(*offset, report.weather.wind, dt);
             report.weather.gust_offset = *offset;
-            strikes.extend(server.weather.sky.effect_lightning(id, at, report.weather.lightning, tick));
+            let dry = report.weather.precipitation < 0.05;
+            strikes.extend(server.weather.sky.effect_lightning(id, at, report.weather.lightning, dry, tick));
             let quick = server.weather.recently_changed(at);
             let due = quick
                 || self.sent.get(&id).is_none_or(|(last, sent_at)| {
@@ -762,6 +763,11 @@ impl WeatherState {
             }
         }
         self.table.apply(&mut weather, &strengths, place.floor);
+        // What blows over snow is snow: drifting snow is white, not the ground's colour.
+        if weather.snow_cover > 0.1 {
+            let white = smoothstep(0.1, 0.5, weather.snow_cover);
+            weather.dust_color = weather.dust_color.map(|c| (c as f32 + (250.0 - c as f32) * white) as u8);
+        }
         let mut effects: Vec<(usize, f32)> = strengths.into_iter().enumerate().filter(|&(_, s)| s > 0.01).collect();
         effects.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         Report { weather, effects }
@@ -874,7 +880,9 @@ impl Sky {
 
     /// Lightning from effects (thundersnow, fantastical storms) near a player, at
     /// `strength` (the `lightning` channel): 150 to 900 blocks away.
-    fn effect_lightning(&self, player: PlayerId, at: Vec2, strength: f32, tick: u64) -> Option<Strike> {
+    /// Dry lightning (heat lightning: no storm overhead) flashes far off, beyond where
+    /// thunder is heard (`protocol::THUNDER_HEARD`), so it is silent.
+    fn effect_lightning(&self, player: PlayerId, at: Vec2, strength: f32, dry: bool, tick: u64) -> Option<Strike> {
         let h = mix(mix(self.seed ^ EFFECT_STRIKES ^ tick) ^ player as u64);
         if unit(h) >= (EFFECT_LIGHTNING * strength) as f64 {
             return None;
@@ -882,7 +890,8 @@ impl Sky {
         // A direction from a point on the unit square's edge, then a distance.
         let (a, b) = (unit(mix(h)) as f32 * 2.0 - 1.0, unit(mix(mix(h))) as f32 * 2.0 - 1.0);
         let direction = Vec2::new(a, b).normalize_or(Vec2::X);
-        let distance = 150.0 + 750.0 * unit(mix(mix(mix(h)))) as f32;
+        let far = unit(mix(mix(mix(h)))) as f32;
+        let distance = if dry { THUNDER_HEARD + 20.0 + (LIGHTNING_REACH - THUNDER_HEARD - 40.0) * far } else { 150.0 + 750.0 * far };
         // Mostly strikes, some flashes within the cloud.
         Some(Strike { at: at + direction * distance, seed: (h >> 32) as u32, cloud: unit(mix(h ^ 0xc10d)) < 0.4 })
     }
@@ -1262,9 +1271,12 @@ mod tests {
         assert!(ground * 2 < storm.len() && ground * 5 > storm.len(), "{ground} of {}", storm.len());
         assert_eq!(storm, flashes(1.0, 1.0));
         // Effects' lightning strikes around the player, as often as the channel says.
-        let near: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, s * SECOND)).collect();
+        let near: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, false, s * SECOND)).collect();
         assert!((700..1300).contains(&near.len()), "{} strikes", near.len());
         assert!(near.iter().all(|s| (149.0..901.0).contains(&s.at.length())));
+        // Heat lightning, with no storm overhead, flashes too far off to be heard.
+        let dry: Vec<_> = (0..60_000u64).filter_map(|s| weather.sky.effect_lightning(1, Vec2::ZERO, 1.0, true, s * SECOND)).collect();
+        assert!(!dry.is_empty() && dry.iter().all(|s| (THUNDER_HEARD..LIGHTNING_REACH).contains(&s.at.length())));
     }
 
     #[test]

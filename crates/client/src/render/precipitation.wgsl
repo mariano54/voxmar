@@ -38,7 +38,8 @@ struct Params {
     wind: vec4<f32>,
     // Four sets of ambient particles (pollen, fireflies, …), three entries each: xyz how
     // far they have drifted, w how many; rgb their colour, w 1 if they glow; x their size
-    // in blocks, y how they move (0 drift, 1 hover, 2 fall, 3 rise, 4 blow, 5 glint)
+    // in blocks, y how they move (0 drift, 1 hover, 2 fall, 3 rise, 4 blow, 5 glint, 6
+    // mist), z for mist the top of the fog above the camera
     ambient: array<vec4<f32>, 12>,
     // Each column around the camera: the top of the highest block rain lands on, plus one
     // (bits 0..10), the same beneath any leaves (bits 10..20), and whether the top is water
@@ -86,7 +87,8 @@ struct VertexOutput {
     // Height above the highest block below, in blocks; drops end where they land.
     @location(1) above: f32,
     @location(2) @interpolate(flat) color: vec4<f32>,
-    // 0: raindrop, 1: snowflake, 2: splash, 3: hailstone, 4: sleet, 5: drizzle, 6: dust,
+    // 0: raindrop, 1: snowflake, 2: splash, 3: hailstone (falling, bouncing or lying), 4:
+    // sleet, 5: drizzle, 6: dust,
     // 7: mote, 8: ripple, 9: drip
     @location(3) @interpolate(flat) kind: u32,
     // How far a splash or ripple has spread, 0..1; for snowflakes, their turn.
@@ -142,13 +144,16 @@ fn project(world: vec3<f32>) -> vec4<f32> {
 }
 
 // A raindrop landing: a small crown that spreads and fades on the highest block, each
-// time somewhere new.
+// time somewhere new. In hail, as many of them as the hail's share are hailstones instead.
 fn splash(n: u32, corner: vec2<f32>) -> VertexOutput {
     var out: VertexOutput;
     out.clip = HIDDEN;
     var h = pcg(n * 2246822519u + 777u);
     if unit(h) >= params.rain.w * (1.0 - params.snow.w) {
         return out;
+    }
+    if unit(pcg(h ^ 0x4a11u)) < params.hail.w {
+        return hailstone(n, corner);
     }
     h = pcg(h);
     let period = 0.35 + 0.4 * unit(h);
@@ -192,6 +197,74 @@ fn splash(n: u32, corner: vec2<f32>) -> VertexOutput {
     out.clip = project(world);
     out.kind = 2u;
     out.color = vec4(rain_color() * 1.4, 0.35 * fade * (1.0 - out.spread));
+    return out;
+}
+
+// A hailstone landing: it bounces, twice, lower each time, rolls a little and lies on the
+// ground a few seconds, white, before melting away; then lands again somewhere new. On
+// water it only rings.
+fn hailstone(n: u32, corner: vec2<f32>) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip = HIDDEN;
+    var h = pcg(n * 3812015801u + 4093u);
+    let period = 2.5 + 3.0 * unit(h);
+    h = pcg(h);
+    let age = params.camera.w / period + unit(h);
+    let t = fract(age) * period;
+    h = pcg(n ^ pcg(u32(floor(age)) * 2654435761u));
+    var offset = vec3(unit(h) - 0.5, 0.0, unit(pcg(h)) - 0.5) * 2.0 * SPLASH_REACH;
+    h = pcg(pcg(h));
+    let size = unit(h);
+    let column = column_at(offset);
+    let below = ground(offset);
+    let distance = length(offset);
+    if below < -BOX.y || distance < 1.0 || (column & LEAVES) != 0u {
+        return out;
+    }
+    let fade = 1.0 - smoothstep(0.6, 1.0, length(offset.xz) / SPLASH_REACH);
+    out.uv = corner;
+    out.above = 1.0;
+    if (column & WATER) != 0u {
+        if t > 0.4 {
+            return out;
+        }
+        out.spread = t / 0.4;
+        offset.y = below - 0.1;
+        let world = offset + vec3(corner.x, 0.0, corner.y) * (0.08 + 0.3 * out.spread);
+        out.clip = project(world);
+        out.kind = 8u;
+        out.color = vec4(rain_color() * 1.3, 0.45 * fade * (1.0 - out.spread));
+        return out;
+    }
+    // Two hops: up to `first` blocks, then a third as high, under gravity of 20 blocks/s²;
+    // drifting a little along the way.
+    let gravity = 20.0;
+    let first = 0.2 + 0.35 * unit(pcg(h ^ 0x51u));
+    let up1 = sqrt(2.0 * gravity * first);
+    let up2 = sqrt(2.0 * gravity * first / 3.0);
+    let hop1 = 2.0 * up1 / gravity;
+    let hop2 = 2.0 * up2 / gravity;
+    var height = 0.0;
+    if t < hop1 {
+        height = up1 * t - 0.5 * gravity * t * t;
+    } else if t < hop1 + hop2 {
+        let s = t - hop1;
+        height = up2 * s - 0.5 * gravity * s * s;
+    }
+    let angle = unit(pcg(h ^ 0x77u)) * TAU;
+    offset += vec3(cos(angle), 0.0, sin(angle)) * 0.4 * min(t, hop1 + hop2 + 0.15);
+    let radius = 0.018 + 0.02 * size;
+    offset.y = below + radius + height;
+    // It melts away over its last second.
+    let melt = 1.0 - smoothstep(period - 1.0, period, t);
+    let pixel = distance * 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
+    let drawn = max(radius, pixel * 0.9);
+    let right = view.world_from_view[0].xyz;
+    let up = view.world_from_view[1].xyz;
+    out.clip = project(offset + (right * corner.x + up * corner.y) * drawn);
+    out.kind = 3u;
+    out.color = vec4(max(params.light.rgb * 2.4, vec3(0.8)), 0.95 * fade * melt * radius / drawn * smoothstep(1.0, 2.5, distance));
+    out.above = radius + height;
     return out;
 }
 
@@ -340,6 +413,7 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
     var glow = false;
     var scale: f32;
     var motion: u32;
+    var ceiling = 1000.0;
     var h = pcg(n * 3266489917u + 99u);
     let size = unit(pcg(h ^ 0x51u));
     if group == 0u {
@@ -365,6 +439,9 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
         glow = params.ambient[i + 1u].w > 0.5;
         scale = params.ambient[i + 2u].x * (0.6 + 0.8 * size);
         motion = u32(params.ambient[i + 2u].y + 0.5);
+        if motion == 6u {
+            ceiling = params.ambient[i + 2u].z;
+        }
     }
     if unit(h) >= amount {
         return out;
@@ -390,11 +467,13 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
         case 3u: { swirl = 0.4; rate = 0.3 + 0.2 * size; }
         case 4u: { swirl = 0.6; rate = 1.3 + size; }
         case 5u: { swirl = 0.2; rate = 0.15 + 0.1 * size; }
+        case 6u: { swirl = 0.5; rate = 0.05 + 0.05 * size; }
         default: {}
     }
     offset += vec3(sin(t * rate + phase), 0.5 * sin(t * rate * 1.3 + phase * 2.1), cos(t * rate * 0.8 + phase * 1.7)) * swirl;
     let below = ground(offset);
-    if offset.y < below + 0.1 {
+    // Mist keeps below the top of its fog, thinning towards it.
+    if offset.y < below + 0.1 || offset.y > ceiling {
         return out;
     }
     let distance = length(offset);
@@ -440,7 +519,7 @@ fn airborne(n: u32, corner: vec2<f32>) -> VertexOutput {
     }
     let reach = length(offset.xz) / (box.x * 0.5);
     opacity *= (1.0 - smoothstep(0.6, 1.0, reach)) * (1.0 - smoothstep(0.8, 1.0, abs(offset.y) / (box.y * 0.5)));
-    opacity *= smoothstep(0.8, 3.0, distance);
+    opacity *= smoothstep(0.8, 3.0, distance) * (1.0 - smoothstep(ceiling - 2.0, ceiling, offset.y));
     out.color.a = opacity;
     out.clip = project(world);
     out.uv = corner;
@@ -480,13 +559,17 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
     if snowflake {
         kind = 1u;
     } else if rest < params.hail.w {
+        // Hail falls sparser than rain: fewer stones, each one seen.
+        if unit(pcg(h ^ 0x3a11u)) > 0.35 {
+            return out;
+        }
         kind = 3u;
     } else if rest < params.hail.w + params.sleet.w {
         kind = 4u;
     } else if (rest - params.hail.w - params.sleet.w) / max(1.0 - params.hail.w - params.sleet.w, 1e-4) < params.drizzle.w {
         kind = 5u;
     }
-    let round = kind == 1u || kind == 4u;
+    let round = kind == 1u || kind == 4u || kind == 3u;
     h = pcg(h);
     let x = unit(h);
     h = pcg(h);
@@ -552,19 +635,33 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
             tint = vec3(0.85, 0.92, 1.0);
             strength = 0.6;
         }
+        // Hailstones: hard white pellets, bigger and brighter than sleet, a little blurred
+        // along their fast fall.
+        let hailstone = kind == 3u;
+        if hailstone {
+            radius = (0.016 + 0.022 * size * size) * (0.8 + 0.4 * params.hail.w);
+            brightness = 2.4;
+            tint = vec3(0.97, 0.98, 1.0);
+            strength = 0.95;
+        }
         let drawn = max(radius, pixel * 0.9);
         let right = view.world_from_view[0].xyz;
-        let up = view.world_from_view[1].xyz;
-        world = offset + (right * corner.x + up * corner.y) * drawn;
-        top = drawn;
+        var up = view.world_from_view[1].xyz;
+        var tall = drawn;
+        if hailstone {
+            let velocity = params.wind.xyz * 0.3 - vec3(0.0, 18.0, 0.0);
+            up = normalize(velocity - right * dot(velocity, right));
+            tall = drawn + length(velocity) * 0.0025;
+        }
+        world = offset + right * corner.x * drawn + up * corner.y * tall;
+        top = tall;
         opacity = strength * radius / drawn;
-        out.color = vec4(params.light.rgb * tint * brightness, 0.0);
+        // Ice stays white even under a storm's gloom.
+        out.color = vec4(select(params.light.rgb * tint * brightness, max(params.light.rgb * brightness, vec3(0.8)), hailstone), 0.0);
         out.kind = kind;
     } else {
-        // Raindrops; drizzle, finer, slower and blown further by the wind; and hailstones,
-        // white pellets falling hard, blurred into short streaks.
+        // Raindrops; and drizzle, finer, slower and blown further by the wind.
         let drizzle = kind == 5u;
-        let hail = kind == 3u;
         var fall = params.streak.xyz;
         var stretch = params.streak.w;
         var width = (0.016 + 0.02 * size) * (0.8 + 0.5 * params.light.w);
@@ -573,11 +670,6 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
             fall = normalize(velocity);
             stretch = length(velocity) * 0.045;
             width = 0.006 + 0.004 * size;
-        } else if hail {
-            let velocity = params.wind.xyz * 0.3 - vec3(0.0, 18.0, 0.0);
-            fall = normalize(velocity);
-            stretch = length(velocity) * 0.015;
-            width = 0.025 + 0.02 * size;
         }
         let along = fall;
         stretch *= 0.7 + 0.6 * size;
@@ -586,8 +678,8 @@ fn vertex(@location(0) id: u32) -> VertexOutput {
         world = offset + across * corner.x * drawn * 0.5 + along * corner.y * stretch * 0.5;
         top = -along.y * stretch * 0.5;
         // Heavier rain: denser (from the drop count) and also bolder streaks.
-        opacity = select(0.2 + 0.25 * params.light.w, 0.85, hail) * width / drawn;
-        out.color = vec4(select(rain_color(), params.light.rgb * vec3(2.0, 2.1, 2.3), hail), 0.0);
+        opacity = (0.2 + 0.25 * params.light.w) * width / drawn;
+        out.color = vec4(rain_color(), 0.0);
         out.kind = kind;
     }
     if offset.y + top < below {
@@ -623,6 +715,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         shape = 1.0 - smoothstep(0.3, 1.0, length(in.uv) * ragged);
     } else if in.kind == 4u {
         shape = 1.0 - smoothstep(0.2, 1.0, length(in.uv));
+    } else if in.kind == 3u {
+        // A hailstone: solid, with a crisp edge and a brighter heart.
+        let r = length(in.uv);
+        shape = (1.0 - smoothstep(0.6, 0.95, r)) * (0.85 + 0.15 * (1.0 - r));
     } else if in.kind == 8u {
         // A ripple: a thin ring spreading on the water.
         let r = length(in.uv);
