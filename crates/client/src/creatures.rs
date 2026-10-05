@@ -90,6 +90,9 @@ pub struct Creatures {
     cube: Option<Handle<Mesh>>,
     /// Creatures seen to die since joining.
     pub deaths: u32,
+    /// Blows of ours the server took since joining, and how many landed.
+    pub blows: u32,
+    pub landed: u32,
 }
 
 impl Creatures {
@@ -97,6 +100,17 @@ impl Creatures {
     pub fn receive(&mut self, changed: Vec<CreatureView>, gone: Vec<CreatureGone>) {
         self.inbox.extend(changed);
         self.left.extend(gone);
+    }
+
+    /// The server took a blow of ours at `id`: it landed for `damage`, or missed.
+    pub fn struck(&mut self, id: u32, damage: u16, _killed: bool) {
+        self.blows += 1;
+        if damage > 0 {
+            self.landed += 1;
+            if let Some(shown) = self.shown.get_mut(&id) {
+                shown.flash = FLASH;
+            }
+        }
     }
 
     /// How many creatures are shown, alive.

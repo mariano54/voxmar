@@ -77,6 +77,13 @@ const TIME_LIMIT: f32 = 300.0;
 const LOAD_LIMIT: f32 = 180.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
+/// Longest the strike step may take: a server running behind takes blows slowly, and the
+/// step fails sooner on its own if blows stop being answered.
+const STRIKE_LIMIT: f32 = 90.0;
+/// Seconds without the server answering a blow, and blows answered without a kill, that
+/// fail the strike step: a creature with 4 health dies within a few hits at any level.
+const UNANSWERED: f32 = 12.0;
+const MOST_BLOWS: u32 = 40;
 /// How long an edit is given at least, and at most, to reach the server, come back and be
 /// meshed; the checks run as soon as both sides show it.
 const SETTLE: f32 = 0.3;
@@ -185,6 +192,8 @@ struct Gate {
     gorge: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
+    /// Blows the server has answered, as last counted.
+    blows_seen: u32,
     failures: Vec<String>,
     passes: usize,
     /// Real frame times so far (milliseconds), and the longest in each step.
@@ -214,6 +223,7 @@ impl Gate {
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             quarry: Vec3::ZERO,
+            blows_seen: 0,
             failures: Vec::new(),
             passes: 0,
             frame_ms: Vec::new(),
@@ -380,6 +390,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Load => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
         Step::Gorge => GORGE_LOAD_LIMIT + STEP_LIMIT,
+        // Striking judges itself by the blows the server answers (see `strike`).
+        Step::Strike => STRIKE_LIMIT,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -1016,29 +1028,46 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             // Strike it as a player would, a click every few frames, until it dies.
+            // Judged by the blows the server answers, not the clock: it must keep taking
+            // them, and the snail must die within a few dozen.
+            let (blows, landed) = {
+                let creatures = world.resource::<crate::creatures::Creatures>();
+                (creatures.blows, creatures.landed)
+            };
+            if blows > gate.blows_seen {
+                gate.blows_seen = blows;
+                gate.phase_since = now;
+            }
+            let stalled = now - gate.phase_since > UNANSWERED;
             match snail(world) {
-                Some(view) if in_phase < 25.0 => {
+                Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
                     // Close in to striking reach, then strike.
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
                     // A click every third of a second, as a player swings.
-                    let swing = (in_phase * 3.0).fract() < 0.15;
+                    let swing = ((now - gate.since) * 3.0).fract() < 0.15;
                     mouse(world, MouseButton::Left, swing);
                 }
-                Some(_) => {
+                Some(view) => {
                     mouse(world, MouseButton::Left, false);
                     key(world, KeyCode::KeyW, false);
                     let aimed = world.resource::<crate::interact::Target>().creature.is_some();
-                    let distance = snail(world).map_or(0.0, |v| v.position.distance(world.resource::<LocalPlayer>().eye()));
-                    gate.check("creature struck", Err(format!("25 seconds of blows did not kill it (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
+                    let distance = view.position.distance(world.resource::<LocalPlayer>().eye());
+                    let why = if stalled { format!("the server answered no blow for {UNANSWERED}s") } else { format!("{blows} blows ({landed} landed) did not kill it") };
+                    gate.check("creature struck", Err(format!("{why} (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
                     gate.next(Step::Gorge, now);
                 }
                 None => {
                     mouse(world, MouseButton::Left, false);
                     let deaths = world.resource::<crate::creatures::Creatures>().deaths;
-                    gate.check("creature struck", if deaths > 0 { Ok(format!("killed in {in_phase:.1}s")) } else { Err("it went without dying".into()) });
+                    let (blows, landed) = {
+                        let creatures = world.resource::<crate::creatures::Creatures>();
+                        (creatures.blows, creatures.landed)
+                    };
+                    let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
+                    gate.check("creature struck", result);
                     gate.advance(now);
                 }
             }

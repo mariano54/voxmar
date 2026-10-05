@@ -2201,6 +2201,133 @@ mod tests {
     /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
     /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
     /// in-game captures of caves near spawn: inside the largest open space under each sight.
+    /// Close-ups of kinds of tree in place, for captures: `TREES=olive:mediterranean,
+    /// larch:taiga SEED=n` finds, in each biome near spawn, the places the tree is likeliest,
+    /// then in the first of them that has one the trunk whose crown holds most of its own
+    /// leaves (its fruit's, where it bears fruit), and prints `/tp` and a pose from a dozen
+    /// blocks off (as `tree_sights`).
+    #[test]
+    #[ignore]
+    fn gathering_sights() {
+        use voxmar_engine::block::RenderKind;
+        use voxmar_engine::coords::{CHUNK_SIZE, WORLD_HEIGHT};
+        use voxmar_engine::glam::Vec3;
+        let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(42);
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let world = Overworld::new(seed, registry.clone());
+        let spawn = world.spawn_point();
+        let centre = IVec2::new(spawn.x, spawn.z);
+        let mut chances = Vec::new();
+        for pair in std::env::var("TREES").unwrap_or_default().split(',') {
+            let Some((tree, biome)) = pair.split_once(':') else { continue };
+            let Some(index) = content.trees.iter().position(|t| t.name == format!("base:{tree}")) else {
+                println!("{tree}: no such tree");
+                continue;
+            };
+            let def = &content.trees[index];
+            // Its fruit's leaves at every stage of ripening, and its own leaves where no other
+            // tree shares them.
+            let fruit = def.fruit.as_ref().map(|f| f.leaves.clone());
+            let leaves = def.leaves.clone().filter(|l| content.trees.iter().filter(|t| t.leaves.as_ref() == Some(l)).count() == 1);
+            let marks: Vec<BlockId> = fruit
+                .iter()
+                .flat_map(|f| [f.clone(), format!("{f}_0"), format!("{f}_1"), format!("{f}_2")])
+                .chain(leaves)
+                .filter_map(|name| registry.id(&name))
+                .collect();
+            let Some(id) = world.biomes.id(&format!("base:{biome}")) else { continue };
+            // The 8-block cells where the tree is likeliest, its chance summed over the cells
+            // around, within 400 blocks of a few places inside the biome.
+            let mut cells: Vec<(f32, IVec2)> = Vec::new();
+            let mut from = centre;
+            for _ in 0..3 {
+                let Some(at) = world.locate_biome(biome, from, 12000) else { break };
+                let sampler = world.sampler(at - 400, at + 400);
+                let n = 100;
+                let mut grid = vec![0.0f32; n * n];
+                for (i, cell) in grid.iter_mut().enumerate() {
+                    let p = at + IVec2::new((i % n) as i32 * 8 - 400, (i / n) as i32 * 8 - 400);
+                    let site = sampler.site(p.x, p.y);
+                    if site.home != id || site.height <= site.water {
+                        continue;
+                    }
+                    let (ground, water) = world.surface_blocks(&site, p.x, p.y);
+                    if water.is_none() {
+                        world.ecology.tree_chances(&site, Some(world.terrain.ground(ground)), p.x, p.y, &mut chances);
+                        *cell = chances.iter().filter(|c| c.0 .0 as usize == index).map(|c| c.1).sum();
+                    }
+                }
+                for i in 0..n * n {
+                    let (x, z) = ((i % n) as i32, (i / n) as i32);
+                    let sum: f32 = (-2..=2).flat_map(|dz| (-2..=2).map(move |dx| (x + dx, z + dz))).filter(|&(u, v)| (0..n as i32).contains(&u) && (0..n as i32).contains(&v)).map(|(u, v)| grid[(v * n as i32 + u) as usize]).sum();
+                    if sum > 0.0 {
+                        cells.push((sum, at + IVec2::new(x * 8 - 400, z * 8 - 400)));
+                    }
+                }
+                from = at + IVec2::new(1500, 900);
+            }
+            cells.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let mut places: Vec<IVec2> = Vec::new();
+            for (_, p) in cells {
+                if places.len() < 8 && places.iter().all(|q| (*q - p).abs().max_element() > 160) {
+                    places.push(p);
+                }
+            }
+            let found = places.iter().find_map(|&at| {
+                let size = 5;
+                let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-2, -2);
+                let columns = generate_area(&world, first, size);
+                let origin = first.origin();
+                let span = size * CHUNK_SIZE;
+                let block = |p: IVec3| {
+                    let inside = (0..span).contains(&(p.x - origin.x)) && (0..span).contains(&(p.z - origin.z)) && (0..WORLD_HEIGHT).contains(&p.y);
+                    if inside { columns[(((p.z - origin.z) >> 5) * size + ((p.x - origin.x) >> 5)) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31)) } else { BlockId::AIR }
+                };
+                let log = |b: BlockId| registry.def(b).name.ends_with("_log");
+                let leaf = |b: BlockId| registry.info(b).render == RenderKind::Leaves;
+                let open = |b: BlockId| b.is_air() || registry.info(b).render == RenderKind::Plant;
+                let ground = |x: i32, z: i32| (1..WORLD_HEIGHT).rev().find(|&y| { let b = block(IVec3::new(x, y, z)); !open(b) && !log(b) && !leaf(b) });
+                // Trunks by how many of the tree's own leaves lie within four blocks of them.
+                let mut trunk: Option<(IVec3, usize)> = None;
+                for z in origin.z + 16..origin.z + span - 16 {
+                    for x in origin.x + 16..origin.x + span - 16 {
+                        let Some(g) = ground(x, z) else { continue };
+                        let base = IVec3::new(x, g + 1, z);
+                        if !log(block(base)) {
+                            continue;
+                        }
+                        let own = (1..20).flat_map(|dy| (-4..=4).flat_map(move |dz| (-4..=4).map(move |dx| IVec3::new(dx, dy, dz)))).filter(|&d| marks.contains(&block(base + d))).count();
+                        if own > 0 && trunk.is_none_or(|t| own > t.1) {
+                            trunk = Some((base, own));
+                        }
+                    }
+                }
+                let (base, own) = trunk?;
+                let crown = base.as_vec3() + Vec3::new(0.5, (def.height.0 + def.height.1) as f32 * 0.35, 0.5);
+                let eye = |x: i32, z: i32| ground(x, z).map(|g| Vec3::new(x as f32 + 0.5, g as f32 + 2.62, z as f32 + 0.5));
+                let blocked = |from: Vec3, to: Vec3| (1..40).filter(|&i| !open(block((from + (to - from) * (i as f32 / 40.0)).floor().as_ivec3()))).count();
+                // From twelve blocks off and a little up, on the clearest line to the crown.
+                let (spot, from) = (0..16)
+                    .filter_map(|i| {
+                        let a = i as f32 / 16.0 * std::f32::consts::TAU;
+                        let p = IVec3::new(base.x + (a.cos() * 12.0).round() as i32, 0, base.z + (a.sin() * 12.0).round() as i32);
+                        eye(p.x, p.z).map(|e| (p, e + Vec3::Y * 2.0))
+                    })
+                    .min_by_key(|(_, e)| blocked(*e, crown))?;
+                let player = eye(spot.x, spot.z)?;
+                let d = crown - from;
+                let (yaw, pitch) = ((-d.x).atan2(-d.z).to_degrees(), d.y.atan2(Vec3::new(d.x, 0.0, d.z).length()).to_degrees());
+                let (o, feet) = (from - player, player - Vec3::Y * 1.62);
+                Some(format!("trunk {base} ({own} own leaves): --command \"/tp {} {} {}\" --pose {:.1},{:.1},{:.1},{:.0},{:.0}", feet.x, feet.y, feet.z, o.x, o.y, o.z, yaw, pitch))
+            });
+            match found {
+                Some(line) => println!("{tree} in {biome}, {line}"),
+                None => println!("{tree} in {biome}: none in the {} likeliest places", places.len()),
+            }
+        }
+    }
+
     #[test]
     #[ignore]
     fn cave_sights() {

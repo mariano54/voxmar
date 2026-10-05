@@ -12,6 +12,7 @@ mod worlds;
 use bevy::prelude::*;
 
 pub use join::connect;
+pub use loading::HoldCover;
 pub use worlds::worlds_dir;
 
 pub struct MenuPlugin;
