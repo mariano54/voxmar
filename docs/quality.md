@@ -34,8 +34,11 @@ change it takes well under a minute.
    against main (a client change runs the client's; an engine change everything's),
    less the few slow ones listed in the script's `SLOW_TESTS`, and meanwhile
 4. a scripted session in the real game (`voxmar --gate DIR`, crates/client/src/gate.rs) in
-   a small world, headless and silent, with the integrated server made to run behind
-   (`--server-lag`, 60 ms more a tick, as on a busy machine). It fails on any failed
+   a small world, headless and silent, with the integrated server made to run behind as
+   on a busy machine (`gate::SERVER_LAG`: 60 ms more a tick, a 400 ms stall every ninth
+   with messages waiting, and a 600 ms stall as every other action is proposed). It also
+   fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
+   first break once compiled three pipelines on the spot). It fails on any failed
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
@@ -116,9 +119,11 @@ Every heavy command goes through `memcap`, which gets out of the way:
   While it exists nothing new starts and whatever is running pauses, builds, tests and
   game runs alike, until it is removed when he is done. (Our builds on every core gave
   him 40–140 ms frames and under 60 fps while flying.) He wants work to go on otherwise,
-  game open or not, so his game alone holds nothing. memcap keeps the flag fresh while
-  his game (voxmar not as a capture or gate, or Minecraft) runs, and ignores it once none
-  has run for 30 minutes, so a forgotten flag cannot stall everything.
+  game open or not, so his game alone holds nothing. So that a forgotten flag cannot stall
+  everything, memcap ignores it 30 minutes after his game (voxmar not as a capture or
+  gate, or Minecraft) was last seen running, or two hours after it was written if his
+  game never appeared.
+- Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or
   two, finish. A paused command leaves `/tmp/voxmar-heavy-N.lock.paused`.

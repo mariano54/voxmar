@@ -81,7 +81,9 @@ $memcap -- cargo build --release >"$out/build.txt" 2>&1 || { tail -20 "$out/buil
 # Whether a game Mariano plays is running (voxmar not as a capture or gate, or Minecraft):
 # numbers taken then would be wrong, so nothing is timed.
 game_running() {
-  ps -A -o comm=,args= | awk '
+  # The program is the first word of the arguments: `comm` is cut at 16 characters, which
+  # made ./target/release/voxmar look like "release".
+  ps -A -o args= | awk '
     { n = split($1, path, "/"); exe = path[n] }
     exe == "voxmar" && !/--capture|--gate/ { found = 1 }
     exe == "java" && tolower($0) ~ /minecraft/ { found = 1 }

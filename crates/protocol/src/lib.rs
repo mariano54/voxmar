@@ -21,7 +21,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -46,6 +46,9 @@ pub enum ClientMessage {
     Propose { action: ActionId, target: ActionTarget },
     /// Abandon the action in progress (for example, the mouse button was released).
     Cancel,
+    /// The action in progress is done by the player's own clock (a block shows broken):
+    /// the next proposal must not cancel it, however late the server's own clock runs.
+    Finished,
     /// The player's preferences: streaming radius in columns (capped by the server) and
     /// flight speed multiplier (honoured for admins only).
     Settings { view_distance: u8, fly_speed: f32 },

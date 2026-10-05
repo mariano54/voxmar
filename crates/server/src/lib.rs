@@ -52,9 +52,31 @@ pub struct ServerConfig {
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
     /// only.
     pub world: Option<PathBuf>,
-    /// Extra time every tick takes, to see how clients cope with a server that runs
-    /// behind, as on a busy machine. Zero but in tests.
-    pub tick_lag: Duration,
+    /// Makes the server run behind, to see how clients cope, as on a busy machine. None
+    /// but in tests.
+    pub lag: Lag,
+}
+
+/// How a server made to run behind does so (see `ServerConfig::lag`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Lag {
+    /// Extra time every tick takes; over a tick's 50 ms, the server keeps falling behind.
+    pub per_tick: Duration,
+    /// Extra time every `stall_every`th tick takes besides: a stall, during which players'
+    /// messages wait, as when a burst of streaming or a slow tick holds the server up.
+    pub stall: Duration,
+    pub stall_every: u32,
+    /// A stall just as every other action is proposed, so the server's clock for it starts
+    /// that much after the player's while the next one's does not.
+    pub proposal_stall: Duration,
+}
+
+impl Lag {
+    /// The extra time tick number `tick` takes.
+    fn of_tick(&self, tick: u64) -> Duration {
+        let stalls = self.stall_every > 0 && tick.is_multiple_of(self.stall_every as u64);
+        self.per_tick + if stalls { self.stall } else { Duration::ZERO }
+    }
 }
 
 impl Default for ServerConfig {
@@ -66,7 +88,7 @@ impl Default for ServerConfig {
             local_admin: true,
             admins: Vec::new(),
             world: None,
-            tick_lag: Duration::ZERO,
+            lag: Lag::default(),
         }
     }
 }
@@ -370,7 +392,7 @@ impl Server {
             let now = Instant::now();
             if now >= next_tick {
                 self.tick();
-                std::thread::sleep(self.config.tick_lag);
+                std::thread::sleep(self.config.lag.of_tick(self.tick));
                 next_tick += tick_length;
                 if now > next_tick + tick_length * 10 {
                     tracing::warn!("server is running behind, skipping ticks");

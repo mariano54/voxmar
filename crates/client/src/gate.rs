@@ -42,6 +42,7 @@ use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::world::VoxelWorld;
+use voxmar_server::Lag;
 use voxmar_protocol::{ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, local_pair};
 
 use crate::menu::{Notice, Screen};
@@ -55,11 +56,18 @@ pub struct GatePlugin {
     pub dir: PathBuf,
 }
 
-/// How much longer each tick of the integrated server takes in a gate run: more than a
-/// tick's 50 ms, so the server keeps running behind, as on a busy machine, and its word on
-/// every action comes late (about 15 ticks a second instead of 20). Mariano's play builds
-/// lost blocks he broke to exactly that (fixed in 17bf62f).
-pub const SERVER_LAG: Duration = Duration::from_millis(60);
+/// How the integrated server runs behind in a gate run, as on a busy machine: every tick
+/// takes 60 ms more than its 50 ms (about 15 ticks a second instead of 20), every ninth
+/// stalls for 400 ms besides, with players' messages waiting, and it stalls 600 ms as every
+/// other action is proposed. Mariano's play builds lost blocks he broke to both: a server whose
+/// word came late (fixed in 17bf62f), and one stalled when the break was proposed, whose
+/// own clock then started late (fixed by the client's `Finished`).
+pub const SERVER_LAG: Lag = Lag {
+    per_tick: Duration::from_millis(60),
+    stall: Duration::from_millis(400),
+    stall_every: 9,
+    proposal_stall: Duration::from_millis(600),
+};
 
 /// Size of the gate's shots: enough to judge, quick to read back.
 const SHOT: UVec2 = UVec2::new(960, 540);
@@ -106,7 +114,7 @@ fn render_offscreen(
 }
 
 /// The steps, in order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Step {
     /// The world around the player loads.
     Load,
@@ -169,6 +177,9 @@ struct Gate {
     gorge: IVec3,
     failures: Vec<String>,
     passes: usize,
+    /// Real frame times so far (milliseconds), and the longest in each step.
+    frame_ms: Vec<f32>,
+    longest: FxHashMap<Step, f32>,
 }
 
 impl Gate {
@@ -193,6 +204,8 @@ impl Gate {
             gorge: IVec3::ZERO,
             failures: Vec::new(),
             passes: 0,
+            frame_ms: Vec::new(),
+            longest: default(),
         }
     }
 
@@ -313,6 +326,10 @@ fn run(world: &mut World) {
     let screen = *world.resource::<State<Screen>>().get();
     let mut gate = world.remove_resource::<Gate>().expect("gate state");
     gate.frames += 1;
+    let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
+    gate.frame_ms.push(frame_ms);
+    let longest = gate.longest.entry(gate.step).or_default();
+    *longest = longest.max(frame_ms);
     if gate.step != Step::Done {
         match guard(world, &mut gate, now, screen) {
             Ok(()) => step(world, &mut gate, now),
@@ -451,6 +468,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let Some(after) = gate.shot(world, "place-after") else { return };
             let cells = gate.placed.clone();
             verify_edit(world, gate, "place", &cells, |b| !b.is_air(), "place-before", &after);
+            smooth(gate, "place", Step::Place);
             let (count, wanted) = (held_count(world), gate.count_before.saturating_sub(3));
             let result = if count == wanted { Ok(format!("the hand holds {count}")) } else { Err(format!("the hand holds {count}, not {wanted}")) };
             gate.check("place: inventory", result);
@@ -488,6 +506,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let Some(after) = gate.shot(world, "dig-after") else { return };
             let cells: Vec<IVec3> = gate.dug.iter().map(|&(pos, _)| pos).collect();
             verify_edit(world, gate, "dig", &cells, |b| b.is_air(), "dig-before", &after);
+            smooth(gate, "dig", Step::Dig);
             gate.count_before = dropped_count(world, gate);
             look(world, 0.0, 0.0);
             key(world, KeyCode::KeyW, true);
@@ -1178,6 +1197,28 @@ fn columns_around(feet: IVec3) -> Vec<ColumnPos> {
 fn settled(world: &World, feet: IVec3) -> bool {
     let client = world.resource::<ClientWorld>();
     columns_around(feet).into_iter().all(|pos| !client.meshing(pos))
+}
+
+/// The longest frame a step may take: the first break or placement once compiled the
+/// pipelines for cracks, particles and dropped items on the spot, a hitch Mariano felt as
+/// block breaking lag. Gate runs share a busy machine, so the bar is high and relative.
+const HITCH_MS: f32 = 150.0;
+const HITCH_FACTOR: f32 = 6.0;
+
+/// Checks that `step` (placing or digging) ran without a hitch: no frame over
+/// max(`HITCH_MS`, `HITCH_FACTOR` × the session's median frame).
+fn smooth(gate: &mut Gate, name: &str, step: Step) {
+    let mut sorted = gate.frame_ms.clone();
+    sorted.sort_by(f32::total_cmp);
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+    let longest = gate.longest.get(&step).copied().unwrap_or(0.0);
+    let limit = HITCH_MS.max(HITCH_FACTOR * median);
+    let result = if longest <= limit {
+        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms)"))
+    } else {
+        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms)"))
+    };
+    gate.check(&format!("{name}: smooth"), result);
 }
 
 /// Whether an edit of `cells` has settled, `since` seconds after it was made: both client
