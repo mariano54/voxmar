@@ -8,7 +8,7 @@
 //                                    beneath; a: cover of small plants)
 
 #import bevy_pbr::mesh_view_bindings::{view, fog}
-#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, water_normal}
+#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, sun_unclouded, water_normal, reflected_cloud}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct DistantView {
@@ -324,8 +324,12 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32) -> vec3<f32> {
     // lower the angle, so on average real water faces the eye more than a flat sheet.
     let facing = dot(n, to_eye) + (1.0 - ripples) * RIPPLE_SLOPE_VARIANCE / max(to_eye.y, 0.01);
     let r = reflect(-to_eye, n);
-    let glint = pow(max(dot(r, sun_direction()), 0.0), mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples))
-        * mix(GLINT.x, GLINT.y, ripples);
+    let toward_sun = max(dot(r, sun_direction()), 0.0);
+    var glint = 0.0;
+    if toward_sun > 0.8 {
+        glint = pow(toward_sun, mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples)) * mix(GLINT.x, GLINT.y, ripples)
+            * sun_unclouded(in.world_position);
+    }
     // The top colour is the biome's water colour, as real water's. Saturated, like every
     // colour here: seen edge-on, a sheet interpolates at pixel centres outside it.
     let tint = saturate(in.top);
@@ -338,8 +342,10 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32) -> vec3<f32> {
     let depth = (1.0 - sky) * SHEET_DEPTH;
     let path = select(depth / max(to_eye.y, 0.05), 1e4, sky <= 0.0);
     let seen = floor * transmittance(absorbed, scattered, path + depth) + inscattered(absorbed, scattered, path, light);
-    // The sky as real water reflects it where its reflections leave the screen.
-    let reflected = sky_gradient(r, distant.zenith.rgb, distant.horizon.rgb);
+    // The sky and the low cloud as real water reflects them where its reflections leave
+    // the screen.
+    let cloud = reflected_cloud(in.world_position, r);
+    let reflected = sky_gradient(r, distant.zenith.rgb, distant.horizon.rgb) * (1.0 - cloud.a) + cloud.rgb;
     let falls = smoothstep(0.7, 1.5, surface_slope);
     let still = mix(seen, reflected, fresnel(facing)) + sun_color() * glint * 4.0;
     let white_water = mix(seen, light * FALLING_FOAM, 0.55);
