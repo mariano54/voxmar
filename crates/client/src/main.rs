@@ -411,21 +411,26 @@ fn setup(
         }
     }
     // The untinted sides of an opaque block with a tinted top (a grass block) take the
-    // pack's overlay for them, tinted as the top is, after the textures themselves.
-    let mut overlay_tint = vec![Tint::None; block_textures.len()];
+    // pack's overlay for them, tinted as the top is, after the textures themselves. Leaves
+    // take theirs untinted over the tinted leaves: the blossom and fruit of fruit leaves.
+    let mut overlay_tint: Vec<Option<Tint>> = vec![None; block_textures.len()];
     for id in 0..registry.len() {
         let info = registry.info(voxmar_engine::block::BlockId(id as u16));
         let top = info.tints[Face::PosY as usize];
         if info.render == RenderKind::Opaque && top != Tint::None {
             for face in Face::ALL.into_iter().filter(|&f| f != Face::PosY && info.tints[f as usize] == Tint::None) {
-                overlay_tint[info.layers[face as usize] as usize] = top;
+                overlay_tint[info.layers[face as usize] as usize] = Some(top);
+            }
+        } else if info.render == RenderKind::Leaves {
+            for layer in info.layers {
+                overlay_tint[layer as usize] = Some(Tint::None);
             }
         }
     }
-    let overlays = source.overlays(registry.textures(), size, |i| overlay_tint[i] != Tint::None);
+    let overlays = source.overlays(registry.textures(), size, |i| overlay_tint[i].is_some());
     for (layer, overlay) in overlays.into_iter().enumerate() {
-        if let Some(overlay) = overlay {
-            layers[layer].overlay = Some((block_textures.len() as u16, overlay_tint[layer]));
+        if let (Some(overlay), Some(tint)) = (overlay, overlay_tint[layer]) {
+            layers[layer].overlay = Some((block_textures.len() as u16, tint));
             block_textures.push(overlay);
             layers.push(LayerInfo::default());
         }

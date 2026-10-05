@@ -143,7 +143,7 @@ impl Server {
             return u64::MAX;
         }
         let ticks = crop.def.minutes * 60.0 * TICKS_PER_SECOND as f32 / crop.ripe_stage() as f32 / rate;
-        let jitter = 0.85 + 0.3 * random3(stage as u64, pos, crop.seed.0 as u32)[0];
+        let jitter = 0.85 + 0.3 * random3(stage as u64, pos, crop.stages[0].0 as u32)[0];
         self.tick + (ticks * jitter).round().max(1.0) as u64
     }
 
