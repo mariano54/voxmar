@@ -5,8 +5,9 @@
 #   tools/bench [--rounds N] [--only NAME[,NAME]] [BASE]
 #
 # Builds both with --release, then runs each view alternately (base, this, base, this…)
-# for N rounds (default 2), all within one quiet window (it holds ~/Projects/voxmar-wt/QUIET
-# while it times, and waits for a calm machine first). Judges ratios against the base,
+# for N rounds (default 2), all within one quiet window: it holds ~/Projects/voxmar-wt/QUIET
+# while it times, which pauses other threads' builds (memcap) and holds new heavy commands,
+# and waits for running tests and game runs to finish. Judges ratios against the base,
 # never absolute numbers, as the graphics thread does:
 #
 # - a flight fails if its p99 frame is over 1.5x the base's in every round, or its worst
@@ -69,19 +70,31 @@ echo "bench: building this tree and the base ($(git log -1 --format='%h %s' "$ba
 $memcap -- cargo build --release >"$out/build.txt" 2>&1 || { tail -20 "$out/build.txt"; exit 1; }
 (cd "$base_dir" && $memcap -- cargo build --release) >"$out/build-base.txt" 2>&1 || { tail -20 "$out/build-base.txt"; exit 1; }
 
-# A calm machine: nobody else's heavy command running, and the load low.
-echo "bench: waiting for a quiet machine (no other heavy commands, load under 10)"
-for ((i = 0; ; i++)); do
-  busy=0
-  for lock in /tmp/voxmar-heavy-*.lock; do [[ -e $lock ]] && kill -0 "$(cat "$lock" 2>/dev/null)" 2>/dev/null && busy=1; done
-  load=$(sysctl -n vm.loadavg | awk '{ print int($2) }')
-  ((!busy && load < 10)) && break
-  ((i % 30 == 0)) && echo "bench: still waiting (load $load$( ((busy)) && echo ', heavy commands running'))"
-  ((i > 600)) && { echo "bench: the machine never quietened (load $load)" >&2; exit 1; }
-  sleep 2
+# The quiet window: claim QUIET at once (another timing run's, if fresh, is waited for),
+# which pauses every build memcap runs and holds new heavy commands; then wait for the
+# tests and game runs still going to finish, and for the load to settle.
+while [[ -e $quiet && -n $(find "$quiet" -mmin -20 2>/dev/null) ]]; do
+  echo "bench: another timing run holds QUIET ($(cat "$quiet")), waiting"
+  sleep 10
 done
 echo "bench $(date -u +%FT%TZ)" >"$quiet"
 trap 'rm -f "$quiet"' EXIT INT TERM
+echo "bench: holding QUIET; waiting for running heavy commands to pause or finish"
+for ((i = 0; ; i++)); do
+  busy=0
+  for lock in /tmp/voxmar-heavy-*.lock; do
+    [[ -e $lock && ! -e $lock.paused ]] && kill -0 "$(cat "$lock" 2>/dev/null)" 2>/dev/null && busy=1
+  done
+  ((!busy)) && break
+  ((i > 150)) && { echo "bench: heavy commands still running after 5 minutes" >&2; exit 1; }
+  sleep 2
+done
+# The one-minute load average lags; give it up to two minutes to fall under 12.
+for ((i = 0; i < 60; i++)); do
+  (($(sysctl -n vm.loadavg | awk '{ print int($2) }') < 12)) && break
+  sleep 2
+done
+echo "bench: quiet after $((i * 2))s more (load $(sysctl -n vm.loadavg | awk '{ print $2 }'))"
 export VOXMAR_TIMING=1
 
 # One run of `view` by the binary in `dir`: its numbers, as "median p99 max" (flights) or
@@ -89,6 +102,7 @@ export VOXMAR_TIMING=1
 run() {
   local dir=$1 view=$2 log
   view_args "$view"
+  touch "$quiet"
   log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_CONFIG="$config" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
   if [[ $view == flight* ]]; then
     sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log"

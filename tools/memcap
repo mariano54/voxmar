@@ -5,20 +5,22 @@
 #
 #   ~/Projects/voxmar-wt/memcap [GB] -- cargo test --release -p voxmar_worldgen
 #
-# - Waits while ~/Projects/voxmar-wt/QUIET exists (a timing run is on; a flag older than 20
-#   minutes is stale and ignored). The timing run itself sets VOXMAR_TIMING=1 to go ahead.
+# - Gets out of the way of timing runs: waits while ~/Projects/voxmar-wt/QUIET exists (a
+#   flag older than 20 minutes is stale and ignored), and pauses a running build (not tests
+#   or game runs, which finish soon) until it goes. The timing run itself sets
+#   VOXMAR_TIMING=1 to go ahead; `tools/bench` does all of this for you.
 # - Waits for one of VOXMAR_SLOTS (default 4) slots shared by every thread and track.
-# - Stays out of Mariano's way while he plays (his voxmar game, any run of the game that
-#   is not a capture or gate, or Minecraft): game runs and captures wait until he stops,
-#   and are paused if he starts while they run; builds and tests run at background
-#   priority, on the efficiency cores, and go back to normal priority when he stops.
+# - Gets out of Mariano's way completely while he plays (his voxmar game, any run of the
+#   game that is not a capture or gate, or Minecraft): nothing new starts, and whatever is
+#   running pauses, until he stops.
 # - Kills the command and everything it started once their resident memory together
 #   passes GB (default 20), and exits 137 with a message saying so.
 # - Defaults RUST_TEST_THREADS=4 unless already set. Cargo uses every core: a clean build
 #   of the whole workspace peaks around 6.5 GB, so four at once stay far below the caps.
 #
 # Written after a worldgen test reached 117 GB on 2026-10-04 and took the Mac down; the
-# quiet and play holds after builds gave him 40-140 ms lag spikes while he played.
+# holds after our builds gave him 40-140 ms frames and under 60 fps while he played, and
+# timing runs could not get a quiet machine.
 
 cap_gb=20
 if [[ $1 =~ ^[0-9]+$ ]]; then cap_gb=$1; shift; fi
@@ -26,7 +28,7 @@ if [[ $1 =~ ^[0-9]+$ ]]; then cap_gb=$1; shift; fi
 [[ $# -eq 0 ]] && { echo "usage: memcap [GB] -- command..." >&2; exit 2; }
 
 export RUST_TEST_THREADS=${RUST_TEST_THREADS:-4}
-quiet_flag=~/Projects/voxmar-wt/QUIET
+quiet_flag=${VOXMAR_QUIET_FLAG:-~/Projects/voxmar-wt/QUIET}
 
 # Whether Mariano is playing: a game that is not a capture or gate run (other runs are
 # silent captures, by the rules), or Minecraft.
@@ -56,9 +58,9 @@ quiet() {
 }
 
 waited=0
-while quiet || { ((game)) && playing; }; do
+while quiet || playing; do
   if ((waited++ % 30 == 0)); then
-    if quiet; then echo "memcap: a timing run holds QUIET, waiting (the timing run itself sets VOXMAR_TIMING=1)" >&2; else echo "memcap: Mariano is playing, waiting to run the game" >&2; fi
+    if quiet; then echo "memcap: a timing run holds QUIET, waiting (the timing run itself sets VOXMAR_TIMING=1)" >&2; else echo "memcap: Mariano is playing, waiting until he stops" >&2; fi
   fi
   sleep 2
 done
@@ -76,6 +78,7 @@ while [[ -z $lock ]]; do
   fi
 done
 
+name=$1
 "$@" &
 child=$!
 
@@ -86,27 +89,40 @@ tree() {
     END { for (p in parent) { q = p; while (q > 1) { if (q == root) { print p; break } q = parent[q] } } }'
 }
 
-# Steps out of the way while Mariano plays (1) or back in (0): pauses or resumes a game
-# run; moves anything else to background priority or back.
-held=0
-hold() {
-  local pid
-  for pid in $(tree); do
-    if ((game)); then
-      kill "-$([[ $1 == 1 ]] && echo STOP || echo CONT)" "$pid" 2>/dev/null
+# Builds (anything but a game run or tests, which finish within a minute or two and may
+# time themselves) pause while a timing run holds QUIET, so its window starts at once.
+pausable=1
+((game)) && pausable=0
+for arg in "$@"; do [[ $arg == test ]] && pausable=0; done
+
+# Steps out of the way of Mariano's playing and of timing runs: everything pauses while he
+# plays, and builds while QUIET is up (`$lock.paused` says so, for the timing run to see).
+# Applied again every check, to catch processes the command started since.
+paused=0
+step_aside() {
+  local playing_now=$1 quiet_now=$2 pause=0 pid
+  ((playing_now || pausable && quiet_now)) && pause=1
+  if ((pause != paused)); then
+    if ((pause)); then
+      echo "memcap: '$name' paused while $( ((playing_now)) && echo "Mariano plays" || echo "a timing run holds QUIET")" >&2
+      : >"$lock.paused"
     else
-      taskpolicy "$([[ $1 == 1 ]] && echo -b || echo -B)" -p "$pid" 2>/dev/null
+      echo "memcap: '$name' carries on" >&2
+      rm -f "$lock.paused"
     fi
-  done
-  held=$1
+  fi
+  if ((pause || paused)); then
+    for pid in $(tree); do kill "-$( ((pause)) && echo STOP || echo CONT)" "$pid" 2>/dev/null; done
+  fi
+  paused=$pause
 }
 
 stop() {
   local pids
   pids=$(tree)
-  ((held && game)) && [[ -n $pids ]] && kill -CONT $pids 2>/dev/null
+  ((paused)) && [[ -n $pids ]] && kill -CONT $pids 2>/dev/null
   [[ -n $pids ]] && kill -9 $pids 2>/dev/null
-  rm -f "$lock"
+  rm -f "$lock" "$lock.paused"
 }
 trap 'stop; exit 143' TERM INT HUP
 
@@ -123,19 +139,16 @@ while kill -0 "$child" 2>/dev/null; do
       exit 137
     fi
   fi
-  # Checked every other second; a held tree is held again, to catch processes it started.
+  # Checked every other second.
   if ((ticks++ % 2 == 0)); then
-    if playing; then
-      ((held)) || echo "memcap: Mariano is playing; '$1' is $(((game)) && echo paused || echo "at background priority") until he stops" >&2
-      hold 1
-    elif ((held)); then
-      hold 0
-      echo "memcap: Mariano stopped playing; '$1' carries on" >&2
-    fi
+    playing_now=0 quiet_now=0
+    playing && playing_now=1
+    quiet && quiet_now=1
+    ((playing_now || quiet_now || paused)) && step_aside "$playing_now" "$quiet_now"
   fi
   sleep 1
 done
 wait "$child"
 status=$?
-rm -f "$lock"
+rm -f "$lock" "$lock.paused"
 exit $status

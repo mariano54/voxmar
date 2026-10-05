@@ -86,8 +86,8 @@ add a fixed wait of more than a second.
 For changes that can cost frame time (anything under `client/src/render`, meshing,
 lighting, worldgen, streaming, per-frame client code), and after any change the landing
 gate's numbers make suspicious. It builds this tree and a base (main unless given) with
-`--release`, waits for a calm machine, holds `~/Projects/voxmar-wt/QUIET` while it times,
-and runs each view alternately, base then this, for two rounds, at Mariano's settings
+`--release`, then holds a quiet window (see below) while it runs each view alternately,
+base then this, for two rounds, at Mariano's settings
 (32 chunks, SMAA, VSync off; 75% and full resolution of his 3024×1964 screen). It judges
 ratios, never absolute numbers, as the graphics thread does: a flight fails if its p99
 frame is over 1.5× the base's in every round or any frame takes over 25 ms on AC power;
@@ -107,11 +107,20 @@ and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/pla
 (`cargo build --release`), never copied from another worktree, so the binary and its
 `assets/` always match.
 
-## Staying out of his way
+## Staying out of his way, and quiet windows
 
-While he plays (his voxmar game, any game run that is not a capture or gate, or
-Minecraft), `memcap` holds game runs and captures until he stops, pausing any that are
-running, and moves builds and tests to background priority on the efficiency cores, back
-to normal when he stops. It also waits while `QUIET` exists (younger than 20 minutes);
-the timing run that holds `QUIET` sets `VOXMAR_TIMING=1` for its own commands. The
-version in `tools/memcap` is what `~/Projects/voxmar-wt/memcap` should be.
+Every heavy command goes through `memcap`, which gets out of the way:
+
+- While Mariano plays (his voxmar game, any game run that is not a capture or gate, or
+  Minecraft), nothing new starts and whatever is running pauses, builds, tests and game
+  runs alike, until he stops. Our builds on every core gave him 40–140 ms frames and under
+  60 fps while flying.
+- While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
+  starts and running builds pause; tests and game runs, which finish within a minute or
+  two, finish. A paused command leaves `/tmp/voxmar-heavy-N.lock.paused`.
+
+So a quiet window needs no announcement: `tools/bench` claims `QUIET` itself (waiting
+only for another timing run's), waits for the running tests and game runs to finish and
+the load to settle, and keeps the flag fresh until it is done. A thread timing something
+by hand does the same: write `QUIET`, run its own commands with `VOXMAR_TIMING=1`, and
+delete the flag when done (or let it go stale after 20 minutes).
