@@ -7,7 +7,7 @@
 
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::{CameraMainTextureUsages, Hdr};
-use bevy::camera::visibility::NoFrustumCulling;
+use bevy::camera::visibility::{NoCpuCulling, NoFrustumCulling};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::cluster::ClusterConfig;
@@ -82,6 +82,10 @@ impl Plugin for RenderPlugin {
             .init_resource::<DayCycle>()
             .init_resource::<Quality>()
             .init_resource::<pack::ActivePack>()
+            // Interface nodes draw from their inherited visibility; Bevy's per-view
+            // visibility of them is never read, but resetting and updating it each frame
+            // ran as many small parallel tasks as nodes allowed.
+            .register_required_components::<Node, NoCpuCulling>()
             .add_systems(Startup, cluster_lights_on_the_cpu)
             .add_systems(Update, (pack::apply_pack, apply_quality.run_if(resource_changed::<Quality>)))
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
