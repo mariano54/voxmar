@@ -723,6 +723,16 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
    terrain at f4d64c8 against this) are `step6_rebuild_*` in the shots folder. Side-by-side
    captures with Tectonic itself are still missing: we have its source, not screenshots.
 
+   Faces, after the play-build check showed a fjord's side as one smooth plane: fjord
+   walls wander in and out with buttresses and gullies (their edge moves by up to a fifth
+   of the valley's width) and step down in ledges five to nine blocks high; the flanks of
+   ranges carry a gully term in the land (`gully` in `land.ron`, up to fifteen blocks deep
+   along the zero lines of a 70-block noise) and the crag density reaches further down
+   them (seven blocks at mid-slope); and level ledges in a cliff hold snow where it is cold
+   and grass where it is not too high. Spires and towers keep to a few clusters of their
+   regions (where their cluster noise is high), so a desert with spires is mostly dunes and
+   flats with a stand of them here and there, not a forest of spikes.
+
 Steps 1 and 3 are the big ones. Step 2 touches `biomes.ron` claims only (not palettes), to
 stay clear of the decor track's colour work.
 
