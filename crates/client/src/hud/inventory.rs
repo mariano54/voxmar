@@ -470,7 +470,7 @@ fn details(locale: &Locale, def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
         }
     }
     if !uses.is_empty() {
-        lines.push((uses.join(" · "), SOFT));
+        lines.push((uses.join(locale.get("language.dot")), SOFT));
     }
     let package = def.name.split(':').next().unwrap_or("");
     lines.push((if ids { def.name.clone() } else { package.to_owned() }, MUTED));
@@ -497,7 +497,8 @@ fn show_skills(player: Res<LocalPlayer>, launch: Res<Launch>, locale: Res<Locale
         return;
     }
     let skills = &launch.content.skills;
-    let words = skills.ids().map(|id| super::skills::summary(&locale, skills, id, player.skills.xp(id))).collect::<Vec<_>>().join(" · ");
+    let words = skills.ids().map(|id| super::skills::summary(&locale, skills, id, player.skills.xp(id))).collect::<Vec<_>>();
+    let words = words.join(locale.get("language.dot"));
     if let Ok(mut text) = line.single_mut()
         && text.0 != words
     {

@@ -10,6 +10,8 @@
     "language.name": "English",
     // How tall a line of wrapped text is, in font sizes.
     "language.line_height": "1.2",
+    // Between items in a line: "Farming 3 · Mining 5".
+    "language.dot": " · ",
 
     // Menus.
     "menu.singleplayer": "Singleplayer",
