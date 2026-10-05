@@ -9,14 +9,16 @@ use bevy::prelude::*;
 use bevy::text::FontSmoothing;
 use bevy::ui::RelativeCursorPosition;
 
+use super::ime::{Composing, ImeSystems};
 use super::skin::{FONT, PX, Piece, font_size};
+use crate::lang::Localized;
 
 pub struct WidgetsPlugin;
 
 impl Plugin for WidgetsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(UiFont(FONT))
-            .add_systems(Update, (style_buttons, scroll_lists, (focus_fields, edit_fields, draw_fields).chain()));
+            .add_systems(Update, (style_buttons, scroll_lists, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
     }
 }
 
@@ -59,12 +61,13 @@ pub fn shadowed(font: &Handle<Font>, value: impl Into<String>, size: f32, color:
     (text, font, color, TextShadow { offset: Vec2::splat(px / font_size(1)), color: SHADOW })
 }
 
-/// A panel's title, in gold between two teal diamonds, over a gold rule.
-pub fn spawn_heading(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, value: &str) {
+/// A panel's title, in gold between two teal diamonds, over a gold rule. `key` names its
+/// words in the player's language (see `lang`), as for every widget with a label.
+pub fn spawn_heading(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, key: &'static str) {
     let row = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
     parent.spawn(row).with_children(|row| {
         row.spawn(shadowed(font, "◆", BODY, ACCENT));
-        row.spawn(shadowed(font, value, LARGE, GOLD));
+        row.spawn((Localized(key), shadowed(font, "", LARGE, GOLD)));
         row.spawn(shadowed(font, "◆", BODY, ACCENT));
     });
     spawn_rule(parent, 4.0 * PX);
@@ -80,10 +83,10 @@ pub fn spawn_rule(parent: &mut ChildSpawnerCommands, margin: f32) {
 }
 
 /// A small label above a group of controls.
-pub fn label(font: &Handle<Font>, value: &str) -> (Node, Text, TextFont, TextColor) {
+pub fn label(font: &Handle<Font>, key: &'static str) -> (Node, Localized, Text, TextFont, TextColor) {
     let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(7.0 * PX), Val::Px(3.0 * PX));
-    let (text, font, color) = text(font, value, BODY, MUTED);
-    (Node { margin, ..default() }, text, font, color)
+    let (text, font, color) = text(font, "", BODY, MUTED);
+    (Node { margin, ..default() }, Localized(key), text, font, color)
 }
 
 /// A full-screen layer that centres its content, over a tinted backdrop.
@@ -150,11 +153,12 @@ pub type Pressed = (Changed<Interaction>, Without<Disabled>);
 /// Height of a button.
 pub const BUTTON: f32 = 20.0 * PX;
 
-/// A button taking an equal share of its row, carrying `action` to identify it.
+/// A button taking an equal share of its row, carrying `action` to identify it. An empty
+/// `key` leaves the label for its screen to write.
 pub fn spawn_button(
     parent: &mut ChildSpawnerCommands,
     font: &Handle<Font>,
-    label: &str,
+    key: &'static str,
     style: ButtonStyle,
     action: impl Bundle,
 ) -> Entity {
@@ -166,7 +170,13 @@ pub fn spawn_button(
         align_items: AlignItems::Center,
         ..default()
     };
-    parent.spawn((Button, style, node, style.pieces()[0].image(), action)).with_child(shadowed(font, label, BODY, TEXT)).id()
+    let mut button = parent.spawn((Button, style, node, style.pieces()[0].image(), action));
+    if key.is_empty() {
+        button.with_child(shadowed(font, "", BODY, TEXT));
+    } else {
+        button.with_child((Localized(key), shadowed(font, "", BODY, TEXT)));
+    }
+    button.id()
 }
 
 /// Draws each button for its state: the hover piece under the pointer, the pressed piece
@@ -258,7 +268,7 @@ pub fn spawn_text_field(
     parent: &mut ChildSpawnerCommands,
     font: &Handle<Font>,
     value: &str,
-    placeholder: &str,
+    placeholder: &'static str,
     max_chars: usize,
     order: u8,
     focused: bool,
@@ -280,7 +290,7 @@ pub fn spawn_text_field(
         text_entity = field.spawn(text(font, value, BODY, TEXT)).id();
         let caret_node = Node { width: Val::Px(PX), height: Val::Px(8.0 * PX), margin: UiRect::left(Val::Px(PX)), ..default() };
         caret = field.spawn((caret_node, BackgroundColor(ACCENT))).id();
-        placeholder_entity = field.spawn(text(font, placeholder, BODY, MUTED.with_alpha(0.7))).id();
+        placeholder_entity = field.spawn((Localized(placeholder), text(font, "", BODY, MUTED.with_alpha(0.7)))).id();
     });
     field.insert(TextField {
         value: value.to_owned(),
@@ -313,9 +323,11 @@ fn edit_fields(
     mut input: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
     mut fields: Query<(Entity, &mut TextField, Has<Focused>)>,
+    mut composing: ResMut<Composing>,
 ) {
     // Shortcuts (copy, select all, …) are not text.
     let shortcut = keys.any_pressed([KeyCode::SuperLeft, KeyCode::SuperRight, KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let mut typed = String::new();
     for event in input.read().filter(|event| event.state == ButtonState::Pressed) {
         if event.logical_key == Key::Tab {
             let mut order: Vec<(u8, Entity, bool)> = fields.iter().map(|(entity, field, focused)| (field.order, entity, focused)).collect();
@@ -330,11 +342,21 @@ fn edit_fields(
         let Some((_, mut field, _)) = fields.iter_mut().find(|(.., focused)| *focused) else { continue };
         if event.logical_key == Key::Backspace {
             field.value.pop();
-        } else if let Some(typed) = event.text.as_ref().filter(|_| !shortcut) {
-            for c in typed.chars().filter(|c| !c.is_control()) {
+        } else if let Some(text) = event.text.as_ref().filter(|_| !shortcut) {
+            for c in text.chars().filter(|c| !c.is_control()) {
+                typed.push(c);
                 if field.value.chars().count() < field.max_chars {
                     field.value.push(c);
                 }
+            }
+        }
+    }
+    // What the input method committed (Japanese, for one) goes into the focused field.
+    let committed = composing.take(&typed);
+    if let Some((_, mut field, _)) = fields.iter_mut().find(|(.., focused)| *focused) {
+        for c in committed.chars().filter(|c| !c.is_control()) {
+            if field.value.chars().count() < field.max_chars {
+                field.value.push(c);
             }
         }
     }
@@ -344,6 +366,7 @@ fn edit_fields(
 /// and a teal rim while focused (fainter while hovered).
 fn draw_fields(
     time: Res<Time>,
+    composing: Res<Composing>,
     mut fields: Query<(&TextField, Has<Focused>, &Interaction, &mut ImageNode)>,
     mut texts: Query<&mut Text>,
     mut nodes: Query<&mut Node>,
@@ -351,13 +374,15 @@ fn draw_fields(
 ) {
     let blink_on = time.elapsed_secs().fract() < 0.55;
     for (field, focused, interaction, mut image) in &mut fields {
+        // Text the input method is composing shows after the field's, until committed.
+        let shown = if focused && !composing.preedit.is_empty() { format!("{}{}", field.value, composing.preedit) } else { field.value.clone() };
         if let Ok(mut text) = texts.get_mut(field.text)
-            && text.0 != field.value
+            && text.0 != shown
         {
-            text.0.clone_from(&field.value);
+            text.0 = shown;
         }
         if let Ok(mut node) = nodes.get_mut(field.placeholder) {
-            let display = if field.value.is_empty() { Display::Flex } else { Display::None };
+            let display = if field.value.is_empty() && (!focused || composing.preedit.is_empty()) { Display::Flex } else { Display::None };
             if node.display != display {
                 node.display = display;
             }
@@ -410,13 +435,13 @@ pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece
 }
 
 /// Fills a meter to `share` (0..1) and writes `text` over it.
-pub fn set_meter<F: bevy::ecs::query::QueryFilter>(
+pub fn set_meter<F: bevy::ecs::query::QueryFilter, G: bevy::ecs::query::QueryFilter>(
     meter: &Meter,
     share: f32,
     text_value: &str,
     nodes: &mut Query<&mut Node, F>,
     children: &Query<&Children>,
-    texts: &mut Query<&mut Text>,
+    texts: &mut Query<&mut Text, G>,
 ) {
     if let Ok(mut node) = nodes.get_mut(meter.fill) {
         let width = Val::Percent(share.clamp(0.0, 1.0) * 100.0);

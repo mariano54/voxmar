@@ -65,5 +65,7 @@ bytemuck.workspace = true
 ron.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The system's language, for the first run (bevy_text already builds it).
+sys-locale = "0.3"
 tracing.workspace = true
 zip.workspace = true

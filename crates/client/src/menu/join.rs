@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, bounded};
 use voxmar_protocol::{ClientConnection, DEFAULT_PORT, tcp};
 
+use crate::lang::Locale;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{
     BODY, ButtonStyle, Disabled, ERROR, MUTED, Pressed, SCRIM, SOFT, TextField, UiFont, button_row, spawn_heading,
@@ -103,11 +104,11 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, connecting: Option<Res<Conne
     let address = connecting.map(|c| c.address.clone()).or_else(|| recent.first().cloned()).unwrap_or_default();
     commands.spawn((DespawnOnExit(Screen::Join), screen(SCRIM))).with_children(|root| {
         root.spawn(panel(260.0 * PX)).with_children(|panel| {
-            spawn_heading(panel, font, "Multiplayer");
-            panel.spawn(label(font, "Server address"));
-            spawn_text_field(panel, font, &address, "host or host:port", 80, 0, true, AddressField);
+            spawn_heading(panel, font, "menu.multiplayer");
+            panel.spawn(label(font, "join.address"));
+            spawn_text_field(panel, font, &address, "join.address.placeholder", 80, 0, true, AddressField);
             if !recent.is_empty() {
-                panel.spawn(label(font, "Recent servers"));
+                panel.spawn(label(font, "join.recent"));
                 let list = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), ..default() };
                 panel.spawn(list).with_children(|list| {
                     for address in &recent {
@@ -125,8 +126,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, connecting: Option<Res<Conne
             let message = notice.0.take().unwrap_or_default();
             panel.spawn((Status, Node { margin: UiRect::top(Val::Px(6.0 * PX)), ..default() }, text(font, message, BODY, ERROR)));
             panel.spawn(button_row(6.0 * PX)).with_children(|row| {
-                spawn_button(row, font, "Join", ButtonStyle::Primary, Action::Join);
-                spawn_button(row, font, "Back", ButtonStyle::Secondary, Action::Back);
+                spawn_button(row, font, "join.join", ButtonStyle::Primary, Action::Join);
+                spawn_button(row, font, "menu.back", ButtonStyle::Secondary, Action::Back);
             });
         });
     });
@@ -162,6 +163,7 @@ fn click(
     keys: Res<ButtonInput<KeyCode>>,
     field: Query<&TextField, With<AddressField>>,
     connecting: Option<Res<Connecting>>,
+    locale: Res<Locale>,
     mut status: Query<&mut Text, With<Status>>,
     mut next: ResMut<NextState<Screen>>,
 ) {
@@ -176,7 +178,7 @@ fn click(
                 let Ok(field) = field.single() else { continue };
                 if field.value.trim().is_empty() {
                     if let Ok(mut status) = status.single_mut() {
-                        status.0 = "Enter the address of a server.".into();
+                        status.0 = locale.get("join.error.no_address").into();
                     }
                 } else {
                     commands.insert_resource(connect(&field.value));
@@ -192,6 +194,7 @@ fn finish_connecting(
     mut commands: Commands,
     connecting: Option<Res<Connecting>>,
     launch: Res<Launch>,
+    locale: Res<Locale>,
     mut status: Query<&mut Text, With<Status>>,
     mut next: ResMut<NextState<Screen>>,
 ) {
@@ -205,12 +208,12 @@ fn finish_connecting(
         }
         Err(e) => {
             let reason = match e.kind() {
-                std::io::ErrorKind::ConnectionRefused => "no server is running there".to_owned(),
-                std::io::ErrorKind::TimedOut => "the server did not answer".to_owned(),
+                std::io::ErrorKind::ConnectionRefused => locale.get("join.error.refused").to_owned(),
+                std::io::ErrorKind::TimedOut => locale.get("join.error.timed_out").to_owned(),
                 _ => e.to_string(),
             };
             if let Ok(mut status) = status.single_mut() {
-                status.0 = format!("Could not connect to {}: {reason}.", connecting.address);
+                status.0 = locale.format("join.error.failed", &[("address", &connecting.address), ("reason", &reason)]);
             }
         }
     }
@@ -221,6 +224,7 @@ fn show_status(
     mut commands: Commands,
     connecting: Option<Res<Connecting>>,
     mut shown: Local<Option<bool>>,
+    locale: Res<Locale>,
     mut status: Query<(&mut Text, &mut TextColor), With<Status>>,
     join: Query<(Entity, &Action)>,
 ) {
@@ -231,7 +235,7 @@ fn show_status(
     *shown = Some(busy);
     let Ok((mut text, mut color)) = status.single_mut() else { return };
     if let Some(connecting) = &connecting {
-        text.0 = format!("Connecting to {}…", connecting.address);
+        text.0 = locale.format("join.connecting", &[("address", &connecting.address)]);
         color.0 = MUTED;
     } else {
         // What remains is why the last attempt failed.

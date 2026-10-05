@@ -5,18 +5,25 @@
 //! shift clicks, drags, double clicks and number keys) comes down to a few moves here:
 //! [`Inventory::move_items`] between two slots, one of which may be the stack held on the
 //! pointer ([`CURSOR`]), [`Inventory::quick_move`] between the hotbar and the rest, and
-//! [`Inventory::stow_cursor`] when the screen closes. The client works out which moves a
-//! gesture means; the server checks and applies each the same way.
+//! [`Inventory::stow_cursor`] when the screen closes. The two-by-two crafting grid is four
+//! more slots ([`CRAFT`]), and [`Inventory::craft`] turns what it holds into a recipe's
+//! output. The client works out which moves a gesture means; the server checks and
+//! applies each the same way.
 
 use serde::{Deserialize, Serialize};
 
 use crate::block::BlockId;
+use crate::craft::GRID;
 
 pub const HOTBAR_SLOTS: usize = 9;
 pub const SLOTS: usize = 36;
 pub const MAX_STACK: u8 = 64;
 /// The slot number of the stack held on the pointer while the inventory screen is open.
 pub const CURSOR: usize = SLOTS;
+/// The crafting grid's first slot; its four are `CRAFT..CRAFT + 4`, row by row.
+pub const CRAFT: usize = CURSOR + 1;
+/// The last slot number there is.
+const LAST: usize = CRAFT + GRID - 1;
 
 /// Items are blocks for now; dedicated item definitions come with tools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,11 +39,14 @@ pub struct Inventory {
     /// The stack held on the pointer, slot [`CURSOR`].
     #[serde(default)]
     pub cursor: Option<ItemStack>,
+    /// The crafting grid, slots [`CRAFT`] on.
+    #[serde(default)]
+    pub craft: [Option<ItemStack>; GRID],
 }
 
 impl Default for Inventory {
     fn default() -> Self {
-        Self { slots: vec![None; SLOTS], cursor: None }
+        Self { slots: vec![None; SLOTS], cursor: None, craft: [None; GRID] }
     }
 }
 
@@ -72,23 +82,70 @@ impl Inventory {
     }
 
     pub fn get(&self, slot: usize) -> Option<ItemStack> {
-        if slot == CURSOR { self.cursor } else { self.slots.get(slot).copied().flatten() }
+        match slot {
+            CURSOR => self.cursor,
+            CRAFT..=LAST => self.craft[slot - CRAFT],
+            _ => self.slots.get(slot).copied().flatten(),
+        }
     }
 
     fn set(&mut self, slot: usize, stack: Option<ItemStack>) {
         let stack = stack.filter(|s| s.count > 0);
-        if slot == CURSOR {
-            self.cursor = stack;
-        } else {
-            self.slots[slot] = stack;
+        match slot {
+            CURSOR => self.cursor = stack,
+            CRAFT..=LAST => self.craft[slot - CRAFT] = stack,
+            _ => self.slots[slot] = stack,
         }
+    }
+
+    /// What the crafting grid holds, item by item.
+    pub fn grid(&self) -> [Option<BlockId>; GRID] {
+        self.craft.map(|stack| stack.map(|s| s.item))
+    }
+
+    /// Crafts what the grid holds into `output` (`count` of it), taking one item from each
+    /// filled cell: once, onto the pointer (which must be empty or hold the same item with
+    /// room), or with `all` as many times as the grid allows, into the inventory while it
+    /// has room. `recipe` names what a grid makes. Returns how many times it crafted.
+    pub fn craft(&mut self, recipe: impl Fn(&[Option<BlockId>; GRID]) -> Option<(BlockId, u8)>, all: bool) -> u32 {
+        let mut made = 0;
+        while let Some((output, count)) = recipe(&self.grid()) {
+            if all {
+                let mut trial = self.clone();
+                if trial.add(output, count) > 0 {
+                    break;
+                }
+                self.add(output, count);
+            } else {
+                match self.cursor {
+                    None => self.cursor = Some(ItemStack { item: output, count }),
+                    Some(held) if held.item == output && held.count as u32 + count as u32 <= MAX_STACK as u32 => {
+                        self.cursor = Some(ItemStack { count: held.count + count, ..held });
+                    }
+                    Some(_) => break,
+                }
+            }
+            for cell in &mut self.craft {
+                if let Some(stack) = cell {
+                    stack.count -= 1;
+                    if stack.count == 0 {
+                        *cell = None;
+                    }
+                }
+            }
+            made += 1;
+            if !all {
+                break;
+            }
+        }
+        made
     }
 
     /// Moves up to `count` items from `from` to `to` (either may be [`CURSOR`]): onto an
     /// empty slot or the same item, as many as fit, or swapping the two stacks when all of
     /// `from` goes onto a different item. Returns whether anything moved.
     pub fn move_items(&mut self, from: usize, to: usize, count: u8) -> bool {
-        if from == to || from > CURSOR || to > CURSOR || count == 0 {
+        if from == to || from > LAST || to > LAST || count == 0 {
             return false;
         }
         let Some(source) = self.get(from) else { return false };
@@ -119,6 +176,13 @@ impl Inventory {
     /// topping up stacks of the same item first, then into the first empty slots. Returns
     /// whether anything moved.
     pub fn quick_move(&mut self, slot: usize) -> bool {
+        if (CRAFT..=LAST).contains(&slot) {
+            // Out of the crafting grid, into the inventory.
+            let Some(stack) = self.get(slot) else { return false };
+            let left = self.add(stack.item, stack.count);
+            self.set(slot, Some(ItemStack { count: left, ..stack }));
+            return left != stack.count;
+        }
         if slot >= SLOTS {
             return false;
         }
@@ -145,13 +209,17 @@ impl Inventory {
         stack.count != before
     }
 
-    /// Puts the stack on the pointer back into the inventory, as [`Inventory::add`] would.
-    /// Whatever does not fit stays on the pointer.
+    /// Puts the stack on the pointer and what the crafting grid holds back into the
+    /// inventory, as [`Inventory::add`] would. Whatever does not fit stays where it was.
     pub fn stow_cursor(&mut self) -> bool {
-        let Some(stack) = self.cursor.take() else { return false };
-        let left = self.add(stack.item, stack.count);
-        self.set(CURSOR, Some(ItemStack { count: left, ..stack }));
-        left != stack.count
+        let mut moved = false;
+        for slot in std::iter::once(CURSOR).chain(CRAFT..=LAST) {
+            let Some(stack) = self.get(slot) else { continue };
+            let left = self.add(stack.item, stack.count);
+            self.set(slot, Some(ItemStack { count: left, ..stack }));
+            moved |= left != stack.count;
+        }
+        moved
     }
 
     /// How many of `item` [`Inventory::add`] would take, up to `count`.
@@ -257,6 +325,25 @@ mod tests {
             inv.slots[slot] = stack(SAND, 64);
         }
         assert!(!inv.quick_move(9));
+    }
+
+    #[test]
+    fn the_grid_crafts_once_or_all() {
+        let mut inv = Inventory::default();
+        inv.craft = [stack(DIRT, 3), None, None, None];
+        // One dirt makes four sand.
+        let recipe = |grid: &[Option<BlockId>; GRID]| (grid == &[Some(DIRT), None, None, None]).then_some((SAND, 4));
+        assert_eq!(inv.craft(recipe, false), 1);
+        assert_eq!((inv.cursor, inv.craft[0]), (stack(SAND, 4), stack(DIRT, 2)));
+        // Shift crafts the rest into the inventory.
+        assert_eq!(inv.craft(recipe, true), 2);
+        assert_eq!((inv.get(0), inv.craft[0]), (stack(SAND, 8), None));
+        assert_eq!(inv.craft(recipe, true), 0);
+        // Grid slots move like any other, and go back on closing.
+        assert!(inv.move_items(0, CRAFT + 3, 8));
+        assert_eq!(inv.get(CRAFT + 3), stack(SAND, 8));
+        assert!(inv.stow_cursor());
+        assert_eq!((inv.get(0), inv.cursor, inv.craft), (stack(SAND, 12), None, [None; GRID]));
     }
 
     #[test]

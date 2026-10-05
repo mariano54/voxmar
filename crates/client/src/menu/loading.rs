@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use voxmar_engine::coords::ColumnPos;
 
 use super::Screen;
+use crate::lang::Locale;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{BODY, GOLD, LARGE, MUTED, UiFont, shadowed};
 use crate::net::Net;
@@ -71,7 +72,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, assets: Res<AssetServer>) {
         }
         // A wash of night blue over the reel keeps the text readable.
         cover.spawn((full(), BackgroundColor(Color::srgba(0.03, 0.05, 0.12, 0.45))));
-        cover.spawn((Title, shadowed(font, "Joining", LARGE, GOLD)));
+        cover.spawn((Title, shadowed(font, "", LARGE, GOLD)));
         cover.spawn((Detail, shadowed(font, "", BODY, MUTED)));
         let track = Node {
             width: Val::Px(BAR),
@@ -115,6 +116,7 @@ fn update(
     mut title: Query<&mut Text, (With<Title>, Without<Detail>)>,
     mut detail: Query<&mut Text, (With<Detail>, Without<Title>)>,
     mut pulse: Query<&mut Node, With<Pulse>>,
+    locale: Res<Locale>,
 ) {
     let Ok(cover) = cover.single() else { return };
     let ground = ColumnPos::of_block(player.position.floor().as_ivec3());
@@ -123,10 +125,11 @@ fn update(
         return;
     }
     let (heading, message) = match (player.joined, net.is_remote()) {
-        (false, true) => ("Joining server", "Waiting for the server to let you in"),
-        (false, false) => ("Opening world", "Starting the world"),
-        (true, _) => ("Loading world", "Building the terrain around you"),
+        (false, true) => ("loading.joining", "loading.joining.detail"),
+        (false, false) => ("loading.opening", "loading.opening.detail"),
+        (true, _) => ("loading.building", "loading.building.detail"),
     };
+    let (heading, message) = (locale.get(heading), locale.get(message));
     if let Ok(mut text) = title.single_mut()
         && text.0 != heading
     {

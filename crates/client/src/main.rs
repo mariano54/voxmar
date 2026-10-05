@@ -9,7 +9,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen),
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
@@ -21,7 +21,8 @@
 //! much longer, as on a busy machine (gate runs default to `gate::SERVER_LAG`).
 //! Other options: `--host` also open singleplayer worlds to the network, `--seed N` (for new
 //! worlds made by `--world` or `--capture`), `--name NAME`, `--view-distance N` (columns),
-//! `--fov DEGREES`, `--weather KIND[:INTENSITY]` (show that instead of the server's
+//! `--fov DEGREES`, `--language CODE` (`en`, `ja`; overrides the setting, and captures are in
+//! English without it), `--weather KIND[:INTENSITY]` (show that instead of the server's
 //! weather; the kinds are in `weather.ron`, intensities 0..1 or light|moderate|heavy|max), `--command LINE` (run a console command once in game, such as
 //! `"/time set noon"`; repeatable), `--no-vsync`, `--no-music`. `--view-distance`,
 //! `--fov` and `--no-vsync` override the saved settings. Captures are silent, and so is
@@ -35,6 +36,7 @@ mod gate;
 mod hud;
 mod interact;
 mod keys;
+mod lang;
 mod menu;
 mod music;
 mod net;
@@ -95,6 +97,9 @@ struct Options {
     menu: bool,
     inventory: bool,
     character: bool,
+    /// `--tab NAME`: the settings tab to open; `--guide SKILL`: the skill guide to open.
+    tab: Option<String>,
+    guide: Option<String>,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
     /// `--press left|right`: hold a mouse button at the start of the clip.
@@ -103,6 +108,7 @@ struct Options {
     windowed: bool,
     screen: Option<Screen>,
     music: bool,
+    language: Option<String>,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -129,6 +135,8 @@ fn parse_options() -> Result<Options, String> {
         menu: false,
         inventory: false,
         character: false,
+        tab: None,
+        guide: None,
         flicker: None,
         clip: None,
         press: None,
@@ -136,6 +144,7 @@ fn parse_options() -> Result<Options, String> {
         windowed: false,
         screen: None,
         music: true,
+        language: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -154,6 +163,7 @@ fn parse_options() -> Result<Options, String> {
             }
             "--command" => options.commands.push(value()?),
             "--no-music" => options.music = false,
+            "--language" => options.language = Some(value()?),
             "--capture" => options.capture = Some(value()?.into()),
             "--gate" => options.gate = Some(value()?.into()),
             "--server-lag" => options.server_lag = Some(value()?.parse().map_err(|e| format!("--server-lag: {e}"))?),
@@ -165,6 +175,8 @@ fn parse_options() -> Result<Options, String> {
             "--menu" => options.menu = true,
             "--inventory" => options.inventory = true,
             "--character" => options.character = true,
+            "--tab" => options.tab = Some(value()?),
+            "--guide" => options.guide = Some(value()?),
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -227,6 +239,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
     settings.vsync = options.vsync.unwrap_or(settings.vsync);
+    // Captures are in English unless asked otherwise, whatever the machine's language.
+    let default_language = if reproducible { voxmar_engine::lang::ENGLISH.to_owned() } else { settings.language.clone() };
+    settings.language = options.language.clone().unwrap_or(default_language);
     // Captures run the ambience without playing it, so its log shows what would play.
     if headless {
         settings.ambience_volume = 0;
@@ -284,12 +299,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         session::SessionPlugin,
         weather::WeatherPlugin,
         ui::UiPlugin,
-    ));
+    ))
+    .add_plugins(lang::LangPlugin);
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
     .insert_resource(Actions(content.actions))
     .insert_resource(render::DayCycle { view_distance: render::lod::view_distance(settings.view_distance), ..default() })
     .insert_resource(shader_packs)
+    .insert_resource(lang::Locale::load(&assets.join("content"), &settings.language))
     .insert_resource(settings)
     .insert_resource(Registry { blocks: registry, world: world_content })
     .add_systems(Startup, setup);
@@ -319,6 +336,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Screen::Title
     };
     app.insert_resource(FirstScreen(first)).insert_resource(launch);
+    if let Some(tab) = options.tab {
+        app.insert_resource(settings::StartTab(tab));
+    }
+    if let Some(skill) = options.guide {
+        app.insert_resource(hud::character::StartGuide(skill));
+    }
     // Slow frames of real play are recorded for later (see slow_frames.rs); captures and
     // gate runs, which run on a busy machine by design, are not.
     // The renderer's part of a slow frame's record is always there to be set.
@@ -405,6 +428,7 @@ fn setup(
     mut crack_materials: ResMut<Assets<render::cracks::CrackMaterial>>,
     world: Res<ClientWorld>,
     terrain: Res<render::terrain::Terrain>,
+    launch: Res<Launch>,
 ) {
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures);
@@ -526,7 +550,17 @@ fn setup(
         icons.push(images.add(ui_image(&icon)));
     }
     let crosshair = images.add(ui_image(&source.sprite("crosshair", (15, 15, [255, 255, 255, 0]))));
-    commands.insert_resource(HudImages { icons, crosshair });
+    // Each skill's icon, `ui/skill/<name>` in the packs, or the unknown skill's.
+    let skills = &launch.content.skills;
+    let unknown = source.read("ui/skill/unknown");
+    let skill_icons = skills
+        .ids()
+        .map(|id| {
+            let name = skills.get(id).name.rsplit(':').next().unwrap_or_default().to_owned();
+            source.read(&format!("ui/skill/{name}")).or_else(|| unknown.clone()).map(|art| images.add(ui_image(&art))).unwrap_or_default()
+        })
+        .collect();
+    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

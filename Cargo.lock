@@ -5041,6 +5041,7 @@ dependencies = [
  "rustc-hash 2.1.3",
  "serde",
  "serde_json",
+ "sys-locale",
  "tracing",
  "voxmar_engine",
  "voxmar_protocol",
@@ -5097,6 +5098,7 @@ dependencies = [
  "png",
  "ron",
  "serde",
+ "skrifa 0.44.0",
  "zip",
 ]
 
