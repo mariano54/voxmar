@@ -178,10 +178,9 @@ fn ink(canvas: &Canvas, text: &str) -> Result<Ink, Error> {
     let palette = canvas.palette(name)?;
     let count = canvas.palettes[palette as usize].len();
     let shade: usize = shade.parse().map_err(|_| Error(format!("`{text}`: `{shade}` is not a shade number")))?;
-    if shade >= count {
-        return Err(Error(format!("`{text}`: palette `{name}` has only {count} shades")));
-    }
-    Ok(Ink::Shade(palette, shade as u8))
+    // A sprite drawn with more shades than a recolouring palette has takes its lightest:
+    // a derived plant can swap in a shorter palette without redrawing its grid.
+    Ok(Ink::Shade(palette, shade.min(count - 1) as u8))
 }
 
 fn draw_grid(canvas: &mut Canvas, grid: &Grid) -> Result<(), Error> {

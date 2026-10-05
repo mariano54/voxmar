@@ -3,6 +3,7 @@
 
 mod actions;
 mod commands;
+mod creatures;
 mod farm;
 mod fluids;
 mod items;
@@ -12,8 +13,9 @@ pub mod save;
 mod weather;
 mod wear;
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -145,9 +147,19 @@ pub struct ServerHandle {
     console: Sender<String>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    tick_times: Arc<Mutex<VecDeque<Duration>>>,
 }
 
+/// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
+const TICK_TIMES: usize = 60 * TICKS_PER_SECOND as usize;
+
 impl ServerHandle {
+    /// How long the server's last ticks took to simulate, oldest first (up to a minute's
+    /// worth), for benchmarks and diagnostics.
+    pub fn tick_times(&self) -> Vec<Duration> {
+        self.tick_times.lock().map(|t| t.iter().copied().collect()).unwrap_or_default()
+    }
+
     /// Sender for new connections (local or accepted by a TCP listener).
     pub fn connections(&self) -> Sender<ServerConnection> {
         self.connections.clone()
@@ -177,13 +189,14 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
     let (connections, incoming) = unbounded();
     let (console, lines) = unbounded();
     let stop = Arc::new(AtomicBool::new(false));
+    let tick_times = Arc::new(Mutex::new(VecDeque::with_capacity(TICK_TIMES)));
     let thread = {
-        let stop = stop.clone();
+        let (stop, tick_times) = (stop.clone(), tick_times.clone());
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, meta, save, content, incoming, lines).run(&stop))?
+            .spawn(move || Server::new(config, meta, save, content, incoming, lines).run(&stop, &tick_times))?
     };
-    Ok(ServerHandle { connections, console, stop, thread: Some(thread) })
+    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times })
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -259,6 +272,8 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
+    /// Animals and monsters about.
+    creatures: creatures::Creatures,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -355,6 +370,7 @@ impl Server {
             executor: Executor::default(),
             items,
             farm,
+            creatures: creatures::Creatures::default(),
             processes,
             temperature,
             wear_rules,
@@ -379,7 +395,7 @@ impl Server {
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
     /// handled as soon as they arrive so actions feel immediate.
-    fn run(mut self, stop: &AtomicBool) {
+    fn run(mut self, stop: &AtomicBool, tick_times: &Mutex<VecDeque<Duration>>) {
         let tick_length = Duration::from_secs(1) / TICKS_PER_SECOND;
         let mut next_tick = Instant::now();
         while !stop.load(Ordering::Relaxed) {
@@ -392,6 +408,12 @@ impl Server {
             let now = Instant::now();
             if now >= next_tick {
                 self.tick();
+                if let Ok(mut times) = tick_times.lock() {
+                    if times.len() == TICK_TIMES {
+                        times.pop_front();
+                    }
+                    times.push_back(now.elapsed());
+                }
                 std::thread::sleep(self.config.lag.of_tick(self.tick));
                 next_tick += tick_length;
                 if now > next_tick + tick_length * 10 {
@@ -454,6 +476,7 @@ impl Server {
         self.complete_actions();
         self.run_processes();
         self.tick_items();
+        self.tick_creatures();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();

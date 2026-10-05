@@ -527,6 +527,80 @@ the other research notes). Ideas only: no code, numbers tables or art were copie
   crop's level and 99 rather than growth that speeds up (`crop::level_bonus`), and
   experience drops rising at the side of the screen (`crates/client/src/hud/skills.rs`).
 
+## Creatures and their behaviour
+
+The research behind these is the creature AI deep dive and the mob survey
+(`research/creature-ai.html` with its notes in `research/creature-ai/`, and
+`research/mob-mods.html`, in the worktrees folder). Ideas only: no code, data or art was
+copied from any of them. The design is in [docs/creature-ai.md](docs/creature-ai.md),
+[docs/creatures.md](docs/creatures.md) and [docs/drops.md](docs/drops.md).
+
+### Minecraft (creatures)
+
+- Author: Mojang Studios. Licence: proprietary. Ideas only.
+- What we took: the Brain's memories that expire and stand in for cooldowns, the random
+  stroll and look-around idles, panicking when hurt, animals following a player who holds
+  their food, the fox's crouch and pounce, the per-species overrides of one block-cost
+  table, forgetting an unseen target, revenge on whoever struck it.
+- Where: `crates/engine/src/creature/brain.rs` and `brain/modules.rs` (wander, look
+  around, tempted, flee, hunt's pounce), `crates/server/src/creatures.rs`.
+
+### Old School RuneScape (creatures and combat)
+
+- Author: Jagex. Licence: proprietary. Ideas only.
+- What we took: monsters aggressive only to players up to twice their combat level,
+  tolerance after ten minutes in one small area, home and leash ranges, the combat level
+  formula, accuracy rolled from attack against defence levels, four experience a point of
+  damage with a third of it in Hitpoints, and drop tables with always, common and rare
+  entries.
+- Where: `brain/modules.rs` (`Hunt`), `crates/server/src/creatures.rs`
+  (`combat_level`, `player_strikes`, tolerance), `crates/engine/src/creature.rs`
+  (`hit_chance`), `crates/engine/src/loot.rs`.
+
+### Rain World
+
+- Authors: Videocult (Joar Jakobsson, James Therrien). Licence: proprietary. Ideas only.
+- What we took: a personality of six traits rolled from the creature's id and pushed away
+  from the middle, modules that each claim urgency, nervous creatures that freeze and
+  watch, and a relationship table by kind (planned).
+- Where: `brain.rs` (`Personality`), `brain/modules.rs` (`Freeze`, `StandToLook`).
+
+### Zoo Tycoon 2, and Dave Mark's Infinite Axis Utility System (Guild Wars 2: Heart of Thorns)
+
+- Authors: Blue Fang Games; Dave Mark and Mike Lewis (Game AI Pro 3, ch. 13, on Heart of
+  Thorns). Licence: proprietary games and published talks. Ideas only.
+- What we took: dual utility, with rank bands chosen first and a weighted draw among the
+  near-best inside a band, a bonus for the running choice, and behaviours as a library of
+  decisions with considerations that species pick from.
+- Where: `brain.rs` (`think`, `Band`), `brain/modules.rs`.
+
+### Untamed Wilds
+
+- Author: Rezzolarian. Licence: GPL-3.0. Ideas only.
+- What we took: herds and sentinels, and one power number for the food web (planned).
+- Where: `brain/modules.rs` (`Herd`, `Sentinel`); the food web in docs/creature-ai.md.
+
+### Dwarf Fortress, RimWorld, Don't Starve and Ark: Survival Evolved
+
+- Authors: Bay 12 Games; Ludeon Studios; Klei Entertainment; Studio Wildcard. Licences:
+  proprietary. Ideas only.
+- What we took: species tokens and personality facets with species medians (Dwarf
+  Fortress); wildness, taming that decays and the manhunter chance on a failed tame
+  (RimWorld); treatment that shapes what a tamed animal becomes (Don't Starve's beefalo);
+  named temperaments such as skittish, curious, territorial and patient (Ark). The taming
+  plans in docs/breeding.md and the temperament axes in `creature.rs`.
+
+### Minecraft creature mods (mob survey)
+
+- Alex's Mobs and Alex's Caves (AlexModGuy, no licence shown), Animania (LGPL-3.0),
+  Farmer's Delight's add-ons, Ice and Fire (LGPL-3.0) and the others in the survey.
+  Ideas only.
+- What we took: drops carrying food traits so recipes match on kind, a diet record per
+  species, products on timers, butchering with a tool for better drops, pests that want
+  your food, and many small, specific behaviours as what makes creatures feel alive.
+- Where: `assets/content/base/creatures.ron` and `blocks_creatures.ron` (tags), `loot.rs`
+  (tool bonuses), docs/creatures.md and docs/food-and-cooking.md.
+
 ## The hiking video
 
 - "Turning Minecraft into a Hiking Simulator", by GOATED (27 August 2026):

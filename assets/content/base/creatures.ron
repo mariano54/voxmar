@@ -1,0 +1,372 @@
+// Creatures: animals, monsters and spirits (docs/creatures.md, docs/creature-data.md).
+//
+// - `level` is its combat level (RuneScape's): hunters leave alone players more than twice
+//   it. The first creatures stay at level 30 and under, most of the common ones at 1, so a
+//   new player can start easily (Mariano, 2026-10-06).
+// - `body` is a plan from the part library (engine/src/creature.rs, `Model`), sized in
+//   blocks (width, height, length), with its colours: coat, second colour, features.
+// - `habitat` picks where it appears: biomes by `tag:` or name with a weight, and the
+//   climate it is comfortable in (temperature °C, moisture, aether), as plants.ron does.
+//   Supernatural creatures need aether. `active` is when it is about.
+// - `temperament` is its temper, 0..1; each individual rolls its own personality about
+//   it (`spread`). A species that lists no `behaviours` gets them from its temperament
+//   and diet: the behaviour generator's first layer.
+// - `xp` is the Hunter experience for butchering a kill (monsters train combat only).
+// - `loot` is what it drops: always (chance 1) or by chance, more with the right tool
+//   (`tools`: the tags of what the killer holds) and, for rarer finds, with level.
+(
+    creatures: [
+        // --- Small and common: where everyone starts -------------------------------------
+        (
+            name: "rabbit", level: 1, health: 3,
+            body: (
+                size: (0.4, 0.45),
+                model: Quadruped(body: (0.3, 0.26, 0.42), head: (0.24, 0.22, 0.24), legs: 0.1, ears: (0.07, 0.2), tail: (0.1, 0.1, 0.08)),
+                colours: [(150, 118, 86), (226, 216, 196), (70, 52, 40)],
+            ),
+            movement: (style: Hopper, walk: 2.2, run: 7.0, turn: 420.0, jump: 7.0),
+            habitat: (
+                biomes: [("tag:grassland", 1.0), ("tag:heath", 0.8), ("tag:tundra", 0.6), ("tag:forest", 0.3), ("tag:scrubland", 0.5)],
+                comfort: (temperature: (-16.0, 30.0), moisture: (0.12, 2.0)),
+                active: Crepuscular,
+            ),
+            group: (size: (1, 3)),
+            temperament: (fear: 0.9, nervousness: 0.85, curiosity: 0.2, sociability: 0.35, energy: 0.75),
+            senses: (sight: 18.0, hearing: 24.0),
+            leash: 14.0,
+            diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["carrot", "wild_carrot"]),
+            xp: (kill: 4.0, skill: "hunter"),
+            loot: [
+                (item: "raw_rabbit"),
+                (item: "rabbit_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
+                (item: "rabbit_foot", chance: 0.03, rarity: Rare),
+            ],
+        ),
+        (
+            name: "junglefowl", title: "Junglefowl", level: 1, health: 3,
+            body: (
+                size: (0.4, 0.6),
+                model: Biped(body: (0.3, 0.3, 0.42), head: (0.2, 0.22, 0.2), legs: 0.2, wings: (0.06, 0.32), beak: (0.08, 0.06, 0.1), tail: (0.08, 0.22, 0.14)),
+                colours: [(176, 92, 42), (214, 170, 84), (236, 188, 52)],
+            ),
+            movement: (walk: 1.5, run: 4.8, turn: 480.0, jump: 6.5),
+            habitat: (
+                biomes: [("tag:grassland", 0.7), ("tag:jungle", 1.0), ("tag:scrubland", 0.6), ("tag:forest", 0.3)],
+                comfort: (temperature: (6.0, 36.0), moisture: (0.3, 2.4)),
+            ),
+            group: (size: (2, 5)),
+            temperament: (fear: 0.7, nervousness: 0.8, curiosity: 0.4, sociability: 0.75, energy: 0.8),
+            leash: 16.0,
+            diet: (eats: ["clover", "dandelion"], favourite: ["wheat_seeds", "wheat"]),
+            xp: (kill: 4.0, skill: "hunter"),
+            loot: [(item: "raw_chicken"), (item: "feather", count: (1, 2), chance: 0.9)],
+        ),
+        (
+            name: "mallard", level: 1, health: 3, rarity: Uncommon,
+            body: (
+                size: (0.4, 0.55),
+                model: Biped(body: (0.3, 0.26, 0.46), head: (0.18, 0.2, 0.2), legs: 0.14, wings: (0.06, 0.36), beak: (0.1, 0.05, 0.14), tail: (0.1, 0.08, 0.1)),
+                colours: [(120, 100, 80), (60, 120, 70), (230, 170, 40)],
+            ),
+            movement: (style: Walker, walk: 1.2, run: 4.0, turn: 360.0, jump: 6.0),
+            habitat: (
+                biomes: [("tag:wetland", 1.0), ("tag:river", 1.0), ("tag:grassland", 0.2)],
+                comfort: (temperature: (-4.0, 30.0), moisture: (0.6, 3.0)),
+                water: Amphibious,
+            ),
+            group: (size: (2, 4)),
+            temperament: (fear: 0.7, nervousness: 0.6, curiosity: 0.5, sociability: 0.7, energy: 0.5),
+            leash: 18.0,
+            diet: (eats: ["short_grass", "clover"], favourite: ["wheat_seeds", "wheat"]),
+            xp: (kill: 4.0, skill: "hunter"),
+            loot: [(item: "raw_duck"), (item: "feather", count: (1, 3), chance: 0.9)],
+        ),
+        (
+            name: "lumen_snail", supernatural: true, level: 1, health: 4, rarity: Uncommon,
+            body: (
+                size: (0.4, 0.45),
+                model: Blob(body: (0.3, 0.2, 0.6), head: (0.18, 0.18, 0.18), shell: (0.36, 0.34, 0.36)),
+                colours: [(110, 236, 206), (96, 70, 140)],
+                glows: true,
+            ),
+            movement: (style: Creeper, walk: 0.35, run: 0.7, turn: 90.0, jump: 0.0),
+            habitat: (
+                biomes: [("glowcap_forest", 1.0), ("tag:fungal", 1.0), ("tag:forest", 0.2), ("tag:wetland", 0.3)],
+                comfort: (aether: (0.6, 1.0), moisture: (0.6, 3.0)),
+                active: Night,
+            ),
+            group: (size: (1, 3)),
+            temperament: (fear: 0.2, curiosity: 0.3, energy: 0.2, nervousness: 0.2),
+            leash: 8.0,
+            diet: (eats: ["glowcap", "brown_mushroom", "red_mushroom"], favourite: ["glowcap"]),
+            xp: (kill: 6.0, skill: "hunter"),
+            loot: [(item: "lumen_slime", count: (1, 2))],
+        ),
+        // --- Grazers ------------------------------------------------------------------------
+        (
+            name: "mouflon", level: 2, health: 6,
+            body: (
+                size: (0.7, 0.95),
+                model: Quadruped(body: (0.56, 0.5, 0.82), head: (0.32, 0.32, 0.36), legs: 0.38, ears: (0.1, 0.08), horns: (0.1, 0.22), tail: (0.12, 0.15, 0.06)),
+                colours: [(150, 108, 72), (226, 214, 192), (120, 98, 78)],
+            ),
+            movement: (walk: 1.4, run: 5.5, turn: 260.0, jump: 8.0),
+            habitat: (
+                biomes: [("tag:grassland", 0.6), ("tag:heath", 1.0), ("tag:mountain", 1.0), ("tag:highland", 1.0)],
+                comfort: (temperature: (-12.0, 24.0), moisture: (0.2, 1.8)),
+            ),
+            group: (size: (3, 6)),
+            temperament: (fear: 0.6, nervousness: 0.55, curiosity: 0.3, sociability: 0.85, energy: 0.35),
+            leash: 24.0,
+            diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
+            xp: (kill: 8.0, skill: "hunter"),
+            loot: [
+                (item: "raw_mutton", count: (1, 2)),
+                (item: "wool", chance: 0.6, tools: [(tag: "shears", chance: 1.6, extra: 1)]),
+                (item: "bone", chance: 0.4),
+            ],
+        ),
+        (
+            name: "red_deer", level: 5, health: 8,
+            body: (
+                size: (0.8, 1.5),
+                model: Quadruped(body: (0.52, 0.58, 1.0), head: (0.3, 0.3, 0.42), legs: 0.75, ears: (0.08, 0.14), horns: (0.06, 0.46), tail: (0.1, 0.12, 0.05)),
+                colours: [(150, 90, 52), (222, 202, 170), (200, 178, 140)],
+            ),
+            movement: (walk: 1.5, run: 8.5, turn: 300.0, jump: 9.5),
+            habitat: (
+                biomes: [("tag:forest", 1.0), ("tag:grassland", 0.25)],
+                comfort: (temperature: (-15.0, 26.0), moisture: (0.4, 2.2)),
+                active: Crepuscular,
+            ),
+            group: (size: (2, 5)),
+            temperament: (fear: 0.85, nervousness: 0.8, curiosity: 0.25, sociability: 0.65, energy: 0.5),
+            senses: (sight: 24.0, hearing: 30.0),
+            leash: 40.0,
+            diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["apple"]),
+            xp: (kill: 15.0, skill: "hunter"),
+            loot: [
+                (item: "raw_venison", count: (1, 2)),
+                (item: "hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]),
+                (item: "antler", chance: 0.25, rarity: Uncommon),
+            ],
+        ),
+        (
+            name: "aurochs", title: "Aurochs", level: 6, health: 14, rarity: Uncommon,
+            attack: (damage: (2, 4), reach: 1.2, every: 1.6),
+            defence: 4,
+            body: (
+                size: (1.1, 1.45),
+                model: Quadruped(body: (0.9, 0.85, 1.45), head: (0.5, 0.46, 0.52), legs: 0.62, horns: (0.12, 0.36), snout: (0.3, 0.2, 0.12), tail: (0.08, 0.42, 0.08)),
+                colours: [(70, 50, 40), (110, 80, 60), (226, 220, 200)],
+            ),
+            movement: (style: Lumberer, walk: 1.2, run: 5.0, turn: 160.0, jump: 7.5),
+            habitat: (
+                biomes: [("tag:grassland", 1.0), ("tag:savanna", 0.6), ("tag:forest", 0.2)],
+                comfort: (temperature: (-4.0, 34.0), moisture: (0.2, 1.8)),
+            ),
+            group: (size: (2, 5)),
+            temperament: (aggression: 0.15, fear: 0.3, nervousness: 0.3, curiosity: 0.4, sociability: 0.85, energy: 0.3),
+            leash: 32.0,
+            diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["wheat"]),
+            xp: (kill: 20.0, skill: "hunter"),
+            loot: [(item: "raw_beef", count: (1, 3)), (item: "hide"), (item: "bone", count: (0, 2))],
+        ),
+        // --- Forest folk and hunters ---------------------------------------------------------
+        (
+            name: "wild_boar", level: 8, health: 10,
+            attack: (damage: (1, 3), reach: 1.0, every: 1.3),
+            defence: 5,
+            body: (
+                size: (0.8, 0.85),
+                model: Quadruped(body: (0.6, 0.55, 0.92), head: (0.4, 0.38, 0.42), legs: 0.3, ears: (0.1, 0.12), horns: (0.05, 0.1), snout: (0.24, 0.16, 0.14), tail: (0.05, 0.2, 0.05)),
+                colours: [(82, 62, 46), (112, 90, 70), (226, 214, 190)],
+            ),
+            movement: (style: Lumberer, walk: 1.3, run: 6.0, turn: 220.0, jump: 7.5),
+            habitat: (
+                biomes: [("tag:forest", 1.0), ("tag:scrubland", 0.4)],
+                comfort: (temperature: (-8.0, 30.0), moisture: (0.4, 2.4)),
+            ),
+            group: (size: (1, 4)),
+            temperament: (aggression: 0.25, fear: 0.3, nervousness: 0.35, curiosity: 0.45, sociability: 0.55, territory: 0.6, energy: 0.6),
+            leash: 28.0,
+            diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["apple", "carrot"]),
+            behaviours: [
+                (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Defend, weight: 1.2),
+                (do: Curious(distance: 7.0), weight: 0.6), (do: StandToLook), (do: Herd(spacing: 3.0)), (do: Tempted(radius: 10.0)),
+            ],
+            xp: (kill: 20.0, skill: "hunter"),
+            loot: [
+                (item: "raw_pork", count: (1, 3)),
+                (item: "hide", chance: 0.7, tools: [(tag: "knife", chance: 1.4)]),
+                (item: "lard", chance: 0.6),
+                (item: "fang", chance: 0.1, rarity: Uncommon),
+            ],
+        ),
+        (
+            name: "fox", level: 4, health: 6, rarity: Uncommon,
+            attack: (damage: (1, 2), reach: 0.8, every: 1.0),
+            body: (
+                size: (0.55, 0.6),
+                model: Quadruped(body: (0.3, 0.3, 0.62), head: (0.26, 0.24, 0.26), legs: 0.25, ears: (0.09, 0.14), snout: (0.12, 0.1, 0.14), tail: (0.16, 0.16, 0.42)),
+                colours: [(212, 112, 42), (240, 234, 224), (52, 38, 32)],
+            ),
+            movement: (style: Stalker, walk: 1.8, run: 7.5, turn: 420.0, jump: 8.5),
+            habitat: (
+                biomes: [("tag:forest", 1.0), ("tag:grassland", 0.5), ("tag:tundra", 0.4), ("tag:heath", 0.5)],
+                comfort: (temperature: (-25.0, 32.0)),
+                active: Crepuscular,
+            ),
+            group: (size: (1, 2)),
+            temperament: (fear: 0.55, nervousness: 0.5, curiosity: 0.75, sociability: 0.2, energy: 0.7),
+            senses: (sight: 20.0, hearing: 32.0),
+            leash: 36.0,
+            diet: (favourite: ["raw_chicken", "raw_rabbit"]),
+            xp: (kill: 12.0, skill: "hunter"),
+            loot: [(item: "fox_fur", chance: 0.9, tools: [(tag: "knife", chance: 1.1)])],
+        ),
+        (
+            name: "wolf", level: 12, health: 16, rarity: Uncommon,
+            attack: (damage: (2, 4), reach: 1.0, every: 1.1),
+            defence: 8,
+            body: (
+                size: (0.7, 0.9),
+                model: Quadruped(body: (0.44, 0.48, 0.9), head: (0.36, 0.34, 0.36), legs: 0.42, ears: (0.1, 0.14), snout: (0.18, 0.14, 0.2), tail: (0.12, 0.12, 0.42)),
+                colours: [(128, 128, 132), (204, 202, 198), (42, 42, 46)],
+            ),
+            movement: (style: Trotter, walk: 2.4, run: 7.0, turn: 320.0, jump: 8.5),
+            habitat: (
+                biomes: [("tag:forest", 0.6), ("tag:cold", 1.0), ("tag:tundra", 0.6), ("tag:mountain", 0.6)],
+                comfort: (temperature: (-30.0, 18.0)),
+                active: Night,
+            ),
+            group: (size: (2, 5)),
+            temperament: (aggression: 0.6, fear: 0.2, nervousness: 0.3, curiosity: 0.4, sociability: 0.9, territory: 0.7, energy: 0.65),
+            senses: (sight: 22.0, hearing: 32.0),
+            leash: 48.0,
+            diet: (favourite: ["raw_mutton", "raw_beef", "raw_venison"]),
+            xp: (kill: 30.0, skill: "hunter"),
+            loot: [
+                (item: "wolf_pelt", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]),
+                (item: "fang", chance: 0.3, rarity: Uncommon),
+                (item: "bone", count: (0, 1)),
+            ],
+        ),
+        (
+            name: "brown_bear", level: 28, health: 40, rarity: Rare,
+            attack: (damage: (2, 6), reach: 1.4, every: 1.4),
+            defence: 20,
+            body: (
+                size: (1.2, 1.4),
+                model: Quadruped(body: (1.0, 0.95, 1.5), head: (0.56, 0.5, 0.5), legs: 0.55, ears: (0.14, 0.12), snout: (0.28, 0.2, 0.2), tail: (0.12, 0.12, 0.1)),
+                colours: [(96, 66, 42), (122, 88, 58), (40, 30, 25)],
+            ),
+            movement: (style: Lumberer, walk: 1.3, run: 6.5, turn: 160.0, jump: 7.0),
+            habitat: (
+                biomes: [("tag:forest", 1.0), ("tag:mountain", 0.5), ("tag:tundra", 0.2)],
+                comfort: (temperature: (-18.0, 24.0), moisture: (0.4, 2.4)),
+            ),
+            group: (size: (1, 1)),
+            temperament: (aggression: 0.25, fear: 0.1, nervousness: 0.4, curiosity: 0.5, sociability: 0.1, territory: 0.8, energy: 0.3),
+            senses: (sight: 16.0, hearing: 24.0),
+            leash: 48.0,
+            diet: (eats: ["sweet_berry_bush", "brown_mushroom"], favourite: ["apple"]),
+            behaviours: [
+                (do: Wander(radius: 20.0)), (do: LookAround, weight: 1.2), (do: Graze), (do: Defend, weight: 1.5),
+                (do: StandToLook, weight: 1.5), (do: Curious(distance: 10.0), weight: 0.5), (do: Tempted(radius: 8.0)),
+            ],
+            xp: (kill: 80.0, skill: "hunter"),
+            loot: [
+                (item: "raw_bear", count: (2, 4)),
+                (item: "bear_pelt", chance: 0.9, tools: [(tag: "knife", chance: 1.1)]),
+                (item: "bear_fat", count: (1, 2)),
+                (item: "claw", chance: 0.4, rarity: Uncommon),
+            ],
+        ),
+        // --- Monsters: darkness only ---------------------------------------------------------
+        (
+            name: "cave_crawler", kind: Monster, level: 6, health: 8,
+            attack: (damage: (1, 3), reach: 1.0, every: 1.0),
+            defence: 4,
+            body: (
+                size: (0.9, 0.6),
+                model: Crawler(body: (0.6, 0.4, 0.7), head: (0.4, 0.34, 0.36), legs: 0.6, pairs: 4),
+                colours: [(52, 46, 46), (82, 42, 42)],
+            ),
+            movement: (style: Creeper, walk: 1.6, run: 5.2, turn: 400.0, jump: 7.0),
+            habitat: (active: Any),
+            temperament: (aggression: 0.8, fear: 0.1, nervousness: 0.4, energy: 0.6),
+            senses: (sight: 16.0, hearing: 20.0),
+            leash: 32.0,
+            loot: [(item: "silk", count: (0, 2)), (item: "venom_sac", chance: 0.15, rarity: Uncommon)],
+        ),
+        (
+            name: "shambler", kind: Monster, supernatural: true, level: 5, health: 10,
+            attack: (damage: (1, 3), reach: 1.0, every: 1.3),
+            defence: 3,
+            body: (
+                size: (0.6, 1.8),
+                model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
+                colours: [(92, 112, 82), (72, 62, 52), (40, 40, 40)],
+            ),
+            movement: (style: Creeper, walk: 1.0, run: 2.8, turn: 180.0, jump: 7.0),
+            habitat: (comfort: (aether: (0.2, 1.0)), active: Any),
+            temperament: (aggression: 0.9, fear: 0.0, nervousness: 0.1, energy: 0.3, sociability: 0.5),
+            senses: (sight: 18.0, hearing: 24.0),
+            leash: 40.0,
+            loot: [
+                (item: "rotten_flesh", count: (0, 2)),
+                (item: "bone", chance: 0.4),
+                (item: "tomato_seeds", chance: 0.02, rarity: Rare),
+                (item: "chili_pepper_seeds", chance: 0.01, rarity: Rare),
+            ],
+        ),
+        // --- Supernatural: where aether runs high ----------------------------------------------
+        (
+            name: "moonhare", supernatural: true, level: 10, health: 6, rarity: Rare,
+            body: (
+                size: (0.45, 0.5),
+                model: Quadruped(body: (0.32, 0.28, 0.46), head: (0.26, 0.24, 0.26), legs: 0.12, ears: (0.07, 0.28), tail: (0.12, 0.12, 0.1)),
+                colours: [(196, 216, 250), (236, 242, 255), (120, 150, 230)],
+                glows: true,
+            ),
+            movement: (style: Hopper, walk: 2.4, run: 9.0, turn: 480.0, jump: 7.5),
+            habitat: (
+                biomes: [("moonlit_meadow", 1.0), ("tag:fantastical", 0.6), ("tag:grassland", 0.25)],
+                comfort: (aether: (0.7, 1.0), temperature: (-10.0, 26.0)),
+                active: Night,
+            ),
+            group: (size: (1, 2)),
+            temperament: (fear: 0.85, nervousness: 0.7, curiosity: 0.5, sociability: 0.3, energy: 0.9),
+            senses: (sight: 24.0, hearing: 30.0),
+            leash: 18.0,
+            diet: (eats: ["clover", "dandelion", "moonbloom"], favourite: ["moonbloom"]),
+            behaviours: [
+                (do: Wander(radius: 10.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 12.0)), (do: Freeze),
+                (do: StandToLook), (do: Blink), (do: Curious(distance: 6.0), weight: 0.6), (do: Tempted(radius: 10.0)),
+            ],
+            xp: (kill: 40.0, skill: "hunter"),
+            loot: [
+                (item: "moonhare_pelt", chance: 0.8),
+                (item: "moon_dust", chance: 0.1, rarity: VeryRare, when: [Night]),
+            ],
+        ),
+        (
+            name: "wisp", kind: Spirit, supernatural: true, level: 3, health: 3, rarity: Rare,
+            body: (
+                size: (0.4, 0.4),
+                model: Blob(body: (0.3, 0.3, 0.3)),
+                colours: [(232, 214, 255), (200, 180, 255)],
+                glows: true,
+            ),
+            movement: (style: Drifter, walk: 1.2, run: 4.0, turn: 360.0, jump: 0.0),
+            habitat: (comfort: (aether: (0.6, 1.0)), water: Air, active: Night),
+            group: (size: (1, 3)),
+            temperament: (fear: 0.5, nervousness: 0.5, curiosity: 0.9, sociability: 0.6, energy: 0.6),
+            senses: (sight: 24.0, hearing: 12.0),
+            leash: 20.0,
+            behaviours: [(do: Wander(radius: 10.0)), (do: Curious(distance: 4.0), weight: 1.5), (do: Flee(radius: 3.0)), (do: Blink), (do: Herd(spacing: 2.0))],
+            loot: [(item: "aether_mote", chance: 0.6, rarity: Rare)],
+        ),
+    ],
+)

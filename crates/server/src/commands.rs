@@ -16,6 +16,11 @@ use voxmar_protocol::{ChatKind, MAX_LINE, PlayerId, ServerMessage, TICKS_PER_DAY
 use crate::save::GameMode;
 use crate::{Server, load_column, wear};
 
+/// What players call a species: its name in their language, or its own title.
+fn creature_name(def: &voxmar_engine::creature::CreatureDef) -> Words {
+    Words::Own(voxmar_engine::lang::def_key("creature", &def.name), def.title.clone())
+}
+
 /// How deeply aliases may run other aliases.
 const MAX_DEPTH: usize = 8;
 /// The fastest the time of day may run.
@@ -168,6 +173,8 @@ impl Server {
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
             Run::Locate => self.locate(id, args),
+            Run::Summon => self.summon(id, args),
+            Run::Creatures => Ok(self.creatures_about(id)),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));
@@ -448,6 +455,77 @@ impl Server {
     }
 
     /// The biome the player stands in, and what makes it.
+    /// `/summon <creature> [count]`: creatures on the ground a few blocks in front of the
+    /// player.
+    fn summon(&mut self, id: Source, args: &[String]) -> Reply {
+        let (name, count, at) = match args {
+            [name] => (name, "1", None),
+            [name, count] => (name, count.as_str(), None),
+            [name, count, x, y, z] => (name, count.as_str(), Some([x, y, z])),
+            _ => return Err(Words::key("command.summon.what")),
+        };
+        let count = count.parse::<u32>().ok().filter(|c| (1..=16).contains(c)).ok_or_else(|| Words::key("command.summon.count"))?;
+        let species = self.content.creatures.find(name).ok_or_else(|| Words::key("command.summon.unknown").with("name", name.as_str()))?;
+        let at = match at {
+            Some(words) => self.block_position(id, words)?.as_vec3() + Vec3::new(0.5, 0.0, 0.5),
+            None => {
+                let (feet, look) = match id {
+                    Source::Player(p) => {
+                        let player = &self.players[&p];
+                        (player.position, player.look().with_y(0.0).normalize_or(Vec3::NEG_Z))
+                    }
+                    Source::Console => (self.spawn, Vec3::NEG_Z),
+                };
+                feet + look * 4.0
+            }
+        };
+        let mut placed = 0;
+        for i in 0..count {
+            let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
+            let cell = (at + offset).floor().as_ivec3();
+            let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
+            if self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), self.tick ^ i as u64).is_some() {
+                placed += 1;
+            }
+        }
+        let creature = creature_name(&self.content.creatures.get(species).def);
+        match placed {
+            0 => Err(Words::key("command.summon.no_room").with("creature", creature)),
+            n => Ok(Words::key("command.summon.done").with("creature", creature).with("count", Words::text(n))),
+        }
+    }
+
+    /// `/creatures`: the creatures within 64 blocks.
+    fn creatures_about(&self, id: Source) -> Words {
+        let at = self.position_of(id);
+        let mut counts: std::collections::BTreeMap<String, (usize, f32, &'static str, Words)> = Default::default();
+        for creature in self.creatures.live.values() {
+            let distance = creature.body.position.distance(at);
+            if distance > 64.0 {
+                continue;
+            }
+            let species = self.content.creatures.get(creature.species);
+            let doing = creature.mind.doing.map_or("resting", |i| species.modules[i].0.name());
+            let entry = counts.entry(species.def.name.clone()).or_insert((0, f32::MAX, doing, creature_name(&species.def)));
+            entry.0 += 1;
+            if distance < entry.1 {
+                entry.1 = distance;
+                entry.2 = doing;
+            }
+        }
+        if counts.is_empty() {
+            return Words::key("command.creatures.none");
+        }
+        let lines = counts.into_values().map(|(n, d, doing, creature)| {
+            Words::key("command.creatures.line")
+                .with("count", Words::text(n))
+                .with("creature", creature)
+                .with("distance", Words::text(format!("{d:.0}")))
+                .with("doing", Words::Own(format!("creature.doing.{doing}"), doing.replace('_', " ")))
+        });
+        Words::Lines(std::iter::once(Words::key("command.creatures.title")).chain(lines).collect())
+    }
+
     fn biome(&self, id: Source) -> Words {
         let at = self.position_of(id).floor().as_ivec3();
         let site = self.overworld.site(at.x, at.z);

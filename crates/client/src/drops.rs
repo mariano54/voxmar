@@ -254,7 +254,7 @@ fn scatter(copy: usize) -> Vec3 {
 
 /// Block light at `cell`, 0..=15: the brightest light source near it, less a level per
 /// block of distance, as light spreads through open space.
-fn block_light(world: &ClientWorld, cell: IVec3) -> u8 {
+pub(crate) fn block_light(world: &ClientWorld, cell: IVec3) -> u8 {
     // Only the diamond within reach, a fifth of the cube around it.
     let r = BLOCK_LIGHT_REACH;
     let mut best = 0u8;

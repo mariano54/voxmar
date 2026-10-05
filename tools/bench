@@ -7,6 +7,9 @@
 #       runs' average FPS, 1% low,
 #       p99 and worst frame per scene, with the spread between runs, and adds the results
 #       to ~/Projects/voxmar-wt/bench-history.jsonl by commit and power mode.
+#   tools/bench cpu [--repeats N]
+#       The CPU half, needing no GPU (the Linux box too): server tick times, columns
+#       streamed and lighting and meshing cost while flying at 4x speed at 32 chunks.
 #   tools/bench history [SCENE]
 #       The recorded results, oldest first, to see the effect of changes over time.
 #   tools/bench [--rounds N] [--only NAME[,NAME]] [--quiet] [BASE]
@@ -99,6 +102,34 @@ clone_dir() { if [[ $(uname -s) == Darwin ]]; then cp -cR "$1" "$2"; else cp -R 
 rounds=2 only= base=main mode=compare repeats=3 use_quiet=0
 case ${1:-} in
   fps) mode=fps; shift ;;
+  cpu)
+    # The CPU half, no GPU needed (any machine): the server's ticks, columns streamed and
+    # the client's lighting and meshing while flying at 4x speed at 32 chunks
+    # (crates/server/tests/cpu_bench.rs), N runs (default 3), medians recorded.
+    shift
+    repeats=3
+    [[ ${1:-} == --repeats ]] && repeats=$2
+    memcap=~/Projects/voxmar-wt/memcap
+    [[ -x $memcap ]] || memcap=$PWD/tools/memcap
+    mkdir -p ~/Projects/voxmar-wt target/bench
+    commit=$(git rev-parse --short HEAD)$([[ -n $(git status --porcelain --untracked-files=no) ]] && echo '+changes')
+    lines=()
+    for ((r = 1; r <= repeats; r++)); do
+      line=$($memcap 16 -- cargo test --release -p voxmar_server --test cpu_bench -- --ignored --nocapture 2>&1 | tee target/bench/cpu.txt | grep '^cpu:')
+      [[ -n $line ]] || { echo "bench: FAILED: no cpu line; see target/bench/cpu.txt" >&2; exit 1; }
+      echo "$line"
+      lines+=("$(sed -E 's/^cpu: [0-9]+ ticks, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms; ([0-9]+) columns\/s streamed; ([0-9.]+) ms .*/\1 \2 \3 \4 \5/' <<<"$line")")
+    done
+    printf '%s\n' "${lines[@]}" | python3 -c '
+import json, statistics, sys, time
+rows = [list(map(float, l.split())) for l in sys.stdin if l.strip()]
+med = [statistics.median(c) for c in zip(*rows)]
+names = ["tick_median", "tick_p99", "tick_max", "columns_s", "mesh_ms"]
+entry = dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), commit=sys.argv[1], platform=sys.argv[2], power=sys.argv[3], ac=sys.argv[4], load=sys.argv[5], scene="cpu", repeats=len(rows), **dict(zip(names, med)))
+print("cpu (medians): tick median %.2f ms, p99 %.2f ms, max %.2f ms; %.0f columns/s; %.2f ms a column" % tuple(med))
+open(sys.argv[6], "a").write(json.dumps(entry) + "\n")
+' "$commit" "$(platform)" "$(power_mode)" "$(on_ac_power)" "$(load_avg)" "$history"
+    exit 0 ;;
   history)
     # One line per run and scene: when, commit, power mode, and the numbers.
     [[ -e $history ]] || { echo "bench: no results recorded yet" >&2; exit 1; }
@@ -109,6 +140,9 @@ scene = sys.argv[2]
 print(f"{'when (UTC)':17} {'commit':9} {'machine':14} {'power':6} {'scene':11} {'fps':>6} {'1% low':>7} {'p99 ms':>7} {'worst':>7} {'spread':>7}")
 for r in rows:
     if scene and r["scene"] != scene:
+        continue
+    if r["scene"] == "cpu":
+        print(f"{r['t'][:16]:17} {r['commit'][:9]:9} {r.get('platform', '?'):14} {r['power']:6} cpu         ticks {r['tick_median']:.2f}/{r['tick_p99']:.2f}/{r['tick_max']:.1f} ms, {r['columns_s']:.0f} columns/s, mesh {r['mesh_ms']:.2f} ms")
         continue
     print(f"{r['t'][:16]:17} {r['commit'][:9]:9} {r.get('platform', '?'):14} {r['power']:6} {r['scene']:11} {r['fps']:6.0f} {r['low']:7.0f} {r['p99']:7.2f} {r['worst']:7.1f} {r['spread']*100:6.1f}%")
 PY
@@ -253,7 +287,11 @@ run() {
     # "fps 1%-low p99 worst" from the run's frame statistics, whatever kind of scene.
     sed -nE 's/.*(flight|dig|steady): [0-9]+ frames, median [0-9.]+ ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms, .*\(([0-9]+) fps\), 1% low ([0-9]+) fps.*/\4 \5 \2 \3/p' <<<"$log"
   elif [[ $view == flight* ]]; then
-    sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log"
+    # "median p99 max meshed": meshed is the columns loaded less those still waiting to be
+    # meshed, so a change that meshes less, and so draws less, shows.
+    local meshed
+    meshed=$(sed -nE 's/.*capture: .* ([0-9]+) columns, .* ([0-9]+) pending, .*/\1 \2/p' <<<"$log" | awk '{ print $1 - $2 }')
+    sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log" | sed "s/$/ $meshed/"
   else
     sed -nE 's/.*capture: [0-9]+ fps \(([0-9.]+) ms\).*/\1/p' <<<"$log"
   fi
@@ -305,11 +343,11 @@ for view in "${views[@]}"; do
     b=$(run "$base_dir" "$view") || exit 1
     c=$(run . "$view") || exit 1
     if [[ $view == flight* ]]; then
-      read -r bm bp bx <<<"$b"
-      read -r cm cp cx <<<"$c"
+      read -r bm bp bx bn <<<"$b"
+      read -r cm cp cx cn <<<"$c"
       key=$bp
       verdict=$(flight_verdict "$bp" "$cp" "$cx" "$on_ac")
-      line="base median $bm p99 $bp max $bx ms; this median $cm p99 $cp max $cx ms; p99"
+      line="base median $bm p99 $bp max $bx ms, $bn columns meshed; this median $cm p99 $cp max $cx ms, $cn meshed; p99"
       values=("$bm" "$bp" "$bx" "$cm" "$cp" "$cx")
     else
       key=$b

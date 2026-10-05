@@ -103,6 +103,128 @@
             comfort: (temperature: (18.0, 45.0), moisture: (0.0, 1.0)),
             harvest: [(item: "emberfruit", count: (1, 2))],
         ),
+        // The fruit of the trees grown for gathering, each in its climate (trees.ron).
+        (
+            name: "pear", sown: false, fruit: true, regrow: 0, level: 4, rarity: Uncommon, xp: (plant: 0.0, harvest: 8.0), minutes: 22.0,
+            stages: ["pear_leaves_0", "pear_leaves_1", "pear_leaves_2", "pear_leaves"],
+            comfort: (temperature: (0.0, 20.0), moisture: (0.4, 1.8)),
+            harvest: [(item: "pear", count: (1, 2))],
+        ),
+        (
+            name: "plum", sown: false, fruit: true, regrow: 0, level: 8, rarity: Uncommon, xp: (plant: 0.0, harvest: 10.0), minutes: 22.0,
+            stages: ["plum_leaves_0", "plum_leaves_1", "plum_leaves_2", "plum_leaves"],
+            comfort: (temperature: (2.0, 22.0), moisture: (0.4, 1.8)),
+            harvest: [(item: "plum", count: (1, 3))],
+        ),
+        (
+            name: "hazelnut", sown: false, fruit: true, regrow: 0, level: 2, rarity: Common, xp: (plant: 0.0, harvest: 5.0), minutes: 18.0,
+            stages: ["hazelnut_leaves_0", "hazelnut_leaves_1", "hazelnut_leaves_2", "hazelnut_leaves"],
+            comfort: (temperature: (-2.0, 20.0), moisture: (0.4, 1.8)),
+            harvest: [(item: "hazelnut", count: (2, 4))],
+        ),
+        (
+            name: "walnut", sown: false, fruit: true, regrow: 0, level: 14, rarity: Uncommon, xp: (plant: 0.0, harvest: 18.0), minutes: 30.0,
+            stages: ["walnut_leaves_0", "walnut_leaves_1", "walnut_leaves_2", "walnut_leaves"],
+            comfort: (temperature: (2.0, 22.0), moisture: (0.4, 1.6)),
+            harvest: [(item: "walnut", count: (1, 3))],
+        ),
+        (
+            name: "chestnut", sown: false, fruit: true, regrow: 0, level: 18, rarity: Uncommon, xp: (plant: 0.0, harvest: 20.0), minutes: 30.0,
+            stages: ["chestnut_leaves_0", "chestnut_leaves_1", "chestnut_leaves_2", "chestnut_leaves"],
+            comfort: (temperature: (4.0, 22.0), moisture: (0.5, 1.8)),
+            harvest: [(item: "chestnut", count: (2, 3))],
+        ),
+        (
+            name: "wild_cherries", sown: false, fruit: true, regrow: 0, level: 6, rarity: Uncommon, xp: (plant: 0.0, harvest: 9.0), minutes: 22.0,
+            stages: ["wild_cherries_leaves_0", "wild_cherries_leaves_1", "wild_cherries_leaves_2", "wild_cherries_leaves"],
+            comfort: (temperature: (-2.0, 16.0), moisture: (0.5, 1.8)),
+            harvest: [(item: "wild_cherries", count: (2, 4))],
+        ),
+        (
+            name: "rowan_berries", sown: false, fruit: true, regrow: 0, level: 3, rarity: Common, xp: (plant: 0.0, harvest: 5.0), minutes: 20.0,
+            stages: ["rowan_berries_leaves_0", "rowan_berries_leaves_1", "rowan_berries_leaves_2", "rowan_berries_leaves"],
+            comfort: (temperature: (-12.0, 14.0), moisture: (0.4, 1.8)),
+            harvest: [(item: "rowan_berries", count: (3, 5))],
+        ),
+        (
+            name: "olives", sown: false, fruit: true, regrow: 0, level: 24, rarity: Uncommon, xp: (plant: 0.0, harvest: 24.0), minutes: 32.0,
+            stages: ["olives_leaves_0", "olives_leaves_1", "olives_leaves_2", "olives_leaves"],
+            comfort: (temperature: (12.0, 30.0), moisture: (0.1, 1.0)),
+            harvest: [(item: "olives", count: (3, 5))],
+        ),
+        (
+            name: "fig", sown: false, fruit: true, regrow: 0, level: 22, rarity: Rare, xp: (plant: 0.0, harvest: 26.0), minutes: 30.0,
+            stages: ["fig_leaves_0", "fig_leaves_1", "fig_leaves_2", "fig_leaves"],
+            comfort: (temperature: (14.0, 32.0), moisture: (0.2, 1.4)),
+            harvest: [(item: "fig", count: (1, 2))],
+        ),
+        (
+            name: "lemon", sown: false, fruit: true, regrow: 0, level: 28, rarity: Rare, xp: (plant: 0.0, harvest: 28.0), minutes: 32.0,
+            stages: ["lemon_leaves_0", "lemon_leaves_1", "lemon_leaves_2", "lemon_leaves"],
+            comfort: (temperature: (14.0, 32.0), moisture: (0.3, 1.8)),
+            harvest: [(item: "lemon", count: (1, 2))],
+        ),
+        (
+            name: "almond", sown: false, fruit: true, regrow: 0, level: 30, rarity: Rare, xp: (plant: 0.0, harvest: 30.0), minutes: 34.0,
+            stages: ["almond_leaves_0", "almond_leaves_1", "almond_leaves_2", "almond_leaves"],
+            comfort: (temperature: (12.0, 30.0), moisture: (0.1, 1.0)),
+            harvest: [(item: "almond", count: (2, 3))],
+        ),
+        (
+            name: "banana", sown: false, fruit: true, regrow: 0, level: 32, rarity: Uncommon, xp: (plant: 0.0, harvest: 30.0), minutes: 34.0,
+            stages: ["banana_leaves_0", "banana_leaves_1", "banana_leaves_2", "banana_leaves"],
+            comfort: (temperature: (20.0, 40.0), moisture: (0.8, 2.5)),
+            harvest: [(item: "banana", count: (2, 4))],
+        ),
+        (
+            name: "mango", sown: false, fruit: true, regrow: 0, level: 40, rarity: Rare, xp: (plant: 0.0, harvest: 36.0), minutes: 36.0,
+            stages: ["mango_leaves_0", "mango_leaves_1", "mango_leaves_2", "mango_leaves"],
+            comfort: (temperature: (20.0, 40.0), moisture: (0.6, 2.5)),
+            harvest: [(item: "mango", count: (1, 2))],
+        ),
+        (
+            name: "avocado", sown: false, fruit: true, regrow: 0, level: 45, rarity: Rare, xp: (plant: 0.0, harvest: 40.0), minutes: 38.0,
+            stages: ["avocado_leaves_0", "avocado_leaves_1", "avocado_leaves_2", "avocado_leaves"],
+            comfort: (temperature: (18.0, 36.0), moisture: (0.6, 2.2)),
+            harvest: [(item: "avocado", count: (1, 2))],
+        ),
+        (
+            name: "cacao", sown: false, fruit: true, regrow: 0, level: 55, rarity: VeryRare, xp: (plant: 0.0, harvest: 60.0), minutes: 44.0,
+            stages: ["cacao_leaves_0", "cacao_leaves_1", "cacao_leaves_2", "cacao_leaves"],
+            comfort: (temperature: (21.0, 40.0), moisture: (1.0, 2.5)),
+            harvest: [(item: "cacao", count: (1, 2))],
+        ),
+        (
+            name: "baobab_fruit", sown: false, fruit: true, regrow: 0, level: 35, rarity: Rare, xp: (plant: 0.0, harvest: 30.0), minutes: 40.0,
+            stages: ["baobab_fruit_leaves_0", "baobab_fruit_leaves_1", "baobab_fruit_leaves_2", "baobab_fruit_leaves"],
+            comfort: (temperature: (20.0, 42.0), moisture: (0.05, 1.0)),
+            harvest: [(item: "baobab_fruit")],
+        ),
+        (
+            name: "marula", sown: false, fruit: true, regrow: 0, level: 20, rarity: Uncommon, xp: (plant: 0.0, harvest: 18.0), minutes: 30.0,
+            stages: ["marula_leaves_0", "marula_leaves_1", "marula_leaves_2", "marula_leaves"],
+            comfort: (temperature: (20.0, 42.0), moisture: (0.05, 1.0)),
+            harvest: [(item: "marula", count: (2, 3))],
+        ),
+        // Dates of the desert palm, tamarind of the savanna, pine nuts of the stone pine.
+        (
+            name: "dates", sown: false, fruit: true, regrow: 0, level: 26, rarity: Uncommon, xp: (plant: 0.0, harvest: 22.0), minutes: 34.0,
+            stages: ["dates_leaves_0", "dates_leaves_1", "dates_leaves_2", "dates_leaves"],
+            comfort: (temperature: (20.0, 45.0), moisture: (0.0, 0.6)),
+            harvest: [(item: "dates", count: (3, 5))],
+        ),
+        (
+            name: "tamarind", sown: false, fruit: true, regrow: 0, level: 16, rarity: Uncommon, xp: (plant: 0.0, harvest: 14.0), minutes: 30.0,
+            stages: ["tamarind_leaves_0", "tamarind_leaves_1", "tamarind_leaves_2", "tamarind_leaves"],
+            comfort: (temperature: (20.0, 42.0), moisture: (0.05, 1.2)),
+            harvest: [(item: "tamarind", count: (2, 3))],
+        ),
+        (
+            name: "pine_nuts", sown: false, fruit: true, regrow: 0, level: 34, rarity: Rare, xp: (plant: 0.0, harvest: 26.0), minutes: 40.0,
+            stages: ["pine_nuts_leaves_0", "pine_nuts_leaves_1", "pine_nuts_leaves_2", "pine_nuts_leaves"],
+            comfort: (temperature: (-6.0, 18.0), moisture: (0.1, 1.2)),
+            harvest: [(item: "pine_nuts", count: (2, 4))],
+        ),
         // Opens and grows by night: it needs no light at all.
         (
             name: "moonbloom", level: 75, rarity: VeryRare, xp: (plant: 360.0, harvest: 1450.0, forage: 50.0), minutes: 60.0, light: 0,

@@ -94,6 +94,10 @@ impl ActionContext for Context<'_> {
     fn occupied(&self, cell: IVec3) -> bool {
         self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
+
+    fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
+        self.server.creatures.aabb(id)
+    }
 }
 
 impl Server {
@@ -199,6 +203,7 @@ impl Server {
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
                 (Effect::Pick, ActionTarget::Block { block, .. }) => self.pick(agent, block),
+                (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {

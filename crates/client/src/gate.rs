@@ -141,6 +141,11 @@ enum Step {
     Sky,
     /// A small tree with an apple among its leaves, drawn with its leaf cards and fruit.
     Tree,
+    /// Creatures summoned on a pad beside the test ground reach the client and draw.
+    Creatures,
+    /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
+    /// over picks up.
+    Strike,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
@@ -178,6 +183,8 @@ struct Gate {
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
     gorge: IVec3,
+    /// Where the struck creature was last seen, for walking over its loot.
+    quarry: Vec3,
     failures: Vec<String>,
     passes: usize,
     /// Real frame times so far (milliseconds), and the longest in each step.
@@ -206,6 +213,7 @@ impl Gate {
             count_before: 0,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
+            quarry: Vec3::ZERO,
             failures: Vec::new(),
             passes: 0,
             frame_ms: Vec::new(),
@@ -519,9 +527,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let Some(after) = gate.shot(world, "dig-after") else { return };
             let cells: Vec<IVec3> = gate.dug.iter().map(|&(pos, _)| pos).collect();
             verify_edit(world, gate, "dig", &cells, |b| b.is_air(), "dig-before", &after);
-            // Known: the first break compiles the pipelines for cracks, particles and drops
-            // on the spot (graphics is moving that to world load); back to failing with it.
-            smooth(gate, "dig", Step::Dig, Some("the first break compiles its pipelines; graphics is fixing it"));
+            smooth(gate, "dig", Step::Dig, None);
             gate.count_before = dropped_count(world, gate);
             look(world, 0.0, 0.0);
             key(world, KeyCode::KeyW, true);
@@ -552,6 +558,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
+        Step::Creatures => creatures(world, gate, now, in_phase),
+        Step::Strike => strike(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -636,6 +644,10 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 
 /// Esc opens the menu and closes it again; E the inventory, C from there the character
 /// screen in its place, and C closes that.
+/// How long a screen is given to open, close or be shot: on a machine loaded far past its
+/// cores a shot alone can take seconds.
+const SCREEN_WAIT: f32 = 10.0;
+
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
     let (menu, inventory, character, locked) = (ui.menu_open, ui.inventory_open, ui.character_open, ui.cursor_locked);
@@ -667,7 +679,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("menu", shown.and_then(|s| if locked { Err("the mouse stayed grabbed".into()) } else { Ok(s) }));
                 set_language(world, "ja");
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if !menu && in_phase > SCREEN_WAIT {
                 gate.check("menu", Err("Esc did not open the menu".into()));
                 gate.next(Step::Weather, now);
             }
@@ -707,7 +719,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("menu: close", Ok("Esc closed it and gave the game the mouse back".into()));
                 key(world, KeyCode::KeyE, true);
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("menu: close", Err(format!("after Esc the menu is {} and the mouse {}", if menu { "open" } else { "closed" }, if locked { "grabbed" } else { "free" })));
                 gate.next(Step::Weather, now);
             }
@@ -720,7 +732,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("inventory", shown);
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("inventory", Err("E did not open the inventory".into()));
                 gate.next(Step::Weather, now);
             }
@@ -738,7 +750,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("character", shown);
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("character", Err(format!("after C the inventory is {} and the character screen {}", if inventory { "open" } else { "closed" }, if character { "open" } else { "closed" })));
                 gate.next(Step::Weather, now);
             }
@@ -750,7 +762,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 // A log to craft with.
                 world.resource::<Net>().command("give oak_log 1");
                 gate.advance(now);
-            } else if in_phase > 3.0 {
+            } else if in_phase > SCREEN_WAIT {
                 gate.check("character: close", Err("C did not close the character screen".into()));
                 gate.next(Step::Weather, now);
             }
@@ -809,6 +821,10 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [("storm", "storm", |w| w.precipitation > 0.3 && w.snow < 0.5), ("snow", "snow", |w| w.precipitation > 0.3 && w.snow > 0.5)];
     match gate.phase {
         0 => {
+            // A screen left open by a failed step before would cover every view after it,
+            // failing all of them: close them all (as Esc would, one by one).
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
             look(world, 0.0, 5.0);
             if gate.shot(world, "clear").is_some() {
                 world.resource::<Net>().command(&format!("weather {} 120", kinds[0].0));
@@ -889,10 +905,153 @@ fn tree(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the tree barely shows: the view changed by {change:.1} levels")),
             };
             gate.check("tree", result);
-            gate.next(Step::Gorge, now);
+            gate.next(Step::Creatures, now);
         }
         _ => {}
     }
+}
+
+/// The species the gate summons and strikes: slow and fearless, so it stays to be struck.
+const CREATURE: &str = "base:lumen_snail";
+/// What it always drops.
+const CREATURE_DROP: &str = "base:lumen_slime";
+
+/// A lumen snail and a few grazers are summoned on open test ground: they must reach the
+/// client and draw, and the snail, struck with left clicks as a player would, must die
+/// and drop its slime, which walking over it picks up.
+fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let species = world.resource::<Launch>().content.creatures.find(CREATURE);
+    let Some(species) = species else {
+        gate.check("creatures", Err(format!("no `{CREATURE}` in the content")));
+        gate.next(Step::Gorge, now);
+        return;
+    };
+    let snail = |world: &World| {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        creatures.views().find(|v| v.species == species).copied()
+    };
+    match gate.phase {
+        0 => {
+            // A clear pad of its own beside the test ground: stone underfoot, air above, so
+            // nothing the earlier steps built stands between the player and the creatures.
+            let pad = gate.feet + IVec3::new(0, 0, 14);
+            let (x, y, z) = (pad.x, pad.y, pad.z);
+            let net = world.resource::<Net>();
+            // Walled two high, so nothing wanders off the edge.
+            net.command(&format!("fill {} {} {} {} {} {} stone", x - 6, y - 1, z - 6, x + 6, y + 1, z + 6));
+            net.command(&format!("fill {} {y} {} {} {} {} air", x - 5, z - 5, x + 5, y + 3, z + 5));
+            net.command(&format!("tp {} {y} {}", x as f32 + 0.5, z as f32 + 4.5));
+            net.command("time set noon");
+            gate.advance(now);
+        }
+        1 if in_phase > 1.0 => {
+            // Facing the pad's middle, which is where /summon puts them (four blocks ahead).
+            look(world, 0.0, -25.0);
+            gate.count_before = item_count(world, CREATURE_DROP);
+            let net = world.resource::<Net>();
+            let pad = gate.feet + IVec3::new(0, 0, 14);
+            net.command(&format!("summon {CREATURE} 1 {} {} {}", pad.x, pad.y, pad.z + 1));
+            net.command(&format!("summon mouflon 2 {} {} {}", pad.x - 3, pad.y, pad.z - 4));
+            net.command(&format!("summon rabbit 1 {} {} {}", pad.x + 3, pad.y, pad.z - 4));
+            gate.advance(now);
+        }
+        2 => {
+            let Some(view) = snail(world) else {
+                if in_phase > 10.0 {
+                    gate.check("creatures", Err("a summoned creature never reached the client".into()));
+                    gate.next(Step::Gorge, now);
+                }
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.2);
+            if in_phase < 1.0 {
+                return;
+            }
+            if gate.shot(world, "creatures").is_some() {
+                let shown = world.resource::<crate::creatures::Creatures>().alive();
+                gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                gate.next(Step::Strike, now);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The lumen snail summoned in [`creatures`], struck until it dies; its slime must drop
+/// and be picked up.
+fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(CREATURE) else { return };
+    let snail = |world: &World| {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        creatures.views().find(|v| v.species == species).copied()
+    };
+    match gate.phase {
+        0 => {
+            // Strike it as a player would, a click every few frames, until it dies.
+            match snail(world) {
+                Some(view) if in_phase < 25.0 => {
+                    gate.quarry = view.position;
+                    // Close in to striking reach, then strike.
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
+                    key(world, KeyCode::KeyW, far);
+                    aim_at(world, view.position + Vec3::Y * 0.2);
+                    // A click every third of a second, as a player swings.
+                    let swing = (in_phase * 3.0).fract() < 0.15;
+                    mouse(world, MouseButton::Left, swing);
+                }
+                Some(_) => {
+                    mouse(world, MouseButton::Left, false);
+                    key(world, KeyCode::KeyW, false);
+                    let aimed = world.resource::<crate::interact::Target>().creature.is_some();
+                    let distance = snail(world).map_or(0.0, |v| v.position.distance(world.resource::<LocalPlayer>().eye()));
+                    gate.check("creature struck", Err(format!("25 seconds of blows did not kill it (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
+                    gate.next(Step::Gorge, now);
+                }
+                None => {
+                    mouse(world, MouseButton::Left, false);
+                    let deaths = world.resource::<crate::creatures::Creatures>().deaths;
+                    gate.check("creature struck", if deaths > 0 { Ok(format!("killed in {in_phase:.1}s")) } else { Err("it went without dying".into()) });
+                    gate.advance(now);
+                }
+            }
+        }
+        1 => {
+            // Walk over where it died, as a player picks up loot.
+            let feet = world.resource::<LocalPlayer>().position;
+            let close = feet.xz().distance(gate.quarry.xz()) < 0.4;
+            key(world, KeyCode::KeyW, !close);
+            if !close {
+                aim_at(world, gate.quarry + Vec3::Y * 1.6);
+            }
+            let count = item_count(world, CREATURE_DROP);
+            if count > gate.count_before || in_phase > 8.0 {
+                key(world, KeyCode::KeyW, false);
+                let result = if count > gate.count_before {
+                    Ok(format!("picked up {} {CREATURE_DROP}", count - gate.count_before))
+                } else {
+                    Err(format!("no {CREATURE_DROP} picked up after the kill"))
+                };
+                gate.check("creature drops", result);
+                gate.next(Step::Gorge, now);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Turns the player to look at a point.
+fn aim_at(world: &mut World, at: Vec3) {
+    let mut player = world.resource_mut::<LocalPlayer>();
+    let to = at - player.eye();
+    player.yaw = (-to.x).atan2(-to.z);
+    player.pitch = to.y.atan2(to.xz().length());
+}
+
+/// How many of an item the inventory holds.
+fn item_count(world: &World, name: &str) -> u32 {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    let Some(item) = client.registry.id(name) else { return 0 };
+    (0..voxmar_engine::inventory::SLOTS).filter_map(|slot| player.inventory.get(slot)).filter(|s| s.item == item).map(|s| s.count as u32).sum()
 }
 
 /// The sun low in the morning sky, a bright disc in a sky that darkens upwards; at night

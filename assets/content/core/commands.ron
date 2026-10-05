@@ -92,6 +92,19 @@
         // Shortcuts, as any package could add them.
         (name: "day", usage: "", help: "Sets the time to morning: /time set day.", permission: Admin, run: Alias(["time set day"])),
         (name: "night", usage: "", help: "Sets the time to night: /time set night.", permission: Admin, run: Alias(["time set night"])),
+        (
+            name: "summon",
+            usage: "<creature> [count] [x y z]",
+            help: "Puts creatures of a species (rabbit, wolf, moonhare…) on the ground in front of you, or at a block (~ is where you are), one unless you say, up to 16.",
+            permission: Admin,
+            run: Summon,
+        ),
+        (
+            name: "creatures",
+            usage: "",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing.",
+            run: Creatures,
+        ),
     ],
     // Times of day `/time set` knows by name, in ticks after sunrise.
     times: [

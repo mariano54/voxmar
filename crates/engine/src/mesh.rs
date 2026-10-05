@@ -22,7 +22,8 @@
 //! vertex's corner (0..=3, in the order the quad is built), and bits 25..27 how many plant
 //! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`).
 //! Bit 27 marks the same quads used as leaf cards (`ChunkMesh::fringe`), with flag 2 for a
-//! flat card and bit 28 for a conifer's needles; their top edge is flag 1, as on a plant.
+//! flat card, bit 28 for a conifer's needles and bits 29..31 for the face of the crown it is
+//! shaded as; their top edge is flag 1, as on a plant.
 //!
 //! Faces of translucent fluids (water) carry the fluid's state instead of ambient
 //! occlusion, which their shading has no use for:
@@ -68,6 +69,8 @@ pub const PLANT_ANTIDIAGONAL: u32 = 7;
 const FLAG_INNER: u32 = 1 << 23;
 /// Marks the quads of a leaf card, which the shader grows out of the leaf block.
 const FLAG_FRINGE: u32 = 1 << 27;
+/// On a fringe: the face of the crown the card is shaded as (bits 29..31).
+const CARD_FACE_SHIFT: u32 = 29;
 /// On a fringe: the card lies flat rather than upright (flag 2).
 const FLAG_FLAT: u32 = 1 << 24;
 /// On a fringe: the leaves are a conifer's needles, whose sprigs the shader keeps small and
@@ -1087,10 +1090,20 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], 
     let cell = |p: IVec3| &cells[pidx(p.x as usize, p.y as usize, p.z as usize)];
     let clear = |c: &Cell| !c.occludes && registry.info(c.block).render != RenderKind::Leaves;
     let open: Vec<&Cell> = Face::ALL.iter().map(|face| cell(padded + face.normal())).filter(|c| clear(c)).collect();
-    if open.is_empty() {
+    // A lone leaf block on the ground (a heap of fallen leaves) stays a block: grown into a
+    // round cluster it would look like a ball resting on nothing.
+    let lone = Face::ALL.iter().all(|face| registry.info(cell(padded + face.normal()).block).render != RenderKind::Leaves);
+    if open.is_empty() || (lone && cell(padded - IVec3::Y).occludes) {
         return;
     }
     let flat = clear(cell(padded + IVec3::Y));
+    // Cards are shaded as the face of the crown they grow from, so one seen edge on reads
+    // as part of that face rather than a light seam across it: an open side, or the top
+    // (or bottom) where no side is open.
+    let side = [Face::PosX, Face::NegX, Face::PosZ, Face::NegZ, Face::PosY, Face::NegY]
+        .into_iter()
+        .find(|&face| clear(cell(padded + face.normal())))
+        .unwrap_or(Face::PosY);
     let sky = open.iter().map(|c| c.light >> 4).max().unwrap_or(0);
     let block = open.iter().map(|c| c.light & 15).max().unwrap_or(0);
     let pos = padded - 1;
@@ -1105,7 +1118,7 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], 
         for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
             let p = pos + IVec3::new(dx, top, dz);
             let w0 = p.x as u32 | (p.y as u32) << 6 | (p.z as u32) << 12 | face << 18 | (corner as u32) << 21 | (top as u32) << 23;
-            out.vertices.push([w0 | FLAG_FRINGE | needles | shape, w1]);
+            out.vertices.push([w0 | FLAG_FRINGE | needles | shape | (side as u32) << CARD_FACE_SHIFT, w1]);
         }
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
     }
@@ -1316,6 +1329,22 @@ mod tests {
             let between = |buffers: &MeshBuffers| buffers.vertices.chunks(4).filter(|quad| quad.iter().all(|v| v[0] & 63 == 5)).count();
             assert_eq!((between(&mesh.cutout), between(&mesh.inner)), (0, shared_faces));
         }
+    }
+
+    /// Leaves on the outside of a crown grow cards, a flat one too where open to the sky,
+    /// but a lone leaf block lying on the ground (a heap of fallen leaves) stays a block.
+    #[test]
+    fn leaf_cards_grow_on_crowns_not_on_heaps() {
+        let (stone, leaves) = (BlockId(1), BlockId(3));
+        let cards = |column: Column| mesh_of(column, 1).fringe.vertices.len() / 4;
+        let mut crown = Column::default();
+        crown.set_block(IVec3::new(4, 40, 4), leaves);
+        crown.set_block(IVec3::new(5, 40, 4), leaves);
+        assert_eq!(cards(crown), 6, "two crossed upright cards and a flat one on each leaf");
+        let mut heap = Column::default();
+        heap.set_block(IVec3::new(4, 39, 4), stone);
+        heap.set_block(IVec3::new(4, 40, 4), leaves);
+        assert_eq!(cards(heap), 0);
     }
 
     #[test]

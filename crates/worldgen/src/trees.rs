@@ -236,6 +236,9 @@ impl Trees {
         if let Crown::Bush { radius } = s.crown {
             let r = pick(rng, radius) * k.sqrt();
             g.mound(r, leaves, s.log, rng);
+            if let Some((fruit, share)) = s.fruit {
+                g.fruit(leaves, fruit, share);
+            }
             return;
         }
 
@@ -320,6 +323,7 @@ impl Trees {
                 let wide = (pick(rng, reach) + pick(rng, radius)) * k;
                 let foot = (start * height as f32).max(1.0);
                 let span = height as f32 + pick(rng, radius) * k * squash - foot;
+                let foliage = Foliage { radius: (1.5 * k.sqrt()).max(1.1), squash: squash.max(0.8), twigs: 1 };
                 let envelope = Envelope {
                     centre: root + lean + Vec3::Y * (lift + foot + span * 0.55),
                     radius: wide,
@@ -329,13 +333,13 @@ impl Trees {
                     shape: Shape::Billows { count: (3.0 + 4.0 * k * k) as usize, radius: 1.9 * k.sqrt() },
                 };
                 let habit = Habit { density: 0.35, influence: 7.0, kill: 1.6, tropism: Vec3::Y * 0.25 };
-                let foliage = Foliage { radius: (1.5 * k.sqrt()).max(1.1), squash: squash.max(0.8), twigs: 1 };
                 g.colonised(&trunk, height, foot, &envelope, &habit, &foliage, s.wood, leaves, rng);
             }
             Crown::Conical { radius, start } => {
                 // A cone from the crown's foot to a spike over the trunk, its limbs drooping
                 // as they reach out and carrying needles along their last few blocks.
                 let foot = (start * height as f32).max(1.0);
+                let foliage = Foliage { radius: 1.4, squash: 0.5, twigs: 3 };
                 let envelope = Envelope {
                     centre: root + lean + Vec3::Y * (lift + foot),
                     radius: pick(rng, radius) * k,
@@ -345,7 +349,6 @@ impl Trees {
                     shape: Shape::Cone,
                 };
                 let habit = Habit { density: 0.9, influence: 3.5, kill: 1.2, tropism: Vec3::NEG_Y * 0.3 };
-                let foliage = Foliage { radius: 1.4, squash: 0.5, twigs: 3 };
                 g.colonised(&trunk, height, foot, &envelope, &habit, &foliage, s.wood, leaves, rng);
                 // The leader: a spike of needles over the top.
                 let tip = trunk(1.0).floor().as_ivec3();
@@ -358,6 +361,7 @@ impl Trees {
                 // needles on limbs that sweep up and out, with sky between the pads, and
                 // stubs of dead limbs on the trunk below, where the lower crown died off.
                 let foot = (start * height as f32).max(1.0);
+                let foliage = Foliage { radius: 1.6, squash: 0.45, twigs: 1 };
                 let envelope = Envelope {
                     centre: root + lean + Vec3::Y * (lift + height as f32 - 1.0),
                     radius: pick(rng, radius) * k,
@@ -367,7 +371,6 @@ impl Trees {
                     shape: Shape::Billows { count: count(rng, (4, 6)) as usize, radius: 1.6 * k.sqrt() },
                 };
                 let habit = Habit { density: 0.4, influence: 6.0, kill: 1.6, tropism: Vec3::Y * 0.35 };
-                let foliage = Foliage { radius: 1.6, squash: 0.45, twigs: 1 };
                 g.colonised(&trunk, height, foot, &envelope, &habit, &foliage, s.wood, leaves, rng);
                 for _ in 0..rng.range(2, 5) {
                     let from = on_trunk(pick(rng, (0.3, start)));
@@ -402,6 +405,7 @@ impl Trees {
                 // A wide, flat crown of billows on limbs that fork off the upper trunk and
                 // spread.
                 let foot = (fork * height as f32).max(1.0);
+                let foliage = Foliage { radius: (1.5 * k.sqrt()).max(1.1), squash: squash.clamp(0.5, 0.8), twigs: 1 };
                 let envelope = Envelope {
                     centre: root + lean + Vec3::Y * (lift + height as f32 + 1.0),
                     radius: (pick(rng, reach) + pick(rng, radius)) * k,
@@ -411,7 +415,6 @@ impl Trees {
                     shape: Shape::Billows { count: (3.0 + 3.0 * k * k) as usize, radius: 1.7 * k.sqrt() },
                 };
                 let habit = Habit { density: 0.35, influence: 7.0, kill: 1.6, tropism: Vec3::Y * 0.2 };
-                let foliage = Foliage { radius: (1.5 * k.sqrt()).max(1.1), squash: squash.clamp(0.5, 0.8), twigs: 1 };
                 g.colonised(&trunk, height, foot, &envelope, &habit, &foliage, s.wood, leaves, rng);
             }
             Crown::Weeping { radius, drape } => {
@@ -1141,6 +1144,47 @@ mod tests {
             }
         }
         assert!(fruit > 0, "no apples on eight oaks");
+    }
+
+    /// Every block of a grown tree joins the rest through its wood and leaves: no clump of
+    /// leaves floats apart from the limbs that bear it, giants included, whose crowns reach
+    /// furthest.
+    #[test]
+    fn grown_trees_hold_together() {
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let trees = Trees::new(&content, &registry);
+        let soft: Vec<bool> = (0..registry.len()).map(|i| BlockId(i as u16).is_air()).collect();
+        let earth: Vec<bool> = soft.iter().map(|s| !s).collect();
+        let grass = registry.expect("base:grass_block");
+        for name in ["oak", "big_oak", "ancient_oak", "birch", "maple", "cherry", "acacia", "jungle", "giant_jungle", "spruce", "giant_spruce", "pine"] {
+            let index = content.trees.iter().position(|t| t.name == format!("base:{name}")).unwrap();
+            for seed in 0..12 {
+                let blocks = grown(&trees, TreeId(index as u16), 500 + seed, 1.0, grass, &soft, &earth);
+                let part = |p: IVec3| p.y > 100 && !blocks.get(p).is_air();
+                let mut cells = Vec::new();
+                for y in 101..160 {
+                    for z in 0..32 {
+                        for x in 0..32 {
+                            if part(IVec3::new(x, y, z)) {
+                                cells.push(IVec3::new(x, y, z));
+                            }
+                        }
+                    }
+                }
+                let mut seen: std::collections::HashSet<IVec3> = std::collections::HashSet::from([IVec3::new(16, 101, 16)]);
+                let mut stack = vec![IVec3::new(16, 101, 16)];
+                while let Some(p) = stack.pop() {
+                    for d in [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z] {
+                        if part(p + d) && seen.insert(p + d) {
+                            stack.push(p + d);
+                        }
+                    }
+                }
+                let loose: Vec<IVec3> = cells.iter().copied().filter(|c| !seen.contains(c)).collect();
+                assert!(loose.is_empty(), "{name} {seed}: {} of {} blocks float, e.g. {}", loose.len(), cells.len(), loose[0]);
+            }
+        }
     }
 
     /// `cargo test -p voxmar_worldgen tree_preview -- --ignored --nocapture` (optionally

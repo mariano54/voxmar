@@ -30,7 +30,7 @@ impl Plugin for InteractPlugin {
         app.init_resource::<Target>()
             .add_systems(
                 Update,
-                (select_slot.after(player::zoom), find_target, pick_block, break_and_place, draw_target)
+                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, draw_target)
                     .chain()
                     .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),
@@ -45,6 +45,8 @@ pub struct InteractSystems;
 #[derive(Resource, Default)]
 pub struct Target {
     pub hit: Option<RayHit>,
+    /// The creature under the crosshair, nearer than any block (see `creatures::aim`).
+    pub creature: Option<u32>,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
     mining_seconds: f32,
@@ -349,8 +351,14 @@ fn predict_break(world: &mut ClientWorld, player: &LocalPlayer, content: &Conten
 }
 
 fn draw_target(target: Res<Target>, mut gizmos: Gizmos) {
-    if let Some(hit) = target.hit {
-        let center = hit.block.as_vec3() + 0.5;
-        gizmos.cube(Transform::from_translation(center).with_scale(Vec3::splat(1.004)), Color::srgba(0.0, 0.0, 0.0, 0.8));
+    match target.hit {
+        Some(hit) => {
+            let center = hit.block.as_vec3() + 0.5;
+            gizmos.cube(Transform::from_translation(center).with_scale(Vec3::splat(1.004)), Color::srgba(0.0, 0.0, 0.0, 0.8));
+        }
+        // An invisible line keeps the outline's pipeline in use from the first frame. On
+        // Metal, Bevy compiles a pipeline on the render thread the first time something
+        // needs it, and the first block the player looked at held that frame for 60 ms.
+        None => gizmos.line(Vec3::ZERO, Vec3::ZERO, Color::NONE),
     }
 }

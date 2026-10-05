@@ -384,4 +384,12 @@
     "weather.state.clear": "clear",
     "weather.channel.rain": "rain",
     "weather.channel.snow": "snow",
+    "command.summon.what": "Summon what?",
+    "command.summon.count": "The count must be 1 to 16.",
+    "command.summon.unknown": "There is no creature called `{name}`.",
+    "command.summon.no_room": "There is no room for a {creature} there.",
+    "command.summon.done": "Summoned {creature} × {count}.",
+    "command.creatures.none": "No creatures within 64 blocks.",
+    "command.creatures.title": "Within 64 blocks:",
+    "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",
 }

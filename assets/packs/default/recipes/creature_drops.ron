@@ -1,0 +1,166 @@
+// What creatures drop (content/base/blocks_creatures.ron), drawn as item sprites in a few
+// shapes shared by many items, each in its own palettes: a cut of meat, a hide, a feather,
+// a bone, a tooth or claw, an antler, a tuft of wool, a lump of fat, a coil of silk, a sac,
+// a pile of dust, a blob of slime and a mote. Legend: `f`, `h`, `j` the main colour (dark,
+// middle, light), `k`, `l`, `m` the second (fat, bone, rim), `u`–`w` glow, `W` white and
+// `D` a dark outline.
+(
+    legend: {
+        'f': "fruit:0", 'h': "fruit:1", 'j': "fruit:2",
+        'k': "wood:0", 'l': "wood:1", 'm': "wood:2",
+        'u': "glow:0", 'v': "glow:1", 'w': "glow:2",
+        'W': "#fbf8ee", 'D': "#2a2220",
+    },
+    palettes: {
+        "meat_rabbit": ["#8e3a3a", "#c8605a", "#e88c80"],
+        "meat_chicken": ["#b06a58", "#e0a08a", "#f4c8b4"],
+        "meat_duck": ["#7a2e2e", "#b0504a", "#d07c70"],
+        "meat_mutton": ["#7a1e1e", "#b03a34", "#d8665c"],
+        "meat_pork": ["#b05a5a", "#e48c8c", "#f8b8b0"],
+        "meat_beef": ["#6a1010", "#a82424", "#d44a3e"],
+        "meat_venison": ["#5a0e0e", "#8e1e1e", "#b83a32"],
+        "meat_bear": ["#4a0c0c", "#7a1a18", "#a8342c"],
+        "meat_rotten": ["#4a5a2a", "#6e7e3c", "#98a456"],
+        "fat_rim": ["#d8c8a8", "#f0e4cc", "#fff8ea"],
+        "rabbit_skin": ["#7a5e44", "#aa8a66", "#d0b694"],
+        "leather": ["#4e3018", "#7a5030", "#a6784a"],
+        "fox_red": ["#8e3c10", "#d26e26", "#f4a050"],
+        "wolf_grey": ["#55565c", "#8a8a90", "#c2c2c6"],
+        "bear_brown": ["#3a2414", "#664428", "#8e6a44"],
+        "moon_pale": ["#7a94d0", "#b4cbf6", "#e8f0ff"],
+        "fur_light": ["#c8b490", "#e8dcc4", "#fff6e6"],
+        "feather_white": ["#a8a49a", "#dcd8ce", "#ffffff"],
+        "bone_pale": ["#b0a68a", "#d8d0b4", "#f4eedc"],
+        "claw_dark": ["#1c1614", "#3a302a", "#5e524a"],
+        "antler_tan": ["#8a7454", "#b8a07a", "#dccaa4"],
+        "wool_white": ["#c8c4b8", "#e8e4d8", "#ffffff"],
+        "lard_white": ["#d8ceb0", "#f0e8d0", "#fffcf0"],
+        "bear_fat": ["#c8b07a", "#e8d4a0", "#fff0c8"],
+        "silk_white": ["#b8b8c8", "#dcdce8", "#ffffff"],
+        "spool_wood": ["#5a3c1c", "#7a5a30", "#9a7a48"],
+        "venom_green": ["#2e5a14", "#5a9a28", "#9ad04a"],
+        "moon_dust": ["#8aa0d8", "#c4d4ff", "#ffffff"],
+        "lumen_glow": ["#2aa088", "#5ce6c6", "#c4fff0"],
+        "aether_violet": ["#8a6ad0", "#c4a8ff", "#f4ecff"],
+    },
+    textures: {
+        // A cut of meat: a rounded slab with a rim of fat and a bone end.
+        "block/raw_rabbit": (base: "shape/plant", palettes: {"fruit": "meat_rabbit", "wood": "fat_rim"}, layers: [Grid(rows: [
+            "................", "................", "................", ".....kkkk.......",
+            "...kkhhhhkk.....", "..khhjjhhhhk....", "..khjjhhhhhhk...", ".khhjhhhfhhhhk..",
+            ".khhhhhffhhhhk..", ".khhhhhhhhhhfk..", "..khhhhhhhffk.ll", "...kkhhhhfkk.lml",
+            ".....kkkkk...ll.", "................", "................", "................",
+        ])]),
+        "block/raw_chicken": (base: "block/raw_rabbit", palettes: {"fruit": "meat_chicken", "wood": "bone_pale"}),
+        "block/raw_duck": (base: "block/raw_rabbit", palettes: {"fruit": "meat_duck", "wood": "fat_rim"}),
+        "block/raw_mutton": (base: "block/raw_rabbit", palettes: {"fruit": "meat_mutton", "wood": "fat_rim"}),
+        "block/raw_pork": (base: "block/raw_rabbit", palettes: {"fruit": "meat_pork", "wood": "fat_rim"}),
+        "block/raw_beef": (base: "block/raw_rabbit", palettes: {"fruit": "meat_beef", "wood": "fat_rim"}),
+        "block/raw_venison": (base: "block/raw_rabbit", palettes: {"fruit": "meat_venison", "wood": "fat_rim"}),
+        "block/raw_bear": (base: "block/raw_rabbit", palettes: {"fruit": "meat_bear", "wood": "fat_rim"}),
+        "block/rotten_flesh": (base: "block/raw_rabbit", palettes: {"fruit": "meat_rotten", "wood": "meat_rotten"}),
+        // A hide stretched out: four legs and a neck.
+        "block/hide": (base: "shape/plant", palettes: {"fruit": "leather"}, layers: [Grid(rows: [
+            "................", "...h........h...", "...hh..jj..hh...", "....hhhjjhhh....",
+            ".....hhhhhh.....", "....hhjhhhhh....", "....hhhhhhhh....", "....hhhhhfhh....",
+            "....hhhhhhhh....", "....hjhhhhhh....", ".....hhhhhh.....", "....hhhffhhh....",
+            "...hh......hh...", "...h........h...", "................", "................",
+        ])]),
+        "block/rabbit_hide": (base: "block/hide", palettes: {"fruit": "rabbit_skin"}),
+        // Fur keeps the hide's shape with tufts along its edges.
+        "block/fox_fur": (base: "shape/plant", palettes: {"fruit": "fox_red", "wood": "fur_light"}, layers: [Grid(rows: [
+            "................", "...h........h...", "..jhh..jj..hhj..", "....hhhjjhhh....",
+            "....jhhhhhhj....", "...jhhjhhhhhj...", "....hhhhhhhh....", "...jhhhmmfhhj...",
+            "....hhmmmmhh....", "...jhjmmmmhhj...", ".....hhmmhh.....", "....hhhffhhh....",
+            "..jhh......hhj..", "...h........h...", "................", "................",
+        ])]),
+        "block/wolf_pelt": (base: "block/fox_fur", palettes: {"fruit": "wolf_grey", "wood": "fur_light"}),
+        "block/bear_pelt": (base: "block/fox_fur", palettes: {"fruit": "bear_brown", "wood": "bear_brown"}),
+        "block/moonhare_pelt": (base: "block/fox_fur", palettes: {"fruit": "moon_pale", "wood": "moon_dust"}),
+        // A feather: a shaft with vanes.
+        "block/feather": (base: "shape/plant", palettes: {"fruit": "feather_white", "wood": "bone_pale"}, layers: [Grid(rows: [
+            "................", "...........jj...", "..........jjhj..", ".........jjhhj..",
+            "........jjhhjf..", ".......jjhhjf...", "......jjhhjf....", ".....jjhhjf.....",
+            "....jjhhjf......", "....jhhjf.......", "...jhjff........", "...jlf..........",
+            "..ll............", ".l..............", "................", "................",
+        ])]),
+        // A bone.
+        "block/bone": (base: "shape/plant", palettes: {"fruit": "bone_pale"}, layers: [Grid(rows: [
+            "................", "................", "..........jj....", ".........jhhj...",
+            ".........hhhj...", "........hhhf....", ".......hhf......", "......hhf.......",
+            ".....hhf........", "....hhf.........", "...jhhh.........", "..jhhhf.........",
+            "...hhf..........", "................", "................", "................",
+        ])]),
+        // A tooth, curved and pointed; claws the same in dark horn.
+        "block/fang": (base: "shape/plant", palettes: {"fruit": "bone_pale"}, layers: [Grid(rows: [
+            "................", "................", "......jjjj......", ".....jhhhhf.....",
+            ".....hhhhhf.....", "......hhhhf.....", "......hhhf......", ".......hhf......",
+            ".......hhf......", "........hf......", "........hf......", ".........f......",
+            "................", "................", "................", "................",
+        ])]),
+        "block/claw": (base: "block/fang", palettes: {"fruit": "claw_dark"}),
+        // An antler: a beam with tines.
+        "block/antler": (base: "shape/plant", palettes: {"fruit": "antler_tan"}, layers: [Grid(rows: [
+            "................", "..j.....j.......", "..h.....h...j...", "..hh...hh...h...",
+            "...h...h...hh...", "...hh.hh..hh....", "....hhhhhhh.....", ".....hhhh.......",
+            ".....hhf........", "....hhf.........", "....hf..........", "...hhf..........",
+            "...hf...........", "..ff............", "................", "................",
+        ])]),
+        "block/rabbit_foot": (base: "shape/plant", palettes: {"fruit": "rabbit_skin", "wood": "fur_light"}, layers: [Grid(rows: [
+            "................", "................", "........kk......", ".......kllk.....",
+            ".......kllk.....", "......hhhh......", "......hhhh......", ".....hhjhh......",
+            ".....hhjhh......", "....hhhhhh......", "...hhhhhhf......", "...mmhmmhf......",
+            "...mm.mm........", "................", "................", "................",
+        ])]),
+        // A tuft of wool.
+        "block/wool": (base: "shape/plant", palettes: {"fruit": "wool_white"}, layers: [Grid(rows: [
+            "................", "................", ".....jj..jj.....", "....jhhjjhhj....",
+            "...jhhhhhhhhj...", "..jhhjhhhhjhhj..", "..hhhhhhhhhhhh..", ".jhhhhjhhhhhhhj.",
+            ".hhhhhhhhhjhhhh.", ".hhjhhhhhhhhhhf.", "..hhhhhhjhhhhf..", "..fhhhhhhhhhff..",
+            "...ffhhffhhff...", ".....ff..ff.....", "................", "................",
+        ])]),
+        // A lump of fat.
+        "block/lard": (base: "shape/plant", palettes: {"fruit": "lard_white"}, layers: [Grid(rows: [
+            "................", "................", "................", "................",
+            ".....jjjjjj.....", "....jhhhhhhj....", "...jhhhhhhhhh...", "...hhhhjhhhhh...",
+            "...hhhhhhhhhf...", "...hhhhhhhhff...", "...fhhhhhhhff...", "....ffffffff....",
+            "................", "................", "................", "................",
+        ])]),
+        "block/bear_fat": (base: "block/lard", palettes: {"fruit": "bear_fat"}),
+        // A coil of silk on a twig.
+        "block/silk": (base: "shape/plant", palettes: {"fruit": "silk_white", "wood": "spool_wood"}, layers: [Grid(rows: [
+            "................", "................", "........k.......", ".......kl.......",
+            ".....jjjjjj.....", "....jhhhhhhj....", "....hjjjjjjh....", "....hhhhhhhh....",
+            "....hjjjjjjh....", "....hhhhhhhf....", "....fhhhhhff....", ".....ffffff.....",
+            "......lk........", "......k.........", "................", "................",
+        ])]),
+        // A sac, a droplet with a highlight.
+        "block/venom_sac": (base: "shape/plant", palettes: {"fruit": "venom_green"}, layers: [Grid(rows: [
+            "................", "................", ".......hh.......", "......hhhh......",
+            ".....hhhhhh.....", "....hhjhhhhh....", "....hjjhhhhh....", "...hhjhhhhhhh...",
+            "...hhhhhhhhhf...", "...hhhhhhhhhf...", "....hhhhhhhf....", ".....fhhhhff....",
+            "......ffff......", "................", "................", "................",
+        ])]),
+        // A pile of dust that glints.
+        "block/moon_dust": (base: "shape/plant", palettes: {"fruit": "moon_dust"}, layers: [Grid(rows: [
+            "................", "................", "........W.......", "...W............",
+            "..........W.....", "......j.........", "....jjhj........", "...jhhhhjj..W...",
+            "..jhhhjhhhhj....", "..hhhhhhhhhhh...", ".fhhhhjhhhhhhf..", ".ffhhhhhhhhhff..",
+            "..fffffffffff...", "................", "................", "................",
+        ])]),
+        // A blob of slime.
+        "block/lumen_slime": (base: "shape/plant", palettes: {"fruit": "lumen_glow"}, layers: [Grid(rows: [
+            "................", "................", "................", "......jjj.......",
+            ".....jhhhhj.....", "....jhhWhhhj....", "....hhWhhhhh....", "...jhhhhhhhhj...",
+            "...hhhhhhhhhh...", "..fhhhhhhhhhhf..", "..fhhhhhhhhhff..", "...ffhhhhhfff...",
+            ".....fffff......", "................", "................", "................",
+        ])]),
+        // A mote: a bright orb with sparks.
+        "block/aether_mote": (base: "shape/plant", palettes: {"fruit": "aether_violet"}, layers: [Grid(rows: [
+            "................", ".......W........", "................", "..W....hh....W..",
+            ".....hhjjhh.....", "....hjjWWjjh....", "....hjWWWWjh....", "...hhjWWWWjhh...",
+            "....hjjWWjjh....", "....hhjjjjhh....", ".....fhhhhf.....", "..W....ff....W..",
+            "................", ".......W........", "................", "................",
+        ])]),
+    },
+)

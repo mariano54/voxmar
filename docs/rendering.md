@@ -380,7 +380,11 @@ texture and colour, then their light; their bushy geometry was the smaller part.
   pass (`TerrainPass::Fringe`, mesh bit 27, flag 2 for the flat card). The texture runs on
   past the block at its own 16 texels a block, cut to a ragged round cluster (after Better
   Leaves Lite), different on every card, and a card shows its block's overlay (fruit) only
-  over the block itself. Cards shrink into their block from 40 blocks and are drawn to 64.
+  over the block itself. Each card is shaded as the face of the crown it grows from (an
+  open side, else the top), not as facing up, so a card seen edge on reads as part of that
+  face rather than as a light seam across the crown. A lone leaf block on the ground (a
+  heap of fallen leaves) grows none: as a round cluster it looked like a ball resting on
+  nothing. Cards shrink into their block from 40 blocks and are drawn to 64.
   They cast no shadow: a card's shadow is the crown's own blurred by a few texels, and in
   a dense forest the cards in the shadow cascades were most of their cost.
 

@@ -144,7 +144,7 @@ fn receive(
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
-    (mut drops, mut toasts, launch, locale): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>),
+    (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
@@ -264,6 +264,7 @@ fn receive(
             ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
+            ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }
     }
