@@ -751,9 +751,13 @@ before the upsample costs 0.31 ms at 2268×1473 where the single 4×4 depth-awar
 it replaced cost 0.52, for the same blur. It draws:
 
 - *The low cloud*, a layer in the world (Mariano's playtest of 8e6c104: clouds were a
-  picture on the sky, and on a mountain they should pass you). Its base lies 170 blocks
-  above sea level in fair weather and comes down to 95 in rain, onto the hills; it is 28
-  blocks deep as a flat layer and up to 100 as heaped cumulus. The same 2D noise as before
+  picture on the sky, and on a mountain they should pass you). Its base lies 135 blocks
+  above sea level in fair weather and comes down to 85 in rain, onto the hills; it is 32
+  blocks deep as a flat layer and up to 150 as heaped cumulus. Its clouds don't all sit
+  at that height (Mariano: "clouds only at 1 y level, looks weird, especially on a
+  mountain"): in drifts some 700 blocks across they float higher or lower by up to 0.6 of
+  the layer's depth (`cloud_lift`), a few blocks for a flat layer and dozens for heaped
+  cloud, so they meet the hills at different heights. The same 2D noise as before
   sets where cloud is, and within the layer heaped cloud rises in domes over flat bases,
   its thickest cores tallest; within 800 blocks 3D puffs about 20 blocks across bite into
   its edges and tops. 16 steps cross the layer, up to 32 where it is seen at a slant so no
@@ -855,6 +859,15 @@ cheaper.
 **Shader packs** gained `sun_tint`, `shadow_softness`, `sky_falloff`, `ambient_occlusion`,
 `subsurface`, `cloud_shadows`, `glow`, `rays`, `mist`, `fog`, `wet_ground`, `frost` and
 `local_air`; Classic keeps the plain look (no volumetric light).
+
+**Dusk and dawn** (Mariano's playtest: "dusk and morning should have different lighting
+whether close or far to the sun"). The low sun warms one side of the sky: towards it the
+horizon glows warmer and brighter, away from it, under the earth's shadow, it lies cooler
+and dimmer. `dusk_tint` in atmosphere.wgsl scales a colour by `1 + DUSK_CONTRAST · k · d`,
+with `k` how far a direction looks towards the sun across the land (its horizontal part, so
+the zenith and a top face take neither side) and `d` how strongly dusk shows (from the sun's
+height, none under thick cloud). The sky's horizon, the haze the land fades into, the sky
+water mirrors and the sky light on walls all take it, so they agree.
 
 ## Fluid state
 

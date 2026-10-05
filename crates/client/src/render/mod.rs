@@ -244,6 +244,9 @@ pub struct SkyParams {
     /// xy: the cloud layer's offset over the camera in cloud units, z: precipitation,
     /// w: lightning flash.
     pub weather: Vec4,
+    /// Light in the sky, 0..1: x rainbow (above 0.75 a double one), y halo (above 0.5
+    /// with sun dogs), z aurora, w falling stars (1 a meteor shower).
+    pub optics: Vec4,
 }
 
 /// Blocks per unit of the sky shader's cloud noise. The cloud layer's offset wraps every
@@ -378,10 +381,14 @@ fn array_image(layers: &[Rgba], mipmaps: bool, address: ImageAddressMode, blende
         let coverage = if blended.get(i).copied().unwrap_or(false) { 1.0 } else { alpha_coverage(&layer.pixels) };
         let mut level = layer.pixels.clone();
         let mut level_size = size;
+        if mipmaps {
+            bleed(&mut level, level_size);
+        }
         data.extend_from_slice(&level);
         for _ in 1..levels {
             level = downsample(&level, level_size);
             level_size /= 2;
+            bleed(&mut level, level_size);
             if coverage < 1.0 {
                 preserve_coverage(&mut level, coverage);
             }
@@ -477,6 +484,53 @@ fn preserve_coverage(pixels: &mut [u8], coverage: f32) {
     }
 }
 
+/// Gives the clear texels of an RGBA8 square the colour of the visible ones nearest them,
+/// spreading outwards from them a texel at a time, and keeps them clear.
+/// Filtering blends a texel with its clear neighbours when the texture is minified, and a
+/// cut-out's edge passing the alpha test there took their colour, black in most textures:
+/// plants seen from above or far off showed as black crosses.
+fn bleed(pixels: &mut [u8], size: u32) {
+    let size = size as usize;
+    let visible = |p: &[u8], i: usize| p[i * 4 + 3] > 0;
+    let mut filled: Vec<bool> = (0..size * size).map(|i| visible(pixels, i)).collect();
+    if filled.iter().all(|&f| f) || !filled.iter().any(|&f| f) {
+        return;
+    }
+    for _ in 0..size {
+        let before = pixels.to_vec();
+        let was = filled.clone();
+        let mut grew = false;
+        for i in (0..size * size).filter(|&i| !was[i]) {
+            let (x, y) = (i % size, i / size);
+            let mut sum = [0u32; 3];
+            let mut count = 0;
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)] {
+                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                if nx < 0 || ny < 0 || nx >= size as i32 || ny >= size as i32 {
+                    continue;
+                }
+                let n = ny as usize * size + nx as usize;
+                if was[n] {
+                    for c in 0..3 {
+                        sum[c] += before[n * 4 + c] as u32;
+                    }
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                for c in 0..3 {
+                    pixels[i * 4 + c] = (sum[c] / count) as u8;
+                }
+                filled[i] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+}
+
 /// Halves an RGBA8 square, averaging colour weighted by alpha so cut-out edges do not
 /// bleed dark fringes into lower mips.
 fn downsample(pixels: &[u8], size: u32) -> Vec<u8> {
@@ -494,8 +548,10 @@ fn downsample(pixels: &[u8], size: u32) -> Vec<u8> {
                 }
                 alpha += a;
             }
-            for c in rgb {
-                out.push(c.checked_div(alpha).unwrap_or(0) as u8);
+            // Clear all over: the plain average, of colours `bleed` gave the clear texels.
+            let plain = |c: usize| (0..4).map(|k| pixels[(((y * 2 + k / 2) * size + x * 2 + k % 2) * 4) as usize + c] as u32).sum::<u32>() / 4;
+            for (c, sum) in rgb.into_iter().enumerate() {
+                out.push(sum.checked_div(alpha).unwrap_or_else(|| plain(c)) as u8);
             }
             out.push((alpha / 4) as u8);
         }
@@ -520,6 +576,9 @@ pub fn ui_image(texture: &Rgba) -> Image {
 struct Environment {
     to_sun: Vec3,
     daylight: f32,
+    /// How strongly the side of the sky towards the low sun is warmer than the side away
+    /// (see `atmosphere::Light::dusk`).
+    dusk: f32,
     light_direction: Vec3,
     light_color: Vec3,
     ambient: Vec3,
@@ -584,7 +643,7 @@ impl Environment {
         let zenith = fade(NIGHT_ZENITH, DAY_ZENITH, daylight);
         let horizon = tint(fade(NIGHT_HORIZON, DAY_HORIZON, daylight), DUSK_HORIZON, dusk * 0.9);
         let ambient = tint(fade(NIGHT_AMBIENT, DAY_AMBIENT, daylight), DUSK_AMBIENT, dusk * 0.5);
-        Self { to_sun, daylight, light_direction, light_color, ambient, zenith, horizon }
+        Self { to_sun, daylight, dusk, light_direction, light_color, ambient, zenith, horizon }
     }
 
     /// The same light under cloud: a full layer hides the sun or moon, and the sky and
@@ -597,6 +656,8 @@ impl Environment {
             color.lerp(Vec3::splat(color.dot(Vec3::new(0.2126, 0.7152, 0.0722)) * brightness), overcast)
         };
         self.light_color *= (1.0 - 0.9 * overcast) * gloom;
+        // Under cloud no side of the sky is lit more than another.
+        self.dusk *= 1.0 - overcast;
         self.zenith = grey(self.zenith, 1.0) * gloom;
         self.horizon = grey(self.horizon, 0.9) * gloom;
         // Cloud spreads the hidden sunlight over the whole sky, brightening the shade.
@@ -675,7 +736,16 @@ fn update_environment(
     } else {
         SUN_GLOW * (env.daylight * 2.0).min(1.0) * (1.0 - 0.7 * overcast)
     };
-    let light = atmosphere::Light { horizon, ambient: env.ambient, sun: env.light_color, glow, elevation: env.light_direction.y };
+    let across = Vec2::new(env.to_sun.x, env.to_sun.z).normalize_or_zero();
+    let dusk = if cycle.underwater { 0.0 } else { env.dusk };
+    let light = atmosphere::Light {
+        horizon,
+        ambient: env.ambient,
+        sun: env.light_color,
+        glow,
+        elevation: env.light_direction.y,
+        dusk: across.extend(dusk),
+    };
     let air = atmosphere::Air { haze: Some(air.haze), density: air.haze_density };
     let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
     let position = camera.translation.as_dvec3();
@@ -709,6 +779,7 @@ fn update_environment(
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
             stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
             weather: layer.extend(shown.precipitation).extend(flash),
+            optics: Vec4::new(shown.rainbow, shown.halo, shown.aurora, shown.falling_stars),
         };
         sky.atmosphere = air;
     }
@@ -733,4 +804,23 @@ fn water_tint(generator: Option<&lod::WorldGenerator>, eye: Vec3, last: &mut Opt
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_texels_take_the_colour_of_visible_ones_in_every_mip() {
+        // 4×4, clear black except one red texel in a corner.
+        let mut pixels = vec![0u8; 4 * 4 * 4];
+        pixels[..4].copy_from_slice(&[200, 10, 10, 255]);
+        bleed(&mut pixels, 4);
+        for texel in pixels.chunks(4).skip(1) {
+            assert_eq!(texel, [200, 10, 10, 0]);
+        }
+        // A 2×2 block with nothing visible keeps that colour rather than turning black.
+        let half = downsample(&pixels, 4);
+        assert_eq!(&half[12..16], [200, 10, 10, 0]);
+    }
 }

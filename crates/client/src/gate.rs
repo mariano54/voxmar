@@ -700,8 +700,9 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// The sun low in the morning sky, a bright disc in a sky that darkens upwards; at night
 /// the moon, opposite the sun, and stars around it.
 fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    // Morning (ticks after sunrise) and midnight.
+    // Morning (ticks after sunrise), sunset with the sun a few degrees up, and midnight.
     const MORNING: u64 = 1920;
+    const SUNSET: u64 = 11_830;
     const MIDNIGHT: u64 = 18_000;
     let ticks = world.resource::<crate::render::DayCycle>().ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64);
     let at = |time: u64| (ticks - time as f64).abs() < 100.0;
@@ -719,14 +720,33 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let at = light_on_screen(world);
             gate.check("sky: sun", disc(&shot, at, "sun"));
             gate.check("sky: day", gradient(&shot));
-            world.resource::<Net>().command(&format!("time set {MIDNIGHT}"));
+            world.resource::<Net>().command(&format!("time set {SUNSET}"));
             gate.advance(now);
         }
-        3 if at(MIDNIGHT) && in_phase > 0.5 => {
+        // At sunset, the sky above the horizon towards the sun, then away from it.
+        3 if at(SUNSET) && in_phase > 0.5 => {
             aim_at_light(world);
+            world.resource_mut::<LocalPlayer>().pitch = 0.15;
             gate.advance(now);
         }
         4 if in_phase > 0.3 => {
+            let Some(_) = gate.shot(world, "sunset towards") else { return };
+            world.resource_mut::<LocalPlayer>().yaw += std::f32::consts::PI;
+            gate.advance(now);
+        }
+        5 if in_phase > 0.3 => {
+            let Some(away) = gate.shot(world, "sunset away") else { return };
+            let towards = gate.earlier_shot("sunset towards");
+            let result = towards.ok_or_else(|| "no shot towards the sunset".to_owned()).and_then(|towards| sunset(&towards, &away));
+            gate.check("sky: sunset", result);
+            world.resource::<Net>().command(&format!("time set {MIDNIGHT}"));
+            gate.advance(now);
+        }
+        6 if at(MIDNIGHT) && in_phase > 0.5 => {
+            aim_at_light(world);
+            gate.advance(now);
+        }
+        7 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "moon") else { return };
             let at = light_on_screen(world);
             gate.check("sky: moon", disc(&shot, at, "moon"));
@@ -736,12 +756,12 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             player.pitch = 1.0;
             gate.advance(now);
         }
-        5 if in_phase > 0.3 => {
+        8 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
             gate.next(Step::Gorge, now);
         }
-        1 | 3 if in_phase > 5.0 => {
+        1 | 3 | 6 if in_phase > 5.0 => {
             gate.check("sky", Err(format!("the time of day did not change: {ticks:.0} ticks")));
             gate.next(Step::Gorge, now);
         }
@@ -922,6 +942,32 @@ fn gradient(shot: &Image) -> Result<String, String> {
         Ok(format!("the sky's top differs from lower down by {difference:.0} levels"))
     } else {
         Err(format!("the sky is flat: top and lower down differ by {difference:.0} levels"))
+    }
+}
+
+/// Least levels by which the sky above the horizon is redder (red less blue) towards the
+/// setting sun than away from it.
+const SUNSET_WARMTH: f32 = 15.0;
+
+/// At sunset the sky low down is warm towards the sun and cool away from it: in a band
+/// above the middle of shots aimed a little above the horizon either way.
+fn sunset(towards: &Image, away: &Image) -> Result<String, String> {
+    let warmth = |shot: &Image| -> Result<f32, String> {
+        let (w, h, data) = pixels(shot)?;
+        let (mut red, mut blue) = (0u64, 0u64);
+        for y in h / 5..h * 2 / 5 {
+            for x in 0..w {
+                red += data[(y * w + x) * 4] as u64;
+                blue += data[(y * w + x) * 4 + 2] as u64;
+            }
+        }
+        Ok((red as f32 - blue as f32) / (w * (h / 5)) as f32)
+    };
+    let (warm, cool) = (warmth(towards)?, warmth(away)?);
+    if warm - cool >= SUNSET_WARMTH {
+        Ok(format!("towards the setting sun the sky is {warm:+.0} levels red over blue, away from it {cool:+.0}"))
+    } else {
+        Err(format!("the sunset sky is as warm away from the sun ({cool:+.0} red over blue) as towards it ({warm:+.0})"))
     }
 }
 

@@ -44,9 +44,10 @@ use bevy::render::view::ExtractedView;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderDefVal;
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use voxmar_engine::coords::{CHUNK_SIZE, ChunkPos, ColumnPos};
 use voxmar_engine::mesh::{MeshBuffers, Vertex};
+use voxmar_engine::visibility::VisibleChunks;
 use voxmar_engine::world::{COLUMN_AREA, DEFAULT_COLORS};
 
 mod compact;
@@ -156,7 +157,7 @@ enum Message {
     ColumnColours { column: IVec2, colours: Vec<[[u8; 3]; 3]> },
     RemoveColumn(IVec2),
     /// The chunks cave culling leaves visible; any other chunk is skipped.
-    Visible(FxHashSet<ChunkPos>),
+    Visible(VisibleChunks),
     UploadTile(Box<TileMesh>),
     RemoveTile(TileKey),
     RealColumns(i32),
@@ -191,7 +192,7 @@ impl Terrain {
         let _ = self.tx.send(Message::Blades { chunk, seeds });
     }
 
-    pub fn set_visible(&self, visible: FxHashSet<ChunkPos>) {
+    pub fn set_visible(&self, visible: VisibleChunks) {
         let _ = self.tx.send(Message::Visible(visible));
     }
 
@@ -596,7 +597,7 @@ pub(super) struct TerrainGpu {
     tiles: FxHashMap<TileKey, TileRecord>,
     /// Chunks with a mesh, per column.
     columns: FxHashMap<IVec2, u32>,
-    visible: FxHashSet<ChunkPos>,
+    visible: VisibleChunks,
     real_columns: i32,
     /// Where the camera is this frame.
     camera: Vec3,
@@ -640,7 +641,7 @@ impl Default for TerrainGpu {
             bounds: Vec::new(),
             tiles: FxHashMap::default(),
             columns: FxHashMap::default(),
-            visible: FxHashSet::default(),
+            visible: VisibleChunks::default(),
             real_columns: 0,
             camera: Vec3::ZERO,
             free_slots: Vec::new(),
@@ -678,8 +679,8 @@ impl TerrainGpu {
 
     /// The chunk's record, made if it has none.
     /// Takes cave culling's new set of visible chunks, marking each record.
-    fn set_visible(&mut self, visible: FxHashSet<ChunkPos>) {
-        for (pos, &index) in &self.chunks {
+    fn set_visible(&mut self, visible: VisibleChunks) {
+        for (&pos, &index) in &self.chunks {
             self.bounds[index as usize].1 = visible.contains(pos);
         }
         self.visible = visible;
@@ -692,7 +693,7 @@ impl TerrainGpu {
                 let column = IVec2::new(chunk.0.x, chunk.0.z);
                 let colours = self.column_colours.get(&column).or(self.default_colours.as_ref()).map_or(0, |range| range.start);
                 let slot = self.new_slot(chunk.origin().extend(colours as i32));
-                let bounds = (chunk.origin().as_vec3(), self.visible.contains(&chunk));
+                let bounds = (chunk.origin().as_vec3(), self.visible.contains(chunk));
                 let record = ChunkRecord { slot, ..default() };
                 let index = match self.free_records.pop() {
                     Some(index) => {
