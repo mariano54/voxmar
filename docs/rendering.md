@@ -771,13 +771,6 @@ of the cloud's finest detail, and it holds the density unclamped so the bilinear
 keeps edges sharp. It is centred where the ground around the eye takes its shadows from,
 towards the light; past it shaders work the density out as before.
 
-The terrain now reads the value-noise lattices from the same two textures as the
-volumetric pass (`NOISE_TEXTURES`, held with the cloud maps), for the puddles, frost and
-snow that weather leaves on it: one filtered read per noise instead of four hashes. In
-drizzle that took 0.26 ms more off the terrain's pass at 2268×1473, and the frost's noise
-is no longer worked out where there is no frost. The cell is wrapped to the lattice before
-it becomes a texture coordinate, so the noise keeps its precision far from the origin.
-
 **Night** (Mariano: too bright). The sky gradient was already a dark navy; what lit the
 night sky grey was cloud, which the dome lit at 7% of daylight. Cloud is now lit by the
 moon and the night sky's ambient light like everything else, and the Milky Way is dimmer:

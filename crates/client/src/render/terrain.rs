@@ -34,7 +34,7 @@ use bevy::render::render_resource::{
     BufferUsages, CachedRenderPipelineId, CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, texture_3d, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -979,9 +979,6 @@ fn prepare_bind_group(
             (8, &cloud_map.view),
             (9, &cloud_map.sampler),
             (10, &cloud_map.shade),
-            (11, &cloud_map.noise.plane),
-            (12, &cloud_map.noise.volume),
-            (13, &cloud_map.noise.sampler),
         )),
     );
     let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.layers)?)));
@@ -1006,9 +1003,6 @@ fn prepare_bind_group(
             &cloud_map.view,
             &cloud_map.sampler,
             &cloud_map.shade,
-            &cloud_map.noise.plane,
-            &cloud_map.noise.volume,
-            &cloud_map.noise.sampler,
         )),
     );
     gpu.distant_bind_group = Some(distant);
@@ -1354,13 +1348,10 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 // The air and light (lighting.wgsl), and each texture layer's overlay and glow.
                 uniform_buffer::<Atmosphere>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
-                // The cloud maps and noise (cloud_map.rs).
+                // The cloud maps (cloud_map.rs).
                 texture_2d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 texture_2d(TextureSampleType::Float { filterable: true }),
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                texture_3d(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
             ),
         ),
     );
@@ -1390,15 +1381,11 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 (0, storage_buffer_read_only_sized(false, None)),
                 (1, uniform_buffer::<DistantView>(false)),
                 (2, storage_buffer_read_only_sized(false, None)),
-                // The air and light, at the binding lighting.wgsl expects, and the cloud maps
-                // and noise.
+                // The air and light, at the binding lighting.wgsl expects, and the cloud maps.
                 (6, uniform_buffer::<Atmosphere>(false)),
                 (8, texture_2d(TextureSampleType::Float { filterable: true })),
                 (9, sampler(SamplerBindingType::Filtering)),
                 (10, texture_2d(TextureSampleType::Float { filterable: true })),
-                (11, texture_2d(TextureSampleType::Float { filterable: true })),
-                (12, texture_3d(TextureSampleType::Float { filterable: true })),
-                (13, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
@@ -1473,12 +1460,11 @@ pub(super) fn mesh_like(
     descriptor.layout.push(group.clone());
     descriptor.vertex.shader = shader.clone();
     descriptor.vertex.buffers = vec![vertex_layout.layout().clone()];
-    // Every such pipeline binds the cloud maps and noise (bindings 8 to 13).
-    let defs = ["CLOUD_MAP", "NOISE_TEXTURES"].map(ShaderDefVal::from);
-    descriptor.vertex.shader_defs.extend(defs.clone());
+    // Every such pipeline binds the cloud map (bindings 8 and 9).
+    descriptor.vertex.shader_defs.push("CLOUD_MAP".into());
     if let Some(fragment) = descriptor.fragment.as_mut() {
         fragment.shader = shader.clone();
-        fragment.shader_defs.extend(defs);
+        fragment.shader_defs.push("CLOUD_MAP".into());
     }
     Some(descriptor)
 }

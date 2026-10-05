@@ -134,10 +134,8 @@ fn weathered(albedo: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, sky: f32) -
         wet = max(wet, smoothstep(level, level + 0.04, patches) * smoothstep(0.3, 0.6, wetness) * exposed);
     }
     var color = albedo * (1.0 - 0.4 * min(wet, 1.0));
-    if frost > 0.0 {
-        let rime = frost * exposed * saturate(normal.y * 0.8 + 0.2) * smoothstep(0.35, 0.6, value_noise(world.xz * 1.7 + world.y));
-        color = mix(color, vec3(0.78, 0.84, 0.9), rime * 0.6);
-    }
+    let rime = frost * exposed * saturate(normal.y * 0.8 + 0.2) * smoothstep(0.35, 0.6, value_noise(world.xz * 1.7 + world.y));
+    color = mix(color, vec3(0.78, 0.84, 0.9), rime * 0.6);
     if snow > 0.3 && normal.y > 0.9 {
         let drifts = value_noise(world.xz * 0.37 + 3.1) * 0.7 + value_noise(world.xz * 1.9) * 0.3;
         let dusting = smoothstep(1.0 - snow, 1.15 - snow, drifts) * exposed;
