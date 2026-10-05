@@ -244,6 +244,9 @@ pub struct SkyParams {
     /// xy: the cloud layer's offset over the camera in cloud units, z: precipitation,
     /// w: lightning flash.
     pub weather: Vec4,
+    /// Light in the sky, 0..1: x rainbow (above 0.75 a double one), y halo (above 0.5
+    /// with sun dogs), z aurora, w falling stars (1 a meteor shower).
+    pub optics: Vec4,
 }
 
 /// Blocks per unit of the sky shader's cloud noise. The cloud layer's offset wraps every
@@ -776,6 +779,7 @@ fn update_environment(
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
             stars: Vec4::new(days.fract() as f32, (days % 1000.0) as f32, 0.0, 0.0),
             weather: layer.extend(shown.precipitation).extend(flash),
+            optics: Vec4::new(shown.rainbow, shown.halo, shown.aurora, shown.falling_stars),
         };
         sky.atmosphere = air;
     }
