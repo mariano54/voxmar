@@ -73,6 +73,11 @@ struct Atmosphere {
     // Dusk and dawn (see `dusk_tint`). xy: the way to the sun across the land, z: how
     // strongly its side of the sky is warmer than the other.
     dusk: vec4<f32>,
+    // Lightning inside the low cloud: xyz where (world space), w how bright, 0..1.
+    cloud_flash: vec4<f32>,
+    // A rainbow (see `rainbow`): xyz the direction to the sun, w how strong (above 0.75 a
+    // double one), 0 for none.
+    bow: vec4<f32>,
 };
 
 // At full dusk or dawn, how much more red, green and blue the side of the sky towards the
@@ -261,6 +266,36 @@ fn under_water(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>) -> Aerial {
     out.transmittance = exp(-extinction * (wet + down));
     out.light = water_glow(a, max(surface - eye.y, 0.0), offset.y / distance, wet);
     return out;
+}
+
+// A colour of the spectrum, red (0) through yellow and green to violet (1), soft as a
+// rainbow's are (each colour spread over its neighbours).
+fn spectrum(t: f32) -> vec3<f32> {
+    let h = saturate(t) * 0.8;
+    let rgb = saturate(abs(fract(vec3(h, h + 2.0 / 3.0, h + 1.0 / 3.0)) * 6.0 - 3.0) - 1.0);
+    return mix(vec3(dot(rgb, vec3(0.3, 0.5, 0.2))), rgb, 0.75);
+}
+
+// A band from `inner` to `outer` degrees with edges a degree soft, 0..1.
+fn band(angle: f32, inner: f32, outer: f32) -> f32 {
+    return smoothstep(inner - 0.6, inner + 0.4, angle) * (1.0 - smoothstep(outer - 0.4, outer + 0.6, angle));
+}
+
+// A rainbow, in the rain between the eye and what lies beyond (the volumetric pass draws
+// it over the clouds and the far land): opposite the sun, the primary bow red outside at
+// 42° to violet at 40.5°, and with a double rainbow (strength over 0.75) the secondary bow
+// from 50° to 53.5°, its colours reversed and fainter. Light to add along `dir`.
+fn rainbow(a: Atmosphere, dir: vec3<f32>) -> vec3<f32> {
+    let angle = degrees(acos(clamp(dot(dir, -a.bow.xyz), -1.0, 1.0)));
+    if a.bow.w <= 0.0 || angle > 56.0 {
+        return vec3(0.0);
+    }
+    var light = spectrum((42.0 - angle) / 1.5) * band(angle, 40.5, 42.0) * 0.45 * a.bow.w;
+    if a.bow.w > 0.75 {
+        let double = smoothstep(0.75, 0.9, a.bow.w);
+        light += spectrum((angle - 50.0) / 3.5) * band(angle, 50.0, 53.5) * 0.14 * a.bow.w * double;
+    }
+    return light;
 }
 
 // Blocks per unit of the low cloud's noise coordinates (render::CLOUD_UNIT), and the

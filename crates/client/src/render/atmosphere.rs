@@ -104,6 +104,8 @@ pub struct Atmosphere {
     pub water_light: Vec4,
     pub water_scales: Vec4,
     pub dusk: Vec4,
+    pub cloud_flash: Vec4,
+    pub bow: Vec4,
 }
 
 impl Default for Atmosphere {
@@ -214,6 +216,8 @@ impl Atmosphere {
                 water_light: water.light.extend(1.0),
                 water_scales: Vec4::new(pack.water.absorption, pack.water.scattering, 0.0, 0.0),
                 dusk: Vec4::ZERO,
+                cloud_flash: Vec4::ZERO,
+                bow: Vec4::ZERO,
             };
         }
 
@@ -268,6 +272,8 @@ impl Atmosphere {
             water_light: Vec4::ZERO,
             water_scales: Vec4::ZERO,
             dusk: light.dusk.extend(0.0),
+            cloud_flash: Vec4::ZERO,
+            bow: Vec4::ZERO,
         }
     }
 
@@ -278,6 +284,7 @@ impl Atmosphere {
     /// Its shadows on the land fade as the sky closes over, when the cloud's dimming of the
     /// whole sky (in the sun's colour) takes over.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn with_clouds(
         mut self,
         weather: &Weather,
@@ -286,6 +293,7 @@ impl Atmosphere {
         to_light: Vec3,
         seconds: f32,
         flash: f32,
+        cloud_flash: Option<(Vec3, f32)>,
         pack: &ShaderPack,
     ) -> Self {
         // Rain only falls from a well covered sky.
@@ -311,6 +319,7 @@ impl Atmosphere {
         }
         let shade = cloud_map::shade_corner(eye.xz(), eye.xz() + towards);
         self.cloud_shade = Vec4::new(shade.x, shade.y, cloud_map::SHADE_EXTENT, drawn);
+        self.cloud_flash = cloud_flash.map_or(Vec4::ZERO, |(at, brightness)| at.extend(brightness));
         self
     }
 }
@@ -402,7 +411,7 @@ mod tests {
     fn the_low_cloud_comes_down_in_rain() {
         let pack = ShaderPack::default();
         let air = Atmosphere::new(&Light::default(), &Weather::NONE, &Air::default(), &pack, Quality::default(), View::new(2000.0));
-        let cloud = |weather: Weather| air.with_clouds(&weather, Vec2::ZERO, DVec3::ZERO, Vec3::Y, 0.0, 0.0, &pack);
+        let cloud = |weather: Weather| air.with_clouds(&weather, Vec2::ZERO, DVec3::ZERO, Vec3::Y, 0.0, 0.0, None, &pack);
         assert_eq!(cloud(Weather::NONE).cloud_look.z, 0.0, "a clear sky has no cloud to march");
         let fair = cloud(Weather { cover: 0.4, ..Weather::NONE });
         let rain = cloud(Weather { cover: 1.0, precipitation: 1.0, ..Weather::NONE });
