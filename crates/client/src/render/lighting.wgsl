@@ -7,7 +7,7 @@
 #define_import_path voxmar::lighting
 
 #import bevy_pbr::mesh_view_bindings::{view, lights, globals}
-#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_across, cloud_light, cloud_seen, far_color}
+#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_across, cloud_light, cloud_seen, far_color, water_glow}
 #import voxmar::clouds::value_noise
 #import voxmar::shadows::soft_shadow
 
@@ -197,6 +197,12 @@ fn reflected_cloud(world: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
 // the light beneath does.
 fn sun_unclouded(world: vec3<f32>) -> f32 {
     return 1.0 - cloud_across(atmosphere, view.world_position, world, sun_direction()).x;
+}
+
+// Under water, what the water scatters towards the eye along a ray heading `direction`
+// from just under its surface, as far as it goes.
+fn glow_below_surface(direction: vec3<f32>) -> vec3<f32> {
+    return water_glow(atmosphere, 0.0, direction.y, 1e4);
 }
 
 // `color` at `world` seen through the air. Real chunks, distant terrain, water and the

@@ -279,6 +279,11 @@ impl Material for SkyMaterial {
         _key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = None;
+        // The sky leaves the depth cleared, so passes that read depth (water, light shafts)
+        // know the view reaches it rather than something drawn.
+        if let Some(depth) = descriptor.depth_stencil.as_mut() {
+            depth.depth_write_enabled = Some(false);
+        }
         Ok(())
     }
 }
@@ -294,6 +299,8 @@ pub struct DayCycle {
     /// Fog end distance in blocks: the edge of the distant terrain.
     pub view_distance: f32,
     pub underwater: bool,
+    /// Under water, the height of the water's surface above the eye.
+    pub water_surface: f32,
 }
 
 #[derive(Component)]
@@ -536,6 +543,8 @@ const NIGHT_HORIZON: Vec3 = Vec3::new(0.005, 0.007, 0.014);
 const DUSK_HORIZON: Vec3 = Vec3::new(1.9, 0.78, 0.32);
 const DUSK_AMBIENT: Vec3 = Vec3::new(1.3, 0.95, 0.75);
 const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
+/// Water's colour where no world says otherwise (between worlds), linear RGB.
+const WATER: Vec3 = Vec3::new(0.05, 0.2, 0.7);
 
 /// The direction towards the sun at a time of day (0..1, 0 = sunrise): a slightly tilted
 /// arc across the sky.
@@ -627,6 +636,7 @@ fn update_environment(
     mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>, Without<Camera3d>)>,
     mut clear: ResMut<ClearColor>,
     (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
+    (generator, mut water_column): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>),
 ) {
     let Some(sky_handle) = sky_handle else { return };
     // The camera's own transform (it has no parent), as this frame moved it: the global one
@@ -656,11 +666,7 @@ fn update_environment(
         dome.translation = camera.translation;
     }
 
-    let mut horizon = env.horizon;
-    if cycle.underwater {
-        let water = Vec3::new(0.04, 0.13, 0.32);
-        horizon = fade(water * 0.03, water, env.daylight);
-    }
+    let horizon = env.horizon;
     // Haze glows around the sun like the sky does, while the sun is the light, and as
     // dully as the sky's glow under thick cloud.
     let overcast = smoothstep(0.4, 1.0, shown.cover);
@@ -674,7 +680,12 @@ fn update_environment(
     let seconds = (cycle.ticks / voxmar_protocol::TICKS_PER_SECOND as f64) as f32 % 100_000.0;
     let position = camera.translation.as_dvec3();
     let layer = ((DVec2::new(position.x, position.z) + weather.drift.as_dvec2()) / CLOUD_UNIT).rem_euclid(DVec2::splat(4096.0)).as_vec2();
-    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation.y, underwater: cycle.underwater };
+    let underwater = cycle.underwater.then(|| atmosphere::Submerged {
+        tint: water_tint(generator.as_deref(), camera.translation, &mut water_column),
+        surface: cycle.water_surface,
+        light: env.light_color * env.light_direction.y.max(0.0) + env.ambient,
+    });
+    let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation.y, underwater };
     let mut air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, *quality, view);
     if !cycle.underwater {
         air = air.with_clouds(shown, layer, position, env.light_direction, seconds, flash, &pack);
@@ -701,6 +712,22 @@ fn update_environment(
         };
         sky.atmosphere = air;
     }
+}
+
+/// The biome's colour of the water at `eye`, linear RGB, as the terrain's water takes it,
+/// looked up again only when the eye moves to another column (`last`).
+fn water_tint(generator: Option<&lod::WorldGenerator>, eye: Vec3, last: &mut Option<(IVec2, Vec3)>) -> Vec3 {
+    let column = IVec2::new(eye.x.floor() as i32, eye.z.floor() as i32);
+    if let Some((at, tint)) = *last
+        && at == column
+    {
+        return tint;
+    }
+    let Some(world) = generator.and_then(|g| g.get()) else { return WATER };
+    let [r, g, b] = world.sampler(column, column).colors(column.x, column.y).water;
+    let tint = Color::srgb_u8(r, g, b).to_linear().to_vec3();
+    *last = Some((column, tint));
+    tint
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {

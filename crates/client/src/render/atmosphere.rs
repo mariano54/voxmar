@@ -60,8 +60,6 @@ const FOG_BELOW_EYE: f32 = 16.0;
 const FOG_HEIGHT: f32 = 120.0;
 /// How far one sees in clear air, in blocks (as `Weather::visibility`).
 const CLEAR_VISIBILITY: f32 = 3030.0;
-/// Under water, the view closes in over this many blocks.
-const UNDERWATER_VIEW: f32 = 40.0;
 /// Volumetric light: how far its rays reach, in blocks, how many steps they take, how
 /// much light scatters evenly in every direction besides the glow around the sun, and how
 /// much more clear air scatters sunlight into shafts than it dims the view.
@@ -101,6 +99,9 @@ pub struct Atmosphere {
     pub cloud_map: Vec4,
     pub cloud_shade: Vec4,
     pub ground: Vec4,
+    pub water: Vec4,
+    pub water_light: Vec4,
+    pub water_scales: Vec4,
 }
 
 impl Default for Atmosphere {
@@ -115,13 +116,25 @@ pub struct View {
     /// The edge of the distant terrain, in blocks.
     pub distance: f32,
     pub eye_height: f32,
-    pub underwater: bool,
+    /// The water the eye is in, if it is under water.
+    pub underwater: Option<Submerged>,
 }
 
 impl View {
     pub fn new(distance: f32) -> Self {
-        Self { distance, eye_height: 130.0, underwater: false }
+        Self { distance, eye_height: 130.0, underwater: None }
     }
+}
+
+/// The water around an eye under water.
+#[derive(Clone, Copy, Debug)]
+pub struct Submerged {
+    /// Its colour as the biome tints it, linear RGB.
+    pub tint: Vec3,
+    /// The height of its surface.
+    pub surface: f32,
+    /// Sun and sky light falling on the surface.
+    pub light: Vec3,
 }
 
 /// The light of the moment, from the day cycle (see `Environment` in render/mod.rs).
@@ -173,12 +186,13 @@ impl Atmosphere {
         let View { distance: view_distance, eye_height, underwater } = view;
         let shadow = Vec4::new(quality.shadows.taps() as f32, pack.shadow_softness, NORMAL_OFFSET, MAX_PENUMBRA);
         let surface = Vec4::new(pack.sky_falloff, pack.ambient_occlusion, pack.subsurface, pack.glow * GLOW);
-        if underwater {
+        if let Some(water) = underwater {
+            // No air: the water between the eye and everything takes its place.
             return Self {
                 shadow,
                 surface,
                 haze: light.horizon.extend(0.0),
-                haze_shape: Vec4::new(HAZE_BASE, HAZE_HEIGHT, 0.0, UNDERWATER_VIEW),
+                haze_shape: Vec4::new(HAZE_BASE, HAZE_HEIGHT, view_distance * EDGE_FADE, view_distance),
                 glow: Vec4::ZERO,
                 fog: light.horizon.extend(0.0),
                 fog_shape: Vec4::new(0.0, FOG_HEIGHT, 0.0, 0.0),
@@ -190,6 +204,9 @@ impl Atmosphere {
                 cloud_map: Vec4::ZERO,
                 cloud_shade: Vec4::ZERO,
                 ground: Vec4::new(0.0, 0.0, 0.0, pack.bounce),
+                water: water.tint.extend(water.surface),
+                water_light: water.light.extend(1.0),
+                water_scales: Vec4::new(pack.water.absorption, pack.water.scattering, 0.0, 0.0),
             };
         }
 
@@ -240,6 +257,9 @@ impl Atmosphere {
                 weather.snow_cover.clamp(0.0, 1.0) * pack.frost,
                 pack.bounce,
             ),
+            water: Vec4::ZERO,
+            water_light: Vec4::ZERO,
+            water_scales: Vec4::ZERO,
         }
     }
 

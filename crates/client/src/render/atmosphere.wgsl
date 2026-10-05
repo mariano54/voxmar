@@ -10,6 +10,7 @@
 #define_import_path voxmar::atmosphere
 
 #import voxmar::clouds::{cloud_body, cloud_detail, cloud_threshold, value_noise3}
+#import voxmar::water::{absorption, scattering}
 
 struct Atmosphere {
     // Shadows. x: filter taps (0: no shadows, 1: one bilinear tap), y: penumbra width per
@@ -62,6 +63,13 @@ struct Atmosphere {
     // The ground. x: how wet rain has left it, y: frost on it, z: snow lying around, w:
     // how much sunlight it bounces onto walls and undersides.
     ground: vec4<f32>,
+    // Under water (see `under_water`). rgb: the colour of the water the eye is in, w: the
+    // height of its surface.
+    water: vec4<f32>,
+    // rgb: sun and sky light falling on that surface, w: 1 while the eye is under water.
+    water_light: vec4<f32>,
+    // x, y: how strongly water absorbs and scatters light (the pack's).
+    water_scales: vec4<f32>,
 };
 
 // Mean density between heights `y0` and `y0 + dy` of air that is densest below `base`
@@ -132,8 +140,8 @@ fn haze_color(a: Atmosphere, direction: vec3<f32>, to_sun: vec3<f32>) -> vec3<f3
 }
 
 struct Aerial {
-    // How much of what lies behind shows through.
-    transmittance: f32,
+    // How much of what lies behind shows through, per channel.
+    transmittance: vec3<f32>,
     // Light the air adds on the way to the eye.
     light: vec3<f32>,
 };
@@ -160,6 +168,9 @@ fn far_color(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, to_sun: vec3<f
 // shapes the one and knows where shadows fall for the other. The far edge of the distant
 // terrain fades completely into what lies beyond.
 fn aerial(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>, to_sun: vec3<f32>) -> Aerial {
+    if a.water_light.w > 0.0 {
+        return under_water(a, eye, offset);
+    }
     let distance = max(length(offset), 1e-4);
     let direction = offset / distance;
     var out = air_along(a, eye, offset, to_sun);
@@ -192,8 +203,48 @@ fn air_along(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>, to_sun: vec3<f32>
     }
     let glow = a.glow.rgb * sun_glow(dot(direction, to_sun));
     var out: Aerial;
-    out.transmittance = through;
+    out.transmittance = vec3(through);
     out.light = sky_lit * (1.0 - through) + glow * sunlit;
+    return out;
+}
+
+// How much brighter water seen from inside it glows than light scattered once in it would
+// make it: light scattered again and again, which a single scattering leaves out.
+const UNDER_WATER_SCATTERING: f32 = 3.0;
+
+// Light the water the eye is in scatters towards the eye along `distance` blocks of a ray
+// that heads `direction_y` upwards from `depth` blocks below its surface. Light comes down
+// from the surface, fading as the water takes it, so the ray, rising or sinking into
+// brighter or darker water, gathers (single scattering, integrated exactly)
+//   light · e^(-k·depth) · s / (k·g) · (1 - e^(-k·distance·g)), with g = 1 - direction_y,
+// k the water's extinction and s its scattering.
+fn water_glow(a: Atmosphere, depth: f32, direction_y: f32, distance: f32) -> vec3<f32> {
+    let scattered = scattering(a.water.rgb, a.water_scales.y);
+    let extinction = absorption(a.water.rgb, a.water_scales.x) + scattered;
+    let g = max(1.0 - direction_y, 1e-3);
+    let gathered = scattered / (extinction * g) * (1.0 - exp(-extinction * distance * g));
+    return a.water_light.rgb * exp(-extinction * depth) * gathered * UNDER_WATER_SCATTERING;
+}
+
+// Under water, the water between `eye` and what lies `offset` from it, which takes the
+// air's place: the view closes in as the water absorbs red first and blue last (see
+// voxmar::water), and fills with the light it scatters (`water_glow`). What lies below the
+// surface was lit through the water above it too. What lies above it is seen through the
+// water only as far as the surface, whose own shading (water_surface.wgsl) adds nothing
+// more.
+fn under_water(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>) -> Aerial {
+    let extinction = absorption(a.water.rgb, a.water_scales.x) + scattering(a.water.rgb, a.water_scales.y);
+    let surface = a.water.w;
+    let distance = max(length(offset), 1e-4);
+    var wet = distance;
+    var down = surface - (eye.y + offset.y);
+    if down < 0.0 {
+        wet *= saturate((surface - eye.y) / max(offset.y, 1e-4));
+        down = 0.0;
+    }
+    var out: Aerial;
+    out.transmittance = exp(-extinction * (wet + down));
+    out.light = water_glow(a, max(surface - eye.y, 0.0), offset.y / distance, wet);
     return out;
 }
 

@@ -16,7 +16,7 @@
 #define_import_path voxmar::water_surface
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, sun_unclouded, air_between, reflected_cloud}
+#import voxmar::lighting::{shade_normal, sun_direction, sun_color, sun_shadow, sun_unclouded, air_between, reflected_cloud, glow_below_surface}
 #import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
 
 struct Water {
@@ -320,7 +320,7 @@ fn trace(origin: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
 // The air between the eye and a point: how much of the point shows through it, and the
 // light it adds on the way.
 struct Air {
-    through: f32,
+    through: vec3<f32>,
     light: vec3<f32>,
 };
 
@@ -406,21 +406,25 @@ fn shade_water(
     // bent; outside it the surface mirrors the deep water below.
     if water.optics.w > 0.5 && dot(to_eye, normal) < 0.0 {
         let out = refract(-to_eye, -waves, 1.33);
-        let light = shade_normal(vec3(1.0), world, vec3(0.0, 1.0, 0.0), 1.0, sky, 0.0, 1.0, false, false);
-        let deep = inscattered(absorbed, scattered, 1e4, light);
+        // Outside the window the surface mirrors the water below, as lit as the water
+        // around the eye; all of it seen through the water between the eye and the surface.
+        let deep = glow_below_surface(reflect(-to_eye, -waves)) * air.through + air.light;
         var seen_above = deep;
         if dot(out, out) > 0.0 {
             // The sky through the window, or what stands above the water where the bent
-            // view finds it on screen behind the surface.
-            var above = sky_gradient(out, water.zenith.rgb, water.horizon.rgb) * open;
+            // view finds it on screen behind the surface, which was drawn seen through
+            // the water up to the surface already.
+            var above = sky_gradient(out, water.zenith.rgb, water.horizon.rgb) * open * air.through + air.light;
             let bent = project(world + out * 4.0);
-            if all(bent.xy == saturate(bent.xy)) && depth_at(bent.xy) < frag.z {
-                above = color_at(bent.xy);
+            if all(bent.xy == saturate(bent.xy)) {
+                let behind = depth_at(bent.xy);
+                if behind > 0.0 && behind < frag.z {
+                    above = color_at(bent.xy);
+                }
             }
-            seen_above = mix(above, deep, 1.0 - saturate(dot(out, -normal) * 3.0));
+            seen_above = mix(above, deep, 1.0 - saturate(dot(out, normal) * 3.0));
         }
-        // The water between the eye and the surface, as the air under water paints it.
-        return seen_above * air.through + air.light;
+        return seen_above;
     }
 
     // What lies behind the surface along the view, and what is seen through the waves: the

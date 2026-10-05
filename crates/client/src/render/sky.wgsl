@@ -4,7 +4,7 @@
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
-#import voxmar::atmosphere::{Atmosphere, edge_fog}
+#import voxmar::atmosphere::{Atmosphere, edge_fog, under_water}
 #import voxmar::clouds::{pcg, unit, value_noise, cloud_body}
 
 struct SkyParams {
@@ -429,6 +429,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_position.xyz - view.world_position);
     let ddx = dpdx(dir);
     let ddy = dpdy(dir);
+    // Under water nothing of the sky shows but through the surface, which draws it itself:
+    // only the water, deep beyond everything.
+    if atmosphere.water_light.w > 0.0 {
+        return vec4(under_water(atmosphere, view.world_position, dir * 1e4).light, 1.0);
+    }
     // Angle a pixel spans mid-screen, where pixels span the widest angle.
     let px = 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
     let up = max(dir.y, 0.0);
