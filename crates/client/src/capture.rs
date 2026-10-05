@@ -325,7 +325,8 @@ fn fly(time: &Time, player: &mut LocalPlayer, sprint_speed: f32) {
     player.flying = true;
     let forward = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
     let direction = if player.position.y < FLIGHT_HEIGHT { Vec3::Y } else { forward };
-    let speed = sprint_speed * 0.9;
+    // As fast as the player's fly speed setting makes it (an admin's, up to several times).
+    let speed = sprint_speed * 0.9 * player.fly_speed;
     player.position += direction * speed * time.delta_secs();
 }
 
