@@ -114,19 +114,35 @@ pub fn setup(
     ));
 }
 
+/// The cube's size while nothing is mined: it stays drawn around the camera, which sees
+/// only its back faces, and those are culled. So its pipeline is compiled as the world
+/// loads rather than at the first block hit (on Metal, Bevy compiles on the render thread,
+/// which held that frame). Large enough that the camera stays inside it however far it
+/// moves in a frame (the camera's position is a frame old here).
+const IDLE_SIZE: f32 = 256.0;
+
 /// Moves the cube onto the block being mined and shows its stage.
 fn show(
     crack: Res<Crack>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
     mut cube: Query<(&mut Transform, &mut Visibility, &MeshMaterial3d<CrackMaterial>), With<CrackCube>>,
     mut materials: ResMut<Assets<CrackMaterial>>,
 ) {
     let Ok((mut transform, mut visibility, material)) = cube.single_mut() else { return };
     let Some((block, stage)) = crack.at.filter(|_| crack.strength > 0.0) else {
-        visibility.set_if_neq(Visibility::Hidden);
+        match camera.single() {
+            Ok(eye) => {
+                visibility.set_if_neq(Visibility::Visible);
+                *transform = Transform::from_translation(eye.translation()).with_scale(Vec3::splat(IDLE_SIZE));
+            }
+            Err(_) => {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
+        }
         return;
     };
     visibility.set_if_neq(Visibility::Visible);
-    transform.translation = block.as_vec3() + 0.5;
+    *transform = Transform::from_translation(block.as_vec3() + 0.5).with_scale(Vec3::splat(1.002));
     let params = Vec4::new(stage.min(STAGES - 1) as f32, crack.strength.min(1.0), 0.0, 0.0);
     // Only when the stage changes, ten times a block, so the material is rarely rebuilt.
     if materials.get(&material.0).is_some_and(|m| m.params != params)

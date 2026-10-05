@@ -287,7 +287,11 @@ run() {
     # "fps 1%-low p99 worst" from the run's frame statistics, whatever kind of scene.
     sed -nE 's/.*(flight|dig|steady): [0-9]+ frames, median [0-9.]+ ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms, .*\(([0-9]+) fps\), 1% low ([0-9]+) fps.*/\4 \5 \2 \3/p' <<<"$log"
   elif [[ $view == flight* ]]; then
-    sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log"
+    # "median p99 max meshed": meshed is the columns loaded less those still waiting to be
+    # meshed, so a change that meshes less, and so draws less, shows.
+    local meshed
+    meshed=$(sed -nE 's/.*capture: .* ([0-9]+) columns, .* ([0-9]+) pending, .*/\1 \2/p' <<<"$log" | awk '{ print $1 - $2 }')
+    sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log" | sed "s/$/ $meshed/"
   else
     sed -nE 's/.*capture: [0-9]+ fps \(([0-9.]+) ms\).*/\1/p' <<<"$log"
   fi
@@ -339,11 +343,11 @@ for view in "${views[@]}"; do
     b=$(run "$base_dir" "$view") || exit 1
     c=$(run . "$view") || exit 1
     if [[ $view == flight* ]]; then
-      read -r bm bp bx <<<"$b"
-      read -r cm cp cx <<<"$c"
+      read -r bm bp bx bn <<<"$b"
+      read -r cm cp cx cn <<<"$c"
       key=$bp
       verdict=$(flight_verdict "$bp" "$cp" "$cx" "$on_ac")
-      line="base median $bm p99 $bp max $bx ms; this median $cm p99 $cp max $cx ms; p99"
+      line="base median $bm p99 $bp max $bx ms, $bn columns meshed; this median $cm p99 $cp max $cx ms, $cn meshed; p99"
       values=("$bm" "$bp" "$bx" "$cm" "$cp" "$cx")
     else
       key=$b
