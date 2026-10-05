@@ -100,6 +100,7 @@
     "settings.value.low": "Low",
     "settings.value.medium": "Medium",
     "settings.value.high": "High",
+    "settings.value.ultra": "Ultra",
     "settings.value.chunks": "{count} chunks",
     "settings.value.pixels": "{count} px",
 

@@ -710,6 +710,13 @@ is nothing to blend. Leaves cut out of the shadow maps at the mip whose texels a
 again as large as the cascade's (voxel.wgsl, `alpha_test`), so their holes are never finer
 than the map holds and the dappled shade under a crown does not sparkle as cascades move.
 
+**Shadow resolution.** High draws each of the four cascades (12, 31, 78 and 200 blocks
+out) into a 2048-texel map; from about 30 blocks out, in the third cascade, a shadow's edge
+shows steps (Mariano's playtest of 2026-10-05: shadows don't look great, maybe they need
+higher res). The Ultra setting draws 4096-texel maps, which takes the steps out, for about
+1.8 ms a frame at his settings (Low Power Mode, a busy machine) and 268 MB of maps; near
+shadows look the same at either size, as the soft filter, not the map, sets their edge.
+
 **Soft shadows with a penumbra** (shadows.wgsl, our own sampling of Bevy's cascades): a
 blocker search finds how far the caster is and the filter widens with that distance
 (percentage-closer soft shadows), so a trunk's contact shadow is crisp and a canopy's
