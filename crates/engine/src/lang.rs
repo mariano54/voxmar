@@ -20,6 +20,9 @@ use std::fmt::{Display, Write};
 use std::path::Path;
 
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
+
+use crate::block::{BlockDef, BlockRegistry};
 
 /// The language every other falls back to, and the one every key must exist in.
 pub const ENGLISH: &str = "en";
@@ -130,6 +133,56 @@ impl Lang {
         fill(text, &all)
     }
 
+    /// What a block or item is called: its own name in the language (`block.base.oak_log`),
+    /// or, for a block made from a template, the template member's name with the family's
+    /// filled in (`block.base.{name}_log` with `family.base.oak`), so a language names a
+    /// whole family of woods or rocks in two lines; another look of a plant goes by the
+    /// plant's name. Without any of those, a name made from its id: "Oak Log".
+    pub fn block(&self, def: &BlockDef) -> String {
+        if let Some(name) = self.find(&def_key("block", &def.name)) {
+            return name.to_owned();
+        }
+        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+        if let Some(family) = &def.family {
+            let family_local = family.rsplit(':').next().unwrap_or(family);
+            let pattern = local.replacen(family_local, "{name}", 1);
+            if let (Some(member), Some(family)) = (self.find(&format!("block.{namespace}.{pattern}")), self.find(&def_key("family", family))) {
+                return fill(member, &[("name", &family)]);
+            }
+        }
+        if let Some(plant) = def.variant_of.as_deref().and_then(|plant| self.find(&def_key("block", plant))) {
+            return plant.to_owned();
+        }
+        title_from_id(&def.name)
+    }
+
+    /// `words` in this language. Blocks are looked up in `blocks`.
+    pub fn render(&self, words: &Words, blocks: &BlockRegistry) -> String {
+        match words {
+            Words::Text(text) => text.clone(),
+            Words::Own(key, own) => self.get_or(key, own).to_owned(),
+            Words::Block(name) => blocks.id(name).map_or_else(|| title_from_id(name), |id| self.block(blocks.def(id))),
+            Words::Lines(lines) => lines.iter().map(|line| self.render(line, blocks)).collect::<Vec<_>>().join("\n"),
+            Words::List(items) => {
+                let separator = self.find("language.list_separator").unwrap_or(", ");
+                items.iter().map(|item| self.render(item, blocks)).collect::<Vec<_>>().join(separator)
+            }
+            Words::Key(key, args) => {
+                let rendered: Vec<(&str, String)> = args.iter().map(|(name, value)| (name.as_str(), self.render(value, blocks))).collect();
+                let display: Vec<(&str, &dyn Display)> = rendered.iter().map(|(name, value)| (*name, value as &dyn Display)).collect();
+                // A count picks its form: `key.one` or `key.other`.
+                let count = rendered.iter().find(|(name, _)| *name == "count").and_then(|(_, value)| value.parse::<u64>().ok());
+                match count {
+                    Some(count) if self.find(key).is_none() => {
+                        let rest: Vec<(&str, &dyn Display)> = display.into_iter().filter(|(name, _)| *name != "count").collect();
+                        self.count(key, count, &rest)
+                    }
+                    _ => fill(self.get(key), &display),
+                }
+            }
+        }
+    }
+
     /// Every key this language or English defines.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.english.keys().chain(self.strings.keys().filter(|key| !self.english.contains_key(*key))).map(String::as_str)
@@ -157,6 +210,71 @@ pub fn languages(content_dir: &Path) -> Vec<Language> {
         names.into_iter().map(|(code, name)| Language { name: name.unwrap_or_else(|| code.clone()), code }).collect();
     languages.sort_by(|a, b| (a.code != ENGLISH, &a.code).cmp(&(b.code != ENGLISH, &b.code)));
     languages
+}
+
+/// Words for a player, which their client puts into their language: what the server
+/// says (a command's answer, news, why it turned someone away) travels as keys and
+/// arguments, never as English.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Words {
+    /// As it was written: a player's chat, a name, a number.
+    Text(String),
+    /// A key's text, its `{name}`s filled with the arguments.
+    Key(String, Vec<(String, Words)>),
+    /// A block or item's name, by the block's id.
+    Block(String),
+    /// A definition's own text (a command's help), unless the language has `key`.
+    Own(String, String),
+    /// Several, a line each.
+    Lines(Vec<Words>),
+    /// Several, as a list: "a, b, c".
+    List(Vec<Words>),
+}
+
+impl Words {
+    /// A key's text, with arguments to add with [`Words::with`].
+    pub fn key(key: &str) -> Self {
+        Words::Key(key.to_owned(), Vec::new())
+    }
+
+    /// Adds argument `name` to a key's text.
+    pub fn with(mut self, name: &str, value: impl Into<Words>) -> Self {
+        if let Words::Key(_, args) = &mut self {
+            args.push((name.to_owned(), value.into()));
+        }
+        self
+    }
+
+    /// Text as written: a number, a name, a coordinate.
+    pub fn text(value: impl Display) -> Self {
+        Words::Text(value.to_string())
+    }
+}
+
+impl From<String> for Words {
+    fn from(text: String) -> Self {
+        Words::Text(text)
+    }
+}
+
+impl From<&str> for Words {
+    fn from(text: &str) -> Self {
+        Words::Text(text.to_owned())
+    }
+}
+
+/// A name for people made from an id: `base:oak_log` is "Oak Log".
+pub fn title_from_id(name: &str) -> String {
+    let local = name.rsplit(':').next().unwrap_or(name);
+    local
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map(|first| first.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The key a definition's name is looked up by: `kind` `block` and name `base:oak_log`

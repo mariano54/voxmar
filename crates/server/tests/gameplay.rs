@@ -139,7 +139,7 @@ impl Client {
                 self.weather = Some(weather);
                 self.quick = quick;
             }
-            ServerMessage::Chat { kind, text } => self.chat.push((kind, text)),
+            ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
             ServerMessage::Time { day, day_speed, .. } => self.day = Some((day, day_speed)),
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
@@ -569,7 +569,7 @@ fn water_flows_for_everyone_to_see() {
     client.pump_until(|c| c.world.block(IVec3::new(x + 5, y - 1, z)).and_then(|b| c.content.blocks.fluid(b)).is_some_and(|s| s.falling));
     // Give hands out blocks to place.
     let answer = client.ok("/give water 3");
-    assert!(answer.contains("Gave 3 base:water"), "{answer}");
+    assert!(answer.contains("Gave 3 Water"), "{answer}");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == water && s.count == 3));
     let errors = client.command("/setblock ~ ~ ~ no_such_block");
     assert_eq!(errors[0].0, ChatKind::Error);

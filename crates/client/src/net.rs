@@ -173,7 +173,7 @@ fn receive(
                 player.joined = true;
             }
             ServerMessage::Rejected { reason } => {
-                notice.0 = Some(locale.format("net.rejected", &[("reason", &reason)]));
+                notice.0 = Some(locale.format("net.rejected", &[("reason", &locale.render(&reason, &world.registry))]));
                 next.set(menu);
                 break;
             }
@@ -252,6 +252,7 @@ fn receive(
                 player.admin = admin;
             }
             ServerMessage::Chat { kind, text } => {
+                let text = locale.render(&text, &world.registry);
                 // Logged too, so the replies to a capture's `--command`s are on record.
                 debug!("chat: {text}");
                 console.push(kind, &text, time.elapsed_secs())

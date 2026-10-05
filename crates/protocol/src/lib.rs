@@ -14,6 +14,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::{Inventory, ItemStack};
+use voxmar_engine::lang::Words;
 use voxmar_engine::skill::{SkillId, Skills};
 use voxmar_engine::traits::Health;
 use voxmar_engine::world::Column;
@@ -21,7 +22,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -85,7 +86,7 @@ pub enum ServerMessage {
         allow_flight: bool,
         admin: bool,
     },
-    Rejected { reason: String },
+    Rejected { reason: Words },
     Column { pos: ColumnPos, column: Arc<Column> },
     Unload { pos: ColumnPos },
     BlockChanged { pos: IVec3, block: BlockId },
@@ -105,8 +106,9 @@ pub enum ServerMessage {
     Time { tick: u64, day: u64, day_speed: f32 },
     /// What the player may now do, after an admin changed it (`/gamemode`).
     Abilities { allow_flight: bool, admin: bool },
-    /// A line for the player's console: a reply to their command, or chat.
-    Chat { kind: ChatKind, text: String },
+    /// A line for the player's console: a reply to their command, or chat, in words the
+    /// client puts into the player's language.
+    Chat { kind: ChatKind, text: Words },
     /// The weather where the player is, sent when it changes and every few seconds, with
     /// the names of the effects showing (`valley_fog`, `hail`), strongest first, and the
     /// rain around, to show storms coming. `quick` asks the client to change to it within
