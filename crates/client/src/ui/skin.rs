@@ -1,8 +1,8 @@
 //! The interface's look: the pixel font and the pixel-art pieces every screen is built
 //! from, prepared once at startup.
 //!
-//! The font is drawn as text in `assets/ui/font.txt` and built into a TrueType font when
-//! the game starts (`voxmar_texgen::font`). The pieces (panels, buttons, slots, wells, the
+//! The fonts are drawn as text in `assets/ui/fonts` and the chosen one is built into a
+//! TrueType font when the game starts or the setting changes (`voxmar_texgen::font`). The pieces (panels, buttons, slots, wells, the
 //! hotbar's frame) are `ui/*` textures from the texture packs, so a pack can reskin the
 //! interface the way it retextures blocks; our default pack draws them all in
 //! `recipes/ui.ron`. Both live behind fixed handles, so widgets can name a piece without
@@ -11,6 +11,7 @@
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use bevy::sprite::{BorderRect, SliceScaleMode, TextureSlicer};
+use serde::{Deserialize, Serialize};
 use voxmar_texgen::font::{EM_PIXELS, PixelFont};
 
 use crate::render::ui_image;
@@ -140,20 +141,57 @@ impl Piece {
     }
 }
 
-/// Builds the font and reads every piece from the texture packs, behind their fixed
-/// handles. A piece no pack draws is a flat grey stand-in, and a font file that cannot be
-/// read leaves Bevy's built-in font.
-pub fn load(source: &mut Source, images: &mut Assets<Image>, fonts: &mut Assets<Font>) {
-    let path = voxmar_server::assets_dir().join("ui/font.txt");
-    let font = std::fs::read_to_string(&path)
-        .map_err(|e| e.to_string())
-        .and_then(|text| PixelFont::parse(&text).map_err(|e| e.to_string()));
+/// The pixel fonts a player can choose from, drawn in `assets/ui/fonts`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InterfaceFont {
+    /// A monospace font with a typewriter's slab serifs.
+    #[default]
+    Ledger,
+    /// A monospace font with square corners.
+    Block,
+    /// The first, proportional font.
+    Voxmar,
+}
+
+impl InterfaceFont {
+    pub const ALL: [InterfaceFont; 3] = [InterfaceFont::Ledger, InterfaceFont::Block, InterfaceFont::Voxmar];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            InterfaceFont::Ledger => "Ledger",
+            InterfaceFont::Block => "Block",
+            InterfaceFont::Voxmar => "Voxmar",
+        }
+    }
+
+    fn file(self) -> &'static str {
+        match self {
+            InterfaceFont::Ledger => "ledger.txt",
+            InterfaceFont::Block => "block.txt",
+            InterfaceFont::Voxmar => "voxmar.txt",
+        }
+    }
+}
+
+/// Builds a font into the fixed handle every text uses, so changing it changes all text.
+/// A font file that cannot be read leaves the font that was there.
+pub fn set_font(choice: InterfaceFont, fonts: &mut Assets<Font>) {
+    let dir = voxmar_server::assets_dir().join("ui/fonts");
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+    let font = read(choice.file())
+        .ok_or_else(|| format!("cannot read {}", choice.file()))
+        .and_then(|text| PixelFont::parse_with(&text, read).map_err(|e| e.to_string()));
     match font {
         Ok(font) => {
-            let _ = fonts.insert(&FONT, Font::from_bytes(font.to_ttf("Voxmar Pixel")));
+            let _ = fonts.insert(&FONT, Font::from_bytes(font.to_ttf(&format!("Voxmar {}", choice.label()))));
         }
-        Err(e) => warn!("cannot read the interface font {}: {e}", path.display()),
+        Err(e) => warn!("cannot build the interface font {}: {e}", dir.join(choice.file()).display()),
     }
+}
+
+/// Reads every piece from the texture packs into its fixed handle. A piece no pack draws
+/// is a flat grey stand-in.
+pub fn load(source: &mut Source, images: &mut Assets<Image>) {
     for piece in Piece::ALL {
         let (name, (w, h), _) = piece.spec();
         let art = source.read(name).unwrap_or_else(|| {

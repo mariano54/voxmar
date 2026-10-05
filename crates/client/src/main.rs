@@ -435,7 +435,8 @@ fn setup(
             layers.push(LayerInfo::default());
         }
     }
-    ui::skin::load(&mut source, &mut images, &mut fonts);
+    ui::skin::load(&mut source, &mut images);
+    ui::skin::set_font(settings.font, &mut fonts);
     let colormaps = source.colormaps();
     render::setup(&mut commands, &mut images, &mut meshes, &mut sky_materials, &block_textures, &layers);
     let crack_stages = (0..render::cracks::STAGES).map(|stage| source.read(&format!("block/destroy_stage_{stage}"))).collect();
