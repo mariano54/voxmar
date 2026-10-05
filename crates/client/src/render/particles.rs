@@ -29,7 +29,7 @@ use bevy::render::render_phase::{
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages,
     CachedRenderPipelineId, PipelineCache, SamplerBindingType, ShaderStages, TextureSampleType, VertexStepMode,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, texture_3d, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -335,11 +335,16 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
                 (2, storage_buffer_read_only_sized(false, None)),
                 // The air and light, at the binding lighting.wgsl expects.
                 (6, uniform_buffer::<Atmosphere>(false)),
-                // Each texture layer's overlay, at the terrain's binding, and the cloud maps.
+                // Each texture layer's overlay, at the terrain's binding, and the cloud maps
+                // and noise: the particle pipeline is built as the terrain's (`mesh_like`), with
+                // its shader defs, so it reads them.
                 (7, texture_2d(TextureSampleType::Float { filterable: false })),
                 (8, texture_2d(TextureSampleType::Float { filterable: true })),
                 (9, sampler(SamplerBindingType::Filtering)),
                 (10, texture_2d(TextureSampleType::Float { filterable: true })),
+                (11, texture_2d(TextureSampleType::Float { filterable: true })),
+                (12, texture_3d(TextureSampleType::Float { filterable: true })),
+                (13, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
@@ -409,6 +414,9 @@ fn prepare_bind_group(
             (8, &cloud_map.view),
             (9, &cloud_map.sampler),
             (10, &cloud_map.shade),
+            (11, &cloud_map.noise.plane),
+            (12, &cloud_map.noise.volume),
+            (13, &cloud_map.noise.sampler),
         )),
     );
     gpu.bind_group = Some(bind_group);
