@@ -46,6 +46,8 @@ pub enum Piece {
     WellHover,
     WellFocus,
     Bar,
+    BarHealth,
+    BarHunger,
     Knob,
     KnobSmall,
     Tooltip,
@@ -57,7 +59,7 @@ pub enum Piece {
 }
 
 impl Piece {
-    const ALL: [Piece; 23] = [
+    const ALL: [Piece; 25] = [
         Piece::Panel,
         Piece::Button,
         Piece::ButtonHover,
@@ -73,6 +75,8 @@ impl Piece {
         Piece::WellHover,
         Piece::WellFocus,
         Piece::Bar,
+        Piece::BarHealth,
+        Piece::BarHunger,
         Piece::Knob,
         Piece::KnobSmall,
         Piece::Tooltip,
@@ -102,6 +106,8 @@ impl Piece {
             Piece::WellHover => ("ui/well_hover", (6, 6), Some(2.0)),
             Piece::WellFocus => ("ui/well_focus", (6, 6), Some(2.0)),
             Piece::Bar => ("ui/bar", (4, 4), Some(1.0)),
+            Piece::BarHealth => ("ui/bar_health", (4, 4), Some(1.0)),
+            Piece::BarHunger => ("ui/bar_hunger", (4, 4), Some(1.0)),
             Piece::Knob => ("ui/knob", (6, 9), None),
             Piece::KnobSmall => ("ui/knob_small", (6, 6), None),
             Piece::Tooltip => ("ui/tooltip", (8, 8), Some(3.0)),
