@@ -828,7 +828,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.next(Step::Gorge, now);
         return;
     };
-    let snail = || {
+    let snail = |world: &World| {
         let creatures = world.resource::<crate::creatures::Creatures>();
         creatures.views().find(|v| v.species == species).copied()
     };
@@ -856,7 +856,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         2 => {
-            let Some(view) = snail() else {
+            let Some(view) = snail(world) else {
                 if in_phase > 10.0 {
                     gate.check("creatures", Err("a summoned creature never reached the client".into()));
                     gate.next(Step::Gorge, now);
@@ -875,7 +875,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         3 => {
             // Strike it as a player would, a click every few frames, until it dies.
-            match snail() {
+            match snail(world) {
                 Some(view) if in_phase < 20.0 => {
                     // Close in to striking reach, then strike.
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
@@ -887,7 +887,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     mouse(world, MouseButton::Left, false);
                     key(world, KeyCode::KeyW, false);
                     let aimed = world.resource::<crate::interact::Target>().creature.is_some();
-                    let distance = snail().map_or(0.0, |v| v.position.distance(world.resource::<LocalPlayer>().eye()));
+                    let distance = snail(world).map_or(0.0, |v| v.position.distance(world.resource::<LocalPlayer>().eye()));
                     gate.check("creature struck", Err(format!("twenty seconds of blows did not kill it (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
                     gate.next(Step::Gorge, now);
                 }
