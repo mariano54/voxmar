@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy::text::FontSmoothing;
 use bevy::ui::RelativeCursorPosition;
 
+use super::ime::{Composing, ImeSystems};
 use super::skin::{FONT, PX, Piece, font_size};
 use crate::lang::Localized;
 
@@ -17,7 +18,7 @@ pub struct WidgetsPlugin;
 impl Plugin for WidgetsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(UiFont(FONT))
-            .add_systems(Update, (style_buttons, scroll_lists, (focus_fields, edit_fields, draw_fields).chain()));
+            .add_systems(Update, (style_buttons, scroll_lists, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
     }
 }
 
@@ -322,9 +323,11 @@ fn edit_fields(
     mut input: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
     mut fields: Query<(Entity, &mut TextField, Has<Focused>)>,
+    mut composing: ResMut<Composing>,
 ) {
     // Shortcuts (copy, select all, …) are not text.
     let shortcut = keys.any_pressed([KeyCode::SuperLeft, KeyCode::SuperRight, KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let mut typed = String::new();
     for event in input.read().filter(|event| event.state == ButtonState::Pressed) {
         if event.logical_key == Key::Tab {
             let mut order: Vec<(u8, Entity, bool)> = fields.iter().map(|(entity, field, focused)| (field.order, entity, focused)).collect();
@@ -339,11 +342,21 @@ fn edit_fields(
         let Some((_, mut field, _)) = fields.iter_mut().find(|(.., focused)| *focused) else { continue };
         if event.logical_key == Key::Backspace {
             field.value.pop();
-        } else if let Some(typed) = event.text.as_ref().filter(|_| !shortcut) {
-            for c in typed.chars().filter(|c| !c.is_control()) {
+        } else if let Some(text) = event.text.as_ref().filter(|_| !shortcut) {
+            for c in text.chars().filter(|c| !c.is_control()) {
+                typed.push(c);
                 if field.value.chars().count() < field.max_chars {
                     field.value.push(c);
                 }
+            }
+        }
+    }
+    // What the input method committed (Japanese, for one) goes into the focused field.
+    let committed = composing.take(&typed);
+    if let Some((_, mut field, _)) = fields.iter_mut().find(|(.., focused)| *focused) {
+        for c in committed.chars().filter(|c| !c.is_control()) {
+            if field.value.chars().count() < field.max_chars {
+                field.value.push(c);
             }
         }
     }
@@ -353,6 +366,7 @@ fn edit_fields(
 /// and a teal rim while focused (fainter while hovered).
 fn draw_fields(
     time: Res<Time>,
+    composing: Res<Composing>,
     mut fields: Query<(&TextField, Has<Focused>, &Interaction, &mut ImageNode)>,
     mut texts: Query<&mut Text>,
     mut nodes: Query<&mut Node>,
@@ -360,13 +374,15 @@ fn draw_fields(
 ) {
     let blink_on = time.elapsed_secs().fract() < 0.55;
     for (field, focused, interaction, mut image) in &mut fields {
+        // Text the input method is composing shows after the field's, until committed.
+        let shown = if focused && !composing.preedit.is_empty() { format!("{}{}", field.value, composing.preedit) } else { field.value.clone() };
         if let Ok(mut text) = texts.get_mut(field.text)
-            && text.0 != field.value
+            && text.0 != shown
         {
-            text.0.clone_from(&field.value);
+            text.0 = shown;
         }
         if let Ok(mut node) = nodes.get_mut(field.placeholder) {
-            let display = if field.value.is_empty() { Display::Flex } else { Display::None };
+            let display = if field.value.is_empty() && (!focused || composing.preedit.is_empty()) { Display::Flex } else { Display::None };
             if node.display != display {
                 node.display = display;
             }

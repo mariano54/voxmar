@@ -3,6 +3,8 @@
     "language.name": "日本語",
     // Kanji fill their whole box, so lines of them need more room than letters.
     "language.line_height": "1.45",
+    // Between items in a line: a middle dot never starts a line in Japanese.
+    "language.dot": "・",
 
     // メニュー
     "menu.singleplayer": "シングルプレイ",
@@ -22,7 +24,7 @@
     "worlds.delete": "削除",
     "worlds.delete_forever": "完全に削除",
     "worlds.none": "ワールドがまだありません。作成して始めましょう。",
-    "worlds.details": "{mode} · シード {seed} · {played}にプレイ",
+    "worlds.details": "{mode}・シード {seed}・{played}にプレイ",
     "worlds.confirm_delete": "「{world}」を削除しますか？元に戻せません。",
     "worlds.delete_failed": "{world}を削除できませんでした: {error}",
 
@@ -183,7 +185,7 @@
 
     "hud.died": "死んでしまった。Rでリスポーン。",
 
-    "inventory.help": "右クリック: 半分 · ドラッグ: 分配\nShift+クリック: ホットバー ↔ 持ち物 · 1-9: 入替 · Q: 投げる",
+    "inventory.help": "右クリック: 半分・ドラッグ: 分配\nShift+クリック: 移動・1-9: 入替・Q: 投げる",
 
     "rarity.uncommon": "アンコモン",
     "rarity.rare": "レア",
@@ -194,7 +196,7 @@
     "item.fuel": "燃料",
     "item.light": "光る",
     "item.alchemy": "錬金術: {property}",
-    "item.plants": "{crop}を植える · {skill} {level}",
+    "item.plants": "{crop}を植える・{skill} {level}",
 
     "skills.gained": "+{xp} {skill}",
     "skills.level_up": "{skill} レベル{level}",
