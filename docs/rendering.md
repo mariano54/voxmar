@@ -130,7 +130,10 @@ about 50 of them:
   do not have: none now, clustered on the CPU.
 - Bevy building mesh instances on the GPU for our handful of Bevy meshes (sky, rain,
   cracks, other players): four compute passes, plus wgpu's checks of the indirect draws
-  they feed and their own copies. Batched on the CPU instead.
+  they feed and their own copies. Batched on the CPU instead, with views told there is no
+  GPU preprocessing at all: otherwise Bevy files opaque meshes for indirect draws that
+  only its GPU builder fills, and for a day the sky, the one opaque Bevy mesh, went
+  undrawn, leaving the clear colour, with no sun, stars or high cloud.
 - The terrain's index compaction submitted itself every frame, with a command buffer of
   pending writes, even with nothing to copy. It now rides in the frame's own submission.
 

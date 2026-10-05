@@ -15,7 +15,9 @@ use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLi
 use bevy::math::DVec2;
 use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
 use bevy::pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey};
+use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
 use bevy::render::extract_component::ExtractComponent;
+use bevy::render::{RenderApp, RenderStartup, init_gpu_resource};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDataOrder,
@@ -87,7 +89,17 @@ impl Plugin for RenderPlugin {
             .add_systems(Startup, cluster_lights_on_the_cpu)
             .add_systems(Update, (pack::apply_pack, apply_quality.run_if(resource_changed::<Quality>)))
             .add_systems(PostUpdate, update_environment.before(TransformSystems::Propagate));
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(RenderStartup, batch_on_the_cpu.after(init_gpu_resource::<GpuPreprocessingSupport>));
+        }
     }
+}
+
+/// Our few Bevy meshes are batched on the CPU (see `main`), so views batch without GPU
+/// preprocessing too. Otherwise Bevy files opaque meshes for indirect draws that only its
+/// GPU instance builder fills, and the sky, our one opaque Bevy mesh, never draws.
+fn batch_on_the_cpu(mut support: ResMut<GpuPreprocessingSupport>) {
+    support.max_supported_mode = GpuPreprocessingMode::None;
 }
 
 /// Bevy sorts point and spot lights into clusters of the view on the GPU, in five render

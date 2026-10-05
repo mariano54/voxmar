@@ -255,6 +255,28 @@ fields and values any system can read on the server:
 | `Weather::wind`, `gusts`, `voxmar_engine::weather::gust` | engine | the wind, gusts included, the same on server and client |
 | effect tags | `weather.ron` | `cold`, `hot`, `wet`, `dry`, `visibility`, `hazard`, `lightning`, `wonder`, `night`, `aether`: find what is happening by kind, not by name |
 
+### Hazards: what weather does to machines and buildings
+
+For whoever builds machines, roofs and crops: the weather process works out, in every
+simulated 128-block cell (the 5×5 around each player), what the weather would do to things
+left out in it, as fields on `WeatherState::hazards` (`Hazards::of` in server/weather.rs
+for the formulas). They are rates or states now, for a machine to integrate over time
+(damage per second from `core:hail`, rust per hour from `core:corrosion`); away from
+players they read 0.
+
+| Field | Meaning | Magnitude |
+| --- | --- | --- |
+| `core:hail` | kinetic energy of hailstones striking a square metre facing the sky, J m⁻² s⁻¹ | 0 without hail; ~1 pea to marble hail; 2 walnut hail (the `hail` effect at full); 4 golf-ball hail |
+| `core:wind_load` | the wind's pressure on a surface facing it at the gusts' peak, Pa (½ρv²) | ~10 a breeze; ~60 a strong wind; 200–600 a gale |
+| `core:corrosion` | how fast bare iron rusts, relative | 1 steady wet at 15 °C inland; ~2 at 30 °C; ×2 by the sea; 0 dry or frozen |
+| `core:frost` | how hard the cold bites, 0..1 | 0 above freezing; 1 at -20 °C, or in freezing rain or hard frost (ice on everything) |
+| `core:heat` | heat stress, 0..1 | 0 below 32 °C; 1 at 48 °C; halved under full cloud |
+| `core:lightning` | ground strikes in the cell lately, each 1, halving every 10 minutes | a few in a thunderstorm's path |
+| `WeatherState::strikes` | the last 64 strikes that reached the ground: the block struck (on top of the ground), the tick and the peak current | 10–200 kA, most 20–40 |
+
+Cloud flashes never reach the ground, so they are not strikes. A lightning rod or a
+machine's surge damage reads the events; a building's wear reads the fields.
+
 A buff system should read these through modifiers (a stew's +2 warmth against
 `feels_like()`), never by naming effects, so a mod's new effect with the `cold` tag
 counts too.

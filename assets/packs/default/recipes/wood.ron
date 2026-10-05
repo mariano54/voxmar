@@ -14,28 +14,28 @@
         "birch_wood": ["#9a8256", "#ad9563", "#bea771", "#ceb781", "#dbc591", "#e6d2a1"],
         "birch_leaves": ["#555555", "#6c6c6c", "#838383", "#9a9a9a", "#b1b1b1", "#c8c8c8"],
         "birch_sapling": ["#3f5a22", "#4f6e29", "#628432", "#769a3c", "#8bb047"],
-        "spruce_bark": ["#25190d", "#2f2011", "#3a2816", "#45301b", "#503921"],
+        "spruce_bark": ["#22170d", "#2e1f12", "#3b2818", "#49321f", "#573d27", "#664930"],
         "spruce_wood": ["#4a341d", "#583f24", "#664a2b", "#745533", "#82613b", "#906d44"],
         "spruce_leaves": ["#4c4c4c", "#616161", "#777777", "#8d8d8d", "#a3a3a3", "#b9b9b9"],
         "spruce_sapling": ["#1d3a26", "#264a2f", "#305b38", "#3c6d43", "#4a7f4f"],
-        "jungle_bark": ["#352b0e", "#443814", "#53451a", "#625320", "#716127"],
+        "jungle_bark": ["#2e250d", "#3d3313", "#4c4119", "#5b4f20", "#6a5d28", "#7a6c31"],
         "jungle_wood": ["#74503a", "#855d42", "#966b4b", "#a67955", "#b48760", "#c1966c"],
-        "acacia_bark": ["#433f39", "#524d46", "#625c53", "#716b61", "#817a70"],
+        "acacia_bark": ["#3a3631", "#4a4540", "#5a544e", "#6a645c", "#7b746b", "#8c857b"],
         "acacia_wood": ["#843f1f", "#9a4b26", "#ad572e", "#bd6437", "#ca7141", "#d67f4d"],
-        "dark_oak_bark": ["#22180c", "#2b1f10", "#352614", "#3f2e19", "#49361e"],
+        "dark_oak_bark": ["#1a120a", "#24190e", "#2f2113", "#3a2a18", "#46331e", "#523d25"],
         "dark_oak_wood": ["#382512", "#432d18", "#4e361e", "#5a3f24", "#66492b", "#725333"],
         "dark_oak_leaves": ["#505050", "#666666", "#7c7c7c", "#929292", "#a8a8a8", "#bebebe"],
-        "cherry_bark": ["#2a1a20", "#36222a", "#432b34", "#50353e", "#5d3f48"],
+        "cherry_bark": ["#2e1c24", "#3d2530", "#4d2f3c", "#5d3a48", "#6e4655", "#8a6470"],
         "cherry_wood": ["#a87470", "#b9837e", "#c9928c", "#d6a29b", "#e1b2aa", "#eac1b9"],
         "cherry_leaves": ["#b0577f", "#c76a93", "#da82a8", "#e99cbc", "#f4b6cf", "#fbcfe0"],
         "cherry_sapling": ["#a24f76", "#bd6690", "#d681a9", "#e99dbf", "#f5b9d3"],
-        "mangrove_bark": ["#3b281e", "#493126", "#573b2e", "#654536", "#734f3f"],
+        "mangrove_bark": ["#33221a", "#432d22", "#53382b", "#634335", "#734f3f", "#845c4a"],
         "mangrove_wood": ["#6a2823", "#7b302a", "#8c3931", "#9c4339", "#ab4e42", "#b85a4c"],
-        "maple_bark": ["#37291f", "#443328", "#513d31", "#5e483a", "#6b5344"],
+        "maple_bark": ["#2b2724", "#3a3430", "#49423c", "#585049", "#685f57", "#7a7067"],
         "maple_wood": ["#9c6540", "#ad7249", "#bc8053", "#c98e5e", "#d49c6a", "#ddaa78"],
         "maple_leaves": ["#7a2416", "#97341d", "#b04826", "#c45f30", "#d47c3f", "#e09a55"],
         "maple_sapling": ["#8a2412", "#ad3618", "#cc4e1f", "#e2702b", "#f0963a"],
-        "redwood_bark": ["#461c12", "#572418", "#692d1e", "#7a3725", "#8a422d"],
+        "redwood_bark": ["#3c1810", "#4f2016", "#62291c", "#753324", "#873e2c", "#994a36"],
         "redwood_wood": ["#742f21", "#863928", "#984330", "#a94e39", "#b85a43", "#c5674e"],
         "redwood_leaves": ["#363636", "#484848", "#5b5b5b", "#6f6f6f", "#838383", "#989898"],
         "redwood_sapling": ["#1b3a22", "#244a2a", "#2d5a33", "#386b3d", "#457d48"],
@@ -44,19 +44,19 @@
         "pine_wood": ["#9c7a46", "#ae8a51", "#bf9b5d", "#cdab6a", "#d9ba79", "#e4c98a"],
         "pine_leaves": ["#454b51", "#5a6067", "#70767d", "#868c94", "#9ca2aa", "#b3b9c1"],
         "pine_sapling": ["#1c3832", "#25473e", "#2e574a", "#396857", "#467a65"],
-        "cypress_bark": ["#3a322c", "#473e37", "#554a42", "#62564d", "#706359"],
+        "cypress_bark": ["#352d28", "#443a33", "#53473f", "#62554b", "#726358", "#827266"],
         "cypress_wood": ["#9a8262", "#aa916f", "#b9a07c", "#c7ae8a", "#d3bb98", "#ddc7a5"],
         "cypress_leaves": ["#383838", "#4a4a4a", "#5d5d5d", "#717171", "#858585", "#9a9a9a"],
         "cypress_sapling": ["#1c3a2c", "#244a36", "#2e5b41", "#3a6d4d", "#487f5b"],
-        "willow_bark": ["#363126", "#433d2e", "#504936", "#5d553f", "#6a6149"],
+        "willow_bark": ["#2e2a21", "#3c372b", "#4a4435", "#585140", "#675f4b", "#776e57"],
         "willow_wood": ["#958358", "#a59364", "#b5a271", "#c3b07e", "#cfbd8b", "#dac999"],
         "willow_leaves": ["#5a5a5a", "#717171", "#888888", "#9f9f9f", "#b6b6b6", "#cdcdcd"],
         "willow_sapling": ["#4a6a2a", "#5a7e31", "#6c933a", "#80a845", "#95bc52"],
-        "baobab_bark": ["#64544c", "#74625a", "#847168", "#937f76", "#a28e84"],
+        "baobab_bark": ["#5a4b44", "#6b5a52", "#7c6a61", "#8c7a70", "#9c8a80", "#ac9b91"],
         "baobab_wood": ["#9a8464", "#aa9372", "#b9a280", "#c6b08e", "#d2bd9c", "#dcc9aa"],
-        "palm_bark": ["#55452c", "#665435", "#77633f", "#877249", "#968154"],
+        "palm_bark": ["#463824", "#58472d", "#6a5737", "#7c6742", "#8d774d", "#9e8859"],
         "palm_wood": ["#9a7a4b", "#ac8957", "#bc9863", "#c9a670", "#d5b37d", "#dfc08b"],
-        "silverwood_bark": ["#7f8591", "#979eaa", "#b0b6c1", "#c7ccd5", "#dde1e8"],
+        "silverwood_bark": ["#6f7581", "#878e9a", "#a0a6b1", "#b8bdc7", "#ced2da", "#e4e7ed"],
         "silverwood_wood": ["#8f99ad", "#a0a9bc", "#b1b9ca", "#c1c8d7", "#d0d6e2", "#dee3ec"],
         "silverwood_leaves": ["#4d7a8e", "#6592a5", "#7eabbc", "#9cc5d3", "#bddde7", "#dff2f7"],
         "silverwood_sapling": ["#527f93", "#6b98ab", "#86b2c2", "#a6cbd8", "#c7e3ec"],
@@ -67,22 +67,24 @@
     },
     templates: {
         "wood": {
+            // Bark: tall plates parted by dark furrows, lit on their left, never the even
+            // boards of planks. Species with a bark of their own replace this below.
             "block/{name}_log": (layers: [
                 Paint(palette: "bark", base: 0.55, shade: [
-                    Noise(cells: (16, 2), octaves: 2, amount: 0.55),
-                    Stripes(vertical: true, period: 4.0, width: 0.25, amount: -0.45, warp: 0.6),
-                    Grain(0.3),
+                    Cells(count: (4, 3), jitter: 0.9, value: 0.3, edge: -0.75, bevel: 0.35, warp: 0.6, stretch: (1.0, 3.0)),
+                    Noise(cells: (16, 4), amount: 0.15),
+                    Grain(0.25),
                 ], clean: true),
             ]),
+            // The cut end: growth rings inside a ragged ring of bark.
             "block/{name}_log_top": (layers: [
-                Paint(palette: "wood", base: 0.62, shade: [Rings(spacing: 2.6, width: 0.35, amount: -0.3, wobble: 0.5, square: 0.45), Noise(cells: (16, 16), amount: 0.15)]),
-                Paint(palette: "bark", base: 0.45, shade: [Noise(cells: (16, 16), amount: 0.6)], mask: [Border(width: 1, amount: 1.0)], above: 0.5),
+                Paint(palette: "wood", base: 0.62, shade: [Rings(spacing: 2.6, width: 0.35, amount: -0.3, wobble: 0.5, square: 0.45), Grain(0.12)]),
+                Paint(palette: "bark", base: 0.45, shade: [Grain(0.6)], mask: [Border(width: 1, amount: 1.0), Border(width: 2, amount: 0.45), Noise(cells: (8, 8), amount: 0.4)], above: 0.62),
             ]),
+            // Smooth wood under the bark, with fine wandering grain and no board seams.
             "block/stripped_{name}_log": (layers: [
-                Paint(palette: "wood", base: 0.58, shade: [
-                    Noise(cells: (16, 2), octaves: 2, amount: 0.35),
-                    Stripes(vertical: true, period: 5.0, width: 0.2, amount: -0.22, warp: 0.8),
-                ], clean: true),
+                Paint(palette: "wood", base: 0.6, shade: [Noise(cells: (8, 1), octaves: 2, amount: 0.35), Grain(0.15)], clean: true),
+                Paint(palette: "wood", base: 0.28, shade: [Grain(0.2)], mask: [Ridge(cells: (5, 1), octaves: 2, width: 0.1, amount: 1.0)], above: 0.5),
             ]),
             "block/stripped_{name}_log_top": (layers: [
                 Paint(palette: "wood", base: 0.66, shade: [Rings(spacing: 2.6, width: 0.35, amount: -0.25, wobble: 0.5, square: 0.45), Border(width: 1, amount: -0.25), Noise(cells: (16, 16), amount: 0.12)]),
@@ -160,24 +162,81 @@
             Paint(palette: "bark", base: 0.62, shade: [Noise(cells: (8, 4), octaves: 2, amount: 0.4), Noise(cells: (16, 16), amount: 0.2)], clean: true),
             Clusters(palette: "mark", count: 7, size: (2, 5), spread: (3.0, 0.3), spacing: 4.0, shade: 1, seed: 3),
         ]),
-        // Palm: ringed trunk.
-        "block/palm_log": (palettes: {"bark": "palm_bark"}, layers: [
+        // Each species' bark, so a trunk says what tree it is.
+        "block/maple_log": (palettes: {"bark": "maple_bark"}, layers: [
+            // Grey, in long narrow strips that lift at their edges.
             Paint(palette: "bark", base: 0.55, shade: [
-                Stripes(period: 4.0, width: 0.25, amount: -0.4, warp: 0.6),
-                Stripes(period: 4.0, width: 0.25, amount: 0.2, warp: 0.6, phase: 1.0),
-                Noise(cells: (16, 4), amount: 0.35),
+                Cells(count: (5, 2), jitter: 0.8, value: 0.35, edge: -0.75, bevel: 0.35, warp: 0.6, stretch: (1.0, 4.0)),
+                Noise(cells: (16, 4), amount: 0.15),
+                Grain(0.2),
             ], clean: true),
         ]),
-        // Baobab: smooth, swollen grey bark.
-        "block/baobab_log": (palettes: {"bark": "baobab_bark"}, layers: [
-            Paint(palette: "bark", base: 0.55, shade: [Noise(cells: (4, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 8.0, width: 0.125, amount: -0.25, warp: 1.5), Noise(cells: (16, 16), amount: 0.12)], clean: true),
+        "block/spruce_log": (palettes: {"bark": "spruce_bark"}, layers: [
+            // Small, thin scales.
+            Paint(palette: "bark", base: 0.55, shade: [Cells(count: (4, 6), jitter: 1.0, value: 0.4, edge: -0.6, bevel: 0.45, warp: 0.4, stretch: (1.4, 1.0)), Grain(0.2)], clean: true),
         ]),
-        // Redwood: deep fibrous furrows.
+        "block/dark_oak_log": (palettes: {"bark": "dark_oak_bark"}, layers: [
+            // Thick ridges and deep furrows.
+            Paint(palette: "bark", base: 0.6, shade: [Cells(count: (3, 3), jitter: 0.9, value: 0.3, edge: -0.95, width: 1.0, bevel: 0.45, warp: 0.8, stretch: (1.0, 3.0)), Grain(0.25)], clean: true),
+        ]),
+        "block/jungle_log": (palettes: {"bark": "jungle_bark", "moss": ["#2f4a1c", "#3e5f22", "#4f752a", "#628a33"]}, layers: [
+            // Ribbed and streaked, with moss in the furrows.
+            Paint(palette: "bark", base: 0.55, shade: [Cells(count: (5, 2), jitter: 0.8, value: 0.25, edge: -0.6, bevel: 0.3, warp: 1.0, stretch: (1.0, 3.5)), Noise(cells: (16, 4), amount: 0.2), Grain(0.25)], clean: true),
+            Paint(palette: "moss", base: 0.4, shade: [Grain(0.8)], mask: [Noise(cells: (3, 2), octaves: 2, amount: 1.2), Speckle(chance: 0.3, amount: 0.3)], above: 0.85),
+        ]),
+        "block/acacia_log": (palettes: {"bark": "acacia_bark"}, layers: [
+            // Grey, coarse and blocky.
+            Paint(palette: "bark", base: 0.55, shade: [Cells(count: (3, 3), jitter: 1.0, value: 0.4, edge: -0.7, bevel: 0.4, warp: 1.0, stretch: (1.0, 2.0)), Grain(0.3)], clean: true),
+        ]),
+        "block/cherry_log": (palettes: {"bark": "cherry_bark"}, layers: [
+            // Smooth and dark, with the pale horizontal lenticels cherries have.
+            Paint(palette: "bark", base: 0.5, shade: [Noise(cells: (2, 4), octaves: 2, amount: 0.35), Stripes(period: 4.0, width: 0.25, amount: -0.2, warp: 0.8, phase: 2.0), Grain(0.15)], clean: true),
+            Paint(palette: "bark", base: 0.95, mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, warp: 0.8), Noise(cells: (8, 4), amount: 0.9)], above: 1.0, shadow: -2),
+        ]),
+        "block/mangrove_log": (palettes: {"bark": "mangrove_bark"}, layers: [
+            // Fine, scaly network.
+            Paint(palette: "bark", base: 0.55, shade: [Cells(count: (5, 4), jitter: 1.0, value: 0.3, edge: -0.65, bevel: 0.35, warp: 0.5, stretch: (1.0, 2.0)), Grain(0.25)], clean: true),
+        ]),
         "block/redwood_log": (palettes: {"bark": "redwood_bark"}, layers: [
+            // Deep, fibrous ridges running the whole trunk.
             Paint(palette: "bark", base: 0.55, shade: [
-                Noise(cells: (16, 2), octaves: 2, amount: 0.5),
-                Stripes(vertical: true, period: 3.0, width: 0.34, amount: -0.4, warp: 1.0),
+                Cells(count: (6, 1), jitter: 0.7, value: 0.3, edge: -0.8, bevel: 0.3, warp: 0.8, stretch: (1.0, 6.0)),
+                Noise(cells: (16, 2), amount: 0.25),
+                Grain(0.25),
             ], clean: true),
+        ]),
+        "block/cypress_log": (palettes: {"bark": "cypress_bark"}, layers: [
+            // Stringy strips.
+            Paint(palette: "bark", base: 0.55, shade: [Cells(count: (7, 2), jitter: 0.8, value: 0.25, edge: -0.6, bevel: 0.3, warp: 0.6, stretch: (1.0, 5.0)), Grain(0.25)], clean: true),
+        ]),
+        "block/willow_log": (palettes: {"bark": "willow_bark"}, layers: [
+            // A deep diamond network.
+            Paint(palette: "bark", base: 0.6, shade: [Cells(count: (3, 4), jitter: 0.7, value: 0.25, edge: -0.9, bevel: 0.45, warp: 0.5, stretch: (1.0, 2.0)), Grain(0.25)], clean: true),
+        ]),
+        "block/baobab_log": (palettes: {"bark": "baobab_bark", "knot": ["#3e322c", "#4e3f37", "#6a5a50"]}, layers: [
+            // Smooth and swollen, wrinkled in wavy folds, with a knot or two.
+            Paint(palette: "bark", base: 0.55, shade: [
+                Noise(cells: (2, 4), octaves: 2, amount: 0.45),
+                Stripes(period: 5.0, width: 0.2, amount: -0.35, warp: 2.0),
+                Stripes(period: 5.0, width: 0.2, amount: 0.2, warp: 2.0, phase: 1.0),
+                Grain(0.15),
+            ], clean: true),
+            Clusters(palette: "knot", count: 2, size: (3, 5), spacing: 8.0, shade: 1, shadow: 1, margin: 2, seed: 4),
+        ]),
+        "block/palm_log": (palettes: {"bark": "palm_bark"}, layers: [
+            // A criss-cross of old frond bases, over fibre.
+            Paint(palette: "bark", base: 0.6, shade: [Noise(cells: (16, 4), amount: 0.3), Gradient(from: 0.15, to: -0.15), Grain(0.25)], clean: true),
+            Paint(palette: "bark", base: 0.05, shade: [Grain(0.2)], mask: [Stripes(period: 8.0, width: 0.15, amount: 1.0, slope: 1.0, warp: 0.6), Stripes(period: 8.0, width: 0.15, amount: 1.0, slope: -1.0, phase: 4.0, warp: 0.6, seed: 3)], above: 0.5, light: 1),
+        ]),
+        "block/silverwood_log": (palettes: {"bark": "silverwood_bark", "glint": ["#b7e6ff", "#e8f8ff"]}, layers: [
+            // Pale plates with blue glints.
+            Paint(palette: "bark", base: 0.55, shade: [Cells(count: (4, 3), jitter: 0.9, value: 0.3, edge: -0.6, bevel: 0.35, warp: 0.6, stretch: (1.0, 3.0)), Grain(0.2)], clean: true),
+            Paint(palette: "glint", base: 0.2, shade: [Speckle(chance: 0.5, amount: 0.6)], mask: [Speckle(chance: 0.05, amount: 1.0, seed: 7)]),
+        ]),
+        "block/emberwood_log": (palettes: {"bark": ["#1b1311", "#271b18", "#33231f", "#3f2c26", "#4b352e", "#b33a0e", "#ee6a18", "#ffa63a", "#ffd27a"]}, layers: [
+            // Charred plates split by glowing seams: one palette from char to flame, so the
+            // plates' edges burn.
+            Paint(palette: "bark", base: 0.22, shade: [Cells(count: (4, 3), jitter: 0.9, value: 0.14, edge: 0.4, bevel: 0.06, warp: 0.6, stretch: (1.0, 3.0)), Noise(cells: (2, 4), amount: 0.2), Grain(0.1)]),
         ]),
         // Pine (Scots pine): thin orange plates flaking off in papery scales, cracked by
         // dark grey-brown fissures where the old bark shows through.
@@ -197,16 +256,6 @@
             Paint(palette: "leaves", base: 0.55, shade: [Noise(cells: (8, 8), amount: 0.2)], mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, slope: 1.0, warp: 0.5), Noise(cells: (4, 4), amount: 0.7)], above: 0.8, shadow: -1),
             Paint(palette: "leaves", base: 0.8, shade: [Noise(cells: (8, 8), amount: 0.2, seed: 3)], mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, slope: -1.0, warp: 0.5, phase: 2.0), Noise(cells: (4, 4), amount: 0.7, seed: 5)], above: 0.85, shadow: -1),
             Cut(mask: [Noise(cells: (8, 8), amount: 0.9), Grain(0.7)], above: 0.2),
-        ]),
-        // Silverwood: bright bark with faint blue glints.
-        "block/silverwood_log": (palettes: {"bark": "silverwood_bark", "glint": ["#b7e6ff", "#e8f8ff"]}, layers: [
-            Paint(palette: "bark", base: 0.55, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.5), Stripes(vertical: true, period: 5.0, width: 0.2, amount: -0.3, warp: 1.0)], clean: true),
-            Paint(palette: "glint", base: 0.2, shade: [Speckle(chance: 0.5, amount: 0.6)], mask: [Speckle(chance: 0.05, amount: 1.0, seed: 7)]),
-        ]),
-        // Emberwood: charred bark split by glowing seams.
-        "block/emberwood_log": (palettes: {"bark": "emberwood_bark", "ember": ["#b33a0e", "#ee6a18", "#ffa63a", "#ffd27a"]}, layers: [
-            Paint(palette: "bark", base: 0.5, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.6), Noise(cells: (16, 16), amount: 0.25)], clean: true),
-            Paint(palette: "ember", base: 0.35, shade: [Noise(cells: (4, 16), amount: 0.9)], mask: [Stripes(vertical: true, period: 5.0, width: 0.2, amount: 1.0, warp: 1.0, phase: 2.0), Noise(cells: (2, 4), amount: 1.2)], above: 1.05, shadow: -1),
         ]),
         "block/emberwood_log_top": (base: "block/stripped_emberwood_log_top", palettes: {"bark": "emberwood_bark"}, layers: [
             Paint(palette: "bark", base: 0.45, shade: [Noise(cells: (16, 16), amount: 0.6)], mask: [Border(width: 1, amount: 1.0)], above: 0.5),

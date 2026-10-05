@@ -300,7 +300,8 @@ no two worlds share a rarity table. Everything else is a continuous field:
   falling as waterfalls onto plunge pools where the drop is three blocks or more. Flow is
   summed region by region through records of where water crosses each 1 km region's border,
   so rivers can be any length and nothing depends on generation order.
-- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`) join the places worth walking
+- **Trails** (`worldgen/src/trails/`, materials in `trails.ron`; laid only near settlements,
+  of which there are none yet, so `laid: NearSettlements` leaves them all out) join the places worth walking
   to: summits that stand above the land around, lake shores, the banks of waterfalls, the edges
   of long drops and flat trailheads in the valleys, a few per 512-block region. Nearby places
   are joined into a sparse network (a Gabriel graph, with no two trails setting off side by
@@ -342,7 +343,7 @@ variants take shares of their parent along a field 8 km across; ecotones sit on 
 fantastical biomes claim cells where aether (12 km across) runs high. The scales of these
 fields are data (`scales` in `climate.ron`). Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
-lines such as game trails; shared sets in `surfaces.ron` break every soil slope up into
+lines such as game trails, which no biome uses for now; shared sets in `surfaces.ron` break every soil slope up into
 coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
 rock follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
 birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
@@ -472,7 +473,10 @@ heavy downpour under strong updrafts is a thunderstorm: each second it may, rare
 lightning strike somewhere in the cell (a few flashes a minute in the heart of the fiercest
 storm), which nearby clients see as a flash and a bolt and hear as thunder once the sound has
 travelled: a crack, boom and roll close by, a muffled rip and roll farther off, only a low
-roll from far away. A cell coming into range first catches up on its last ten minutes, so
+roll from far away. What the weather would do to machines and buildings left out in it is
+worked out in the same cells as hazard fields (hail's impact, the wind's load, corrosion,
+frost, heat and recent strikes) with lightning strikes kept as events, for gameplay to come
+(docs/weather-effects.md, "Hazards"). A cell coming into range first catches up on its last ten minutes, so
 the weather at a place does not depend on when anyone arrived, and cells left behind return to
 their baseline. The process uses only exact arithmetic on seeded hash streams, so it is
 deterministic on every machine. It runs on the simulation clock, so it carries on when the
@@ -580,11 +584,12 @@ sand and snow it meets, nearer ones counting more. With the climate and biome fr
 generator, height above the land around, depth underground, the weather and the time of day,
 that makes an environment vector, and `ambience.ron` in any content package lists what plays
 where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
-surf, cave air, synthesized; rain by strength and cover, dripping trees, streams and lakes,
+surf, a slight cave air, lava seething and bubbling, a waterfall's roar by falling water,
+synthesized; rain by strength and cover, dripping trees, streams and lakes,
 recorded) as stereo segments that crossfade and never repeat back to back, and one-shots at a
 rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker on a trunk,
-owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips and
-rumbles in caves). Recordings are CC0 field recordings in the package
+owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips
+near and far and rumbles in caves, lava bursting bubbles). Recordings are CC0 field recordings in the package
 (`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
 far, swimming strokes and splashes (`sounds.ron`). One-shots sound from real blocks the fill found,
 panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
