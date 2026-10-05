@@ -121,7 +121,7 @@
         // vein are its halo.
         "block/marble": (palettes: {"main": "marble", "vein": "marble_vein"}, layers: [
             Paint(palette: "main", base: 0.66, shade: [Noise(cells: (3, 3), octaves: 2, amount: 0.4, seed: 5)], clean: true),
-            Grid(legend: {'v': "vein:1", 'h': "-2", 'f': "main:1"}, rows: [
+            Grid(legend: {'v': "vein:2", 'h': "-1", 'f': "main:2"}, rows: [
             ".........vv....v",
             "v......vv.......",
             "................",
