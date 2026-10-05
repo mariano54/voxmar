@@ -4,11 +4,12 @@
 //! the eye, uneven and drifting; and sunlight the air scatters where the sun reaches it
 //! (light shafts), marched through Bevy's cascaded shadow maps. Rays are marched at half
 //! resolution into a cached texture, the light they gather and how much of the scene shows
-//! through, softened there among rays that ended about as far away, then composited at full
-//! resolution with a depth-aware upsample, so the pass costs a quarter of what full
-//! resolution would and keeps crisp edges against what is in front. Softening before the
-//! upsample rather than in it reads 12.5 texels per full-resolution pixel instead of 32
-//! (0.52 ms down to 0.31 at 2268×1473), with the same blur.
+//! through; blended into the frames before, found where the same air was by last frame's
+//! view, so the grain of each frame's steps (which start at new noise every frame) averages
+//! away; then composited at full resolution with a depth-aware upsample, so the pass costs a
+//! quarter of what full resolution would and keeps crisp edges against what is in front.
+//! The accumulation took the place of a spatial blur among neighbouring rays, which left the
+//! clouds grainy and soft (Mariano's playtest, 2026-10-05).
 //!
 //! The pipelines are built from the mesh pipeline's descriptor for the view, like the
 //! terrain's, so the view bind group and its shader defs (multisampling among them) match
@@ -27,11 +28,14 @@ use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BindGroupLayoutEntryBuilder,
     BlendComponent, BlendFactor, BlendOperation, BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
     LoadOp, MultisampleState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, ShaderStages, SpecializedMeshPipeline, StoreOp, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, VertexAttribute, VertexStepMode,
-    binding_types::{texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
+    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType,
+    SpecializedMeshPipeline, StoreOp, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    UniformBuffer, VertexAttribute, VertexStepMode,
+    binding_types::{sampler, texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
 };
-use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
+use bevy::diagnostic::FrameCount;
+use bevy::image::ImageFilterMode;
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::texture::{CachedTexture, TextureCache};
 use bevy::render::view::{ExtractedView, ViewDepthTexture, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
@@ -49,7 +53,13 @@ const MARCH_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 /// The view depth each half-resolution ray ended at, which the composite compares its own
 /// pixel's against for every ray it blends: read from this small texture rather than as
 /// sixteen loads from the full-resolution depth per pixel, it halves the composite's cost.
-const RAY_DEPTH_FORMAT: TextureFormat = TextureFormat::R16Float;
+/// And how far away the ray's light comes from, where the next frame looks for it again.
+const RAY_DEPTH_FORMAT: TextureFormat = TextureFormat::Rg16Float;
+/// The depths the accumulated rays ended at, for the next frame to tell an edge that moved.
+const HISTORY_DEPTH_FORMAT: TextureFormat = TextureFormat::R16Float;
+/// How much of each frame's march goes into the accumulated air: about the last eight
+/// frames make it up.
+const BLEND: f32 = 0.12;
 
 pub struct VolumetricPlugin;
 
@@ -87,7 +97,10 @@ struct VolumetricPipelines {
     /// The march reads depth, the atmosphere and the cloud maps and noise; the composite
     /// depth and the march.
     march: Layouts,
+    accumulate: Layouts,
     composite: Layouts,
+    /// Reads the history between its texels, where last frame's view put it.
+    linear: Sampler,
     /// A vertex layout to hand the mesh pipeline, which our full-screen triangle ignores.
     vertex_layout: MeshVertexBufferLayout,
     /// The march and composite pipelines for each view key.
@@ -98,7 +111,7 @@ struct VolumetricPipelines {
 #[derive(Clone, Copy)]
 struct Passes {
     march: CachedRenderPipelineId,
-    soften: CachedRenderPipelineId,
+    accumulate: CachedRenderPipelineId,
     composite: CachedRenderPipelineId,
 }
 
@@ -108,14 +121,30 @@ struct Passes {
 struct VolumetricView {
     passes: Passes,
     march_group: BindGroup,
-    soften_group: BindGroup,
+    accumulate_group: BindGroup,
     composite_group: BindGroup,
     target: CachedTexture,
     ray_depths: CachedTexture,
-    softened: CachedTexture,
+    /// This frame's accumulated air and its rays' depths (last frame's are read).
+    accumulated: CachedTexture,
+    accumulated_depths: CachedTexture,
 }
 
-fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
+/// Last frame's view of a camera that drew volumetric light, and its size, so the next
+/// frame finds where the air it accumulated lies now.
+#[derive(Component)]
+struct PreviousView {
+    clip_from_world: Mat4,
+    size: UVec2,
+}
+
+#[derive(ShaderType)]
+struct PreviousUniform {
+    clip_from_world: Mat4,
+    blend: Vec4,
+}
+
+fn init(mut commands: Commands, asset_server: Res<AssetServer>, device: Res<RenderDevice>) {
     let vertex_layout = MeshVertexBufferLayout::new(
         vec![ATTRIBUTE_VOXEL.id],
         VertexBufferLayout {
@@ -134,6 +163,24 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
             layout.entries.extend(cloud_map::layout_entries(ShaderStages::FRAGMENT));
             layout
         }),
+        accumulate: Layouts::new(|depth| {
+            let exact = || texture_2d(TextureSampleType::Float { filterable: false });
+            BindGroupLayoutDescriptor::new(
+                "volumetric_accumulate_layout",
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::FRAGMENT,
+                    (
+                        depth,
+                        exact(),
+                        exact(),
+                        texture_2d(TextureSampleType::Float { filterable: true }),
+                        exact(),
+                        sampler(SamplerBindingType::Filtering),
+                        uniform_buffer::<PreviousUniform>(false),
+                    ),
+                ),
+            )
+        }),
         composite: Layouts::new(|depth| {
             BindGroupLayoutDescriptor::new(
                 "volumetric_composite_layout",
@@ -143,13 +190,19 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
                 ),
             )
         }),
+        linear: device.create_sampler(&SamplerDescriptor {
+            label: Some("volumetric_history"),
+            mag_filter: ImageFilterMode::Linear.into(),
+            min_filter: ImageFilterMode::Linear.into(),
+            ..default()
+        }),
         vertex_layout,
         pipelines: FxHashMap::default(),
     });
 }
 
 impl VolumetricPipelines {
-    /// The march, softening and composite pipelines for a view.
+    /// The march, accumulation and composite pipelines for a view.
     fn pipelines(
         &mut self,
         key: MeshPipelineKey,
@@ -177,14 +230,14 @@ impl VolumetricPipelines {
         let target = |format| Some(ColorTargetState { format, blend: None, write_mask: ColorWrites::ALL });
         let march = vec![target(MARCH_FORMAT), target(RAY_DEPTH_FORMAT)];
         let march = self.descriptor(&base, fullscreen, self.march.get(multisampled), "march", march, 1);
-        // Softening reads what the composite reads, the march's in place of its own.
-        let soften = self.descriptor(&base, fullscreen, self.composite.get(multisampled), "soften", vec![target(MARCH_FORMAT)], 1);
+        let accumulated = vec![target(MARCH_FORMAT), target(HISTORY_DEPTH_FORMAT)];
+        let accumulate = self.descriptor(&base, fullscreen, self.accumulate.get(multisampled), "accumulate", accumulated, 1);
         let composite = vec![Some(ColorTargetState { format, blend: Some(BlendState { color: over, alpha: keep }), write_mask: ColorWrites::COLOR })];
         let composite =
             self.descriptor(&base, fullscreen, self.composite.get(multisampled), "composite", composite, key.msaa_samples());
         let passes = Passes {
             march: cache.queue_render_pipeline(march),
-            soften: cache.queue_render_pipeline(soften),
+            accumulate: cache.queue_render_pipeline(accumulate),
             composite: cache.queue_render_pipeline(composite),
         };
         self.pipelines.insert(key, passes);
@@ -192,7 +245,7 @@ impl VolumetricPipelines {
     }
 
     /// The mesh pipeline's descriptor with our full-screen shaders, group 2 and target of
-    /// `samples` samples; `entry_point` is the pass, `march`, `soften` or `composite`.
+    /// `samples` samples; `entry_point` is the pass, `march`, `accumulate` or `composite`.
     fn descriptor(
         &self,
         base: &RenderPipelineDescriptor,
@@ -213,10 +266,10 @@ impl VolumetricPipelines {
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = self.shader.clone();
             fragment.entry_point = Some(entry_point.into());
-            if entry_point != "march" {
-                fragment.shader_defs.push(ShaderDefVal::from("COMPOSITE"));
-            } else {
-                fragment.shader_defs.extend(["NOISE_TEXTURES", "CLOUD_MAP"].map(ShaderDefVal::from));
+            match entry_point {
+                "march" => fragment.shader_defs.extend(["MARCH", "NOISE_TEXTURES", "CLOUD_MAP"].map(ShaderDefVal::from)),
+                "accumulate" => fragment.shader_defs.push(ShaderDefVal::from("ACCUMULATE")),
+                _ => fragment.shader_defs.push(ShaderDefVal::from("COMPOSITE")),
             }
             fragment.targets = targets;
         }
@@ -234,20 +287,22 @@ fn prepare(
     cache: Res<PipelineCache>,
     view_keys: Res<ViewKeyCache>,
     device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    frames: Res<FrameCount>,
     mut textures: ResMut<TextureCache>,
     atmosphere: Res<Atmosphere>,
     buffer: Res<AtmosphereBuffer>,
     cloud_map: Option<Res<CloudMap>>,
-    views: Query<(Entity, &ExtractedView, &ViewDepthTexture), (With<ExtractedCamera>, With<Camera3d>)>,
+    views: Query<(Entity, &ExtractedView, &ViewDepthTexture, Option<&PreviousView>), (With<ExtractedCamera>, With<Camera3d>)>,
 ) {
     let Some(cloud_map) = cloud_map else { return };
-    for (entity, view, depth) in &views {
+    for (entity, view, depth, previous) in &views {
         let drawn = atmosphere.rays.x > 0.0 || atmosphere.mist.w > 0.0 || atmosphere.cloud_look.z > 0.0;
         let key = view_keys.get(&view.retained_view_entity).copied().filter(|_| drawn);
         let Some((key, passes)) =
             key.and_then(|key| Some((key, pipelines.pipelines(key, &mesh_pipeline, &mut layouts, &fullscreen, &cache)?)))
         else {
-            commands.entity(entity).remove::<VolumetricView>();
+            commands.entity(entity).remove::<(VolumetricView, PreviousView)>();
             continue;
         };
         let size = depth.texture.size();
@@ -267,7 +322,21 @@ fn prepare(
             )
         };
         let (target, ray_depths) = (half("volumetric_light", MARCH_FORMAT), half("volumetric_ray_depths", RAY_DEPTH_FORMAT));
-        let softened = half("volumetric_softened", MARCH_FORMAT);
+        // Two of each, written in turn: this frame's accumulation reads last frame's.
+        let histories = [half("volumetric_history_a", MARCH_FORMAT), half("volumetric_history_b", MARCH_FORMAT)];
+        let history_depths =
+            [half("volumetric_history_depths_a", HISTORY_DEPTH_FORMAT), half("volumetric_history_depths_b", HISTORY_DEPTH_FORMAT)];
+        let (write, read) = if frames.0 % 2 == 0 { (0, 1) } else { (1, 0) };
+        let clip_from_world = view.clip_from_world.unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
+        let size = UVec2::new(size.width, size.height);
+        // The first frame, and one after a resize, starts afresh.
+        let (before, blend) = match previous {
+            Some(previous) if previous.size == size => (previous.clip_from_world, BLEND),
+            _ => (clip_from_world, 1.0),
+        };
+        let mut uniform = UniformBuffer::from(PreviousUniform { clip_from_world: before, blend: Vec4::new(blend, 0.0, 0.0, 0.0) });
+        uniform.write_buffer(&device, &queue);
+        let Some(uniform) = uniform.binding() else { continue };
         let multisampled = key.msaa_samples() > 1;
         let march_group = device.create_bind_group(
             "volumetric_march",
@@ -282,16 +351,26 @@ fn prepare(
                 &BindGroupEntries::sequential((depth.view(), &light.default_view, &ray_depths.default_view)),
             )
         };
-        let (soften_group, composite_group) = (light_group("volumetric_soften", &target), light_group("volumetric_composite", &softened));
-        commands.entity(entity).insert(VolumetricView {
-            passes,
-            march_group,
-            soften_group,
-            composite_group,
-            target,
-            ray_depths,
-            softened,
-        });
+        let accumulate_group = device.create_bind_group(
+            "volumetric_accumulate",
+            &cache.get_bind_group_layout(pipelines.accumulate.get(multisampled)),
+            &BindGroupEntries::sequential((
+                depth.view(),
+                &target.default_view,
+                &ray_depths.default_view,
+                &histories[read].default_view,
+                &history_depths[read].default_view,
+                &pipelines.linear,
+                uniform,
+            )),
+        );
+        let [accumulated, _] = if write == 0 { histories } else { let [a, b] = histories; [b, a] };
+        let [accumulated_depths, _] = if write == 0 { history_depths } else { let [a, b] = history_depths; [b, a] };
+        let composite_group = light_group("volumetric_composite", &accumulated);
+        commands.entity(entity).insert((
+            VolumetricView { passes, march_group, accumulate_group, composite_group, target, ray_depths, accumulated, accumulated_depths },
+            PreviousView { clip_from_world, size },
+        ));
     }
 }
 
@@ -302,13 +381,13 @@ fn volumetric_light(
 ) {
     let (target, mesh_view, volumetric) = view.into_inner();
     let passes = volumetric.passes;
-    let [Some(march), Some(soften), Some(composite)] =
-        [passes.march, passes.soften, passes.composite].map(|id| pipeline_cache.get_render_pipeline(id))
+    let [Some(march), Some(accumulate), Some(composite)] =
+        [passes.march, passes.accumulate, passes.composite].map(|id| pipeline_cache.get_render_pipeline(id))
     else {
         return;
     };
-    // March into the half-resolution target, soften it there, then blend it over the image
-    // (the multisampled one under MSAA, resolved at the end of the pass).
+    // March into the half-resolution target, accumulate it there, then blend it over the
+    // image (the multisampled one under MSAA, resolved at the end of the pass).
     let half = |view| {
         Some(RenderPassColorAttachment {
             view,
@@ -318,11 +397,11 @@ fn volumetric_light(
         })
     };
     let march_targets = [half(&volumetric.target.default_view), half(&volumetric.ray_depths.default_view)];
-    let soften_target = [half(&volumetric.softened.default_view)];
+    let accumulate_targets = [half(&volumetric.accumulated.default_view), half(&volumetric.accumulated_depths.default_view)];
     let composite_target = [Some(target.get_color_attachment())];
     let passes = [
         ("volumetric_march", &march_targets[..], march, &volumetric.march_group),
-        ("volumetric_soften", &soften_target[..], soften, &volumetric.soften_group),
+        ("volumetric_accumulate", &accumulate_targets[..], accumulate, &volumetric.accumulate_group),
         ("volumetric_composite", &composite_target[..], composite, &volumetric.composite_group),
     ];
     for (label, attachments, pipeline, group) in passes {
