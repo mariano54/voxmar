@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn times_read_naturally() {
-        let content = voxmar_server::assets_dir().join("content");
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let english = voxmar_engine::lang::Lang::load(&content, "en");
         let ago = |then, now| ago(&english, then, now);
         let now = 1_000_000_000;

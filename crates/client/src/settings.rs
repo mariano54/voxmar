@@ -1549,11 +1549,12 @@ mod tests {
     #[test]
     fn every_hint_fits_the_room_kept_for_it() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/fonts");
-        let content = voxmar_server::assets_dir().join("content");
+        let content = dir.join("../../content");
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+        let fallback = crate::ui::skin::read_fallback(&dir);
         for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
             let mut font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
-            font.fill_from(crate::ui::skin::fallback());
+            font.fill_from(&fallback);
             // Glyphs get one font pixel of space after them; body text draws each font pixel
             // `scale` screen pixels wide, inside the panel's padding.
             let cell = font.monospace.unwrap_or(0);

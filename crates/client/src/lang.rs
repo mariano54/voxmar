@@ -2,7 +2,7 @@
 //! spawned with a [`Localized`] key keeps showing that key's string, and the setting
 //! switches all of it at once.
 //!
-//! Words a screen writes once go on screen as `(Localized("menu.play"), text(…))`, and are
+//! Words a screen writes once go on screen as `(Localized("menu.settings"), text(…))`, and are
 //! rewritten whenever the language changes. Words built as the game runs (counts, names,
 //! messages) come from `Res<Locale>`, and the system writing them redraws them when the
 //! locale changes too. A definition's name comes from [`Locale::block`] and its kin, which
@@ -154,20 +154,16 @@ fn switch(settings: Res<Settings>, mut locale: ResMut<Locale>) {
 /// Writes each new [`Localized`] text, and every one when the language changes, before
 /// text is laid out so no frame shows a key; and spaces the lines of every text as the
 /// language wants.
-fn localize(
-    locale: Res<Locale>,
-    mut texts: Query<(Ref<Localized>, &mut Text)>,
-    mut lines: Query<(Ref<Text>, &mut LineHeight)>,
-) {
+fn localize(locale: Res<Locale>, mut texts: Query<(Option<Ref<Localized>>, Mut<Text>, &mut LineHeight)>) {
     let all = locale.is_changed();
     let height = LineHeight::RelativeToFont(locale.line_height());
-    for (text, mut line) in &mut lines {
+    for (localized, mut text, mut line) in &mut texts {
         if all || text.is_added() {
             line.set_if_neq(height);
         }
-    }
-    for (localized, mut text) in &mut texts {
-        if all || localized.is_added() || localized.is_changed() {
+        if let Some(localized) = localized
+            && (all || localized.is_added() || localized.is_changed())
+        {
             let words = locale.get(localized.0);
             if text.0 != words {
                 words.clone_into(&mut text.0);
@@ -185,8 +181,12 @@ mod tests {
 
     use super::*;
 
+    fn assets() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+    }
+
     fn content() -> std::path::PathBuf {
-        voxmar_server::assets_dir().join("content")
+        assets().join("content")
     }
 
     /// The first-party packages, which must be complete in every language the game ships.
@@ -236,7 +236,7 @@ mod tests {
                 assert_eq!(arguments(japanese.get(key)), arguments(english.get(key)), "`{key}` changes its arguments");
             }
         }
-        let loaded = voxmar_server::load_content(&voxmar_server::assets_dir()).unwrap();
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
         let in_english = definition_names(&loaded, &Locale::load(&content(), ENGLISH));
         for ((what, japanese), (_, english)) in definition_names(&loaded, &Locale::load(&content(), "ja")).into_iter().zip(in_english) {
             if japanese == english {
@@ -288,10 +288,10 @@ mod tests {
     /// fallback fonts merged in: no tofu boxes.
     #[test]
     fn every_character_is_drawn() {
-        let fonts = voxmar_server::assets_dir().join("ui/fonts");
+        let fonts = assets().join("ui/fonts");
         let read = |name: &str| std::fs::read_to_string(fonts.join(name)).ok();
-        let fallback = crate::ui::skin::fallback();
-        let loaded = voxmar_server::load_content(&voxmar_server::assets_dir()).unwrap();
+        let fallback = &crate::ui::skin::read_fallback(&fonts);
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
         let mut texts: Vec<String> = Vec::new();
         for language in languages(&content()) {
             let locale = Locale::load(&content(), &language.code);

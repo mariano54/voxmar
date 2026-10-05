@@ -19,7 +19,7 @@ it rebuilds in seconds rather than minutes after an edit and runs nearly as fast
 
 Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name NAME`,
 `--view-distance N` (columns of 32 blocks, default 16), `--fov DEGREES`, `--no-vsync` (uncapped
-frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
+frame rate), `--language CODE` (`en` or `ja`; captures are in English without it), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
 `--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --inventory | --character | --screen title|worlds|create|join|settings]`,
@@ -91,6 +91,22 @@ are kept with the world (`items.ron`).
 The interface (menus, HUD, inventory) has one look: a pixel font drawn in
 `assets/ui/font.txt` and pixel-art pieces that are `ui/*` textures of the default pack
 (`recipes/ui.ron`), so a texture pack can reskin it. Menus blur the world behind them.
+
+### Languages
+
+The game is in English and Japanese (Settings › Interface › Language; the first run follows
+the system's language). Every word comes from a content package's `lang/<code>.ron`, a map
+from keys to text (`"menu.settings": "設定"`): the interface's words are `core`'s
+(`assets/content/core/lang/en.ron` explains the format), and a mod ships its own files for
+its blocks and skills, or adds a whole language. Definitions are named by key from their ids
+(`block.base.oak_log`, `skill.core.farming`), and a template's members by pattern, so
+`block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
+line per language; anything a language leaves out shows in English, then as a name made from
+the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
+way. Kanji and kana come from a Japanese pixel font (listed in `assets/ui/fonts/fallback.ron`)
+whose glyphs are read at startup and merged under the chosen interface font, on its
+baseline, so every font speaks Japanese. Tests in `crates/client/src/lang.rs` hold every
+language complete, every key the code names defined, and every character drawn.
 
 ### Console and commands
 

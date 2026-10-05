@@ -199,6 +199,12 @@ pub fn set_font(choice: InterfaceFont, fonts: &mut Assets<Font>) {
 /// Glyphs for what our fonts don't draw (Japanese, for one), from the pixel fonts listed in
 /// `assets/ui/fonts/fallback.ron`, in order. Read once: thousands of kanji take a moment.
 pub fn fallback() -> &'static PixelFont {
+    static FALLBACK: std::sync::OnceLock<PixelFont> = std::sync::OnceLock::new();
+    FALLBACK.get_or_init(|| read_fallback(&voxmar_server::assets_dir().join("ui/fonts")))
+}
+
+/// The fallback fonts' glyphs, merged in order, from the fonts directory `dir`.
+pub fn read_fallback(dir: &std::path::Path) -> PixelFont {
     #[derive(Deserialize)]
     struct Fallback {
         /// A pixel-outline TrueType or OpenType file, relative to `assets/ui/fonts`.
@@ -206,29 +212,25 @@ pub fn fallback() -> &'static PixelFont {
         /// The pixels its em is drawn on.
         pixels_per_em: u32,
     }
-    static FALLBACK: std::sync::OnceLock<PixelFont> = std::sync::OnceLock::new();
-    FALLBACK.get_or_init(|| {
-        let dir = voxmar_server::assets_dir().join("ui/fonts");
-        let list = std::fs::read_to_string(dir.join("fallback.ron")).map_err(|e| e.to_string()).and_then(|source| {
-            ron::from_str::<Vec<Fallback>>(&source).map_err(|e| e.to_string())
-        });
-        let mut merged = PixelFont::default();
-        match list {
-            Ok(list) => {
-                for entry in list {
-                    let font = std::fs::read(dir.join(&entry.file))
-                        .map_err(|e| e.to_string())
-                        .and_then(|data| voxmar_texgen::font::import(&data, entry.pixels_per_em).map_err(|e| e.to_string()));
-                    match font {
-                        Ok(font) => merged.fill_from(&font),
-                        Err(e) => warn!("cannot read the fallback font {}: {e}", entry.file),
-                    }
+    let list = std::fs::read_to_string(dir.join("fallback.ron")).map_err(|e| e.to_string()).and_then(|source| {
+        ron::from_str::<Vec<Fallback>>(&source).map_err(|e| e.to_string())
+    });
+    let mut merged = PixelFont::default();
+    match list {
+        Ok(list) => {
+            for entry in list {
+                let font = std::fs::read(dir.join(&entry.file))
+                    .map_err(|e| e.to_string())
+                    .and_then(|data| voxmar_texgen::font::import(&data, entry.pixels_per_em).map_err(|e| e.to_string()));
+                match font {
+                    Ok(font) => merged.fill_from(&font),
+                    Err(e) => warn!("cannot read the fallback font {}: {e}", entry.file),
                 }
             }
-            Err(e) => warn!("cannot read {}: {e}", dir.join("fallback.ron").display()),
         }
-        merged
-    })
+        Err(e) => warn!("cannot read {}: {e}", dir.join("fallback.ron").display()),
+    }
+    merged
 }
 
 /// Reads every piece from the texture packs into its fixed handle. A piece no pack draws
