@@ -157,12 +157,14 @@ them apart. Plants and leaf fringes cast shadows only in the two nearest cascade
 they were most of the third cascade's work; further out their shadows are specks and
 fuzz. Together these took about 0.85 ms off that forest at 2268×1473 (Low Power Mode).
 
-Shading asks for soft or hard shadow edges (`sun_shadow`). Terrain, leaves and grass
-blades keep the soft filter; water, particles and plants take one comparison of the four
+Shading asks for soft or hard shadow edges (`sun_shadow`). Terrain and grass blades keep
+the soft filter; water, particles, plants and leaves take one comparison of the four
 nearest shadow texels. Water's light only tints what it scatters, particles are too
-small for a penumbra, and a plant takes one shadow for its whole cell, whose edge its
-blades break up: the soft filter's blocker search had cost the water up to a quarter of
-its time over a lake and the plants half their shading in a savanna (0.24 ms).
+small for a penumbra, a plant takes one shadow for its whole cell, and the holes of
+leaves and plants break any edge up: the soft filter had cost the water up to a quarter
+of its time over a lake, the plants half their shading in a savanna (0.24 ms) and a
+dense forest a fifth of its terrain's pixels (0.4 ms), with no difference a side-by-side
+capture shows.
 
 ### Measuring
 

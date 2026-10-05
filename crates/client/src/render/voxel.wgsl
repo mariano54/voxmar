@@ -441,10 +441,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
         surface = weathered(base, in.world_position, NORMALS[face], in.light.y);
     }
 #endif
-    // A plant takes one shadow for its whole cell (`shadow_at`), whose edge its blades break
-    // up anyway: it needs no soft filter, which cost the plants of a savanna half their
-    // shading (0.24 ms at 2268×1473).
-    var color = shade(surface.rgb, shadow_at, face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant, !plant);
+    // Plants and leaves take hard-edged shadows: a plant takes one shadow for its whole cell
+    // (`shadow_at`), and the holes and blades of leaves and plants break any edge up, so they
+    // need no soft filter, which cost the plants of a savanna half their shading (0.24 ms at
+    // 2268×1473) and a dense forest a fifth of its terrain's pixels (0.4 ms).
+    var color = shade(surface.rgb, shadow_at, face, in.light.y, in.light.z, in.light.x, kind == TINT_FOLIAGE || plant, !(plant || kind == TINT_FOLIAGE));
 #ifndef TRANSLUCENT
     color = wet_sheen(color, in.world_position, NORMALS[face], surface.a, in.light.y);
 #endif
