@@ -424,12 +424,12 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     height + 1
                 }
             };
-            // The window under an arch: open from its foot to a few blocks under its top,
-            // where no water beside it could pour in.
+            // The window under an arch: open from its foot, leaving at least four blocks of
+            // the fin (as the land eased it) over it, where no water beside it could pour in.
             let foot = geo.form.base.floor() as i32;
-            let window = geo.form.window as i32;
+            let window = (geo.form.window as i32).min(height - foot - 4);
             let beside_water = || sides_of(&geology, wx, wz).iter().any(|n| n.wet().is_some_and(|(_, top)| top > foot));
-            let window = if window > 0 && height >= foot + window + 3 && !geo.submerged() && !beside_water() { window } else { 0 };
+            let window = if window >= 3 && !geo.submerged() && !beside_water() { window } else { 0 };
             let hollow_at = |y: i32| (y > foot && y <= foot + window) || (y >= hollow_from && hollow.get((y - hollow_from) as usize).copied().unwrap_or(false));
 
             for y in 0..=height {

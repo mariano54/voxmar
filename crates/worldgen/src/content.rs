@@ -1127,7 +1127,8 @@ pub enum ShapeKind {
     Towers { height: f32, spacing: f32 },
     /// Clusters of thin rock spikes.
     Spires { height: f32, spacing: f32 },
-    /// Cones with a crater, as many and as tall as the world's volcanism allows.
+    /// Cones with a breached crater, gathered in volcanic fields, as many and as tall as
+    /// the world's volcanism allows.
     Volcanoes { height: f32, radius: f32 },
     /// Natural arches: fins of rock, `span` apart along their lines, with windows under
     /// them.

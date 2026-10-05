@@ -377,19 +377,25 @@ impl Shapes {
                 let scale = span * 5.0;
                 let d = n0.get_noise_2d(x / scale, z / scale).abs() / (3.0 / scale);
                 let wide = 2.0 + 1.5 * (0.5 + 0.5 * n2.get_noise_2d(x / 40.0, z / 40.0));
-                let fin = (1.0 - smoothstep(wide - 1.0, wide + 0.5, d)) * smoothstep(0.1, 0.35, n1.get_noise_2d(x / (span * 3.0), z / (span * 3.0)));
-                let rise = weight * height * fin;
+                let fin = (1.0 - smoothstep(wide - 1.0, wide + 0.5, d)) * smoothstep(0.05, 0.25, n1.get_noise_2d(x / (span * 3.0), z / (span * 3.0)));
+                // A fin stands full height from halfway into its climate: a low fin reads
+                // as a wall, not an arch.
+                let rise = smoothstep(0.0, 0.5, weight) * height * fin;
                 (0.0, rise, weight * fin)
             }
         }
     }
 
     /// How high a window opens under a fin of an arch at (x, z), from the ground, given
-    /// the fin's height there: a share of it under the top few blocks, which carry it.
+    /// the fin's height there: all of it but the top four blocks, which carry it, where a
+    /// noise rises along the fin, the opening rounding over towards its ends like an arch.
     fn window(&self, shape: &Shape, x: f32, z: f32, fin: f32) -> f32 {
         let ShapeKind::Arches { span, .. } = shape.kind else { return 0.0 };
-        let open = smoothstep(0.15, 0.35, shape.noises[2].get_noise_2d(x / span + 91.0, z / span));
-        (open * (fin * 0.75)).min(fin - 4.0).max(0.0).floor()
+        if fin < 9.0 {
+            return 0.0;
+        }
+        let open = smoothstep(0.0, 0.4, shape.noises[2].get_noise_2d(x / span + 91.0, z / span));
+        (open.sqrt() * (fin - 4.0)).floor()
     }
 
     /// The standalone shape of the grid cell holding (x, z), if the cell holds one and it

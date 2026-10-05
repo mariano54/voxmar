@@ -266,10 +266,11 @@ no two worlds share a rarity table. Everything else is a continuous field:
   for them, on the same bands as the biome table and never by asking which biome won:
   wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
   stepped canyons, karst towers on limestone, clusters of spires, volcanoes with breached
-  craters on land where the world is volcanic, very rare natural arches (fins of rock with
+  craters gathered in volcanic fields on land, very rare natural arches (fins of rock with
   windows under them), sea cliffs notched at the waterline with stacks offshore, and fjords
   where valleys meet cold coasts. Every outline follows noise, so none is a circle; only
-  volcanoes stand around a centre. Rarer shapes take only some regions of their climate.
+  volcanoes stand around a centre, their outlines warped into irregular lobes. Rarer shapes
+  take only some regions of their climate.
   Towers and spires do not cool the climate on their tops.
 - **Temperature** falls towards the poles (latitude repeats along z every 9–11 km from pole
   to equator, `zones` in `climate.ron`, colder to the north, so hot, temperate and cold land
@@ -334,9 +335,12 @@ variants take shares of their parent along a field 8 km across; ecotones sit on 
 fantastical biomes claim cells where aether (12 km across) runs high. The scales of these
 fields are data (`scales` in `climate.ron`). Borders blend over 16-48 blocks. Each biome's ground comes from
 ordered surface rules (slope, altitude, climate, rock province, noise patches and contour
-lines such as game trails, which no biome uses for now; shared sets in `surfaces.ron` break every soil slope up into
-coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
-rock follow the climate everywhere. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
+lines such as game trails, which no biome uses for now; shared sets in `surfaces.ron` break steeper soil slopes up into
+patches of coarse dirt, gravel and rock) over the stones of its rock province, while snow, ice and bare
+rock follow the climate everywhere. Slope rules go by the ground's steepness over a few
+blocks, not single steps, and materials meet in patches tens of blocks across with ragged
+edges rather than interleaving block by block; the risers of steep, stepped ground show the
+province's rock beds under a lip of the biome's ground. Trees (`trees.ron`: procedurally shaped giant spruce, pine,
 birch, oak, dark oak, cherry, willow, jungle giants, acacia, palm, mangrove, shrubs, cacti)
 and plants (`plants.ron`, with nutrition, alchemy and dye properties) are a shared pool:
 each says what climate, ground and habitat it likes, biomes select from the pool by tag or

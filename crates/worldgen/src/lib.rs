@@ -452,10 +452,6 @@ impl Overworld {
         self.trails.sketch(&self.land(), min, max)
     }
 
-    /// Steepest height step from (x, z), whose height is `height`, to its four neighbours.
-    fn slope(&self, x: i32, z: i32, height: i32) -> i32 {
-        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (self.height(x + dx, z + dz) - height).abs()).max().unwrap_or(0)
-    }
 
     /// Every set of bands (strata) the surface lays by height, of biomes, of terrain shapes
     /// and of the rock provinces' bare rock: what distant terrain blends to show a banded
@@ -560,9 +556,13 @@ struct Picks {
 impl Sampler<'_> {
     /// The parameters of the surface at a position inside the sampler's area.
     pub fn site(&self, x: i32, z: i32) -> Site {
-        let geo = self.world.ground(x, z);
-        let steepness = steepness(|dx, dz| self.world.height(x + dx, z + dz));
-        self.site_on(&geo, x, z, self.world.slope(x, z, geo.height), steepness)
+        // The ground five blocks across around the position, sampled together, for its
+        // slope and steepness.
+        let area = self.world.rivers.area(self.world.stages(), IVec2::new(x - 2, z - 2), 5);
+        let height = |dx: i32, dz: i32| area[((dz + 2) * 5 + dx + 2) as usize].height;
+        let geo = area[12];
+        let slope = [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(|(dx, dz)| (height(dx, dz) - geo.height).abs()).max().unwrap_or(0);
+        self.site_on(&geo, x, z, slope, steepness(height))
     }
 
     /// What the surface looks like from far away; see [`Overworld::surface_sample`].
@@ -2927,11 +2927,16 @@ mod tests {
         }
     }
 
-    /// `SEED=7 X=3600 Z=680 cargo test -p voxmar_worldgen surface_busy -- --ignored --nocapture`
-    /// TEMP: top blocks around a position, how often neighbours differ, by steepness.
+    /// `SEED=7 X=3600 Z=680 SIZE=4 cargo test -p voxmar_worldgen surface_patches -- --ignored --nocapture`
+    ///
+    /// How patchy the ground is around a position, by steepness: the share of its top
+    /// blocks (under trees and plants) of each kind, how often neighbours differ, and how
+    /// many blocks stand alone, differing from three or four of their neighbours, the
+    /// speckle that makes ground look busy. `MAP=1` draws the top blocks, one letter per
+    /// `STEP` blocks.
     #[test]
     #[ignore]
-    fn surface_busy() {
+    fn surface_patches() {
         use voxmar_engine::block::RenderKind;
         use voxmar_engine::coords::CHUNK_SIZE;
         let env = |name: &str| std::env::var(name).ok();
@@ -2964,6 +2969,7 @@ mod tests {
         let mut bins: Vec<std::collections::BTreeMap<String, u32>> = vec![Default::default(); 4];
         let (mut pairs, mut changes, mut lonely, mut inner) = ([0u32; 4], [0u32; 4], [0u32; 4], [0u32; 4]);
         let mut legend: Vec<BlockId> = Vec::new();
+        // Lone blocks by what they are and what surrounds them.
         let mut kinds: std::collections::BTreeMap<String, u32> = Default::default();
         let mut rows = Vec::new();
         for dz in 1..span - 1 {
@@ -2977,8 +2983,8 @@ mod tests {
                 pairs[bin] += 2;
                 changes[bin] += (n[0] != b) as u32 + (n[2] != b) as u32;
                 inner[bin] += 1;
-                lonely[bin] += (n.iter().filter(|&&o| o != b).count() >= 3) as u32;
                 if n.iter().filter(|&&o| o != b).count() >= 3 {
+                    lonely[bin] += 1;
                     let other = n.iter().find(|&&o| o != b).copied().unwrap();
                     *kinds.entry(format!("{} in {}", registry.def(b).name, registry.def(other).name)).or_insert(0u32) += 1;
                 }
