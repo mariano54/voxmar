@@ -10,7 +10,7 @@ use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::world::VoxelWorld;
 use voxmar_protocol::{
-    ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY,
+    ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND,
     Weather, local_pair, tcp,
 };
 use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
@@ -185,12 +185,21 @@ impl Client {
     }
 }
 
+/// Ticks a server behind the clock runs back to back to catch up, at most (it gives up on
+/// a longer backlog, see `Server::run`), plus the one in progress: how much earlier by the
+/// clock than its ticks say an action can complete.
+const CATCH_UP: Duration = Duration::from_millis(11 * 1000 / TICKS_PER_SECOND as u64);
+
 #[test]
 fn break_and_place_blocks() {
     let mut client = Client::join();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
+    // Stone, which takes long enough to mine that a server catching up cannot finish it
+    // anywhere near at once.
+    client.ok("/setblock ~ ~-1 ~ stone");
+    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:stone"));
     let ground = client.world.block(below).unwrap();
-    assert!(!ground.is_air());
+    let hardness = Duration::from_secs_f32(client.content.blocks.info(ground).hardness);
 
     let target = ActionTarget::Block { block: below, face: Face::PosY };
     // Mining takes the block's hardness in seconds; cancelling before then changes nothing.
@@ -203,7 +212,7 @@ fn break_and_place_blocks() {
     let started = std::time::Instant::now();
     client.propose("core:mine", target);
     client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
-    assert!(started.elapsed() >= Duration::from_millis(400), "mining completed too early");
+    assert!(started.elapsed() + CATCH_UP >= hardness, "mining completed too early: {:?} of {hardness:?}", started.elapsed());
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.count == 1));
 
     // Place the first hotbar item back on the block underneath the hole.
@@ -295,21 +304,24 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
 fn a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started() {
     // A busy server can complete a break later than the client, which shows it done and
     // starts on the next block; that must not cancel the first. Too early, it still does.
+    // Stone takes long enough that a server catching up on its ticks cannot finish the
+    // block only begun before it is replaced.
     let mut client = Client::join();
     let feet = client.position.floor().as_ivec3();
     let (a, b, c) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 1));
-    client.ok("/fill ~ ~-1 ~1 ~1 ~-1 ~2 dirt");
-    client.pump_until(|c| [a, b].into_iter().all(|p| c.world.block(p).is_some_and(|b| !b.is_air())));
-    let dirt = client.world.block(a).unwrap();
-    let hardness = client.content.blocks.info(dirt).hardness;
+    client.ok("/fill ~ ~-1 ~1 ~1 ~-1 ~2 stone");
+    client.pump_until(|cl| [a, b, c].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    let stone = client.world.block(a).unwrap();
+    let hardness = client.content.blocks.info(stone).hardness;
+    assert!(Duration::from_secs_f32(hardness) > CATCH_UP * 2, "stone mines too fast for this test");
     let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
     mine(&client, c);
-    std::thread::sleep(Duration::from_secs_f32(hardness * 0.3));
+    std::thread::sleep(Duration::from_millis(50));
     mine(&client, a);
     std::thread::sleep(Duration::from_secs_f32(hardness * 0.85));
     mine(&client, b);
     client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
-    assert_eq!(client.world.block(c), Some(dirt), "a block only begun was broken");
+    assert_eq!(client.world.block(c), Some(stone), "a block only begun was broken");
 }
 
 #[test]

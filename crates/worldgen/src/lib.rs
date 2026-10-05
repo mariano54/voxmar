@@ -1470,6 +1470,24 @@ mod tests {
                 let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
                 // Peaks are steep by nature.
                 let steep = if world.biomes.get(id).has_tag("peaks") || world.biomes.get(id).has_tag("mountain") { 6 } else { 2 };
+                // The sea: a view out over it from the nearest dry shore, looking at its
+                // nearest open water of this biome.
+                if world.biomes.get(id).has_tag("ocean") {
+                    let centre = IVec2::new(spawn.x, spawn.z);
+                    let near = world.sampler(centre - 3000, centre + 3000);
+                    let grid: Vec<(IVec2, Site)> = (0..188 * 188).map(|i| centre + IVec2::new(i % 188 * 32 - 3000, i / 188 * 32 - 3000)).map(|p| (p, near.site(p.x, p.y))).collect();
+                    let sea = grid.iter().filter(|(_, s)| s.home == id && s.height < s.water && s.edge > 16.0).min_by_key(|(p, _)| (*p - centre).length_squared()).map(|(p, _)| *p);
+                    let shore = sea.and_then(|sea| grid.iter().filter(|(_, s)| s.height >= s.water && s.height < s.water + 12 && s.river < 0.2).min_by_key(|(p, _)| (*p - sea).length_squared()).map(|(p, _)| (*p, sea)));
+                    match shore {
+                        Some((at, sea)) => {
+                            let dir = (sea - at).as_vec2().normalize_or_zero();
+                            let yaw = (-dir.x).atan2(-dir.y).to_degrees();
+                            println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,{yaw:.0},-8  above: --pose 0,14,0,{yaw:.0},-14", at.x, at.y, at.x, at.y);
+                        }
+                        None => println!("{name}: not found"),
+                    }
+                    continue;
+                }
                 // The point deepest inside the biome within a few kilometres of spawn, else
                 // the deepest around the first place found further out.
                 let centre = IVec2::new(spawn.x, spawn.z);

@@ -17,6 +17,11 @@
 //! - the screen must change where an edit happened, judged from shots taken before and
 //!   after from the same place.
 //!
+//! Before it builds, it looks over the generated land around spawn as the player arrives
+//! and checks what Mariano asked of it: no hiking-trail wear while there are no
+//! settlements, no cobbled or crafted stone lying about at the surface, and grass that
+//! covers much of the ground but not all of it, with tall grass a minority.
+//!
 //! It runs headless like `--capture`, builds its own test ground high above spawn with
 //! commands (so terrain changes don't move it), and exits with an error if any check
 //! failed. Each check is logged as `gate: ok …` or `gate: FAILED …`, and the shots are
@@ -61,8 +66,10 @@ const TIME_LIMIT: f32 = 300.0;
 const LOAD_LIMIT: f32 = 180.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
-/// How long an edit is given to reach the server, come back and be meshed.
-const SETTLE: f32 = 1.5;
+/// How long an edit is given at least, and at most, to reach the server, come back and be
+/// meshed; the checks run as soon as both sides show it.
+const SETTLE: f32 = 0.3;
+const SETTLE_LIMIT: f32 = 4.0;
 /// Blocks around the player in which client and server must agree.
 const AGREE_WITHIN: i32 = 7;
 /// How far above spawn the test ground is built, clear of terrain and water.
@@ -72,6 +79,10 @@ const DIG: usize = 3;
 /// Least mean change (levels of 255) in the middle of the screen for an edit to count
 /// as shown.
 const SHOWN_CHANGE: f32 = 6.0;
+/// Blocks around spawn over which the land is looked over, each way.
+const LAND_REACH: i32 = 48;
+/// Least grass-topped columns there for the ground cover to be judged.
+const LAND_GRASS: usize = 300;
 
 impl Plugin for GatePlugin {
     fn build(&self, app: &mut App) {
@@ -343,6 +354,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Load => {
             if loaded(world) {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
+                land(world, gate);
                 gate.next(Step::Build, now);
             }
         }
@@ -388,10 +400,12 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 // at the sky, so the click mines nothing.
                 look(world, 0.0, 80.0);
                 mouse(world, MouseButton::Left, true);
-            } else if gate.frames == 3 {
+            } else {
+                // Let go the next frame, however late the observer was ready: a button left
+                // held would mine whatever the next steps aim at.
                 mouse(world, MouseButton::Left, false);
             }
-            if since > 2.0 && settled(world, feet) {
+            if since > 0.5 && settled(world, feet) {
                 let locked = world.resource::<UiState>().cursor_locked;
                 gate.check("arrive", if locked { Ok(format!("standing on the test ground at {feet}")) } else { Err("a click did not grab the mouse".into()) });
                 aim(world, feet + IVec3::new(0, -1, 2));
@@ -427,7 +441,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::PlaceSettle => {
-            if since < SETTLE || !settled(world, feet) {
+            if !edit_settled(world, gate, since, &gate.placed.clone(), |b| !b.is_air()) {
                 return;
             }
             let Some(after) = gate.shot(world, "place-after") else { return };
@@ -463,7 +477,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::DigSettle => {
-            if since < SETTLE || !settled(world, feet) {
+            let dug: Vec<IVec3> = gate.dug.iter().map(|&(pos, _)| pos).collect();
+            if !edit_settled(world, gate, since, &dug, |b| b.is_air()) {
                 return;
             }
             let Some(after) = gate.shot(world, "dig-after") else { return };
@@ -503,8 +518,11 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             if gate.phase == 0 {
                 world.resource_mut::<NextState<Screen>>().set(Screen::Title);
                 gate.advance(now);
-            } else if in_phase > 1.0 {
+            } else {
                 let screen = *world.resource::<State<Screen>>().get();
+                if screen != Screen::Title && in_phase < 3.0 {
+                    return;
+                }
                 let result = if screen == Screen::Title {
                     Ok("back at the title screen, the world closed".to_owned())
                 } else {
@@ -549,8 +567,11 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.next(Step::Screens, now);
             }
         }
-        2 if in_phase > 1.0 => {
+        2 => {
             let server = gate.observer.as_ref().and_then(|o| o.others.values().next().copied());
+            if server.is_none_or(|at| at.distance(position) >= 1.0) && in_phase < 3.0 {
+                return;
+            }
             let result = match server {
                 Some(at) if at.distance(position) < 1.0 => Ok(format!("the server has the player within {:.2} blocks", at.distance(position))),
                 Some(at) => Err(format!("the server has the player at {at}, the client at {position}")),
@@ -577,7 +598,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             key(world, KeyCode::Escape, false);
-            if menu && in_phase > 0.5 && let Some(shot) = gate.shot(world, "menu") {
+            if menu && in_phase > 0.2 && let Some(shot) = gate.shot(world, "menu") {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
                 let shown = if change >= SCREEN_CHANGE { Ok(format!("drawn, changing the screen by {change:.1} levels")) } else { Err(format!("changed the screen by only {change:.1} levels")) };
                 gate.check("menu", shown.and_then(|s| if locked { Err("the mouse stayed grabbed".into()) } else { Ok(s) }));
@@ -601,7 +622,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         3 => {
             key(world, KeyCode::KeyE, false);
-            if inventory && in_phase > 0.5 && let Some(shot) = gate.shot(world, "inventory") {
+            if inventory && in_phase > 0.2 && let Some(shot) = gate.shot(world, "inventory") {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
                 let shown = if change >= SCREEN_CHANGE { Ok(format!("drawn, changing the screen by {change:.1} levels")) } else { Err(format!("changed the screen by only {change:.1} levels")) };
                 gate.check("inventory", shown);
@@ -652,7 +673,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             // Let it fill the air before the shot.
-            if in_phase < 3.0 {
+            if in_phase < 1.0 {
                 return;
             }
             let Some(shot) = gate.shot(world, name) else { return };
@@ -936,6 +957,68 @@ fn pixels(shot: &Image) -> Result<(usize, usize, &[u8]), String> {
     }
 }
 
+/// Looks over the land around spawn as generated: its surface, block by block, and what
+/// grows on it.
+fn land(world: &World, gate: &mut Gate) {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    let registry = &client.registry;
+    let centre = player.position.floor().as_ivec3();
+    let (mut columns, mut grass, mut covered, mut tall) = (0usize, 0usize, 0usize, 0usize);
+    let (mut worn, mut crafted) = (Vec::new(), Vec::new());
+    for z in centre.z - LAND_REACH..=centre.z + LAND_REACH {
+        for x in centre.x - LAND_REACH..=centre.x + LAND_REACH {
+            // The ground: the highest solid block that is not part of a tree.
+            let Some((y, top)) = (0..voxmar_engine::coords::WORLD_HEIGHT).rev().find_map(|y| {
+                let block = client.block(IVec3::new(x, y, z))?;
+                let def = registry.def(block);
+                let tree = def.has_tag("leaves") || def.has_tag("log") || def.name.ends_with("_log") || def.name.ends_with("_wood");
+                (registry.info(block).solid && !tree).then_some((y, block))
+            }) else {
+                continue;
+            };
+            columns += 1;
+            let def = registry.def(top);
+            let at = IVec3::new(x, y, z);
+            if def.name.ends_with("worn_grass_block") || def.name.ends_with("_planks") {
+                worn.push(format!("{} at {at}", def.name));
+            }
+            if ["cobbled", "polished", "bricks"].iter().any(|t| def.has_tag(t)) {
+                crafted.push(format!("{} at {at}", def.name));
+            }
+            if def.name.ends_with(":grass_block") {
+                grass += 1;
+                if let Some(above) = client.block(at + IVec3::Y).filter(|&b| registry.def(b).render == voxmar_engine::block::RenderKind::Plant) {
+                    covered += 1;
+                    tall += usize::from(registry.def(above).name.contains("tall_grass"));
+                }
+            }
+        }
+    }
+    let first = |list: &[String]| list.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
+    gate.check(
+        "land: no trails",
+        if worn.is_empty() { Ok(format!("no worn tread or decks in {columns} columns around spawn")) } else { Err(format!("{} columns: {}", worn.len(), first(&worn))) },
+    );
+    gate.check(
+        "land: natural stone",
+        if crafted.is_empty() { Ok("no cobbled or crafted stone at the surface".into()) } else { Err(format!("{} columns: {}", crafted.len(), first(&crafted))) },
+    );
+    let cover = covered as f32 / grass.max(1) as f32;
+    let tall_share = tall as f32 / covered.max(1) as f32;
+    gate.check(
+        "land: ground cover",
+        if grass < LAND_GRASS {
+            Ok(format!("only {grass} grass columns around spawn, too few to judge"))
+        } else if !(0.15..=0.9).contains(&cover) {
+            Err(format!("{:.0}% of {grass} grass blocks carry a plant (wanted 15-90%)", 100.0 * cover))
+        } else if tall_share > 0.3 {
+            Err(format!("tall grass is {:.0}% of the plants on grass (wanted at most 30%)", 100.0 * tall_share))
+        } else {
+            Ok(format!("{:.0}% of {grass} grass blocks carry a plant, {:.0}% of them tall grass", 100.0 * cover, 100.0 * tall_share))
+        },
+    );
+}
+
 /// Whether the world around the player has loaded and been meshed, distant terrain
 /// included.
 fn loaded(world: &World) -> bool {
@@ -955,6 +1038,19 @@ fn columns_around(feet: IVec3) -> Vec<ColumnPos> {
 fn settled(world: &World, feet: IVec3) -> bool {
     let client = world.resource::<ClientWorld>();
     columns_around(feet).into_iter().all(|pos| !client.meshing(pos))
+}
+
+/// Whether an edit of `cells` has settled, `since` seconds after it was made: both client
+/// and server show each as `wanted` and nothing around waits to be meshed, or the limit
+/// has passed (and the checks will say what is missing).
+fn edit_settled(world: &World, gate: &Gate, since: f32, cells: &[IVec3], wanted: fn(BlockId) -> bool) -> bool {
+    if since < SETTLE {
+        return false;
+    }
+    let client = world.resource::<ClientWorld>();
+    let shown = |side: &dyn Fn(IVec3) -> Option<BlockId>| cells.iter().all(|&p| side(p).is_some_and(wanted));
+    let server = gate.observer.as_ref().is_none_or(|o| shown(&|p| o.world.block(p)));
+    (server && shown(&|p| client.block(p)) && settled(world, gate.feet)) || since > SETTLE_LIMIT
 }
 
 /// Checks an edit of `cells` once it has settled: each is as `wanted` on the client and

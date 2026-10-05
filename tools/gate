@@ -1,43 +1,75 @@
 #!/bin/bash
-# The landing gate: what every change passes before it lands on main, and what every play
-# build is made from. See docs/quality.md.
+# The gates. See docs/quality.md.
 #
-#   tools/gate              # from the root of a worktree: hygiene, build, tests, play
-#   tools/gate --passed REV # exits 0 if REV (default HEAD) passed the gate
+#   tools/gate                 # before every landing: fast, only what the change can affect
+#   tools/gate --full          # everything; play builds are made only from commits it passed
+#   tools/gate --passed [--full] [REV]
+#                              # exits 0 if REV (default HEAD) passed (the full gate)
 #
-# 1. Hygiene: no whitespace errors against main, no conflict markers.
-# 2. Builds everything (`--profile iter`, tests included) without warnings.
-# 3. Runs every test in the workspace, and meanwhile
-# 4. plays a scripted session in the real game with its integrated server running behind
-#    (`voxmar --gate`, see crates/client/src/gate.rs): building, digging, drops, climbing out
-#    of water, the menu and inventory, storm and snow, the sun, moon and stars, a gorge,
-#    leaving the world. It fails on any failed check, a crash, a panic, any ERROR line (wgpu
-#    validation errors among them) and any WARN line not listed in ALLOWED_WARNINGS.
+# Both: hygiene (no whitespace errors, no conflict markers), a warning-free incremental
+# build (`--profile iter`, tests included), tests, and a scripted session in the real game
+# with its integrated server running behind (`voxmar --gate`, crates/client/src/gate.rs):
+# building, digging, drops, climbing out of water, the menu and inventory, storm and snow,
+# the sun, moon and stars, a gorge, leaving the world. The session fails on any failed check, a
+# crash, a panic, any ERROR line (wgpu validation errors among them) and any WARN line not
+# listed in ALLOWED_WARNINGS. Tests and the session run side by side.
+#
+# The landing gate runs only the tests of the crates the change can reach (from the files
+# it touches against main), skips the slow tests listed in SLOW_TESTS, plays the session
+# in a small world, and skips everything a tree already passed. The full gate runs every
+# test and plays at the normal view distance.
 #
 # Every heavy step runs through ~/Projects/voxmar-wt/memcap. On a clean tree a pass is
-# recorded against the commit, which `--passed` checks. The game's log and shots stay in
-# target/gate/ for a look.
+# recorded against the tree (so a merge or rebase that changes nothing keeps it). The
+# game's log and shots stay in target/gate/ for a look.
 
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 memcap=~/Projects/voxmar-wt/memcap
 passed_dir="$(git rev-parse --git-common-dir)/gate-passed"
 
-if [[ ${1:-} == --passed ]]; then
-  rev=$(git rev-parse --verify "${2:-HEAD}^{commit}") || exit 2
-  [[ -e $passed_dir/$rev ]] && { cat "$passed_dir/$rev"; exit 0; }
-  echo "gate: $rev has not passed the gate" >&2
+full=0 check=0 rev=HEAD
+while (($#)); do
+  case $1 in
+    --full) full=1 ;;
+    --passed) check=1 ;;
+    -*) echo "usage: tools/gate [--full] | tools/gate --passed [--full] [REV]" >&2; exit 2 ;;
+    *) rev=$1 ;;
+  esac
+  shift
+done
+level=$( ((full)) && echo full || echo landing)
+
+# A tree passed `landing` if either gate passed it, `full` only if the full one did.
+passed() {
+  local record=$passed_dir/$1
+  [[ -e $record ]] && { ((!full)) || grep -q '^full ' "$record"; }
+}
+
+if ((check)); then
+  tree=$(git rev-parse --verify "$rev^{tree}") || exit 2
+  passed "$tree" && { cat "$passed_dir/$tree"; exit 0; }
+  echo "gate: $(git rev-parse --short "$rev") has not passed the $level gate" >&2
   exit 1
 fi
 
-# WARN lines a gate run may log, each with why it is expected.
+# WARN lines a session may log, each with why it is expected.
 ALLOWED_WARNINGS=(
   # The gate makes the integrated server run behind on purpose (gate::SERVER_LAG).
   'server is running behind, skipping ticks'
 )
 
+# Tests too slow for every landing, run by the full gate only: `crate test_name` pairs
+# (test names as `cargo test` filters take them).
+# Measured alone on 2026-10-05: the next slowest took 7 s.
+SLOW_TESTS=(
+  voxmar_worldgen fluids_are_contained          # 177 s
+  voxmar_worldgen decorations_rest_on_the_ground # 23 s
+  voxmar_worldgen wood_never_floats             # 17 s
+)
+
 started=$(date +%s)
-out=target/gate
+out=$PWD/target/gate
 rm -rf "$out" && mkdir -p "$out"
 fail() {
   echo "gate: FAILED: $*" >&2
@@ -51,8 +83,35 @@ if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)' -- '*.rs' '*.ron' '*.md' '*.wgsl' '*.t
   cat "$out/hygiene.txt"
   fail "conflict markers"
 fi
-commit=$(git rev-parse HEAD)
 [[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0
+tree=$(git rev-parse HEAD^{tree})
+if ((clean)) && passed "$tree"; then
+  echo "gate: this tree already passed: $(cat "$passed_dir/$tree")"
+  exit 0
+fi
+
+# What the change can reach: crates and their dependents, from the files it touches
+# against main (or, on main itself, against what was last pushed).
+packages=()
+session=1
+if ((!full)); then
+  base=main
+  [[ $(git rev-parse HEAD) == $(git rev-parse main) ]] && base=origin/main
+  changed=$( (git diff --name-only "$(git merge-base HEAD "$base")" HEAD; git diff --name-only HEAD) | sort -u)
+  reach() { for p in "$@"; do [[ " ${packages[*]+"${packages[*]}"} " == *" $p "* ]] || packages+=("$p"); done; }
+  while read -r path; do
+    case $path in
+      "") ;;
+      Cargo.toml | Cargo.lock | crates/engine/*) reach voxmar_engine voxmar_worldgen voxmar_server voxmar_client ;;
+      crates/worldgen/* | assets/*) reach voxmar_worldgen voxmar_server voxmar_client ;;
+      crates/protocol/*) reach voxmar_server voxmar_client ;;
+      crates/server/*) reach voxmar_server voxmar_client ;;
+      crates/texgen/*) reach voxmar_texgen voxmar_client ;;
+      crates/client/*) reach voxmar_client ;;
+    esac
+  done <<<"$changed"
+  ((${#packages[@]})) || session=0
+fi
 
 step "build"
 $memcap -- cargo build --profile iter --workspace --all-targets >"$out/build.txt" 2>&1 || { tail -40 "$out/build.txt"; fail "the build"; }
@@ -61,32 +120,72 @@ if grep -q '^warning' "$out/build.txt"; then
   fail "build warnings"
 fi
 
-# The tests (worldgen's take a couple of minutes) and the session run side by side.
-step "tests and play"
-RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} $memcap -- cargo test --profile iter --workspace >"$out/tests.txt" 2>&1 &
-tests=$!
-VOXMAR_MUTE=1 $memcap 12 -- target/iter/voxmar --gate "$out" >"$out/game.txt" 2>&1
-status=$?
-wait $tests || {
+step "tests ($( ((full)) && echo all || echo "${packages[*]+"${packages[*]}"}"))$( ((session)) && echo " and play")"
+test_args=(--workspace)
+skips=()
+if ((!full)); then
+  test_args=()
+  for p in ${packages[@]+"${packages[@]}"}; do test_args+=(-p "$p"); done
+  for ((i = 0; i + 1 < ${#SLOW_TESTS[@]}; i += 2)); do skips+=(--skip "${SLOW_TESTS[i + 1]}"); done
+fi
+# The test binaries (already built) and the session run side by side, under one memcap
+# (one heavy slot, held as a game run's: `--gate` names the script), rather than one after another as `cargo test` runs them; each test
+# binary runs from its crate's directory as cargo would.
+run='
+  out=$1 session=$2; shift 2
+  if [[ $session == 1 ]]; then
+    (VOXMAR_MUTE=1 target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
+  fi
+  while IFS=$(printf "\t") read -r dir exe; do
+    (cd "$dir" && "$exe" "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
+  done <"$out/tests.list"
+  wait'
+: >"$out/tests.list"
+if ((${#test_args[@]})); then
+  cargo test --profile iter "${test_args[@]}" --no-run --message-format=json 2>"$out/tests-build.txt" |
+    python3 -c '
+import json, os, sys
+for line in sys.stdin:
+    m = json.loads(line)
+    if m.get("reason") == "compiler-artifact" and m.get("executable") and m["profile"]["test"]:
+        print(os.path.dirname(m["manifest_path"]) + "\t" + m["executable"])' >"$out/tests.list" ||
+    fail "building the tests ($out/tests-build.txt)"
+fi
+GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
+  $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+tests_failed=0
+for f in "$out"/test-*.status; do
+  [[ -e $f ]] || continue
+  cat "${f%.status}.txt" >>"$out/tests.txt"
+  [[ $(cat "$f") == 0 ]] || tests_failed=1
+done
+if ((tests_failed)); then
   grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
   fail "tests (all output in $out/tests.txt)"
-}
-log=$(sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt")
-grep -E 'gate: (ok|FAILED)' <<<"$log" | sed -E 's/.*gate: //'
-problems=$(grep -E ' ERROR |panicked|^thread .* panicked' <<<"$log")
-warnings=$(grep ' WARN ' <<<"$log")
-for allowed in "${ALLOWED_WARNINGS[@]}"; do
-  warnings=$(grep -vF "$allowed" <<<"$warnings")
-done
-[[ -n $warnings ]] && problems+=$'\n'$warnings
-problems=$(grep -v 'gate: FAILED\|gate FAILED' <<<"$problems" | sed '/^$/d')
-[[ -n $problems ]] && { echo "$problems" | head -20; fail "the game logged errors or unexpected warnings ($out/game.txt)"; }
-((status == 0)) || fail "the game exited with $status ($out/game.txt, shots in $out)"
+fi
+status=$(cat "$out/game.status" 2>/dev/null || echo 0)
+((session)) && [[ ! -e $out/game.status ]] && fail "the session never ran ($out/run.txt)"
+log=
+if ((session)); then
+  log=$(sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt")
+  grep -E 'gate: FAILED' <<<"$log" | sed -E 's/.*gate: //'
+  problems=$(grep -E ' ERROR |panicked' <<<"$log")
+  warnings=$(grep ' WARN ' <<<"$log")
+  for allowed in "${ALLOWED_WARNINGS[@]}"; do
+    warnings=$(grep -vF "$allowed" <<<"$warnings")
+  done
+  [[ -n $warnings ]] && problems+=$'\n'$warnings
+  problems=$(grep -v 'gate: FAILED\|gate FAILED' <<<"$problems" | sed '/^$/d')
+  [[ -n $problems ]] && { echo "$problems" | head -20; fail "the game logged errors or unexpected warnings ($out/game.txt)"; }
+  ((status == 0)) || fail "the game exited with $status ($out/game.txt, shots in $out)"
+fi
 
-summary="passed $(date -u +%FT%TZ) in $(($(date +%s) - started))s: $(grep -c 'gate: ok' <<<"$log") game checks; $(grep -h '^test result' "$out/tests.txt" | awk '{ p += $4 } END { print p }') tests"
+checks=$(grep -c 'gate: ok' <<<"$log")
+ran=$(grep -h '^test result' "$out/tests.txt" 2>/dev/null | awk '{ p += $4 } END { print p + 0 }')
+summary="$level passed $(date -u +%FT%TZ) in $(($(date +%s) - started))s: $checks game checks, $ran tests"
 if ((clean)); then
-  mkdir -p "$passed_dir" && echo "$summary" >"$passed_dir/$commit"
-  echo "gate: $commit $summary"
+  mkdir -p "$passed_dir" && echo "$summary" >>"$passed_dir/$tree"
+  echo "gate: $(git rev-parse --short HEAD) $summary"
 else
-  echo "gate: $summary (uncommitted changes, so no commit was marked as passed)"
+  echo "gate: $summary (uncommitted changes, so nothing was recorded)"
 fi
