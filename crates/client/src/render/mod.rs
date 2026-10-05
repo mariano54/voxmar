@@ -737,6 +737,11 @@ pub(crate) fn update_environment(
     // Haze glows around the sun like the sky does, while the sun is the light, and as
     // dully as the sky's glow under thick cloud.
     let overcast = smoothstep(0.4, 1.0, shown.cover);
+    // Under water only while the camera is below the surface: a camera lifted far above a
+    // player in water (a capture's pose) drew the sky as the deep water, black.
+    if cycle.underwater && camera.translation.y > cycle.water_surface {
+        cycle.underwater = false;
+    }
     let glow = if cycle.underwater || env.to_sun.y <= 0.0 {
         Vec3::ZERO
     } else {
