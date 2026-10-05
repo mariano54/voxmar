@@ -17,6 +17,11 @@
 //! - the screen must change where an edit happened, judged from shots taken before and
 //!   after from the same place.
 //!
+//! Before it builds, it looks over the generated land around spawn as the player arrives
+//! and checks what Mariano asked of it: no hiking-trail wear while there are no
+//! settlements, no cobbled or crafted stone lying about at the surface, and grass that
+//! covers much of the ground but not all of it, with tall grass a minority.
+//!
 //! It runs headless like `--capture`, builds its own test ground high above spawn with
 //! commands (so terrain changes don't move it), and exits with an error if any check
 //! failed. Each check is logged as `gate: ok …` or `gate: FAILED …`, and the shots are
@@ -72,6 +77,10 @@ const DIG: usize = 3;
 /// Least mean change (levels of 255) in the middle of the screen for an edit to count
 /// as shown.
 const SHOWN_CHANGE: f32 = 6.0;
+/// Blocks around spawn over which the land is looked over, each way.
+const LAND_REACH: i32 = 48;
+/// Least grass-topped columns there for the ground cover to be judged.
+const LAND_GRASS: usize = 300;
 
 impl Plugin for GatePlugin {
     fn build(&self, app: &mut App) {
@@ -334,6 +343,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Load => {
             if loaded(world) {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
+                land(world, gate);
                 gate.next(Step::Build, now);
             }
         }
@@ -823,6 +833,68 @@ fn pixels(shot: &Image) -> Result<(usize, usize, &[u8]), String> {
         Some(data) if data.len() == w * h * 4 => Ok((w, h, data)),
         _ => Err("the shot has no pixels".into()),
     }
+}
+
+/// Looks over the land around spawn as generated: its surface, block by block, and what
+/// grows on it.
+fn land(world: &World, gate: &mut Gate) {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    let registry = &client.registry;
+    let centre = player.position.floor().as_ivec3();
+    let (mut columns, mut grass, mut covered, mut tall) = (0usize, 0usize, 0usize, 0usize);
+    let (mut worn, mut crafted) = (Vec::new(), Vec::new());
+    for z in centre.z - LAND_REACH..=centre.z + LAND_REACH {
+        for x in centre.x - LAND_REACH..=centre.x + LAND_REACH {
+            // The ground: the highest solid block that is not part of a tree.
+            let Some((y, top)) = (0..voxmar_engine::coords::WORLD_HEIGHT).rev().find_map(|y| {
+                let block = client.block(IVec3::new(x, y, z))?;
+                let def = registry.def(block);
+                let tree = def.has_tag("leaves") || def.has_tag("log") || def.name.ends_with("_log") || def.name.ends_with("_wood");
+                (registry.info(block).solid && !tree).then_some((y, block))
+            }) else {
+                continue;
+            };
+            columns += 1;
+            let def = registry.def(top);
+            let at = IVec3::new(x, y, z);
+            if def.name.ends_with("worn_grass_block") || def.name.ends_with("_planks") {
+                worn.push(format!("{} at {at}", def.name));
+            }
+            if ["cobbled", "polished", "bricks"].iter().any(|t| def.has_tag(t)) {
+                crafted.push(format!("{} at {at}", def.name));
+            }
+            if def.name.ends_with(":grass_block") {
+                grass += 1;
+                if let Some(above) = client.block(at + IVec3::Y).filter(|&b| registry.def(b).render == voxmar_engine::block::RenderKind::Plant) {
+                    covered += 1;
+                    tall += usize::from(registry.def(above).name.contains("tall_grass"));
+                }
+            }
+        }
+    }
+    let first = |list: &[String]| list.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
+    gate.check(
+        "land: no trails",
+        if worn.is_empty() { Ok(format!("no worn tread or decks in {columns} columns around spawn")) } else { Err(format!("{} columns: {}", worn.len(), first(&worn))) },
+    );
+    gate.check(
+        "land: natural stone",
+        if crafted.is_empty() { Ok("no cobbled or crafted stone at the surface".into()) } else { Err(format!("{} columns: {}", crafted.len(), first(&crafted))) },
+    );
+    let cover = covered as f32 / grass.max(1) as f32;
+    let tall_share = tall as f32 / covered.max(1) as f32;
+    gate.check(
+        "land: ground cover",
+        if grass < LAND_GRASS {
+            Ok(format!("only {grass} grass columns around spawn, too few to judge"))
+        } else if !(0.15..=0.9).contains(&cover) {
+            Err(format!("{:.0}% of {grass} grass blocks carry a plant (wanted 15-90%)", 100.0 * cover))
+        } else if tall_share > 0.3 {
+            Err(format!("tall grass is {:.0}% of the plants on grass (wanted at most 30%)", 100.0 * tall_share))
+        } else {
+            Ok(format!("{:.0}% of {grass} grass blocks carry a plant, {:.0}% of them tall grass", 100.0 * cover, 100.0 * tall_share))
+        },
+    );
 }
 
 /// Whether the world around the player has loaded and been meshed, distant terrain
