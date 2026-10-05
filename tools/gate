@@ -1,0 +1,92 @@
+#!/bin/bash
+# The landing gate: what every change passes before it lands on main, and what every play
+# build is made from. See docs/quality.md.
+#
+#   tools/gate              # from the root of a worktree: hygiene, build, tests, play
+#   tools/gate --passed REV # exits 0 if REV (default HEAD) passed the gate
+#
+# 1. Hygiene: no whitespace errors against main, no conflict markers.
+# 2. Builds everything (`--profile iter`, tests included) without warnings.
+# 3. Runs every test in the workspace, and meanwhile
+# 4. plays a scripted session in the real game with its integrated server running behind
+#    (`voxmar --gate`, see crates/client/src/gate.rs): building, digging, drops, climbing out
+#    of water, the menu and inventory, storm and snow, the sun, moon and stars, leaving
+#    the world. It fails on any failed check, a crash, a panic, any ERROR line (wgpu
+#    validation errors among them) and any WARN line not listed in ALLOWED_WARNINGS.
+#
+# Every heavy step runs through ~/Projects/voxmar-wt/memcap. On a clean tree a pass is
+# recorded against the commit, which `--passed` checks. The game's log and shots stay in
+# target/gate/ for a look.
+
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 2
+memcap=~/Projects/voxmar-wt/memcap
+passed_dir="$(git rev-parse --git-common-dir)/gate-passed"
+
+if [[ ${1:-} == --passed ]]; then
+  rev=$(git rev-parse --verify "${2:-HEAD}^{commit}") || exit 2
+  [[ -e $passed_dir/$rev ]] && { cat "$passed_dir/$rev"; exit 0; }
+  echo "gate: $rev has not passed the gate" >&2
+  exit 1
+fi
+
+# WARN lines a gate run may log, each with why it is expected.
+ALLOWED_WARNINGS=(
+  # The gate makes the integrated server run behind on purpose (gate::SERVER_LAG).
+  'server is running behind, skipping ticks'
+)
+
+started=$(date +%s)
+out=target/gate
+rm -rf "$out" && mkdir -p "$out"
+fail() {
+  echo "gate: FAILED: $*" >&2
+  exit 1
+}
+step() { echo "gate: $* ($(($(date +%s) - started))s)"; }
+
+step "hygiene"
+git diff main --check >"$out/hygiene.txt" || { cat "$out/hygiene.txt"; fail "whitespace errors against main"; }
+if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)' -- '*.rs' '*.ron' '*.md' '*.wgsl' '*.toml' >"$out/hygiene.txt"; then
+  cat "$out/hygiene.txt"
+  fail "conflict markers"
+fi
+commit=$(git rev-parse HEAD)
+[[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0
+
+step "build"
+$memcap -- cargo build --profile iter --workspace --all-targets >"$out/build.txt" 2>&1 || { tail -40 "$out/build.txt"; fail "the build"; }
+if grep -q '^warning' "$out/build.txt"; then
+  grep -A6 '^warning' "$out/build.txt" | head -40
+  fail "build warnings"
+fi
+
+# The tests (worldgen's take a couple of minutes) and the session run side by side.
+step "tests and play"
+RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} $memcap -- cargo test --profile iter --workspace >"$out/tests.txt" 2>&1 &
+tests=$!
+VOXMAR_MUTE=1 $memcap 12 -- target/iter/voxmar --gate "$out" >"$out/game.txt" 2>&1
+status=$?
+wait $tests || {
+  grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
+  fail "tests (all output in $out/tests.txt)"
+}
+log=$(sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt")
+grep -E 'gate: (ok|FAILED)' <<<"$log" | sed -E 's/.*gate: //'
+problems=$(grep -E ' ERROR |panicked|^thread .* panicked' <<<"$log")
+warnings=$(grep ' WARN ' <<<"$log")
+for allowed in "${ALLOWED_WARNINGS[@]}"; do
+  warnings=$(grep -vF "$allowed" <<<"$warnings")
+done
+[[ -n $warnings ]] && problems+=$'\n'$warnings
+problems=$(grep -v 'gate: FAILED\|gate FAILED' <<<"$problems" | sed '/^$/d')
+[[ -n $problems ]] && { echo "$problems" | head -20; fail "the game logged errors or unexpected warnings ($out/game.txt)"; }
+((status == 0)) || fail "the game exited with $status ($out/game.txt, shots in $out)"
+
+summary="passed $(date -u +%FT%TZ) in $(($(date +%s) - started))s: $(grep -c 'gate: ok' <<<"$log") game checks; $(grep -h '^test result' "$out/tests.txt" | awk '{ p += $4 } END { print p }') tests"
+if ((clean)); then
+  mkdir -p "$passed_dir" && echo "$summary" >"$passed_dir/$commit"
+  echo "gate: $commit $summary"
+else
+  echo "gate: $summary (uncommitted changes, so no commit was marked as passed)"
+fi

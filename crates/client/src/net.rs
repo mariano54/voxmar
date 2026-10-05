@@ -57,6 +57,11 @@ impl Net {
         self.server.is_none()
     }
 
+    /// The integrated server, when playing singleplayer.
+    pub fn server(&self) -> Option<&ServerHandle> {
+        self.server.as_ref()
+    }
+
     pub fn propose(&self, action: ActionId, target: ActionTarget) {
         self.connection.send(ClientMessage::Propose { action, target });
     }

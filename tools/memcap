@@ -1,0 +1,141 @@
+#!/bin/bash
+# memcap: run a heavy command (cargo build/test/run, the game, a capture) with a memory
+# cap and a machine-wide limit on how many heavy commands run at once, out of the way of
+# Mariano's playing and of timing runs.
+#
+#   ~/Projects/voxmar-wt/memcap [GB] -- cargo test --release -p voxmar_worldgen
+#
+# - Waits while ~/Projects/voxmar-wt/QUIET exists (a timing run is on; a flag older than 20
+#   minutes is stale and ignored). The timing run itself sets VOXMAR_TIMING=1 to go ahead.
+# - Waits for one of VOXMAR_SLOTS (default 4) slots shared by every thread and track.
+# - Stays out of Mariano's way while he plays (his voxmar game, any run of the game that
+#   is not a capture or gate, or Minecraft): game runs and captures wait until he stops,
+#   and are paused if he starts while they run; builds and tests run at background
+#   priority, on the efficiency cores, and go back to normal priority when he stops.
+# - Kills the command and everything it started once their resident memory together
+#   passes GB (default 20), and exits 137 with a message saying so.
+# - Defaults RUST_TEST_THREADS=4 unless already set. Cargo uses every core: a clean build
+#   of the whole workspace peaks around 6.5 GB, so four at once stay far below the caps.
+#
+# Written after a worldgen test reached 117 GB on 2026-10-04 and took the Mac down; the
+# quiet and play holds after builds gave him 40-140 ms lag spikes while he played.
+
+cap_gb=20
+if [[ $1 =~ ^[0-9]+$ ]]; then cap_gb=$1; shift; fi
+[[ $1 == -- ]] && shift
+[[ $# -eq 0 ]] && { echo "usage: memcap [GB] -- command..." >&2; exit 2; }
+
+export RUST_TEST_THREADS=${RUST_TEST_THREADS:-4}
+quiet_flag=~/Projects/voxmar-wt/QUIET
+
+# Whether Mariano is playing: a game that is not a capture or gate run (other runs are
+# silent captures, by the rules), or Minecraft.
+playing() {
+  ps -A -o comm=,args= | awk '
+    { n = split($1, path, "/"); exe = path[n] }
+    exe == "voxmar" && !/--capture|--gate/ { found = 1 }
+    exe == "java" && tolower($0) ~ /minecraft/ { found = 1 }
+    END { exit !found }'
+}
+
+# Whether the command runs the game (a capture, a gate, `cargo run` of the client), which
+# competes for the GPU and so waits rather than slowing down.
+game=0 package=
+previous=
+for arg in "$@"; do
+  case $arg in
+    */voxmar | voxmar | --capture | --gate | --flight | run) game=1 ;;
+  esac
+  [[ $previous == -p || $previous == --package ]] && package=$arg
+  previous=$arg
+done
+[[ -n $package && $package != voxmar_client ]] && [[ " $* " != *" --capture "* ]] && game=0
+
+quiet() {
+  [[ -z $VOXMAR_TIMING && -e $quiet_flag && -n $(find "$quiet_flag" -mmin -20 2>/dev/null) ]]
+}
+
+waited=0
+while quiet || { ((game)) && playing; }; do
+  if ((waited++ % 30 == 0)); then
+    if quiet; then echo "memcap: a timing run holds QUIET, waiting (the timing run itself sets VOXMAR_TIMING=1)" >&2; else echo "memcap: Mariano is playing, waiting to run the game" >&2; fi
+  fi
+  sleep 2
+done
+
+slots=${VOXMAR_SLOTS:-4}
+lock=
+waited=0
+while [[ -z $lock ]]; do
+  for i in $(seq 1 "$slots"); do
+    if shlock -f "/tmp/voxmar-heavy-$i.lock" -p $$; then lock=/tmp/voxmar-heavy-$i.lock; break; fi
+  done
+  if [[ -z $lock ]]; then
+    ((waited++ % 30 == 0)) && echo "memcap: all $slots heavy slots busy, waiting" >&2
+    sleep 2
+  fi
+done
+
+"$@" &
+child=$!
+
+# The command and all its descendants, by walking parent links.
+tree() {
+  ps -A -o pid=,ppid= | awk -v root="$child" '
+    { parent[$1] = $2 }
+    END { for (p in parent) { q = p; while (q > 1) { if (q == root) { print p; break } q = parent[q] } } }'
+}
+
+# Steps out of the way while Mariano plays (1) or back in (0): pauses or resumes a game
+# run; moves anything else to background priority or back.
+held=0
+hold() {
+  local pid
+  for pid in $(tree); do
+    if ((game)); then
+      kill "-$([[ $1 == 1 ]] && echo STOP || echo CONT)" "$pid" 2>/dev/null
+    else
+      taskpolicy "$([[ $1 == 1 ]] && echo -b || echo -B)" -p "$pid" 2>/dev/null
+    fi
+  done
+  held=$1
+}
+
+stop() {
+  local pids
+  pids=$(tree)
+  ((held && game)) && [[ -n $pids ]] && kill -CONT $pids 2>/dev/null
+  [[ -n $pids ]] && kill -9 $pids 2>/dev/null
+  rm -f "$lock"
+}
+trap 'stop; exit 143' TERM INT HUP
+
+cap_kb=$((cap_gb * 1024 * 1024))
+ticks=0
+while kill -0 "$child" 2>/dev/null; do
+  pids=$(tree | tr '\n' ',')
+  if [[ -n $pids ]]; then
+    kb=$(ps -o rss= -p "${pids%,}" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }')
+    if ((kb > cap_kb)); then
+      echo "memcap: killed '$*' at $((kb / 1024 / 1024)) GB resident, over the ${cap_gb} GB cap" >&2
+      stop
+      wait "$child" 2>/dev/null
+      exit 137
+    fi
+  fi
+  # Checked every other second; a held tree is held again, to catch processes it started.
+  if ((ticks++ % 2 == 0)); then
+    if playing; then
+      ((held)) || echo "memcap: Mariano is playing; '$1' is $(((game)) && echo paused || echo "at background priority") until he stops" >&2
+      hold 1
+    elif ((held)); then
+      hold 0
+      echo "memcap: Mariano stopped playing; '$1' carries on" >&2
+    fi
+  fi
+  sleep 1
+done
+wait "$child"
+status=$?
+rm -f "$lock"
+exit $status

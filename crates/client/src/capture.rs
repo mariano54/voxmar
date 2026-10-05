@@ -200,18 +200,30 @@ fn render_offscreen(
     mut images: ResMut<Assets<Image>>,
     camera: Query<Entity, With<Camera3d>>,
 ) {
-    let mut image = Image::new_target_texture(state.size.x, state.size.y, TextureFormat::Rgba8UnormSrgb, None);
+    state.target = offscreen(&mut commands, &mut images, &camera, state.size);
+}
+
+/// Points the world's camera at a new offscreen image `size` pixels across, which shots
+/// are then taken of, and returns the image.
+pub(crate) fn offscreen(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    camera: &Query<Entity, With<Camera3d>>,
+    size: UVec2,
+) -> Handle<Image> {
+    let mut image = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None);
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
-    state.target = images.add(image);
-    for entity in &camera {
-        commands.entity(entity).insert(RenderTarget::Image(state.target.clone().into()));
+    let target = images.add(image);
+    for entity in camera {
+        commands.entity(entity).insert(RenderTarget::Image(target.clone().into()));
     }
+    target
 }
 
 type UntargetedUiRoot = (With<Node>, Without<ChildOf>, Without<UiTargetCamera>);
 
 /// UI follows the window by default; point it at the offscreen camera instead.
-fn target_ui(
+pub(crate) fn target_ui(
     mut commands: Commands,
     camera: Query<Entity, With<Camera3d>>,
     roots: Query<Entity, UntargetedUiRoot>,

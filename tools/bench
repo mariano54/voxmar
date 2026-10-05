@@ -1,0 +1,135 @@
+#!/bin/bash
+# The performance gate: this tree's frame times against a baseline's (main unless given),
+# at Mariano's settings, on a quiet machine. See docs/quality.md.
+#
+#   tools/bench [--rounds N] [--only NAME[,NAME]] [BASE]
+#
+# Builds both with --release, then runs each view alternately (base, this, base, this…)
+# for N rounds (default 2), all within one quiet window (it holds ~/Projects/voxmar-wt/QUIET
+# while it times, and waits for a calm machine first). Judges ratios against the base,
+# never absolute numbers, as the graphics thread does:
+#
+# - a flight fails if its p99 frame is over 1.5x the base's in every round, or its worst
+#   frame over 25 ms on AC power;
+# - a static view fails if it is over 8% slower than the base in every round.
+#
+# Views (headless captures, seed 1, his config: 32 chunks and SMAA, VSync off):
+#   flight75   40 s flight at 2268x1473, his 75% resolution of a 3024x1964 screen
+#   flight100  40 s flight at 3024x1964, full resolution
+#   sea        the sea at spawn, 2268x1473
+#   forest     dense forest, 2268x1473
+# The numbers, the power mode and the load go to target/bench/report.txt.
+
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 2
+memcap=~/Projects/voxmar-wt/memcap
+quiet=~/Projects/voxmar-wt/QUIET
+rounds=2 only= base=main
+while (($#)); do
+  case $1 in
+    --rounds) rounds=$2; shift 2 ;;
+    --only) only=$2; shift 2 ;;
+    -*) echo "usage: tools/bench [--rounds N] [--only NAME[,NAME]] [BASE]" >&2; exit 2 ;;
+    *) base=$1; shift ;;
+  esac
+done
+
+out=$PWD/target/bench
+mkdir -p "$out"
+report=$out/report.txt
+config=$out/config
+mkdir -p "$config"
+# Mariano's settings, as he plays (2026-10-05).
+printf '(\n    view_distance: 32,\n    anti_aliasing: Smaa,\n    vsync: false,\n)\n' >"$config/settings.ron"
+
+# The capture arguments of a view, into `view_args`.
+view_args() {
+  case $1 in
+    flight75) view_args=(--size 2268x1473 --weather clear --time 0.2 --flight 40) ;;
+    flight100) view_args=(--size 3024x1964 --weather clear --time 0.2 --flight 40) ;;
+    sea) view_args=(--size 2268x1473 --pose 0,2,0,20,-5 --time 0.2 --wait 10) ;;
+    forest) view_args=(--size 2268x1473 --weather clear --time 0.3 --command "/tp 384 1504" --pose 0,25,0,200,-30 --wait 10) ;;
+    *) return 1 ;;
+  esac
+}
+views=(flight75 flight100 sea forest)
+[[ -n $only ]] && IFS=, read -ra views <<<"$only"
+for view in "${views[@]}"; do view_args "$view" || { echo "bench: no view called $view" >&2; exit 2; }; done
+
+# The base, built in its own worktree (its target seeded from ours, so only what changed
+# is rebuilt).
+base_rev=$(git rev-parse --verify "$base^{commit}") || exit 2
+base_dir=$out/base
+if [[ ! -e $base_dir/.git ]]; then
+  git worktree add --detach "$base_dir" "$base_rev" >/dev/null || exit 1
+  [[ -d target/release ]] && mkdir -p "$base_dir/target" && cp -cR target/release "$base_dir/target/release"
+fi
+git -C "$base_dir" checkout -q --detach "$base_rev" || exit 1
+echo "bench: building this tree and the base ($(git log -1 --format='%h %s' "$base_rev")) with --release"
+$memcap -- cargo build --release >"$out/build.txt" 2>&1 || { tail -20 "$out/build.txt"; exit 1; }
+(cd "$base_dir" && $memcap -- cargo build --release) >"$out/build-base.txt" 2>&1 || { tail -20 "$out/build-base.txt"; exit 1; }
+
+# A calm machine: nobody else's heavy command running, and the load low.
+echo "bench: waiting for a quiet machine (no other heavy commands, load under 10)"
+for ((i = 0; ; i++)); do
+  busy=0
+  for lock in /tmp/voxmar-heavy-*.lock; do [[ -e $lock ]] && kill -0 "$(cat "$lock" 2>/dev/null)" 2>/dev/null && busy=1; done
+  load=$(sysctl -n vm.loadavg | awk '{ print int($2) }')
+  ((!busy && load < 10)) && break
+  ((i % 30 == 0)) && echo "bench: still waiting (load $load$( ((busy)) && echo ', heavy commands running'))"
+  ((i > 600)) && { echo "bench: the machine never quietened (load $load)" >&2; exit 1; }
+  sleep 2
+done
+echo "bench $(date -u +%FT%TZ)" >"$quiet"
+trap 'rm -f "$quiet"' EXIT INT TERM
+export VOXMAR_TIMING=1
+
+# One run of `view` by the binary in `dir`: its numbers, as "median p99 max" (flights) or
+# "frame-ms" (static views).
+run() {
+  local dir=$1 view=$2 log
+  view_args "$view"
+  log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_CONFIG="$config" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  if [[ $view == flight* ]]; then
+    sed -nE 's/.*flight: [0-9]+ frames, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms.*/\1 \2 \3/p' <<<"$log"
+  else
+    sed -nE 's/.*capture: [0-9]+ fps \(([0-9.]+) ms\).*/\1/p' <<<"$log"
+  fi
+}
+
+{
+  echo "bench $(date -u +%FT%TZ): $(git rev-parse --short HEAD)$([[ -n $(git status --porcelain --untracked-files=no) ]] && echo '+changes') against $(git rev-parse --short "$base_rev")"
+  echo "power: $(pmset -g | grep -i powermode | xargs) ($(pmset -g batt | head -1 | sed "s/.*'\(.*\)'.*/\1/")), load $(sysctl -n vm.loadavg)"
+} | tee "$report"
+failed=0
+on_ac=$(pmset -g batt | head -1 | grep -c 'AC Power')
+for view in "${views[@]}"; do
+  worse=0 worst_fail=0
+  for ((round = 1; round <= rounds; round++)); do
+    b=$(run "$base_dir" "$view") c=$(run . "$view")
+    [[ -z $b || -z $c ]] && { echo "$view round $round: no numbers (base '$b', this '$c'); see a run by hand" | tee -a "$report"; failed=1; continue; }
+    if [[ $view == flight* ]]; then
+      read -r bm bp bx <<<"$b"
+      read -r cm cp cx <<<"$c"
+      verdict=$(awk -v bp="$bp" -v cp="$cp" -v cx="$cx" -v ac="$on_ac" 'BEGIN { r = cp / bp; printf "%.2f %d %d", r, r > 1.5, (ac && cx > 25) }')
+      read -r ratio over too_slow <<<"$verdict"
+      ((worse += over)) || true
+      ((worst_fail += too_slow)) || true
+      echo "$view round $round: base median $bm p99 $bp max $bx ms; this median $cm p99 $cp max $cx ms; p99 x$ratio" | tee -a "$report"
+    else
+      verdict=$(awk -v b="$b" -v c="$c" 'BEGIN { r = c / b; printf "%.3f %d", r, r > 1.08 }')
+      read -r ratio over <<<"$verdict"
+      ((worse += over)) || true
+      echo "$view round $round: base $b ms, this $c ms a frame; x$ratio" | tee -a "$report"
+    fi
+  done
+  if ((worse == rounds)); then
+    echo "$view: FAILED, slower than the base in every round" | tee -a "$report"
+    failed=1
+  elif ((worst_fail > 0)); then
+    echo "$view: FAILED, a frame over 25 ms on AC power" | tee -a "$report"
+    failed=1
+  fi
+done
+((failed)) && { echo "bench: FAILED (report in $report)"; exit 1; }
+echo "bench: passed (report in $report)"

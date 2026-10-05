@@ -124,6 +124,7 @@ pub struct UiState {
 
 /// Esc closes the console or the inventory, or toggles the menu. The mouse is free while a
 /// screen is open, grabbed again when it closes, and grabbed by clicking into the window.
+/// Without a window (`--gate`) all of it works the same, but for grabbing the pointer.
 fn grab_cursor(
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -132,7 +133,6 @@ fn grab_cursor(
     player: Res<LocalPlayer>,
     mut screen_was_open: Local<bool>,
 ) {
-    let Ok(mut cursor) = cursor.single_mut() else { return };
     if keys.just_pressed(KeyCode::Escape) {
         if ui.console_open {
             ui.console_open = false;
@@ -145,8 +145,10 @@ fn grab_cursor(
     let screen_open = ui.inventory_open || ui.menu_open || ui.console_open || player.dead;
     let want_locked = !screen_open && (ui.cursor_locked || *screen_was_open || mouse.just_pressed(MouseButton::Left));
     *screen_was_open = screen_open;
-    if want_locked != ui.cursor_locked || (want_locked && cursor.grab_mode == CursorGrabMode::None) {
-        ui.cursor_locked = want_locked;
+    let changed = want_locked != ui.cursor_locked;
+    ui.cursor_locked = want_locked;
+    let Ok(mut cursor) = cursor.single_mut() else { return };
+    if changed || (want_locked && cursor.grab_mode == CursorGrabMode::None) {
         cursor.grab_mode = if want_locked { CursorGrabMode::Locked } else { CursorGrabMode::None };
         cursor.visible = !want_locked;
     }
