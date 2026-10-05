@@ -16,6 +16,8 @@
 pub mod brain;
 pub mod motion;
 
+use std::sync::Arc;
+
 use glam::Vec3;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -387,8 +389,10 @@ impl Default for Group {
     }
 }
 
-/// A species' temper, each 0..=1 (docs/creature-ai.md, "Aggression").
-#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+/// A species' temper, each 0..=1 (docs/creature-ai.md, "Aggression"). Individuals roll
+/// their own personality about these values, up to `spread` either way (see
+/// [`brain::Personality`]).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Temperament {
     pub aggression: f32,
@@ -396,6 +400,18 @@ pub struct Temperament {
     pub curiosity: f32,
     pub sociability: f32,
     pub territory: f32,
+    /// Pace and restlessness.
+    pub energy: f32,
+    /// How easily startled.
+    pub nervousness: f32,
+    /// How far individuals differ from the species.
+    pub spread: f32,
+}
+
+impl Default for Temperament {
+    fn default() -> Self {
+        Self { aggression: 0.0, fear: 0.0, curiosity: 0.0, sociability: 0.0, territory: 0.0, energy: 0.5, nervousness: 0.5, spread: 0.2 }
+    }
 }
 
 /// How far it notices things, in blocks.
@@ -479,6 +495,10 @@ fn unit() -> f32 {
 pub enum Behaviour {
     /// Strolls about its home, pausing.
     Wander { radius: f32 },
+    /// Stands and looks about.
+    LookAround,
+    /// Lifts its head or rears up to watch a player nearby.
+    StandToLook,
     /// Stops to eat what it eats from the ground about it.
     Graze,
     /// Runs from threats closer than `radius`.
@@ -487,6 +507,8 @@ pub enum Behaviour {
     Freeze,
     /// Keeps near others of its kind.
     Herd { spacing: f32 },
+    /// Stands watch while kin graze.
+    Sentinel,
     /// Follows a player holding its favourite food.
     Tempted { radius: f32 },
     /// Hunts players who come within `radius`: chases and attacks.
@@ -575,6 +597,9 @@ struct CreatureFile {
 pub struct Creature {
     pub def: CreatureDef,
     pub behaviours: Vec<BehaviourEntry>,
+    /// The modules that run its behaviours, each with its weight, then the ones every
+    /// creature has.
+    pub modules: Vec<(Arc<dyn brain::Module>, f32)>,
     /// Its body's boxes at full size.
     pub parts: Vec<Part>,
     pub loot: Vec<loot::Resolved>,
@@ -582,6 +607,13 @@ pub struct Creature {
     pub eats: Vec<crate::block::BlockId>,
     pub favourite: Vec<crate::block::BlockId>,
     pub xp_skill: Option<SkillId>,
+}
+
+impl Creature {
+    /// Whether it fights back or hunts at all.
+    pub fn fights(&self) -> bool {
+        self.def.attack.is_some() && self.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Defend | Behaviour::Hunt { .. }))
+    }
 }
 
 /// Every species.
@@ -651,11 +683,16 @@ impl CreatureRegistry {
             };
             let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
             let parts = def.body.model.parts(1.0);
+            let modules = behaviours
+                .iter()
+                .map(|entry| (brain::modules::module(entry.behaviour), entry.weight))
+                .chain(brain::modules::always().into_iter().map(|module| (module, 1.0)))
+                .collect();
             let id = CreatureId(registry.creatures.len() as u16);
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, parts, loot, eats, favourite, xp_skill });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, loot, eats, favourite, xp_skill });
         }
         Ok(registry)
     }
@@ -691,18 +728,24 @@ impl CreatureRegistry {
 pub fn generated(def: &CreatureDef) -> Vec<BehaviourEntry> {
     let t = def.temperament;
     let entry = |behaviour, weight| BehaviourEntry { behaviour, weight };
-    let mut list = vec![entry(Behaviour::Wander { radius: def.leash.min(12.0) }, 1.0)];
+    let mut list = vec![entry(Behaviour::Wander { radius: def.leash.min(12.0) }, 1.0), entry(Behaviour::LookAround, 1.0)];
     if !def.diet.eats.is_empty() {
         list.push(entry(Behaviour::Graze, 1.0));
     }
     if t.fear > 0.3 {
         list.push(entry(Behaviour::Flee { radius: 4.0 + 10.0 * t.fear }, 1.0));
     }
-    if t.fear > 0.7 {
+    if t.fear > 0.7 || t.nervousness > 0.7 {
         list.push(entry(Behaviour::Freeze, 1.0));
+    }
+    if t.nervousness > 0.4 && t.fear > 0.3 {
+        list.push(entry(Behaviour::StandToLook, 1.0));
     }
     if t.sociability > 0.4 && def.group.size.1 > 1 {
         list.push(entry(Behaviour::Herd { spacing: def.body.size.0 * 3.0 + 1.0 }, 1.0));
+        if t.fear > 0.4 {
+            list.push(entry(Behaviour::Sentinel, 1.0));
+        }
     }
     if !def.diet.favourite.is_empty() {
         list.push(entry(Behaviour::Tempted { radius: 10.0 }, 1.0));
