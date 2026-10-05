@@ -371,7 +371,12 @@ texture and colour, then their light; their bushy geometry was the smaller part.
   holes, read as static.
 - **Colour.** Leaves take the place's foliage colour a little lighter, yellower and less
   saturated (`biome_colour` in voxel.wgsl): the climates' foliage colours are saturated
-  enough that a canopy read as one dark, pure green.
+  enough that a canopy read as one dark, pure green. Smooth noise at about a crown's size
+  then varies shade (±20%) and hue (yellower or bluer), so from a hill a canopy is a quilt
+  of greens, one tree lighter than the next, rather than one flat colour.
+- **Snow.** Flat leaf cards, and the upper half of upright ones, take the weather as a
+  top face does (`weathered`), so under lying snow a crown whitens up close as it does
+  beyond the cards' reach, where only its blocks' tops show.
 - **Light through the crown.** A leaf in its own crown's shade still glows where only a
   leaf or so lies between it and the sun: its shadow is looked up again a block and a
   quarter towards the sun (`shade_normal`), only for leaves less than half lit.

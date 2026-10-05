@@ -441,7 +441,15 @@ fn biome_colour(kind: u32, colours: u32, world: vec3<f32>, face: u32) -> vec3<f3
         // climates' foliage colours are saturated enough that, times a leaf texture, a
         // canopy read as one dark, pure green.
         let grey = dot(colour, vec3(0.2126, 0.7152, 0.0722));
-        return mix(colour, grey * vec3(1.25, 1.2, 0.75), 0.35) * 1.15;
+        var leaves = mix(colour, grey * vec3(1.25, 1.2, 0.75), 0.35) * 1.15;
+        // Neighbouring crowns differ a little in shade and hue, as real trees do, so a
+        // canopy from above is a quilt of greens rather than one flat colour: smooth noise
+        // at about a crown's size.
+        let shade = tufts(inside.xz * 0.19 + vec2(41.0, 17.0));
+        let hue = tufts(inside.xz * 0.13 + vec2(-23.0, 88.0));
+        leaves *= 0.8 + 0.4 * shade;
+        leaves *= mix(vec3(0.9, 1.0, 1.12), vec3(1.14, 1.04, 0.8), hue);
+        return leaves;
     }
     return colour;
 }
@@ -520,7 +528,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     var surface = vec4(base, 0.0);
 #ifndef TRANSLUCENT
     if !plant {
-        surface = weathered(base, in.world_position, NORMALS[face], in.light.y);
+        var weather_normal = NORMALS[face];
+#ifdef FRINGE
+        // A flat leaf card, and the upper half of an upright one, catch snow and frost as
+        // the top of the crown does, so a canopy whitens under snow.
+        if (in.card & 1u) != 0u || in.uv.y < 0.5 {
+            weather_normal = vec3(0.0, 1.0, 0.0);
+        }
+#endif
+        surface = weathered(base, in.world_position, weather_normal, in.light.y);
     }
 #endif
     // Plants and leaves take hard-edged shadows: a plant takes one shadow for its whole cell
