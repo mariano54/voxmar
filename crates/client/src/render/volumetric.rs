@@ -4,13 +4,11 @@
 //! the eye, uneven and drifting; and sunlight the air scatters where the sun reaches it
 //! (light shafts), marched through Bevy's cascaded shadow maps. Rays are marched at half
 //! resolution into a cached texture, the light they gather and how much of the scene shows
-//! through, softened there among rays that ended about as far away, then composited at full
-//! resolution with a depth-aware upsample, so the pass costs a quarter of what full
-//! resolution would and keeps crisp edges against what is in front. Softening before the
-//! upsample rather than in it reads 12.5 texels per full-resolution pixel instead of 32
-//! (0.52 ms down to 0.31 at 2268×1473), with the same blur.
+//! through, then composited at full resolution with a depth-aware upsample, so the pass
+//! costs a quarter of what full resolution would and keeps crisp edges against what is in
+//! front.
 //!
-//! The pipelines are built from the mesh pipeline's descriptor for the view, like the
+//! Both pipelines are built from the mesh pipeline's descriptor for the view, like the
 //! terrain's, so the view bind group and its shader defs (multisampling among them) match
 //! exactly; only the shaders, targets and our own group 2 differ. Under MSAA the composite
 //! draws into the multisampled image, which the transparent pass carries on in. The pass is
@@ -91,28 +89,19 @@ struct VolumetricPipelines {
     /// A vertex layout to hand the mesh pipeline, which our full-screen triangle ignores.
     vertex_layout: MeshVertexBufferLayout,
     /// The march and composite pipelines for each view key.
-    pipelines: FxHashMap<MeshPipelineKey, Passes>,
-}
-
-/// The pipelines of a view's three passes.
-#[derive(Clone, Copy)]
-struct Passes {
-    march: CachedRenderPipelineId,
-    soften: CachedRenderPipelineId,
-    composite: CachedRenderPipelineId,
+    pipelines: FxHashMap<MeshPipelineKey, (CachedRenderPipelineId, CachedRenderPipelineId)>,
 }
 
 /// This frame's pipelines, bind groups and half-resolution target for a camera that draws
 /// volumetric light.
 #[derive(Component)]
 struct VolumetricView {
-    passes: Passes,
+    march: CachedRenderPipelineId,
+    composite: CachedRenderPipelineId,
     march_group: BindGroup,
-    soften_group: BindGroup,
     composite_group: BindGroup,
     target: CachedTexture,
     ray_depths: CachedTexture,
-    softened: CachedTexture,
 }
 
 fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -161,7 +150,7 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 impl VolumetricPipelines {
-    /// The march, softening and composite pipelines for a view.
+    /// The march and composite pipelines for a view.
     fn pipelines(
         &mut self,
         key: MeshPipelineKey,
@@ -169,7 +158,7 @@ impl VolumetricPipelines {
         layouts: &mut MeshVertexBufferLayouts,
         fullscreen: &FullscreenShader,
         cache: &PipelineCache,
-    ) -> Option<Passes> {
+    ) -> Option<(CachedRenderPipelineId, CachedRenderPipelineId)> {
         if let Some(&ids) = self.pipelines.get(&key) {
             return Some(ids);
         }
@@ -189,22 +178,16 @@ impl VolumetricPipelines {
         let target = |format| Some(ColorTargetState { format, blend: None, write_mask: ColorWrites::ALL });
         let march = vec![target(MARCH_FORMAT), target(RAY_DEPTH_FORMAT)];
         let march = self.descriptor(&base, fullscreen, self.march.get(multisampled), "march", march, 1);
-        // Softening reads what the composite reads, the march's in place of its own.
-        let soften = self.descriptor(&base, fullscreen, self.composite.get(multisampled), "soften", vec![target(MARCH_FORMAT)], 1);
         let composite = vec![Some(ColorTargetState { format, blend: Some(BlendState { color: over, alpha: keep }), write_mask: ColorWrites::COLOR })];
         let composite =
             self.descriptor(&base, fullscreen, self.composite.get(multisampled), "composite", composite, key.msaa_samples());
-        let passes = Passes {
-            march: cache.queue_render_pipeline(march),
-            soften: cache.queue_render_pipeline(soften),
-            composite: cache.queue_render_pipeline(composite),
-        };
-        self.pipelines.insert(key, passes);
-        Some(passes)
+        let ids = (cache.queue_render_pipeline(march), cache.queue_render_pipeline(composite));
+        self.pipelines.insert(key, ids);
+        Some(ids)
     }
 
     /// The mesh pipeline's descriptor with our full-screen shaders, group 2 and target of
-    /// `samples` samples; `entry_point` is the pass, `march`, `soften` or `composite`.
+    /// `samples` samples; `entry_point` is the pass, `march` or `composite`.
     fn descriptor(
         &self,
         base: &RenderPipelineDescriptor,
@@ -225,7 +208,7 @@ impl VolumetricPipelines {
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = self.shader.clone();
             fragment.entry_point = Some(entry_point.into());
-            if entry_point != "march" {
+            if entry_point == "composite" {
                 fragment.shader_defs.push(ShaderDefVal::from("COMPOSITE"));
             } else {
                 fragment.shader_defs.extend(["NOISE_TEXTURES", "CLOUD_MAP"].map(ShaderDefVal::from));
@@ -256,7 +239,7 @@ fn prepare(
     for (entity, view, depth) in &views {
         let drawn = atmosphere.rays.x > 0.0 || atmosphere.mist.w > 0.0 || atmosphere.cloud_look.z > 0.0;
         let key = view_keys.get(&view.retained_view_entity).copied().filter(|_| drawn);
-        let Some((key, passes)) =
+        let Some((key, (march, composite))) =
             key.and_then(|key| Some((key, pipelines.pipelines(key, &mesh_pipeline, &mut layouts, &fullscreen, &cache)?)))
         else {
             commands.entity(entity).remove::<VolumetricView>();
@@ -279,7 +262,6 @@ fn prepare(
             )
         };
         let (target, ray_depths) = (half("volumetric_light", MARCH_FORMAT), half("volumetric_ray_depths", RAY_DEPTH_FORMAT));
-        let softened = half("volumetric_softened", MARCH_FORMAT);
         let multisampled = key.msaa_samples() > 1;
         let march_group = device.create_bind_group(
             "volumetric_march",
@@ -295,23 +277,12 @@ fn prepare(
                 (13, &cloud_map.noise.sampler),
             )),
         );
-        let light_group = |label, light: &CachedTexture| {
-            device.create_bind_group(
-                label,
-                &cache.get_bind_group_layout(pipelines.composite.get(multisampled)),
-                &BindGroupEntries::sequential((depth.view(), &light.default_view, &ray_depths.default_view)),
-            )
-        };
-        let (soften_group, composite_group) = (light_group("volumetric_soften", &target), light_group("volumetric_composite", &softened));
-        commands.entity(entity).insert(VolumetricView {
-            passes,
-            march_group,
-            soften_group,
-            composite_group,
-            target,
-            ray_depths,
-            softened,
-        });
+        let composite_group = device.create_bind_group(
+            "volumetric_composite",
+            &cache.get_bind_group_layout(pipelines.composite.get(multisampled)),
+            &BindGroupEntries::sequential((depth.view(), &target.default_view, &ray_depths.default_view)),
+        );
+        commands.entity(entity).insert(VolumetricView { march, composite, march_group, composite_group, target, ray_depths });
     }
 }
 
@@ -321,14 +292,13 @@ fn volumetric_light(
     mut ctx: RenderContext,
 ) {
     let (target, mesh_view, volumetric) = view.into_inner();
-    let passes = volumetric.passes;
-    let [Some(march), Some(soften), Some(composite)] =
-        [passes.march, passes.soften, passes.composite].map(|id| pipeline_cache.get_render_pipeline(id))
+    let (Some(march), Some(composite)) =
+        (pipeline_cache.get_render_pipeline(volumetric.march), pipeline_cache.get_render_pipeline(volumetric.composite))
     else {
         return;
     };
-    // March into the half-resolution target, soften it there, then blend it over the image
-    // (the multisampled one under MSAA, resolved at the end of the pass).
+    // March into the half-resolution target, then blend it over the image (the
+    // multisampled one under MSAA, resolved at the end of the pass).
     let half = |view| {
         Some(RenderPassColorAttachment {
             view,
@@ -338,16 +308,14 @@ fn volumetric_light(
         })
     };
     let march_targets = [half(&volumetric.target.default_view), half(&volumetric.ray_depths.default_view)];
-    let soften_target = [half(&volumetric.softened.default_view)];
     let composite_target = [Some(target.get_color_attachment())];
     let passes = [
-        ("volumetric_march", &march_targets[..], march, &volumetric.march_group),
-        ("volumetric_soften", &soften_target[..], soften, &volumetric.soften_group),
-        ("volumetric_composite", &composite_target[..], composite, &volumetric.composite_group),
+        (&march_targets[..], march, &volumetric.march_group),
+        (&composite_target[..], composite, &volumetric.composite_group),
     ];
-    for (label, attachments, pipeline, group) in passes {
+    for (attachments, pipeline, group) in passes {
         let descriptor = RenderPassDescriptor {
-            label: Some(label),
+            label: Some("volumetric_light"),
             color_attachments: attachments,
             depth_stencil_attachment: None,
             timestamp_writes: None,

@@ -4,12 +4,12 @@
 // sunlight scattered by haze, fog and ground fog where the sun reaches them, marched through
 // the cascaded shadow maps, so shafts fall through gaps in canopies and past ridges.
 //
-// Three passes: `march` at half resolution (a quarter of the pixels; all of this is soft)
-// writes the light the air adds and how much of what lies behind shows through, `soften`
-// blends each ray with its neighbours that ended about as far away, and `composite` blends
-// it over the image, from the nearby rays that ended about as far away as the pixel's own
-// surface, so nothing bleeds across the edge of a trunk or a ridge. Steps start at a fixed noise, so the march has fine grain rather than
-// bands, which the softening smooths away.
+// Two passes: `march` at half resolution (a quarter of the pixels; all of this is soft)
+// writes the light the air adds and how much of what lies behind shows through, and
+// `composite` blends it over the image, from the nearby half-resolution rays that ended
+// about as far away as the pixel's own surface, so nothing bleeds across the edge of a
+// trunk or a ridge. Steps start at a fixed noise, so the march has fine grain rather than
+// bands, which the composite's blend smooths away.
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 #import bevy_pbr::mesh_view_bindings::{view, lights, directional_shadow_textures, directional_shadow_textures_comparison_sampler}
@@ -22,8 +22,7 @@
 #else
 @group(2) @binding(0) var depth_texture: texture_depth_2d;
 #endif
-// `march`: the atmosphere. `soften` and `composite`: the half-resolution light and
-// transmittance (the march's, and softened).
+// `march`: the atmosphere. `composite`: the half-resolution light and transmittance.
 #ifdef COMPOSITE
 @group(2) @binding(1) var march_texture: texture_2d<f32>;
 // The view depth each ray ended at (`march`'s second target).
@@ -292,7 +291,7 @@ fn march(in: FullscreenVertexOutput) -> Marched {
     let ray = surface(vec2<i32>(in.position.xy) * 2);
     let eye = view.world_position;
     // Where each ray's steps start. Near the eye, interleaved gradient noise, which the
-    // softening smooths best; through the cloud, whose steps are long and whose
+    // composite's blend smooths best; through the cloud, whose steps are long and whose
     // layers line up, white noise, as the gradient's diagonal pattern shows there as streaks.
     let pixel = vec2<u32>(in.position.xy);
     let near = near_air(a, eye, ray.xyz, ray.w, interleaved_gradient_noise(in.position.xy, 0u));
@@ -304,36 +303,6 @@ fn march(in: FullscreenVertexOutput) -> Marched {
 
 #else
 
-// How much a ray that ended `ended` away tells about a surface `distance` away: rays that
-// ended much nearer or farther saw other things.
-fn alike(ended: f32, distance: f32) -> f32 {
-    return exp(-abs(ended - distance) / (0.05 * min(distance, ended) + 0.25));
-}
-
-// Each half-resolution ray blended with its neighbours that ended about as far away, by a
-// 3×3 tent ([1 2 1] each way), which smooths the march's grain away. With the composite's
-// bilinear upsample it blurs as much as a tent two rays wide around each pixel would.
-@fragment
-fn soften(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let ray = vec2<i32>(in.position.xy);
-    let last = vec2<i32>(textureDimensions(march_texture)) - 1;
-    let distance = textureLoad(ray_depths, ray, 0).r;
-    var air = vec4(0.0);
-    var total = 0.0;
-    for (var k = 0; k < 9; k++) {
-        let o = vec2(k % 3, k / 3) - 1;
-        let near = clamp(ray + o, vec2(0), last);
-        let tent = f32((2 - abs(o.x)) * (2 - abs(o.y)));
-        let weight = tent * (alike(textureLoad(ray_depths, near, 0).r, distance) + 1e-4);
-        air += textureLoad(march_texture, near, 0) * weight;
-        total += weight;
-    }
-    return air / max(total, 1e-6);
-}
-
-// The softened rays around the pixel, blended bilinearly among those that ended about as
-// far away as its own surface, so nothing bleeds across the edge of a trunk or a ridge.
-// Any surface two pixels wide has one of the four rays on it.
 @fragment
 fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
@@ -345,11 +314,16 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let last = vec2<i32>(textureDimensions(march_texture)) - 1;
     var air = vec4(0.0);
     var total = 0.0;
-    for (var k = 0; k < 4; k++) {
-        let o = vec2(k & 1, k >> 1u);
+    // A tent two rays wide over the 4×4 nearest rays smooths the march's grain away.
+    for (var k = 0; k < 16; k++) {
+        let o = vec2(k & 3, k >> 2u) - 1;
         let ray = clamp(base + o, vec2(0), last);
-        let bilinear = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
-        let weight = bilinear * (alike(textureLoad(ray_depths, ray, 0).r, distance) + 1e-4);
+        let d = vec2<f32>(o) - f;
+        let tent = max(2.0 - abs(d.x), 0.0) * max(2.0 - abs(d.y), 0.0);
+        // Rays that ended much nearer or farther than this pixel's surface saw other things.
+        let ended = textureLoad(ray_depths, ray, 0).r;
+        let alike = exp(-abs(ended - distance) / (0.05 * min(distance, ended) + 0.25));
+        let weight = tent * (alike + 1e-4);
         air += textureLoad(march_texture, ray, 0) * weight;
         total += weight;
     }
