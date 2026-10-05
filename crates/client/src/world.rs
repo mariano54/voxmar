@@ -381,15 +381,28 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
     }
 }
 
+/// How long chunks that arrived wait at most before cave culling takes them in.
+const CULL_AGAIN: f32 = 0.1;
+
 /// Hides chunks the camera cannot see through the terrain (cave culling).
-fn cull_chunks(mut world: ResMut<ClientWorld>, camera: Query<&GlobalTransform, With<Camera3d>>, mut last_chunk: Local<Option<IVec3>>) {
+fn cull_chunks(
+    time: Res<Time<Real>>,
+    mut world: ResMut<ClientWorld>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
+    mut last: Local<Option<(IVec3, f32)>>,
+) {
     let Ok(camera) = camera.single() else { return };
     let eye = camera.translation().floor().as_ivec3();
     let camera_chunk = eye.div_euclid(IVec3::splat(CHUNK_SIZE));
-    if !world.visibility_dirty && *last_chunk == Some(camera_chunk) {
+    let now = time.elapsed_secs();
+    // A new camera chunk walks again at once; chunks arriving (which mark visibility dirty
+    // nearly every frame while the world streams in) at most every `CULL_AGAIN` seconds.
+    let moved = last.is_none_or(|(chunk, _)| chunk != camera_chunk);
+    let due = world.visibility_dirty && last.is_none_or(|(_, at)| now - at >= CULL_AGAIN);
+    if !moved && !due {
         return;
     }
-    *last_chunk = Some(camera_chunk);
+    *last = Some((camera_chunk, now));
     world.visibility_dirty = false;
 
     let _span = info_span!("cull_chunks").entered();
