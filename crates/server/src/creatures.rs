@@ -64,8 +64,14 @@ const MAX_CREATURES: usize = 512;
 const KIN_RANGE: f32 = 14.0;
 /// How far creatures look for food.
 const FOOD_RANGE: i32 = 6;
-/// Ticks between a player's strikes.
-const STRIKE_COOLDOWN: u64 = TICKS_PER_SECOND as u64 / 2;
+/// Ticks between a player's strikes: a little under the client's swing, so a server
+/// running behind (fewer ticks a second) still takes every swing a player makes.
+const STRIKE_COOLDOWN: u64 = 6;
+/// How far, in blocks, a blow may reach past a creature's box on the server: the client
+/// aims at where it last drew the creature, which a server running behind has moved on
+/// from. Plus how far the creature moves in this many seconds.
+const REACH_SLACK: f32 = 1.0;
+const REACH_LAG: f32 = 0.6;
 /// Seconds a player must keep within `SETTLE_RADIUS` blocks of one spot before hunters
 /// there leave them be (RuneScape's ten minutes in 21 × 21 squares).
 const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
@@ -135,8 +141,15 @@ pub struct Creatures {
 }
 
 impl Creatures {
-    pub fn aabb(&self, id: u32) -> Option<Aabb> {
-        self.live.get(&id).filter(|c| c.health > 0).map(|c| c.body.aabb())
+    /// The box a blow at a creature may land in: its own, widened by what the player's
+    /// view of it may lag behind (`REACH_SLACK`, `REACH_LAG`).
+    pub fn reach_box(&self, id: u32) -> Option<Aabb> {
+        let creature = self.live.get(&id).filter(|c| c.health > 0)?;
+        let mut aabb = creature.body.aabb();
+        let slack = REACH_SLACK + creature.body.velocity.length() * REACH_LAG;
+        aabb.min -= Vec3::splat(slack);
+        aabb.max += Vec3::splat(slack);
+        Some(aabb)
     }
 }
 
@@ -421,16 +434,19 @@ impl Server {
         let attack_skill = self.skill("core:attack");
         let attack = self.level(player, attack_skill);
         let [hit, amount, _] = random3(self.tick, creature.body.position.floor().as_ivec3(), id ^ 0x5717);
-        let eye = self.players[&player].position;
+        let feet = self.players[&player].position;
         let creature = self.creatures.live.get_mut(&id).expect("checked above");
-        // Knocked back from the blow whether it lands or not.
-        let away = (creature.body.position - eye).with_y(0.0).normalize_or_zero();
-        creature.body.velocity += away * 4.0 + Vec3::Y * 3.0;
-        creature.changed = true;
         if hit >= creature::hit_chance(attack, species.def.defence) {
             creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+            if let Some(p) = self.players.get(&player) {
+                p.connection.send(ServerMessage::Struck { creature: id, damage: 0, killed: false });
+            }
             return;
         }
+        // A blow that lands knocks it back a little.
+        let away = (creature.body.position - feet).with_y(0.0).normalize_or_zero();
+        creature.body.velocity += away * 2.5 + Vec3::Y * 2.5;
+        creature.changed = true;
         let max_hit = 1 + attack / 8;
         let damage = (1 + (amount * max_hit as f32) as u16).min(max_hit as u16 + 1).min(creature.health);
         creature.health -= damage;
@@ -448,7 +464,11 @@ impl Server {
             }
             target.changed(traits::SKILLS);
         }
-        if self.creatures.live[&id].health == 0 {
+        let killed = self.creatures.live[&id].health == 0;
+        if let Some(p) = self.players.get(&player) {
+            p.connection.send(ServerMessage::Struck { creature: id, damage, killed });
+        }
+        if killed {
             self.creature_dies(id);
         }
     }

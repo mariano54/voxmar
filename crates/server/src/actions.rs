@@ -96,7 +96,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn creature_box(&self, id: u32) -> Option<voxmar_engine::physics::Aabb> {
-        self.server.creatures.aabb(id)
+        self.server.creatures.reach_box(id)
     }
 }
 

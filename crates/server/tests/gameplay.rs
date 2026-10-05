@@ -40,9 +40,10 @@ struct Client {
     chat: Vec<(ChatKind, String)>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
-    /// Creatures in sight, and how many were seen to die.
+    /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
+    blows: u32,
     _server: ServerHandle,
 }
 
@@ -95,6 +96,7 @@ impl Client {
             day: None,
             creatures: Default::default(),
             deaths: 0,
+            blows: 0,
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -159,6 +161,7 @@ impl Client {
                     self.deaths += gone.died as u32;
                 }
             }
+            ServerMessage::Struck { .. } => self.blows += 1,
             ServerMessage::Items { changed, gone } => {
                 for view in changed {
                     self.items.insert(view.id, view);
@@ -635,23 +638,44 @@ fn walking_wears_a_path() {
 
 #[test]
 fn summoned_creatures_are_seen_struck_and_drop_their_loot() {
-    let mut client = Client::join();
+    strike_a_snail(Client::join());
+}
+
+/// As the gate's server runs: behind, with stalls, and a stall as every other action is
+/// proposed. Blows still land and the snail still dies.
+#[test]
+fn creatures_are_struck_when_the_server_runs_behind() {
+    let lag = voxmar_server::Lag {
+        per_tick: Duration::from_millis(60),
+        stall: Duration::from_millis(400),
+        stall_every: 9,
+        proposal_stall: Duration::from_millis(600),
+    };
+    strike_a_snail(Client::join_with(ServerConfig { view_distance: 2, lag, ..Default::default() }));
+}
+
+fn strike_a_snail(mut client: Client) {
     let snail = client.content.creatures.find("lumen_snail").expect("a lumen snail in the content");
     let slime = client.content.blocks.id("base:lumen_slime").unwrap();
     client.ok("/summon lumen_snail 1 ~ ~ ~");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == snail));
     let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == snail).unwrap();
-    let at = view.position;
     // Stand beside it, and strike until it dies: four health, a hit in two at level 1.
+    // Each blow waits for the server's answer, so a server running behind only slows it.
+    let mut at = view.position;
     client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
-    let deadline = Instant::now() + Duration::from_secs(20);
     while client.creatures.contains_key(&id) {
-        assert!(Instant::now() < deadline, "twenty seconds of blows did not kill it");
+        assert!(client.blows < 40, "{} blows did not kill it", client.blows);
+        at = client.creatures[&id].position;
+        let blows = client.blows;
         client.propose("core:attack", ActionTarget::Creature(id));
-        let until = Instant::now() + Duration::from_millis(600);
-        client.pump_until(|_| Instant::now() > until);
+        // The answer, or a later swing if the server was still cooling down.
+        let asked = Instant::now();
+        client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
     }
     assert_eq!(client.deaths, 1);
+    // Walk onto where it died, as a player goes for the loot.
+    client.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
     // Its slime pops out beside us, and we pick it up.
     client.pump_until(|c| (0..voxmar_engine::inventory::SLOTS).filter_map(|s| c.inventory.get(s)).any(|s| s.item == slime));
 }
