@@ -5,7 +5,7 @@ Light comes from the top left: surfaces facing it take lighter shades, and every
 a one-shade darker rim on its lower right, so sprites read cleanly at a glance."""
 import math
 N=32
-CH={'L':'abcdef','P':'pqrst','C':'xyz','S':'jklmn','T':'uvw'}
+CH={'L':'abcdef','P':'pqrst','C':'xyz','S':'jklmn','T':'uvw','F':'ghio','W':'ABDE','G':'GHI'}
 class Canvas:
     def __init__(s,n=N): s.n=n; s.g=[[None]*n for _ in range(n)]
     def put(s,x,y,mat,sh):
@@ -147,3 +147,60 @@ def floret_spike(c,x,y0,y1,w,mat='P',sh=2,seed=0):
                 if half>1: c.put(x+side*(half-1),y,'P',sh+1 if side<0 else sh)
         c.put(x,y,'P',sh+1 if i%2 else sh)
 import random
+
+
+def ellipse(c,cx,cy,rx,ry,mat,sh,jag=0.0,seed=0,keep=1.0):
+    """A shaded ellipse (bush, cap, fruit), lit from the top left; `jag` roughens its edge."""
+    r=random.Random(seed)
+    for y in range(int(cy-ry-2),int(cy+ry+3)):
+        for x in range(int(cx-rx-2),int(cx+rx+3)):
+            u,v=(x-cx)/rx,(y-cy)/ry; d=math.hypot(u,v)
+            if d<=1+jag*(r.random()-0.5) and r.random()<keep:
+                lit=-(u+v)
+                s=sh+(1 if lit>0.5 else 0)+(1 if lit>1.0 else 0)-(1 if lit<-0.6 else 0)-(1 if d>0.85 and u+v>0 else 0)
+                c.put(x,y,mat,s)
+def foliage(c,cx,cy,rx,ry,sh=3,seed=0,leaf_len=2.6,density=1.0):
+    """A bush crown of many small leaves, lit from the top left, darker inside."""
+    r=random.Random(seed)
+    ellipse(c,cx,cy,rx*0.9,ry*0.9,'L',sh-1,jag=0.3,seed=seed)
+    n=int(rx*ry*0.55*density)
+    for i in range(n):
+        a=r.uniform(0,2*math.pi); d=math.sqrt(r.random())
+        x=cx+math.cos(a)*d*rx; y=cy+math.sin(a)*d*ry
+        lit=-(math.cos(a)+math.sin(a))*d
+        leaf(c,x,y,r.uniform(0,360),leaf_len*r.uniform(0.7,1.2),leaf_len*0.8,sh+(1 if lit>0.3 else 0)-(1 if lit<-0.5 else 0))
+def berry(c,x,y,mat='F',size=1):
+    """A round berry with a highlight."""
+    x,y=int(round(x)),int(round(y))
+    if size<=1:
+        c.put(x,y,mat,2); c.put(x+1,y,mat,1); c.put(x,y+1,mat,1); c.put(x+1,y+1,mat,0)
+        c.put(x,y,mat,3)
+    else:
+        ellipse(c,x,y,size,size,mat,1); c.put(x-size//2,y-size//2,mat,3)
+def berries(c,cx,cy,rx,ry,n,seed=0,mat='F',size=1,cluster=1):
+    r=random.Random(seed+99)
+    for i in range(n):
+        a=r.uniform(0,2*math.pi); d=math.sqrt(r.random())*0.85
+        x=cx+math.cos(a)*d*rx; y=cy+math.sin(a)*d*ry
+        for k in range(cluster):
+            berry(c,x+(k%2)*2-(k//2),y+(k//2)*2,mat,size)
+def twigs(c,x,y,n,h,spread,sh=1,seed=0):
+    r=random.Random(seed)
+    for i in range(n):
+        a=-90+r.uniform(-spread,spread); l=h*r.uniform(0.6,1.0)
+        x1=x+math.cos(math.radians(a))*l; y1=y+math.sin(math.radians(a))*l
+        line(c,x,y,x1,y1,'W',sh+(1 if i%2 else 0))
+        if l>5:
+            mx,my=(x+x1)/2,(y+y1)/2; a2=a+r.choice((-35,35))
+            line(c,mx,my,mx+math.cos(math.radians(a2))*l*0.4,my+math.sin(math.radians(a2))*l*0.4,'W',sh)
+def feather_leaf(c,x,y,ang,length,sh=3,mat='L'):
+    """A fine, divided leaf (carrot, dill, fern frond): a rib with short side strokes."""
+    a=math.radians(ang); dx,dy=math.cos(a),math.sin(a)
+    n=int(length)
+    for i in range(n):
+        px,py=x+dx*i,y+dy*i; c.put(px,py,mat,sh-1)
+        if i>0 and i%2==0:
+            w=max(1,int((1-i/n)*3))
+            for side in (-1,1):
+                for k in range(1,w+1):
+                    c.put(px-dy*side*k+dx*k*0.5,py+dx*side*k+dy*k*0.5,mat,sh+(1 if side<0 else 0))
