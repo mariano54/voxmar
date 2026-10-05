@@ -325,6 +325,24 @@ fn a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started() {
 }
 
 #[test]
+fn a_block_the_client_finished_breaks_even_if_the_server_started_it_late() {
+    // A server stalled when the proposal came (streaming, a slow tick) starts its clock
+    // late; by that clock the client finishes early and starts on the next block at once.
+    // Once the client says the first is done, the next proposal must not cancel it: it
+    // breaks in its own time.
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    let (a, b) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2));
+    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
+    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
+    mine(&client, a);
+    client.connection.send(ClientMessage::Finished);
+    mine(&client, b);
+    client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
+}
+
+#[test]
 fn falling_hurts() {
     let mut client = Client::join();
     let start = client.position;
