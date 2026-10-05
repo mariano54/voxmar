@@ -60,7 +60,7 @@ changes don't move it, and checks:
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
 | weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
-| sky | looks at the morning sun, then the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, stars |
+| sky | looks at the morning sun, towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a sunset sky warmer towards the sun than away, stars |
 | leave | quits to the title screen | the world closes cleanly |
 
 "The server" is a second player the gate connects to the same integrated server, floating
