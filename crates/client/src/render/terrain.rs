@@ -967,6 +967,9 @@ impl TerrainGpu {
 
 /// Applies the main world's messages: writes and frees mesh data, updates the origin table.
 #[allow(clippy::too_many_arguments)]
+/// Longest a frame spends taking in new meshes and tiles on the render thread.
+const UPLOAD_BUDGET: std::time::Duration = std::time::Duration::from_micros(1500);
+
 fn receive(
     mut gpu: ResMut<TerrainGpu>,
     inbox: Res<TerrainInbox>,
@@ -980,7 +983,12 @@ fn receive(
 ) {
     let layout = pipeline_cache.get_bind_group_layout(&pipelines.chunks_layout);
     gpu.ensure_arenas(&device, &queue);
-    for message in inbox.0.try_iter() {
+    // While the world streams in (a fast flight), more meshes can arrive in a frame than
+    // it should spend uploading: past the budget the rest wait for the next frames.
+    let start = std::time::Instant::now();
+    while start.elapsed() < UPLOAD_BUDGET
+        && let Ok(message) = inbox.0.try_recv()
+    {
         match message {
             Message::Upload { chunk, pass, mesh } => gpu.upload(&device, &queue, &layout, chunk, pass, &mesh),
             Message::Remove { chunk, pass } => gpu.release(chunk, pass),

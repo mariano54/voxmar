@@ -272,7 +272,7 @@ impl ParticleAmount {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            view_distance: 16,
+            view_distance: 32,
             vsync: true,
             fov: 75,
             sensitivity: 100,

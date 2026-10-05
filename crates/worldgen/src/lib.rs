@@ -1118,7 +1118,8 @@ mod tests {
             (&[9, 1], "mixed_forest"),
         ];
         for (seeds, biome) in places {
-            // Dry land well inside the biome, not on a sliver of it at a border.
+            // Dry land well inside the biome, not on a sliver of it at a border, nor on a
+            // frozen or steep patch where little grows.
             let found = seeds.iter().find_map(|&seed| {
                 let world = Overworld::new(seed, registry.clone());
                 let id = world.biomes.id(&format!("base:{biome}")).unwrap();
@@ -1127,7 +1128,7 @@ mod tests {
                     .map(|(dx, dz)| IVec2::new(dx, dz) * 64)
                     .find(|&p| {
                         let site = world.site(p.x, p.y);
-                        site.home == id && site.edge >= 48.0 && site.height > SEA_LEVEL + 2
+                        site.home == id && site.edge >= 48.0 && site.height > SEA_LEVEL + 2 && site.temperature > 0.0 && site.steepness < 1.0
                     })?;
                 Some((seed, world, id, at))
             });
@@ -1191,6 +1192,8 @@ mod tests {
                     }
                 }
             }
+            // A few pieces at least (fewer since 772d719 thinned snags and bushes), and many
+            // plants.
             assert!(pieces >= 4 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome} at {at}: {:?}", world.site(at.x, at.y));
         }
     }
@@ -1819,10 +1822,11 @@ mod tests {
                 // The middle 3×3 columns, whose neighbours are all generated.
                 for z in origin.z + 32..origin.z + 128 {
                     for x in origin.x + 32..origin.x + 128 {
+                        let ground = world.height(x, z);
                         for y in 0..voxmar_engine::coords::WORLD_HEIGHT {
                             let p = IVec3::new(x, y, z);
                             let here = block(p).unwrap();
-                            if here.is_air() && y < world.height(x, z) {
+                            if here.is_air() && y < ground {
                                 caves += 1;
                             }
                             if here != water && here != lava {
