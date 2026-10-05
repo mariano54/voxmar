@@ -89,6 +89,12 @@ pub struct Settings {
     pub zoom_key: Key,
     /// Key that opens the console to chat (`/` always opens it for a command).
     pub chat_key: Key,
+    /// Key that starts a sprint.
+    pub sprint_key: Key,
+    /// Whether tapping forward twice quickly starts a sprint too.
+    pub double_tap_sprint: bool,
+    /// Whether the view widens a little while sprinting.
+    pub fov_effects: bool,
     /// Magnification when zooming in, in percent.
     pub zoom: i32,
     /// Whether the view follows the mouse smoothly while zoomed.
@@ -278,6 +284,9 @@ impl Default for Settings {
             anti_aliasing: AntiAliasing::default(),
             zoom_key: Key(KeyCode::KeyC),
             chat_key: Key(KeyCode::KeyT),
+            sprint_key: Key(KeyCode::ControlLeft),
+            double_tap_sprint: true,
+            fov_effects: true,
             zoom: 400,
             cinematic_zoom: true,
             zoom_in_survival: false,
@@ -456,6 +465,8 @@ enum Toggle {
     DebugOverlay,
     CinematicZoom,
     ZoomInSurvival,
+    DoubleTapSprint,
+    FovEffects,
 }
 
 impl Toggle {
@@ -466,6 +477,8 @@ impl Toggle {
             Toggle::DebugOverlay => "Debug overlay",
             Toggle::CinematicZoom => "Cinematic zoom",
             Toggle::ZoomInSurvival => "Zoom in survival",
+            Toggle::DoubleTapSprint => "Double-tap sprint",
+            Toggle::FovEffects => "FOV effects",
         }
     }
 
@@ -476,6 +489,8 @@ impl Toggle {
             Toggle::DebugOverlay => settings.debug_overlay,
             Toggle::CinematicZoom => settings.cinematic_zoom,
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
+            Toggle::DoubleTapSprint => settings.double_tap_sprint,
+            Toggle::FovEffects => settings.fov_effects,
         }
     }
 
@@ -486,6 +501,8 @@ impl Toggle {
             Toggle::DebugOverlay => &mut settings.debug_overlay,
             Toggle::CinematicZoom => &mut settings.cinematic_zoom,
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
+            Toggle::DoubleTapSprint => &mut settings.double_tap_sprint,
+            Toggle::FovEffects => &mut settings.fov_effects,
         } = on;
     }
 }
@@ -573,6 +590,7 @@ fn cycle<T: Copy + PartialEq>(all: &[T], current: T, forward: bool) -> T {
 /// A key the player can rebind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Binding {
+    Sprint,
     Zoom,
     Chat,
 }
@@ -580,6 +598,7 @@ enum Binding {
 impl Binding {
     fn label(self) -> &'static str {
         match self {
+            Binding::Sprint => "Sprint key",
             Binding::Zoom => "Zoom key",
             Binding::Chat => "Chat key",
         }
@@ -587,6 +606,7 @@ impl Binding {
 
     fn get(self, settings: &Settings) -> Key {
         match self {
+            Binding::Sprint => settings.sprint_key,
             Binding::Zoom => settings.zoom_key,
             Binding::Chat => settings.chat_key,
         }
@@ -594,6 +614,7 @@ impl Binding {
 
     fn set(self, settings: &mut Settings, key: Key) {
         *match self {
+            Binding::Sprint => &mut settings.sprint_key,
             Binding::Zoom => &mut settings.zoom_key,
             Binding::Chat => &mut settings.chat_key,
         } = key;
@@ -635,6 +656,8 @@ impl Control {
             Control::Switch(Toggle::DebugOverlay) => "Frame rate, position and what you look at, top left. F3 also toggles it.",
             Control::Switch(Toggle::CinematicZoom) => "The view follows the mouse smoothly while zoomed.",
             Control::Switch(Toggle::ZoomInSurvival) => "Lets the zoom key work in survival, not only in creative.",
+            Control::Switch(Toggle::DoubleTapSprint) => "Tapping forward twice quickly starts a sprint, as the sprint key does.",
+            Control::Switch(Toggle::FovEffects) => "The view widens a little while you sprint.",
             Control::Choice(Choice::FarDetail) => "How soon far chunks merge blocks. Fast suits slower machines and huge distances.",
             Control::Choice(Choice::Resolution) => "How many pixels the world is drawn at; menus and text stay sharp. Lower is faster.",
             Control::Choice(Choice::AntiAliasing) => "How edges are smoothed. MSAA also smooths leaves and plants.",
@@ -645,6 +668,7 @@ impl Control {
             Control::Choice(Choice::Particles) => "How many particles effects such as breaking blocks show.",
             Control::Key(Binding::Chat) => "Opens the chat line. / always opens it for a command.",
             Control::Key(Binding::Zoom) => "Hold to zoom in.",
+            Control::Key(Binding::Sprint) => "Starts a sprint, which lasts while you keep moving forward.",
         }
     }
 }
@@ -659,6 +683,7 @@ const SECTIONS: [(&str, &[Control]); 5] = [
             Control::Choice(Choice::FarDetail),
             Control::Choice(Choice::Resolution),
             Control::Slider(Slider::Fov),
+            Control::Switch(Toggle::FovEffects),
             Control::Choice(Choice::AntiAliasing),
             Control::Switch(Toggle::Vsync),
             Control::Choice(Choice::Textures),
@@ -679,6 +704,8 @@ const SECTIONS: [(&str, &[Control]); 5] = [
         "Controls",
         &[
             Control::Slider(Slider::Sensitivity),
+            Control::Key(Binding::Sprint),
+            Control::Switch(Toggle::DoubleTapSprint),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Zoom),
             Control::Slider(Slider::Zoom),
@@ -758,6 +785,10 @@ const ROW: f32 = 18.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
 const VALUE_WIDTH: f32 = 50.0 * PX;
 const CONTROL_WIDTH: f32 = 100.0 * PX;
+/// Lines of body text, at Bevy's default line height of 1.2 font sizes.
+const LINE: f32 = 1.2 * BODY;
+/// Lines kept for the hint at the foot of the panel: the longest hint wraps to two.
+const HINT_LINES: usize = 2;
 
 fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -793,7 +824,8 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
                 });
             });
             spawn_rule(panel, 4.0 * PX);
-            let hint = Node { min_height: Val::Px(10.0 * PX), ..default() };
+            // As tall as the longest hint, so the panel keeps its height as the pointer moves.
+            let hint = Node { height: Val::Px(HINT_LINES as f32 * LINE), overflow: Overflow::clip(), ..default() };
             panel.spawn(hint).with_child((HintText, text(font, "", BODY, MUTED)));
             panel.spawn(button_row(4.0 * PX)).with_children(|row| {
                 spawn_button(row, font, "Back to game", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
@@ -1251,6 +1283,36 @@ fn sync_server(settings: Res<Settings>, net: Res<Net>, mut player: ResMut<LocalP
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voxmar_texgen::font::{EM_PIXELS, PixelFont};
+
+    /// The panel reserves room for the hint, so a longer one would spill out of it.
+    #[test]
+    fn every_hint_fits_the_room_kept_for_it() {
+        let font = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/font.txt")).unwrap();
+        let font = PixelFont::parse(&font).unwrap();
+        // Glyphs get one font pixel of space after them; body text draws each font pixel
+        // `scale` screen pixels wide, inside the panel's padding.
+        let advance = |c: char| font.glyphs.get(&c).map_or(EM_PIXELS, |glyph| glyph.width) as f32 + 1.0;
+        let scale = BODY / EM_PIXELS as f32;
+        let room = (PANEL_WIDTH - 28.0 * PX) / scale;
+        for (_, controls) in SECTIONS {
+            for &control in controls.iter() {
+                let hint = control.hint();
+                let (mut lines, mut width) = (1, 0.0);
+                for word in hint.split(' ') {
+                    let word_width: f32 = word.chars().map(advance).sum();
+                    let with_space = if width == 0.0 { word_width } else { width + advance(' ') + word_width };
+                    if with_space > room {
+                        lines += 1;
+                        width = word_width;
+                    } else {
+                        width = with_space;
+                    }
+                }
+                assert!(lines <= HINT_LINES, "{lines} lines: {hint}");
+            }
+        }
+    }
 
     #[test]
     fn settings_file_round_trips_and_tolerates_old_or_edited_files() {

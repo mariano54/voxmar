@@ -273,11 +273,11 @@ fn hold_time(state: Res<Capture>, time: Res<Time>, mut cycle: ResMut<DayCycle>) 
 
 /// Climbs straight up above the terrain, then flies forward at sprint-flight speed. Flying
 /// through the ground would have the server send the player back.
-fn fly(time: &Time, player: &mut LocalPlayer) {
+fn fly(time: &Time, player: &mut LocalPlayer, sprint_speed: f32) {
     player.flying = true;
     let forward = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
     let direction = if player.position.y < FLIGHT_HEIGHT { Vec3::Y } else { forward };
-    let speed = voxmar_engine::physics::player::FLY_SPRINT_SPEED * 0.9;
+    let speed = sprint_speed * 0.9;
     player.position += direction * speed * time.delta_secs();
 }
 
@@ -293,7 +293,7 @@ fn capture(
     mut exit: MessageWriter<AppExit>,
     lod: Res<Lod>,
     screen: Res<State<Screen>>,
-    (weather, air): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>),
+    (weather, air, launch): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>, Res<crate::session::Launch>),
 ) {
     // Real time while `--flicker` stops the game's clock.
     let now = if state.flicker.is_some() { real.elapsed_secs() } else { time.elapsed_secs() };
@@ -335,7 +335,7 @@ fn capture(
     if let Some(duration) = state.flight
         && now - *state.flight_started.get_or_insert(now) < duration
     {
-        fly(&time, &mut player);
+        fly(&time, &mut player, launch.content.movement.fly_sprint_speed);
         state.frame_times.push(time.delta_secs() * 1000.0);
         return;
     }
