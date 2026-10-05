@@ -27,12 +27,13 @@ use bevy::math::DVec2;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_resource::{
-    AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, CachedRenderPipelineId,
+    AddressMode, BindGroup, BindGroupEntries, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+    BindGroupLayoutEntry, BindingResource, CachedRenderPipelineId,
     ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState, LoadOp, Operations, PipelineCache,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
     SamplerDescriptor, ShaderStages, StoreOp, TextureDataOrder, TextureDescriptor, TextureDimension, TextureFormat,
     TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
-    binding_types::{sampler as sampler_binding, texture_2d, uniform_buffer},
+    binding_types::{sampler as sampler_binding, texture_2d, texture_3d, uniform_buffer},
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::{RenderApp, RenderStartup};
@@ -143,6 +144,23 @@ impl CloudNoise {
     }
 }
 
+/// The bindings in group 2 of the cloud maps (8 and 10, sampled with 9) and of the cloud
+/// noise's lattice textures (11 to 13), for every pipeline whose shaders set `CLOUD_MAP` and
+/// `NOISE_TEXTURES`: those built like the terrain's (`terrain::mesh_like`) and the
+/// volumetric pass. Kept in one place so no pipeline leaves one out: the particles once
+/// did, and their first frame failed validation and quit.
+pub fn layout_entries(visibility: ShaderStages) -> [BindGroupLayoutEntry; 6] {
+    let filterable = TextureSampleType::Float { filterable: true };
+    [
+        texture_2d(filterable).build(8, visibility),
+        sampler_binding(SamplerBindingType::Filtering).build(9, visibility),
+        texture_2d(filterable).build(10, visibility),
+        texture_2d(filterable).build(11, visibility),
+        texture_3d(filterable).build(12, visibility),
+        sampler_binding(SamplerBindingType::Filtering).build(13, visibility),
+    ]
+}
+
 pub struct CloudMapPlugin;
 
 impl Plugin for CloudMapPlugin {
@@ -240,6 +258,21 @@ fn init(
         layouts,
         groups: None,
     });
+}
+
+impl CloudMap {
+    /// What `layout_entries` lays out.
+    pub fn entries(&self) -> [BindGroupEntry<'_>; 6] {
+        let entry = |binding, resource| BindGroupEntry { binding, resource };
+        [
+            entry(8, BindingResource::TextureView(&self.view)),
+            entry(9, BindingResource::Sampler(&self.sampler)),
+            entry(10, BindingResource::TextureView(&self.shade)),
+            entry(11, BindingResource::TextureView(&self.noise.plane)),
+            entry(12, BindingResource::TextureView(&self.noise.volume)),
+            entry(13, BindingResource::Sampler(&self.noise.sampler)),
+        ]
+    }
 }
 
 /// Draws the maps while there is cloud (`Atmosphere::cloud_map.w`).

@@ -34,7 +34,7 @@ use bevy::render::render_resource::{
     BufferUsages, CachedRenderPipelineId, CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, texture_3d, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -53,7 +53,7 @@ mod compact;
 
 use compact::Compaction;
 
-use super::cloud_map::CloudMap;
+use super::cloud_map::{self, CloudMap};
 use super::atmosphere::{Atmosphere, AtmosphereBuffer};
 use super::lod::{LodVertex, TileKey, TileMesh};
 use super::water::{self, WaterParams};
@@ -1019,18 +1019,16 @@ fn prepare_bind_group(
     let distant = device.create_bind_group(
         "distant_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipelines.distant_layout),
-        &BindGroupEntries::with_indices((
-            (0, origins.as_entire_binding()),
-            (1, view.as_entire_binding()),
-            (2, coverage.as_entire_binding()),
-            (6, atmosphere.0.as_entire_binding()),
-            (8, &cloud_map.view),
-            (9, &cloud_map.sampler),
-            (10, &cloud_map.shade),
-            (11, &cloud_map.noise.plane),
-            (12, &cloud_map.noise.volume),
-            (13, &cloud_map.noise.sampler),
-        )),
+        &[
+            &BindGroupEntries::with_indices((
+                (0, origins.as_entire_binding()),
+                (1, view.as_entire_binding()),
+                (2, coverage.as_entire_binding()),
+                (6, atmosphere.0.as_entire_binding()),
+            ))[..],
+            &cloud_map.entries(),
+        ]
+        .concat(),
     );
     let textures = textures.as_ref().and_then(|t| Some((images.get(&t.textures)?, images.get(&t.layers)?)));
     let (Some((blocks, layers)), Some(seeds), Some(wind), Some(colours)) =
@@ -1042,22 +1040,20 @@ fn prepare_bind_group(
     let bind_group = device.create_bind_group(
         "terrain_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipelines.layout),
-        &BindGroupEntries::sequential((
-            &blocks.texture_view,
-            &blocks.sampler,
-            origins.as_entire_binding(),
-            seeds.as_entire_binding(),
-            wind.as_entire_binding(),
-            colours.as_entire_binding(),
-            atmosphere.0.as_entire_binding(),
-            &layers.texture_view,
-            &cloud_map.view,
-            &cloud_map.sampler,
-            &cloud_map.shade,
-            &cloud_map.noise.plane,
-            &cloud_map.noise.volume,
-            &cloud_map.noise.sampler,
-        )),
+        &[
+            &BindGroupEntries::sequential((
+                &blocks.texture_view,
+                &blocks.sampler,
+                origins.as_entire_binding(),
+                seeds.as_entire_binding(),
+                wind.as_entire_binding(),
+                colours.as_entire_binding(),
+                atmosphere.0.as_entire_binding(),
+                &layers.texture_view,
+            ))[..],
+            &cloud_map.entries(),
+        ]
+        .concat(),
     );
     gpu.distant_bind_group = Some(distant);
     gpu.bind_group = Some(bind_group);
@@ -1414,7 +1410,7 @@ struct TerrainPipelines {
 }
 
 fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let layout = BindGroupLayoutDescriptor::new(
+    let mut layout = BindGroupLayoutDescriptor::new(
         "terrain_layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::VERTEX_FRAGMENT,
@@ -1430,16 +1426,10 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 // The air and light (lighting.wgsl), and each texture layer's overlay and glow.
                 uniform_buffer::<Atmosphere>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
-                // The cloud maps and noise (cloud_map.rs).
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                texture_3d(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
             ),
         ),
     );
+    layout.entries.extend(cloud_map::layout_entries(ShaderStages::VERTEX_FRAGMENT));
     let chunks_layout = BindGroupLayoutDescriptor::new(
         "terrain_chunks_layout",
         &BindGroupLayoutEntries::single(ShaderStages::VERTEX, storage_buffer_read_only_sized(false, None)),
@@ -1458,7 +1448,7 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
         },
     );
     let items = PASSES.map(|pass| commands.spawn(TerrainPassItem(pass)).id());
-    let distant_layout = BindGroupLayoutDescriptor::new(
+    let mut distant_layout = BindGroupLayoutDescriptor::new(
         "distant_layout",
         &BindGroupLayoutEntries::with_indices(
             ShaderStages::VERTEX_FRAGMENT,
@@ -1466,18 +1456,12 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 (0, storage_buffer_read_only_sized(false, None)),
                 (1, uniform_buffer::<DistantView>(false)),
                 (2, storage_buffer_read_only_sized(false, None)),
-                // The air and light, at the binding lighting.wgsl expects, and the cloud maps
-                // and noise.
+                // The air and light, at the binding lighting.wgsl expects.
                 (6, uniform_buffer::<Atmosphere>(false)),
-                (8, texture_2d(TextureSampleType::Float { filterable: true })),
-                (9, sampler(SamplerBindingType::Filtering)),
-                (10, texture_2d(TextureSampleType::Float { filterable: true })),
-                (11, texture_2d(TextureSampleType::Float { filterable: true })),
-                (12, texture_3d(TextureSampleType::Float { filterable: true })),
-                (13, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
+    distant_layout.entries.extend(cloud_map::layout_entries(ShaderStages::VERTEX_FRAGMENT));
     let distant_vertex_layout = MeshVertexBufferLayout::new(
         vec![ATTRIBUTE_LOD.id],
         VertexBufferLayout {

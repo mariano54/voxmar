@@ -29,7 +29,7 @@ use bevy::render::render_phase::{
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages,
     CachedRenderPipelineId, PipelineCache, SamplerBindingType, ShaderStages, TextureSampleType, VertexStepMode,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, texture_3d, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -42,7 +42,7 @@ use rustc_hash::FxHashMap;
 
 use super::atmosphere::{Atmosphere, AtmosphereBuffer};
 use super::LayerInfo;
-use super::cloud_map::CloudMap;
+use super::cloud_map::{self, CloudMap};
 use super::terrain::{TerrainTextures, mesh_like};
 use crate::textures::Rgba;
 use voxmar_engine::block::Tint;
@@ -325,7 +325,7 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let layout = BindGroupLayoutDescriptor::new(
+    let mut layout = BindGroupLayoutDescriptor::new(
         "particle_layout",
         &BindGroupLayoutEntries::with_indices(
             ShaderStages::VERTEX_FRAGMENT,
@@ -335,19 +335,14 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
                 (2, storage_buffer_read_only_sized(false, None)),
                 // The air and light, at the binding lighting.wgsl expects.
                 (6, uniform_buffer::<Atmosphere>(false)),
-                // Each texture layer's overlay, at the terrain's binding, and the cloud maps
-                // and noise: the particle pipeline is built as the terrain's (`mesh_like`), with
-                // its shader defs, so it reads them.
+                // Each texture layer's overlay, at the terrain's binding.
                 (7, texture_2d(TextureSampleType::Float { filterable: false })),
-                (8, texture_2d(TextureSampleType::Float { filterable: true })),
-                (9, sampler(SamplerBindingType::Filtering)),
-                (10, texture_2d(TextureSampleType::Float { filterable: true })),
-                (11, texture_2d(TextureSampleType::Float { filterable: true })),
-                (12, texture_3d(TextureSampleType::Float { filterable: true })),
-                (13, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
+    // The particle pipeline is built as the terrain's (`mesh_like`), with its shader defs,
+    // so it reads the cloud maps and noise too.
+    layout.entries.extend(cloud_map::layout_entries(ShaderStages::VERTEX_FRAGMENT));
     // Particles have no vertex buffer: the vertex and instance indices say everything.
     let vertex_layout = MeshVertexBufferLayout::new(
         Vec::new(),
@@ -405,19 +400,17 @@ fn prepare_bind_group(
     let bind_group = device.create_bind_group(
         "particle_bind_group",
         &pipeline_cache.get_bind_group_layout(&gpu.layout),
-        &BindGroupEntries::with_indices((
-            (0, &blocks.texture_view),
-            (1, &blocks.sampler),
-            (2, gpu.buffer.as_entire_binding()),
-            (6, atmosphere.0.as_entire_binding()),
-            (7, &layers.texture_view),
-            (8, &cloud_map.view),
-            (9, &cloud_map.sampler),
-            (10, &cloud_map.shade),
-            (11, &cloud_map.noise.plane),
-            (12, &cloud_map.noise.volume),
-            (13, &cloud_map.noise.sampler),
-        )),
+        &[
+            &BindGroupEntries::with_indices((
+                (0, &blocks.texture_view),
+                (1, &blocks.sampler),
+                (2, gpu.buffer.as_entire_binding()),
+                (6, atmosphere.0.as_entire_binding()),
+                (7, &layers.texture_view),
+            ))[..],
+            &cloud_map.entries(),
+        ]
+        .concat(),
     );
     gpu.bind_group = Some(bind_group);
 }

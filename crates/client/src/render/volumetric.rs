@@ -27,9 +27,9 @@ use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BindGroupLayoutEntryBuilder,
     BlendComponent, BlendFactor, BlendOperation, BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
     LoadOp, MultisampleState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedMeshPipeline, StoreOp, TextureDescriptor,
+    RenderPipelineDescriptor, ShaderStages, SpecializedMeshPipeline, StoreOp, TextureDescriptor,
     TextureDimension, TextureFormat, TextureSampleType, TextureUsages, VertexAttribute, VertexStepMode,
-    binding_types::{sampler, texture_2d, texture_3d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
+    binding_types::{texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
 use bevy::render::texture::{CachedTexture, TextureCache};
@@ -40,7 +40,7 @@ use rustc_hash::FxHashMap;
 
 use super::ATTRIBUTE_VOXEL;
 use super::atmosphere::{Atmosphere, AtmosphereBuffer};
-use super::cloud_map::CloudMap;
+use super::cloud_map::{self, CloudMap};
 use super::water::WaterPass;
 
 const SHADER: &str = "embedded://voxmar/render/volumetric.wgsl";
@@ -127,24 +127,12 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(VolumetricPipelines {
         shader: asset_server.load(SHADER),
         march: Layouts::new(|depth| {
-            let noise = TextureSampleType::Float { filterable: true };
-            BindGroupLayoutDescriptor::new(
+            let mut layout = BindGroupLayoutDescriptor::new(
                 "volumetric_march_layout",
-                &BindGroupLayoutEntries::with_indices(
-                    ShaderStages::FRAGMENT,
-                    (
-                        (0, depth),
-                        (1, uniform_buffer::<Atmosphere>(false)),
-                        // The cloud maps and noise (cloud_map.rs).
-                        (8, texture_2d(noise)),
-                        (9, sampler(SamplerBindingType::Filtering)),
-                        (10, texture_2d(noise)),
-                        (11, texture_2d(noise)),
-                        (12, texture_3d(noise)),
-                        (13, sampler(SamplerBindingType::Filtering)),
-                    ),
-                ),
-            )
+                &BindGroupLayoutEntries::with_indices(ShaderStages::FRAGMENT, ((0, depth), (1, uniform_buffer::<Atmosphere>(false)))),
+            );
+            layout.entries.extend(cloud_map::layout_entries(ShaderStages::FRAGMENT));
+            layout
         }),
         composite: Layouts::new(|depth| {
             BindGroupLayoutDescriptor::new(
@@ -284,16 +272,8 @@ fn prepare(
         let march_group = device.create_bind_group(
             "volumetric_march",
             &cache.get_bind_group_layout(pipelines.march.get(multisampled)),
-            &BindGroupEntries::with_indices((
-                (0, depth.view()),
-                (1, buffer.0.as_entire_binding()),
-                (8, &cloud_map.view),
-                (9, &cloud_map.sampler),
-                (10, &cloud_map.shade),
-                (11, &cloud_map.noise.plane),
-                (12, &cloud_map.noise.volume),
-                (13, &cloud_map.noise.sampler),
-            )),
+            &[&BindGroupEntries::with_indices(((0, depth.view()), (1, buffer.0.as_entire_binding())))[..], &cloud_map.entries()]
+                .concat(),
         );
         let light_group = |label, light: &CachedTexture| {
             device.create_bind_group(
