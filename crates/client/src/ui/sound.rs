@@ -43,11 +43,11 @@ pub struct Silent;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiSounds {
     /// A short low thump under a tiny bright tick, like a phone's haptic click.
-    #[default]
     Haptic,
     /// A high, pure tick with its octave, gone almost at once.
     Glass,
-    /// A minimal digital blip; items blip twice, rising.
+    /// A minimal digital blip; items blip twice, rising. Mariano's pick of the second round.
+    #[default]
     Blip,
     /// A soft synth click that drops in pitch.
     Pulse,
