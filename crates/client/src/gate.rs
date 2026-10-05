@@ -79,7 +79,7 @@ const STEP_LIMIT: f32 = 30.0;
 /// How long an edit is given at least, and at most, to reach the server, come back and be
 /// meshed; the checks run as soon as both sides show it.
 const SETTLE: f32 = 0.3;
-const SETTLE_LIMIT: f32 = 4.0;
+const SETTLE_LIMIT: f32 = 8.0;
 /// Blocks around the player in which client and server must agree.
 const AGREE_WITHIN: i32 = 7;
 /// How far above spawn the test ground is built, clear of terrain and water.
@@ -1231,7 +1231,30 @@ fn edit_settled(world: &World, gate: &Gate, since: f32, cells: &[IVec3], wanted:
     let client = world.resource::<ClientWorld>();
     let shown = |side: &dyn Fn(IVec3) -> Option<BlockId>| cells.iter().all(|&p| side(p).is_some_and(wanted));
     let server = gate.observer.as_ref().is_none_or(|o| shown(&|p| o.world.block(p)));
-    (server && shown(&|p| client.block(p)) && settled(world, gate.feet)) || since > SETTLE_LIMIT
+    // A break the client finished early completes on the server in its own time, so the
+    // whole area must agree, not only the cells aimed at.
+    let agree = gate.observer.as_ref().is_none_or(|o| disagreements(client, &o.world, gate.feet).is_empty());
+    (server && agree && shown(&|p| client.block(p)) && settled(world, gate.feet)) || since > SETTLE_LIMIT
+}
+
+/// Blocks within `AGREE_WITHIN` of `feet` that client and server both have and see
+/// differently.
+fn disagreements(client: &ClientWorld, server: &VoxelWorld, feet: IVec3) -> Vec<(IVec3, BlockId, BlockId)> {
+    let r = AGREE_WITHIN;
+    let mut differ = Vec::new();
+    for dy in -r..=r {
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let p = feet + IVec3::new(dx, dy, dz);
+                if let (Some(ours), Some(theirs)) = (client.block(p), server.block(p))
+                    && ours != theirs
+                {
+                    differ.push((p, ours, theirs));
+                }
+            }
+        }
+    }
+    differ
 }
 
 /// Checks an edit of `cells` once it has settled: each is as `wanted` on the client and
@@ -1248,19 +1271,10 @@ fn verify_edit(world: &World, gate: &mut Gate, name: &str, cells: &[IVec3], want
     if let Some(observer) = &gate.observer {
         checks.push(("server", expect(&|p| observer.world.block(p))));
         let r = AGREE_WITHIN;
-        let mut differ = Vec::new();
-        for dy in -r..=r {
-            for dz in -r..=r {
-                for dx in -r..=r {
-                    let p = gate.feet + IVec3::new(dx, dy, dz);
-                    if let (Some(ours), Some(theirs)) = (client.block(p), observer.world.block(p))
-                        && ours != theirs
-                    {
-                        differ.push(format!("{p}: client {}, server {}", named(Some(ours)), named(Some(theirs))));
-                    }
-                }
-            }
-        }
+        let differ: Vec<String> = disagreements(client, &observer.world, gate.feet)
+            .into_iter()
+            .map(|(p, ours, theirs)| format!("{p}: client {}, server {}", named(Some(ours)), named(Some(theirs))))
+            .collect();
         checks.push((
             "agree",
             if differ.is_empty() {
