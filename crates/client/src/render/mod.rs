@@ -454,18 +454,23 @@ pub struct LayerInfo {
     pub overlay: Option<(u16, Tint)>,
     /// How brightly it glows by itself, 0..1.
     pub glow: f32,
+    /// How it varies from block to block (see `voxmar_engine::block::TextureVariety`).
+    pub variety: voxmar_engine::block::TextureVariety,
 }
 
 /// Each block texture layer's `LayerInfo`, one texel per layer: red and green the overlay's
-/// layer plus one (0 for none), blue its tint, alpha the glow. The terrain shader adds the
-/// glow to the texels bright enough to be the glowing part (see voxel.wgsl).
+/// layer plus one (0 for none), blue its tint in the low six bits and in the top two
+/// whether the layer turns (64) and mirrors (128) from block to block, alpha the glow. The
+/// terrain shader adds the glow to the texels bright enough to be the glowing part (see
+/// voxel.wgsl).
 fn layer_table(layers: &[LayerInfo]) -> Image {
     let data = layers
         .iter()
         .flat_map(|layer| {
             let (overlay, tint) = layer.overlay.map_or((0, 0), |(overlay, tint)| (overlay + 1, tint as u8));
             let [low, high] = overlay.to_le_bytes();
-            [low, high, tint, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
+            let variety = (layer.variety.turn as u8) << 6 | (layer.variety.mirror as u8) << 7;
+            [low, high, tint | variety, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
         })
         .collect::<Vec<u8>>();
     let mut image = Image::new(
@@ -874,6 +879,20 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_layer_table_keeps_tint_and_variety_apart() {
+        use voxmar_engine::block::TextureVariety;
+        let layers = [
+            LayerInfo { overlay: Some((300, Tint::Water)), glow: 1.0, variety: TextureVariety { turn: true, mirror: false } },
+            LayerInfo { overlay: None, glow: 0.0, variety: TextureVariety { turn: false, mirror: true } },
+        ];
+        let table = layer_table(&layers);
+        let data = table.data.unwrap();
+        assert_eq!(data[..4], [45, 1, Tint::Water as u8 | 64, 255]);
+        assert_eq!(data[4..8], [0, 0, 128, 0]);
+        assert!((Tint::Water as u8) < 64, "tints must fit under the variety bits");
+    }
 
     #[test]
     fn clear_texels_take_the_colour_of_visible_ones_in_every_mip() {
