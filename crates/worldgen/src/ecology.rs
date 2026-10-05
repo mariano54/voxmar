@@ -691,7 +691,16 @@ impl Flora {
                 flora.wonder_plants.push((id, wonder));
                 continue;
             }
-            let mut weight = selected(&def.plants, &def.exclude, &plant.name, tags) * plant_rarity[i];
+            // Foraged plants (tagged `forage`) come only by name or by the `forage` tag, never
+            // through a habitat tag such as `meadow`, so a biome takes them at the low weight
+            // it gives the tag and they stay a rare find.
+            let forage = tags.clone().any(|t| t == "forage");
+            let mut weight = if forage {
+                let own: Vec<Select> = def.plants.iter().filter(|s| matches!(s, Select::Name(..)) || matches!(s, Select::Tag(t, _) if t == "forage")).cloned().collect();
+                selected(&own, &def.exclude, &plant.name, tags) * plant_rarity[i]
+            } else {
+                selected(&def.plants, &def.exclude, &plant.name, tags) * plant_rarity[i]
+            };
             // Carpets keep to the grass's colour; flowers to their palette where one is set,
             // else, like plants that grow alone, the brightest against the grass are rarest.
             match (plant.spread, flower_anchor) {

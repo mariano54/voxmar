@@ -879,7 +879,10 @@ impl Overworld {
     pub(crate) fn surface_layers(&self, site: &Site, x: i32, z: i32) -> Layers {
         let layers = self.layers_of(site, x, z);
         match layers.filler {
-            Fill::Rock => Layers { top: self.terrain.band(self.rock_bands(site), site.height, x, z), ..layers },
+            // Bare rock's top is the bed at its height, unless a ledge holds snow or grass.
+            Fill::Rock if layers.top != self.terrain.ids.snow && layers.top != self.terrain.ids.grass => {
+                Layers { top: self.terrain.band(self.rock_bands(site), site.height, x, z), ..layers }
+            }
             _ => layers,
         }
     }
@@ -914,6 +917,15 @@ impl Overworld {
         let cliff = || rules.cliff(surface, &spot, stones, strata);
         let steep = site.steepness.max(0.5 * site.slope as f32);
         if past(steep, 2.3, 3.2) {
+            // A ledge in the face, level with its neighbours, holds snow where it is cold
+            // and grass where it is not too high, as ledges do.
+            let ledge = site.slope == 0 && terrain.chance(x, z) < 0.8;
+            if ledge && past(-t, -1.0, 2.0) {
+                return Layers { top: ids.snow, ..cliff() };
+            }
+            if ledge && above < 140.0 && site.vegetation > 0.3 {
+                return Layers { top: ids.grass, ..cliff() };
+            }
             return cliff();
         }
         // Cold: ground under snow, then deep snow (powdery where it is coldest).
