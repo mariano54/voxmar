@@ -212,6 +212,10 @@
 
     "skills.gained": "+{xp} {skill}",
     "skills.level_up": "Level {level}",
+    "target.kept": "Kept",
+    "target.kept_by": "Kept by {owner}",
+    "target.young": "Young",
+    "target.ready": "Ready to breed",
     "skills.needs": "Needs {skill} {level}",
 
     "character.health": "Health",

@@ -124,6 +124,11 @@ pub struct RemotePlayers {
 }
 
 impl RemotePlayers {
+    /// What another player is called, while they are here.
+    pub fn name(&self, id: PlayerId) -> Option<&str> {
+        self.players.get(&id).map(|(view, _)| view.name.as_str())
+    }
+
     /// Where another player stands, if they are in sight.
     pub fn position(&self, id: PlayerId) -> Option<Vec3> {
         self.players.get(&id).map(|(view, _)| view.position)

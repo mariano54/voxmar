@@ -1,19 +1,21 @@
 //! The target readout, RuneScape-style but small: the creature under the crosshair (or the
 //! one being fought, for a while after the last blow) named at the top of the screen with
 //! its combat level, coloured by how it compares with ours; once struck at, a thin bar of
-//! its health underneath.
+//! its health underneath. A kept animal says so (and whose, when it is someone else's), as
+//! do one still young and one ready to breed, in a quiet line under the name.
 
 use bevy::color::Mix;
 use bevy::prelude::*;
 
-use crate::creatures::Creatures;
+use crate::creatures::{Creatures, Keeper, Sighting};
+use crate::net::RemotePlayers;
 use crate::interact::Target;
 use crate::lang::Locale;
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{BODY, ERROR, GOLD, TEXT, UiFont, shadowed};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, MUTED, SOFT, TEXT, UiFont, shadowed, text};
 
 /// Seconds the creature last struck at stays in the readout after the crosshair leaves it.
 const FIGHTING: f32 = 6.0;
@@ -43,7 +45,12 @@ pub struct Readout {
     /// The level's colour against our own combat level.
     pub colour: Color,
     pub health: Option<f32>,
+    /// Kept, young, ready to breed: each as written, and its colour.
+    pub tags: Vec<(String, Color)>,
 }
+
+/// Tags shown at most: kept, young, ready.
+const TAGS: usize = 3;
 
 #[derive(Component)]
 struct ReadoutPlate;
@@ -55,6 +62,12 @@ struct ReadoutLevel;
 struct ReadoutBar;
 #[derive(Component)]
 struct ReadoutFill;
+#[derive(Component)]
+struct ReadoutTags;
+#[derive(Component)]
+struct ReadoutTag(usize);
+#[derive(Component)]
+struct ReadoutDot(usize);
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -73,6 +86,16 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             plate.spawn(line).with_children(|line| {
                 line.spawn((shadowed(font, "", BODY, TEXT), ReadoutName));
                 line.spawn((shadowed(font, "", BODY, GOLD), ReadoutLevel));
+            });
+            let tags = Node { column_gap: Val::Px(4.0 * PX), display: Display::None, ..default() };
+            plate.spawn((tags, ReadoutTags)).with_children(|tags| {
+                for i in 0..TAGS {
+                    // A dot before every tag but the first.
+                    if i > 0 {
+                        tags.spawn((text(font, "·", BODY, MUTED), ReadoutDot(i)));
+                    }
+                    tags.spawn((shadowed(font, "", BODY, SOFT), ReadoutTag(i)));
+                }
             });
             plate.spawn((bar, Piece::Well.image(), ReadoutBar)).with_child((
                 Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
@@ -105,8 +128,12 @@ fn show(
     mut plate: Query<&mut Visibility, (With<ReadoutPlate>, Without<ReadoutBar>)>,
     mut bar: Query<&mut Visibility, (With<ReadoutBar>, Without<ReadoutPlate>)>,
     mut fill: Query<&mut Node, With<ReadoutFill>>,
-    mut name: Query<&mut Text, (With<ReadoutName>, Without<ReadoutLevel>)>,
-    mut level: Query<(&mut Text, &mut TextColor), (With<ReadoutLevel>, Without<ReadoutName>)>,
+    mut name: Query<&mut Text, (With<ReadoutName>, Without<ReadoutLevel>, Without<ReadoutTag>)>,
+    mut level: Query<(&mut Text, &mut TextColor), (With<ReadoutLevel>, Without<ReadoutName>, Without<ReadoutTag>)>,
+    mut tag_row: Query<&mut Node, (With<ReadoutTags>, Without<ReadoutFill>)>,
+    mut tag_texts: Query<(&ReadoutTag, &mut Text, &mut TextColor, &mut Visibility), (Without<ReadoutName>, Without<ReadoutLevel>, Without<ReadoutPlate>, Without<ReadoutBar>)>,
+    mut dots: Query<(&ReadoutDot, &mut Visibility), (Without<ReadoutTag>, Without<ReadoutPlate>, Without<ReadoutBar>)>,
+    players: Res<RemotePlayers>,
 ) {
     let screen_open = ui.inventory_open || ui.character_open || ui.menu_open;
     let creature = target.creature.or_else(|| creatures.fighting(time.elapsed_secs(), FIGHTING)).filter(|_| !screen_open && !player.dead);
@@ -121,6 +148,7 @@ fn show(
                 level: locale.format("character.level", &[("level", &def.level)]),
                 colour: level_colour(def.level, ours),
                 health: seen.struck.then(|| seen.health as f32 / def.health.max(1) as f32),
+                tags: tags(&locale, &players, &seen),
             }
         }
         None => Readout::default(),
@@ -150,7 +178,51 @@ fn show(
         }
         color.set_if_neq(TextColor(next.colour));
     }
+    if let Ok(mut row) = tag_row.single_mut() {
+        let display = if next.tags.is_empty() { Display::None } else { Display::Flex };
+        if row.display != display {
+            row.display = display;
+        }
+    }
+    for (ReadoutDot(i), mut visibility) in &mut dots {
+        visibility.set_if_neq(if *i < next.tags.len() { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    for (ReadoutTag(i), mut text, mut color, mut visibility) in &mut tag_texts {
+        match next.tags.get(*i) {
+            Some((words, colour)) => {
+                if text.0 != *words {
+                    text.0.clone_from(words);
+                }
+                color.set_if_neq(TextColor(*colour));
+                visibility.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
     *readout = next;
+}
+
+/// The quiet line under a creature's name: kept (and by whom, when not by us), young, and
+/// ready to breed.
+fn tags(locale: &Locale, players: &RemotePlayers, seen: &Sighting) -> Vec<(String, Color)> {
+    let mut tags = Vec::new();
+    match seen.keeper {
+        Some(Keeper::Other(owner)) => match players.name(owner) {
+            Some(name) => tags.push((locale.format("target.kept_by", &[("owner", &name)]), SOFT)),
+            None => tags.push((locale.get("target.kept").to_owned(), SOFT)),
+        },
+        Some(Keeper::Us | Keeper::Away) => tags.push((locale.get("target.kept").to_owned(), SOFT)),
+        None => {}
+    }
+    if seen.young {
+        tags.push((locale.get("target.young").to_owned(), SOFT));
+    }
+    if seen.ready {
+        tags.push((locale.get("target.ready").to_owned(), ACCENT));
+    }
+    tags
 }
 
 fn hide(mut readout: ResMut<Readout>, mut plate: Query<&mut Visibility, With<ReadoutPlate>>) {
@@ -163,6 +235,19 @@ fn hide(mut readout: ResMut<Readout>, mut plate: Query<&mut Visibility, With<Rea
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kept_young_and_ready_animals_say_so() {
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let locale = Locale::load(&content, "en");
+        let players = RemotePlayers::default();
+        let seen = |keeper, young, ready| Sighting { species: voxmar_engine::creature::CreatureId(0), health: 3, struck: false, keeper, young, ready };
+        let words = |seen: Sighting| tags(&locale, &players, &seen).into_iter().map(|(words, _)| words).collect::<Vec<_>>();
+        assert!(words(seen(None, false, false)).is_empty());
+        assert_eq!(words(seen(Some(Keeper::Us), true, true)), ["Kept", "Young", "Ready to breed"]);
+        // Someone else's, with them away: still kept, without a name to give.
+        assert_eq!(words(seen(Some(Keeper::Other(7)), false, false)), ["Kept"]);
+    }
 
     #[test]
     fn levels_redden_above_ours_and_green_below() {

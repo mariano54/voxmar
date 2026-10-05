@@ -200,6 +200,10 @@
 
     "skills.gained": "+{xp} {skill}",
     "skills.level_up": "レベル{level}",
+    "target.kept": "飼育中",
+    "target.kept_by": "{owner}が飼育",
+    "target.young": "子ども",
+    "target.ready": "繁殖できる",
     "skills.needs": "{skill} {level} が必要",
 
     "character.health": "体力",

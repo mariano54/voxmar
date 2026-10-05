@@ -1227,7 +1227,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("tame", Ok(format!("a junglefowl is ours after {in_phase:.1}s of feeding")));
-                gate.next(Step::Gorge, now);
+                gate.advance(now);
             } else if in_phase > 25.0 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
@@ -1238,6 +1238,24 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.3);
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        3 => {
+            // Looking at our new junglefowl, the target readout says it is kept.
+            if let Some(view) = hen(world) {
+                aim_at(world, view.position + Vec3::Y * 0.3);
+            }
+            let kept = world.resource::<crate::lang::Locale>().get("target.kept").to_owned();
+            let readout = world.resource::<crate::hud::target::Readout>();
+            let tags: Vec<&str> = readout.tags.iter().map(|(words, _)| words.as_str()).collect();
+            if tags.contains(&kept.as_str()) {
+                let detail = format!("{} {}: {}", readout.name, readout.level, tags.join(", "));
+                gate.check("readout: kept", Ok(detail));
+                gate.next(Step::Gorge, now);
+            } else if in_phase > 3.0 {
+                let detail = format!("aimed at the tamed junglefowl, it read {:?} {:?} with tags {tags:?}", readout.name, readout.level);
+                gate.check("readout: kept", Err(detail));
+                gate.next(Step::Gorge, now);
             }
         }
         _ => {}
