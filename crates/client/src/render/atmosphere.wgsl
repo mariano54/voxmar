@@ -319,25 +319,32 @@ fn cloud_light(a: Atmosphere, eye: vec3<f32>, world: vec3<f32>, to_sun: vec3<f32
     return 1.0 - a.cloud_look.x * smoothstep(0.0, 0.5, cloud_middle(a, crossing - eye.xz));
 }
 
-// The low cloud along `direction` (upwards) from `origin`, as one look where the ray crosses
-// the middle of the layer, for the sky in reflections: its base, lit by `sun` from above
-// and by `sky`, seen through the air on the way, in premultiplied colour and opacity.
-fn cloud_seen(a: Atmosphere, eye: vec3<f32>, origin: vec3<f32>, direction: vec3<f32>, to_sun: vec3<f32>, sun: vec3<f32>, sky: vec3<f32>) -> vec4<f32> {
+// How opaque the low cloud looks along `direction` (upwards) from `origin`, from one look
+// where the ray crosses the middle of the layer (x), and how far away that is (y).
+fn cloud_across(a: Atmosphere, eye: vec3<f32>, origin: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
     let middle = 0.5 * (a.cloud_shape.x + a.cloud_shape.y);
     if a.cloud_look.z <= 0.0 || direction.y <= 0.01 || origin.y >= middle {
-        return vec4(0.0);
+        return vec2(0.0);
     }
     let along = (middle - origin.y) / direction.y;
     if along > a.cloud_look.w {
-        return vec4(0.0);
+        return vec2(0.0);
     }
     let density = cloud_middle(a, origin.xz + direction.xz * along - eye.xz);
-    let alpha = smoothstep(0.0, 0.35, density) * smoothstep(0.01, 0.08, direction.y);
+    return vec2(smoothstep(0.0, 0.35, density) * smoothstep(0.01, 0.08, direction.y), along);
+}
+
+// The low cloud along `direction` (upwards) from `origin` (see `cloud_across`), for the sky
+// in reflections: its base, lit by `sun` from above and by `sky`, seen through the air on
+// the way, in premultiplied colour and opacity.
+fn cloud_seen(a: Atmosphere, eye: vec3<f32>, origin: vec3<f32>, direction: vec3<f32>, to_sun: vec3<f32>, sun: vec3<f32>, sky: vec3<f32>) -> vec4<f32> {
+    let across = cloud_across(a, eye, origin, direction);
+    let alpha = across.x;
     if alpha <= 0.0 {
         return vec4(0.0);
     }
     let white = vec3(dot(sun, vec3(0.2126, 0.7152, 0.0722)));
     let lit = (mix(sun, white, 0.5) * 0.4 + sky * 0.7) * (1.0 - 0.5 * a.cloud_shape.w);
-    let air = air_along(a, origin, direction * along, to_sun);
+    let air = air_along(a, origin, direction * across.y, to_sun);
     return vec4((lit * air.transmittance + air.light) * alpha, alpha);
 }

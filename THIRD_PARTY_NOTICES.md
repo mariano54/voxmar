@@ -201,16 +201,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Field recordings from Freesound (rain, thunder, water)
+## Field recordings from Freesound (rain, thunder, water, hail, caves, lava)
 
 Every recording below is dedicated to the public domain under Creative Commons CC0 1.0
 Universal (https://creativecommons.org/publicdomain/zero/1.0/), which requires no notice;
 we credit the recordists anyway. Licences were checked on each sound's page on 5 October
-2026. We used Freesound's high-quality previews and changed them: cut into short pieces,
+2026 (the last five rows on 6 October). We used Freesound's high-quality previews and changed them: cut into short pieces,
 filtered (high- and low-pass), levelled, faded in and out, a mono recording made stereo
 from two different stretches, a close thunder clap low-passed to sound farther off, and
 encoded as MP3. The files are in `assets/content/base/sounds/` and are listed in
-`ambience.ron` (rain, drips, stream, lake) and `sounds.ron` (thunder, swimming, splashes).
+`ambience.ron` (rain, drips, stream, lake, waterfall, hail, cave air, lava) and `sounds.ron`
+(thunder, swimming, splashes).
 
 | Our files | Recording | Recordist | Source |
 | --- | --- | --- | --- |
@@ -225,3 +226,7 @@ encoded as MP3. The files are in `assets/content/base/sounds/` and are listed in
 | `thunder_far_1..3.mp3` | Dry storm thunders | fran_marenco | https://freesound.org/s/796529/ |
 | `swim_1..6.mp3` | water movements swimming around various splashes random.flac | kyles | https://freesound.org/s/637958/ |
 | `splash_1..3.mp3` | Foley_Natural_Water_Jump_Mono.wav | Nox_Sound | https://freesound.org/s/585744/ |
+| `waterfall_1..3.mp3` | Waterfall sound. | Tom_Kaszuba | https://freesound.org/s/660255/ |
+| `hail_1..3.mp3` | Hail and Rain in the Courtyard | qubodup | https://freesound.org/s/162213/ |
+| `cave_1..3.mp3` | Quarry Tunnel Ambience 1, Large Splash (a quiet stretch without the splash) | ecfike | https://freesound.org/s/476318/ |
+| `lava_1..3.mp3` | Lava Loop 3 (a slowed, processed recording of a chemical boiling) | Fission9 | https://freesound.org/s/474851/ |

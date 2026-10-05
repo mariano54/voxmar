@@ -7,7 +7,7 @@
 #define_import_path voxmar::lighting
 
 #import bevy_pbr::mesh_view_bindings::{view, lights, globals}
-#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_light, cloud_seen, far_color}
+#import voxmar::atmosphere::{Atmosphere, Aerial, aerial, cloud_across, cloud_light, cloud_seen, far_color}
 #import voxmar::clouds::value_noise
 #import voxmar::shadows::soft_shadow
 
@@ -190,6 +190,13 @@ fn air_between(world: vec3<f32>) -> Aerial {
 // premultiplied colour and opacity.
 fn reflected_cloud(world: vec3<f32>, direction: vec3<f32>) -> vec4<f32> {
     return cloud_seen(atmosphere, view.world_position, world, direction, sun_direction(), sun_color(), lights.ambient_color.rgb);
+}
+
+// How much of the sun's disc the low cloud leaves in view from `world`. A glint off water
+// is the sun itself, mirrored, so it hides behind cloud as the sun does, not just dims as
+// the light beneath does.
+fn sun_unclouded(world: vec3<f32>) -> f32 {
+    return 1.0 - cloud_across(atmosphere, view.world_position, world, sun_direction()).x;
 }
 
 // `color` at `world` seen through the air. Real chunks, distant terrain, water and the
