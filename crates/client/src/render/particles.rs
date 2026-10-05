@@ -464,9 +464,13 @@ fn queue(
         let retained = &view.retained_view_entity;
         let (Some(phase), Some(&view_key)) = (phases.get_mut(retained), view_keys.get(retained)) else { continue };
         phase.remove(key.0);
-        let Some(pipeline) = drawing.then(|| gpu.pipeline(view_key, &mesh_pipeline, &mut layouts, &cache)).flatten() else {
+        // Asked for while nothing is drawn too, so it is compiled as the world loads: on
+        // Metal, Bevy compiles on the render thread, which held the frame of the first
+        // block broken.
+        let Some(pipeline) = gpu.pipeline(view_key, &mesh_pipeline, &mut layouts, &cache) else { continue };
+        if !drawing {
             continue;
-        };
+        }
         let batch = OpaqueNoLightmap3dBatchSetKey { pipeline, draw_function, material_bind_group_index: None, slabs: default() };
         let bin = OpaqueNoLightmap3dBinKey { asset_id: AssetId::<Mesh>::default().untyped() };
         phase.add(batch, bin, (gpu.item, key.0), InputUniformIndex::default(), BinnedRenderPhaseType::NonMesh);

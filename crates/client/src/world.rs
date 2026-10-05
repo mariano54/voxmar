@@ -261,6 +261,11 @@ impl ClientWorld {
         Ok(())
     }
 
+    /// Whether the column and its eight neighbours are all loaded, so it can be meshed.
+    fn meshable(&self, pos: ColumnPos) -> bool {
+        (-1..=1).all(|dz| (-1..=1).all(|dx| self.voxels.contains(pos.offset(dx, dz))))
+    }
+
     fn neighborhood(&self, pos: ColumnPos) -> Option<Neighborhood> {
         let mut columns = Vec::with_capacity(9);
         for dz in -1..=1 {
@@ -298,19 +303,30 @@ fn dispatch_jobs(
     }
     let voxels = &world.voxels;
     world.dirty.retain(|pos| voxels.contains(*pos));
-    let mut ready: Vec<ColumnPos> = world
-        .dirty
-        .iter()
-        .copied()
-        .filter(|pos| !world.in_flight.contains(pos) && world.voxels.contains(*pos))
-        .collect();
+    // Columns at the edge of the loaded area wait for neighbours. While the world streams
+    // in, thousands wait, so this pass runs every frame: it only looks columns up.
+    let mut meshable = 0;
+    let mut ready = Vec::new();
+    for &pos in &world.dirty {
+        if world.meshable(pos) {
+            meshable += 1;
+            if !world.in_flight.contains(&pos) {
+                ready.push(pos);
+            }
+        }
+    }
+    // The nearest first, sorting only as many as there are free jobs.
+    let free = max_in_flight.saturating_sub(world.in_flight.len()).min(ready.len());
+    if free < ready.len() {
+        ready.select_nth_unstable_by_key(free, |pos| pos.distance(center));
+        ready.truncate(free);
+    }
     ready.sort_unstable_by_key(|pos| pos.distance(center));
 
+    let mut dispatched = 0;
     for pos in ready {
-        if world.in_flight.len() >= max_in_flight {
-            break;
-        }
         let Some(columns) = world.neighborhood(pos) else { continue };
+        dispatched += 1;
         world.dirty.remove(&pos);
         world.in_flight.insert(pos);
         let registry = world.registry.clone();
@@ -325,8 +341,7 @@ fn dispatch_jobs(
         });
     }
     world.stats.jobs_in_flight = world.in_flight.len();
-    // Columns at the edge of the loaded area wait for neighbours; only count meshable ones.
-    world.stats.pending_columns = world.dirty.iter().filter(|p| world.neighborhood(**p).is_some()).count();
+    world.stats.pending_columns = meshable - dispatched;
 }
 
 /// Hands finished jobs to the renderer, skipping meshes that did not change.

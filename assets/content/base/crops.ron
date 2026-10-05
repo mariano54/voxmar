@@ -206,6 +206,25 @@
             comfort: (temperature: (20.0, 42.0), moisture: (0.05, 1.0)),
             harvest: [(item: "marula", count: (2, 3))],
         ),
+        // Dates of the desert palm, tamarind of the savanna, pine nuts of the stone pine.
+        (
+            name: "dates", sown: false, fruit: true, regrow: 0, level: 26, rarity: Uncommon, xp: (plant: 0.0, harvest: 22.0), minutes: 34.0,
+            stages: ["dates_leaves_0", "dates_leaves_1", "dates_leaves_2", "dates_leaves"],
+            comfort: (temperature: (20.0, 45.0), moisture: (0.0, 0.6)),
+            harvest: [(item: "dates", count: (3, 5))],
+        ),
+        (
+            name: "tamarind", sown: false, fruit: true, regrow: 0, level: 16, rarity: Uncommon, xp: (plant: 0.0, harvest: 14.0), minutes: 30.0,
+            stages: ["tamarind_leaves_0", "tamarind_leaves_1", "tamarind_leaves_2", "tamarind_leaves"],
+            comfort: (temperature: (20.0, 42.0), moisture: (0.05, 1.2)),
+            harvest: [(item: "tamarind", count: (2, 3))],
+        ),
+        (
+            name: "pine_nuts", sown: false, fruit: true, regrow: 0, level: 34, rarity: Rare, xp: (plant: 0.0, harvest: 26.0), minutes: 40.0,
+            stages: ["pine_nuts_leaves_0", "pine_nuts_leaves_1", "pine_nuts_leaves_2", "pine_nuts_leaves"],
+            comfort: (temperature: (-6.0, 18.0), moisture: (0.1, 1.2)),
+            harvest: [(item: "pine_nuts", count: (2, 4))],
+        ),
         // Opens and grows by night: it needs no light at all.
         (
             name: "moonbloom", level: 75, rarity: VeryRare, xp: (plant: 360.0, harvest: 1450.0, forage: 50.0), minutes: 60.0, light: 0,

@@ -523,6 +523,10 @@
         (template: "fruit_leaves", name: "cacao", all: (rarity: VeryRare), members: {"cacao": (tags: ["flavour:bitter", "dye:brown"])}),
         (template: "fruit_leaves", name: "baobab_fruit", all: (rarity: Rare), members: {"baobab_fruit": (tags: ["flavour:sour"])}),
         (template: "fruit_leaves", name: "marula", all: (rarity: Uncommon), members: {"marula": (tags: ["flavour:sweet", "flavour:sour"])}),
+        // More fruit of the trees grown for gathering: dates, tamarind and pine nuts.
+        (template: "fruit_leaves", name: "dates", all: (rarity: Uncommon), members: {"dates": (tags: ["flavour:sweet"])}),
+        (template: "fruit_leaves", name: "tamarind", all: (rarity: Uncommon), members: {"tamarind": (tags: ["flavour:sour", "flavour:sweet"])}),
+        (template: "fruit_leaves", name: "pine_nuts", all: (rarity: Rare), members: {"pine_nuts": (tags: ["nut", "flavour:nutty"])}),
         // The moonbloom, sown: its ripe plant and what it yields are the wild flower's.
         (
             template: "crop", name: "moonbloom", without: ["moonbloom"],
