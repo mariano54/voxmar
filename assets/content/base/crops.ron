@@ -63,6 +63,46 @@
             comfort: (temperature: (6.0, 28.0), moisture: (0.15, 0.8)),
             harvest: [(item: "saffron", count: (1, 2)), (item: "saffron_seeds", chance: 0.35, rarity: Uncommon)],
         ),
+        // Fruit on trees: picked by hand, back to bare leaves to fruit again. Not sown;
+        // trees grow them in their crowns (trees.ron's `fruit`), oaks apples and golden
+        // apples, cherry trees cherries, jungle trees oranges, palms coconuts, emberwoods
+        // emberfruit.
+        (
+            name: "apple", sown: false, fruit: true, regrow: 0, level: 1, rarity: Uncommon, xp: (plant: 0.0, harvest: 6.0), minutes: 20.0,
+            stages: ["apple_leaves_0", "apple_leaves_1", "apple_leaves_2", "apple_leaves"],
+            comfort: (temperature: (0.0, 22.0), moisture: (0.4, 1.8)),
+            harvest: [(item: "apple", count: (1, 2))],
+        ),
+        (
+            name: "cherries", sown: false, fruit: true, regrow: 0, level: 1, rarity: Rare, xp: (plant: 0.0, harvest: 14.0), minutes: 24.0,
+            stages: ["cherries_leaves_0", "cherries_leaves_1", "cherries_leaves_2", "cherries_leaves"],
+            comfort: (temperature: (2.0, 20.0), moisture: (0.5, 1.8)),
+            harvest: [(item: "cherries", count: (2, 4))],
+        ),
+        (
+            name: "orange", sown: false, fruit: true, regrow: 0, level: 1, rarity: Rare, xp: (plant: 0.0, harvest: 16.0), minutes: 26.0,
+            stages: ["orange_leaves_0", "orange_leaves_1", "orange_leaves_2", "orange_leaves"],
+            comfort: (temperature: (16.0, 34.0), moisture: (0.6, 2.5)),
+            harvest: [(item: "orange", count: (1, 2))],
+        ),
+        (
+            name: "coconut", sown: false, fruit: true, regrow: 0, level: 1, rarity: Uncommon, xp: (plant: 0.0, harvest: 8.0), minutes: 30.0,
+            stages: ["coconut_leaves_0", "coconut_leaves_1", "coconut_leaves_2", "coconut_leaves"],
+            comfort: (temperature: (20.0, 38.0), moisture: (0.4, 2.5)),
+            harvest: [(item: "coconut")],
+        ),
+        (
+            name: "golden_apple", sown: false, fruit: true, regrow: 0, level: 1, rarity: Legendary, xp: (plant: 0.0, harvest: 400.0), minutes: 120.0,
+            stages: ["golden_apple_leaves_0", "golden_apple_leaves_1", "golden_apple_leaves_2", "golden_apple_leaves"],
+            comfort: (temperature: (0.0, 24.0), moisture: (0.4, 2.0)),
+            harvest: [(item: "golden_apple")],
+        ),
+        (
+            name: "emberfruit", sown: false, fruit: true, regrow: 0, level: 1, rarity: VeryRare, xp: (plant: 0.0, harvest: 120.0), minutes: 60.0,
+            stages: ["emberfruit_leaves_0", "emberfruit_leaves_1", "emberfruit_leaves_2", "emberfruit_leaves"],
+            comfort: (temperature: (18.0, 45.0), moisture: (0.0, 1.0)),
+            harvest: [(item: "emberfruit", count: (1, 2))],
+        ),
         // Opens and grows by night: it needs no light at all.
         (
             name: "moonbloom", level: 75, rarity: VeryRare, xp: (plant: 360.0, harvest: 1450.0, forage: 50.0), minutes: 60.0, light: 0,

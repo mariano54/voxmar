@@ -107,6 +107,17 @@
             (name: "{name}_crop", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop3"), hardness: 0.0, drops: "{name}", color: (90, 150, 60), tags: ["plant", "crop", "ripe"]),
             (name: "{name}", render: Plant, solid: false, item: true, action: "base:plant", textures: All("{name}"), hardness: 0.0, color: (200, 120, 50), tags: ["produce", "root"]),
         ],
+        // Fruit on a tree: leaves that bear it, bare, in blossom, unripe and ripe (what trees
+        // grow with), then the fruit itself. Each is a leaf block like its tree's (same
+        // tint, shading and wind), its fruit drawn over the leaves untinted; picking a ripe
+        // one takes it back to bare to fruit again (crops.ron).
+        "fruit_leaves": [
+            (name: "{name}_leaves_0", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_0"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
+            (name: "{name}_leaves_1", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_1"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
+            (name: "{name}_leaves_2", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_2"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
+            (name: "{name}_leaves", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "ripe"]),
+            (name: "{name}", render: Plant, solid: false, item: true, textures: All("{name}"), hardness: 0.0, color: (200, 60, 40), tags: ["produce", "fruit", "edible"]),
+        ],
         // Fired clay in one colour.
         "terracotta": [
             (name: "{name}_terracotta", textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}"]),
@@ -473,6 +484,16 @@
         (template: "crop", name: "strawberry", all: (rarity: Rare), members: {"strawberry": (tags: ["edible", "berry", "fruit", "flavour:sweet", "dye:red", "alchemy:healing"])}),
         (template: "crop", name: "chili_pepper", all: (rarity: Rare), members: {"chili_pepper": (tags: ["edible", "spice", "flavour:spicy", "dye:red", "alchemy:warming"])}),
         (template: "crop", name: "saffron", all: (rarity: VeryRare), members: {"saffron": (tags: ["spice", "flavour:aromatic", "dye:yellow", "alchemy:clarity", "alchemy:calming"])}),
+        // Fruit trees' fruit (crops.ron); the trees grow the ripe leaves in their crowns.
+        (template: "fruit_leaves", name: "apple", all: (rarity: Uncommon), members: {"apple": (tags: ["flavour:sweet", "flavour:sour"])}),
+        (template: "fruit_leaves", name: "cherries", all: (rarity: Rare, tint: Some(None)), members: {"cherries": (tags: ["berry", "flavour:sweet", "dye:red"])}),
+        (template: "fruit_leaves", name: "orange", all: (rarity: Rare), members: {"orange": (tags: ["flavour:sweet", "flavour:sour", "dye:orange"])}),
+        (template: "fruit_leaves", name: "coconut", all: (rarity: Uncommon), members: {"coconut": (tags: ["flavour:sweet", "fibre"])}),
+        (template: "fruit_leaves", name: "golden_apple", all: (rarity: Legendary), members: {"golden_apple_leaves": (light: 4), "golden_apple": (light: 3, tags: ["flavour:sweet", "wonder", "glowing", "alchemy:regeneration", "alchemy:healing"])}),
+        (
+            template: "fruit_leaves", name: "emberfruit", all: (rarity: VeryRare, tint: Some(None), light: 7),
+            members: {"emberfruit": (light: 6, tags: ["flavour:spicy", "wonder", "glowing", "alchemy:fire_resistance", "alchemy:warming"])},
+        ),
         // The moonbloom, sown: its ripe plant and what it yields are the wild flower's.
         (
             template: "crop", name: "moonbloom", without: ["moonbloom"],

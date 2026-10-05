@@ -276,6 +276,19 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
     client.pump_until(|c| c.skills.xp(voxmar_engine::skill::SkillId(0)) == 110);
+
+    // Ripe fruit on a tree is picked by hand, at any level: the fruit pops out and the
+    // leaves go back to bare, to fruit again.
+    let leaves = feet + IVec3::new(-1, 1, 1);
+    client.ok("/setblock ~-1 ~1 ~1 apple_leaves");
+    let (ripe, bare, apple) = {
+        let blocks = &client.content.blocks;
+        (blocks.expect("base:apple_leaves"), blocks.expect("base:apple_leaves_0"), blocks.expect("base:apple"))
+    };
+    client.pump_until(|c| c.world.block(leaves) == Some(ripe));
+    client.propose("base:pick", ActionTarget::Block { block: leaves, face: Face::PosZ });
+    client.pump_until(|c| c.world.block(leaves) == Some(bare) && c.items.values().any(|i| i.stack.item == apple));
+    client.pump_until(|c| c.earned.last() == Some(&60));
 }
 
 #[test]

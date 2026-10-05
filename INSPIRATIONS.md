@@ -476,6 +476,17 @@ the other research notes). Ideas only: no code, numbers tables or art were copie
   earlier stage to fruit again (`regrow` in `crops.ron`, `Server::pick` in
   `crates/server/src/farm.rs`).
 
+### Croptopia and Fruitful Fun
+
+- Authors: thetrdev (Croptopia); Snownee (Fruitful Fun, formerly Fruit Trees)
+- Links: https://github.com/ExoPlant/Croptopia, https://github.com/Snownee/FruitfulFun
+- Licence: all rights reserved (both). Techniques only.
+- What we took: fruit as a leaf block of the tree's own, a share of a crown's leaves,
+  going from bare through blossom and unripe to ripe and back when picked, rather than a
+  block of its own hung in the tree (the `fruit_leaves` template in `blocks.ron`, fruit
+  crops in `crops.ron`, the untinted fruit overlay over tinted leaves in
+  `crates/client/src/main.rs`).
+
 ### RuneScape (Old School)
 
 - Author: Jagex

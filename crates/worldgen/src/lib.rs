@@ -1480,8 +1480,13 @@ mod tests {
                 };
                 // Poses are relative to the eye of the player the command takes there.
                 let forest = world.site(at.x, at.y).forest > 0.3;
-                let (back, up) = if forest { (20.0, 26.0) } else { (14.0, 11.0) };
-                println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,45,-8  above: --pose {back},{up},{back},45,-36", at.x, at.y, at.x, at.y);
+                let (back, up) = if forest { (20.0f32, 26.0f32) } else { (14.0, 11.0) };
+                // Above every hill between the player and the camera, and a little beyond.
+                let here = world.height(at.x, at.y);
+                let reach = back as i32 + 6;
+                let highest = (0..=reach).step_by(2).flat_map(|a| (0..=reach).step_by(2).map(move |b| (a, b))).map(|(a, b)| world.height(at.x + a, at.y + b)).max().unwrap_or(here);
+                let up = up.max((highest - here) as f32 + if forest { 24.0 } else { 9.0 });
+                println!("{name} at {},{}: --command \"/tp {} {}\" --pose 0,0.3,0,45,-8  above: --pose {back},{up:.0},{back},45,-36", at.x, at.y, at.x, at.y);
             }
             return;
         }
@@ -1979,7 +1984,9 @@ mod tests {
                 let inside = (0..19).contains(&cx) && (0..19).contains(&cz) && (0..voxmar_engine::coords::WORLD_HEIGHT).contains(&p.y);
                 inside.then(|| columns[(cz * 19 + cx) as usize].block(IVec3::new(p.x & 31, p.y, p.z & 31)))
             };
-            let lights: Vec<BlockId> = ["base:glowstone", "base:sea_lantern", "base:lava"].iter().filter_map(|n| registry.id(n)).collect();
+            // Glowing blocks light a view; lava does too, but a view over a lava sea shows
+            // the lava rather than the cave biome, so views near it are left out.
+            let lights: Vec<BlockId> = (0..registry.len() as u16).map(BlockId).filter(|&b| registry.def(b).light > 0 && b != lava).collect();
             let air = |p: IVec3| block(p).is_some_and(|b| b.is_air());
             let mut biomes: Vec<(String, u64, (i32, IVec3, f32))> = Vec::new();
             let mut total = 0;
@@ -2015,11 +2022,10 @@ mod tests {
                                     (view, yaw) = (length, (-dir.x).atan2(-dir.y).to_degrees());
                                 }
                             }
-                            let lit = (-8..=8)
-                                .flat_map(|dz| (-6..=6).flat_map(move |dy| (-8..=8).map(move |dx| IVec3::new(dx, dy, dz))))
-                                .filter(|&d| block(camera + d).is_some_and(|b| lights.contains(&b)))
-                                .count() as i32;
-                            let score = view + run.min(20) + 12 * lit.min(4);
+                            let around = || (-8..=8).flat_map(|dz| (-6..=6).flat_map(move |dy| (-8..=8).map(move |dx| IVec3::new(dx, dy, dz))));
+                            let lit = around().filter(|&d| block(camera + d).is_some_and(|b| lights.contains(&b))).count() as i32;
+                            let molten = !biomes[i].0.contains("molten") && (camera.y < caves::LAVA_LEVEL + 8 || around().any(|d| block(camera + d) == Some(lava)));
+                            let score = if molten { i32::MIN + 1 } else { view + run.min(20) + 12 * lit.min(4) };
                             if score > biomes[i].2.0 {
                                 biomes[i].2 = (score, camera, yaw);
                             }

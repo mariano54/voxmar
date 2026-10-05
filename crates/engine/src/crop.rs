@@ -29,6 +29,12 @@ pub struct CropDef {
     /// The item that plants it; `<name>_seeds` unless given.
     #[serde(default)]
     pub seed: String,
+    /// Whether players sow it at all: fruit on trees grows where the tree put it.
+    #[serde(default = "yes")]
+    pub sown: bool,
+    /// It grows on a tree or bush, so the ground and water beneath don't matter to it.
+    #[serde(default)]
+    pub fruit: bool,
     /// The blocks it grows through, from sprout to ripe; unless given, the crop
     /// template's `<name>_crop_0` to `_2` and the ripe `<name>_crop`.
     #[serde(default)]
@@ -66,6 +72,10 @@ pub struct CropDef {
     pub wild: Vec<String>,
     #[serde(default)]
     pub forage: Vec<Loot>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn farming() -> String {
@@ -143,7 +153,8 @@ struct CropFile {
 #[derive(Clone, Debug)]
 pub struct Crop {
     pub def: CropDef,
-    pub seed: BlockId,
+    /// The item that sows it, if players sow it.
+    pub seed: Option<BlockId>,
     pub stages: Vec<BlockId>,
     pub skill: SkillId,
     pub harvest: Vec<(BlockId, Loot)>,
@@ -216,7 +227,7 @@ impl CropRegistry {
             }
             let skill = skills.id(&def.skill).ok_or_else(|| error(format!("no skill `{}`", def.skill)))?;
             let id = CropId(registry.crops.len() as u16);
-            let seed = block(&def.seed)?;
+            let seed = if def.sown { Some(block(&def.seed)?) } else { None };
             let stages = def.stages.iter().map(|name| block(name)).collect::<Result<Vec<_>, _>>()?;
             let loot = |list: &[Loot]| list.iter().map(|loot| Ok((block(&loot.item)?, loot.clone()))).collect::<Result<Vec<_>, _>>();
             let (harvest, forage) = (loot(&def.harvest)?, loot(&def.forage)?);
@@ -225,7 +236,9 @@ impl CropRegistry {
                     registry.by_wild.insert(look.block, (id, look.size.max(1)));
                 }
             }
-            if registry.by_seed.insert(seed, id).is_some() {
+            if let Some(seed) = seed
+                && registry.by_seed.insert(seed, id).is_some()
+            {
                 return Err(error(format!("`{}` already plants another crop", def.seed)));
             }
             for (stage, &block) in stages.iter().enumerate() {
@@ -293,8 +306,8 @@ pub fn rate(def: &CropDef, at: Conditions) -> f32 {
     };
     let climate = fit(at.temperature, def.comfort.temperature, TEMPERATURE_MARGIN) * fit(at.moisture, def.comfort.moisture, MOISTURE_MARGIN);
     let light = if at.light >= def.light { 1.0 } else { 0.0 };
-    let soil = if at.fertile { 1.0 } else { 0.8 };
-    let water = if at.watered { 1.0 } else { 0.6 };
+    let soil = if at.fertile || def.fruit { 1.0 } else { 0.8 };
+    let water = if at.watered || def.fruit { 1.0 } else { 0.6 };
     let rate = climate * light * soil * water;
     if rate < STALLED { 0.0 } else { rate }
 }
