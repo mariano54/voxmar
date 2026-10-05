@@ -598,10 +598,19 @@ The water shader then composes the surface over the scene itself (alpha 1):
   **pixelated**, one normal per texel of the block textures, the glittering squares of
   Complementary's Reimagined style (Verdant does).
 - **Glints and foam.** A sharp sun highlight with a broader sheen, shadowed by the sun's
-  shadow maps; foam in drifting patches where waves break, where the bed comes within a
+  shadow maps and hidden where the low cloud covers the sun seen from that bit of water;
+  foam in drifting patches where waves break, where the bed comes within a
   third of a block of the surface (none on still water), slightly tinted by the water.
-- **Under water**, looking up, the surface shows the world above inside Snell's window and
-  mirrors the deep water outside it.
+- **Under water** the water takes the air's place in `aerial` (`under_water` in
+  atmosphere.wgsl), with the same absorption and scattering as water seen from above, for
+  the biome's water colour at the eye: red goes first and blue last, so the view closes in
+  over a few dozen blocks into blue, the bed takes the water's tint, and what lies deeper
+  is darker for the light that came down to it. The water's own glow is single scattering
+  of light fading with depth, integrated exactly along each ray (`water_glow`), three times
+  brighter for the light scattered more than once. Looking up, the surface shows the world
+  above inside Snell's window and, outside it, mirrors the water below, lit as the water
+  around the eye. The sky dome, which writes no depth so passes reading depth know the view
+  reaches it, shows only the water.
 - **Flowing water** (see "Fluid state" below for what the mesher reads). The surface slopes
   down from its source, the top edge of the sides with it, and the normal tilts with the
   slope. Like Minecraft's flowing water (which the Streams mod's rivers show), it carries

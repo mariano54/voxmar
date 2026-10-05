@@ -435,6 +435,15 @@ fn follow_camera(
     let cell = eye.floor().as_ivec3();
     let in_water = |p: IVec3| world.block(p).and_then(|b| registry.fluid(b)).filter(|s| Some(s.fluid) == water);
     cycle.underwater = in_water(cell).is_some_and(|s| in_water(cell + IVec3::Y).is_some() || eye.y - cell.y as f32 <= s.height());
+    if cycle.underwater {
+        // The surface above, which the light comes down through (no deeper than this is
+        // worth looking up: little light is left by then).
+        let mut top = cell;
+        while top.y - cell.y < 64 && in_water(top + IVec3::Y).is_some() {
+            top += IVec3::Y;
+        }
+        cycle.water_surface = top.y as f32 + in_water(top).map_or(1.0, |s| s.height());
+    }
 }
 
 #[cfg(test)]
