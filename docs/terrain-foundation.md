@@ -541,6 +541,11 @@ planning, whose grids sample the land the most. The next
 savings belong to step 3 (fields and splines worked out once per lattice point for both
 the 2D surface and the density) and step 4 (the shapes' 21% moves into the router).
 
+**Measured at step 2:** `first_column` 141.0 G instructions (+1.9% on step 1),
+`generation_stages` 369.7 G (+0.4%). The biome picker reads the land's continentalness at
+each 4-block cell, batched over a sampler's area, so the biome stage stays under 0.1 ms per
+column.
+
 ## 8. Migration plan
 
 Each step builds, passes the tests, looks right in captures and previews, bumps
@@ -575,6 +580,35 @@ Each step builds, passes the tests, looks right in captures and previews, bumps
    shadow at regional scale, roles from the router, `climate.ron` and biome claims
    re-authored on shared breakpoints, variants by Q or R. *Done when:* the section 6.6
    targets hold on seeds 1, 7 and 42, captures across borders.
+
+   *As built:* measuring first (`biome_spread`, with `AXES=1` for each climate axis alone)
+   showed what kept regions small: each axis alone makes regions 1.4–4 km across, but the
+   table's cells, where four bands meet, only 0.4–0.85 km, and moisture changed with
+   latitude as fast as temperature (evaporation by the local warmth, the circulation's
+   belts), so its borders ran beside temperature's and cut each zone into thin bands.
+   Biomes now go by a humidity (`humidity` in `climate.ron`) that weighs a slow 16 km
+   wetness field most and the wind's rain and the belts little, and leaves evaporation out,
+   as vanilla's humidity is independent of temperature; plants and the land's regions (the
+   router's `H`) read the same. Variants follow an 8 km field and aether a 12 km one, and
+   the scales of all of the climate's own fields are data (`scales`). Continentalness is the
+   land's own at each cell, kept to the dry side where the cell is land, so coasts no longer
+   carry strips of sea biomes. Altitude coupling, the ecotones' widths and the circulation
+   alone each changed little and stay as they were. Over twelve worlds (8 km maps, mean):
+   the median block of land lies in a region 1.63 km across (1.26 before), 71% of land in
+   regions at least 1 km across (59%), 31 biomes within 5 km of the middle (35), 25
+   counting variants and ecotones with their parents. Seed 7 holds every size target
+   (2.37 km, 75%); seeds 1 and 42 fall short (1.38 and 1.12 km, 66% and 63%), as much of
+   their land is islands and peninsulas narrower than a kilometre. The count of biomes
+   within 5 km cannot reach 15–25 with climate zones 10 km from pole to equator: every 5 km
+   radius holds every zone. It needs either zones about twice as wide or fewer kinds of
+   biome per zone; that is Mariano's call.
+
+   Bare rock in the same step (decor's colour-cohesion rule, `crate::hue`): each rock
+   province's exposed stones are the family of its main stone's colour, differing in
+   shade rather than hue, laid in beds one to four blocks thick that are the same all over
+   the province (`Province::bands`, `Fill::Rock`), on cliffs and wherever slope rules
+   place rock, whose patches are now tens of blocks across. `Overworld::strata` lists the
+   provinces' beds too, for distant terrain.
 3. **3D density.** Band-limited lattice density with factor and roughness; the fill from
    density; surface rules at exposed tops and undersides; rivers, lakes and trails as caps
    and floors; caves combined with `min`; exact `height()`. *Done when:* overhangs and

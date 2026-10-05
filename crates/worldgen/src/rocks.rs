@@ -23,9 +23,14 @@ pub struct Province {
     pub name: String,
     pub tags: Vec<String>,
     pub(crate) stones: Palette,
-    /// The stones where the rock shows at the surface (outcrops, scree, boulders): the
-    /// same, keeping to the colour of the main one (see `crate::hue`).
+    /// The stones where the rock shows at the surface (outcrops, scree, boulders): those of
+    /// the main one's colour family (see `crate::hue`), so bare rock varies in shade, not
+    /// in hue.
     pub(crate) outcrop: Palette,
+    /// Bare rock by height: the family's stones in beds one to four blocks thick, the same
+    /// all over the province, so cliffs and steep slopes show strata of the local stone
+    /// rather than a speckle.
+    pub(crate) bands: Vec<BlockId>,
 }
 
 pub struct Rocks {
@@ -52,11 +57,15 @@ impl Rocks {
         let provinces = content
             .provinces
             .iter()
-            .map(|p| Province {
-                name: p.name.clone(),
-                tags: p.tags.clone(),
-                stones: Palette::new(&p.stones, registry),
-                outcrop: Palette::harmonious(&p.stones, registry, [128.0; 3]),
+            .map(|p| {
+                let family = Palette::family(&p.stones, registry);
+                Province {
+                    name: p.name.clone(),
+                    tags: p.tags.clone(),
+                    stones: Palette::new(&p.stones, registry),
+                    bands: bands(&family, crate::rarity::name_hash(&p.name)),
+                    outcrop: Palette::weighted(family),
+                }
             })
             .collect();
         Self { provinces, shares, seed: seed ^ PURPOSE }
@@ -156,6 +165,28 @@ impl Rocks {
     }
 }
 
+/// Beds of stone by weight, one to four blocks thick, enough of them that the pattern
+/// repeats only every hundred blocks or so; the same for a province in every world, as
+/// its rock is.
+fn bands(family: &[(BlockId, f32)], seed: u64) -> Vec<BlockId> {
+    let total: f32 = family.iter().map(|f| f.1).sum();
+    if family.is_empty() || total <= 0.0 {
+        return Vec::new();
+    }
+    let mut rng = crate::rng::Rng::new(seed, PURPOSE, 0, 0);
+    let mut out = Vec::new();
+    while out.len() < 100 {
+        let mut u = rng.unit() * total;
+        let block = family.iter().find(|f| {
+            u -= f.1;
+            u < 0.0
+        });
+        let block = block.map_or(family[0].0, |f| f.0);
+        out.extend(std::iter::repeat_n(block, rng.range(1, 5) as usize));
+    }
+    out
+}
+
 /// Some of a world's provinces, and how far inside them a position lies.
 pub struct ProvinceMask {
     /// The world's province cells, without their stones.
@@ -232,6 +263,29 @@ mod tests {
                 }
             }
             assert_eq!(rocks.nearest(px, pz), best.1, "at ({px}, {pz})");
+        }
+    }
+
+    /// Bare rock is beds of one colour family, differing in shade rather than hue: no
+    /// clashing stone among a province's bands or outcrops.
+    #[test]
+    fn bare_rock_keeps_to_one_colour_family() {
+        let registry = BlockRegistry::from_ron("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+        let content = WorldContent::base(&registry).unwrap();
+        let rocks = Rocks::new(5, &content, &registry, &crate::rarity::Featured::new(5, 0.5));
+        let color = |block: BlockId| registry.def(block).color.map(f32::from);
+        for i in 0..rocks.len() {
+            let province = rocks.get(ProvinceId(i as u8));
+            assert!(province.bands.len() >= 100, "{}", province.name);
+            let mut counts: std::collections::HashMap<BlockId, usize> = Default::default();
+            for &block in &province.bands {
+                *counts.entry(block).or_default() += 1;
+            }
+            let main = *counts.iter().max_by_key(|c| c.1).unwrap().0;
+            for block in province.bands.iter().chain(province.outcrop.blocks().collect::<Vec<_>>().iter()) {
+                let harmony = crate::hue::harmony(color(*block), color(main), crate::hue::GROUND_SPREAD);
+                assert!(harmony > 0.2, "{}: {} beside {} ({harmony})", province.name, registry.def(*block).name, registry.def(main).name);
+            }
         }
     }
 

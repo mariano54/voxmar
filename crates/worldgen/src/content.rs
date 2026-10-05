@@ -75,7 +75,62 @@ pub struct ClimateDef {
     /// stretching a tail gives a rare slot more land without changing the terrain.
     #[serde(default)]
     pub remaps: Vec<RemapDef>,
+    /// How far the regional climate's own fields vary, in blocks.
+    #[serde(default)]
+    pub scales: ScalesDef,
+    /// What the humidity biomes are placed by is made of.
+    #[serde(default)]
+    pub humidity: HumidityDef,
     pub frost: FrostDef,
+}
+
+/// Wavelengths of the regional climate's own noise fields, in blocks: how large the
+/// regions they shape are.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ScalesDef {
+    /// Warm and cold anomalies of the sea-level temperature (±5 °C).
+    pub anomaly: f32,
+    /// Wetter and drier regions.
+    pub wetness: f32,
+    /// The field rare biomes take the extremes of.
+    pub weirdness: f32,
+    /// Where the land is fantastical.
+    pub aether: f32,
+    /// How rich the soil is.
+    pub fertility: f32,
+    /// The field that picks a biome's variants.
+    pub variant: f32,
+}
+
+/// The humidity biomes, plants and the land's regions read, in moisture's units
+/// (precipitation over evaporation): a slow wetness field, the rain the prevailing wind
+/// brings (wet coasts, dry interiors and rain shadows) and the latitude's wet and dry belts,
+/// weighed together. It leaves out how much the local warmth evaporates, which varies with
+/// latitude as fast as temperature does: biomes split by both would come in thin bands.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct HumidityDef {
+    /// The median humidity of a world of average humidity.
+    pub median: f32,
+    /// How widely it spreads: the standard deviation of its logarithm.
+    pub spread: f32,
+    /// The weights of the slow wetness field, of the wind's rain and of the belts.
+    pub wetness: f32,
+    pub wind: f32,
+    pub belts: f32,
+}
+
+impl Default for HumidityDef {
+    fn default() -> Self {
+        Self { median: 0.72, spread: 0.6, wetness: 0.8, wind: 0.5, belts: 0.33 }
+    }
+}
+
+impl Default for ScalesDef {
+    fn default() -> Self {
+        Self { anomaly: 8000.0, wetness: 6000.0, weirdness: 11000.0, aether: 2200.0, fertility: 700.0, variant: 800.0 }
+    }
 }
 
 /// Named bands along one axis: `names[i]` lies below `edges[i]` and above `edges[i - 1]`.

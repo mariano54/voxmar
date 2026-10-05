@@ -367,6 +367,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let layers = world.surface_layers(&site, wx, wz);
             let stones = world.stones(&site);
             let strata = world.surface_of(&site, wx, wz).1;
+            let bands = world.rock_bands(&site);
             drop(surface);
             {
                 let _stage = stage::enter(Stage::Caves);
@@ -421,6 +422,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 } else if below_surface <= layers.depth && layers.filler != Fill::Stones {
                     match layers.filler {
                         Fill::Block(block) => block,
+                        Fill::Rock => terrain.band(bands, y, wx, wz),
                         _ => terrain.band(strata, y, wx, wz),
                     }
                 } else {
@@ -861,19 +863,37 @@ impl Overworld {
         self.biomes.get(site.biome).stones.as_ref().unwrap_or(&self.rocks.get(site.province).stones)
     }
 
+    /// Bare rock by height, in beds of its rock province's stones; none where the biome
+    /// has stones of its own.
+    pub(crate) fn rock_bands(&self, site: &Site) -> &[BlockId] {
+        match self.biomes.get(site.biome).stones {
+            Some(_) => &[],
+            None => &self.rocks.get(site.province).bands,
+        }
+    }
+
     /// The stones where the rock shows at the surface: the biome's own, or its rock
     /// province's outcrop stones.
     pub(crate) fn outcrop(&self, site: &Site) -> &Palette {
         self.biomes.get(site.biome).stones.as_ref().unwrap_or(&self.rocks.get(site.province).outcrop)
     }
 
-    /// The surface at a site, from the top down.
+    /// The surface at a site, from the top down. Bare rock's top is the bed at its height,
+    /// as in the column below it.
     pub(crate) fn surface_layers(&self, site: &Site, x: i32, z: i32) -> Layers {
+        let layers = self.layers_of(site, x, z);
+        match layers.filler {
+            Fill::Rock => Layers { top: self.terrain.band(self.rock_bands(site), site.height, x, z), ..layers },
+            _ => layers,
+        }
+    }
+
+    fn layers_of(&self, site: &Site, x: i32, z: i32) -> Layers {
         let terrain = &self.terrain;
         let ids = &terrain.ids;
         let d = terrain.dither(x, z);
         let mix = || terrain.mix(x, z);
-        let spot = Spot { site, x, z, dither: d, mix: &mix, chance: terrain.chance(x, z), sampled: Default::default() };
+        let spot = Spot { site, x, z, dither: d, mix: &mix, chance: terrain.chance(x, z), bands: self.rock_bands(site), sampled: Default::default() };
         let biome = self.biomes.get(site.biome);
         let (surface, strata) = self.surface_of(site, x, z);
         let stones = self.outcrop(site);
