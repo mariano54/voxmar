@@ -8,7 +8,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory),
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
@@ -91,6 +91,7 @@ struct Options {
     time: Option<f32>,
     menu: bool,
     inventory: bool,
+    character: bool,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
     /// `--press left|right`: hold a mouse button at the start of the clip.
@@ -123,6 +124,7 @@ fn parse_options() -> Result<Options, String> {
         time: None,
         menu: false,
         inventory: false,
+        character: false,
         flicker: None,
         clip: None,
         press: None,
@@ -157,6 +159,7 @@ fn parse_options() -> Result<Options, String> {
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
             "--menu" => options.menu = true,
             "--inventory" => options.inventory = true,
+            "--character" => options.character = true,
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -322,6 +325,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             time: options.time,
             menu: options.menu,
             inventory: options.inventory,
+            character: options.character,
             flicker: options.flicker,
             clip: options.clip,
             press: options.press,

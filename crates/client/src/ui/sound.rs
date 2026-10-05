@@ -3,8 +3,8 @@
 //! (`UiSounds` in the settings). Every set is synthesized at startup, like the block
 //! sounds, and follows the sound effects volume.
 //!
-//! Each sound is a struck object: a few decaying sine modes (a wood block's inharmonic
-//! ones, a glass's bright pair, a slate's low ones) over a short low-passed noise strike.
+//! Each sound is a few decaying sine partials, which may glide in pitch, be frequency
+//! modulated or blip twice, and may carry a breath of high noise.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -38,101 +38,102 @@ pub enum UiSound {
 #[derive(Component)]
 pub struct Silent;
 
-/// The sets of interface sounds a player can choose from.
+/// The sets of interface sounds a player can choose from: clean, short and a little
+/// futuristic.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiSounds {
-    /// A small wooden knock.
+    /// A short low thump under a tiny bright tick, like a phone's haptic click.
     #[default]
-    Wood,
-    /// Glass ringing softly, a fifth apart.
-    Chime,
-    /// Almost all strike, like a pen tapped on paper; the quietest.
-    Tick,
-    /// A low tap on slate, with weight.
-    Stone,
-    /// A short rising shimmer, the teal glow of the interface as sound.
-    Arcane,
+    Haptic,
+    /// A high, pure tick with its octave, gone almost at once.
+    Glass,
+    /// A minimal digital blip; items blip twice, rising.
+    Blip,
+    /// A soft synth click that drops in pitch.
+    Pulse,
+    /// A sci-fi chirp: frequency modulation settling into a clean tone.
+    Signal,
+    /// Almost only air: a short breath of high noise. The quietest.
+    Tap,
     Off,
 }
 
 impl UiSounds {
-    pub const ALL: [UiSounds; 6] = [UiSounds::Wood, UiSounds::Chime, UiSounds::Tick, UiSounds::Stone, UiSounds::Arcane, UiSounds::Off];
+    pub const ALL: [UiSounds; 7] =
+        [UiSounds::Haptic, UiSounds::Glass, UiSounds::Blip, UiSounds::Pulse, UiSounds::Signal, UiSounds::Tap, UiSounds::Off];
 
     pub fn label(self) -> &'static str {
         match self {
-            UiSounds::Wood => "Wood",
-            UiSounds::Chime => "Chime",
-            UiSounds::Tick => "Tick",
-            UiSounds::Stone => "Stone",
-            UiSounds::Arcane => "Arcane",
+            UiSounds::Haptic => "Haptic",
+            UiSounds::Glass => "Glass",
+            UiSounds::Blip => "Blip",
+            UiSounds::Pulse => "Pulse",
+            UiSounds::Signal => "Signal",
+            UiSounds::Tap => "Tap",
             UiSounds::Off => "Off",
         }
     }
 
-    /// The click and the item tap, each as decaying modes (frequency in Hz, level, decay in
-    /// seconds), with its length, its strike (level, decay, tone: the low-pass's
-    /// coefficient, lower is darker) and pitch sweep. `None` for silence.
-    fn recipe(self) -> Option<[Strike; 2]> {
+    /// The click and the item tap, or `None` for silence.
+    fn recipe(self) -> Option<[Sound; 2]> {
+        const PLAIN: Sound = Sound { partials: &[], seconds: 0.05, attack: 0.001, glide: 0.0, fm: None, noise: None, echo: None };
         Some(match self {
-            UiSounds::Wood => [
-                Strike { modes: &[(940.0, 1.0, 0.030), (2420.0, 0.45, 0.014), (3950.0, 0.2, 0.008)], seconds: 0.12, noise: (0.8, 0.004, 0.35), sweep: 0.0 },
-                Strike { modes: &[(520.0, 1.0, 0.040), (1340.0, 0.35, 0.018)], seconds: 0.14, noise: (0.7, 0.005, 0.25), sweep: 0.0 },
+            UiSounds::Haptic => [
+                Sound { partials: &[(170.0, 150.0, 1.0, 0.012), (3800.0, 3800.0, 0.18, 0.002)], attack: 0.0008, glide: 0.02, ..PLAIN },
+                Sound { partials: &[(130.0, 115.0, 1.0, 0.016), (2900.0, 2900.0, 0.14, 0.002)], seconds: 0.06, attack: 0.0008, glide: 0.02, ..PLAIN },
             ],
-            UiSounds::Chime => [
-                Strike { modes: &[(2093.0, 0.6, 0.11), (3136.0, 0.35, 0.07), (6270.0, 0.08, 0.03)], seconds: 0.35, noise: (0.15, 0.002, 0.9), sweep: 0.0 },
-                Strike { modes: &[(1568.0, 0.6, 0.09), (2349.0, 0.3, 0.06)], seconds: 0.3, noise: (0.1, 0.002, 0.9), sweep: 0.0 },
+            UiSounds::Glass => [
+                Sound { partials: &[(3150.0, 3150.0, 0.7, 0.012), (6300.0, 6300.0, 0.25, 0.006)], seconds: 0.06, attack: 0.0006, ..PLAIN },
+                Sound { partials: &[(2360.0, 2360.0, 0.7, 0.014), (4720.0, 4720.0, 0.22, 0.007)], seconds: 0.07, attack: 0.0006, ..PLAIN },
             ],
-            UiSounds::Tick => [
-                Strike { modes: &[(1800.0, 0.25, 0.006)], seconds: 0.05, noise: (1.0, 0.0025, 0.6), sweep: 0.0 },
-                Strike { modes: &[(700.0, 0.3, 0.012)], seconds: 0.07, noise: (1.0, 0.004, 0.3), sweep: 0.0 },
+            UiSounds::Blip => [
+                Sound { partials: &[(1320.0, 1320.0, 0.8, 0.02), (3960.0, 3960.0, 0.18, 0.012)], seconds: 0.06, ..PLAIN },
+                Sound { partials: &[(880.0, 880.0, 0.8, 0.018), (2640.0, 2640.0, 0.16, 0.01)], seconds: 0.11, echo: Some((0.045, 1.5)), ..PLAIN },
             ],
-            UiSounds::Stone => [
-                Strike { modes: &[(310.0, 1.0, 0.035), (870.0, 0.3, 0.015), (1630.0, 0.12, 0.008)], seconds: 0.12, noise: (1.0, 0.006, 0.15), sweep: 0.0 },
-                Strike { modes: &[(220.0, 1.0, 0.045), (610.0, 0.25, 0.02)], seconds: 0.14, noise: (0.9, 0.007, 0.12), sweep: 0.0 },
+            UiSounds::Pulse => [
+                Sound { partials: &[(2200.0, 700.0, 1.0, 0.022)], seconds: 0.07, attack: 0.0008, glide: 0.018, ..PLAIN },
+                Sound { partials: &[(1500.0, 450.0, 1.0, 0.028)], seconds: 0.08, attack: 0.0008, glide: 0.022, ..PLAIN },
             ],
-            UiSounds::Arcane => [
-                Strike { modes: &[(880.0, 0.7, 0.05), (1320.0, 0.45, 0.04), (2640.0, 0.15, 0.03)], seconds: 0.18, noise: (0.1, 0.002, 0.9), sweep: 0.35 },
-                Strike { modes: &[(660.0, 0.7, 0.05), (990.0, 0.35, 0.035)], seconds: 0.16, noise: (0.1, 0.002, 0.9), sweep: -0.15 },
+            UiSounds::Signal => [
+                Sound { partials: &[(1500.0, 1800.0, 0.8, 0.035)], seconds: 0.1, glide: 0.03, fm: Some((0.5, 2.5, 0.015)), ..PLAIN },
+                Sound { partials: &[(1100.0, 900.0, 0.8, 0.04)], seconds: 0.1, glide: 0.03, fm: Some((0.5, 2.0, 0.015)), ..PLAIN },
+            ],
+            UiSounds::Tap => [
+                Sound { partials: &[(2600.0, 2600.0, 0.12, 0.004)], seconds: 0.03, noise: Some((1.0, 0.0028, 0.5)), ..PLAIN },
+                Sound { partials: &[(1700.0, 1700.0, 0.12, 0.005)], seconds: 0.04, noise: Some((1.0, 0.0038, 0.35)), ..PLAIN },
             ],
             UiSounds::Off => return None,
         })
     }
 }
 
-/// A struck object, as `UiSounds::recipe` describes.
-struct Strike {
-    modes: &'static [(f32, f32, f32)],
+/// A short synthesized sound, as `UiSounds::recipe` describes.
+struct Sound {
+    /// Sine partials: starting and ending frequency (Hz), level and decay time (s).
+    partials: &'static [(f32, f32, f32, f32)],
     seconds: f32,
-    noise: (f32, f32, f32),
-    /// How far every mode's pitch bends (as a ratio) over the first 40 ms.
-    sweep: f32,
+    attack: f32,
+    /// Seconds over which each partial glides, exponentially, to its ending frequency.
+    glide: f32,
+    /// Frequency modulation of every partial: the modulator's frequency as a ratio of the
+    /// partial's, the modulation index and how fast it dies away (s).
+    fm: Option<(f32, f32, f32)>,
+    /// A strike of high-passed noise: level, decay (s) and the low-pass coefficient taken
+    /// away from it (higher leaves a thinner, brighter noise).
+    noise: Option<(f32, f32, f32)>,
+    /// The whole sound again, this many seconds later at this pitch.
+    echo: Option<(f32, f32)>,
 }
 
-impl Strike {
+impl Sound {
     /// The samples, peaking at 0.8.
     fn render(&self, seed: u32) -> Vec<f32> {
-        let envelope = |t: f32, attack: f32, decay: f32| (t / attack).min(1.0) * (-t / decay).exp();
-        let (noise, noise_decay, tone) = self.noise;
-        let mut rng = seed;
-        let mut low = 0.0;
-        let mut phases = vec![0.0f32; self.modes.len()];
         let frames = (self.seconds * RATE as f32) as usize;
-        let mut out: Vec<f32> = (0..frames)
-            .map(|i| {
-                let t = i as f32 / RATE as f32;
-                let bend = 1.0 + self.sweep * (t / 0.04).min(1.0);
-                let mut v = 0.0;
-                for (phase, &(f, level, decay)) in phases.iter_mut().zip(self.modes) {
-                    *phase += TAU * f * bend / RATE as f32;
-                    v += phase.sin() * level * envelope(t, 0.0015, decay);
-                }
-                rng ^= rng << 13;
-                rng ^= rng >> 17;
-                rng ^= rng << 5;
-                low += tone * (rng as f32 / u32::MAX as f32 * 2.0 - 1.0 - low);
-                v + low * noise * envelope(t, 0.0005, noise_decay)
-            })
-            .collect();
+        let mut out = vec![0.0f32; frames];
+        self.add(&mut out, 0, 1.0, seed);
+        if let Some((delay, pitch)) = self.echo {
+            self.add(&mut out, (delay * RATE as f32) as usize, pitch, seed);
+        }
         // A 3 ms fade at the end, so nothing clicks.
         let fade = (0.003 * RATE as f32) as usize;
         let n = out.len();
@@ -141,6 +142,36 @@ impl Strike {
         }
         let peak = out.iter().fold(1e-9f32, |m, s| m.max(s.abs()));
         out.iter().map(|s| s / peak * 0.8).collect()
+    }
+
+    fn add(&self, out: &mut [f32], offset: usize, pitch: f32, seed: u32) {
+        let mut rng = seed;
+        let mut low = 0.0;
+        let mut phases = vec![0.0f32; self.partials.len()];
+        let mut modulators = vec![0.0f32; self.partials.len()];
+        for (i, sample) in out.iter_mut().skip(offset).enumerate() {
+            let t = i as f32 / RATE as f32;
+            let k = if self.glide > 0.0 { (t / self.glide).min(1.0) } else { 1.0 };
+            let mut v = 0.0;
+            for (j, &(from, to, level, decay)) in self.partials.iter().enumerate() {
+                let f = from * (to / from).powf(k) * pitch;
+                let modulation = self.fm.map_or(0.0, |(ratio, index, index_decay)| {
+                    modulators[j] += TAU * f * ratio / RATE as f32;
+                    index * (-t / index_decay).exp() * modulators[j].sin()
+                });
+                phases[j] += TAU * f / RATE as f32;
+                v += (phases[j] + modulation).sin() * level * (t / self.attack).min(1.0) * (-t / decay).exp();
+            }
+            if let Some((level, decay, tone)) = self.noise {
+                rng ^= rng << 13;
+                rng ^= rng >> 17;
+                rng ^= rng << 5;
+                let white = rng as f32 / u32::MAX as f32 * 2.0 - 1.0;
+                low += tone * (white - low);
+                v += (white - low) * level * (t / 0.0003).min(1.0) * (-t / decay).exp();
+            }
+            *sample += v;
+        }
     }
 }
 
@@ -153,8 +184,8 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
         .iter()
         .filter_map(|&set| {
             let [click, item] = set.recipe()?;
-            let mut add = |strike: &Strike, seed| sources.add(AudioSource { bytes: Arc::from(wav(&strike.render(seed))) });
-            Some((set, [add(&click, 3), add(&item, 5)]))
+            let mut add = |sound: &Sound, seed| sources.add(AudioSource { bytes: Arc::from(wav(&sound.render(seed))) });
+            Some((set, [add(&click, 7), add(&item, 11)]))
         })
         .collect();
     commands.insert_resource(Clips(clips));
@@ -198,8 +229,8 @@ mod tests {
                 assert_eq!(set, UiSounds::Off);
                 continue;
             };
-            for strike in strikes {
-                let samples = strike.render(1);
+            for sound in strikes {
+                let samples = sound.render(1);
                 assert!(samples.iter().any(|s| s.abs() > 0.7), "{set:?} is silent");
                 assert!(samples.last().unwrap().abs() < 1e-3, "{set:?} ends with a click");
             }
