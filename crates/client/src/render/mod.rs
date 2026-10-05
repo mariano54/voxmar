@@ -825,7 +825,7 @@ pub(crate) fn update_environment(
             horizon: horizon.extend(1.0),
             sun: env.to_sun.extend(env.daylight),
             clouds: Vec4::new(seconds, shown.cover, shown.convection, shown.cirrus),
-            stars: Vec4::new(days.fract() as f32, (days % night::SKY_DAYS) as f32, (days / night::YEAR_DAYS).fract() as f32, 0.0),
+            stars: Vec4::new(days.fract() as f32, (days % night::SKY_DAYS) as f32, voxmar_engine::calendar::year_fraction(days), 0.0),
             moon: env.to_moon,
             weather: layer.extend(shown.precipitation).extend(flash),
             optics: Vec4::new(shown.rainbow, shown.halo, shown.aurora, shown.falling_stars),
