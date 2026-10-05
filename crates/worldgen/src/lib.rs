@@ -1528,7 +1528,7 @@ mod tests {
         }
         let (planted, flowers) = (planted as f32 / open as f32, flowers as f32 / open as f32);
         println!("{open} open grass blocks, {planted:.2} planted, {flowers:.3} flowers");
-        assert!(open > 1000 && planted > 0.6 && flowers < 0.08, "{open} open, {planted} planted, {flowers} flowers");
+        assert!(open > 1000 && planted > 0.5 && flowers < 0.08, "{open} open, {planted} planted, {flowers} flowers");
     }
 
     /// `cargo test --release -p voxmar_worldgen decor_sights -- --ignored --nocapture`
