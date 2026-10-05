@@ -18,6 +18,7 @@ pub mod dropped;
 pub mod field;
 pub mod fluid;
 pub mod inventory;
+pub mod lang;
 pub mod light;
 pub mod mesh;
 pub mod movement;
