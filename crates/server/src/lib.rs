@@ -3,6 +3,7 @@
 
 mod actions;
 mod commands;
+mod creatures;
 mod farm;
 mod fluids;
 mod items;
@@ -271,6 +272,8 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
+    /// Animals and monsters about.
+    creatures: creatures::Creatures,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -367,6 +370,7 @@ impl Server {
             executor: Executor::default(),
             items,
             farm,
+            creatures: creatures::Creatures::default(),
             processes,
             temperature,
             wear_rules,
@@ -472,6 +476,7 @@ impl Server {
         self.complete_actions();
         self.run_processes();
         self.tick_items();
+        self.tick_creatures();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
