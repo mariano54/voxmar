@@ -15,7 +15,7 @@ use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, MUTED, Meter, SCRIM, SOFT, ScrollList, TEXT, UiFont, panel, screen, set_meter, shadowed,
-    spawn_button, spawn_heading, spawn_meter, spawn_rule, text,
+    spawn_button, spawn_heading, spawn_meter, spawn_rule, spawn_scroll_more, text,
 };
 
 pub struct CharacterPlugin;
@@ -26,7 +26,7 @@ impl Plugin for CharacterPlugin {
             .add_systems(PostStartup, (spawn, open_start_guide))
             .add_systems(
                 Update,
-                ((show, pick_skill, draw_skills, draw_guide).chain().after(ScreenSystems), draw_condition).run_if(in_state(Screen::InGame)),
+                ((show, pick_skill, draw_skills, draw_guide).chain().after(ScreenSystems), draw_condition, draw_combat).run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut guide: ResMut<Guide>| guide.0 = None);
     }
@@ -65,7 +65,12 @@ struct HealthMeter;
 
 const WIDTH: f32 = 400.0 * PX;
 const LEFT: f32 = 150.0 * PX;
-const LIST_HEIGHT: f32 = 170.0 * PX;
+/// The line at the foot of the panel, saying what can be done next.
+#[derive(Component)]
+struct CharacterHint;
+/// The player's combat level, at the foot of the condition section.
+#[derive(Component)]
+struct CombatLine;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -73,10 +78,22 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         root.spawn(panel(WIDTH)).with_children(|card| {
             spawn_heading(card, font, "screen.character");
             card.spawn(Node { column_gap: Val::Px(8.0 * PX), ..default() }).with_children(|columns| {
-                // How you are.
-                let left = Node { width: Val::Px(LEFT), flex_shrink: 0.0, flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), ..default() };
-                columns.spawn(left).with_children(|left| spawn_condition(left, font));
-                // Skills, or one skill's guide.
+                // How you are, in a recessed section of its own.
+                let left = Node {
+                    width: Val::Px(LEFT),
+                    flex_shrink: 0.0,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(3.0 * PX),
+                    padding: UiRect::all(Val::Px(4.0 * PX)),
+                    ..default()
+                };
+                columns.spawn((left, Piece::Well.image())).with_children(|left| {
+                    spawn_condition(left, font);
+                    // Pushed to the bottom of the section.
+                    left.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, CombatLine, shadowed(font, "", BODY, GOLD)));
+                });
+                // Skills, or one skill's guide laid over them: the tiles set the height, so
+                // the panel keeps its size whichever shows, in either language.
                 let right = Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, min_width: Val::ZERO, ..default() };
                 columns.spawn(right).with_children(|right| {
                     let list = Node {
@@ -85,24 +102,27 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                         row_gap: Val::Px(3.0 * PX),
                         column_gap: Val::Px(3.0 * PX),
                         align_content: AlignContent::Start,
-                        height: Val::Px(LIST_HEIGHT),
-                        overflow: Overflow::scroll_y(),
                         ..default()
                     };
-                    right.spawn((SkillList, ScrollList, list));
+                    right.spawn((SkillList, list));
                     let page = Node {
+                        position_type: PositionType::Absolute,
+                        top: Val::ZERO,
+                        bottom: Val::ZERO,
+                        left: Val::ZERO,
+                        right: Val::ZERO,
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(2.0 * PX),
-                        height: Val::Px(LIST_HEIGHT),
                         overflow: Overflow::scroll_y(),
                         display: Display::None,
                         ..default()
                     };
-                    right.spawn((GuidePage, ScrollList, page));
+                    let page = right.spawn((GuidePage, ScrollList, page)).id();
+                    spawn_scroll_more(right, font, page);
                 });
             });
             spawn_rule(card, 4.0 * PX);
-            card.spawn((Localized("character.hint"), text(font, "", BODY, MUTED)));
+            card.spawn((CharacterHint, text(font, "", BODY, MUTED)));
         });
         spawn_hotkeys(root, GameScreen::Character);
     });
@@ -155,10 +175,11 @@ fn draw_skills(
     font: Res<UiFont>,
     images: Res<super::HudImages>,
     locale: Res<Locale>,
-    mut list: Query<(Entity, &mut Node, Option<&Children>), With<SkillList>>,
+    mut list: Query<(Entity, &mut Visibility, Option<&Children>), With<SkillList>>,
     mut progress: Query<(&SkillProgress, &mut Node), Without<SkillList>>,
+    mut hint: Query<&mut Text, With<CharacterHint>>,
 ) {
-    let Ok((entity, mut node, rows)) = list.single_mut() else { return };
+    let Ok((entity, mut visibility, rows)) = list.single_mut() else { return };
     if locale.is_changed()
         && let Some(rows) = rows
     {
@@ -168,10 +189,14 @@ fn draw_skills(
         }
         return;
     }
-    let shown = ui.character_open && guide.0.is_none();
-    let display = if shown { Display::Grid } else { Display::None };
-    if node.display != display {
-        node.display = display;
+    // Hidden under an open guide, but still there: its tiles give the guide its height.
+    let shown = ui.character_open;
+    visibility.set_if_neq(if guide.0.is_none() { Visibility::Inherited } else { Visibility::Hidden });
+    let words = locale.get(if guide.0.is_some() { "character.guide_hint" } else { "character.hint" });
+    if let Ok(mut text) = hint.single_mut()
+        && text.0 != words
+    {
+        words.clone_into(&mut text.0);
     }
     if !shown {
         return;
@@ -325,16 +350,33 @@ pub fn spawn_condition(parent: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     parent.spawn((Condition, column)).with_children(|panel| {
         let row = || Node { column_gap: Val::Px(3.0 * PX), align_items: AlignItems::Center, ..default() };
         panel.spawn(row()).with_children(|row| {
-            row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, Localized("character.health"), text(font, "", BODY, MUTED)));
+            row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, Localized("character.health"), text(font, "", BODY, MUTED), TextLayout::no_wrap()));
             spawn_meter(row, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
         });
         panel.spawn(row()).with_children(|row| {
-            row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, Localized("character.hunger"), text(font, "", BODY, MUTED)));
+            row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, Localized("character.hunger"), text(font, "", BODY, MUTED), TextLayout::no_wrap()));
             spawn_meter(row, font, Piece::BarHunger, Val::Percent(100.0), HungerMeter);
         });
         panel.spawn((FeltLine, text(font, "", BODY, SOFT)));
         panel.spawn((EffectList, Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0 * PX), ..default() }));
     });
+}
+
+/// Writes the combat level under the condition, once the server has told our skills.
+fn draw_combat(player: Res<LocalPlayer>, launch: Res<Launch>, locale: Res<Locale>, mut line: Query<&mut Text, With<CombatLine>>) {
+    if !player.is_changed() && !locale.is_changed() {
+        return;
+    }
+    let words = if player.skills_known {
+        locale.format("character.combat_level", &[("level", &launch.content.skills.combat_level(&player.skills))])
+    } else {
+        String::new()
+    };
+    for mut text in &mut line {
+        if text.0 != words {
+            text.0.clone_from(&words);
+        }
+    }
 }
 
 /// Keeps every condition panel current.

@@ -100,6 +100,7 @@
     "settings.value.low": "Low",
     "settings.value.medium": "Medium",
     "settings.value.high": "High",
+    "settings.value.ultra": "Ultra",
     "settings.value.chunks": "{count} chunks",
     "settings.value.pixels": "{count} px",
 
@@ -197,7 +198,18 @@
 
     "hud.died": "You died. Press R to respawn.",
 
-    "inventory.help": "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack\n1-9: swap · Q: throw",
+    "inventory.key.right_click": "Right-click",
+    "inventory.hint.half": "half",
+    "inventory.key.drag": "Drag",
+    "inventory.hint.spread": "spread",
+    "inventory.key.double_click": "Double-click",
+    "inventory.hint.gather": "gather",
+    "inventory.key.shift_click": "Shift-click",
+    "inventory.hint.move": "move",
+    "inventory.key.numbers": "1-9",
+    "inventory.hint.swap": "swap",
+    "inventory.key.throw": "Q",
+    "inventory.hint.throw": "throw",
 
     "rarity.uncommon": "Uncommon",
     "rarity.rare": "Rare",
@@ -241,6 +253,8 @@
     "effect.overheated": "Overheated",
     "effect.overheated.description": "No healing, lose health. Find shade or water.",
     "character.hint": "Click a skill for its guide: what each level opens up.",
+    "character.guide_hint": "Scroll for more; Back returns to your skills.",
+    "character.combat_level": "Combat level {level}",
     "character.level": "Lv {level}",
     "character.xp": "{xp} xp",
     "character.xp_of": "{xp} / {next} xp",

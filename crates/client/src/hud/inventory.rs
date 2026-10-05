@@ -27,7 +27,7 @@ use voxmar_engine::craft::GRID;
 use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK, SLOTS};
 
 use super::{SLOT, slot_contents};
-use crate::lang::{Locale, Localized};
+use crate::lang::{Locale, Localized, TightLine};
 use crate::Actions;
 use crate::menu::Screen;
 use crate::net::Net;
@@ -48,7 +48,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, show_skills).after(InventorySystems))
+                ((toggle, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -97,8 +97,6 @@ struct InventoryCard;
 struct PointerStack;
 #[derive(Component)]
 struct Tooltip;
-#[derive(Component)]
-struct SkillsLine;
 #[derive(Component)]
 struct TooltipLines;
 /// What the crafting grid makes: click to craft one onto the pointer, shift-click to craft
@@ -156,10 +154,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
-            let help = (Localized("inventory.help"), text(font, "", BODY, MUTED), TextLayout::justify(Justify::Center));
-            card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
-            let skills = (text(font, "", BODY, SOFT), TextLayout::justify(Justify::Center), SkillsLine);
-            card.spawn((Node { margin: UiRect::top(Val::Px(3.0 * PX)), ..default() }, skills));
+            spawn_legend(card, font);
         });
         super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
         // The held stack and the tooltip float above everything, at the pointer.
@@ -574,19 +569,35 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
-/// Lists every skill's level under the slots, as it changes.
-fn show_skills(player: Res<LocalPlayer>, launch: Res<Launch>, locale: Res<Locale>, mut line: Query<&mut Text, With<SkillsLine>>) {
-    if !player.is_changed() && !locale.is_changed() {
-        return;
-    }
-    let skills = &launch.content.skills;
-    let words = skills.ids().map(|id| super::skills::summary(&locale, skills, id, player.skills.xp(id))).collect::<Vec<_>>();
-    let words = words.join(locale.get("language.dot"));
-    if let Ok(mut text) = line.single_mut()
-        && text.0 != words
-    {
-        text.0 = words;
-    }
+/// The mouse and key moves the inventory takes, as key caps with what each does, two to a
+/// row under the slots.
+const LEGEND: [(&str, &str); 6] = [
+    ("inventory.key.right_click", "inventory.hint.half"),
+    ("inventory.key.drag", "inventory.hint.spread"),
+    ("inventory.key.double_click", "inventory.hint.gather"),
+    ("inventory.key.shift_click", "inventory.hint.move"),
+    ("inventory.key.numbers", "inventory.hint.swap"),
+    ("inventory.key.throw", "inventory.hint.throw"),
+];
+
+fn spawn_legend(card: &mut ChildSpawnerCommands, font: &Handle<Font>) {
+    let legend = Node {
+        display: Display::Grid,
+        grid_template_columns: RepeatedGridTrack::auto(2),
+        column_gap: Val::Px(8.0 * PX),
+        row_gap: Val::Px(2.0 * PX),
+        margin: UiRect::top(Val::Px(6.0 * PX)),
+        ..default()
+    };
+    card.spawn(legend).with_children(|legend| {
+        for (key, hint) in LEGEND {
+            legend.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(3.0 * PX), ..default() }).with_children(|entry| {
+                let cap = Node { padding: UiRect::axes(Val::Px(3.0 * PX), Val::Px(2.0 * PX)), ..default() };
+                entry.spawn((cap, Piece::Button.image())).with_child((Localized(key), shadowed(font, "", BODY, SOFT), TightLine));
+                entry.spawn((Localized(hint), text(font, "", BODY, MUTED)));
+            });
+        }
+    });
 }
 
 /// Names the item under the pointer, beside it, while nothing is held.

@@ -137,10 +137,12 @@ pub enum ShadowQuality {
     Medium,
     #[default]
     High,
+    Ultra,
 }
 
 impl ShadowQuality {
-    pub const ALL: [ShadowQuality; 4] = [ShadowQuality::Off, ShadowQuality::Low, ShadowQuality::Medium, ShadowQuality::High];
+    pub const ALL: [ShadowQuality; 5] =
+        [ShadowQuality::Off, ShadowQuality::Low, ShadowQuality::Medium, ShadowQuality::High, ShadowQuality::Ultra];
 
     /// The key of its name in the settings (see `lang`).
     pub fn key(self) -> &'static str {
@@ -149,6 +151,7 @@ impl ShadowQuality {
             ShadowQuality::Low => "settings.value.low",
             ShadowQuality::Medium => "settings.value.medium",
             ShadowQuality::High => "settings.value.high",
+            ShadowQuality::Ultra => "settings.value.ultra",
         }
     }
 
@@ -158,12 +161,19 @@ impl ShadowQuality {
             ShadowQuality::Off => 0,
             ShadowQuality::Low => 1,
             ShadowQuality::Medium => 8,
-            ShadowQuality::High => 16,
+            ShadowQuality::High | ShadowQuality::Ultra => 16,
         }
     }
 
+    /// Texels across each cascade's map. Ultra's 4096 sharpens shadows from about 30 blocks
+    /// out, where 2048 shows steps along a shadow's edge, for about 1.8 ms a frame at the
+    /// player's settings (Low Power Mode, a busy machine) and 268 MB of shadow maps.
     fn map_size(self) -> usize {
-        if self == ShadowQuality::Low { 1024 } else { 2048 }
+        match self {
+            ShadowQuality::Low => 1024,
+            ShadowQuality::Ultra => 4096,
+            _ => 2048,
+        }
     }
 
     /// The cascades: how many, how far the first reaches and how far shadows reach, in
@@ -172,7 +182,7 @@ impl ShadowQuality {
         let (num_cascades, first_cascade_far_bound, maximum_distance) = match self {
             ShadowQuality::Off | ShadowQuality::Low => (2, 16.0, 96.0),
             ShadowQuality::Medium => (3, 12.0, 160.0),
-            ShadowQuality::High => (4, 12.0, 200.0),
+            ShadowQuality::High | ShadowQuality::Ultra => (4, 12.0, 200.0),
         };
         CascadeShadowConfigBuilder { num_cascades, first_cascade_far_bound, maximum_distance, ..default() }.build()
     }

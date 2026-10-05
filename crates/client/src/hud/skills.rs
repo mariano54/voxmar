@@ -5,7 +5,7 @@
 //! skill's level and how far it is to the next.
 
 use bevy::prelude::*;
-use voxmar_engine::skill::{SkillId, SkillRegistry};
+use voxmar_engine::skill::SkillId;
 
 use crate::lang::Locale;
 use crate::menu::Screen;
@@ -98,17 +98,6 @@ impl SkillToasts {
 /// Experience as players read it: whole where it is, a decimal where not (12.5).
 pub fn xp_text(tenths: u32) -> String {
     if tenths.is_multiple_of(10) { format!("{}", tenths / 10) } else { format!("{}.{}", tenths / 10, tenths % 10) }
-}
-
-/// A skill's level and progress to the next, for the inventory screen: "Farming 12 (34%)".
-pub fn summary(locale: &Locale, skills: &SkillRegistry, skill: SkillId, xp: u32) -> String {
-    let level = skills.level(xp);
-    let title = locale.skill(skills.get(skill));
-    if level >= skills.max_level() {
-        format!("{title} {level}")
-    } else {
-        format!("{title} {level} ({:.0}%)", skills.progress(xp) * 100.0)
-    }
 }
 
 #[derive(Component)]
