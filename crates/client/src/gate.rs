@@ -1229,10 +1229,29 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     } else {
         Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms)"))
     };
+    // A machine asked for more than all its cores (other threads' builds) starves the game
+    // for whole seconds: a long frame then says nothing about the game. A real hitch shows
+    // again on any run with the machine less loaded, as every build's first run is.
+    let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
+    if result.is_err() && load > cores {
+        info!("gate: SKIPPED {name}: smooth: {} (the machine was overloaded, load {load:.0} on {cores} cores)", result.unwrap_err());
+        return;
+    }
     match known {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
     }
+}
+
+/// The machine's load average over the last minute (runnable threads), or 0 if unknown.
+fn load_average() -> f64 {
+    unsafe extern "C" {
+        fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32;
+    }
+    let mut load = [0.0f64; 1];
+    // SAFETY: writes at most one value into a one-element buffer.
+    let got = unsafe { getloadavg(load.as_mut_ptr(), 1) };
+    if got == 1 { load[0] } else { 0.0 }
 }
 
 /// Whether an edit of `cells` has settled, `since` seconds after it was made: both client

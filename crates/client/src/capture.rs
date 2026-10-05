@@ -49,6 +49,9 @@ pub struct CapturePlugin {
     pub pose: Option<[f32; 5]>,
     /// Seconds to fly forward after loading, measuring frame pacing while streaming.
     pub flight: Option<f32>,
+    /// Seconds to dig straight down after loading, holding the button as a player would,
+    /// measuring frame pacing while blocks break, burst, drop and remesh.
+    pub dig: Option<f32>,
     /// Extra seconds to let the world run before capturing, for weather to build.
     pub wait: f32,
     /// Fixed time of day, as a fraction of the day from sunrise.
@@ -100,6 +103,8 @@ impl Plugin for CapturePlugin {
             path: self.path.clone(),
             pose: self.pose,
             flight: self.flight,
+            dig: self.dig,
+            dig_started: None,
             wait: self.wait,
             time: self.time,
             mine: self.mine,
@@ -110,6 +115,7 @@ impl Plugin for CapturePlugin {
             taken_at: None,
             saved: false,
             frame_times: Vec::new(),
+            steady_times: Vec::new(),
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
             clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
             press: self.press,
@@ -125,7 +131,7 @@ impl Plugin for CapturePlugin {
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
-        .add_systems(Update, press.before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
+        .add_systems(Update, (press, dig).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
@@ -140,6 +146,8 @@ struct Capture {
     path: PathBuf,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    dig: Option<f32>,
+    dig_started: Option<f32>,
     wait: f32,
     time: Option<f32>,
     mine: Option<f32>,
@@ -152,6 +160,8 @@ struct Capture {
     /// Whether the screenshot has been written, which can take a while on a busy machine.
     saved: bool,
     frame_times: Vec<f32>,
+    /// Frame times while a still shot waits, after its first second.
+    steady_times: Vec<f32>,
     flicker: Option<Flicker>,
     clip: Option<Clip>,
     press: Option<MouseButton>,
@@ -263,6 +273,21 @@ fn press(state: Res<Capture>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut u
     }
 }
 
+/// Holds the left button looking straight down while `--dig` runs, so the interaction
+/// systems break block after block exactly as for a player digging a shaft.
+fn dig(state: Res<Capture>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut ui: ResMut<UiState>, mut player: ResMut<LocalPlayer>) {
+    if state.dig.is_none() {
+        return;
+    }
+    if state.dig_started.is_some() && state.taken_at.is_none() {
+        ui.cursor_locked = true;
+        player.pitch = -89f32.to_radians();
+        mouse.press(MouseButton::Left);
+    } else if mouse.pressed(MouseButton::Left) {
+        mouse.release(MouseButton::Left);
+    }
+}
+
 /// Seconds between a `--mine 1` break and the screenshot.
 const BROKEN_FOR: f32 = 0.3;
 
@@ -368,38 +393,46 @@ fn capture(
         || stats.pending_columns > 0
         || world.voxels.len() < 9
         || lod_tiles < lod_wanted;
-    let flying = state.flight_started.is_some();
+    // Flying and digging keep the world busy streaming and remeshing; once started they
+    // run their course.
+    let flying = state.flight_started.is_some() || state.dig_started.is_some();
     // A mined block's pieces are caught in the air, while its column remeshes.
     let broken = state.broken_at.map(|at| now - at);
     let patience = if state.flicker.is_some() { 300.0 } else { 60.0 };
     if busy && !flying && broken.is_none() && now < patience {
         state.settled_at = None;
+        state.steady_times.clear();
         return;
     }
     // Measure a few seconds of steady-state rendering before capturing.
     let settled = *state.settled_at.get_or_insert(now);
     if broken.map_or(now - settled < 4.0 + state.wait, |since| since < BROKEN_FOR) {
+        // The steady state before a still shot, measured as a flight is.
+        if state.flight.is_none() && state.dig.is_none() && now - settled > 1.0 {
+            state.steady_times.push(real.delta_secs() * 1000.0);
+        }
         return;
     }
+    // Frame times by the wall clock: the game's own clock caps a frame at 250 ms.
+    let frame_ms = real.delta_secs() * 1000.0;
     if let Some(duration) = state.flight
         && now - *state.flight_started.get_or_insert(now) < duration
     {
         fly(&time, &mut player, launch.content.movement.fly_sprint_speed);
-        state.frame_times.push(time.delta_secs() * 1000.0);
+        state.frame_times.push(frame_ms);
+        return;
+    }
+    if let Some(duration) = state.dig
+        && now - *state.dig_started.get_or_insert(now) < duration
+    {
+        state.frame_times.push(frame_ms);
         return;
     }
     if !state.frame_times.is_empty() {
-        let mut times = std::mem::take(&mut state.frame_times);
-        times.sort_by(f32::total_cmp);
-        let at = |q: f32| times[((times.len() - 1) as f32 * q) as usize];
-        let median = at(0.5);
-        let hitches = times.iter().filter(|&&t| t > median * 2.0).count();
-        info!(
-            "flight: {} frames, median {median:.2} ms, p99 {:.2} ms, max {:.2} ms, {hitches} frames over twice the median",
-            times.len(),
-            at(0.99),
-            at(1.0),
-        );
+        let label = if state.dig.is_some() { "dig" } else { "flight" };
+        info!("{label}: {}", frame_stats(std::mem::take(&mut state.frame_times)));
+    } else if !state.steady_times.is_empty() {
+        info!("steady: {}", frame_stats(std::mem::take(&mut state.steady_times)));
     }
     let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.average()).unwrap_or(0.0);
     let frame = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.average()).unwrap_or(0.0);
@@ -542,6 +575,27 @@ fn flicker_map(a: &[u8], b: &[u8]) -> (usize, Vec<u8>) {
     (changed, map)
 }
 
+/// A run's frame times summed up, as `tools/bench` reads them: count, median, p99 and the
+/// worst (ms), frames over twice the median, the mean and the 1% low (the mean of the
+/// slowest 1%) as frames per second.
+fn frame_stats(mut times: Vec<f32>) -> String {
+    times.sort_by(f32::total_cmp);
+    let at = |q: f32| times[((times.len() - 1) as f32 * q) as usize];
+    let median = at(0.5);
+    let hitches = times.iter().filter(|&&t| t > median * 2.0).count();
+    let mean = times.iter().sum::<f32>() / times.len() as f32;
+    let slowest = &times[times.len() - (times.len() / 100).max(1)..];
+    let low = slowest.iter().sum::<f32>() / slowest.len() as f32;
+    format!(
+        "{} frames, median {median:.2} ms, p99 {:.2} ms, max {:.2} ms, {hitches} frames over twice the median, mean {mean:.2} ms ({:.0} fps), 1% low {:.0} fps",
+        times.len(),
+        at(0.99),
+        at(1.0),
+        1000.0 / mean,
+        1000.0 / low,
+    )
+}
+
 /// `OUT.png` → `OUT-suffix.png`.
 fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let stem = path.file_stem().map_or_else(Default::default, |s| s.to_string_lossy().into_owned());
@@ -560,6 +614,16 @@ mod tests {
         let (changed, map) = flicker_map(&a, &b);
         assert_eq!(changed, 1);
         assert_eq!(map, [3, 3, 3, 255, 255, 0, 0, 255, 0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn frame_stats_give_the_mean_and_the_slowest_hundredth() {
+        let mut times = vec![10.0; 199];
+        times.push(50.0);
+        let stats = frame_stats(times);
+        assert!(stats.starts_with("200 frames, median 10.00 ms, p99 10.00 ms, max 50.00 ms, 1 frames over twice the median"), "{stats}");
+        // The slowest 1% of 200 frames is the two slowest: 50 and 10 ms.
+        assert!(stats.ends_with("mean 10.20 ms (98 fps), 1% low 33 fps"), "{stats}");
     }
 
     #[test]

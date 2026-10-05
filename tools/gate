@@ -169,7 +169,7 @@ status=$(cat "$out/game.status" 2>/dev/null || echo 0)
 log=
 if ((session)); then
   log=$(sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt")
-  grep -E 'gate: FAILED' <<<"$log" | sed -E 's/.*gate: //'
+  grep -E 'gate: (FAILED|KNOWN|SKIPPED)' <<<"$log" | sed -E 's/.*gate: //'
   problems=$(grep -E ' ERROR |panicked' <<<"$log")
   warnings=$(grep ' WARN ' <<<"$log")
   for allowed in "${ALLOWED_WARNINGS[@]}"; do

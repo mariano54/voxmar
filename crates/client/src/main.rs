@@ -4,7 +4,8 @@
 //! `--world NAME` play (or create) the saved world NAME, `--connect HOST[:PORT]` join a
 //! server, `--capture PATH` (screenshot and exit once loaded; plays an unsaved world unless
 //! `--world` or `--connect` is given) with `--pose dx,dy,dz,yaw,pitch` (camera offset from
-//! the player) or `--flight SECONDS` (fly forward first and report frame pacing), `--wait
+//! the player) or `--flight SECONDS` (fly forward first and report frame pacing) or `--dig
+//! SECONDS` (dig straight down holding the button, reporting frame pacing), `--wait
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
@@ -87,6 +88,7 @@ struct Options {
     server_lag: Option<u64>,
     pose: Option<[f32; 5]>,
     flight: Option<f32>,
+    dig: Option<f32>,
     wait: f32,
     mine: Option<f32>,
     time: Option<f32>,
@@ -119,6 +121,7 @@ fn parse_options() -> Result<Options, String> {
         server_lag: None,
         pose: None,
         flight: None,
+        dig: None,
         wait: 0.0,
         mine: None,
         time: None,
@@ -153,6 +156,7 @@ fn parse_options() -> Result<Options, String> {
             "--gate" => options.gate = Some(value()?.into()),
             "--server-lag" => options.server_lag = Some(value()?.parse().map_err(|e| format!("--server-lag: {e}"))?),
             "--flight" => options.flight = Some(value()?.parse().map_err(|e| format!("--flight: {e}"))?),
+            "--dig" => options.dig = Some(value()?.parse().map_err(|e| format!("--dig: {e}"))?),
             "--wait" => options.wait = value()?.parse().map_err(|e| format!("--wait: {e}"))?,
             "--mine" => options.mine = Some(value()?.parse().map_err(|e| format!("--mine: {e}"))?),
             "--time" => options.time = Some(value()?.parse().map_err(|e| format!("--time: {e}"))?),
@@ -326,6 +330,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             path,
             pose: options.pose,
             flight: options.flight,
+            dig: options.dig,
             wait: options.wait,
             mine: options.mine,
             time: options.time,
