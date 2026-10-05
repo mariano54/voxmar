@@ -1,6 +1,7 @@
 //! Dropped items as Minecraft draws them: a tiny block for a block, and for a plant a flat
 //! sprite given thickness, one texel deep with its edges walled in, turning slowly and
-//! bobbing where it lies (the spin and bob are the caller's; see `drops`).
+//! bobbing where it lies. The shader turns and bobs them from the time, so items lying
+//! still cost no upload: the buffer is written only when what is shown changes.
 //!
 //! Every item shown this frame is one instance of one draw: 36 vertices of a box, a cube
 //! for blocks and a slab a sixteenth thick for sprites. A sprite's slab is marched through
@@ -9,7 +10,7 @@
 //! with no mesh per item. Items are lit like the terrain around them (`voxmar::lighting`):
 //! sun and its shadows, sky and block light, and the air between them and the eye.
 //!
-//! The caller fills [`ItemModels`] every frame; nothing persists between frames.
+//! The caller fills [`ItemModels`] every frame (see `drops`).
 
 use bevy::asset::embedded_asset;
 use bevy::core_pipeline::core_3d::AlphaMask3d;
@@ -84,10 +85,12 @@ pub enum Shape {
 /// One item to draw this frame.
 #[derive(Clone, Copy, Debug)]
 pub struct ItemModel {
-    /// Centre of the model.
+    /// Centre of the model, before it bobs.
     pub center: Vec3,
-    /// Turn about the vertical, in radians.
-    pub angle: f32,
+    /// Seconds into its turning and bobbing at time 0, so neighbours don't move in step.
+    pub phase: f32,
+    /// Where this copy of a stack sits from the centre, in the item's turning frame.
+    pub offset: Vec3,
     /// Edge length in blocks.
     pub size: f32,
     pub shape: Shape,
@@ -110,7 +113,8 @@ pub struct ItemModels(pub Vec<ItemModel>);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 struct GpuItem {
     center: [f32; 3],
-    angle: f32,
+    phase: f32,
+    offset: [f32; 3],
     size: f32,
     /// shape:4 | tinted faces:6 | free:14 | block light:4 | sky light:4.
     flags: u32,
@@ -118,7 +122,8 @@ struct GpuItem {
     layers: [u32; 3],
     /// sRGB tint, 8 bits each.
     tint: u32,
-    _pad: [u32; 2],
+    /// To the 16-byte multiple WGSL rounds the struct to (its `vec3` aligns at 16).
+    _pad: [u32; 3],
 }
 
 impl GpuItem {
@@ -132,12 +137,13 @@ impl GpuItem {
         let [r, g, b] = model.tint;
         Self {
             center: model.center.to_array(),
-            angle: model.angle,
+            phase: model.phase,
+            offset: model.offset.to_array(),
             size: model.size,
             flags: shape | ((model.tinted as u32) & 63) << 4 | block << 24 | sky << 28,
             layers: [pair(0), pair(2), pair(4)],
             tint: u32::from_le_bytes([r, g, b, 255]),
-            _pad: [0; 2],
+            _pad: [0; 3],
         }
     }
 }
@@ -145,13 +151,21 @@ impl GpuItem {
 #[derive(Resource)]
 struct ItemKey(MainEntity);
 
-/// What extraction hands the render world: this frame's items.
+/// What extraction hands the render world: the items shown, and whether they changed
+/// since they were last uploaded.
 #[derive(Resource, Default)]
-struct ItemInbox(Vec<GpuItem>);
+struct ItemInbox {
+    items: Vec<GpuItem>,
+    changed: bool,
+}
 
-fn extract(models: Extract<Res<ItemModels>>, mut inbox: ResMut<ItemInbox>) {
-    inbox.0.clear();
-    inbox.0.extend(models.0.iter().take(CAPACITY).map(GpuItem::new));
+fn extract(models: Extract<Res<ItemModels>>, mut inbox: ResMut<ItemInbox>, mut next: Local<Vec<GpuItem>>) {
+    next.clear();
+    next.extend(models.0.iter().take(CAPACITY).map(GpuItem::new));
+    if *next != inbox.items {
+        std::mem::swap(&mut *next, &mut inbox.items);
+        inbox.changed = true;
+    }
 }
 
 /// The items' buffer and the pipeline that draws them.
@@ -212,10 +226,13 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
     });
 }
 
-fn upload(mut gpu: ResMut<ItemGpu>, inbox: Res<ItemInbox>, queue: Res<RenderQueue>) {
-    gpu.count = inbox.0.len() as u32;
-    if !inbox.0.is_empty() {
-        queue.write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&inbox.0));
+fn upload(mut gpu: ResMut<ItemGpu>, mut inbox: ResMut<ItemInbox>, queue: Res<RenderQueue>) {
+    if !std::mem::take(&mut inbox.changed) {
+        return;
+    }
+    gpu.count = inbox.items.len() as u32;
+    if !inbox.items.is_empty() {
+        queue.write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&inbox.items));
     }
 }
 
@@ -335,10 +352,11 @@ mod tests {
 
     #[test]
     fn items_pack_like_the_shader_reads_them() {
-        assert_eq!(size_of::<GpuItem>(), 48);
+        assert_eq!(size_of::<GpuItem>(), 64);
         let model = ItemModel {
             center: Vec3::new(1.0, 2.0, 3.0),
-            angle: 0.5,
+            phase: 0.5,
+            offset: Vec3::X,
             size: 0.25,
             shape: Shape::Sprite,
             layers: [1, 2, 3, 4, 5, 600],

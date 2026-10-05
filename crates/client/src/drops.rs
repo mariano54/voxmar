@@ -33,12 +33,9 @@ const PICKUP_FLIGHT: f32 = 0.15;
 const AHEAD: f32 = 0.1;
 /// How quickly the shown position catches up with where the item should be, per second.
 const FOLLOW: f32 = 25.0;
-/// Turn per second, in radians (Minecraft's one radian a second).
-const SPIN: f32 = 1.0;
-/// How high an item bobs, and how fast, in blocks and radians a second (Minecraft's
-/// tenth of a block, at two radians a second).
+/// How high an item floats above where it lies, at the middle of its bob (Minecraft's
+/// tenth of a block; the renderer bobs and turns it).
 const BOB: f32 = 0.1;
-const BOB_RATE: f32 = 2.0;
 /// How wide a sprite is drawn, against a block's [`SIZE`] (Minecraft draws flat items at
 /// half a block).
 const SPRITE_SIZE: f32 = 0.5;
@@ -171,7 +168,9 @@ fn show(
             None => {
                 let ahead = (now - item.told_at).min(AHEAD);
                 let goal = item.told + item.velocity * ahead;
-                item.position.lerp(goal, 1.0 - (-FOLLOW * dt).exp())
+                // Settled once close, so an item lying still shows the very same model
+                // every frame and costs the renderer no upload.
+                if item.position.distance_squared(goal) < 1e-6 { goal } else { item.position.lerp(goal, 1.0 - (-FOLLOW * dt).exp()) }
             }
         };
         item.position = position;
@@ -183,7 +182,7 @@ fn show(
             item.lit_cell = Some(cell);
             item.light = [sky_light(&world, cell), block_light(&world, cell)];
         }
-        push_models(&mut models.0, &world, pieces.as_deref(), item, now);
+        push_models(&mut models.0, &world, pieces.as_deref(), item);
     }
     // Too many to draw: the nearest go first.
     if models.0.len() > CAPACITY {
@@ -205,7 +204,7 @@ fn copies(count: u8) -> usize {
 }
 
 /// The models showing `item`: its copies, turning and bobbing together.
-fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown, now: f32) {
+fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown) {
     let info = world.registry.info(item.stack.item);
     let sprite = info.render == RenderKind::Plant;
     let (shape, size) = if sprite { (Shape::Sprite, SPRITE_SIZE) } else { (Shape::Cube, SIZE) };
@@ -235,19 +234,14 @@ fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<
         Tint::Foliage => colors[1],
         Tint::Water => colors[2],
     };
-    let age = now + item.phase;
-    let angle = age * SPIN;
     // Lifted off the ground by the bob, as Minecraft's are.
-    let lift = BOB + (age * BOB_RATE).sin() * BOB;
-    let base = item.position + Vec3::Y * (lift + size / 2.0);
-    let (sin, cos) = angle.sin_cos();
+    let center = item.position + Vec3::Y * (BOB + size / 2.0);
     for copy in 0..copies(item.stack.count) {
         // Copies sit a little apart (a sprite's stack behind one another), in the item's
         // own turning frame.
         let spread = if copy == 0 { Vec3::ZERO } else { scatter(copy) * size * 0.35 };
-        let spread = if sprite { Vec3::new(spread.x * 0.3, spread.y * 0.3, -(copy as f32) * size / 16.0) } else { spread };
-        let offset = Vec3::new(cos * spread.x + sin * spread.z, spread.y, -sin * spread.x + cos * spread.z);
-        models.push(ItemModel { center: base + offset, angle, size, shape, layers, tinted, tint, light: item.light });
+        let offset = if sprite { Vec3::new(spread.x * 0.3, spread.y * 0.3, -(copy as f32) * size / 16.0) } else { spread };
+        models.push(ItemModel { center, phase: item.phase, offset, size, shape, layers, tinted, tint, light: item.light });
     }
 }
 
