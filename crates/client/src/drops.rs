@@ -84,6 +84,12 @@ pub struct Drops {
 }
 
 impl Drops {
+    /// The items lying about, not being picked up: id, stack and where the server last
+    /// put them (bottom centre).
+    pub fn lying(&self) -> impl Iterator<Item = (u32, ItemStack, Vec3)> + '_ {
+        self.items.iter().filter(|(_, item)| item.collected.is_none()).map(|(&id, item)| (id, item.stack, item.told))
+    }
+
     /// Applies the server's news, at `now` seconds.
     pub fn receive(&mut self, changed: Vec<ItemView>, gone: Vec<ItemGone>, now: f32) {
         for view in changed {
