@@ -87,6 +87,8 @@ struct Options {
     inventory: bool,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
+    /// `--press left|right`: hold a mouse button at the start of the clip.
+    press: Option<MouseButton>,
     size: UVec2,
     windowed: bool,
     screen: Option<Screen>,
@@ -115,6 +117,7 @@ fn parse_options() -> Result<Options, String> {
         inventory: false,
         flicker: None,
         clip: None,
+        press: None,
         size: UVec2::new(1920, 1080),
         windowed: false,
         screen: None,
@@ -147,6 +150,13 @@ fn parse_options() -> Result<Options, String> {
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
+            "--press" => {
+                options.press = Some(match value()?.as_str() {
+                    "left" => MouseButton::Left,
+                    "right" => MouseButton::Right,
+                    other => return Err(format!("--press: `{other}` is not left or right")),
+                })
+            }
             "--windowed" => options.windowed = true,
             "--size" => {
                 let size = value()?;
@@ -297,6 +307,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             inventory: options.inventory,
             flicker: options.flicker,
             clip: options.clip,
+            press: options.press,
             size: options.size,
             windowed: options.windowed,
         });

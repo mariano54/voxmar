@@ -130,7 +130,7 @@ fn throw(keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, net: Res<Net>, actio
     let Some(stack) = player.inventory.get(slot) else { return };
     let count = if whole { stack.count } else { 1 };
     if player.inventory.take(slot, count).is_some() {
-        net.propose(actions.0.expect("core:drop"), ActionTarget::Stack { slot: slot as u8, count });
+        net.propose_from(&player, actions.0.expect("core:drop"), ActionTarget::Stack { slot: slot as u8, count });
     }
 }
 
@@ -255,18 +255,17 @@ fn scatter(copy: usize) -> Vec3 {
 /// Block light at `cell`, 0..=15: the brightest light source near it, less a level per
 /// block of distance, as light spreads through open space.
 fn block_light(world: &ClientWorld, cell: IVec3) -> u8 {
+    // Only the diamond within reach, a fifth of the cube around it.
     let r = BLOCK_LIGHT_REACH;
     let mut best = 0u8;
     for dy in -r..=r {
-        for dz in -r..=r {
-            for dx in -r..=r {
-                let distance = dx.abs() + dy.abs() + dz.abs();
-                if distance > r {
-                    continue;
-                }
+        let rz = r - dy.abs();
+        for dz in -rz..=rz {
+            let rx = rz - dz.abs();
+            for dx in -rx..=rx {
+                let distance = (dx.abs() + dy.abs() + dz.abs()) as u8;
                 let Some(block) = world.block(cell + IVec3::new(dx, dy, dz)) else { continue };
-                let emission = world.registry.info(block).emission;
-                best = best.max(emission.saturating_sub(distance as u8));
+                best = best.max(world.registry.info(block).emission.saturating_sub(distance));
             }
         }
     }

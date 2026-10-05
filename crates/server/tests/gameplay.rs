@@ -279,6 +279,27 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
 }
 
 #[test]
+fn a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started() {
+    // A busy server can complete a break later than the client, which shows it done and
+    // starts on the next block; that must not cancel the first. Too early, it still does.
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    let (a, b, c) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 1));
+    client.ok("/fill ~ ~-1 ~1 ~1 ~-1 ~2 dirt");
+    client.pump_until(|c| [a, b].into_iter().all(|p| c.world.block(p).is_some_and(|b| !b.is_air())));
+    let dirt = client.world.block(a).unwrap();
+    let hardness = client.content.blocks.info(dirt).hardness;
+    let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
+    mine(&client, c);
+    std::thread::sleep(Duration::from_secs_f32(hardness * 0.3));
+    mine(&client, a);
+    std::thread::sleep(Duration::from_secs_f32(hardness * 0.85));
+    mine(&client, b);
+    client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
+    assert_eq!(client.world.block(c), Some(dirt), "a block only begun was broken");
+}
+
+#[test]
 fn falling_hurts() {
     let mut client = Client::join();
     let start = client.position;

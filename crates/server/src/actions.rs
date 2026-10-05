@@ -1,6 +1,15 @@
 //! The action executor: propose, validate, schedule one completion, then commit
 //! atomically or cancel. Long actions (mining) are a single scheduled event, not work
 //! done every tick.
+//!
+//! A player's client times their action too, and shows it done when its own clock says so
+//! (a broken block vanishes at once). When the server runs behind (a busy machine, or
+//! ticks skipped to catch up), its completion comes later than the client's, and the
+//! client's next proposal (the block behind) must not cancel an action the player saw
+//! finish: an action that has had most of its time by the clock when it is replaced is
+//! completed then, as Minecraft accepts a block broken once most of its time has passed.
+
+use std::time::Instant;
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placement_cell, supported_by};
@@ -22,11 +31,16 @@ pub struct Pending {
     target: ActionTarget,
 }
 
+/// Share of a timed action's time that must have passed by the clock for a new proposal
+/// to complete it rather than cancel it (Minecraft's 0.7 for breaking blocks).
+const MOSTLY_DONE: f32 = 0.7;
+
 #[derive(Default)]
 pub struct Executor {
     scheduler: Scheduler<Pending>,
-    /// Each agent performs at most one timed action at a time.
-    in_progress: FxHashMap<PlayerId, EventId>,
+    /// Each agent performs at most one timed action at a time: its event, when it started
+    /// by the clock, and how long it takes.
+    in_progress: FxHashMap<PlayerId, (EventId, Instant, f32)>,
 }
 
 /// Validation view of the world from one agent's point of view.
@@ -79,25 +93,49 @@ impl Server {
     }
 
     pub(crate) fn propose(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
-        self.cancel_action(agent);
+        self.supersede_action(agent);
         let Some(def) = self.action_def(action) else { return };
         let context = Context { server: self, agent };
         if def.validate(&context, target).is_err() {
             self.reject(agent, target);
             return;
         }
-        let ticks = (def.seconds(&context, target) * TICKS_PER_SECOND as f32).round() as u64;
+        let seconds = def.seconds(&context, target);
+        let ticks = (seconds * TICKS_PER_SECOND as f32).round() as u64;
         if ticks == 0 {
             self.commit(agent, &def, target);
         } else {
             let id = self.executor.scheduler.schedule(self.tick + ticks, Pending { agent, action, target });
-            self.executor.in_progress.insert(agent, id);
+            self.executor.in_progress.insert(agent, (id, Instant::now(), seconds));
         }
     }
 
     pub(crate) fn cancel_action(&mut self, agent: PlayerId) {
-        if let Some(id) = self.executor.in_progress.remove(&agent) {
+        if let Some((id, ..)) = self.executor.in_progress.remove(&agent) {
             self.executor.scheduler.cancel(id);
+        }
+    }
+
+    /// Makes way for a new action: the one in progress is completed now if most of its
+    /// time has passed by the clock (the player saw it finish), otherwise cancelled.
+    fn supersede_action(&mut self, agent: PlayerId) {
+        let Some((id, started, seconds)) = self.executor.in_progress.remove(&agent) else { return };
+        let Some(pending) = self.executor.scheduler.cancel(id) else { return };
+        if started.elapsed().as_secs_f32() >= seconds * MOSTLY_DONE {
+            self.finish(pending);
+        }
+    }
+
+    /// Commits an action whose time is up, if its requirements still hold.
+    fn finish(&mut self, pending: Pending) {
+        if !self.players.contains_key(&pending.agent) {
+            return;
+        }
+        let Some(def) = self.action_def(pending.action) else { return };
+        if def.validate(&Context { server: self, agent: pending.agent }, pending.target).is_ok() {
+            self.commit(pending.agent, &def, pending.target);
+        } else {
+            self.reject(pending.agent, pending.target);
         }
     }
 
@@ -105,18 +143,10 @@ impl Server {
     /// world may have changed while the action was in progress.
     pub(crate) fn complete_actions(&mut self) {
         while let Some((_, id, pending)) = self.executor.scheduler.pop_due(self.tick) {
-            if self.executor.in_progress.get(&pending.agent) == Some(&id) {
+            if self.executor.in_progress.get(&pending.agent).is_some_and(|&(current, ..)| current == id) {
                 self.executor.in_progress.remove(&pending.agent);
             }
-            if !self.players.contains_key(&pending.agent) {
-                continue;
-            }
-            let Some(def) = self.action_def(pending.action) else { continue };
-            if def.validate(&Context { server: self, agent: pending.agent }, pending.target).is_ok() {
-                self.commit(pending.agent, &def, pending.target);
-            } else {
-                self.reject(pending.agent, pending.target);
-            }
+            self.finish(pending);
         }
     }
 

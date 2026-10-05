@@ -15,6 +15,10 @@
 //!
 //! `--clip SECONDS` records motion instead: every frame of that much game time at 30 fps,
 //! as `OUT-000.png` on, for checking how things move (wind, water, weather).
+//!
+//! `--press left|right` holds that mouse button through the first second of a clip,
+//! aimed where `--pose` looks, as a player would: a real break or place, through the server,
+//! to check edits show.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -60,6 +64,8 @@ pub struct CapturePlugin {
     pub flicker: Option<FlickerKind>,
     /// Seconds of game time to record frame by frame (see the module docs).
     pub clip: Option<f32>,
+    /// A mouse button to hold at the start of the clip (see the module docs).
+    pub press: Option<MouseButton>,
     /// Width and height of the shot, in pixels.
     pub size: UVec2,
     /// Render to a real window and shoot that, rather than an offscreen image: slower to
@@ -106,6 +112,7 @@ impl Plugin for CapturePlugin {
             frame_times: Vec::new(),
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
             clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
+            press: self.press,
             size: self.size,
             windowed: self.windowed,
         })
@@ -118,6 +125,7 @@ impl Plugin for CapturePlugin {
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
+        .add_systems(Update, press.before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time).before(TransformSystems::Propagate),
@@ -144,6 +152,7 @@ struct Capture {
     frame_times: Vec<f32>,
     flicker: Option<Flicker>,
     clip: Option<Clip>,
+    press: Option<MouseButton>,
     size: UVec2,
     windowed: bool,
 }
@@ -218,6 +227,26 @@ fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&
     let step = state.flicker.as_ref().map_or(Vec3::ZERO, |f| f.step);
     transform.translation = player.eye() + Vec3::new(x, y, z) + step;
     transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
+}
+
+/// Clip frames `--press` holds its button for: a second, long enough to dig soil.
+const PRESS_FRAMES: u32 = CLIP_RATE;
+
+/// Holds `--press`'s button at the start of the clip, with the player looking where the
+/// pose does, so the interaction systems break or place exactly as for a player.
+fn press(state: Res<Capture>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut ui: ResMut<UiState>, mut player: ResMut<LocalPlayer>) {
+    let Some(button) = state.press else { return };
+    if let Some([_, _, _, yaw, pitch]) = state.pose {
+        player.yaw = yaw.to_radians();
+        player.pitch = pitch.to_radians();
+    }
+    let holding = state.clip.as_ref().is_some_and(|c| c.started && c.taken < PRESS_FRAMES);
+    if holding {
+        ui.cursor_locked = true;
+        mouse.press(button);
+    } else if mouse.pressed(button) {
+        mouse.release(button);
+    }
 }
 
 /// Seconds between a `--mine 1` break and the screenshot.
