@@ -6,6 +6,7 @@ use voxmar_engine::fluid::FluidId;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits::{self, Replication};
+use voxmar_engine::vitals;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
@@ -17,8 +18,6 @@ const SAFE_FALL: f32 = 3.0;
 /// Lava burns this much health every `BURN_TICKS`.
 const BURN: f32 = 4.0;
 const BURN_TICKS: u64 = TICKS_PER_SECOND as u64 / 2;
-/// Below this temperature (°C), healing slows down.
-const COLD: f32 = 0.0;
 
 pub(crate) trait Process: Send {
     fn tier(&self) -> Tier;
@@ -28,7 +27,7 @@ pub(crate) trait Process: Send {
 pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
     vec![
         Box::new(Falling),
-        Box::new(Regeneration::default()),
+        Box::new(Survival),
         Box::new(Weather::default()),
         Box::new(crate::wear::Footsteps::default()),
         Box::new(crate::farm::Growth),
@@ -95,35 +94,113 @@ impl Process for Falling {
     }
 }
 
-/// Natural healing: one point every few seconds, slower where it is freezing. Reads the
-/// temperature field, so anything that warms or cools a place affects it.
+/// Survival: hunger empties, warmth follows the air, fires and water, and together they
+/// decide each player's effects (see `voxmar_engine::vitals`), which heal or hurt them
+/// over time. Once a second; creative players neither hunger nor hurt.
 #[derive(Default)]
-struct Regeneration {
-    runs: u64,
-}
+struct Survival;
 
-impl Process for Regeneration {
+/// How far a fire or torch warms, in blocks, and how much at its heart (°C).
+const HEAT_REACH: i32 = 4;
+const HEAT: f32 = 14.0;
+/// How much colder water feels (°C).
+const WATER_CHILL: f32 = 8.0;
+
+impl Process for Survival {
     fn tier(&self) -> Tier {
         Tier::Low
     }
 
     fn run(&mut self, server: &mut Server) {
-        self.runs += 1;
+        let seconds = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
-            if !player.joined || !player.health.alive() || player.health.current >= player.health.max {
+            if !player.joined || !player.health.alive() {
                 continue;
             }
             let feet = player.position.floor().as_ivec3();
-            let cold = server.temperature.sample(feet.x, feet.z) < COLD;
-            let every = if cold { 8 } else { 4 };
-            if self.runs.is_multiple_of(every) {
-                let player = server.players.get_mut(&id).unwrap();
-                player.health.heal(1);
-                player.changed(traits::HEALTH);
+            let air = server.temperature.sample(feet.x, feet.z);
+            let heat = server.heat_near(feet);
+            let wet = server.block(feet).and_then(|b| server.content.blocks.fluid(b)).is_some();
+            let cold_air = air - if wet { WATER_CHILL } else { 0.0 };
+            let felt = cold_air + heat;
+            let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
+
+            let player = server.players.get_mut(&id).unwrap();
+            let creative = player.allow_flight;
+            let before = player.vitals.clone();
+            if creative {
+                player.vitals.hunger = vitals::MAX_HUNGER;
+            }
+            let effects = vitals::effects(player.vitals.hunger, felt, warmed);
+            let rates = vitals::rates(&effects, false);
+            if !creative {
+                player.exhaustion += rates.hunger_per_minute * seconds / 60.0;
+            }
+            // Healing, while anything is left to heal.
+            match rates.heal_every.filter(|_| player.health.current < player.health.max) {
+                Some(every) => {
+                    player.heal_clock += seconds;
+                    if player.heal_clock >= every {
+                        player.heal_clock -= every;
+                        player.health.heal(1);
+                        player.exhaustion += vitals::HEAL_COST;
+                        player.changed(traits::HEALTH);
+                    }
+                }
+                None => player.heal_clock = 0.0,
+            }
+            match rates.hurt_every.filter(|_| !creative) {
+                Some(every) => {
+                    player.hurt_clock += seconds;
+                    if player.hurt_clock >= every {
+                        player.hurt_clock -= every;
+                        let died = player.health.damage(1);
+                        player.changed(traits::HEALTH);
+                        if died {
+                            player.connection.send(ServerMessage::Died);
+                        }
+                    }
+                }
+                None => player.hurt_clock = 0.0,
+            }
+            while player.exhaustion >= 1.0 {
+                player.exhaustion -= 1.0;
+                player.vitals.hunger = player.vitals.hunger.saturating_sub(1);
+            }
+            // The felt temperature is sent to the degree, so it does not resend every tick.
+            player.vitals.felt = felt.round();
+            player.vitals.effects = vitals::effects(player.vitals.hunger, felt, warmed);
+            if player.vitals != before {
+                player.changed(traits::VITALS);
             }
         }
+    }
+}
+
+impl Server {
+    /// How much fires, torches and other glowing blocks near `at` warm it (°C): the
+    /// brightest within reach, fading with distance.
+    fn heat_near(&self, at: voxmar_engine::glam::IVec3) -> f32 {
+        let blocks = &self.content.blocks;
+        let mut heat = 0.0f32;
+        for dy in -1..=2 {
+            for dz in -HEAT_REACH..=HEAT_REACH {
+                for dx in -HEAT_REACH..=HEAT_REACH {
+                    let pos = at + voxmar_engine::glam::IVec3::new(dx, dy, dz);
+                    let Some(block) = self.block(pos) else { continue };
+                    let emission = blocks.info(block).emission;
+                    if emission < 12 {
+                        continue;
+                    }
+                    let distance = ((dx * dx + dy * dy + dz * dz) as f32).sqrt();
+                    let falloff = (1.0 - distance / (HEAT_REACH as f32 + 1.0)).max(0.0);
+                    heat = heat.max(HEAT * falloff * emission as f32 / 15.0);
+                }
+            }
+        }
+        heat
     }
 }
 
@@ -145,7 +222,12 @@ impl Server {
             player.dirty.clear();
             player
                 .connection
-                .send(ServerMessage::PlayerState { health: player.health, inventory: player.inventory.clone(), skills: player.skills.clone() });
+                .send(ServerMessage::PlayerState {
+                    health: player.health,
+                    inventory: player.inventory.clone(),
+                    skills: player.skills.clone(),
+                    vitals: player.vitals.clone(),
+                });
         }
     }
 }

@@ -11,6 +11,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::action::ActionTarget;
+use voxmar_engine::vitals::{Effect, MAX_HUNGER, Vitals};
 
 use crate::Actions;
 use crate::interact::Target;
@@ -20,7 +21,7 @@ use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{BODY, LARGE, SHADOW, TEXT, UiFont, shadowed};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, LARGE, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
@@ -35,7 +36,7 @@ impl Plugin for HudPlugin {
                 (
                     respawn,
                     update_slots.after(inventory::InventorySystems),
-                    update_hearts,
+                    update_vitals,
                     update_status,
                     update_debug,
                     show_held_name,
@@ -54,6 +55,8 @@ pub struct HudImages {
     /// Item icon per block id.
     pub icons: Vec<Handle<Image>>,
     pub crosshair: Handle<Image>,
+    /// Icon per skill id.
+    pub skills: Vec<Handle<Image>>,
 }
 
 /// A slot's side: an item's 16 texels plus a 2-texel rim, in screen pixels.
@@ -75,11 +78,19 @@ pub struct SlotIcon(pub usize);
 pub struct SlotCount(pub usize);
 #[derive(Component)]
 struct HotbarSelection;
-/// What sits along the bottom edge: the hotbar and hearts.
+/// What sits along the bottom edge: the hotbar, health, hunger and effects.
 #[derive(Component)]
 struct Bottom;
 #[derive(Component)]
-struct Heart(usize);
+struct HealthMeter;
+#[derive(Component)]
+struct HungerMeter;
+/// The row of effects over the meters.
+#[derive(Component)]
+struct EffectChips;
+
+/// The most health a player has, as the server keeps it.
+const MAX_HEALTH: u8 = 20;
 #[derive(Component)]
 struct StatusText;
 #[derive(Component)]
@@ -148,12 +159,13 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             let name = Node { height: Val::Px(12.0 * PX), margin: UiRect::bottom(Val::Px(2.0 * PX)), ..default() };
             bottom.spawn(name).with_child((HeldName, shadowed(font, "", BODY, TEXT)));
             let width = HOTBAR_SLOTS as f32 * (SLOT + GAP) - GAP + 2.0 * FRAME;
-            let hearts = Node { width: Val::Px(width), column_gap: Val::Px(-PX), margin: UiRect::bottom(Val::Px(2.0 * PX)), ..default() };
-            bottom.spawn(hearts).with_children(|hearts| {
-                for i in 0..10 {
-                    let size = Piece::Heart.size();
-                    hearts.spawn((Node { width: Val::Px(size.x), height: Val::Px(size.y), ..default() }, Piece::HeartEmpty.image(), Heart(i)));
-                }
+            // The effects on you, then health and hunger side by side.
+            let chips = Node { width: Val::Px(width), column_gap: Val::Px(2.0 * PX), margin: UiRect::bottom(Val::Px(2.0 * PX)), flex_wrap: FlexWrap::Wrap, ..default() };
+            bottom.spawn((chips, EffectChips));
+            let meters = Node { width: Val::Px(width), column_gap: Val::Px(2.0 * PX), margin: UiRect::bottom(Val::Px(2.0 * PX)), ..default() };
+            bottom.spawn(meters).with_children(|meters| {
+                spawn_meter(meters, font, Piece::BarHealth, Val::Percent(50.0), HealthMeter);
+                spawn_meter(meters, font, Piece::BarHunger, Val::Percent(50.0), HungerMeter);
             });
             let frame = Node { width: Val::Px(width), height: Val::Px(SLOT + 2.0 * FRAME), padding: UiRect::all(Val::Px(FRAME)), column_gap: Val::Px(GAP), ..default() };
             bottom.spawn((frame, Piece::Frame.image())).with_children(|bar| {
@@ -253,21 +265,48 @@ fn update_slots(
     }
 }
 
-fn update_hearts(player: Res<LocalPlayer>, mut hearts: Query<(&Heart, &mut ImageNode)>, mut shown: Local<Option<u8>>) {
-    if *shown == Some(player.health) {
+/// Health and hunger as meters reading "15/20", and a chip for each effect on you: teal
+/// for a buff, red for a debuff.
+#[allow(clippy::too_many_arguments)]
+fn update_vitals(
+    mut commands: Commands,
+    player: Res<LocalPlayer>,
+    font: Res<UiFont>,
+    health: Query<&Meter, With<HealthMeter>>,
+    hunger: Query<&Meter, With<HungerMeter>>,
+    chips: Query<Entity, With<EffectChips>>,
+    mut nodes: Query<&mut Node>,
+    children: Query<&Children>,
+    mut texts: Query<&mut Text>,
+    mut shown: Local<Option<(u8, Vitals)>>,
+) {
+    let state = (player.health, player.vitals.clone());
+    if shown.as_ref() == Some(&state) {
         return;
     }
-    *shown = Some(player.health);
-    for (heart, mut image) in &mut hearts {
-        let piece = match (player.health as usize).saturating_sub(heart.0 * 2) {
-            0 => Piece::HeartEmpty,
-            1 => Piece::HeartHalf,
-            _ => Piece::Heart,
-        };
-        if image.image != piece.handle() {
-            image.image = piece.handle();
-        }
+    let effects_changed = shown.as_ref().is_none_or(|(_, v)| v.effects != state.1.effects);
+    *shown = Some(state);
+    if let Ok(meter) = health.single() {
+        set_meter(meter, player.health as f32 / MAX_HEALTH as f32, &format!("{}/{MAX_HEALTH}", player.health), &mut nodes, &children, &mut texts);
     }
+    if let Ok(meter) = hunger.single() {
+        let value = player.vitals.hunger;
+        set_meter(meter, value as f32 / MAX_HUNGER as f32, &format!("{value}/{MAX_HUNGER}"), &mut nodes, &children, &mut texts);
+    }
+    if effects_changed && let Ok(row) = chips.single() {
+        commands.entity(row).despawn_children().with_children(|row| {
+            for &effect in &player.vitals.effects {
+                spawn_effect_chip(row, &font.0, effect);
+            }
+        });
+    }
+}
+
+/// A small label naming an effect, teal for a buff and red for a debuff.
+pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, effect: Effect) {
+    let chip = Node { padding: UiRect::new(Val::Px(3.0 * PX), Val::Px(3.0 * PX), Val::Px(PX), Val::Px(2.0 * PX)), ..default() };
+    let color = if effect.is_buff() { ACCENT } else { ERROR };
+    parent.spawn((chip, Piece::Tooltip.image())).with_child(shadowed(font, effect.title(), BODY, color));
 }
 
 fn update_status(

@@ -15,13 +15,14 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::{Inventory, ItemStack};
 use voxmar_engine::skill::{SkillId, Skills};
+use voxmar_engine::vitals::Vitals;
 use voxmar_engine::traits::Health;
 use voxmar_engine::world::Column;
 
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -92,7 +93,7 @@ pub enum ServerMessage {
     /// Blocks changed together in one tick (water and lava flowing), in the order they
     /// changed, in columns the player has.
     Blocks { changes: Vec<(IVec3, BlockId)> },
-    PlayerState { health: Health, inventory: Inventory, skills: Skills },
+    PlayerState { health: Health, inventory: Inventory, skills: Skills, vitals: Vitals },
     /// The player earned `tenths` of experience in `skill`, for the interface to show.
     Xp { skill: SkillId, tenths: u32 },
     /// Authoritative position, after a rejected move or a respawn.

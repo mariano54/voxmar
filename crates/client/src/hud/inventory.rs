@@ -23,7 +23,8 @@ use bevy::ui::RelativeCursorPosition;
 use bevy::window::PrimaryWindow;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::block::{BlockDef, Rarity};
-use voxmar_engine::inventory::{CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK, SLOTS};
+use voxmar_engine::craft::GRID;
+use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK, SLOTS};
 
 use super::{SLOT, slot_contents};
 use crate::Actions;
@@ -34,7 +35,7 @@ use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::{Silent, UiSound};
 use crate::session::Launch;
-use crate::ui::widgets::{BODY, ERROR, GOLD, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, spawn_heading, text};
+use crate::ui::widgets::{BODY, ERROR, GOLD, LARGE, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, spawn_heading, text};
 use crate::world::ClientWorld;
 
 pub struct InventoryPlugin;
@@ -46,7 +47,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, click, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, show_skills).after(InventorySystems))
+                ((toggle, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, show_skills).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -99,6 +100,14 @@ struct Tooltip;
 struct SkillsLine;
 #[derive(Component)]
 struct TooltipLines;
+/// What the crafting grid makes: click to craft one onto the pointer, shift-click to craft
+/// as many as fit into the inventory.
+#[derive(Component)]
+struct OutputSlot;
+#[derive(Component)]
+struct OutputIcon;
+#[derive(Component)]
+struct OutputCount;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -123,9 +132,30 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image()))
                     .with_children(|cell| slot_contents(cell, font, slot));
             };
+            // The crafting grid and what it makes, above the pack.
+            let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), margin: UiRect::bottom(Val::Px(5.0 * PX)), ..default() };
+            card.spawn(crafting).with_children(|row| {
+                row.spawn(text(font, "Craft", BODY, MUTED));
+                let square = Node {
+                    display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::px(2, SLOT),
+                    row_gap: Val::Px(PX),
+                    column_gap: Val::Px(PX),
+                    ..default()
+                };
+                row.spawn(square).with_children(|grid| (CRAFT..CRAFT + GRID).for_each(|slot| spawn_slot(grid, slot)));
+                row.spawn(shadowed(font, "→", LARGE, GOLD));
+                let node = Node { width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
+                row.spawn((Button, Silent, OutputSlot, RelativeCursorPosition::default(), node, Piece::Frame.image())).with_children(|cell| {
+                    let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
+                    let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
+                    cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
+                    cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(2.0 * PX), bottom: Val::Px(PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
+                });
+            });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
-            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack · 1-9: swap · Q: throw";
+            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack\n1-9: swap · Q: throw";
             let help = (text(font, help, BODY, MUTED), TextLayout::justify(Justify::Center));
             card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
             let skills = (text(font, "", BODY, SOFT), TextLayout::justify(Justify::Center), SkillsLine);
@@ -170,6 +200,59 @@ fn send(net: &Net, actions: &Actions, inventory: &mut Inventory, action: Move) {
     };
     if moved {
         net.propose(actions.0.expect(name), target);
+    }
+}
+
+/// Shows what the crafting grid makes, and crafts it when clicked.
+#[allow(clippy::too_many_arguments)]
+fn craft(
+    ui: Res<UiState>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    launch: Res<crate::session::Launch>,
+    images: Res<super::HudImages>,
+    net: Res<Net>,
+    actions: Res<Actions>,
+    mut player: ResMut<LocalPlayer>,
+    output: Query<&RelativeCursorPosition, With<OutputSlot>>,
+    mut icon: Query<(&mut ImageNode, &mut Visibility), With<OutputIcon>>,
+    mut count: Query<&mut Text, With<OutputCount>>,
+    mut sounds: MessageWriter<UiSound>,
+) {
+    if !ui.inventory_open {
+        return;
+    }
+    let recipes = launch.content.recipes.clone();
+    let made = recipes.find(&player.inventory.grid()).map(|r| (r.output, r.count));
+    if let Ok((mut image, mut visibility)) = icon.single_mut() {
+        match made {
+            Some((item, _)) => {
+                let handle = &images.icons[item.0 as usize];
+                if image.image != *handle {
+                    image.image = handle.clone();
+                }
+                visibility.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
+    if let Ok(mut text) = count.single_mut() {
+        let value = made.filter(|(_, n)| *n > 1).map_or(String::new(), |(_, n)| n.to_string());
+        if text.0 != value {
+            text.0 = value;
+        }
+    }
+    let clicked = mouse.just_pressed(MouseButton::Left) && output.single().is_ok_and(|cursor| cursor.cursor_over());
+    if !clicked || made.is_none() {
+        return;
+    }
+    let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let recipe = |grid: &[Option<voxmar_engine::block::BlockId>; GRID]| recipes.find(grid).map(|r| (r.output, r.count));
+    if player.inventory.craft(recipe, all) > 0 {
+        net.propose(actions.0.expect("core:craft"), ActionTarget::Slot(if all { 0 } else { 1 }));
+        sounds.write(UiSound::Click);
     }
 }
 

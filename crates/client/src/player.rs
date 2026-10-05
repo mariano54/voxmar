@@ -7,6 +7,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::inventory::Inventory;
 use voxmar_engine::skill::Skills;
+use voxmar_engine::vitals::Vitals;
 use voxmar_engine::movement::{self, Body, Controls, Surroundings};
 use voxmar_engine::physics::{Aabb, player as dims};
 
@@ -62,6 +63,8 @@ pub struct LocalPlayer {
     /// Experience in every skill, as the server last said, and whether it has said yet.
     pub skills: Skills,
     pub skills_known: bool,
+    /// Hunger, warmth and their effects, as the server last said.
+    pub vitals: Vitals,
     pub selected: usize,
     pub dead: bool,
     /// Set once the server has welcomed us.
@@ -90,6 +93,7 @@ impl Default for LocalPlayer {
             inventory: Inventory::default(),
             skills: Skills::default(),
             skills_known: false,
+            vitals: Vitals::default(),
             selected: 0,
             dead: false,
             joined: false,

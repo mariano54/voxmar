@@ -40,7 +40,7 @@ impl Plugin for SettingsPlugin {
         app.init_resource::<Rebinding>()
             .init_resource::<OpenSection>()
             .init_resource::<OpenDropdown>()
-            .add_systems(PostStartup, spawn_menu)
+            .add_systems(PostStartup, (spawn_menu, open_start_tab))
             .add_systems(PreUpdate, rebind.after(InputSystems))
             .add_systems(
             Update,
@@ -937,6 +937,16 @@ struct Rebinding(Option<Binding>);
 /// The tab showing; kept while the panel is closed, so it opens where it was left.
 #[derive(Resource, Default)]
 struct OpenSection(usize);
+
+/// A settings tab to open at startup, by name (`--tab`, for captures).
+#[derive(Resource)]
+pub struct StartTab(pub String);
+
+fn open_start_tab(start: Option<Res<StartTab>>, mut open: ResMut<OpenSection>) {
+    if let Some(index) = start.and_then(|start| SECTIONS.iter().position(|(name, _)| name.eq_ignore_ascii_case(&start.0))) {
+        open.0 = index;
+    }
+}
 
 const PANEL_WIDTH: f32 = 430.0 * PX;
 const TAB_WIDTH: f32 = 72.0 * PX;
