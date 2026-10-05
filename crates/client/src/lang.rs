@@ -16,7 +16,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::text::LineHeight;
 use voxmar_engine::block::{BlockDef, BlockRegistry};
-use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, fill, languages};
+use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, languages, title_from_id};
 use voxmar_engine::skill::SkillDef;
 
 use crate::settings::Settings;
@@ -47,27 +47,9 @@ impl Locale {
         Locale { lang: Arc::new(Lang::load(content_dir, &code)), languages: Arc::new(languages) }
     }
 
-    /// What a block or item is called: its own name in the language (`block.base.oak_log`),
-    /// or, for a block made from a template, the template member's name with the family's
-    /// filled in (`block.base.{name}_log` with `family.base.oak`), so a language names a
-    /// whole family of woods or rocks in two lines; another look of a plant goes by the
-    /// plant's name. Without any of those, a name made from its id: "Oak Log".
+    /// What a block or item is called (see `Lang::block`).
     pub fn block(&self, def: &BlockDef) -> String {
-        if let Some(name) = self.lang.find(&def_key("block", &def.name)) {
-            return name.to_owned();
-        }
-        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
-        if let Some(family) = &def.family {
-            let family_local = family.rsplit(':').next().unwrap_or(family);
-            let pattern = local.replacen(family_local, "{name}", 1);
-            if let (Some(member), Some(family)) = (self.lang.find(&format!("block.{namespace}.{pattern}")), self.lang.find(&def_key("family", family))) {
-                return fill(member, &[("name", &family)]);
-            }
-        }
-        if let Some(plant) = def.variant_of.as_deref().and_then(|plant| self.lang.find(&def_key("block", plant))) {
-            return plant.to_owned();
-        }
-        title_from_id(&def.name)
+        self.lang.block(def)
     }
 
     /// What the block called `name` is called (see [`Locale::block`]).
@@ -122,20 +104,6 @@ fn resolve(wanted: &str, languages: &[Language]) -> String {
     let system = sys_locale::get_locale().unwrap_or_default();
     let primary = system.split(['-', '_', '.']).next().unwrap_or("").to_ascii_lowercase();
     if has(&primary) { primary } else { ENGLISH.to_owned() }
-}
-
-/// A name for people made from an id: `base:oak_log` is "Oak Log".
-pub fn title_from_id(name: &str) -> String {
-    let local = name.rsplit(':').next().unwrap_or(name);
-    local
-        .split('_')
-        .filter(|word| !word.is_empty())
-        .map(|word| {
-            let mut chars = word.chars();
-            chars.next().map(|first| first.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Text that shows a key's string in the player's language, rewritten when it changes.
@@ -205,6 +173,17 @@ mod tests {
             if first_party(&def.name) && !flowing && def.name != "core:air" {
                 names.push((def.name.clone(), locale.block(def)));
             }
+        }
+        // Biomes, and the kinds of weather, effects and winds, as the console names them.
+        let world = voxmar_worldgen::WorldContent::load(content).unwrap();
+        let mut own: Vec<(String, String)> =
+            world.biomes.iter().filter(|biome| first_party(&biome.name)).map(|biome| (def_key("biome", &biome.name), biome.name.clone())).collect();
+        let weather = &content.weather;
+        let named = weather.presets().iter().map(|p| ("kind", p.short_name())).chain(weather.winds().iter().map(|w| ("wind", w.short_name())));
+        own.extend(named.chain(weather.effects().iter().map(|e| ("effect", e.short_name()))).map(|(what, name)| (format!("weather.{what}.{name}"), name.replace('_', " "))));
+        for (key, name) in own {
+            let words = voxmar_engine::lang::Words::Own(key.clone(), name);
+            names.push((key, locale.render(&words, blocks)));
         }
         for id in content.skills.ids() {
             let def = content.skills.get(id);

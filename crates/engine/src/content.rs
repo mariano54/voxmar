@@ -14,6 +14,7 @@ use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::crop::CropRegistry;
+use crate::lang::{ENGLISH, Lang};
 use crate::movement::Tuning;
 use crate::skill::SkillRegistry;
 use crate::weather::WeatherTable;
@@ -30,6 +31,8 @@ pub struct Content {
     pub crops: Arc<CropRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
+    /// The packages' words in English (`lang/en.ron`), for the server's log and console.
+    pub english: Arc<Lang>,
 }
 
 /// A definition file the engine leaves to another crate.
@@ -111,6 +114,7 @@ impl Content {
             skills: Arc::new(skills),
             crops: Arc::new(crops),
             files: Arc::new(files),
+            english: Arc::new(Lang::load(dir, ENGLISH)),
         })
     }
 

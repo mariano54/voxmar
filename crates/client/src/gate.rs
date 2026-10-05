@@ -282,7 +282,7 @@ struct Observer {
     /// Where the server says the other players are.
     others: FxHashMap<PlayerId, Vec3>,
     /// What the server answered the observer's commands.
-    replies: Vec<String>,
+    replies: Vec<voxmar_engine::lang::Words>,
 }
 
 impl Observer {
@@ -967,7 +967,9 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         1 => {
-            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().find(|r| r.contains("gorge")).cloned()) else {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("gorge"))) else {
                 if in_phase > 20.0 {
                     gate.check("gorge", Err("no answer to /locate gorge".into()));
                     gate.next(Step::Leave, now);
