@@ -23,11 +23,7 @@
 
 // A turn by the golden angle (2.39996323 radians), as its cosine and sine.
 const GOLDEN_TURN = vec2(-0.73736888, 0.67549029);
-// Blocker search taps: half as many in the cascades past the second, whose shadows are
-// far enough off that a penumbra's width need not be judged as closely (the search was a
-// sixth of a savanna's terrain shading).
 const BLOCKER_TAPS: u32 = 8u;
-const FAR_BLOCKER_TAPS: u32 = 4u;
 // The widest blocker search and penumbra, in shadow texels: wide enough for soft shade
 // under a canopy, narrow enough that the fixed spiral's taps blur into each other.
 const MAX_SEARCH: f32 = 16.0;
@@ -92,9 +88,8 @@ fn cascade_shadow(a: Atmosphere, index: u32, world: vec3<f32>, normal: vec3<f32>
     let search = clamp(a.shadow.w / texel, 1.5, MAX_SEARCH);
     var blockers = 0.0;
     var blocker_depth = 0.0;
-    let blocker_taps = select(BLOCKER_TAPS, FAR_BLOCKER_TAPS, index >= 2u);
-    var around = spiral(blocker_taps);
-    for (var k = 0u; k < blocker_taps; k++) {
+    var around = spiral(BLOCKER_TAPS);
+    for (var k = 0u; k < BLOCKER_TAPS; k++) {
         let offset = next_point(&around) * search;
         let at = clamp(vec2<i32>(floor(uv * size + offset)), vec2(0), vec2<i32>(size) - 1);
         let stored = textureLoad(directional_shadow_textures, at, layer, 0);
