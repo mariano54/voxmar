@@ -1,6 +1,6 @@
 // Sky dome: horizon-to-zenith gradient, clouds shaped by the weather, sun and moon, and a
-// night sky of stars, constellations, the Milky Way, faint galaxies and planets that turns
-// with the sun.
+// night sky of stars, constellations, the Milky Way, faint galaxies, planets and comets,
+// laid out for each world (night.rs), that turns with the sun and, over a year, against it.
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
@@ -15,8 +15,11 @@ struct SkyParams {
     // x: seconds of game time, y: low cloud cover 0..1, z: how heaped it is, from flat
     // layers (0) to towers (1), w: cirrus 0..1
     clouds: vec4<f32>,
-    // x: fraction of the day, y: days elapsed (wrapped every 1000 days)
+    // x: fraction of the day, y: days elapsed (wrapped every 1000 days), z: fraction of
+    // the year
     stars: vec4<f32>,
+    // xyz: direction towards the moon, w: how much of it is lit, 0 (new) to 1 (full)
+    moon: vec4<f32>,
     // xy: where the cloud layer is over the camera (its position and wind drift, in cloud
     // units), z: precipitation 0..1, w: lightning flash 0..1
     weather: vec4<f32>,
@@ -25,72 +28,35 @@ struct SkyParams {
     optics: vec4<f32>,
 };
 
+// The world's night sky; see night.rs for what each holds.
+struct SkyLayout {
+    constellations: array<vec4<f32>, 10>,
+    stars: array<vec4<f32>, 96>,
+    planets: array<vec4<f32>, 3>,
+    orbits: array<vec4<f32>, 3>,
+    deep_sky: array<vec4<f32>, 8>,
+    deep_look: array<vec4<f32>, 8>,
+    comets: array<vec4<f32>, 3>,
+    comet_looks: array<vec4<f32>, 3>,
+    milky_pole: vec4<f32>,
+    milky_core: vec4<f32>,
+    seeds: vec4<u32>,
+};
+
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> sky: SkyParams;
 // The terrain's air (atmosphere.wgsl): fog and ground fog hide the sky as they hide the land.
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> atmosphere: Atmosphere;
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> heavens: SkyLayout;
 
 const PI: f32 = 3.14159265;
 const TAU: f32 = 6.28318531;
 
-// The night sky turns about the same axis as the sun (z). In its own frame the sun sits at
-// longitude 0; everything below is placed by (longitude, latitude) in degrees.
+// The night sky turns about the same axis as the sun (z). In the frame of the stars the
+// sun sits at longitude 0 on day 0 of a year, and is drawn back through them over it.
 const SUN = vec3(0.97014, 0.0, 0.24254);
-// The Milky Way runs along the great circle facing MILKY_POLE, brightest towards MILKY_CORE.
-const MILKY_POLE = vec3(0.55627, 0.35719, -0.75032);
-const MILKY_CORE = vec3(-0.80296, 0.46359, -0.37461);
 // Turns the coarse star layer so its cube seams do not line up with the fine one.
 const LAYER_TURN = mat3x3<f32>(
     vec3(0.6486, 0.6821, -0.3376), vec3(-0.5740, 0.7297, 0.3715), vec3(0.4998, -0.0472, 0.8649)
-);
-
-// Constellations: centre longitude and latitude, radius enclosing the stars, star count.
-const CONSTELLATIONS = array<vec4<f32>, 8>(
-    vec4(255.0, -5.0, 14.0, 10.0), // the Hunter
-    vec4(282.0, 16.0, 2.0, 7.0), // the Sisters, a tight cluster
-    vec4(195.0, 22.0, 8.0, 6.0), // the Lyre
-    vec4(215.0, 52.0, 16.0, 8.0), // the Dipper
-    vec4(222.0, -50.0, 11.0, 7.0), // the Cross and its pointers
-    vec4(155.0, -24.0, 14.0, 13.0), // the Scorpion
-    vec4(105.0, 16.0, 13.0, 8.0), // the Swan
-    vec4(320.0, 45.0, 11.0, 5.0), // the Throne, a W
-);
-
-// Constellation stars, in order: offset from the centre in degrees (x east, y north),
-// brightness, and colour from blue-white (0) through white and yellow to orange (1).
-const STARS = array<vec4<f32>, 64>(
-    // the Hunter
-    vec4(-4.5, 9.0, 3.1, 0.95), vec4(4.0, 7.5, 1.7, 0.15), vec4(0.0, 12.0, 0.8, 0.2),
-    vec4(-2.2, -0.6, 1.5, 0.1), vec4(0.0, 0.0, 1.7, 0.1), vec4(2.0, 0.7, 1.4, 0.1),
-    vec4(0.2, -3.0, 0.6, 0.2), vec4(0.4, -4.2, 0.8, 0.15),
-    vec4(-4.0, -8.5, 1.4, 0.15), vec4(5.0, -8.0, 3.1, 0.05),
-    // the Sisters
-    vec4(0.0, 0.0, 1.3, 0.1), vec4(0.6, 0.25, 1.0, 0.1), vec4(0.95, -0.15, 0.9, 0.1),
-    vec4(0.45, -0.5, 0.8, 0.1), vec4(-0.45, -0.2, 0.8, 0.1), vec4(-0.15, 0.45, 0.8, 0.1),
-    vec4(1.3, 0.15, 0.7, 0.1),
-    // the Lyre
-    vec4(0.0, 0.0, 3.6, 0.0), vec4(1.6, 1.4, 0.6, 0.2), vec4(1.4, -1.6, 0.7, 0.2),
-    vec4(2.6, -4.6, 0.8, 0.7), vec4(0.6, -6.2, 1.0, 0.2), vec4(-0.6, -4.8, 0.9, 0.1),
-    // the Dipper
-    vec4(8.0, 3.0, 2.0, 0.8), vec4(8.0, -2.5, 1.5, 0.2), vec4(1.5, -3.5, 1.4, 0.25),
-    vec4(0.5, 1.5, 1.0, 0.3), vec4(-4.5, 2.5, 1.8, 0.2), vec4(-9.0, 3.5, 1.5, 0.25),
-    vec4(-8.6, 4.1, 0.4, 0.3), vec4(-14.0, 1.0, 1.7, 0.1),
-    // the Cross and its pointers
-    vec4(0.0, 3.2, 1.8, 0.85), vec4(0.0, -3.0, 2.2, 0.05), vec4(-2.6, 0.2, 2.0, 0.05),
-    vec4(2.2, 0.9, 1.3, 0.15), vec4(1.0, -0.8, 0.6, 0.3), vec4(-9.0, -2.0, 2.8, 0.4),
-    vec4(-6.0, -1.2, 2.1, 0.1),
-    // the Scorpion
-    vec4(-9.5, 7.0, 1.3, 0.1), vec4(-10.5, 4.0, 1.5, 0.1), vec4(-10.0, 1.0, 1.1, 0.15),
-    vec4(-6.0, 3.0, 1.0, 0.2), vec4(-4.0, 1.0, 2.8, 1.0), vec4(-2.5, -0.5, 1.0, 0.2),
-    vec4(-1.5, -4.0, 1.3, 0.2), vec4(-0.5, -7.5, 1.1, 0.2), vec4(1.5, -10.0, 1.1, 0.2),
-    vec4(4.5, -11.5, 1.3, 0.2), vec4(7.0, -10.5, 1.4, 0.15), vec4(7.5, -8.0, 2.0, 0.1),
-    vec4(8.5, -8.4, 1.1, 0.15),
-    // the Swan
-    vec4(0.0, 9.0, 2.5, 0.15), vec4(0.0, 2.5, 1.5, 0.45), vec4(-6.5, 0.5, 1.4, 0.6),
-    vec4(-11.5, -1.0, 0.8, 0.5), vec4(6.0, 4.5, 1.3, 0.2), vec4(10.0, 6.0, 0.8, 0.3),
-    vec4(0.5, -3.5, 1.0, 0.5), vec4(1.0, -10.0, 1.4, 0.95),
-    // the Throne
-    vec4(-9.0, 1.5, 1.4, 0.2), vec4(-4.5, -2.5, 1.5, 0.3), vec4(0.0, 0.5, 1.8, 0.7),
-    vec4(4.5, -3.0, 1.5, 0.25), vec4(8.5, 0.5, 1.3, 0.2),
 );
 
 fn hash(p: vec3<f32>) -> f32 {
@@ -137,11 +103,12 @@ fn star_tint(t: f32) -> vec3<f32> {
     return mix(cool, vec3(1.0, 0.66, 0.38), smoothstep(0.5, 1.0, t));
 }
 
-// A star as a soft point `d` pixels away, larger and with a faint halo when bright.
+// A star as a soft point `d` pixels away, a little larger and with a faint halo when
+// bright.
 fn star_glow(d: f32, brightness: f32) -> f32 {
-    let r = 0.6 + 0.5 * brightness;
+    let r = 0.55 + 0.35 * brightness;
     let x = d * d / (r * r);
-    return brightness * (exp(-x) + 0.05 * exp(-x * 0.06));
+    return brightness * (exp(-x) + 0.02 * exp(-x * 0.1));
 }
 
 // Length in pixels of an offset `o`, given how its coordinates change per pixel (`j`, with
@@ -215,15 +182,15 @@ fn tangent(p: vec3<f32>, lon: f32, lat: f32) -> vec2<f32> {
 fn constellations(p: vec3<f32>, sph: vec2<f32>, dpx: vec3<f32>, dpy: vec3<f32>, px: f32) -> vec3<f32> {
     var light = vec3(0.0);
     var first = 0u;
-    for (var i = 0u; i < 8u; i++) {
-        let group = CONSTELLATIONS[i];
+    for (var i = 0u; i < 10u; i++) {
+        let group = heavens.constellations[i];
         let last = first + u32(group.w);
-        if near(sph, group.x, group.y, group.z) {
+        if group.w > 0.0 && near(sph, group.x, group.y, group.z) {
             let f = frame(group.x, group.y);
             let q = degrees(p * f);
             let j = mat2x2(degrees(dpx * f), degrees(dpy * f));
             for (var s = first; s < last; s++) {
-                let star = STARS[s];
+                let star = heavens.stars[s];
                 let o = q - star.xy;
                 light += star_tint(star.w) * star_glow(pixels(o, j, length(o) / px), star.z);
             }
@@ -236,9 +203,9 @@ fn constellations(p: vec3<f32>, sph: vec2<f32>, dpx: vec3<f32>, dpy: vec3<f32>, 
 // The Milky Way: a soft, patchy band, warmer and wider towards its core, with a dark lane
 // down the middle. Returns colour and, in w, how strongly the band is there.
 fn milky_way(p: vec3<f32>) -> vec4<f32> {
-    let core = dot(p, MILKY_CORE) * 0.5 + 0.5;
+    let core = dot(p, heavens.milky_core.xyz) * 0.5 + 0.5;
     let width = 0.13 + 0.08 * core;
-    let h = dot(p, MILKY_POLE);
+    let h = dot(p, heavens.milky_pole.xyz);
     let band = exp(-h * h / (width * width));
     if band < 0.02 {
         return vec4(0.0);
@@ -272,38 +239,34 @@ fn nebula(p: vec3<f32>, q: vec2<f32>, size: f32, tint: vec3<f32>, ragged: f32) -
     return tint * shape * mix(1.0 - ragged, 1.0, smoothstep(0.3, 0.8, wisps));
 }
 
-// Faint galaxies and nebulae at fixed places.
+// The world's faint galaxies and nebulae.
 fn deep_sky(p: vec3<f32>, sph: vec2<f32>) -> vec3<f32> {
     var light = vec3(0.0);
-    if near(sph, 300.0, 30.0, 6.0) {
-        light += galaxy(tangent(p, 300.0, 30.0), 3.0, 35.0, 0.35);
-    }
-    if near(sph, 170.0, 5.0, 3.0) {
-        light += galaxy(tangent(p, 170.0, 5.0), 1.0, -20.0, 0.8);
-    }
-    if near(sph, 125.0, -30.0, 3.0) {
-        light += galaxy(tangent(p, 125.0, -30.0), 1.2, 70.0, 0.35);
-    }
-    // In the Hunter's sword, and around the Sisters.
-    if near(sph, 255.4, -9.2, 3.0) {
-        light += nebula(p, tangent(p, 255.4, -9.2), 0.7, vec3(0.14, 0.05, 0.08), 0.6);
-    }
-    if near(sph, 282.4, 16.0, 3.0) {
-        light += nebula(p, tangent(p, 282.4, 16.0), 1.1, vec3(0.03, 0.05, 0.12), 0.5);
-    }
-    // Two irregular dwarf galaxies near the pole, circling low over the horizon.
-    if near(sph, 200.0, -66.0, 9.0) {
-        light += nebula(p, tangent(p, 200.0, -66.0) * vec2(1.0, 1.6), 3.5, vec3(0.03, 0.033, 0.04), 0.4);
-    }
-    if near(sph, 232.0, -72.0, 6.0) {
-        light += nebula(p, tangent(p, 232.0, -72.0) * vec2(1.0, 1.4), 2.0, vec3(0.025, 0.028, 0.035), 0.4);
+    for (var i = 0u; i < 8u; i++) {
+        let object = heavens.deep_sky[i];
+        if object.w < 0.0 || !near(sph, object.x, object.y, object.z * 2.5 + 1.0) {
+            continue;
+        }
+        let look = heavens.deep_look[i];
+        let q = tangent(p, object.x, object.y);
+        let kind = u32(object.w);
+        if kind == 0u {
+            light += galaxy(q, object.z, look.x, look.y);
+        } else if kind == 1u {
+            light += nebula(p, q, object.z, vec3(0.14, 0.05, 0.08), look.z);
+        } else if kind == 2u {
+            light += nebula(p, q, object.z, vec3(0.03, 0.05, 0.12), look.z);
+        } else {
+            light += nebula(p, q * vec2(1.0, look.y), object.z, vec3(0.03, 0.033, 0.04), look.z);
+        }
     }
     return light;
 }
 
-// A planet as a small lit disc with a soft halo. Each wanders slowly against the stars.
-// `kind` 0: rusty with a polar cap, 1: pale blue, 2: banded and ringed.
-fn planet(p: vec3<f32>, sph: vec2<f32>, lon: f32, lat: f32, radius: f32, kind: u32, px: f32) -> vec4<f32> {
+// A planet as a small lit disc with a soft halo, at (lon, lat) among the stars, `sun` the
+// sun's direction in their frame. `kind` 0: rusty with a polar cap, 1: pale blue, 2:
+// banded and ringed.
+fn planet(p: vec3<f32>, sph: vec2<f32>, lon: f32, lat: f32, radius: f32, kind: u32, px: f32, sun: vec3<f32>) -> vec4<f32> {
     if !near(sph, lon, lat, radius * 6.0) {
         return vec4(0.0);
     }
@@ -311,7 +274,7 @@ fn planet(p: vec3<f32>, sph: vec2<f32>, lon: f32, lat: f32, radius: f32, kind: u
     let r2 = dot(q, q);
     let aa = px / radius;
     // Lit from the side facing the sun, nearly full as seen from here.
-    let to_sun = normalize(tangent(SUN, lon, lat));
+    let to_sun = normalize(tangent(sun, lon, lat));
     let light = normalize(vec3(to_sun * 0.7, 1.0));
     let normal = vec3(q, sqrt(max(1.0 - r2, 0.0)));
     let lit = 0.12 + 0.88 * max(dot(normal, light), 0.0);
@@ -342,6 +305,43 @@ fn planet(p: vec3<f32>, sph: vec2<f32>, lon: f32, lat: f32, radius: f32, kind: u
     var color = mix(surface * lit * disc, vec3(0.95, 0.85, 0.7) * 0.5, ring);
     color += tint * exp(-r2 / 9.0) * 0.06;
     return vec4(color, max(disc, ring));
+}
+
+// Comet `i`, while it visits on `days`: a fuzzy head drifting slowly against the stars, with
+// a tail streaming away from the sun (`sun`, in the stars' frame), widening and fading,
+// bent a little as a dust tail is. It brightens over its first days and fades over its last.
+fn comet(p: vec3<f32>, sph: vec2<f32>, i: u32, days: f32, sun: vec3<f32>) -> vec3<f32> {
+    let visit = heavens.comets[i];
+    let age = (days - visit.x) / visit.y;
+    if visit.y <= 0.0 || age < 0.0 || age > 1.0 {
+        return vec3(0.0);
+    }
+    let look = heavens.comet_looks[i];
+    let elapsed = days - visit.x;
+    let lat = visit.w + look.y * elapsed;
+    let lon = visit.z + look.x * elapsed / max(cos(radians(lat)), 0.2);
+    let tail = look.z;
+    if !near(sph, lon, lat, tail + 2.0) {
+        return vec3(0.0);
+    }
+    let l = radians(lon);
+    let b = radians(lat);
+    let head = vec3(cos(b) * cos(l), cos(b) * sin(l), sin(b));
+    let away = normalize(head * dot(head, sun) - sun);
+    let side = cross(head, away);
+    // Degrees from the head along the tail, and across it.
+    let along = degrees(atan2(dot(p, away), dot(p, head)));
+    let across = degrees(asin(clamp(dot(p, side), -1.0, 1.0)));
+    var light = vec3(0.0);
+    if along > 0.0 && dot(p, head) > 0.0 {
+        let t = along / tail;
+        let width = 0.2 + 1.1 * t;
+        let bent = across - 0.12 * along * t;
+        light += vec3(0.75, 0.85, 1.0) * exp(-bent * bent / (width * width)) * exp(-2.5 * t) * 0.1;
+    }
+    let r = degrees(acos(clamp(dot(p, head), -1.0, 1.0)));
+    light += vec3(0.8, 0.95, 0.9) * (exp(-r * r / 0.06) * 0.5 + exp(-r * r / 0.5) * 0.06);
+    return light * smoothstep(0.0, 0.25, age) * (1.0 - smoothstep(0.6, 1.0, age)) * look.w;
 }
 
 // Where `dir` falls on a disc of angular `radius` around `center`, measured in pixels like
@@ -420,27 +420,27 @@ fn aurora(dir: vec3<f32>, t: f32) -> vec3<f32> {
     return light * smoothstep(-0.3, 0.5, north) * 0.06;
 }
 
-// Falling stars: about two a second at `rate` 1 (a meteor shower), one every minute or so
-// at an ordinary night's 0.01, all streaking away from the night's one radiant: short-lived
-// streaks 5° to 15° long that brighten then fade. `t` is seconds, `night` the day's number
-// (a new radiant each night), `px` the angle a pixel spans.
+// Falling stars: about two a second at `rate` 1 (a meteor shower), one every few minutes
+// at an ordinary night's few thousandths, all streaking away from the night's one radiant:
+// streaks 5° to 15° long that brighten then fade over one to two seconds. `t` is seconds,
+// `night` the day's number (a new radiant each night), `px` the angle a pixel spans.
 fn falling_stars(dir: vec3<f32>, t: f32, rate: f32, night: f32, px: f32) -> vec3<f32> {
-    // Slots of a quarter of a second, each holding a star or not; a star lasts at most 0.8 s,
-    // so it starts in one of the last four slots.
-    let slot = floor(t * 4.0);
+    // Slots of half a second, each holding a star or not; a star lasts at most 2.2 s, so it
+    // starts in one of the last five slots.
+    let slot = floor(t * 2.0);
     var r = pcg(u32(night) * 7919u + 17u);
     let radiant = normalize(vec3(unit(r) * 2.0 - 1.0, 0.4 + 0.6 * unit(pcg(r)), unit(pcg(pcg(r))) * 2.0 - 1.0));
     var light = vec3(0.0);
-    for (var k = 0; k < 4; k++) {
+    for (var k = 0; k < 5; k++) {
         let s = slot - f32(k);
         var h = pcg(u32(i32(s)) * 2654435761u ^ pcg(u32(night)));
-        if unit(h) > rate * 0.5 {
+        if unit(h) > rate {
             continue;
         }
         h = pcg(h);
-        let start = s * 0.25 + unit(h) * 0.25;
+        let start = s * 0.5 + unit(h) * 0.5;
         h = pcg(h);
-        let life = 0.3 + 0.5 * unit(h);
+        let life = 0.9 + 1.3 * unit(h);
         let age = (t - start) / life;
         if age < 0.0 || age > 1.0 {
             continue;
@@ -540,6 +540,40 @@ fn clouds(dir: vec3<f32>, daylight: f32) -> vec4<f32> {
     return result;
 }
 
+// Sunrise and sunset over `color`. A wide warm glow round the low sun, widest with the sun
+// on the horizon; with the sun still under it, the glow stands over where it will rise (or
+// has set), in rays fanning up from behind the land. The other way the sky dims, and in
+// twilight the earth's shadow rises from the horizon as the sun sinks, under a faint pink
+// band.
+fn sunrise(color: vec3<f32>, dir: vec3<f32>, sun_dot: f32, overcast: f32) -> vec3<f32> {
+    let sun = sky.sun.xyz;
+    let low = smoothstep(-0.12, -0.02, sun.y) * (1.0 - smoothstep(0.08, 0.35, sun.y)) * (1.0 - 0.85 * overcast);
+    if low <= 0.0 {
+        return color;
+    }
+    let toward = max(sun_dot, 0.0);
+    // The angle about the sun, 0 straight up from it; rays only while it is hidden.
+    let side = normalize(cross(sun, vec3(0.0, 1.0, 0.0)));
+    let around = atan2(dot(dir, side), dot(dir, cross(side, sun)));
+    let rays = 0.4 + 0.6 * smoothstep(0.3, 0.7, value_noise(vec2(around * 11.0, 3.0 + sky.clouds.x * 0.002)));
+    let hidden = (1.0 - smoothstep(-0.01, 0.04, sun.y)) * (1.0 - smoothstep(0.5, 1.5, abs(around)));
+    // Brighter and wider once the sun itself shows.
+    let risen = 1.0 + 0.8 * smoothstep(-0.02, 0.04, sun.y);
+    let aureole = (pow(toward, 8.0) * 0.16 + pow(toward, 3.0) * 0.03) * risen * mix(1.0, rays, hidden * 0.6);
+    var lit = color + vec3(1.0, 0.55, 0.28) * aureole * low * smoothstep(-0.06, 0.04, dir.y);
+
+    let flat_dir = dir.xz / max(length(dir.xz), 1e-4);
+    let flat_sun = sun.xz / max(length(sun.xz), 1e-4);
+    let away = max(-dot(flat_dir, flat_sun), 0.0);
+    lit *= 1.0 - 0.2 * low * away * away * (1.0 - smoothstep(0.0, 0.7, dir.y));
+    let twilight = smoothstep(-0.2, -0.04, sun.y) * (1.0 - smoothstep(-0.02, 0.05, sun.y)) * (1.0 - 0.85 * overcast);
+    let top = 0.02 + 0.6 * max(-sun.y, 0.0);
+    let shadow = (1.0 - smoothstep(top - 0.03, top + 0.03, dir.y)) * away * away * twilight;
+    let belt = exp(-pow((dir.y - top - 0.07) / 0.06, 2.0)) * away * twilight;
+    let horizon = dot(sky.horizon.rgb, vec3(0.2126, 0.7152, 0.0722));
+    return lit * (1.0 - 0.45 * shadow) + vec3(1.0, 0.55, 0.65) * belt * horizon * 0.45;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_position.xyz - view.world_position);
@@ -574,8 +608,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let dark = 1.0 - smoothstep(0.05, 0.35, daylight);
     let deep = 1.0 - smoothstep(0.0, 0.12, daylight);
     if dusk > 0.0 {
-        // Turn into the frame of the stars, which turns with the sun.
-        let angle = sky.stars.x * TAU;
+        // Turn into the frame of the stars, which turns with the sun, and against it over
+        // the year: each season shows other constellations at night.
+        let angle = (sky.stars.x + sky.stars.z) * TAU;
         let p = vec3(
             dir.x * cos(angle) + dir.y * sin(angle),
             dir.y * cos(angle) - dir.x * sin(angle),
@@ -590,22 +625,37 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         var night_sky = vec3(0.0);
         if dark > 0.0 {
             night_sky = constellations(p, sph, dpx, dpy, px_deg) * dark;
-            night_sky += star_layer(LAYER_TURN * p, 48.0, 0.09, 0.55, 8u, px) * dark * dark;
+            night_sky += star_layer(LAYER_TURN * p, 48.0, 0.09, 0.45, heavens.seeds.x, px) * dark * dark;
             if deep > 0.0 {
                 let milky = milky_way(p);
-                let faint = star_layer(p, 150.0, 0.06 + 0.16 * milky.w, 0.35, 0u, px);
+                let faint = star_layer(p, 150.0, 0.06 + 0.16 * milky.w, 0.32, heavens.seeds.y, px);
                 night_sky += (milky.rgb + faint + deep_sky(p, sph)) * deep * deep;
             }
         }
 
-        // Planet longitudes swing slowly over game days; the periods divide the 1000 days
+        // The sun among the stars, drawn back through them over the year.
+        let sun_lon = -sky.stars.z * 360.0;
+        let sun = vec3(SUN.x * cos(radians(sun_lon)), SUN.x * sin(radians(sun_lon)), SUN.z);
+        // Planets move along the sun's path at their own pace, an outer one round all the
+        // stars, an inner one to and fro about the sun; their periods divide the 1000 days
         // after which the day count wraps.
         let days = sky.stars.y;
-        let red = planet(p, sph, 200.0 + 30.0 * sin(days * TAU / 100.0), -8.0, 0.4, 0u, px_deg);
-        let blue = planet(p, sph, 300.0 + 20.0 * sin(days * TAU / 40.0 + 2.0), 6.0, 0.42, 1u, px_deg);
-        let ringed = planet(p, sph, 140.0 + 25.0 * sin(days * TAU / 250.0 + 4.0), 14.0, 0.45, 2u, px_deg);
-        let planets = red + blue + ringed;
+        var planets = vec4(0.0);
+        for (var i = 0u; i < 3u; i++) {
+            let look = heavens.planets[i];
+            if look.w == 0.0 {
+                continue;
+            }
+            let orbit = heavens.orbits[i];
+            let lon = select(orbit.x + orbit.y * days, sun_lon + orbit.z * sin(TAU * days / orbit.y + orbit.x), orbit.w > 0.5);
+            planets += planet(p, sph, lon, look.x, look.y, u32(look.z), px_deg, sun);
+        }
         night_sky = night_sky * (1.0 - min(planets.w, 1.0)) + planets.rgb * dusk;
+        if dark > 0.0 {
+            for (var i = 0u; i < 3u; i++) {
+                night_sky += comet(p, sph, i, days, sun) * dark;
+            }
+        }
         // The aurora and falling stars, in the sky's own frame.
         if sky.optics.z > 0.0 && dark > 0.0 {
             night_sky += aurora(dir, sky.clouds.x) * sky.optics.z * dark;
@@ -618,24 +668,36 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // A halo round the sun by day, fainter round the moon by night.
     if sky.optics.y > 0.0 {
-        let light = select(-sky.sun.xyz, sky.sun.xyz, sky.sun.y > 0.0);
-        let bright = select(0.12 * night, daylight, sky.sun.y > 0.0);
+        let light = select(sky.moon.xyz, sky.sun.xyz, sky.sun.y > 0.0);
+        let bright = select(0.12 * night * sky.moon.w, daylight, sky.sun.y > 0.0);
         color += halo(dir, light, sky.optics.y) * bright;
     }
 
     color += vec3(1.0, 0.8, 0.55) * glow * clamp(daylight * 2.0, 0.0, 1.0);
+    color = sunrise(color, dir, sun_dot, overcast);
     if sun_dot > 0.999 {
         let sun = disc(dir, ddx, ddy, sky.sun.xyz, 0.0275, px);
         color = mix(color, vec3(8.0, 7.2, 5.6), sun.z);
     }
 
-    // The moon, opposite the sun and so always full, with faint darker seas.
-    if -sun_dot > 0.999 && night > 0.0 {
-        let moon = disc(dir, ddx, ddy, -sky.sun.xyz, 0.0237, px);
+    // The moon, with faint darker seas, lit on the side towards the sun: full opposite it,
+    // a crescent beside it. By day it is pale. Its dark side hides the stars behind it,
+    // faintly lit by the land.
+    let to_moon = sky.moon.xyz;
+    if dot(dir, to_moon) > 0.999 {
+        let moon = disc(dir, ddx, ddy, to_moon, 0.0237, px);
         let q = moon.xy;
         let seas = smoothstep(0.5, 0.7, value_noise(q * 2.2 + 5.0) * 0.7 + value_noise(q * 5.0 + 1.0) * 0.3);
-        let limb = mix(0.8, 1.0, sqrt(max(1.0 - dot(q, q), 0.0)));
-        color = mix(color, vec3(1.5, 1.55, 1.7) * limb * (1.0 - 0.22 * seas), moon.z * night);
+        let facing = sqrt(max(1.0 - dot(q, q), 0.0));
+        let limb = mix(0.8, 1.0, facing);
+        // The sun's direction in the disc's frame: east, north and towards the eye.
+        let east = normalize(vec3(-to_moon.y, to_moon.x, 0.0));
+        let north = cross(to_moon, east);
+        let towards_sun = vec3(dot(sky.sun.xyz, east), dot(sky.sun.xyz, north), -dot(sky.sun.xyz, to_moon));
+        let lit = smoothstep(-0.04, 0.06, dot(vec3(q, facing), towards_sun));
+        let face = vec3(1.5, 1.55, 1.7) * limb * (1.0 - 0.22 * seas);
+        color = mix(color, face, moon.z * lit * mix(1.0, 0.45, daylight));
+        color = mix(color, face * 0.012, moon.z * (1.0 - lit) * night);
     }
 
     // Fog and ground fog hide the sky exactly as they hide the far edge of the land.
