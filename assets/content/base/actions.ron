@@ -5,6 +5,9 @@
     actions: [
         (name: "plant", duration: Instant, requires: [Alive, InReach, HoldingSeed, Plantable, SkillLevel], effects: [Plant]),
         (name: "pick", duration: Instant, requires: [Alive, InReach, Ripe], effects: [Pick]),
+        // Tending a creature with what is in hand (right click on it): food that tames it or
+        // readies a kept one to breed, or a tool that takes its product (creatures.ron).
+        (name: "tend", duration: Instant, requires: [Alive, CreatureInReach, CreatureAccepts], effects: [Tend]),
         // Cooking what is in hand on a station that cooks it (cooking.ron).
         (name: "cook", duration: Instant, requires: [Alive, InReach, Cookable, CookingLevel], effects: [Cook]),
     ],

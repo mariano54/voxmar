@@ -161,7 +161,8 @@ fn receive(
             }
         };
         match message {
-            ServerMessage::Welcome { position, yaw, flying, allow_flight, admin, seed, weather_seed, .. } => {
+            ServerMessage::Welcome { player: me, position, yaw, flying, allow_flight, admin, seed, weather_seed } => {
+                creatures.me = Some(me);
                 weather.set_seed(weather_seed);
                 air.start(seed);
                 generator.start(seed, world.registry.clone());

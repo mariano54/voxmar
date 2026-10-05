@@ -34,6 +34,8 @@ use voxmar_engine::world::{COLUMN_AREA, Column};
 use voxmar_worldgen::Overworld;
 
 const META_FILE: &str = "world.ron";
+/// Kept creatures (tamed or bred).
+const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
@@ -348,6 +350,21 @@ impl WorldSave {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(e) => Err(e),
         }
+    }
+
+    /// The kept creatures, none if the world has no creatures file.
+    pub fn read_creatures(&self) -> io::Result<Vec<crate::husbandry::SavedCreature>> {
+        let path = self.dir.join(CREATURES_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_creatures(&self, creatures: &[crate::husbandry::SavedCreature]) -> io::Result<()> {
+        let text = ron::ser::to_string(creatures).map_err(io::Error::other)?;
+        write_atomic(&self.dir.join(CREATURES_FILE), text.as_bytes())
     }
 
     pub fn write_items(&self, items: &[SavedItem]) -> io::Result<()> {

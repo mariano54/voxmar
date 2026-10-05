@@ -679,3 +679,43 @@ fn strike_a_snail(mut client: Client) {
     // Its slime pops out beside us, and we pick it up.
     client.pump_until(|c| (0..voxmar_engine::inventory::SLOTS).filter_map(|s| c.inventory.get(s)).any(|s| s.item == slime));
 }
+
+#[test]
+fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
+    let mut client = Client::join();
+    let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
+    let wheat = client.content.blocks.id("base:wheat").unwrap();
+    client.ok("/summon junglefowl 2 ~ ~ ~");
+    client.ok("/give wheat 64");
+    client.pump_until(|c| c.creatures.values().filter(|v| v.species == hen).count() == 2 && c.inventory.get(4).is_some_and(|s| s.item == wheat));
+    // Hold the wheat (the start kit fills the first four slots).
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 4, flying: false }));
+    let hens: Vec<u32> = client.creatures.iter().filter(|(_, v)| v.species == hen).map(|(&id, _)| id).collect();
+    // Feed each until it is ours: three to five feedings at level 1.
+    for &id in &hens {
+        let mut fed = 0;
+        while !client.creatures[&id].kept {
+            assert!(fed < 12, "{fed} feedings did not tame it");
+            let at = client.creatures[&id].position;
+            client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
+            client.propose("base:tend", ActionTarget::Creature(id));
+            fed += 1;
+            let asked = Instant::now();
+            client.pump_until(|c| c.creatures[&id].kept || asked.elapsed() > Duration::from_millis(300));
+        }
+        assert_eq!(client.creatures[&id].owner, Some(client.id));
+    }
+    // Fed again, the two are ready, come together and a young one is born.
+    for &id in &hens {
+        let at = client.creatures[&id].position;
+        client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
+        client.propose("base:tend", ActionTarget::Creature(id));
+        client.pump_until(|c| c.creatures[&id].ready || !c.creatures.values().any(|v| v.young));
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !client.creatures.values().any(|v| v.young && v.kept) {
+        assert!(Instant::now() < deadline, "no young one was born");
+        let until = Instant::now() + Duration::from_millis(200);
+        client.pump_until(|_| Instant::now() > until);
+    }
+}

@@ -281,7 +281,8 @@ fn break_and_place(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let food = held.is_some_and(|item| world.registry.info(item).food > 0);
         let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
-        if food && (hit.is_none() || !placeable) {
+        // With a creature under the crosshair, a right click tends it instead (`creatures::aim`).
+        if food && target.creature.is_none() && (hit.is_none() || !placeable) {
             let eat = actions.0.expect("core:eat");
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {

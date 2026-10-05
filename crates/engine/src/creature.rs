@@ -14,6 +14,7 @@
 //! animated from how fast the creature moves, so the client needs no model files.
 
 pub mod brain;
+pub mod husbandry;
 pub mod motion;
 
 use std::sync::Arc;
@@ -576,6 +577,15 @@ pub struct CreatureDef {
     pub loot: Vec<Loot>,
     #[serde(default)]
     pub xp: CreatureXp,
+    /// How players tame it, if they can (docs/breeding.md).
+    #[serde(default)]
+    pub taming: Option<husbandry::Taming>,
+    /// How kept ones breed, if they do.
+    #[serde(default)]
+    pub breeding: Option<husbandry::Breeding>,
+    /// What kept ones give on timers.
+    #[serde(default)]
+    pub products: Vec<husbandry::Product>,
 }
 
 fn first() -> u8 {
@@ -607,6 +617,11 @@ pub struct Creature {
     pub eats: Vec<crate::block::BlockId>,
     pub favourite: Vec<crate::block::BlockId>,
     pub xp_skill: Option<SkillId>,
+    /// What tames it and what makes a kept one ready to breed, as items.
+    pub tame_food: Vec<crate::block::BlockId>,
+    pub breed_food: Vec<crate::block::BlockId>,
+    /// Each product's item.
+    pub products: Vec<crate::block::BlockId>,
 }
 
 impl Creature {
@@ -644,6 +659,13 @@ impl CreatureRegistry {
                 qualify(&mut def.name);
                 def.diet.eats.iter_mut().chain(&mut def.diet.favourite).for_each(qualify);
                 def.loot.iter_mut().for_each(|loot| qualify(&mut loot.item));
+                def.products.iter_mut().for_each(|p| qualify(&mut p.item));
+                if let Some(taming) = &mut def.taming {
+                    taming.food.iter_mut().for_each(qualify);
+                }
+                if let Some(breeding) = &mut def.breeding {
+                    breeding.food.iter_mut().for_each(qualify);
+                }
                 if let Some(skill) = &mut def.xp.skill
                     && !skill.contains(':')
                 {
@@ -677,6 +699,25 @@ impl CreatureRegistry {
                 Ok(found)
             };
             let (eats, favourite) = (foods(&def.diet.eats)?, foods(&def.diet.favourite)?);
+            let or_favourite = |names: Option<&Vec<String>>| -> Result<Vec<_>, RegistryError> {
+                match names.filter(|n| !n.is_empty()) {
+                    Some(names) => foods(names),
+                    None => Ok(favourite.clone()),
+                }
+            };
+            let tame_food = match &def.taming {
+                Some(taming) => or_favourite(Some(&taming.food))?,
+                None => Vec::new(),
+            };
+            let breed_food = match &def.breeding {
+                Some(breeding) => or_favourite(Some(&breeding.food))?,
+                None => Vec::new(),
+            };
+            let products = def
+                .products
+                .iter()
+                .map(|p| blocks.id(&p.item).ok_or_else(|| error(format!("gives `{}`, which does not exist", p.item))))
+                .collect::<Result<Vec<_>, _>>()?;
             let xp_skill = match &def.xp.skill {
                 Some(name) => Some(skills.id(name).ok_or_else(|| error(format!("no skill `{name}`")))?),
                 None => None,
@@ -692,7 +733,7 @@ impl CreatureRegistry {
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, modules, parts, loot, eats, favourite, xp_skill });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
         }
         Ok(registry)
     }

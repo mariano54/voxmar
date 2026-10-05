@@ -17,6 +17,9 @@
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone"),
         // Two logs over two cobblestones make a campfire, which cooks (cooking.ron).
         (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire"),
+        // Two stones crossed make shears, for wool; two planks a pail, for milk.
+        (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears"),
+        (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail"),
         // Two wheat side by side bake into bread, which fills more than the grain.
         (pattern: [["wheat", "wheat"]], output: "bread"),
     ],

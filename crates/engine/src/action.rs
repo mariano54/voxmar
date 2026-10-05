@@ -76,6 +76,9 @@ pub enum Requirement {
     Ripe,
     /// The target creature is alive and within the actor's reach.
     CreatureInReach,
+    /// The target creature takes what the actor holds: food that tames it or readies it
+    /// to breed, or a tool that takes its product.
+    CreatureAccepts,
     /// The target block is a station that cooks what the actor holds.
     Cookable,
     /// The actor's Cooking level is at least what the held item's recipe there needs.
@@ -111,6 +114,9 @@ pub enum Effect {
     Strike,
     /// Cook one held item at the target station: its recipe's food, or burnt.
     Cook,
+    /// Tend the target creature with what the actor holds: feed it (taming it, or readying
+    /// a kept one to breed) or take its product with a tool.
+    Tend,
     /// Restore the actor's health and return it to spawn.
     Respawn,
     /// Sow one held seed on top of the target, and grant the crop's planting experience.
@@ -215,6 +221,10 @@ pub trait ActionContext {
     fn cooking(&self) -> Option<&crate::cooking::CookingRegistry> {
         None
     }
+    /// Whether the creature with that id takes `item` from the actor's hand.
+    fn creature_accepts(&self, _id: u32, _item: BlockId) -> bool {
+        false
+    }
     /// The box of a living creature, if there is one with that id.
     fn creature_box(&self, _id: u32) -> Option<crate::physics::Aabb> {
         None
@@ -296,6 +306,10 @@ impl ActionDef {
                 ctx.block(block)
                     .and_then(|b| crops.stage_of(b))
                     .is_some_and(|(crop, stage)| stage == crops.get(crop).ripe_stage() && crops.get(crop).def.regrow.is_some())
+            }
+            Requirement::CreatureAccepts => {
+                let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                ctx.actor_held().is_some_and(|item| ctx.creature_accepts(id, item))
             }
             Requirement::Cookable | Requirement::CookingLevel => {
                 let (block, _) = block_target()?;

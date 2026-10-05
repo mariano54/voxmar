@@ -95,9 +95,23 @@ pub struct Live {
     pub hurt_by: Option<PlayerId>,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
+    /// The player who keeps it, by name (tamed or bred), and the id they have now.
+    pub owner: Option<String>,
+    pub owner_id: Option<PlayerId>,
+    /// Trust in the player feeding it, toward taming (1 is tame), and who that is.
+    pub trust: f32,
+    pub trusting: Option<String>,
+    /// Tick it stops being ready to breed, and the tick it may breed again.
+    pub ready_until: u64,
+    pub breeds_again: u64,
+    /// Tick it grows up, while young; its grown size.
+    pub grows_up: Option<u64>,
+    pub adult_scale: f32,
+    /// Tick each of its species' products is next due.
+    pub products_due: Vec<u64>,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
-    changed: bool,
+    pub(crate) changed: bool,
 }
 
 impl Live {
@@ -112,6 +126,10 @@ impl Live {
             health: self.health,
             scale: self.scale,
             seed: self.seed as u32,
+            kept: self.owner.is_some(),
+            owner: self.owner_id,
+            young: self.grows_up.is_some(),
+            ready: self.ready_until > 0,
         }
     }
 
@@ -121,6 +139,11 @@ impl Live {
             || (last.yaw - self.body.yaw).abs() > 0.05
             || last.pose != self.decision.pose
             || last.health != self.health
+            || last.kept != self.owner.is_some()
+            || last.owner != self.owner_id
+            || last.young != self.grows_up.is_some()
+            || last.ready != (self.ready_until > 0)
+            || (last.scale - self.scale).abs() > 0.01
             || (last.velocity - self.body.velocity).length_squared() > 0.04
     }
 }
@@ -200,6 +223,7 @@ impl Server {
             self.despawn_far();
         }
         self.think_and_move();
+        self.tick_husbandry();
         self.replicate_creatures();
     }
 
@@ -218,7 +242,7 @@ impl Server {
     }
 
     /// The players a creature at `at` can sense, nearest first.
-    fn seen_from(&self, at: Vec3, range: f32, tempts: &[BlockId]) -> Vec<Seen> {
+    fn seen_from(&self, at: Vec3, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
         let mut seen: Vec<Seen> = self
             .players
             .values()
@@ -230,6 +254,7 @@ impl Server {
                 combat_level: self.combat_level(p.id),
                 creative: p.allow_flight,
                 tolerated: self.creatures.settled.get(&p.id).is_some_and(|&(_, since)| self.tick - since > TOLERANCE),
+                friend: owner.is_some_and(|name| name == p.name),
             })
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
@@ -252,7 +277,8 @@ impl Server {
             let every = if nearest < NEAR { NEAR_THINK } else { FAR_THINK };
             if (self.tick + id as u64).is_multiple_of(every) {
                 let range = species.def.senses.sight.max(species.def.senses.hearing).max(16.0) * 1.5;
-                let players = self.seen_from(position, range, &species.favourite);
+                let players = self.seen_from(position, range, &species.favourite, creature.owner.as_deref());
+                let mate = self.mate_for(id);
                 let kin: Vec<Vec3> = self
                     .creatures
                     .live
@@ -269,6 +295,7 @@ impl Server {
                     players: &players,
                     kin: &kin,
                     food,
+                    mate,
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };
@@ -525,6 +552,15 @@ impl Server {
             seed,
             hurt_by: None,
             stuck: 0.0,
+            owner: None,
+            owner_id: None,
+            trust: 0.0,
+            trusting: None,
+            ready_until: 0,
+            breeds_again: 0,
+            grows_up: None,
+            adult_scale: scale,
+            products_due: def.products.iter().enumerate().map(|(i, p)| self.tick + product_ticks(p.every, seed, i)).collect(),
             sent: None,
             changed: true,
         };
@@ -621,6 +657,7 @@ impl Server {
             .creatures
             .live
             .iter()
+            .filter(|(_, c)| c.owner.is_none())
             .filter(|(_, c)| {
                 let far = players.iter().all(|p| p.distance(c.body.position) > DESPAWN);
                 far || !self.world.contains(ColumnPos::of_block(c.body.position.floor().as_ivec3()))
@@ -674,6 +711,13 @@ impl Ground<'_> {
     fn water_at(&self, cell: IVec3) -> bool {
         motion::Surroundings::water(self, cell)
     }
+}
+
+/// Ticks until a product is next due: its period, jittered a little by the creature and
+/// product, so a flock does not lay all at once.
+pub(crate) fn product_ticks(minutes: f32, seed: u64, index: usize) -> u64 {
+    let jitter = 0.8 + 0.4 * unit_from(mix(seed, 0x9e0d ^ index as u64));
+    (minutes * 60.0 * TICKS_PER_SECOND as f32 * jitter) as u64
 }
 
 /// How often a rarity spawns against a common species: the multipliers worldgen uses for
