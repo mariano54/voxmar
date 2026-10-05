@@ -183,6 +183,8 @@ struct Gate {
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
     gorge: IVec3,
+    /// Where the struck creature was last seen, for walking over its loot.
+    quarry: Vec3,
     failures: Vec<String>,
     passes: usize,
     /// Real frame times so far (milliseconds), and the longest in each step.
@@ -211,6 +213,7 @@ impl Gate {
             count_before: 0,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
+            quarry: Vec3::ZERO,
             failures: Vec::new(),
             passes: 0,
             frame_ms: Vec::new(),
@@ -980,6 +983,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Strike it as a player would, a click every few frames, until it dies.
             match snail(world) {
                 Some(view) if in_phase < 25.0 => {
+                    gate.quarry = view.position;
                     // Close in to striking reach, then strike.
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
                     key(world, KeyCode::KeyW, far);
@@ -1000,15 +1004,17 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     mouse(world, MouseButton::Left, false);
                     let deaths = world.resource::<crate::creatures::Creatures>().deaths;
                     gate.check("creature struck", if deaths > 0 { Ok(format!("killed in {in_phase:.1}s")) } else { Err("it went without dying".into()) });
-                    look(world, world.resource::<LocalPlayer>().yaw.to_degrees(), 0.0);
-                    key(world, KeyCode::KeyW, true);
                     gate.advance(now);
                 }
             }
         }
         1 => {
-            if in_phase > 0.8 {
-                key(world, KeyCode::KeyW, false);
+            // Walk over where it died, as a player picks up loot.
+            let feet = world.resource::<LocalPlayer>().position;
+            let close = feet.xz().distance(gate.quarry.xz()) < 0.4;
+            key(world, KeyCode::KeyW, !close);
+            if !close {
+                aim_at(world, gate.quarry + Vec3::Y * 1.6);
             }
             let count = item_count(world, CREATURE_DROP);
             if count > gate.count_before || in_phase > 8.0 {
