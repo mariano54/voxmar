@@ -907,7 +907,7 @@
                 rules: [
                     // Wind streaks of red sand, thick in some fields and thread-thin elsewhere.
                     (
-                        when: [Tapered((name: "desert_streaks", scale: 45.0), (name: "desert_streak_width", scale: 400.0, octaves: 2), [(0.35, 0.06), (0.15, 0.03), (0.0, 0.012)])],
+                        when: [Tapered((name: "desert_streaks", scale: 45.0), (name: "desert_streak_width", scale: 400.0, octaves: 2), [(0.55, 0.02), (0.35, 0.008)])],
                         place: (top: Block("red_sand"), filler: Block("sandstone"), depth: 5),
                     ),
                 ],
