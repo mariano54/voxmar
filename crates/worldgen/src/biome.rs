@@ -52,6 +52,9 @@ pub struct Biome {
     /// The centre and half-width of its first climate box on each table axis, where
     /// bounded.
     centre: [Option<(f32, f32)>; 4],
+    /// The colour its ground mostly shows (its grass where grassy); none where it is the
+    /// rock beneath.
+    pub(crate) ground: Option<[f32; 3]>,
 }
 
 impl Biome {
@@ -179,6 +182,15 @@ impl Biomes {
                 colors: def.colors.clone(),
                 // Overworld ground keeps to its colours; caves keep their contrasts.
                 surface: rules.compile(&def.surface, registry, rocks, (def.layer == Layer::Surface).then(|| crate::hue::biome_tints(content, def)[0])),
+                ground: {
+                    let grass = crate::hue::biome_tints(content, def)[0];
+                    let block = match &def.surface.ground.top {
+                        crate::content::Material::Block(name) => Some(registry.expect(name)),
+                        crate::content::Material::Mix(selects) => Palette::harmonious(selects, registry, grass).main(),
+                        _ => None,
+                    };
+                    block.map(|b| crate::hue::shown(registry.def(b), grass, grass))
+                },
                 stones: match &def.stones {
                     Stones::Province => None,
                     Stones::Blocks(selects) => Some(Palette::new(selects, registry)),
@@ -548,6 +560,17 @@ impl Biomes {
         0.5 * (1.0 - smoothstep(0.0, 16.0 + 32.0 * softness, edge))
     }
 
+    /// Like `blend`, but a border between grounds of clashing colours (pale sand against
+    /// red sand) is a ragged line a few blocks wide rather than a wide band of blobs of
+    /// each.
+    pub fn blend_between(&self, home: BiomeId, neighbour: BiomeId, edge: f32, softness: f32) -> f32 {
+        let (a, b) = (self.get(home).ground, self.get(neighbour).ground);
+        match (a, b) {
+            (Some(a), Some(b)) if crate::hue::harmony(a, b, crate::hue::GROUND_SPREAD) < CLASHING_GROUNDS => 0.5 * (1.0 - smoothstep(0.0, 4.0, edge)),
+            _ => Self::blend(edge, softness),
+        }
+    }
+
     /// Searches outwards from `from`, on a square spiral of points `step` blocks apart, for
     /// the nearest one within `radius` blocks that belongs to `biome`. `point` gives the
     /// picker's fields at a position, and `confirm` checks a candidate the way sites are
@@ -576,6 +599,9 @@ impl Biomes {
 
 /// The value of band edge `i` along an axis, extending the outermost bands by the width of
 /// their neighbours.
+/// Below this harmony between two biomes' grounds, their border is narrow.
+const CLASHING_GROUNDS: f32 = 0.3;
+
 pub(crate) fn band_edge(edges: &[f32], i: isize) -> f32 {
     let n = edges.len() as isize;
     let width = |a: isize, b: isize| if n >= 2 { edges[b as usize] - edges[a as usize] } else { 1.0 };
