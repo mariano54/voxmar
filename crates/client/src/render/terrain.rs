@@ -73,6 +73,15 @@ const SHADOW_PASSES: [TerrainPass; 3] = [TerrainPass::Opaque, TerrainPass::Cutou
 /// Leaf fringes are drawn for chunks this close to the camera, in blocks; further out they
 /// would be sub-pixel.
 const FRINGE_DISTANCE: f32 = 96.0;
+/// Leaf faces inside crowns (`TerrainPass::Inner`) are drawn for chunks this close: they
+/// fill what shows through the holes in a crown's leaves, which further out no capture
+/// tells apart from the crown without them, and in a dense forest they were the dearest
+/// faces of all (a sixth of the terrain's vertex work and a seventh of its pixels).
+const INNER_DISTANCE: f32 = 64.0;
+/// Only this many nearest sun cascades draw plants and leaf fringes: further out their
+/// shadows are specks and fuzz no capture tells apart from none, and in a forest they were
+/// most of the third cascade's work.
+const DETAILED_CASCADES: usize = 2;
 /// Plant faces' face index (voxel.wgsl's `FACE_PLANT`).
 const FACE_PLANT: usize = 6;
 /// The most grass blades a block grows, and the distances in blocks over which they thin
@@ -1149,6 +1158,11 @@ fn cull(
         let light = is_light.then(|| view.world_from_view.forward().as_vec3());
         let casters = light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer));
         let farthest = light_entity.is_some_and(|light| last_of_many(light, &lights));
+        // Whether plants and leaf fringes are drawn: in cameras and the nearest cascades.
+        let detailed = match light_entity {
+            Some(LightEntity::Directional { cascade_index, .. }) => *cascade_index < DETAILED_CASCADES,
+            _ => true,
+        };
         let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
         // Each stream's surviving ranges, and the translucent ones with their distance.
         let mut ranges = std::mem::take(&mut draws.ranges);
@@ -1169,12 +1183,14 @@ fn cull(
             }
             let facing = facing(min, max, eye, light);
             for &pass in passes {
-                if pass == TerrainPass::Fringe && distance >= FRINGE_DISTANCE {
+                if (pass == TerrainPass::Fringe && (distance >= FRINGE_DISTANCE || !detailed))
+                    || (pass == TerrainPass::Inner && distance >= INNER_DISTANCE)
+                {
                     continue;
                 }
                 for stream in streams(pass) {
                     let Some(allocation) = &record.streams[stream] else { continue };
-                    if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && (distance >= PLANT_DISTANCE || farthest)) {
+                    if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && (distance >= PLANT_DISTANCE || !detailed)) {
                         continue;
                     }
                     let range = (allocation.page, allocation.vertices.clone());
@@ -1302,9 +1318,8 @@ impl Casters {
 /// Whether a view is the farthest of three or more sun cascades. Its texels are larger
 /// than a leaf's holes, so it draws leaves and other cut-out blocks as solid casters
 /// without the alpha test, which on Apple GPUs is what makes them expensive (no hidden
-/// surface removal); the nearer cascades keep the dappled shade under trees. It leaves
-/// plants out: their shadows there are specks no one can tell from none, and drawing them
-/// took a third of the cascade's time in a savanna (0.27 ms at 2268×1473).
+/// surface removal); the nearer cascades keep the dappled shade under trees. (Plants and
+/// leaf fringes are left out of every cascade past `DETAILED_CASCADES`.)
 fn last_of_many(light: &LightEntity, lights: &Query<&ExtractedDirectionalLight>) -> bool {
     let LightEntity::Directional { light_entity, cascade_index } = *light else { return false };
     let Ok(light) = lights.get(light_entity) else { return false };

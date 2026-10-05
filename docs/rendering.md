@@ -150,6 +150,13 @@ camera's four side planes, not just its range of depth: the box takes in chunks 
 to either side of the view, and leaving them out took a fifth off the two farthest
 cascades (0.2 ms of their 1.3 ms at 2268×1473).
 
+In a dense forest the dearest faces were the leaf faces inside crowns (a sixth of the
+terrain's vertex work and a seventh of its pixels), which only fill what shows through the
+holes in a crown's leaves; they are now drawn within 64 blocks, past which no capture told
+them apart. Plants and leaf fringes cast shadows only in the two nearest cascades, where
+they were most of the third cascade's work; further out their shadows are specks and
+fuzz. Together these took about 0.85 ms off that forest at 2268×1473 (Low Power Mode).
+
 Shading asks for soft or hard shadow edges (`sun_shadow`). Terrain, leaves and grass
 blades keep the soft filter; water, particles and plants take one comparison of the four
 nearest shadow texels. Water's light only tints what it scatters, particles are too
