@@ -3,8 +3,10 @@
 
 mod actions;
 mod commands;
+mod cooking;
 mod creatures;
 mod farm;
+mod husbandry;
 mod fluids;
 mod items;
 mod player;
@@ -390,6 +392,11 @@ impl Server {
             spawn,
         };
         server.show_grown_crops(spawn_column);
+        let saved_creatures = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_creatures()).unwrap_or_else(|e| {
+            tracing::error!("could not load creatures: {e}");
+            Vec::new()
+        });
+        server.restore_creatures(saved_creatures);
         server
     }
 
@@ -516,6 +523,9 @@ impl Server {
         let blocks = &self.content.blocks;
         if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
             tracing::error!("could not save dropped items: {e}");
+        }
+        if let Err(e) = save.write_creatures(&self.saved_creatures()) {
+            tracing::error!("could not save creatures: {e}");
         }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {

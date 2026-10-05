@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 15;
+pub const PROTOCOL_VERSION: u32 = 16;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -148,6 +148,13 @@ pub struct CreatureView {
     /// Its size against its species', from its genes.
     pub scale: f32,
     pub seed: u32,
+    /// Kept by a player (tamed or bred), and that player while they are here.
+    pub kept: bool,
+    pub owner: Option<PlayerId>,
+    /// Still growing up.
+    pub young: bool,
+    /// Ready to breed: fed, and looking for a mate.
+    pub ready: bool,
 }
 
 /// A creature that is no longer there, and whether it died.

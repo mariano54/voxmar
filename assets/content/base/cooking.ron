@@ -1,0 +1,20 @@
+// Cooking (engine/src/cooking.rs, docs/food-and-cooking.md): what each station cooks.
+// `input` is an item (or `tag:` and a tag), `station` the tag of the station block, `level`
+// the Cooking level it takes, `xp` the experience for one that doesn't burn. Burning starts
+// at `level` (half the time) and stops at `stop_burning`; burnt food is `burnt_food`.
+(
+    recipes: [
+        (input: "raw_rabbit", output: "cooked_rabbit", level: 1, xp: 30.0, stop_burning: 15, burnt: "burnt_food"),
+        (input: "raw_chicken", output: "cooked_chicken", level: 1, xp: 30.0, stop_burning: 15, burnt: "burnt_food"),
+        (input: "potato", output: "baked_potato", level: 2, xp: 32.0, stop_burning: 16, burnt: "burnt_food"),
+        (input: "carrot", output: "roast_carrot", level: 2, xp: 28.0, stop_burning: 14, burnt: "burnt_food"),
+        (input: "egg", output: "fried_egg", level: 1, xp: 20.0, stop_burning: 12, burnt: "burnt_food"),
+        (input: "duck_egg", output: "fried_egg", level: 3, xp: 25.0, stop_burning: 14, burnt: "burnt_food"),
+        (input: "raw_duck", output: "cooked_duck", level: 3, xp: 40.0, stop_burning: 18, burnt: "burnt_food"),
+        (input: "raw_mutton", output: "cooked_mutton", level: 5, xp: 50.0, stop_burning: 22, burnt: "burnt_food"),
+        (input: "raw_pork", output: "cooked_pork", level: 8, xp: 60.0, stop_burning: 26, burnt: "burnt_food"),
+        (input: "raw_beef", output: "cooked_beef", level: 12, xp: 75.0, stop_burning: 30, burnt: "burnt_food"),
+        (input: "raw_venison", output: "cooked_venison", level: 15, xp: 90.0, stop_burning: 34, burnt: "burnt_food"),
+        (input: "raw_bear", output: "cooked_bear", level: 25, xp: 140.0, stop_burning: 45, burnt: "burnt_food"),
+    ],
+)

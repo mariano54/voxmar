@@ -97,6 +97,8 @@ pub struct Creatures {
     pub landed: u32,
     /// The creature we last struck at, and when, in seconds since startup.
     fighting: Option<(u32, f32)>,
+    /// Our own player's id, to know our kept creatures.
+    pub me: Option<voxmar_protocol::PlayerId>,
 }
 
 /// A creature as the target readout shows it.
@@ -213,7 +215,17 @@ fn show(
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    let cube = creatures.cube.get_or_insert_with(|| meshes.add(shaded_cube())).clone();
+    // Their pipelines compile as the world loads (`render::warm`), not when the first
+    // creature comes into view.
+    let cube = creatures
+        .cube
+        .get_or_insert_with(|| {
+            let cube = meshes.add(shaded_cube());
+            let material = materials.add(StandardMaterial { unlit: true, ..default() });
+            crate::render::warm::warm(&mut commands, cube.clone(), material, true, DespawnOnExit(Screen::InGame));
+            cube
+        })
+        .clone();
     let registry = &launch.content.creatures;
 
     let creatures = &mut *creatures;
@@ -393,6 +405,23 @@ pub fn aim(
         target.hit = None;
     }
     *cooldown -= time.delta_secs();
+    // A right click tends it with what is in hand: food that tames it or readies a kept one
+    // to breed, or a tool for its product (the server judges; this only asks when it may).
+    if let Some(id) = target.creature
+        && ui.cursor_locked
+        && !player.dead
+        && mouse.just_pressed(MouseButton::Right)
+        && let (Some(tend), Some(item), Some(view)) = (actions.0.id("base:tend"), player.inventory.get(player.selected).map(|s| s.item), creatures.shown.get(&id).map(|s| s.view))
+    {
+        let species = launch.content.creatures.get(view.species);
+        let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
+        let tags = &launch.content.blocks.def(item).tags;
+        let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
+        let accepts = (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool));
+        if accepts {
+            net.propose_from(&player, tend, ActionTarget::Creature(id));
+        }
+    }
     if let Some(id) = target.creature
         && *cooldown <= 0.0
         && ui.cursor_locked

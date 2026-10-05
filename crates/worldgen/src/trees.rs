@@ -16,8 +16,10 @@
 //!   towards points scattered through the crown's shape, gathered into billows on
 //!   broadleaves, until they fill it, and the twigs carry clumps of leaves, flat beneath
 //!   and lumpy at the edge. So no two trees branch alike, limbs show from below and
-//!   between the billows, and sky shows through. Conifers' limbs droop and carry needles
-//!   along their last blocks; willows hang curtains from the underside of their clumps.
+//!   between the billows, and sky shows through. Spruces grow their limbs towards points
+//!   in thin layers, so they spread in tiers of flat, drooping skirts under a leader;
+//!   pines sweep steeply up to a few high pads; cypresses are flames of round clumps;
+//!   willows hang curtains from the underside of their clumps.
 //! - **Fruit.** A species may bear fruit: a share of its crown's outer leaves, most of them
 //!   on its underside and rim, become a fruiting kind of its leaves (`TreeParts::fruit`).
 //! - **Trunks that taper and root.** Tall thick trunks lose their corners one by one as
@@ -336,65 +338,69 @@ impl Trees {
                 g.colonised(&trunk, height, foot, &envelope, &habit, &foliage, s.wood, leaves, rng);
             }
             Crown::Conical { radius, start } => {
-                // A cone from the crown's foot to a spike over the trunk, its limbs drooping
-                // as they reach out and carrying needles along their last few blocks.
+                // A spruce: tiers of drooping limbs, each a flat skirt of needles, wide at the
+                // foot and narrowing to a spike over the trunk, with a band of shade between
+                // tiers (the points the limbs grow towards lie in thin layers) so it reads as
+                // a tiered cone and not a lump.
                 let foot = (start * height as f32).max(1.0);
-                let foliage = Foliage { radius: 1.4, squash: 0.5, twigs: 3 };
+                let foliage = Foliage { radius: 1.8, squash: 0.3, twigs: 2 };
                 let envelope = Envelope {
                     centre: root + lean + Vec3::Y * (lift + foot),
-                    radius: pick(rng, radius) * k,
-                    up: height as f32 + 1.5 - foot,
+                    radius: pick(rng, radius) * k + 0.8,
+                    up: height as f32 + 1.0 - foot,
                     down: 0.0,
                     hollow: 0.0,
-                    shape: Shape::Cone,
+                    shape: Shape::Tiers { spacing: 2.0 + 0.6 * k },
                 };
-                let habit = Habit { density: 0.9, influence: 3.5, kill: 1.2, tropism: Vec3::NEG_Y * 0.3 };
+                let habit = Habit { density: 2.5, influence: 3.0, kill: 1.0, tropism: Vec3::NEG_Y * 0.2 };
                 g.colonised(&trunk, height, foot, &envelope, &habit, &foliage, s.wood, leaves, rng);
-                // The leader: a spike of needles over the top.
-                let tip = trunk(1.0).floor().as_ivec3();
-                for dy in 0..=2 {
+                // The leader: needles round the top of the trunk, so no bare wood shows above
+                // the highest tier, and a spike over it.
+                let top = trunk(1.0);
+                g.clump(top - Vec3::Y * 0.5, 0.9 + girth, 1.4, 2.0, leaves);
+                let tip = top.floor().as_ivec3();
+                for dy in 1..=1 + i32::from(k > 0.9) {
                     g.leaf(tip + IVec3::Y * dy, leaves);
                 }
             }
             Crown::Pine { radius, start } => {
                 // A Scots pine: a tall clean trunk under a high crown of a few flat pads of
-                // needles on limbs that sweep up and out, with sky between the pads, and
-                // stubs of dead limbs on the trunk below, where the lower crown died off.
-                let foot = (start * height as f32).max(1.0);
-                let foliage = Foliage { radius: 1.6, squash: 0.45, twigs: 1 };
+                // needles on limbs that sweep steeply up and out, with sky between the pads.
+                let foot = (start.max(0.6) * height as f32).max(1.0);
+                let foliage = Foliage { radius: 1.7, squash: 0.4, twigs: 1 };
                 let envelope = Envelope {
-                    centre: root + lean + Vec3::Y * (lift + height as f32 - 1.0),
+                    centre: root + lean + Vec3::Y * (lift + height as f32),
                     radius: pick(rng, radius) * k,
                     up: 2.5,
-                    down: (height as f32 - foot) * 0.6,
-                    hollow: 0.3,
+                    down: (height as f32 - foot) * 0.5,
+                    hollow: 0.35,
                     shape: Shape::Billows { count: count(rng, (4, 6)) as usize, radius: 1.6 * k.sqrt() },
                 };
-                let habit = Habit { density: 0.4, influence: 6.0, kill: 1.6, tropism: Vec3::Y * 0.35 };
+                let habit = Habit { density: 0.4, influence: 6.0, kill: 1.6, tropism: Vec3::Y * 0.7 };
                 g.colonised(&trunk, height, foot, &envelope, &habit, &foliage, s.wood, leaves, rng);
-                for _ in 0..rng.range(2, 5) {
-                    let from = on_trunk(pick(rng, (0.3, start)));
-                    let out = heading(rng.unit() * TAU);
-                    g.line(from, from + out * pick(rng, (0.8, 1.6)) + Vec3::Y * 0.3, s.wood);
-                }
             }
             Crown::Spire { radius, start } => {
-                // Radius along the crown (Terrestria's cypress): 0 at its foot, widest a
-                // third of the way up, 0 at its tip, which stands a third of the trunk above
-                // the trunk's top. Its sprays twist slowly round it, so it reads as foliage
-                // rather than a cone.
+                // A cypress: a narrow flame of foliage round the trunk, widest a third of the
+                // way up (Terrestria's profile, 6.25·x(1-x)²) and closing to a point a third of
+                // the trunk above its top, built of overlapping round clumps set a little off
+                // the trunk on alternate sides, so its outline is soft and lumpy rather than a
+                // stack of squares.
                 let r = pick(rng, radius) * k;
                 let first = (height as f32 * start) as i32;
                 let last = height + height / 3;
                 let span = (last + 1 - first) as f32;
-                let lobes = rng.range(2, 4) as f32;
-                for y in first..=last {
+                let mut y = first;
+                while y <= last {
                     let x = (y - first) as f32 / span + 0.5 / span;
-                    let width = r * 6.25 * x * (1.0 - x) * (1.0 - x);
+                    let width = (r * 6.25 * x * (1.0 - x) * (1.0 - x)).max(0.8);
                     let c = trunk((y as f32 / height as f32).min(1.0));
-                    let c = Vec3::new(c.x, root.y + lift + y as f32 + 0.5, c.z);
-                    g.whorl(c, width.max(0.7), lobes, phase + 0.45 * y as f32, 0.3, leaves);
+                    let side = heading(phase + 2.4 * y as f32) * width * 0.25;
+                    let c = Vec3::new(c.x, root.y + lift + y as f32 + 0.5, c.z) + side;
+                    g.clump(c, width, width * 0.9 + 0.4, width * 0.7 + 0.3, leaves);
+                    y += 2;
                 }
+                let tip = trunk(1.0).floor().as_ivec3() + IVec3::Y * (last - height);
+                g.leaf(tip, leaves);
             }
             Crown::Cap { radius } => {
                 // On the stem's last block, wherever its lean took it.
@@ -549,16 +555,6 @@ struct Clump {
     r: f32,
     up: f32,
     down: f32,
-}
-
-/// One layer of a conifer's tier: its centre, how far its sprays reach, how many there are,
-/// how they are turned and how deeply they part.
-struct Whorl {
-    c: Vec2,
-    r: f32,
-    lobes: f32,
-    turn: f32,
-    depth: f32,
 }
 
 /// The cells from `from` (exclusive, unless equal to `to`) to `to`, changing one axis at
@@ -879,49 +875,6 @@ impl Grower<'_, '_> {
             }
             let axis = if a.x >= a.y && a.x >= a.z { 0 } else if a.y >= a.z { 1 } else { 2 };
             cell[axis] -= o[axis].signum() as i32;
-        }
-    }
-
-    /// One layer of a conifer's tier around `c`: out to `r` where its sprays reach
-    /// furthest, lobed into `lobes` sprays turned by `turn` (`depth`, 0 ..= 1, is how
-    /// deeply), with a ragged rim that leaves no leaf cut off from the rest (as in
-    /// `in_clump`).
-    fn whorl(&mut self, c: Vec3, r: f32, lobes: f32, turn: f32, depth: f32, leaves: BlockId) {
-        let shape = Whorl { c: Vec2::new(c.x, c.z), r: r.min(self.room(c)), lobes, turn, depth: depth.min(0.9) };
-        let y = c.y.floor() as i32;
-        let reach = shape.r + 0.45;
-        let min = IVec3::new((c.x - reach).floor() as i32, y, (c.z - reach).floor() as i32);
-        let max = IVec3::new((c.x + reach).floor() as i32, y, (c.z + reach).floor() as i32);
-        let Some((min, max)) = self.blocks.clip(min, max) else { return };
-        for z in min.z..=max.z {
-            for x in min.x..=max.x {
-                let cell = IVec3::new(x, y, z);
-                if self.reachable(cell) && self.in_whorl(&shape, cell) {
-                    self.put_leaf(cell, leaves);
-                }
-            }
-        }
-    }
-
-    /// Whether `cell` is a leaf of a whorl (see `in_clump`).
-    fn in_whorl(&self, s: &Whorl, mut cell: IVec3) -> bool {
-        loop {
-            let o = Vec2::new(cell.x as f32 + 0.5, cell.z as f32 + 0.5) - s.c;
-            let d = o.length();
-            // Every spray reaches at least this far.
-            if d <= 1.1 {
-                return true;
-            }
-            let spray = 0.5 + 0.5 * (s.lobes * o.y.atan2(o.x) + s.turn).cos();
-            let reach = (s.r * (1.0 - s.depth * (1.0 - spray))).max(1.1);
-            if d > reach + 0.45 - 0.45 * self.unit(cell) {
-                return false;
-            }
-            if o.x.abs() >= o.y.abs() {
-                cell.x -= o.x.signum() as i32;
-            } else {
-                cell.z -= o.y.signum() as i32;
-            }
         }
     }
 

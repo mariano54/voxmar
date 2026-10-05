@@ -110,6 +110,8 @@ struct Options {
     clip: Option<f32>,
     /// `--press left|right`: hold a mouse button at the start of the clip.
     press: Option<MouseButton>,
+    /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
+    hold: Option<String>,
     size: UVec2,
     windowed: bool,
     screen: Option<Screen>,
@@ -149,6 +151,7 @@ fn parse_options() -> Result<Options, String> {
         flicker: None,
         clip: None,
         press: None,
+        hold: None,
         size: UVec2::new(1920, 1080),
         windowed: false,
         screen: None,
@@ -191,6 +194,7 @@ fn parse_options() -> Result<Options, String> {
             "--guide" => options.guide = Some(value()?),
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
+            "--hold" => options.hold = Some(value()?),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
             "--press" => {
                 options.press = Some(match value()?.as_str() {
@@ -387,6 +391,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             flicker: options.flicker,
             clip: options.clip,
             press: options.press,
+            hold: options.hold,
             strike: options.strike,
             level_up: options.level_up,
             size: options.size,

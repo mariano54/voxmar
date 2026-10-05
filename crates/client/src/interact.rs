@@ -172,6 +172,10 @@ impl ActionContext for ClientContext<'_> {
     fn occupied(&self, cell: IVec3) -> bool {
         Aabb::standing(self.player.position, dims::WIDTH, dims::HEIGHT).intersects(|c| c == cell)
     }
+
+    fn cooking(&self) -> Option<&voxmar_engine::cooking::CookingRegistry> {
+        Some(&self.content.cooking)
+    }
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
@@ -251,10 +255,34 @@ fn break_and_place(
     // put it on. Eating takes a moment, so it starts on the press, not again while held.
     if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
         let content = &launch.content;
+        // Using what a station cooks on that station cooks it, before eating or placing.
+        if let (Some(hit), Some(cook)) = (hit, actions.0.id("base:cook")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            match actions.0.get(cook).map(|def| def.validate(&context, action_target)) {
+                Some(Ok(())) => {
+                    net.propose_from(&player, cook, action_target);
+                    target.place_cooldown = 0.4;
+                    return;
+                }
+                Some(Err(Rejection::Unmet(Requirement::CookingLevel))) => {
+                    let item = context.actor_held();
+                    let station = world.block(hit.block).map(|b| world.registry.def(b).tags.clone()).unwrap_or_default();
+                    if let (Some(recipe), Some(skill)) = (item.and_then(|i| content.cooking.for_item(i, &station)), content.cooking.skill) {
+                        let skill = locale.skill(content.skills.get(skill));
+                        let words = locale.format("skills.needs", &[("skill", &skill), ("level", &recipe.def.level)]);
+                        toasts.refused(words, time.elapsed_secs());
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let food = held.is_some_and(|item| world.registry.info(item).food > 0);
         let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
-        if food && (hit.is_none() || !placeable) {
+        // With a creature under the crosshair, a right click tends it instead (`creatures::aim`).
+        if food && target.creature.is_none() && (hit.is_none() || !placeable) {
             let eat = actions.0.expect("core:eat");
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {

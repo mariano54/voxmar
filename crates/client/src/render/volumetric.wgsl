@@ -5,14 +5,15 @@
 // the cascaded shadow maps, so shafts fall through gaps in canopies and past ridges.
 //
 // Three passes: `march` at half resolution (a quarter of the pixels; all of this is soft)
-// writes the light the air adds and how much of what lies behind shows through, `soften`
-// blends each ray with its neighbours that ended about as far away, and `composite` blends
-// it over the image, from the nearby rays that ended about as far away as the pixel's own
-// surface, so nothing bleeds across the edge of a trunk or a ridge. Steps start at a fixed noise, so the march has fine grain rather than
-// bands, which the softening smooths away.
+// writes the light the air adds and how much of what lies behind shows through;
+// `accumulate` blends that into the frames before it, found where the same air was then,
+// so the march's grain averages away over a few frames; and `composite` blends it over the
+// image, from the nearby rays that ended about as far away as the pixel's own surface, so
+// nothing bleeds across the edge of a trunk or a ridge. Steps start at noise that changes
+// every frame, so the march has fine grain rather than bands, and the grain averages out.
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
-#import bevy_pbr::mesh_view_bindings::{view, lights, directional_shadow_textures, directional_shadow_textures_comparison_sampler}
+#import bevy_pbr::mesh_view_bindings::{view, globals, lights, directional_shadow_textures, directional_shadow_textures_comparison_sampler}
 #import bevy_pbr::utils::interleaved_gradient_noise
 #import voxmar::atmosphere::{Atmosphere, air_along, cloud_density, cloud_height, cloud_lift, cloud_lift_range, cloud_light, rainbow, sun_glow, weather_fog_density}
 #import voxmar::clouds::{pcg, unit, value_noise, value_noise3}
@@ -22,14 +23,27 @@
 #else
 @group(2) @binding(0) var depth_texture: texture_depth_2d;
 #endif
-// `march`: the atmosphere. `soften` and `composite`: the half-resolution light and
-// transmittance (the march's, and softened).
-#ifdef COMPOSITE
-@group(2) @binding(1) var march_texture: texture_2d<f32>;
-// The view depth each ray ended at (`march`'s second target).
-@group(2) @binding(2) var ray_depths: texture_2d<f32>;
-#else
+// `march`: the atmosphere. `accumulate` and `composite`: the half-resolution light and
+// transmittance (this frame's march, and accumulated), and per ray in r the view depth it
+// ended at and in g how far away its light comes from (`march`'s second target).
+#ifdef MARCH
 @group(2) @binding(1) var<uniform> atmosphere: Atmosphere;
+#else
+@group(2) @binding(1) var march_texture: texture_2d<f32>;
+@group(2) @binding(2) var ray_depths: texture_2d<f32>;
+#endif
+#ifdef ACCUMULATE
+// What `accumulate` wrote last frame, and the depths its rays ended at.
+@group(2) @binding(3) var history: texture_2d<f32>;
+@group(2) @binding(4) var history_depths: texture_2d<f32>;
+@group(2) @binding(5) var history_sampler: sampler;
+struct Previous {
+    // Last frame's clip_from_world, where the history was drawn from.
+    clip_from_world: mat4x4<f32>,
+    // x: how much of this frame's march goes in (1 discards the history).
+    blend: vec4<f32>,
+};
+@group(2) @binding(6) var<uniform> previous: Previous;
 #endif
 
 // Rays to the sky stop here (far beyond anything drawn).
@@ -43,7 +57,7 @@ fn depth_at(pixel: vec2<i32>) -> f32 {
     return select(view.clip_from_view[3][2] / depth, SKY, depth <= 0.0);
 }
 
-#ifndef COMPOSITE
+#ifdef MARCH
 // The direction from the eye to what full-resolution `pixel` shows, and in w its distance.
 fn surface(pixel: vec2<i32>) -> vec4<f32> {
     let depth = textureLoad(depth_texture, pixel, 0);
@@ -85,6 +99,8 @@ const SUN_SHADE: f32 = 0.5;
 struct Air {
     light: vec3<f32>,
     through: f32,
+    // How far away, along the ray, its light mostly comes from.
+    source: f32,
 };
 
 // Whether the sun reaches `world`, from the cascade covering `depth` (distance along the
@@ -129,7 +145,7 @@ fn mist_at(a: Atmosphere, p: vec3<f32>, drift: vec2<f32>) -> f32 {
 // fog, which dims and lights the view, and sunlight scattered by haze, fog and ground fog
 // where the shadow maps say the sun reaches.
 fn near_air(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f32, jitter: f32) -> Air {
-    var out = Air(vec3(0.0), 1.0);
+    var out = Air(vec3(0.0), 1.0, 0.0);
     let light = &lights.directional_lights[0];
     let shadows = lights.n_directional_lights > 0u && ((*light).flags & 1u) != 0u;
     let shafts = a.rays.x > 0.0 && shadows;
@@ -199,7 +215,7 @@ fn near_air(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f32, 
 // (bright tops, grey bases, silver edges towards the sun) and by the sky, darker in storms,
 // and seen through the haze between it and the eye.
 fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f32, jitter: f32) -> Air {
-    var out = Air(vec3(0.0), 1.0);
+    var out = Air(vec3(0.0), 1.0, 0.0);
     let least = u32(a.cloud_look.z);
     if least == 0u {
         return out;
@@ -287,13 +303,15 @@ fn cloud_layer(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, distance: f3
     let air = air_along(a, eye, direction * (weighted / (1.0 - through)), to_sun);
     out.light = color * air.transmittance + air.light * (1.0 - through);
     out.through = through;
+    out.source = weighted / (1.0 - through);
     return out;
 }
 
 struct Marched {
     @location(0) air: vec4<f32>,
-    // The view depth the ray ended at, for the composite.
-    @location(1) depth: f32,
+    // The view depth the ray ended at, for the composite, and how far away its light comes
+    // from, for finding it again next frame.
+    @location(1) depth: vec2<f32>,
 }
 
 @fragment
@@ -302,14 +320,16 @@ fn march(in: FullscreenVertexOutput) -> Marched {
     // The full-resolution pixel this half-resolution one stands for.
     let ray = surface(vec2<i32>(in.position.xy) * 2);
     let eye = view.world_position;
-    // Where each ray's steps start. Near the eye, interleaved gradient noise, which the
-    // softening smooths best; through the cloud, whose steps are long and whose
-    // layers line up, white noise, as the gradient's diagonal pattern shows there as streaks.
+    // Where each ray's steps start, new every frame so the accumulation averages the grain
+    // away. Near the eye, interleaved gradient noise; through the cloud, whose steps are
+    // long and whose layers line up, white noise, as the gradient's diagonal pattern shows
+    // there as streaks.
     let pixel = vec2<u32>(in.position.xy);
-    let near = near_air(a, eye, ray.xyz, ray.w, interleaved_gradient_noise(in.position.xy, 0u));
+    let frame = globals.frame_count;
+    let near = near_air(a, eye, ray.xyz, ray.w, interleaved_gradient_noise(in.position.xy, frame % 64u));
     // The cloud lies behind the air near the eye (or, around the eye inside it, mingles with
     // it, which this treats alike).
-    let cloud = cloud_layer(a, eye, ray.xyz, ray.w, unit(pcg(pixel.x + pcg(pixel.y ^ 0x5bd1e995u))));
+    let cloud = cloud_layer(a, eye, ray.xyz, ray.w, unit(pcg(pixel.x + pcg(pixel.y ^ 0x5bd1e995u) + pcg(frame))));
     var light = near.light + near.through * cloud.light;
     // A rainbow in the rain in front of whatever lies well beyond the eye, above the
     // horizon, where the sun shines on the rain (judged at the eye).
@@ -317,7 +337,10 @@ fn march(in: FullscreenVertexOutput) -> Marched {
         let beyond = smoothstep(80.0, 250.0, ray.w) * smoothstep(-0.04, 0.02, ray.y);
         light += rainbow(a, ray.xyz) * beyond * cloud_light(a, eye, eye, a.bow.xyz);
     }
-    return Marched(vec4(light, near.through * cloud.through), depth_at(vec2<i32>(in.position.xy) * 2));
+    // Rays through cloud are found again next frame where the cloud was; the rest where
+    // they ended (the sky's, far away, only by the turn of the view).
+    let source = select(min(ray.w, SKY), cloud.source, cloud.through < 0.97);
+    return Marched(vec4(light, near.through * cloud.through), vec2(depth_at(vec2<i32>(in.position.xy) * 2), source));
 }
 
 #else
@@ -328,28 +351,52 @@ fn alike(ended: f32, distance: f32) -> f32 {
     return exp(-abs(ended - distance) / (0.05 * min(distance, ended) + 0.25));
 }
 
-// Each half-resolution ray blended with its neighbours that ended about as far away, by a
-// 3×3 tent ([1 2 1] each way), which smooths the march's grain away. With the composite's
-// bilinear upsample it blurs as much as a tent two rays wide around each pixel would.
+#ifdef ACCUMULATE
+// This frame's march blended into what the frames before saw of the same air, found where
+// it was then by last frame's view, so the grain of each frame's steps averages away. The
+// history is kept to the range of this frame's rays around (so nothing that moved leaves a
+// trail), and dropped where the ray then ended at another depth (an edge that moved) or
+// lay off the screen.
 @fragment
-fn soften(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+fn accumulate(in: FullscreenVertexOutput) -> Accumulated {
     let ray = vec2<i32>(in.position.xy);
     let last = vec2<i32>(textureDimensions(march_texture)) - 1;
-    let distance = textureLoad(ray_depths, ray, 0).r;
-    var air = vec4(0.0);
-    var total = 0.0;
+    let now = textureLoad(march_texture, ray, 0);
+    let depths = textureLoad(ray_depths, ray, 0).rg;
+    var low = now;
+    var high = now;
     for (var k = 0; k < 9; k++) {
-        let o = vec2(k % 3, k / 3) - 1;
-        let near = clamp(ray + o, vec2(0), last);
-        let tent = f32((2 - abs(o.x)) * (2 - abs(o.y)));
-        let weight = tent * (alike(textureLoad(ray_depths, near, 0).r, distance) + 1e-4);
-        air += textureLoad(march_texture, near, 0) * weight;
-        total += weight;
+        let near = textureLoad(march_texture, clamp(ray + vec2(k % 3, k / 3) - 1, vec2(0), last), 0);
+        low = min(low, near);
+        high = max(high, near);
     }
-    return air / max(total, 1e-6);
+    // Where this ray's light was last frame.
+    let uv = (in.position.xy * 2.0) / view.viewport.zw;
+    let ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let far = view.world_from_clip * vec4(ndc, 1e-7, 1.0);
+    let direction = normalize(far.xyz / far.w - view.world_position);
+    let before = previous.clip_from_world * vec4(view.world_position + direction * depths.g, 1.0);
+    let at = vec2(before.x / before.w * 0.5 + 0.5, 0.5 - before.y / before.w * 0.5);
+    var blend = previous.blend.x;
+    if before.w <= 0.0 || any(at < vec2(0.0)) || any(at > vec2(1.0)) {
+        blend = 1.0;
+    } else {
+        let size = vec2<f32>(textureDimensions(history));
+        let ended = textureLoad(history_depths, clamp(vec2<i32>(at * size), vec2(0), vec2<i32>(size) - 1), 0).r;
+        blend = select(blend, 1.0, alike(ended, depths.r) < 0.5);
+    }
+    let kept = clamp(textureSampleLevel(history, history_sampler, at, 0.0), low, high);
+    return Accumulated(mix(kept, now, blend), depths.r);
 }
 
-// The softened rays around the pixel, blended bilinearly among those that ended about as
+struct Accumulated {
+    @location(0) air: vec4<f32>,
+    @location(1) depth: f32,
+}
+#endif
+
+#ifdef COMPOSITE
+// The accumulated rays around the pixel, blended bilinearly among those that ended about as
 // far away as its own surface, so nothing bleeds across the edge of a trunk or a ridge.
 // Any surface two pixels wide has one of the four rays on it.
 @fragment
@@ -374,5 +421,6 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // Blended as light + image × transmittance.
     return air / max(total, 1e-6);
 }
+#endif
 
 #endif

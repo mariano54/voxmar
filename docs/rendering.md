@@ -770,12 +770,16 @@ and the volumetric pass.
 **The volumetric pass** (volumetric.wgsl, render/volumetric.rs) draws the air in front of
 the view over the opaque scene and the water, before Bevy's transparent pass, so rain and
 snow fall in front of it. Each view ray is marched at half resolution (all of this is
-soft) for the light the air adds and how much of the scene shows through, softened among
-its neighbours that ended about as far away (a 3×3 tent at half resolution), then blended
-over the image at full resolution from the four nearest rays whose surfaces lie about as
-far away as the pixel's own, so nothing bleeds across a trunk or a ridge. Softening
-before the upsample costs 0.31 ms at 2268×1473 where the single 4×4 depth-aware upsample
-it replaced cost 0.52, for the same blur. It draws:
+soft) for the light the air adds and how much of the scene shows through, its steps
+starting at noise that changes every frame; accumulated with the frames before, found
+where the same air was by last frame's view (the cloud's light where the cloud lay, other
+rays where they ended), kept to the range of this frame's neighbouring rays so nothing
+that moved leaves a trail, and dropped where the ray then ended at another depth; then
+blended over the image at full resolution from the four nearest rays whose surfaces lie
+about as far away as the pixel's own, so nothing bleeds across a trunk or a ridge. The
+accumulation (about eight frames) replaced a 3×3 blur among neighbouring rays, which
+left the cloud grainy and soft (Mariano's playtest, 2026-10-05): the grain averages out
+instead of being smeared. It draws:
 
 - *The low cloud*, a layer in the world (Mariano's playtest of 8e6c104: clouds were a
   picture on the sky, and on a mountain they should pass you). Its base lies 135 blocks
@@ -913,8 +917,10 @@ days. Nothing shows every night:
 - Outer planets creep along the sun's path and meet it every 110 to 200 days, lost in
   its glare for a while; the pale blue planet, when a world has it, never strays more
   than 24° to 46° from the sun and shows only after sunset or before sunrise.
-- The moon goes through its phases every 10 days (`MONTH_DAYS`), full on day 0 and
-  rising later each night. It is the night's light: moonlight scales with how much of it
+- The moon goes through its phases every 10 days, full on day 0 and rising later each
+  night. The phase is the engine's (`voxmar_engine::calendar::moon_phase` and
+  `moon_lit`, from days elapsed), so the server's creatures, drops and plants can follow
+  the same moon the sky shows. It is the night's light: moonlight scales with how much of it
   is lit (to the power 1.5), and the sky and skylight are 0.6 of a full moon's without
   it (`MOONLESS`). Its dark side hides the stars behind it.
 - Comets stay five to nine days, brightening and fading, a tail streaming away from the

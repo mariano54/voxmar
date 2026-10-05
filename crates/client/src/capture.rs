@@ -75,6 +75,8 @@ pub struct CapturePlugin {
     pub clip: Option<f32>,
     /// A mouse button to hold at the start of the clip (see the module docs).
     pub press: Option<MouseButton>,
+    /// An item whose hotbar slot to select once the inventory has it (`--hold`).
+    pub hold: Option<String>,
     /// The creature to summon and strike before the shot (see the module docs).
     pub strike: Option<String>,
     /// The skill whose next level to note before the shot (see the module docs).
@@ -129,6 +131,7 @@ impl Plugin for CapturePlugin {
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
             clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
             press: self.press,
+            hold: self.hold.clone(),
             strike: self.strike.clone(),
             summoned: false,
             struck: false,
@@ -145,7 +148,7 @@ impl Plugin for CapturePlugin {
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
-        .add_systems(Update, (press, dig, showcase).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
+        .add_systems(Update, (hold, press, dig, showcase).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
@@ -179,6 +182,7 @@ struct Capture {
     flicker: Option<Flicker>,
     clip: Option<Clip>,
     press: Option<MouseButton>,
+    hold: Option<String>,
     strike: Option<String>,
     summoned: bool,
     struck: bool,
@@ -269,6 +273,14 @@ fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&
     let step = state.flicker.as_ref().map_or(Vec3::ZERO, |f| f.step);
     transform.translation = player.eye() + Vec3::new(x, y, z) + step;
     transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
+}
+
+/// Selects the hotbar slot holding `--hold`'s item, as a player picks it with a number key.
+fn hold(state: Res<Capture>, world: Res<crate::world::ClientWorld>, mut player: ResMut<LocalPlayer>) {
+    let Some(item) = state.hold.as_deref().and_then(|name| world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")))) else { return };
+    if let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == item)) {
+        player.selected = slot;
+    }
 }
 
 /// Clip frames `--press` holds its button for: a second, long enough to dig soil.

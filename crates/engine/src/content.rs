@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
+use crate::cooking::CookingRegistry;
 use crate::creature::CreatureRegistry;
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
@@ -32,6 +33,8 @@ pub struct Content {
     pub skills: Arc<SkillRegistry>,
     pub crops: Arc<CropRegistry>,
     pub creatures: Arc<CreatureRegistry>,
+    /// What stations cook.
+    pub cooking: Arc<CookingRegistry>,
     /// What the inventory's crafting grid makes.
     pub recipes: Arc<RecipeRegistry>,
     /// Every other definition file, by package then file name.
@@ -70,6 +73,7 @@ impl Content {
         let mut skills = SkillRegistry::default();
         let mut crops = Vec::new();
         let mut creatures = Vec::new();
+        let mut cooking = Vec::new();
         let mut recipes = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
@@ -95,6 +99,10 @@ impl Content {
                     "crops.ron" => {
                         crops.extend(CropRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "cooking.ron" => {
+                        cooking.extend(CookingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "creatures.ron" => {
@@ -124,6 +132,7 @@ impl Content {
         let blocks = BlockRegistry::new(blocks)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
+        let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks)?;
         Ok(Self {
             blocks: Arc::new(blocks),
@@ -134,6 +143,7 @@ impl Content {
             skills: Arc::new(skills),
             crops: Arc::new(crops),
             creatures: Arc::new(creatures),
+            cooking: Arc::new(cooking),
             recipes: Arc::new(recipes),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),

@@ -38,9 +38,10 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
     }
 }
 
-/// Every creature has these, whatever its data says: going home when it strays.
+/// Every creature has these, whatever its data says: going home when it strays, and
+/// going to a mate when both are ready to breed.
 pub fn always() -> Vec<Arc<dyn Module>> {
-    vec![Arc::new(ReturnHome)]
+    vec![Arc::new(ReturnHome), Arc::new(Court)]
 }
 
 /// How a creature with nothing to do looks: resting outside its active hours.
@@ -429,7 +430,7 @@ impl Module for Hunt {
         }
         let radius = self.radius * (0.6 + 0.4 * ctx.lively) * (0.7 + 0.6 * ctx.mind.hunger) * (0.7 + 0.6 * personality.aggression);
         let prey = ctx.at.players.iter().find(|p| {
-            !p.creative && !p.tolerated && ctx.distance(p.position) < radius.min(ctx.sight) && p.combat_level as u16 <= def.level as u16 * 2 + 1
+            !p.creative && !p.tolerated && !p.friend && ctx.distance(p.position) < radius.min(ctx.sight) && p.combat_level as u16 <= def.level as u16 * 2 + 1
         })?;
         Want::at(2.5 * personality.aggression, *prey)
     }
@@ -550,5 +551,31 @@ impl Module for ReturnHome {
 
     fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
         Decision { goal: Some(ctx.at.home), speed: walk(ctx), ..Default::default() }
+    }
+}
+
+/// Goes to another of its kind that is ready to breed, when it is ready too (the server
+/// brings them together into a young one once they meet).
+#[derive(Debug)]
+struct Court;
+
+impl Module for Court {
+    fn name(&self) -> &'static str {
+        "court"
+    }
+
+    fn band(&self) -> Band {
+        Band::Drive
+    }
+
+    fn want(&self, ctx: &Ctx) -> Option<Want> {
+        ctx.at.mate?;
+        Want::new(2.5)
+    }
+
+    fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
+        let Some(mate) = ctx.at.mate else { return Decision::default() };
+        let goal = (flat(mate, ctx.at.position) > 0.8).then_some(mate);
+        Decision { goal, speed: walk(ctx), face: Some(mate), pose: Pose::Alert, ..Default::default() }
     }
 }

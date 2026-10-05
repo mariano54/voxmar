@@ -12,14 +12,11 @@
 
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
+use voxmar_engine::calendar;
 
-/// Days for the stars to turn once against the sun. Like every period here it divides the
-/// 1000 days after which the sky's day count wraps, so the wrap never shows.
-pub const YEAR_DAYS: f64 = 100.0;
-/// Days from one full moon to the next.
-pub const MONTH_DAYS: f64 = 10.0;
-/// The days the sky's clock runs before it wraps.
-pub const SKY_DAYS: f64 = 1000.0;
+// The calendar every period here keeps to (each divides the 1000 days after which the
+// sky's day count wraps, so the wrap never shows).
+pub use voxmar_engine::calendar::SKY_DAYS;
 
 pub const CONSTELLATIONS: usize = 10;
 pub const CONSTELLATION_STARS: usize = 96;
@@ -209,10 +206,8 @@ impl SkyLayout {
 /// falls behind it a little more each day, rising later each night, until it rises and
 /// sets with the sun, new, and grows back.
 pub fn moon(days: f64, sun_path: impl Fn(f32) -> Vec3) -> (Vec3, f32) {
-    let month = (days / MONTH_DAYS).fract() as f32;
-    let direction = sun_path((days.fract() as f32 + 0.5 - month).rem_euclid(1.0));
-    let lit = 0.5 + 0.5 * (month * std::f32::consts::TAU).cos();
-    (direction, lit)
+    let phase = calendar::moon_phase(days);
+    (sun_path((days.fract() as f32 + 0.5 - phase).rem_euclid(1.0)), calendar::moon_lit(days))
 }
 
 /// Longitude and latitude in degrees of a direction in the stars' frame (z their pole).
@@ -254,6 +249,7 @@ impl Random {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use voxmar_engine::calendar::MONTH_DAYS;
 
     #[test]
     fn a_world_keeps_its_sky_and_another_has_its_own() {

@@ -278,7 +278,7 @@
         // Autumn leaves, untinted.
         "block/golden_birch_leaves": (base: "block/birch_leaves", palettes: {"leaves": ["#6e4c12", "#90681a", "#b28a24", "#ccaa34", "#e0c44c", "#eed878"]}),
         "block/olive_leaves": (base: "block/oak_leaves", palettes: {"leaves": ["#4a5240", "#5e6852", "#748066", "#8a967a", "#a2ad92", "#bcc6ae"]}),
-        "block/larch_leaves": (base: "block/spruce_leaves", palettes: {"leaves": ["#4a5a18", "#647622", "#80922e", "#9cae3e", "#b8c656", "#d4de74"]}),
+        "block/larch_leaves": (base: "block/spruce_leaves", palettes: {"leaves": ["#33501c", "#436626", "#567c30", "#6a923c", "#80a84a", "#98be5c"]}),
         "block/russet_oak_leaves": (base: "block/oak_leaves", palettes: {"leaves": ["#5a240e", "#7c3414", "#9c4a1a", "#b86224", "#cc7e34", "#dc9a4a"]}),
         "block/amber_maple_leaves": (base: "block/maple_leaves", palettes: {"leaves": ["#82420f", "#a65c17", "#c27822", "#d6952f", "#e3b04a", "#eeca70"]}),
         // Glowcaps: giant mushrooms with pale fibrous stems and glowing teal caps.
