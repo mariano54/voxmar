@@ -5097,6 +5097,7 @@ dependencies = [
  "png",
  "ron",
  "serde",
+ "skrifa 0.44.0",
  "zip",
 ]
 
