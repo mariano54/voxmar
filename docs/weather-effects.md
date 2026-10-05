@@ -101,8 +101,8 @@ after this table.
 | rain, downpour | streaks, splashes, ripples, drips under leaves, far veils; rain beds by strength and cover | glassy near streaks; rain shafts under distant cells (§8) |
 | storm, thunderstorm, supercell | as a downpour, gusts; storm wind; thunder near to far | storm fronts (§8) (bolts and flashes in the cloud drawn) |
 | heat lightning | silent far flashes | lighting the horizon's cloud from inside (§8) |
-| hail | white pellets that bounce and lie; icy rattle | hail lying white on top faces for a while (as the snow dusting, from `w.hail`) |
-| sleet, freezing rain | icy pellets; sleet patter | the glaze of freezing rain: a glassy sheen on surfaces open to the sky while `w.frost` and `w.sleet` are both up |
+| hail | white pellets that bounce and lie; icy rattle | – (drawn) |
+| sleet, freezing rain | icy pellets; sleet patter | – (drawn) |
 | snow, blizzard, thundersnow | soft flakes, whiteout veils; blizzard howl, gusts, thunder | – (fog, snow dusting and bolts as above) |
 | drifting snow | white dust blowing low; gusts | – |
 | dusty afternoon, dust storm, sandstorm | grains and brown-out veils; sandstorm bed | – |

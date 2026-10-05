@@ -604,6 +604,10 @@ const NIGHT_HORIZON: Vec3 = Vec3::new(0.005, 0.007, 0.014);
 const DUSK_HORIZON: Vec3 = Vec3::new(1.9, 0.78, 0.32);
 const DUSK_AMBIENT: Vec3 = Vec3::new(1.3, 0.95, 0.75);
 const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
+/// How fast hail builds up on open ground at full hail (cover per second), and how fast it
+/// melts away after: white within a few seconds of a heavy fall, gone a minute or two later.
+const HAIL_SETTLING: f32 = 0.25;
+const HAIL_MELTING: f32 = 0.006;
 /// Water's colour where no world says otherwise (between worlds), linear RGB.
 const WATER: Vec3 = Vec3::new(0.05, 0.2, 0.7);
 
@@ -699,7 +703,7 @@ pub(crate) fn update_environment(
     mut dome: Query<&mut Transform, (With<SkyDome>, Without<Sun>, Without<Camera3d>)>,
     mut clear: ResMut<ClearColor>,
     (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
-    (generator, mut water_column): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>),
+    (generator, mut water_column, mut hail_lying): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>, Local<f32>),
 ) {
     let Some(sky_handle) = sky_handle else { return };
     // The camera's own transform (it has no parent), as this frame moved it: the global one
@@ -764,6 +768,13 @@ pub(crate) fn update_environment(
         let in_cloud = weather.cloud_flashes().max_by(|a, b| a.1.total_cmp(&b.1));
         air = air.with_clouds(shown, layer, position, env.light_direction, seconds, flash, in_cloud, &pack);
     }
+    // Hail lies white on open ground for a while after it falls, as a snow dusting does;
+    // freezing rain glazes what it falls on with ice, which mirrors the sky as a wet surface.
+    let dt = time.delta_secs();
+    *hail_lying = (*hail_lying + dt * shown.precipitation * shown.hail * HAIL_SETTLING - dt * HAIL_MELTING).clamp(0.0, 1.0);
+    air.ground.z = air.ground.z.max(*hail_lying * pack.frost);
+    let glaze = shown.frost.min(shown.sleet * 4.0).clamp(0.0, 1.0);
+    air.ground.x = air.ground.x.max(glaze * pack.wet_ground);
     // A rainbow, opposite the sun while it is up.
     if !cycle.underwater && env.to_sun.y > 0.0 {
         air.bow = env.to_sun.extend(shown.rainbow * smoothstep(0.0, 0.05, env.to_sun.y));
