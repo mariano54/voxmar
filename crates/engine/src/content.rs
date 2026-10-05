@@ -13,7 +13,9 @@ use std::sync::Arc;
 use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
+use crate::crop::CropRegistry;
 use crate::movement::Tuning;
+use crate::skill::SkillRegistry;
 use crate::weather::WeatherTable;
 
 #[derive(Clone)]
@@ -24,6 +26,8 @@ pub struct Content {
     pub weather: Arc<WeatherTable>,
     /// How players move.
     pub movement: Arc<Tuning>,
+    pub skills: Arc<SkillRegistry>,
+    pub crops: Arc<CropRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
 }
@@ -55,6 +59,8 @@ impl Content {
         let mut commands = CommandRegistry::default();
         let mut weather = WeatherTable::default();
         let mut movement = None;
+        let mut skills = SkillRegistry::default();
+        let mut crops = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -73,6 +79,12 @@ impl Content {
                     "actions.ron" => actions.extend(package, &source)?,
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,
+                    "skills.ron" => skills.extend(package, &source)?,
+                    "crops.ron" => {
+                        crops.extend(CropRegistry::read(package, &source)?);
+                        // Kept with the other files too, so the fingerprint covers it.
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "movement.ron" => {
                         if movement.replace(Tuning::from_ron(&source)?).is_some() {
                             return Err(RegistryError(format!("{package}/movement.ron: another package already sets movement")));
@@ -87,12 +99,17 @@ impl Content {
         let blocks = BlockRegistry::expand(blocks)?;
         weather.validate()?;
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
+        skills.validate()?;
+        let blocks = BlockRegistry::new(blocks)?;
+        let crops = CropRegistry::new(crops, &blocks, &skills)?;
         Ok(Self {
-            blocks: Arc::new(BlockRegistry::new(blocks)?),
+            blocks: Arc::new(blocks),
             actions: Arc::new(actions),
             commands: Arc::new(commands),
             weather: Arc::new(weather),
             movement: Arc::new(movement),
+            skills: Arc::new(skills),
+            crops: Arc::new(crops),
             files: Arc::new(files),
         })
     }
@@ -105,6 +122,6 @@ impl Content {
                 files = (files ^ b as u64).wrapping_mul(0x100_0000_01b3);
             }
         }
-        self.blocks.fingerprint() ^ self.actions.fingerprint().rotate_left(17) ^ files.rotate_left(34)
+        self.blocks.fingerprint() ^ self.actions.fingerprint().rotate_left(17) ^ files.rotate_left(34) ^ self.skills.fingerprint().rotate_left(51)
     }
 }

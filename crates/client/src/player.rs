@@ -6,6 +6,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::inventory::Inventory;
+use voxmar_engine::skill::Skills;
 use voxmar_engine::movement::{self, Body, Controls, Surroundings};
 use voxmar_engine::physics::{Aabb, player as dims};
 
@@ -58,6 +59,9 @@ pub struct LocalPlayer {
     pub fly_speed: f32,
     pub health: u8,
     pub inventory: Inventory,
+    /// Experience in every skill, as the server last said, and whether it has said yet.
+    pub skills: Skills,
+    pub skills_known: bool,
     pub selected: usize,
     pub dead: bool,
     /// Set once the server has welcomed us.
@@ -84,6 +88,8 @@ impl Default for LocalPlayer {
             fly_speed: 1.0,
             health: 20,
             inventory: Inventory::default(),
+            skills: Skills::default(),
+            skills_known: false,
             selected: 0,
             dead: false,
             joined: false,

@@ -3,6 +3,7 @@
 
 mod actions;
 mod commands;
+mod farm;
 mod fluids;
 mod items;
 mod player;
@@ -223,6 +224,8 @@ pub(crate) struct Server {
     executor: Executor,
     /// Dropped items lying about.
     items: items::Items,
+    /// Crops players planted.
+    farm: farm::Farm,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -298,7 +301,15 @@ impl Server {
             Vec::new()
         });
         let items = items::Items::restore(saved_items, |name| content.blocks.id(name));
-        Self {
+        let saved_crops = save.as_ref().map_or(Ok(Vec::new()), |save| save.read_crops()).unwrap_or_else(|e| {
+            tracing::error!("could not load crops: {e}");
+            Vec::new()
+        });
+        let crops = &content.crops;
+        let farm = farm::Farm::restore(saved_crops, |name| {
+            crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
+        });
+        let mut server = Self {
             config,
             tick,
             day: meta.day.unwrap_or(tick) as f64,
@@ -310,6 +321,7 @@ impl Server {
             overworld,
             executor: Executor::default(),
             items,
+            farm,
             processes,
             temperature,
             wear_rules,
@@ -327,7 +339,9 @@ impl Server {
             players: FxHashMap::default(),
             next_player: 1,
             spawn,
-        }
+        };
+        server.show_grown_crops(spawn_column);
+        server
     }
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
@@ -378,6 +392,7 @@ impl Server {
     pub(crate) fn insert_column(&mut self, pos: ColumnPos, loaded: Loaded) {
         self.world.insert(pos, Arc::new(loaded.column));
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
+        self.show_grown_crops(pos);
     }
 
     fn handle_messages(&mut self) {
@@ -445,6 +460,10 @@ impl Server {
         if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
             tracing::error!("could not save dropped items: {e}");
         }
+        let crops = &self.content.crops;
+        if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {
+            tracing::error!("could not save crops: {e}");
+        }
         self.meta.time = self.tick;
         self.meta.day = Some(self.day as u64);
         self.meta.day_speed = self.day_speed;
@@ -458,7 +477,7 @@ impl Server {
     fn save_player(&self, player: &Player) {
         if let Some(save) = &self.save
             && player.joined
-            && let Err(e) = save.write_player(&player.name, &player.saved(), &self.content.blocks)
+            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills), &self.content.blocks)
         {
             tracing::error!("could not save player {}: {e}", player.name);
         }

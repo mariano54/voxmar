@@ -11,6 +11,8 @@ use voxmar_engine::block::RenderKind;
 use voxmar_server::ServerHandle;
 
 use crate::drops::Drops;
+use crate::hud::skills::SkillToasts;
+use crate::session::Launch;
 use crate::breaking::{BlockBroken, SHOWN_WITHIN, shows_breaking};
 use crate::hud::console::Console;
 use crate::menu::{Notice, Screen};
@@ -122,7 +124,7 @@ fn receive(
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
-    mut drops: ResMut<Drops>,
+    (mut drops, mut toasts, launch): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>),
     mut broken: MessageWriter<BlockBroken>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
@@ -182,9 +184,21 @@ fn receive(
                     }
                 }
             }
-            ServerMessage::PlayerState { health, inventory } => {
+            ServerMessage::PlayerState { health, inventory, skills } => {
                 player.health = health.current;
                 player.inventory = inventory;
+                // A level reached since the last word is announced (not on joining).
+                let registry = &launch.content.skills;
+                if player.skills_known && player.skills != skills {
+                    for id in registry.ids() {
+                        let level = registry.level(skills.xp(id));
+                        if level > registry.level(player.skills.xp(id)) {
+                            toasts.level_up(id, level, time.elapsed_secs());
+                        }
+                    }
+                }
+                player.skills = skills;
+                player.skills_known = true;
                 if health.alive() {
                     player.dead = false;
                 }
@@ -228,6 +242,7 @@ fn receive(
             ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
+            ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }
     }
 }

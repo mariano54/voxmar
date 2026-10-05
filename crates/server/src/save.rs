@@ -8,6 +8,8 @@
 //!   renumber blocks. Untouched columns are not stored: generation recreates them exactly.
 //! - `players/<name>.ron`: each player's position, game mode, health and inventory.
 //! - `items.ron`: the dropped items lying about, by item name.
+//! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
+//!   their next is due.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
 //! never leaves a half-written file behind.
@@ -33,6 +35,7 @@ use voxmar_worldgen::Overworld;
 
 const META_FILE: &str = "world.ron";
 const ITEMS_FILE: &str = "items.ron";
+const CROPS_FILE: &str = "crops.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
 const COLUMN_MAGIC: &[u8; 4] = b"vxc4";
@@ -110,6 +113,8 @@ pub struct SavedPlayer {
     pub flying: bool,
     pub health: Health,
     pub inventory: Inventory,
+    /// Experience in tenths, by skill name.
+    pub skills: Vec<(String, u32)>,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -122,6 +127,8 @@ struct PlayerFile {
     flying: bool,
     health: Health,
     inventory: Vec<Option<(String, u8)>>,
+    #[serde(default)]
+    skills: Vec<(String, u32)>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -257,7 +264,7 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -277,6 +284,7 @@ impl WorldSave {
             flying: player.flying,
             health: player.health,
             inventory,
+            skills: player.skills.clone(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -295,7 +303,32 @@ pub struct SavedItem {
     pub age: f32,
 }
 
+/// A planted crop as a save keeps it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedCrop {
+    pub position: [i32; 3],
+    pub crop: String,
+    pub stage: u8,
+    /// World tick its next stage is due (`u64::MAX` once ripe).
+    pub due: u64,
+}
+
 impl WorldSave {
+    /// The planted crops, none if the world has no crops file.
+    pub fn read_crops(&self) -> io::Result<Vec<SavedCrop>> {
+        let path = self.dir.join(CROPS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_crops(&self, crops: &[SavedCrop]) -> io::Result<()> {
+        let text = ron::ser::to_string(crops).map_err(io::Error::other)?;
+        write_atomic(&self.dir.join(CROPS_FILE), text.as_bytes())
+    }
+
     /// The dropped items lying about, none if the world has no items file.
     pub fn read_items(&self) -> io::Result<Vec<SavedItem>> {
         let path = self.dir.join(ITEMS_FILE);
@@ -458,6 +491,7 @@ mod tests {
             flying: true,
             health: Health { current: 13, max: 20 },
             inventory,
+            skills: vec![("core:farming".into(), 1234)],
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();

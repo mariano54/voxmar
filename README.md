@@ -57,6 +57,19 @@ item (Ctrl+Q the stack), and clicking outside the panel throws the held stack (r
 one item). Hovering an item names it, coloured by rarity, with what it is good for. Esc or E
 closes it and puts back what you hold.
 
+Farming, with RuneScape-style skills: right-click soil with seeds to sow them (carrots and
+potatoes are sown from themselves). Each crop needs a farming level, from wheat at 1 to
+saffron at 60 and the night-growing moonbloom at 75, and planting and harvesting earn
+experience, shown rising at the right of the screen; the inventory screen lists every
+skill's level (levels 1 to 99 on RuneScape's curve). Crops grow through three stages to
+ripe over real minutes, fastest inside their climate, in light, on fertile ground with water
+within four blocks; break a ripe one to harvest it, or right-click a ripe tomato, strawberry
+or chili to pick it and let it fruit again. Higher levels yield a little more, never grow
+faster. Most crops are rare; their seeds come first from wild plants (wild wheat and carrot,
+chili, moonbloom) and from wild crops. Crops and skills are content (`content/base/crops.ron`,
+`content/core/skills.ron`), and the crops players plant are kept with the world (`crops.ron`).
+`/grow [STAGES|ripe]` grows the crops near you.
+
 Broken blocks drop items, as in Minecraft: what a block gives pops out as a tiny copy of it
 (a plant as a flat sprite with thickness) that turns and bobs where it lands, floats in
 water, merges with nearby stacks of the same thing, and lasts five minutes. After half a
@@ -223,19 +236,24 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 
 How the design primitives map to the code today:
 
-- **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`),
+- **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`,
+  `content/base/actions.ron`), crops (`content/base/crops.ron`), skills
+  (`content/core/skills.ron`),
   console commands (`content/core/commands.ron`), kinds of weather (`content/base/weather.ron`)
   and how players move (`content/core/movement.ron`),
   namespaced per package (`base:stone`, `core:mine`; `core:air` is built in).
 - **Action**: the only way discrete changes happen. Every action goes through one lifecycle on
   the server (propose, validate, schedule one completion, re-validate, commit or cancel) and
   compiles down to a fixed set of engine effects. Clients validate with the same rules to
-  predict. Mining, placing, moving items and respawning are all actions.
+  predict. Mining, placing, moving items, throwing them, sowing and picking crops and
+  respawning are all actions.
 - **Process**: continuous server rules at a scheduling tier (`High` every tick, `Low` once a
   second): falling damage, regeneration, which heals slower where the temperature field
-  is freezing, the weather (below), and footsteps, which wear paths (below).
+  is freezing, the weather (below), footsteps, which wear paths (below), dropped items, and
+  crop growth, which pops only the crops whose next stage is due.
 - **Trait**: typed data with declared replication and persistence (`core:health`,
-  `core:inventory`, `core:position`); owner-replicated traits are sent when they change.
+  `core:inventory`, `core:skills`, `core:position`); owner-replicated traits are sent when
+  they change.
 - **Field**: coarse grids (16 blocks per cell unless a field chooses otherwise), generated
   baseline plus emitted differences: `core:temperature`, in °C, from the climate generator,
   and `core:humidity`, `core:clouds` and `core:precipitation` at 128 blocks, which the weather

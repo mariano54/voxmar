@@ -185,6 +185,12 @@ pub struct BlockDef {
     /// What the block needs to stay: plants need ground (`Below`, their default), hanging
     /// plants and stalactites a ceiling (`Above`), other blocks nothing.
     pub support: Option<Support>,
+    /// Only ever an item, never placed in the world: seeds, fruit, produce. It is drawn as
+    /// a sprite of its texture in the hand and on the ground.
+    pub item: bool,
+    /// The action using it performs instead of placing it (`base:plant` for a seed), by
+    /// its full name.
+    pub action: Option<String>,
 }
 
 /// Which neighbour a block rests on. It cannot be placed without a solid block there, and
@@ -224,6 +230,8 @@ impl Default for BlockDef {
             variant_of: None,
             fluid: None,
             support: None,
+            item: false,
+            action: None,
         }
     }
 }
@@ -325,6 +333,8 @@ pub struct BlockPatch {
     pub rarity: Option<Rarity>,
     pub variants: Option<Vec<Variant>>,
     pub support: Option<Support>,
+    pub item: Option<bool>,
+    pub action: Option<String>,
 }
 
 impl BlockPatch {
@@ -347,6 +357,8 @@ impl BlockPatch {
             rarity,
             variants,
             support,
+            item,
+            action,
         } =
             self.clone();
         render.into_iter().for_each(|v| def.render = v);
@@ -366,6 +378,8 @@ impl BlockPatch {
         rarity.into_iter().for_each(|v| def.rarity = v);
         variants.into_iter().for_each(|v| def.variants = v);
         support.into_iter().for_each(|v| def.support = Some(v));
+        item.into_iter().for_each(|v| def.item = v);
+        action.into_iter().for_each(|v| def.action = Some(v));
     }
 }
 
@@ -431,6 +445,8 @@ pub struct BlockInfo {
     pub drop_count: u8,
     /// The fluid state this block is, for water, lava and their flowing states.
     pub fluid: Option<FluidState>,
+    /// Whether holding it and using it places it: false for items (see [`BlockDef::item`]).
+    pub placeable: bool,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -632,6 +648,7 @@ impl BlockRegistry {
                 support: def.support.unwrap_or(if def.render == RenderKind::Plant { Support::Below } else { Support::None }),
                 drop_count: def.drop_count,
                 fluid,
+                placeable: !def.item && def.action.is_none(),
             });
         }
         if textures.len() > 4096 {

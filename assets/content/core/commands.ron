@@ -72,6 +72,13 @@
             permission: Admin,
             run: Drop,
         ),
+        (
+            name: "grow",
+            usage: "[STAGES]",
+            help: "Grows the crops within 8 blocks of you by a stage, or as many as you say (all the way to ripe with `ripe`).",
+            permission: Admin,
+            run: Grow,
+        ),
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (
             name: "locate",

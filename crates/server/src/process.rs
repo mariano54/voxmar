@@ -26,7 +26,13 @@ pub(crate) trait Process: Send {
 }
 
 pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
-    vec![Box::new(Falling), Box::new(Regeneration::default()), Box::new(Weather::default()), Box::new(crate::wear::Footsteps::default())]
+    vec![
+        Box::new(Falling),
+        Box::new(Regeneration::default()),
+        Box::new(Weather::default()),
+        Box::new(crate::wear::Footsteps::default()),
+        Box::new(crate::farm::Growth),
+    ]
 }
 
 /// Fall damage, burning in lava and the void, from the server's own view of where
@@ -139,7 +145,7 @@ impl Server {
             player.dirty.clear();
             player
                 .connection
-                .send(ServerMessage::PlayerState { health: player.health, inventory: player.inventory.clone() });
+                .send(ServerMessage::PlayerState { health: player.health, inventory: player.inventory.clone(), skills: player.skills.clone() });
         }
     }
 }

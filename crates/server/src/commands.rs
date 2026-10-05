@@ -160,6 +160,7 @@ impl Server {
             Run::Fill => self.fill(id, args),
             Run::Give => self.give(id, args),
             Run::Drop => self.drop_command(id, args),
+            Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
             Run::Locate => self.locate(id, args),
         };
@@ -521,6 +522,17 @@ impl Server {
         }
         let name = &self.content.blocks.def(block).name;
         if left > 0 { Ok(format!("Gave {count} {name}; {left} did not fit and dropped at your feet.")) } else { Ok(format!("Gave {count} {name}.")) }
+    }
+
+    fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let stages = match args {
+            [] => 1,
+            [word] if word == "ripe" => u8::MAX,
+            [count] => count.parse::<u8>().ok().filter(|&c| c > 0).ok_or_else(|| format!("`{count}` is not a number of stages."))?,
+            _ => return Err("Grow by how many stages?".into()),
+        };
+        let grown = self.grow_around(self.position_of(source), 8.0, stages);
+        Ok(format!("Grew {grown} crops."))
     }
 
     fn drop_command(&mut self, source: Source, args: &[String]) -> Reply {

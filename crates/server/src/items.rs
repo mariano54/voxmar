@@ -122,11 +122,21 @@ pub(crate) fn random3(tick: u64, cell: IVec3, salt: u32) -> [f32; 3] {
 }
 
 impl Server {
-    /// Pops what breaking the block at `cell` (and the plants it held up) drops out into
-    /// the world.
-    pub(crate) fn drop_loot(&mut self, cells: &[IVec3]) {
+    /// Pops what breaking the blocks at `cells` (a block and the plants it held up) drops
+    /// out into the world: a ripe crop its harvest, earning `agent` its experience.
+    pub(crate) fn drop_loot(&mut self, agent: PlayerId, cells: &[IVec3]) {
         for (i, &cell) in cells.iter().enumerate() {
             let Some(block) = self.block(cell) else { continue };
+            if let Some(crop) = self.ripe_crop(block) {
+                self.harvest(agent, crop, cell, i as u32);
+                continue;
+            }
+            if let Some((crop, plants)) = self.content.crops.wild_form(block) {
+                for plant in 0..plants as u32 {
+                    self.forage(agent, crop, cell, i as u32 * 8 + plant);
+                }
+                continue;
+            }
             let info = self.content.blocks.info(block);
             if info.drops.is_air() || info.drop_count == 0 {
                 continue;

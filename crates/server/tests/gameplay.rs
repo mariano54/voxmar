@@ -21,6 +21,9 @@ struct Client {
     /// Dropped items in sight, and the ones we picked up.
     items: std::collections::HashMap<u32, ItemView>,
     collected: Vec<u32>,
+    skills: voxmar_engine::skill::Skills,
+    /// Experience earned, in tenths, in the order it was.
+    earned: Vec<u32>,
     world: VoxelWorld,
     position: Vec3,
     admin: bool,
@@ -73,6 +76,8 @@ impl Client {
             id: 0,
             items: Default::default(),
             collected: Vec::new(),
+            skills: Default::default(),
+            earned: Vec::new(),
             world: VoxelWorld::default(),
             position: Vec3::ZERO,
             admin: false,
@@ -124,10 +129,12 @@ impl Client {
                     self.world.set_block(pos, block);
                 }
             }
-            ServerMessage::PlayerState { health, inventory } => {
+            ServerMessage::PlayerState { health, inventory, skills } => {
                 self.health = health.current;
                 self.inventory = inventory;
+                self.skills = skills;
             }
+            ServerMessage::Xp { tenths, .. } => self.earned.push(tenths),
             ServerMessage::Weather { weather, quick, .. } => {
                 self.weather = Some(weather);
                 self.quick = quick;
@@ -235,6 +242,40 @@ fn broken_blocks_pop_out_items_that_are_picked_up_and_thrown_stacks_fly() {
     client.propose("core:drop", ActionTarget::Stack { slot: 0, count: 1 });
     client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(before.count - 1));
     client.pump_until(|c| c.items.values().any(|i| i.stack == ItemStack { item: before.item, count: 1 } && i.velocity.z < -1.0));
+}
+
+#[test]
+fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    let (ground, other) = (feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 2));
+    for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(5).is_some());
+    let blocks = &client.content.blocks;
+    let (sprout, ripe, wheat) = (blocks.expect("base:wheat_crop_0"), blocks.expect("base:wheat_crop"), blocks.expect("base:wheat"));
+    assert_eq!(client.inventory.get(4).map(|s| s.item), blocks.id("base:wheat_seeds"));
+    let hold = |client: &Client, slot: u8| {
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+    };
+
+    // Saffron takes farming 60: refused, nothing sown, no experience.
+    hold(&client, 5);
+    client.propose("base:plant", ActionTarget::Block { block: other, face: Face::PosY });
+    // Wheat takes level 1: sown, with its planting experience (2, in tenths).
+    hold(&client, 4);
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && c.earned == [20]);
+    assert_eq!(client.world.block(other + IVec3::Y), Some(BlockId::AIR), "sown without the level");
+    client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
+
+    // Grown ripe, then broken: its harvest pops out and its experience is earned.
+    assert_eq!(client.ok("/grow ripe"), "Grew 1 crops.");
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
+    client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
+    client.pump_until(|c| c.skills.xp(voxmar_engine::skill::SkillId(0)) == 110);
 }
 
 #[test]

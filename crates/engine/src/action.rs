@@ -9,8 +9,10 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockId, BlockInfo, RegistryError, Support};
+use crate::block::{BlockId, BlockInfo, BlockRegistry, RegistryError, Support};
 use crate::coords::Face;
+use crate::crop::CropRegistry;
+use crate::skill::SkillId;
 use crate::glam::{IVec3, Vec3};
 use crate::physics::player::REACH;
 
@@ -57,6 +59,15 @@ pub enum Requirement {
     /// A held block that needs support would have it: a plant solid ground beneath, a
     /// hanging plant a solid block above.
     Supported,
+    /// The actor holds a crop's seed.
+    HoldingSeed,
+    /// The held seed's crop can go on top of the target: ground it grows in, with room
+    /// above.
+    Plantable,
+    /// The actor's level in the held seed's crop's skill is at least what it needs.
+    SkillLevel,
+    /// The target is a ripe crop that fruits again when picked.
+    Ripe,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -82,6 +93,11 @@ pub enum Effect {
     StowCursor,
     /// Restore the actor's health and return it to spawn.
     Respawn,
+    /// Sow one held seed on top of the target, and grant the crop's planting experience.
+    Plant,
+    /// Pick a ripe crop's harvest, leaving the plant to fruit again, and grant the crop's
+    /// harvest experience.
+    Pick,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -157,6 +173,10 @@ impl ActionRegistry {
 pub trait ActionContext {
     fn block(&self, pos: IVec3) -> Option<BlockId>;
     fn info(&self, block: BlockId) -> &BlockInfo;
+    fn blocks(&self) -> &BlockRegistry;
+    fn crops(&self) -> &CropRegistry;
+    /// The actor's level in `skill`.
+    fn actor_level(&self, skill: SkillId) -> u8;
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
@@ -214,7 +234,30 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| !b.is_air() && ctx.info(b).hardness >= 0.0)
             }
-            Requirement::HoldingBlock => ctx.actor_held().is_some(),
+            Requirement::HoldingBlock => ctx.actor_held().is_some_and(|b| ctx.info(b).placeable),
+            Requirement::HoldingSeed => ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)).is_some(),
+            Requirement::Plantable => {
+                let (block, face) = block_target()?;
+                let Some(crop) = ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)) else { return Ok(false) };
+                let ground = ctx.block(block).map(|b| ctx.blocks().def(b));
+                let fits = ground.is_some_and(|def| ctx.crops().get(crop).def.ground.iter().any(|tag| def.has_tag(tag)));
+                let room = ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()));
+                face == Face::PosY && fits && room
+            }
+            Requirement::SkillLevel => match ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)) {
+                Some(crop) => {
+                    let crop = ctx.crops().get(crop);
+                    ctx.actor_level(crop.skill) >= crop.def.level
+                }
+                None => true,
+            },
+            Requirement::Ripe => {
+                let (block, _) = block_target()?;
+                let crops = ctx.crops();
+                ctx.block(block)
+                    .and_then(|b| crops.stage_of(b))
+                    .is_some_and(|(crop, stage)| stage == crops.get(crop).ripe_stage() && crops.get(crop).def.regrow.is_some())
+            }
             Requirement::Replaceable => {
                 let (block, face) = block_target()?;
                 ctx.block(placement_cell(ctx, block, face)).is_some_and(|b| ctx.info(b).replaceable)
@@ -261,6 +304,7 @@ mod tests {
         registry: BlockRegistry,
         blocks: FxHashMap<IVec3, BlockId>,
         held: BlockId,
+        crops: CropRegistry,
     }
 
     impl ActionContext for World {
@@ -269,6 +313,15 @@ mod tests {
         }
         fn info(&self, block: BlockId) -> &BlockInfo {
             self.registry.info(block)
+        }
+        fn blocks(&self) -> &BlockRegistry {
+            &self.registry
+        }
+        fn crops(&self) -> &CropRegistry {
+            &self.crops
+        }
+        fn actor_level(&self, _: SkillId) -> u8 {
+            1
         }
         fn actor_eye(&self) -> Vec3 {
             Vec3::new(0.5, 2.6, 2.5)
@@ -304,7 +357,7 @@ mod tests {
         ])
         .unwrap();
         let blocks = [(IVec3::ZERO, STONE), (IVec3::Y, FLOWER), (IVec3::Z, STONE)].into_iter().collect();
-        World { registry, blocks, held }
+        World { registry, blocks, held, crops: CropRegistry::default() }
     }
 
     fn place() -> ActionDef {

@@ -24,6 +24,7 @@ pub struct TraitDecl {
 
 pub const HEALTH: TraitDecl = TraitDecl { name: "core:health", replication: Replication::Owner, persistent: true };
 pub const INVENTORY: TraitDecl = TraitDecl { name: "core:inventory", replication: Replication::Owner, persistent: true };
+pub const SKILLS: TraitDecl = TraitDecl { name: "core:skills", replication: Replication::Owner, persistent: true };
 pub const POSITION: TraitDecl =
     TraitDecl { name: "core:position", replication: Replication::Interpolated, persistent: true };
 
