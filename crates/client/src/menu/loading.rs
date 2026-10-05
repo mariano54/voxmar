@@ -24,6 +24,10 @@ impl Plugin for LoadingPlugin {
 
 #[derive(Component)]
 struct Cover;
+
+/// Keeps the cover up once the world has loaded (`--loading`, to capture it).
+#[derive(Resource)]
+pub struct HoldCover;
 #[derive(Component)]
 struct Title;
 #[derive(Component)]
@@ -93,13 +97,15 @@ fn frame_rect(index: u32) -> Rect {
     Rect::from_corners(min, min + REEL_FRAME)
 }
 
-/// Plays the reel: each layer pair shows a frame and fades the next in over it.
+/// Plays the reel: one layer shows a frame and the other fades the next in over it.
 fn play_reel(time: Res<Time>, mut layers: Query<(&ReelLayer, &mut ImageNode)>) {
+    // Forwards, then back, so the end never jumps to the start.
     let at = time.elapsed_secs() * REEL_FPS;
-    let frame = at as u32 % REEL_FRAMES;
+    let step = at as u32 % (2 * REEL_FRAMES - 2);
+    let frame = |step: u32| if step < REEL_FRAMES { step } else { 2 * REEL_FRAMES - 2 - step };
     let fade = at.fract();
     for (layer, mut image) in &mut layers {
-        let index = if layer.next { (frame + 1) % REEL_FRAMES } else { frame };
+        let index = if layer.next { frame((step + 1) % (2 * REEL_FRAMES - 2)) } else { frame(step) };
         image.rect = Some(frame_rect(index));
         image.color = Color::WHITE.with_alpha(if layer.next { fade } else { 1.0 });
     }
@@ -117,10 +123,11 @@ fn update(
     mut detail: Query<&mut Text, (With<Detail>, Without<Title>)>,
     mut pulse: Query<&mut Node, With<Pulse>>,
     locale: Res<Locale>,
+    hold: Option<Res<HoldCover>>,
 ) {
     let Ok(cover) = cover.single() else { return };
     let ground = ColumnPos::of_block(player.position.floor().as_ivec3());
-    if player.joined && world.voxels.contains(ground) && world.stats.chunk_entities > 0 {
+    if player.joined && world.voxels.contains(ground) && world.stats.chunk_entities > 0 && hold.is_none() {
         commands.entity(cover).despawn();
         return;
     }
