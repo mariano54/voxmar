@@ -3,6 +3,7 @@
 //! platform's configuration directory.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::anti_alias::fxaa::Fxaa;
 use bevy::anti_alias::smaa::Smaa;
@@ -331,6 +332,9 @@ impl Settings {
     }
 
     pub fn save(&self) {
+        if FILE_UNTOUCHED.load(Ordering::Relaxed) {
+            return;
+        }
         let Some(path) = path() else { return };
         let write = || -> Result<(), Box<dyn std::error::Error>> {
             std::fs::create_dir_all(path.parent().expect("settings file is in a directory"))?;
@@ -381,6 +385,25 @@ fn top_level_fields(source: &str) -> Vec<&str> {
     }
     fields.push(body[start..].trim());
     fields.into_iter().filter(|f| !f.is_empty() && !f.starts_with("//")).collect()
+}
+
+/// Set for runs that are not the player's own (`--capture`, `--gate`): they start from the
+/// defaults and must never write the player's settings file, whatever they change.
+static FILE_UNTOUCHED: AtomicBool = AtomicBool::new(false);
+
+/// Makes `Settings::save` do nothing for the rest of the run.
+pub fn leave_file_untouched() {
+    FILE_UNTOUCHED.store(true, Ordering::Relaxed);
+}
+
+/// Whether this run leaves the settings file alone.
+pub fn file_untouched() -> bool {
+    FILE_UNTOUCHED.load(Ordering::Relaxed)
+}
+
+/// The settings file, if there is a configuration directory.
+pub fn file() -> Option<PathBuf> {
+    path()
 }
 
 /// `voxmar/settings.ron` in the platform's configuration directory.
