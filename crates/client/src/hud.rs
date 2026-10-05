@@ -307,9 +307,9 @@ fn update_vitals(
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
 pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, effect: Effect) {
-    let chip = Node { padding: UiRect::new(Val::Px(3.0 * PX), Val::Px(3.0 * PX), Val::Px(PX), Val::Px(2.0 * PX)), ..default() };
+    let chip = Node { padding: UiRect::axes(Val::Px(4.0 * PX), Val::Px(3.0 * PX)), ..default() };
     let color = if effect.is_buff() { ACCENT } else { ERROR };
-    parent.spawn((chip, Piece::Tooltip.image())).with_child(shadowed(font, locale.effect(effect), BODY, color));
+    parent.spawn((chip, Piece::Tooltip.image())).with_child((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
 }
 
 fn update_status(

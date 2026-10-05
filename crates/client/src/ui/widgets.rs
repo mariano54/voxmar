@@ -18,7 +18,7 @@ pub struct WidgetsPlugin;
 impl Plugin for WidgetsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(UiFont(FONT))
-            .add_systems(Update, (style_buttons, scroll_lists, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
+            .add_systems(Update, (style_buttons, scroll_lists, show_scroll_more, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
     }
 }
 
@@ -246,6 +246,27 @@ fn scroll_lists(
     }
 }
 
+/// A small gold arrow in the bottom right corner of a [`ScrollList`]'s parent, shown while
+/// there is more of the list below, so text cut off at the edge reads as "scroll on".
+#[derive(Component)]
+pub struct ScrollMore(Entity);
+
+/// The arrow for `list`, which must share `parent` with it.
+pub fn spawn_scroll_more(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, list: Entity) {
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(PX), bottom: Val::ZERO, ..default() };
+    parent.spawn((corner, shadowed(font, "▼", BODY, GOLD), ScrollMore(list), Visibility::Hidden, ZIndex(1)));
+}
+
+fn show_scroll_more(lists: Query<(&ScrollPosition, &ComputedNode, &Node), With<ScrollList>>, mut arrows: Query<(&ScrollMore, &mut Visibility)>) {
+    for (more, mut visibility) in &mut arrows {
+        let below = lists.get(more.0).is_ok_and(|(scroll, computed, node)| {
+            let max = (computed.content_size().y - computed.size().y).max(0.0) * computed.inverse_scale_factor();
+            node.display != Display::None && scroll.0.y < max - 1.0
+        });
+        visibility.set_if_neq(if below { Visibility::Inherited } else { Visibility::Hidden });
+    }
+}
+
 /// A single-line text input: click to focus it, type, Backspace to delete, Tab to move to
 /// the next field.
 #[derive(Component)]
@@ -427,7 +448,7 @@ pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece
             ..default()
         };
         label = well.spawn(centre).with_children(|centre| {
-            centre.spawn(shadowed(font, "", BODY, TEXT));
+            centre.spawn((shadowed(font, "", BODY, TEXT), crate::lang::TightLine));
         }).id();
     });
     meter.insert(Meter { fill, label });

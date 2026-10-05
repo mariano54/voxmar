@@ -126,9 +126,10 @@ fn label_hotkeys(
                 let current = screen == bar.0;
                 let node = Node { align_items: AlignItems::Center, column_gap: Val::Px(3.0 * PX), ..default() };
                 row.spawn((Button, Hotkey(screen), node)).with_children(|key| {
-                    let cap = Node { padding: UiRect::new(Val::Px(3.0 * PX), Val::Px(3.0 * PX), Val::Px(PX), Val::Px(2.0 * PX)), ..default() };
+                    let cap = Node { padding: UiRect::axes(Val::Px(3.0 * PX), Val::Px(2.0 * PX)), ..default() };
                     let piece = if current { Piece::ButtonSelected } else { Piece::Button };
-                    key.spawn((cap, piece.image())).with_child(shadowed(&font.0, screen.key_label(&settings), BODY, if current { GOLD } else { TEXT }));
+                    let label = shadowed(&font.0, screen.key_label(&settings), BODY, if current { GOLD } else { TEXT });
+                    key.spawn((cap, piece.image())).with_child((label, crate::lang::TightLine));
                     key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
                 });
             }
