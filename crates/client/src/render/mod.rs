@@ -10,7 +10,6 @@ use bevy::camera::{CameraMainTextureUsages, Hdr};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
-use bevy::light::cluster::ClusterConfig;
 use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
 use bevy::math::DVec2;
 use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
@@ -339,10 +338,6 @@ pub fn setup(
         post::Glow { intensity: 0.1 },
         AmbientLight { brightness: 1.0, ..default() },
         DistanceFog::default(),
-        // We have no point or spot lights to sort into clusters (see
-        // `cluster_lights_on_the_cpu`): one cluster spares Bevy rebuilding and uploading
-        // the default 3456 clusters' lists every frame.
-        ClusterConfig::Single,
         Transform::from_xyz(0.0, 100.0, 0.0),
     ));
 }
