@@ -37,11 +37,20 @@ fn registry() -> Arc<BlockRegistry> {
 
 /// CPU time this thread has used: unlike wall-clock time, it is not inflated when other
 /// processes compete for the cores.
+#[cfg(unix)]
 pub(crate) fn thread_time() -> Duration {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: `t` is a valid timespec for the call to fill.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+}
+
+/// Wall-clock time since the first call, where there is no `clock_gettime` (Windows): the
+/// benchmarks still run, but a busy machine inflates their times.
+#[cfg(not(unix))]
+pub(crate) fn thread_time() -> Duration {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed()
 }
 
 /// Asks the scheduler to keep this thread on the performance cores: on a busy machine it

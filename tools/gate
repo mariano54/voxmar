@@ -26,6 +26,8 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 memcap=~/Projects/voxmar-wt/memcap
+# Away from the Mac (a Linux machine, a fresh clone), the copy in this tree.
+[[ -x $memcap ]] || memcap=$PWD/tools/memcap
 passed_dir="$(git rev-parse --git-common-dir)/gate-passed"
 
 full=0 check=0 rev=HEAD
