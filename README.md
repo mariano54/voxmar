@@ -455,7 +455,10 @@ heavy downpour under strong updrafts is a thunderstorm: each second it may, rare
 lightning strike somewhere in the cell (a few flashes a minute in the heart of the fiercest
 storm), which nearby clients see as a flash and a bolt and hear as thunder once the sound has
 travelled: a crack, boom and roll close by, a muffled rip and roll farther off, only a low
-roll from far away. A cell coming into range first catches up on its last ten minutes, so
+roll from far away. What the weather would do to machines and buildings left out in it is
+worked out in the same cells as hazard fields (hail's impact, the wind's load, corrosion,
+frost, heat and recent strikes) with lightning strikes kept as events, for gameplay to come
+(docs/weather-effects.md, "Hazards"). A cell coming into range first catches up on its last ten minutes, so
 the weather at a place does not depend on when anyone arrived, and cells left behind return to
 their baseline. The process uses only exact arithmetic on seeded hash streams, so it is
 deterministic on every machine. It runs on the simulation clock, so it carries on when the
