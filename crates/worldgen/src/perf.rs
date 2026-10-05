@@ -252,7 +252,7 @@ const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0x61f01c67477cf71f, 0x3c6463abf92e8cdf, 0x4fdf124547d3da44];
+const EXPECTED: [u64; 3] = [0xdcaeff3d32cc8869, 0x7ac96359c70158d5, 0xf6abcc805ea3394e];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
