@@ -68,7 +68,10 @@ or chili to pick it and let it fruit again. Higher levels yield a little more, n
 faster. Most crops are rare; their seeds come first from wild plants (wild wheat and carrot,
 chili, moonbloom) and from wild crops. Crops and skills are content (`content/base/crops.ron`,
 `content/core/skills.ron`), and the crops players plant are kept with the world (`crops.ron`).
-`/grow [STAGES|ripe]` grows the crops near you.
+`/grow [STAGES|ripe]` grows the crops near you. Fruit grows on trees: apples (and, rarely,
+golden apples) on oaks, cherries on cherry trees, oranges on jungle trees, coconuts on palms
+and emberfruit on emberwoods, as leaves that blossom, set fruit and ripen; right-click ripe
+fruit leaves to pick them, at any level, and they bear again.
 
 Broken blocks drop items, as in Minecraft: what a block gives pops out as a tiny copy of it
 (a plant as a flat sprite with thickness) that turns and bobs where it lands, floats in
