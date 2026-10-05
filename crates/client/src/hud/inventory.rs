@@ -46,7 +46,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, click, number_keys, preview).chain().in_set(InventorySystems), (follow_pointer, tooltip, tap, show_skills).after(InventorySystems))
+                ((toggle, click, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, show_skills).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -131,6 +131,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             let skills = (text(font, "", BODY, SOFT), TextLayout::justify(Justify::Center), SkillsLine);
             card.spawn((Node { margin: UiRect::top(Val::Px(3.0 * PX)), ..default() }, skills));
         });
+        super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
         // The held stack and the tooltip float above everything, at the pointer.
         let pointer = Node { position_type: PositionType::Absolute, width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
         root.spawn((PointerStack, pointer, GlobalZIndex(3))).with_children(|cell| slot_contents(cell, font, CURSOR));
@@ -172,10 +173,9 @@ fn send(net: &Net, actions: &Actions, inventory: &mut Inventory, action: Move) {
     }
 }
 
-/// E opens and closes the screen (Esc closes it too, see `player`). Closing puts back what
-/// the pointer holds.
+/// Shows the screen while it is open (`screens` opens and closes it). Closing puts back
+/// what the pointer holds.
 fn toggle(
-    keys: Res<ButtonInput<KeyCode>>,
     mut ui: ResMut<UiState>,
     mut player: ResMut<LocalPlayer>,
     net: Res<Net>,
@@ -184,9 +184,6 @@ fn toggle(
     mut root: Query<&mut Visibility, With<InventoryScreen>>,
     mut was_open: Local<bool>,
 ) {
-    if keys.just_pressed(KeyCode::KeyE) && !player.dead && !ui.menu_open && !ui.console_open {
-        ui.inventory_open = !ui.inventory_open;
-    }
     if player.dead {
         ui.inventory_open = false;
     }

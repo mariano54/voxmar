@@ -230,3 +230,16 @@ encoded as MP3. The files are in `assets/content/base/sounds/` and are listed in
 | `hail_1..3.mp3` | Hail and Rain in the Courtyard | qubodup | https://freesound.org/s/162213/ |
 | `cave_1..3.mp3` | Quarry Tunnel Ambience 1, Large Splash (a quiet stretch without the splash) | ecfike | https://freesound.org/s/476318/ |
 | `lava_1..3.mp3` | Lava Loop 3 (a slowed, processed recording of a chemical boiling) | Fission9 | https://freesound.org/s/474851/ |
+
+## Kenney UI Audio (interface sounds)
+
+The interface's Micro switch sounds (the default click for buttons and sound for items) are
+two recordings from Kenney's UI Audio pack, by Kenney Vleugels (https://kenney.nl/assets/ui-audio),
+dedicated to the public domain under Creative Commons CC0 1.0 Universal
+(https://creativecommons.org/publicdomain/zero/1.0/), which requires no notice; we credit
+Kenney anyway. Licence checked in the pack's License.txt on 5 October 2026. Unchanged, renamed.
+
+| Our files | Kenney's file |
+| --- | --- |
+| `assets/ui/sounds/micro_switch_click.ogg` | `switch13.ogg` |
+| `assets/ui/sounds/micro_switch_item.ogg` | `switch14.ogg` |

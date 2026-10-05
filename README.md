@@ -22,7 +22,7 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS | --dig SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --inventory | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS | --dig SECONDS] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --inventory | --character | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
 time of day (a fraction of the day, 0 at sunrise), `--dig` digs straight down for that many seconds

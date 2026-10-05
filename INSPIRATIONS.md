@@ -51,6 +51,16 @@ copied.
   strongest trail wins.
 - Where: `crates/worldgen/src/trails/route.rs`, `network.rs` and `path.rs`.
 
+### Kenney's UI Audio
+
+- Author: Kenney Vleugels (Kenney.nl)
+- Link: https://kenney.nl/assets/ui-audio
+- Licence: CC0. **Copied**: two recordings, the interface's default Micro switch sounds
+  (see the notices).
+- What we took: a button click and an item sound, chosen by Mariano from Kenney's UI Audio
+  and Interface Sounds packs; our other interface sound sets are synthesized.
+- Where: `assets/ui/sounds/`, played by `crates/client/src/ui/sound.rs`.
+
 ### FastNoiseLite
 
 - Author: Jordan Peck (Auburn) and contributors

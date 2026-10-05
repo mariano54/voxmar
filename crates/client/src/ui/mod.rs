@@ -8,10 +8,27 @@ pub mod widgets;
 
 use bevy::prelude::*;
 
+use crate::settings::Settings;
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((widgets::WidgetsPlugin, blur::BlurPlugin, sound::UiSoundPlugin));
+        app.add_plugins((widgets::WidgetsPlugin, blur::BlurPlugin, sound::UiSoundPlugin))
+            .add_systems(Update, change_font.run_if(resource_changed::<Settings>));
+    }
+}
+
+/// Rebuilds the font when the setting changes, and lays every text out again in it.
+fn change_font(settings: Res<Settings>, mut fonts: ResMut<Assets<Font>>, mut texts: Query<&mut TextFont>, mut built: Local<Option<skin::InterfaceFont>>) {
+    // Startup built the saved choice.
+    let current = *built.get_or_insert(settings.font);
+    if current == settings.font {
+        return;
+    }
+    *built = Some(settings.font);
+    skin::set_font(settings.font, &mut fonts);
+    for mut font in &mut texts {
+        font.set_changed();
     }
 }

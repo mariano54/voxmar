@@ -151,7 +151,7 @@ fn type_line(
 ) {
     let pressed: Vec<&KeyboardInput> = keys.read().filter(|key| key.state == ButtonState::Pressed).collect();
     if !ui.console_open {
-        if ui.menu_open || ui.inventory_open || !player.joined {
+        if ui.menu_open || ui.inventory_open || ui.character_open || !player.joined {
             return;
         }
         let slash = pressed.iter().any(|key| key.logical_key == Key::Character("/".into()));
