@@ -62,6 +62,8 @@ const FLAG_FALLING: u32 = 1u << 24u;
 const FLAG_FRINGE: u32 = 1u << 27u;
 const FLAG_NEEDLES: u32 = 1u << 28u;
 const FLAG_FLAT: u32 = 1u << 24u;
+// On a leaf card: the face of the crown it is shaded as.
+const CARD_FACE_SHIFT: u32 = 29u;
 // Leaf cards shrink back into their block between these distances, in blocks (the renderer
 // stops drawing them a little beyond, terrain.rs `CARD_DISTANCE`).
 const CARD_FADE = vec2(40.0, 60.0);
@@ -197,8 +199,8 @@ fn card_vertex(w0: u32, origin: vec3<f32>) -> Card {
     var card: Card;
     card.seed = u32(face_of(w0) * 2u) + select(0u, 1u, (w0 & FLAG_FLAT) != 0u) + u32(a.z * 4096.0) * 8u;
     if (w0 & FLAG_FLAT) != 0u {
-        // Flat and square, tilted up to 30° about its own axis.
-        let tilt = (b.x - 0.5) * 1.05;
+        // Flat and square, tilted up to 15° about its own axis.
+        let tilt = (b.x - 0.5) * 0.52;
         let side = vec3(-along.y, 0.0, along.x) * cos(tilt) + vec3(0.0, sin(tilt), 0.0);
         size.y = size.x;
         card.world = corner + 0.5 + vec3(along.x * offset, 0.2 + 0.3 * b.y, along.y * offset) + side * (top - 0.5) * size.y;
@@ -390,6 +392,8 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.uv = face_uv(local_position(w0), out.face);
 #ifdef FRINGE
     out.uv = card.uv;
+    // Lit as the face of the crown it grows from, so a card seen edge on matches it.
+    out.face = w0 >> CARD_FACE_SHIFT;
 #endif
     // Plants have no ambient occlusion; their AO bits hold the corner, and water's its flow.
     let water = tint_kind(w1) == TINT_WATER;

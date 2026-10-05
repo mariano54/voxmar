@@ -249,7 +249,7 @@
             tags: ["forest", "temperate", "broadleaf", "blossom"],
             flora: (
                 forest: 0.55,
-                trees: [Name("cherry", 1.0), Name("birch", 0.1), Name("oak", 0.06)],
+                trees: [Name("cherry", 3.0), Name("birch", 0.1), Name("oak", 0.06)],
                 cover: 0.7, flowers: 0.12,
                 palette: (canopy: (229, 172, 205)),
                 plants: [Tag("meadow", 1.0), Name("pink_tulip", 2.0), Tag("forage", 0.02)],
