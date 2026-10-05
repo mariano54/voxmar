@@ -1,0 +1,11 @@
+// Skills, RuneScape-style: actions grant experience in a skill and may need a level in it,
+// and levels make actions yield a little more (see engine/src/skill.rs). Any package can
+// add skills here; one sets the curve that turns experience into levels. RuneScape's
+// reaches level 99 at 13,034,431 experience, level 92 being half way; `Table([...])`
+// instead lists the experience each level from 2 up starts at, for a short ladder.
+(
+    curve: RuneScape(max: 99),
+    skills: [
+        (name: "farming", title: "Farming", description: "Sowing, tending and harvesting crops."),
+    ],
+)

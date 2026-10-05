@@ -52,6 +52,8 @@ pub enum Run {
     Give,
     /// Drops a stack of items into the world.
     Drop,
+    /// Grows the crops around the player.
+    Grow,
     /// Names the biome the player stands in.
     Biome,
     /// Finds the nearest place of a kind, such as a biome.

@@ -88,6 +88,25 @@
         "plant": [
             (name: "{name}", render: Plant, solid: false, sound: Grass, textures: All("{name}"), hardness: 0.0, color: (90, 140, 60), tags: ["plant"]),
         ],
+        // A crop (see crops.ron): three growing stages and the ripe plant, which wild ones
+        // are, then its seeds and what it yields, both only ever items. A stage broken
+        // before it is ripe gives its seed back; what a ripe one gives is in crops.ron.
+        "crop": [
+            (name: "{name}_crop_0", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop0"), hardness: 0.0, drops: "{name}_seeds", color: (90, 150, 60), tags: ["plant", "crop"]),
+            (name: "{name}_crop_1", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop1"), hardness: 0.0, drops: "{name}_seeds", color: (90, 150, 60), tags: ["plant", "crop"]),
+            (name: "{name}_crop_2", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop2"), hardness: 0.0, drops: "{name}_seeds", color: (90, 150, 60), tags: ["plant", "crop"]),
+            (name: "{name}_crop", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop3"), hardness: 0.0, drops: "{name}_seeds", color: (90, 150, 60), tags: ["plant", "crop", "ripe"]),
+            (name: "{name}_seeds", render: Plant, solid: false, item: true, action: "base:plant", textures: All("{name}_seeds"), hardness: 0.0, color: (190, 170, 110), tags: ["seed"]),
+            (name: "{name}", render: Plant, solid: false, item: true, textures: All("{name}"), hardness: 0.0, color: (200, 80, 50), tags: ["produce"]),
+        ],
+        // A crop grown from what it yields (carrots, potatoes): no seeds of its own.
+        "root_crop": [
+            (name: "{name}_crop_0", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop0"), hardness: 0.0, drops: "{name}", color: (90, 150, 60), tags: ["plant", "crop"]),
+            (name: "{name}_crop_1", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop1"), hardness: 0.0, drops: "{name}", color: (90, 150, 60), tags: ["plant", "crop"]),
+            (name: "{name}_crop_2", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop2"), hardness: 0.0, drops: "{name}", color: (90, 150, 60), tags: ["plant", "crop"]),
+            (name: "{name}_crop", render: Plant, solid: false, sound: Grass, textures: All("{name}_crop3"), hardness: 0.0, drops: "{name}", color: (90, 150, 60), tags: ["plant", "crop", "ripe"]),
+            (name: "{name}", render: Plant, solid: false, item: true, action: "base:plant", textures: All("{name}"), hardness: 0.0, color: (200, 120, 50), tags: ["produce", "root"]),
+        ],
         // Fired clay in one colour.
         "terracotta": [
             (name: "{name}_terracotta", textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}"]),
@@ -445,5 +464,20 @@
         (template: "plant", name: "crystal_bloom", tags: ["flower", "cave", "wonder", "glowing", "gem", "alchemy:aether", "alchemy:clarity"], all: (sound: Glass, light: 6, color: (170, 230, 255), rarity: VeryRare)),
         (template: "flower", name: "dreamshade", tags: ["fungus", "cave", "forest_floor", "shade", "wonder", "glowing", "dye:purple", "alchemy:sleep", "alchemy:night_sight"], all: (light: 3, color: (120, 60, 160), rarity: Rare)),
         (template: "plant", name: "heartbloom", tags: ["flower", "meadow", "forest_edge", "wonder", "glowing", "dye:red", "alchemy:regeneration", "alchemy:healing"], all: (light: 4, color: (230, 40, 70), rarity: Legendary)),
+        // Crops (crops.ron), most of them rare. Tags on the produce say what it is good for.
+        (template: "crop", name: "wheat", members: {"wheat": (tags: ["grain", "edible", "fibre"]), "wheat_seeds": (tags: ["grain"])}),
+        (template: "root_crop", name: "carrot", members: {"carrot": (tags: ["edible", "flavour:sweet", "dye:orange"])}),
+        (template: "root_crop", name: "potato", all: (rarity: Uncommon), members: {"potato": (tags: ["edible", "flavour:savoury"])}),
+        (template: "crop", name: "cabbage", all: (rarity: Uncommon), members: {"cabbage": (tags: ["edible", "flavour:savoury", "cold"])}),
+        (template: "crop", name: "tomato", all: (rarity: Rare), members: {"tomato": (tags: ["edible", "fruit", "flavour:sour", "flavour:sweet", "dye:red"])}),
+        (template: "crop", name: "strawberry", all: (rarity: Rare), members: {"strawberry": (tags: ["edible", "berry", "fruit", "flavour:sweet", "dye:red", "alchemy:healing"])}),
+        (template: "crop", name: "chili_pepper", all: (rarity: Rare), members: {"chili_pepper": (tags: ["edible", "spice", "flavour:spicy", "dye:red", "alchemy:warming"])}),
+        (template: "crop", name: "saffron", all: (rarity: VeryRare), members: {"saffron": (tags: ["spice", "flavour:aromatic", "dye:yellow", "alchemy:clarity", "alchemy:calming"])}),
+        // The moonbloom, sown: its ripe plant and what it yields are the wild flower's.
+        (
+            template: "crop", name: "moonbloom", without: ["moonbloom"],
+            all: (rarity: VeryRare),
+            members: {"moonbloom_crop_2": (light: 3), "moonbloom_crop": (textures: All("moonbloom"), light: 7, tags: ["wonder", "glowing"]), "moonbloom_seeds": (light: 2, tags: ["wonder", "glowing"])},
+        ),
     ],
 )

@@ -7,6 +7,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::physics::{Aabb, player as dims};
+use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
 use voxmar_protocol::{
     ClientMessage, MAX_FLY_SPEED, PROTOCOL_VERSION, PlayerId, PlayerInput, PlayerView, ServerConnection, ServerMessage,
@@ -37,6 +38,7 @@ pub struct Player {
     pub flying: bool,
     pub health: Health,
     pub inventory: Inventory,
+    pub skills: Skills,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
     pub last_input_tick: u64,
@@ -65,9 +67,10 @@ impl Player {
             flying: false,
             health: Health::full(MAX_HEALTH),
             inventory: Inventory::default(),
+            skills: Skills::default(),
             fall_start: None,
             last_input_tick: 0,
-            dirty: vec![traits::HEALTH, traits::INVENTORY],
+            dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS],
             sent: FxHashSet::default(),
             items_seen: FxHashSet::default(),
         }
@@ -106,7 +109,7 @@ impl Player {
     }
 
     /// The persistent traits, for saving.
-    pub fn saved(&self) -> SavedPlayer {
+    pub fn saved(&self, skills: &SkillRegistry) -> SavedPlayer {
         SavedPlayer {
             position: self.position,
             yaw: self.yaw,
@@ -114,6 +117,7 @@ impl Player {
             flying: self.flying,
             health: self.health,
             inventory: self.inventory.clone(),
+            skills: skills.ids().map(|id| (skills.get(id).name.clone(), self.skills.xp(id))).filter(|(_, xp)| *xp > 0).collect(),
         }
     }
 }
@@ -150,6 +154,7 @@ impl Server {
             })
         });
         let local_admin = self.config.local_admin;
+        let skill_ids = self.content.skills.clone();
         let weather_seed = self.weather.seed();
         let player = self.players.get_mut(&id).expect("message from unknown player");
         if player.joined {
@@ -180,9 +185,13 @@ impl Server {
                 player.flying = saved.flying && player.allow_flight;
                 player.health = saved.health;
                 player.inventory = saved.inventory;
+                player.skills = restore_skills(&saved.skills, &skill_ids);
             }
             // Players who left dead come back to life at the spawn point.
-            Some(saved) => player.inventory = saved.inventory,
+            Some(saved) => {
+                player.inventory = saved.inventory;
+                player.skills = restore_skills(&saved.skills, &skill_ids);
+            }
             None => {
                 for (block, count) in start_kit {
                     player.inventory.add(block, count);
@@ -191,6 +200,7 @@ impl Server {
         }
         player.changed(traits::INVENTORY);
         player.changed(traits::HEALTH);
+        player.changed(traits::SKILLS);
         let admin = player.admin;
         player.connection.send(ServerMessage::Welcome {
             player: id,
@@ -247,4 +257,16 @@ impl Server {
         player.view_distance = (view_distance as i32).min(max_view_distance);
         player.fly_speed = if player.admin && fly_speed.is_finite() { fly_speed.clamp(1.0, MAX_FLY_SPEED) } else { 1.0 };
     }
+}
+
+/// A player's experience from a save, by skill name; skills that no longer exist are left
+/// out.
+fn restore_skills(saved: &[(String, u32)], registry: &SkillRegistry) -> Skills {
+    let mut skills = Skills::default();
+    for (name, xp) in saved {
+        if let Some(id) = registry.id(name) {
+            skills.grant(id, *xp);
+        }
+    }
+    skills
 }

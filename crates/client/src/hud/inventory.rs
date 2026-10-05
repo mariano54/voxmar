@@ -10,7 +10,9 @@
 //! - 1 to 9 over a slot swaps it with that hotbar slot;
 //! - Q over a slot throws one item out into the world, Ctrl+Q the stack, and a click
 //!   outside the panel throws the held stack (a right click, one item of it);
-//! - hovering an item names it, coloured by rarity, with what it is good for.
+//! - hovering an item names it, coloured by rarity, with what it is good for, and for a
+//!   seed the level it takes to plant;
+//! - under the slots, every skill's level and how far it is to the next.
 //!
 //! Each gesture becomes moves of the engine's inventory rules (`voxmar_engine::inventory`),
 //! proposed to the server as `core:transfer`, `core:quick_move`, `core:stow` and `core:drop` actions and
@@ -31,7 +33,8 @@ use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::{Silent, UiSound};
-use crate::ui::widgets::{BODY, GOLD, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, spawn_heading, text};
+use crate::session::Launch;
+use crate::ui::widgets::{BODY, ERROR, GOLD, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, spawn_heading, text};
 use crate::world::ClientWorld;
 
 pub struct InventoryPlugin;
@@ -43,7 +46,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, click, number_keys, preview).chain().in_set(InventorySystems), (follow_pointer, tooltip, tap).after(InventorySystems))
+                ((toggle, click, number_keys, preview).chain().in_set(InventorySystems), (follow_pointer, tooltip, tap, show_skills).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -93,6 +96,8 @@ struct PointerStack;
 #[derive(Component)]
 struct Tooltip;
 #[derive(Component)]
+struct SkillsLine;
+#[derive(Component)]
 struct TooltipLines;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
@@ -123,6 +128,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack · 1-9: swap · Q: throw";
             let help = (text(font, help, BODY, MUTED), TextLayout::justify(Justify::Center));
             card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
+            let skills = (text(font, "", BODY, SOFT), TextLayout::justify(Justify::Center), SkillsLine);
+            card.spawn((Node { margin: UiRect::top(Val::Px(3.0 * PX)), ..default() }, skills));
         });
         // The held stack and the tooltip float above everything, at the pointer.
         let pointer = Node { position_type: PositionType::Absolute, width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
@@ -486,6 +493,28 @@ fn details(def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
     lines
 }
 
+/// For a seed, what it plants and the level that takes, red while the player is below it.
+fn seed_line(content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+    let crop = content.crops.get(content.crops.planted_by(item)?);
+    let skill = &content.skills.get(crop.skill).title;
+    let ready = content.skills.level(player.skills.xp(crop.skill)) >= crop.def.level;
+    Some((format!("Plants {} · {skill} {}", item_name(&crop.def.name), crop.def.level), if ready { SOFT } else { ERROR }))
+}
+
+/// Lists every skill's level under the slots, as it changes.
+fn show_skills(player: Res<LocalPlayer>, launch: Res<Launch>, mut line: Query<&mut Text, With<SkillsLine>>) {
+    if !player.is_changed() {
+        return;
+    }
+    let skills = &launch.content.skills;
+    let words = skills.ids().map(|id| super::skills::summary(skills, id, player.skills.xp(id))).collect::<Vec<_>>().join(" · ");
+    if let Ok(mut text) = line.single_mut()
+        && text.0 != words
+    {
+        text.0 = words;
+    }
+}
+
 /// Names the item under the pointer, beside it, while nothing is held.
 #[allow(clippy::too_many_arguments)]
 fn tooltip(
@@ -500,6 +529,7 @@ fn tooltip(
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
     mut shown: Local<Option<(voxmar_engine::block::BlockId, bool)>>,
+    launch: Res<Launch>,
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
@@ -517,7 +547,7 @@ fn tooltip(
         let def = world.registry.def(item);
         commands.entity(entity).despawn_children().with_children(|lines| {
             lines.spawn(shadowed(&font.0, item_name(&def.name), BODY, rarity_color(def.rarity)));
-            for (line, color) in details(def, settings.debug_overlay) {
+            for (line, color) in seed_line(&launch.content, &player, item).into_iter().chain(details(def, settings.debug_overlay)) {
                 lines.spawn(text(&font.0, line, BODY, color));
             }
         });

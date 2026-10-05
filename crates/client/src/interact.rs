@@ -1,17 +1,22 @@
-//! Block targeting, breaking and placing, and hotbar selection.
+//! Block targeting, breaking, placing and using held items, and hotbar selection.
 //!
 //! Edits are proposed to the server as actions and predicted locally for responsiveness;
 //! if the server disagrees it replies with the authoritative state, which overwrites ours.
 
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
-use voxmar_engine::action::{ActionContext, ActionTarget, placement_cell, supported_by};
-use voxmar_engine::block::{BlockId, BlockInfo};
+use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placement_cell, supported_by};
+use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
+use voxmar_engine::content::Content;
+use voxmar_engine::crop::CropRegistry;
+use voxmar_engine::skill::SkillId;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, SLOTS};
 use voxmar_engine::physics::{Aabb, RayHit, player as dims, raycast};
 
 use crate::Actions;
 use crate::breaking::{BlockBroken, shows_breaking};
+use crate::hud::skills::SkillToasts;
+use crate::session::Launch;
 use crate::net::Net;
 use crate::player::{self, LocalPlayer, UiState, Zoom};
 use crate::sfx::{Cue, SoundCue};
@@ -121,6 +126,7 @@ fn find_target(world: Res<ClientWorld>, player: Res<LocalPlayer>, mut target: Re
 struct ClientContext<'a> {
     world: &'a ClientWorld,
     player: &'a LocalPlayer,
+    content: &'a Content,
 }
 
 impl ActionContext for ClientContext<'_> {
@@ -130,6 +136,18 @@ impl ActionContext for ClientContext<'_> {
 
     fn info(&self, block: BlockId) -> &BlockInfo {
         self.world.registry.info(block)
+    }
+
+    fn blocks(&self) -> &BlockRegistry {
+        &self.world.registry
+    }
+
+    fn crops(&self) -> &CropRegistry {
+        &self.content.crops
+    }
+
+    fn actor_level(&self, skill: SkillId) -> u8 {
+        self.content.skills.level(self.player.skills.xp(skill))
     }
 
     fn actor_eye(&self) -> Vec3 {
@@ -164,6 +182,7 @@ fn break_and_place(
     mut target: ResMut<Target>,
     mut cues: MessageWriter<SoundCue>,
     mut broken: MessageWriter<BlockBroken>,
+    (launch, mut toasts): (Res<Launch>, ResMut<SkillToasts>),
 ) {
     target.place_cooldown -= time.delta_secs();
     target.mine_cooldown -= time.delta_secs();
@@ -182,7 +201,7 @@ fn break_and_place(
         let mine = actions.0.expect("core:mine");
         let def = actions.0.get(mine).expect("core:mine is defined");
         let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
-        let context = ClientContext { world: &world, player: &player };
+        let context = ClientContext { world: &world, player: &player, content: &launch.content };
         match target.breaking {
             Some((pos, progress)) if pos == hit.block => {
                 let step = time.delta_secs() / target.mining_seconds.max(0.05);
@@ -195,7 +214,7 @@ fn break_and_place(
                 let progress = progress + step;
                 if progress >= 1.0 {
                     // The server commits at the same moment; predict it.
-                    predict_break(&mut world, &player, hit.block, &mut broken);
+                    predict_break(&mut world, &player, &launch.content, hit.block, &mut broken);
                     target.breaking = None;
                 } else {
                     target.breaking = Some((pos, progress));
@@ -207,7 +226,7 @@ fn break_and_place(
                 // Plants and other blocks that break at once go now, as on the server,
                 // whose word would otherwise arrive before a predicted break.
                 if target.mining_seconds <= 0.0 {
-                    predict_break(&mut world, &player, hit.block, &mut broken);
+                    predict_break(&mut world, &player, &launch.content, hit.block, &mut broken);
                     target.mine_cooldown = 0.25;
                 } else {
                     target.breaking = Some((hit.block, 0.0));
@@ -220,11 +239,35 @@ fn break_and_place(
     let Some(hit) = hit else { return };
     if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 {
         target.place_cooldown = 0.2;
-        let place = actions.0.expect("core:place");
         let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
-        let context = ClientContext { world: &world, player: &player };
+        let content = &launch.content;
+        let context = ClientContext { world: &world, player: &player, content };
+        let valid = |id: ActionId| actions.0.get(id).map(|def| def.validate(&context, action_target));
+        // A ripe crop that fruits again is picked, whatever is in hand; an item with an
+        // action of its own (a seed plants) does that; anything else is placed.
+        let held = context.actor_held();
+        let pick = actions.0.id("base:pick").filter(|&id| valid(id).is_some_and(|v| v.is_ok()));
+        let own = held.and_then(|item| world.registry.def(item).action.as_deref()).and_then(|name| actions.0.id(name));
+        if let Some(action) = pick.or(own) {
+            match valid(action) {
+                Some(Ok(())) => {
+                    net.propose(action, action_target);
+                    let effects = actions.0.get(action).map_or(Vec::new(), |def| def.effects.clone());
+                    predict_use(&mut world, &mut player, content, &effects, hit.block, &mut cues);
+                }
+                Some(Err(Rejection::Unmet(Requirement::SkillLevel))) => {
+                    if let Some(crop) = held.and_then(|item| content.crops.planted_by(item)).map(|id| content.crops.get(id)) {
+                        let skill = &content.skills.get(crop.skill).title;
+                        toasts.refused(format!("Needs {skill} {}", crop.def.level), time.elapsed_secs());
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        let place = actions.0.expect("core:place");
         let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
-        if let Some(item) = context.actor_held().filter(|_| allowed) {
+        if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);
             net.propose(place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
@@ -235,10 +278,37 @@ fn break_and_place(
     }
 }
 
+/// Predicts what using an item or picking a crop does, as far as the client can know it:
+/// a sown seed's sprout, a picked crop gone back to regrowing. Its harvest and experience
+/// come from the server.
+fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Content, effects: &[Effect], target: IVec3, cues: &mut MessageWriter<SoundCue>) {
+    for effect in effects {
+        match effect {
+            Effect::Plant => {
+                let selected = player.selected;
+                let Some(seed) = player.inventory.get(selected).map(|s| s.item) else { continue };
+                let Some(crop) = content.crops.planted_by(seed) else { continue };
+                let sprout = content.crops.get(crop).stages[0];
+                player.inventory.take_one(selected);
+                world.set_block(target + IVec3::Y, sprout);
+                cues.write(SoundCue::for_block(world, sprout, Cue::Place));
+            }
+            Effect::Pick => {
+                let Some((crop, _)) = world.block(target).and_then(|b| content.crops.stage_of(b)) else { continue };
+                let crop = content.crops.get(crop);
+                let Some(regrow) = crop.def.regrow else { continue };
+                cues.write(SoundCue::for_block(world, crop.ripe(), Cue::Break));
+                world.set_block(target, crop.stages[regrow as usize]);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Breaks a block as the server will, with any plant that loses its ground; each sounds
 /// and bursts (see `breaking`).
-fn predict_break(world: &mut ClientWorld, player: &LocalPlayer, pos: IVec3, broken: &mut MessageWriter<BlockBroken>) {
-    let plants = supported_by(&ClientContext { world, player }, pos);
+fn predict_break(world: &mut ClientWorld, player: &LocalPlayer, content: &Content, pos: IVec3, broken: &mut MessageWriter<BlockBroken>) {
+    let plants = supported_by(&ClientContext { world, player, content }, pos);
     for pos in std::iter::once(pos).chain(plants) {
         if let Some(block) = world.block(pos).filter(|b| !b.is_air()) {
             broken.write(BlockBroken { pos, block });

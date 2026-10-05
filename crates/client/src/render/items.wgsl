@@ -3,12 +3,17 @@
 // by texel so the texture's own outline and the walls along its edges show, as
 // Minecraft's extruded item models do.
 
-#import bevy_pbr::mesh_view_bindings::view
+#import bevy_pbr::mesh_view_bindings::{view, globals}
 #import voxmar::lighting::{shade_normal, apply_fog}
 
 struct Item {
+    // centre before bobbing, and seconds into its turning and bobbing at time 0
     center: vec3<f32>,
-    angle: f32,
+    phase: f32,
+    // where this copy of a stack sits, in the item's turning frame
+    offset_x: f32,
+    offset_y: f32,
+    offset_z: f32,
     size: f32,
     // shape:4 | tinted faces:6 | free:14 | block light:4 | sky light:4
     flags: u32,
@@ -18,6 +23,7 @@ struct Item {
     tint: u32,
     pad0: u32,
     pad1: u32,
+    pad2: u32,
 };
 
 @group(2) @binding(0) var block_textures: texture_2d_array<f32>;
@@ -27,6 +33,11 @@ struct Item {
 @group(2) @binding(7) var block_layers: texture_2d<f32>;
 
 const SHAPE_SPRITE: u32 = 1u;
+// Turn per second, in radians (Minecraft's one radian a second), and the bob: a tenth of
+// a block up and down at two radians a second.
+const SPIN: f32 = 1.0;
+const BOB: f32 = 0.1;
+const BOB_RATE: f32 = 2.0;
 // Half the thickness of a sprite's slab, in widths of the item.
 const HALF_THICK: f32 = 1.0 / 32.0;
 
@@ -49,6 +60,21 @@ struct VertexOutput {
     @location(2) @interpolate(flat) instance: u32,
     @location(3) @interpolate(flat) face: u32,
 };
+
+// Where an item is and how far it has turned, now.
+struct Pose {
+    center: vec3<f32>,
+    angle: f32,
+};
+
+fn pose_of(item: Item) -> Pose {
+    var pose: Pose;
+    let age = globals.time + item.phase;
+    pose.angle = age * SPIN;
+    pose.center = item.center + vec3(0.0, sin(age * BOB_RATE) * BOB, 0.0)
+        + turn(vec3(item.offset_x, item.offset_y, item.offset_z), pose.angle);
+    return pose;
+}
 
 fn turn(v: vec3<f32>, angle: f32) -> vec3<f32> {
     let c = cos(angle);
@@ -74,11 +100,12 @@ fn layer_of(instance: u32, face: u32) -> i32 {
 fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) instance_index: u32) -> VertexOutput {
     var out: VertexOutput;
     let item = items[instance_index];
+    let pose = pose_of(item);
     let face = vertex_index / 6u;
     let normal = NORMALS[face];
-    let world_normal = turn(normal, item.angle);
+    let world_normal = turn(normal, pose.angle);
     // A face turned away from the eye collapses to nothing.
-    let toward = view.world_position - (item.center + world_normal * item.size * 0.5);
+    let toward = view.world_position - (pose.center + world_normal * item.size * 0.5);
     if dot(world_normal, toward) <= 0.0 {
         out.clip_position = vec4(0.0, 0.0, 0.0, 1.0);
         return out;
@@ -91,7 +118,7 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     local[(axis + 1u) % 3u] = corner.x;
     local[(axis + 2u) % 3u] = corner.y;
     let model = (local * 2.0 - 1.0) * half_extent(item);
-    out.world_position = item.center + turn(model, item.angle) * item.size;
+    out.world_position = pose.center + turn(model, pose.angle) * item.size;
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
     out.local = local;
     out.instance = instance_index;
@@ -192,6 +219,7 @@ fn march(start: vec3<f32>, direction: vec3<f32>, entry_normal: vec3<f32>, layer:
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let item = items[in.instance];
+    let pose = pose_of(item);
     let sprite = (item.flags & 15u) == SHAPE_SPRITE;
     let layer = layer_of(in.instance, select(in.face, 0u, sprite));
     // Sampled before any branch, where derivatives are defined.
@@ -206,7 +234,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var overlay_uv = uv;
     if sprite {
         // The view ray in the unit box.
-        let eye = turn(view.world_position - item.center, -item.angle) / item.size;
+        let eye = turn(view.world_position - pose.center, -pose.angle) / item.size;
         let here = (in.local * 2.0 - 1.0) * half_extent(item);
         let direction = normalize(here - eye) / (2.0 * half_extent(item));
         let n = i32(textureDimensions(block_textures).x);
@@ -232,7 +260,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let over = textureSampleGrad(block_textures, block_sampler, overlay_uv, i32(overlay - 1u), uv_dx, uv_dy);
         albedo = mix(texel.rgb, over.rgb * color, over.a);
     }
-    let world_normal = turn(normal, item.angle);
+    let world_normal = turn(normal, pose.angle);
     let sky = f32(item.flags >> 28u) / 15.0;
     let block = f32((item.flags >> 24u) & 15u) / 15.0;
     // Sprites (plants) are lit as thin and translucent, as the plants they came from are.

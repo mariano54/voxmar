@@ -1,0 +1,9 @@
+// Base game actions: farming. Sowing a seed takes the farming level its crop needs and
+// gives experience; picking a ripe crop that fruits again (tomatoes, berries) keeps the
+// plant. Harvesting a ripe crop by breaking it is `core:mine` (see crops.ron).
+(
+    actions: [
+        (name: "plant", duration: Instant, requires: [Alive, InReach, HoldingSeed, Plantable, SkillLevel], effects: [Plant]),
+        (name: "pick", duration: Instant, requires: [Alive, InReach, Ripe], effects: [Pick]),
+    ],
+)

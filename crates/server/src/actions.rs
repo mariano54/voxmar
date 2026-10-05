@@ -4,7 +4,9 @@
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placement_cell, supported_by};
-use voxmar_engine::block::{BlockId, BlockInfo};
+use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
+use voxmar_engine::crop::CropRegistry;
+use voxmar_engine::skill::SkillId;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::schedule::{EventId, Scheduler};
 use voxmar_engine::traits;
@@ -40,6 +42,18 @@ impl ActionContext for Context<'_> {
 
     fn info(&self, block: BlockId) -> &BlockInfo {
         self.server.content.blocks.info(block)
+    }
+
+    fn blocks(&self) -> &BlockRegistry {
+        &self.server.content.blocks
+    }
+
+    fn crops(&self) -> &CropRegistry {
+        &self.server.content.crops
+    }
+
+    fn actor_level(&self, skill: SkillId) -> u8 {
+        self.server.content.skills.level(self.server.players[&self.agent].skills.xp(skill))
     }
 
     fn actor_eye(&self) -> Vec3 {
@@ -124,9 +138,11 @@ impl Server {
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     let cells: Vec<IVec3> = std::iter::once(block).chain(plants).collect();
-                    self.drop_loot(&cells);
+                    self.drop_loot(agent, &cells);
                 }
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
+                (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
+                (Effect::Pick, ActionTarget::Block { block, .. }) => self.pick(agent, block),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {

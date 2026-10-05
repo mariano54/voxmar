@@ -406,7 +406,8 @@ copied.
   shift-click between hotbar and pack, number keys to swap), item names coloured by rarity
   in tooltips and above the hotbar, middle-click to pick a block, and the blurred world
   behind menus (1.20.5). Our font and interface art are our own drawings, not Minecraft's.
-  How players move: sprinting (sprint key or a double tap of forward, kept while moving
+  Its crops: seeds sown on soil, growth stages, water within four blocks
+  keeping the ground moist (`crop::rate`). How players move: sprinting (sprint key or a double tap of forward, kept while moving
   forward, a jump boost and a small widening of the view), jumping from shallow water even
   with nothing underfoot so a bank a block above the water can be reached, with its
   ten-tick jump delay. Dropped items: how they pop from a broken block, fall, bounce,
@@ -435,6 +436,56 @@ copied.
   (`HumidityDef` in `content.rs`, `climate.rs`), and the 3D density around the surface,
   falling more slowly above it than below (vanilla's "quarter negative"), on a lattice
   4 blocks across and 8 up (`density.rs`).
+
+## Farming and skills
+
+The research behind these is in `research/farming.md` (in the worktrees folder, beside
+the other research notes). Ideas only: no code, numbers tables or art were copied.
+
+### IndustrialCraft 2 crops and CropsNH (GregTech: New Horizons)
+
+- Authors: the IC2 team; CropsNH by the GTNH team (bartimaeusnek's Crops++ before it)
+- Link: https://github.com/GTNewHorizons/CropsNH
+- Licence: LGPL-3.0 (CropsNH); IC2 is all rights reserved. Techniques only.
+- What we took: a crop's growth rate as a product of separate environment factors
+  (climate, soil, water, light), a few visual stages with the time held in hidden progress,
+  and the idea of tiers gating what grows where (`crates/engine/src/crop.rs`, `rate`).
+
+### Farmer's Delight
+
+- Author: vectorwing
+- Link: https://github.com/vectorwing/FarmersDelight
+- Licence: MIT. Techniques only.
+- What we took: wild crops placed by climate as the first source of a crop's seeds
+  (`wild` and `forage` in `content/base/crops.ron`, `CropRegistry::wild_form`).
+
+### AgriCraft
+
+- Authors: InfinityRaider and contributors
+- Link: https://github.com/AgriCraft/AgriCraft
+- Licence: MIT. Techniques only.
+- What we took: a climate band a crop is comfortable in that fades its growth to nothing
+  over a margin rather than stopping dead at its edge (`crop::rate`).
+
+### Pam's HarvestCraft
+
+- Author: MatrexsVigil
+- Link: https://github.com/MatrexsVigil/harvestcraft
+- Licence: all rights reserved. Techniques only.
+- What we took: picking a ripe crop by hand keeps the plant, which goes back to an
+  earlier stage to fruit again (`regrow` in `crops.ron`, `Server::pick` in
+  `crates/server/src/farm.rs`).
+
+### RuneScape (Old School)
+
+- Author: Jagex
+- Link: https://oldschool.runescape.wiki/w/Farming
+- Licence: proprietary. Ideas only.
+- What we took: skills with levels 1 to 99 on its experience curve (`curve: RuneScape` in
+  `content/core/skills.ron`, `crates/engine/src/skill.rs`), crops gated by the level they
+  take, experience for planting and harvesting, yields that rise with level between a
+  crop's level and 99 rather than growth that speeds up (`crop::level_bonus`), and
+  experience drops rising at the side of the screen (`crates/client/src/hud/skills.rs`).
 
 ## The hiking video
 
