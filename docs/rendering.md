@@ -860,6 +860,15 @@ cheaper.
 `subsurface`, `cloud_shadows`, `glow`, `rays`, `mist`, `fog`, `wet_ground`, `frost` and
 `local_air`; Classic keeps the plain look (no volumetric light).
 
+**Dusk and dawn** (Mariano's playtest: "dusk and morning should have different lighting
+whether close or far to the sun"). The low sun warms one side of the sky: towards it the
+horizon glows warmer and brighter, away from it, under the earth's shadow, it lies cooler
+and dimmer. `dusk_tint` in atmosphere.wgsl scales a colour by `1 + DUSK_CONTRAST · k · d`,
+with `k` how far a direction looks towards the sun across the land (its horizontal part, so
+the zenith and a top face take neither side) and `d` how strongly dusk shows (from the sun's
+height, none under thick cloud). The sky's horizon, the haze the land fades into, the sky
+water mirrors and the sky light on walls all take it, so they agree.
+
 ## Fluid state
 
 Water and lava flow (`engine/src/fluid.rs`). Each state of a fluid is its own block, made
