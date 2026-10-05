@@ -1,8 +1,10 @@
 //! Heads-up display: crosshair, hotbar, health, the held item's name, debug overlay, the
 //! inventory screen and the console, all in the interface's pixel look (`crate::ui`).
 
+pub mod character;
 pub mod console;
 pub mod inventory;
+pub mod screens;
 pub mod skills;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -26,7 +28,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin))
+        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,

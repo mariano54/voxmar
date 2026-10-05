@@ -589,10 +589,11 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Esc opens the menu and closes it again; E the inventory.
+/// Esc opens the menu and closes it again; E the inventory, C from there the character
+/// screen in its place, and C closes that.
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
-    let (menu, inventory, locked) = (ui.menu_open, ui.inventory_open, ui.cursor_locked);
+    let (menu, inventory, character, locked) = (ui.menu_open, ui.inventory_open, ui.character_open, ui.cursor_locked);
     match gate.phase {
         0 => {
             look(world, 0.0, 5.0);
@@ -631,7 +632,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let change = gate.earlier_shot("game").map_or(0.0, |game| change(&game, &shot, 0.0));
                 let shown = if change >= SCREEN_CHANGE { Ok(format!("drawn, changing the screen by {change:.1} levels")) } else { Err(format!("changed the screen by only {change:.1} levels")) };
                 gate.check("inventory", shown);
-                key(world, KeyCode::KeyE, true);
+                key(world, KeyCode::KeyC, true);
                 gate.advance(now);
             } else if in_phase > 3.0 {
                 gate.check("inventory", Err("E did not open the inventory".into()));
@@ -640,11 +641,29 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         4 => {
             key(world, KeyCode::KeyE, false);
-            if !inventory && locked {
-                gate.check("inventory: close", Ok("E closed it".into()));
+            key(world, KeyCode::KeyC, false);
+            if character && !inventory && in_phase > 0.2 && let Some(shot) = gate.shot(world, "character") {
+                let change = gate.earlier_shot("inventory").map_or(0.0, |inventory| change(&inventory, &shot, 0.0));
+                let shown = if change >= SCREEN_CHANGE {
+                    Ok(format!("C in the inventory switched to it, changing the screen by {change:.1} levels"))
+                } else {
+                    Err(format!("changed the screen from the inventory's by only {change:.1} levels"))
+                };
+                gate.check("character", shown);
+                key(world, KeyCode::KeyC, true);
+                gate.advance(now);
+            } else if in_phase > 3.0 {
+                gate.check("character", Err(format!("after C the inventory is {} and the character screen {}", if inventory { "open" } else { "closed" }, if character { "open" } else { "closed" })));
+                gate.next(Step::Weather, now);
+            }
+        }
+        5 => {
+            key(world, KeyCode::KeyC, false);
+            if !character && !inventory && locked {
+                gate.check("character: close", Ok("C closed it and gave the game the mouse back".into()));
                 gate.next(Step::Weather, now);
             } else if in_phase > 3.0 {
-                gate.check("inventory: close", Err("E did not close the inventory".into()));
+                gate.check("character: close", Err("C did not close the character screen".into()));
                 gate.next(Step::Weather, now);
             }
         }

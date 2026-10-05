@@ -17,8 +17,8 @@ use voxmar_protocol::MAX_FLY_SPEED;
 
 use crate::keys::Key;
 use crate::menu::Screen;
-use crate::ui::skin::{PX, Piece};
-use crate::ui::sound::Silent;
+use crate::ui::skin::{InterfaceFont, PX, Piece};
+use crate::ui::sound::{Silent, UiSounds};
 use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, LARGE, MUTED, Pressed, SCRIM, SOFT, Selected, TEXT, UiFont, button_row, panel, screen,
     shadowed, spawn_button, spawn_rule, text,
@@ -38,6 +38,7 @@ impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Rebinding>()
             .init_resource::<OpenSection>()
+            .init_resource::<OpenDropdown>()
             .add_systems(PostStartup, spawn_menu)
             .add_systems(PreUpdate, rebind.after(InputSystems))
             .add_systems(
@@ -52,12 +53,15 @@ impl Plugin for SettingsPlugin {
                     click_buttons,
                     pick_section,
                     show_section,
+                    click_dropdowns,
+                    hover_options,
                     sync_controls.run_if(resource_changed::<Settings>.or_eager(resource_changed::<Rebinding>)),
                     show_menu,
                 )
                     .chain(),
                 (apply, select_pack).run_if(resource_changed::<Settings>),
                 fit_lod_hole,
+                autosave,
                 sync_server.run_if(in_state(Screen::InGame)),
             ),
         );
@@ -117,41 +121,27 @@ pub struct Settings {
     pub particles: ParticleAmount,
     /// How coarsely far chunks are meshed.
     pub far_detail: FarDetail,
-    /// How many pixels the world is drawn at (`render::scale`).
-    pub resolution: Resolution,
+    /// How many pixels the world is drawn at (`render::scale`), in percent of the window's
+    /// width and height: one of `RESOLUTIONS`.
+    pub resolution: i32,
+    /// The pixel font the interface writes with.
+    pub font: InterfaceFont,
+    /// The sounds buttons and the inventory make.
+    pub ui_sounds: UiSounds,
+    /// Key that opens and closes the inventory.
+    pub inventory_key: Key,
+    /// Key that opens and closes the character screen (skills and how you are).
+    pub character_key: Key,
 }
 
-/// The share of the window's pixels the world is drawn at before it is stretched over the
-/// window; menus and text are always drawn at full resolution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Resolution {
-    Full,
-    /// Three quarters of the width and height: on a Retina screen still sharper than its
-    /// size in points, for a little over half the cost.
-    #[default]
-    Balanced,
-    /// Half the width and height, the screen's size in points on a Retina display.
-    Fast,
-}
+/// The resolutions the world can be drawn at, in percent of the window's width and
+/// height, before it is stretched over the window; menus and text are always drawn at the
+/// window's own. On a Retina screen 50% is the screen's size in points.
+const RESOLUTIONS: [i32; 9] = [100, 90, 80, 75, 67, 60, 50, 40, 33];
 
-impl Resolution {
-    const ALL: [Resolution; 3] = [Resolution::Full, Resolution::Balanced, Resolution::Fast];
-
-    fn label(self) -> &'static str {
-        match self {
-            Resolution::Full => "Full",
-            Resolution::Balanced => "75%",
-            Resolution::Fast => "50%",
-        }
-    }
-
-    pub fn scale(self) -> f32 {
-        match self {
-            Resolution::Full => 1.0,
-            Resolution::Balanced => 0.75,
-            Resolution::Fast => 0.5,
-        }
-    }
+/// The listed resolution nearest `percent`.
+fn nearest_resolution(percent: i32) -> i32 {
+    *RESOLUTIONS.iter().min_by_key(|&&r| (r - percent).abs()).expect("the list is not empty")
 }
 
 /// How far from the player chunks keep every block, and how far they are meshed with two
@@ -273,16 +263,16 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             view_distance: 32,
-            vsync: true,
-            fov: 75,
+            vsync: false,
+            fov: 90,
             sensitivity: 100,
             music_volume: 100,
             sound_volume: 100,
             ambience_volume: 100,
             debug_overlay: false,
             fly_speed: 100,
-            anti_aliasing: AntiAliasing::default(),
-            zoom_key: Key(KeyCode::KeyC),
+            anti_aliasing: AntiAliasing::Fxaa,
+            zoom_key: Key(KeyCode::KeyZ),
             chat_key: Key(KeyCode::KeyT),
             sprint_key: Key(KeyCode::ControlLeft),
             double_tap_sprint: true,
@@ -298,23 +288,46 @@ impl Default for Settings {
             textures: TextureOrder::default(),
             particles: ParticleAmount::default(),
             far_detail: FarDetail::default(),
-            resolution: Resolution::default(),
+            resolution: 50,
+            font: InterfaceFont::default(),
+            ui_sounds: UiSounds::default(),
+            inventory_key: Key(KeyCode::KeyE),
+            character_key: Key(KeyCode::KeyC),
         }
     }
 }
 
 impl Settings {
-    /// The saved settings, or the defaults if there are none or they cannot be read.
+    /// The saved settings, or the defaults if there are none. A setting the file gets wrong
+    /// (from an older or newer game, or edited by hand) keeps its default and the rest load,
+    /// so one bad value never throws away everything else.
     pub fn load() -> Self {
         let Some(path) = path() else { return Self::default() };
         let Ok(source) = std::fs::read_to_string(&path) else { return Self::default() };
-        match ron::from_str::<Settings>(&source) {
-            Ok(settings) => settings.clamped(),
-            Err(e) => {
-                warn!("ignoring {}: {e}", path.display());
-                Self::default()
+        let (settings, skipped) = Self::parse(&source);
+        if !skipped.is_empty() {
+            warn!("{}: kept the defaults for {} ({})", path.display(), skipped.join(", "), "unreadable values");
+        }
+        settings
+    }
+
+    /// The settings in `source`, and the names of the fields it could not read.
+    fn parse(source: &str) -> (Self, Vec<String>) {
+        if let Ok(settings) = ron::from_str::<Settings>(source) {
+            return (settings.clamped(), Vec::new());
+        }
+        // Add the file's fields one at a time, keeping each only if the settings still read.
+        let mut kept: Vec<&str> = Vec::new();
+        let mut skipped = Vec::new();
+        for field in top_level_fields(source) {
+            kept.push(field);
+            if ron::from_str::<Settings>(&format!("({})", kept.join(", "))).is_err() {
+                kept.pop();
+                skipped.push(field.split(':').next().unwrap_or(field).trim().to_owned());
             }
         }
+        let settings = ron::from_str::<Settings>(&format!("({})", kept.join(", "))).unwrap_or_default();
+        (settings.clamped(), skipped)
     }
 
     pub fn save(&self) {
@@ -329,8 +342,14 @@ impl Settings {
         }
     }
 
-    /// The settings with every value within its slider's range.
+    /// The settings with every value within its slider's range, a listed resolution, and
+    /// no two of the keys that open screens bound to one key.
     pub fn clamped(mut self) -> Self {
+        self.resolution = nearest_resolution(self.resolution);
+        if self.zoom_key == self.character_key || self.zoom_key == self.inventory_key {
+            // Zoom used to be on C, which now opens the character screen.
+            self.zoom_key = Key(KeyCode::KeyZ);
+        }
         for slider in Slider::ALL {
             let (min, max, _) = slider.range();
             let value = slider.get(&self).clamp(min, max);
@@ -338,6 +357,30 @@ impl Settings {
         }
         self
     }
+}
+
+/// The `name: value` fields of a RON struct, split at its top-level commas (outside any
+/// brackets and strings).
+fn top_level_fields(source: &str) -> Vec<&str> {
+    let body = source.trim();
+    let Some(body) = body.find('(').and_then(|open| body.rfind(')').map(|close| &body[open + 1..close])) else { return Vec::new() };
+    let (mut fields, mut depth, mut start, mut in_string, mut escaped) = (Vec::new(), 0i32, 0, false, false);
+    for (i, c) in body.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '(' | '[' | '{' if !in_string => depth += 1,
+            ')' | ']' | '}' if !in_string => depth -= 1,
+            ',' if !in_string && depth == 0 => {
+                fields.push(body[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    fields.push(body[start..].trim());
+    fields.into_iter().filter(|f| !f.is_empty() && !f.starts_with("//")).collect()
 }
 
 /// `voxmar/settings.ron` in the platform's configuration directory.
@@ -511,20 +554,22 @@ impl Toggle {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Choice {
     FarDetail,
-    Resolution,
     AntiAliasing,
     ShaderPack,
     Shadows,
     Water,
     Textures,
     Particles,
+    Font,
+    UiSounds,
 }
 
 impl Choice {
     fn label(self) -> &'static str {
         match self {
             Choice::FarDetail => "Far detail",
-            Choice::Resolution => "Resolution",
+            Choice::Font => "Font",
+            Choice::UiSounds => "Interface sounds",
             Choice::AntiAliasing => "Anti-aliasing",
             Choice::ShaderPack => "Shader pack",
             Choice::Shadows => "Shadows",
@@ -537,7 +582,8 @@ impl Choice {
     fn text(self, settings: &Settings, packs: &ShaderPacks) -> String {
         match self {
             Choice::FarDetail => settings.far_detail.label().into(),
-            Choice::Resolution => settings.resolution.label().into(),
+            Choice::Font => settings.font.label().into(),
+            Choice::UiSounds => settings.ui_sounds.label().into(),
             Choice::AntiAliasing => settings.anti_aliasing.label().into(),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
             Choice::Shadows => settings.shadows.label().into(),
@@ -551,7 +597,8 @@ impl Choice {
     fn step(self, settings: &mut Settings, packs: &ShaderPacks, forward: bool) {
         match self {
             Choice::FarDetail => settings.far_detail = cycle(&FarDetail::ALL, settings.far_detail, forward),
-            Choice::Resolution => settings.resolution = cycle(&Resolution::ALL, settings.resolution, forward),
+            Choice::Font => settings.font = cycle(&InterfaceFont::ALL, settings.font, forward),
+            Choice::UiSounds => settings.ui_sounds = cycle(&UiSounds::ALL, settings.ui_sounds, forward),
             Choice::AntiAliasing => settings.anti_aliasing = cycle(&AntiAliasing::ALL, settings.anti_aliasing, forward),
             Choice::ShaderPack => {
                 let current = settings.shader_pack.clone();
@@ -593,6 +640,8 @@ enum Binding {
     Sprint,
     Zoom,
     Chat,
+    Inventory,
+    Character,
 }
 
 impl Binding {
@@ -601,6 +650,8 @@ impl Binding {
             Binding::Sprint => "Sprint key",
             Binding::Zoom => "Zoom key",
             Binding::Chat => "Chat key",
+            Binding::Inventory => "Inventory key",
+            Binding::Character => "Character key",
         }
     }
 
@@ -609,6 +660,8 @@ impl Binding {
             Binding::Sprint => settings.sprint_key,
             Binding::Zoom => settings.zoom_key,
             Binding::Chat => settings.chat_key,
+            Binding::Inventory => settings.inventory_key,
+            Binding::Character => settings.character_key,
         }
     }
 
@@ -617,6 +670,8 @@ impl Binding {
             Binding::Sprint => &mut settings.sprint_key,
             Binding::Zoom => &mut settings.zoom_key,
             Binding::Chat => &mut settings.chat_key,
+            Binding::Inventory => &mut settings.inventory_key,
+            Binding::Character => &mut settings.character_key,
         } = key;
     }
 }
@@ -627,6 +682,53 @@ enum Control {
     Switch(Toggle),
     Choice(Choice),
     Key(Binding),
+    Dropdown(Dropdown),
+}
+
+/// A setting chosen from a list that drops down under its button.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Dropdown {
+    Resolution,
+}
+
+impl Dropdown {
+    fn label(self) -> &'static str {
+        match self {
+            Dropdown::Resolution => "Resolution",
+        }
+    }
+
+    /// The options, as values and what the list shows for each: the resolutions as the
+    /// pixels they are on this window.
+    fn options(self, window: Option<UVec2>) -> Vec<(i32, String)> {
+        match self {
+            Dropdown::Resolution => RESOLUTIONS
+                .iter()
+                .map(|&percent| {
+                    let label = match window {
+                        Some(size) => {
+                            let (w, h) = (size.x as i32 * percent / 100, size.y as i32 * percent / 100);
+                            format!("{w} × {h} ({percent}%)")
+                        }
+                        None => format!("{percent}%"),
+                    };
+                    (percent, label)
+                })
+                .collect(),
+        }
+    }
+
+    fn get(self, settings: &Settings) -> i32 {
+        match self {
+            Dropdown::Resolution => settings.resolution,
+        }
+    }
+
+    fn set(self, settings: &mut Settings, value: i32) {
+        match self {
+            Dropdown::Resolution => settings.resolution = value,
+        }
+    }
 }
 
 impl Control {
@@ -636,6 +738,7 @@ impl Control {
             Control::Switch(toggle) => toggle.label(),
             Control::Choice(choice) => choice.label(),
             Control::Key(binding) => binding.label(),
+            Control::Dropdown(dropdown) => dropdown.label(),
         }
     }
 
@@ -659,7 +762,11 @@ impl Control {
             Control::Switch(Toggle::DoubleTapSprint) => "Tapping forward twice quickly starts a sprint, as the sprint key does.",
             Control::Switch(Toggle::FovEffects) => "The view widens a little while you sprint.",
             Control::Choice(Choice::FarDetail) => "How soon far chunks merge blocks. Fast suits slower machines and huge distances.",
-            Control::Choice(Choice::Resolution) => "How many pixels the world is drawn at; menus and text stay sharp. Lower is faster.",
+            Control::Dropdown(Dropdown::Resolution) => "How many pixels the world is drawn at; menus and text stay sharp. Lower is faster.",
+            Control::Choice(Choice::Font) => "The pixel font menus, the HUD and chat are written in.",
+            Control::Choice(Choice::UiSounds) => "What buttons and the inventory sound like.",
+            Control::Key(Binding::Inventory) => "Opens and closes the inventory.",
+            Control::Key(Binding::Character) => "Opens and closes the character screen: your skills, and how you are.",
             Control::Choice(Choice::AntiAliasing) => "How edges are smoothed. MSAA also smooths leaves and plants.",
             Control::Choice(Choice::ShaderPack) => "The look of light, sky, water and colour.",
             Control::Choice(Choice::Shadows) => "How sun shadows are drawn: higher is softer and reaches further.",
@@ -675,13 +782,13 @@ impl Control {
 
 /// The panel's tabs, each a page of settings. A new setting goes into the page where
 /// players would look for it.
-const SECTIONS: [(&str, &[Control]); 5] = [
+const SECTIONS: [(&str, &[Control]); 6] = [
     (
         "Video",
         &[
             Control::Slider(Slider::ViewDistance),
             Control::Choice(Choice::FarDetail),
-            Control::Choice(Choice::Resolution),
+            Control::Dropdown(Dropdown::Resolution),
             Control::Slider(Slider::Fov),
             Control::Switch(Toggle::FovEffects),
             Control::Choice(Choice::AntiAliasing),
@@ -704,17 +811,32 @@ const SECTIONS: [(&str, &[Control]); 5] = [
         "Controls",
         &[
             Control::Slider(Slider::Sensitivity),
-            Control::Key(Binding::Sprint),
             Control::Switch(Toggle::DoubleTapSprint),
-            Control::Key(Binding::Chat),
-            Control::Key(Binding::Zoom),
             Control::Slider(Slider::Zoom),
             Control::Switch(Toggle::CinematicZoom),
             Control::Switch(Toggle::ZoomInSurvival),
             Control::Slider(Slider::FlySpeed),
         ],
     ),
-    ("Interface", &[Control::Slider(Slider::HudRaise), Control::Switch(Toggle::DebugOverlay)]),
+    (
+        "Keys",
+        &[
+            Control::Key(Binding::Inventory),
+            Control::Key(Binding::Character),
+            Control::Key(Binding::Chat),
+            Control::Key(Binding::Sprint),
+            Control::Key(Binding::Zoom),
+        ],
+    ),
+    (
+        "Interface",
+        &[
+            Control::Choice(Choice::Font),
+            Control::Choice(Choice::UiSounds),
+            Control::Slider(Slider::HudRaise),
+            Control::Switch(Toggle::DebugOverlay),
+        ],
+    ),
 ];
 
 #[derive(Component, Clone, Copy)]
@@ -771,6 +893,20 @@ struct KeyButton(Binding);
 #[derive(Component)]
 struct KeyValue(Binding);
 
+/// A dropdown's button, value and list, and one option in the list with its value.
+#[derive(Component)]
+struct DropdownButton(Dropdown);
+#[derive(Component)]
+struct DropdownValue(Dropdown);
+#[derive(Component)]
+struct DropdownList(Dropdown);
+#[derive(Component)]
+struct DropdownOption(Dropdown, i32);
+
+/// The dropdown whose list is open.
+#[derive(Resource, Default)]
+struct OpenDropdown(Option<Dropdown>);
+
 /// The binding waiting for its new key, after its button was clicked.
 #[derive(Resource, Default)]
 struct Rebinding(Option<Binding>);
@@ -779,12 +915,12 @@ struct Rebinding(Option<Binding>);
 #[derive(Resource, Default)]
 struct OpenSection(usize);
 
-const PANEL_WIDTH: f32 = 380.0 * PX;
+const PANEL_WIDTH: f32 = 430.0 * PX;
 const TAB_WIDTH: f32 = 72.0 * PX;
 const ROW: f32 = 18.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
-const VALUE_WIDTH: f32 = 50.0 * PX;
-const CONTROL_WIDTH: f32 = 100.0 * PX;
+const VALUE_WIDTH: f32 = 62.0 * PX;
+const CONTROL_WIDTH: f32 = 124.0 * PX;
 /// Lines of body text, at Bevy's default line height of 1.2 font sizes.
 const LINE: f32 = 1.2 * BODY;
 /// Lines kept for the hint at the foot of the panel: the longest hint wraps to two.
@@ -836,6 +972,8 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
                 spawn_button(row, font, "Quit game", ButtonStyle::Secondary, MenuButton::Quit);
             });
         });
+        let bar = crate::hud::screens::spawn_hotkeys(root, crate::hud::screens::GameScreen::Menu);
+        root.commands().entity(bar).insert(ShownWhen::InGame);
     });
 }
 
@@ -853,6 +991,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
             Control::Switch(toggle) => spawn_switch(row, toggle),
             Control::Choice(choice) => spawn_choice(row, font, choice),
             Control::Key(binding) => spawn_key(row, font, binding),
+            Control::Dropdown(dropdown) => spawn_dropdown(row, font, dropdown),
         }
     });
 }
@@ -926,6 +1065,95 @@ fn spawn_key(row: &mut ChildSpawnerCommands, font: &Handle<Font>, binding: Bindi
         ..default()
     });
     row.commands().entity(button).with_child((KeyValue(binding), Node::default()));
+}
+
+/// A button showing the current option; clicked, it drops the list of options under it.
+fn spawn_dropdown(row: &mut ChildSpawnerCommands, font: &Handle<Font>, dropdown: Dropdown) {
+    let mut button = Entity::PLACEHOLDER;
+    row.spawn(Node { width: Val::Px(CONTROL_WIDTH), ..default() }).with_children(|cell| {
+        button = spawn_button(cell, font, "", ButtonStyle::Secondary, DropdownButton(dropdown));
+        let list = Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(100.0),
+            left: Val::ZERO,
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(PX),
+            padding: UiRect::all(Val::Px(3.0 * PX)),
+            margin: UiRect::top(Val::Px(PX)),
+            display: Display::None,
+            ..default()
+        };
+        cell.spawn((DropdownList(dropdown), list, Piece::Tooltip.image(), GlobalZIndex(5)));
+    });
+    row.commands().entity(button).insert(Node {
+        flex_grow: 1.0,
+        height: Val::Px(14.0 * PX),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        ..default()
+    });
+    row.commands().entity(button).with_child((DropdownValue(dropdown), Node::default()));
+}
+
+/// Opens a dropdown's list on its button, picks the option clicked, and closes the list on
+/// any other click.
+#[allow(clippy::too_many_arguments)]
+fn click_dropdowns(
+    mut commands: Commands,
+    mouse: Res<ButtonInput<MouseButton>>,
+    font: Res<UiFont>,
+    mut settings: ResMut<Settings>,
+    mut open: ResMut<OpenDropdown>,
+    buttons: Query<(&DropdownButton, &Interaction)>,
+    options: Query<(&DropdownOption, &Interaction)>,
+    mut lists: Query<(Entity, &DropdownList, &mut Node)>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    root: Query<&Visibility, With<MenuRoot>>,
+) {
+    let shown = root.single().is_ok_and(|v| *v != Visibility::Hidden);
+    let mut wanted = open.0.filter(|_| shown);
+    if mouse.just_pressed(MouseButton::Left) {
+        if let Some((option, _)) = options.iter().find(|(_, i)| **i == Interaction::Pressed) {
+            if option.0.get(&settings) != option.1 {
+                option.0.set(&mut settings, option.1);
+            }
+            wanted = None;
+        } else if let Some((button, _)) = buttons.iter().find(|(_, i)| **i == Interaction::Pressed) {
+            wanted = if wanted == Some(button.0) { None } else { Some(button.0) };
+        } else {
+            wanted = None;
+        }
+    }
+    if open.0 == wanted {
+        return;
+    }
+    open.0 = wanted;
+    let size = window.single().ok().map(|w| w.physical_size());
+    for (entity, list, mut node) in &mut lists {
+        let display = if wanted == Some(list.0) { Display::Flex } else { Display::None };
+        node.display = display;
+        commands.entity(entity).despawn_children();
+        if display == Display::None {
+            continue;
+        }
+        let current = list.0.get(&settings);
+        commands.entity(entity).with_children(|list_node| {
+            for (value, label) in list.0.options(size) {
+                let node = Node { height: Val::Px(11.0 * PX), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() };
+                let mut option = list_node.spawn((Button, Silent, DropdownOption(list.0, value), node, BackgroundColor(Color::NONE)));
+                option.with_child(text(&font.0, label, BODY, if value == current { GOLD } else { TEXT }));
+            }
+        });
+    }
+}
+
+/// Lights the dropdown option under the pointer.
+fn hover_options(mut options: Query<(&Interaction, &mut BackgroundColor), With<DropdownOption>>) {
+    for (interaction, mut background) in &mut options {
+        let color = if *interaction == Interaction::None { Color::NONE } else { ACCENT.with_alpha(0.22) };
+        background.set_if_neq(BackgroundColor(color));
+    }
 }
 
 /// F3 toggles the debug overlay, menu or not.
@@ -1095,10 +1323,13 @@ fn sync_controls(
     mut switches: Query<(&Switch, &mut Node, &mut ImageNode)>,
     choices: Query<(Entity, &ChoiceValue)>,
     keys: Query<(Entity, &KeyValue)>,
+    dropdowns: Query<(Entity, &DropdownValue)>,
+    window: Query<&Window, With<PrimaryWindow>>,
     rebinding: Res<Rebinding>,
     packs: Res<ShaderPacks>,
 ) {
-    // Choice and key buttons show their value as one text, replaced when it changes.
+    // Choice, key and dropdown buttons show their value as one text, replaced when it
+    // changes.
     let mut show = |entity: Entity, value: String, color: Color| {
         commands.entity(entity).despawn_children().with_child(shadowed(&font.0, value, BODY, color));
     };
@@ -1111,6 +1342,14 @@ fn sync_controls(
     }
     for (entity, choice) in &choices {
         show(entity, format!("◂ {} ▸", choice.0.text(&settings, &packs)), TEXT);
+    }
+    let size = window.single().ok().map(|w| w.physical_size());
+    for (entity, dropdown) in &dropdowns {
+        let current = dropdown.0.get(&settings);
+        let label = dropdown.0.options(size).into_iter().find(|(value, _)| *value == current).map_or_else(String::new, |(_, label)| label);
+        // The button keeps it short: the pixels, without the share.
+        let short = label.split(" (").next().unwrap_or(&label).to_owned();
+        show(entity, format!("{short} ▾"), TEXT);
     }
     for (fill, mut node) in &mut fills {
         let (min, max, _) = fill.0.range();
@@ -1186,6 +1425,26 @@ fn show_menu(
     }
 }
 
+/// Seconds after the last change that settings are written, so dragging a slider writes
+/// the file once.
+const SAVE_DELAY: f32 = 1.0;
+
+/// Keeps the settings file current: a moment after any change, and when the game quits
+/// however it quits (the window closed, Cmd-Q, Quit game).
+fn autosave(time: Res<Time<Real>>, settings: Res<Settings>, mut exits: MessageReader<AppExit>, mut due: Local<Option<f32>>, mut started: Local<bool>) {
+    let now = time.elapsed_secs();
+    // The settings as loaded at startup count as a change; they need no writing.
+    if settings.is_changed() && *started {
+        *due = Some(now + SAVE_DELAY);
+    }
+    *started = true;
+    let quitting = exits.read().count() > 0;
+    if due.is_some_and(|at| now >= at) || (quitting && due.is_some()) {
+        settings.save();
+        *due = None;
+    }
+}
+
 /// Switches to the chosen shader pack.
 fn select_pack(settings: Res<Settings>, packs: Res<ShaderPacks>, mut active: ResMut<ActivePack>) {
     let pack = packs.get(&settings.shader_pack);
@@ -1215,7 +1474,7 @@ fn apply(
     }
     quality.set_if_neq(Quality { shadows: settings.shadows, volumetric_light: settings.volumetric_light });
     world.set_far_detail(settings.far_detail.range());
-    scale.set_if_neq(RenderScale(settings.resolution.scale()));
+    scale.set_if_neq(RenderScale(settings.resolution as f32 / 100.0));
     let present_mode = if settings.vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     if let Ok(mut window) = window.single_mut()
         && window.present_mode != present_mode
@@ -1285,31 +1544,36 @@ mod tests {
     use super::*;
     use voxmar_texgen::font::{EM_PIXELS, PixelFont};
 
-    /// The panel reserves room for the hint, so a longer one would spill out of it.
+    /// The panel reserves room for the hint, so a longer one would spill out of it, in any
+    /// of the fonts a player can choose.
     #[test]
     fn every_hint_fits_the_room_kept_for_it() {
-        let font = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/font.txt")).unwrap();
-        let font = PixelFont::parse(&font).unwrap();
-        // Glyphs get one font pixel of space after them; body text draws each font pixel
-        // `scale` screen pixels wide, inside the panel's padding.
-        let advance = |c: char| font.glyphs.get(&c).map_or(EM_PIXELS, |glyph| glyph.width) as f32 + 1.0;
-        let scale = BODY / EM_PIXELS as f32;
-        let room = (PANEL_WIDTH - 28.0 * PX) / scale;
-        for (_, controls) in SECTIONS {
-            for &control in controls.iter() {
-                let hint = control.hint();
-                let (mut lines, mut width) = (1, 0.0);
-                for word in hint.split(' ') {
-                    let word_width: f32 = word.chars().map(advance).sum();
-                    let with_space = if width == 0.0 { word_width } else { width + advance(' ') + word_width };
-                    if with_space > room {
-                        lines += 1;
-                        width = word_width;
-                    } else {
-                        width = with_space;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/ui/fonts");
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+        for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
+            let font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
+            // Glyphs get one font pixel of space after them; body text draws each font pixel
+            // `scale` screen pixels wide, inside the panel's padding.
+            let cell = font.monospace.unwrap_or(0);
+            let advance = |c: char| font.glyphs.get(&c).map_or(EM_PIXELS, |glyph| glyph.width).max(cell) as f32 + 1.0;
+            let scale = BODY / EM_PIXELS as f32;
+            let room = (PANEL_WIDTH - 28.0 * PX) / scale;
+            for (_, controls) in SECTIONS {
+                for &control in controls.iter() {
+                    let hint = control.hint();
+                    let (mut lines, mut width) = (1, 0.0);
+                    for word in hint.split(' ') {
+                        let word_width: f32 = word.chars().map(advance).sum();
+                        let with_space = if width == 0.0 { word_width } else { width + advance(' ') + word_width };
+                        if with_space > room {
+                            lines += 1;
+                            width = word_width;
+                        } else {
+                            width = with_space;
+                        }
                     }
+                    assert!(lines <= HINT_LINES, "{file}: {lines} lines: {hint}");
                 }
-                assert!(lines <= HINT_LINES, "{lines} lines: {hint}");
             }
         }
     }
@@ -1322,5 +1586,10 @@ mod tests {
         // Missing fields take their defaults and out-of-range values are clamped.
         let edited: Settings = ron::from_str("(view_distance: 99, music_volume: -5)").unwrap();
         assert_eq!(edited.clamped(), Settings { view_distance: 32, music_volume: 0, ..Settings::default() });
+        // A value an older game wrote that no longer reads keeps its default, and only it.
+        let (old, skipped) = Settings::parse("(fov: 80, resolution: Balanced, zoom_key: \"KeyC\")");
+        assert_eq!((old.fov, old.resolution, skipped), (80, 50, vec!["resolution".to_owned()]));
+        // Zoom on C made way for the character screen.
+        assert_eq!(old.zoom_key, Key(KeyCode::KeyZ));
     }
 }

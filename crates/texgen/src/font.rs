@@ -18,6 +18,8 @@
 //! .#.
 //! mark cedilla below   a mark drawn under the baseline instead
 //! compose á a acute
+//! monospace 5  every glyph in a cell five pixels wide, narrower ones centred
+//! include x.txt  read another file here (with `PixelFont::parse_with`)
 //! ```
 //!
 //! [`PixelFont::to_ttf`] traces each glyph's pixels into outlines (one contour around each
@@ -95,11 +97,40 @@ impl Bitmap {
 pub struct PixelFont {
     /// Glyphs by character.
     pub glyphs: BTreeMap<char, Bitmap>,
+    /// The cell width of a monospace font: every glyph advances as far, and narrower ones
+    /// sit in its middle.
+    pub monospace: Option<i32>,
 }
 
 impl PixelFont {
     /// Reads a font file (see the module docs).
     pub fn parse(source: &str) -> Result<Self, Error> {
+        Self::parse_with(source, |_| None)
+    }
+
+    /// Reads a font file whose `include` lines name other files, which `read` returns.
+    pub fn parse_with(source: &str, read: impl Fn(&str) -> Option<String>) -> Result<Self, Error> {
+        let mut text = String::new();
+        expand(source, &read, &mut text, 0)?;
+        let mut font = Self::parse_lines(&text)?;
+        font.monospace = text
+            .lines()
+            .find_map(|line| line.strip_prefix("monospace "))
+            .map(|cell| cell.trim().parse().map_err(|_| Error("font: `monospace` takes a width in pixels".into())))
+            .transpose()?;
+        if let Some(cell) = font.monospace {
+            for glyph in font.glyphs.values_mut() {
+                if glyph.width < cell {
+                    let mut centred = Bitmap::blank(cell);
+                    centred.stamp(glyph, (cell - glyph.width) / 2, 0);
+                    *glyph = centred;
+                }
+            }
+        }
+        Ok(font)
+    }
+
+    fn parse_lines(source: &str) -> Result<Self, Error> {
         let mut font = PixelFont::default();
         let mut marks: BTreeMap<String, Mark> = BTreeMap::new();
         // The glyph or mark whose rows are being read.
@@ -137,7 +168,7 @@ impl PixelFont {
         for (number, line) in source.lines().enumerate() {
             let line = line.trim_end();
             let bad = |what: &str| Error(format!("font line {}: {what}", number + 1));
-            if line.starts_with("//") || line.trim().is_empty() {
+            if line.starts_with("//") || line.trim().is_empty() || line.starts_with("monospace ") {
                 continue;
             }
             if let Some(rest) = line.strip_prefix("= ") {
@@ -190,6 +221,23 @@ impl PixelFont {
     pub fn to_ttf(&self, family: &str) -> Vec<u8> {
         ttf::build(self, family)
     }
+}
+
+/// `source` with its `include` lines replaced by the files they name.
+fn expand(source: &str, read: &impl Fn(&str) -> Option<String>, out: &mut String, depth: u32) -> Result<(), Error> {
+    if depth > 8 {
+        return Err(Error("font: includes nest too deep".into()));
+    }
+    for line in source.lines() {
+        if let Some(name) = line.strip_prefix("include ") {
+            let included = read(name.trim()).ok_or_else(|| Error(format!("font: cannot include {}", name.trim())))?;
+            expand(&included, read, out, depth + 1)?;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    Ok(())
 }
 
 /// An accent or other mark that letters are composed with.
@@ -360,7 +408,7 @@ mod ttf {
         let glyphs: Vec<Glyph> = std::iter::once(&notdef)
             .chain(chars.iter().map(|c| &font.glyphs[c]))
             .map(|bitmap| Glyph {
-                advance: ((bitmap.width + SPACING) * unit) as u16,
+                advance: ((bitmap.width.max(font.monospace.unwrap_or(0)) + SPACING) * unit) as u16,
                 contours: outlines(bitmap).into_iter().map(|c| c.into_iter().map(|(x, y)| (x * unit, y * unit)).collect()).collect(),
             })
             .collect();
@@ -576,6 +624,11 @@ compose Ó O acute
         // Over a capital, it goes above the cap height.
         assert_eq!(font.glyphs[&'Ó'].first_row(), Some(-2));
         assert!(PixelFont::parse("= ab\n#").is_err());
+        // Monospace centres narrow glyphs in the cell; includes splice other files in.
+        let mono = PixelFont::parse_with("monospace 5\n= i\n#\ninclude more\n", |_| Some("= space 3\n".into())).unwrap();
+        assert_eq!((mono.monospace, mono.glyphs[&'i'].width), (Some(5), 5));
+        assert!(mono.glyphs[&'i'].rows[0][2]);
+        assert_eq!(mono.glyphs[&' '].width, 5);
         assert!(PixelFont::parse("= a\n##\n#").is_err());
     }
 
@@ -620,16 +673,23 @@ compose Ó O acute
     }
 
     #[test]
-    fn the_game_font_covers_ascii_and_spanish() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/ui/font.txt");
-        let font = PixelFont::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
-        for c in (' '..='~').chain("áéíóúñÁÉÍÓÚÑ¿¡°×…◆▸◂".chars()) {
-            assert!(font.glyphs.contains_key(&c), "the font has no `{c}`");
-        }
-        // Nothing reaches above the ascent or below the descent the font promises.
-        for (c, glyph) in &font.glyphs {
-            let rows = glyph.top..glyph.top + glyph.rows.len() as i32;
-            assert!(rows.start >= CAP_HEIGHT - ASCENT && rows.end <= CAP_HEIGHT + DESCENT, "`{c}` overflows");
+    fn the_game_fonts_cover_ascii_and_spanish() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/ui/fonts");
+        let read = |name: &str| std::fs::read_to_string(format!("{dir}/{name}")).ok();
+        for file in ["voxmar.txt", "ledger.txt", "block.txt"] {
+            let font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
+            for c in (' '..='~').chain("áéíóúñÁÉÍÓÚÑ¿¡°×…◆▸◂↔".chars()) {
+                assert!(font.glyphs.contains_key(&c), "{file} has no `{c}`");
+            }
+            // Nothing reaches above the ascent or below the descent the font promises, and a
+            // monospace font's glyphs all fit its cell.
+            for (c, glyph) in &font.glyphs {
+                let rows = glyph.top..glyph.top + glyph.rows.len() as i32;
+                assert!(rows.start >= CAP_HEIGHT - ASCENT && rows.end <= CAP_HEIGHT + DESCENT, "{file}: `{c}` overflows");
+                if let Some(cell) = font.monospace {
+                    assert_eq!(glyph.width, cell, "{file}: `{c}` is not {cell} wide");
+                }
+            }
         }
     }
 }
