@@ -335,9 +335,15 @@ impl Shapes {
                 let cluster = n1.get_noise_2d(x / (spacing * 6.0), z / (spacing * 6.0));
                 let (wx, wz) = (x + 9.0 * n2.get_noise_2d(x / 23.0, z / 23.0), z + 9.0 * n2.get_noise_2d(x / 23.0 + 41.3, z / 23.0));
                 let n = n0.get_noise_2d(wx / spacing, wz / spacing);
-                let threshold = 0.45 - 0.2 * cluster;
+                // Towers gather where the cluster noise is high, and the plain between those
+                // clusters is open.
+                let field = smoothstep(-0.1, 0.2, cluster);
+                if field <= 0.0 {
+                    return (-0.6 * ground.hills * weight, 0.0, 0.0);
+                }
+                let threshold = 0.5 - 0.15 * cluster;
                 let tall = 0.35 + 0.65 * (0.5 + 0.5 * n1.get_noise_2d(x / (spacing * 1.3) + 7.1, z / (spacing * 1.3)));
-                let tower = smoothstep(threshold, threshold + 0.05, n) * (0.75 + 0.25 * smoothstep(threshold, 0.95, n)) * tall;
+                let tower = smoothstep(threshold, threshold + 0.05, n) * (0.75 + 0.25 * smoothstep(threshold, 0.95, n)) * tall * field;
                 let knoll = 0.12 * smoothstep(threshold - 0.25, threshold - 0.1, n);
                 let rise = tower.max(knoll);
                 // The plain between the towers is flat.
@@ -349,8 +355,14 @@ impl Shapes {
                 let cluster = n1.get_noise_2d(x / (spacing * 5.0), z / (spacing * 5.0));
                 let (wx, wz) = (x + 4.0 * n2.get_noise_2d(x / 11.0, z / 11.0), z + 4.0 * n2.get_noise_2d(x / 11.0 + 17.3, z / 11.0));
                 let n = n0.get_noise_2d(wx / spacing, wz / spacing);
-                let threshold = 0.5 - 0.25 * cluster;
-                let t = ((n - threshold) / (1.0 - threshold)).max(0.0);
+                // Only in a few clusters of a region (where the cluster noise is high), and
+                // there a few spikes each: a find in the desert, not its landform.
+                let field = smoothstep(0.42, 0.58, cluster);
+                if field <= 0.0 {
+                    return (0.0, 0.0, 0.0);
+                }
+                let threshold = 0.66 - 0.1 * cluster;
+                let t = ((n - threshold) / (1.0 - threshold)).max(0.0) * field;
                 let tall = 0.35 + 0.65 * (0.5 + 0.5 * n1.get_noise_2d(x / (spacing * 1.7) + 3.3, z / (spacing * 1.7)));
                 let spike = t.powf(0.55).min(1.0) * tall;
                 (0.0, weight * height * spike, weight * spike)
@@ -383,8 +395,15 @@ impl Shapes {
                 // climbs back out of it inland, between steep walls.
                 let inland = smoothstep(COAST, COAST + 0.45, ground.relief.continental);
                 let floor = SEA_LEVEL as f32 - depth * (1.0 - inland) + 12.0 * inland;
-                let walls = smoothstep(0.55, 0.95, ground.relief.valley) * (1.0 - smoothstep(0.85, 1.0, inland));
+                // The walls' edge wanders in and out (buttresses and gullies), and they step
+                // down in ledges a few blocks high, so a fjord's side is not one plane.
+                let wobble = 0.2 * n1.get_noise_2d(x / 40.0, z / 40.0) + 0.07 * n2.get_noise_2d(x / 11.0, z / 11.0);
+                let walls = smoothstep(0.55 + wobble, 0.95 + wobble, ground.relief.valley) * (1.0 - smoothstep(0.85, 1.0, inland));
                 let cut = weight * walls * (ground.height - floor).max(0.0);
+                let step = 7.0 + 6.0 * (0.5 + 0.5 * n2.get_noise_2d(x / 70.0 + 13.0, z / 70.0));
+                let (whole, part) = ((cut / step).floor(), (cut / step).fract());
+                let terraced = (whole + smoothstep(0.4, 0.6, part)) * step;
+                let cut = terraced;
                 (-cut, 0.0, weight * walls)
             }
             ShapeKind::Arches { .. } => {
