@@ -8,10 +8,12 @@
 //! - shift click sends a stack between the hotbar and the rest, and shift double click
 //!   sends every stack of that item;
 //! - 1 to 9 over a slot swaps it with that hotbar slot;
+//! - Q over a slot throws one item out into the world, Ctrl+Q the stack, and a click
+//!   outside the panel throws the held stack (a right click, one item of it);
 //! - hovering an item names it, coloured by rarity, with what it is good for.
 //!
 //! Each gesture becomes moves of the engine's inventory rules (`voxmar_engine::inventory`),
-//! proposed to the server as `core:transfer`, `core:quick_move` and `core:stow` actions and
+//! proposed to the server as `core:transfer`, `core:quick_move`, `core:stow` and `core:drop` actions and
 //! predicted here at once. Closing the screen puts a held stack back.
 
 use bevy::prelude::*;
@@ -82,6 +84,9 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
+/// The panel; clicks outside it throw the held stack.
+#[derive(Component)]
+struct InventoryCard;
 /// The held stack, drawn at the pointer.
 #[derive(Component)]
 struct PointerStack;
@@ -97,7 +102,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     commands.spawn((InventoryScreen, screen(SCRIM), Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
         let mut card = panel(grid_width + 76.0 * PX);
         card.0.align_items = AlignItems::Center;
-        root.spawn(card).with_children(|card| {
+        root.spawn((card, InventoryCard, RelativeCursorPosition::default())).with_children(|card| {
             card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() })
                 .with_children(|heading| spawn_heading(heading, font, "Inventory"));
             let grid = |top: f32| Node {
@@ -115,7 +120,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
-            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack · 1-9: swap";
+            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack · 1-9: swap · Q: throw";
             let help = (text(font, help, BODY, MUTED), TextLayout::justify(Justify::Center));
             card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
         });
@@ -139,6 +144,8 @@ enum Move {
     Items { from: usize, to: usize, count: u8 },
     Quick(usize),
     Stow,
+    /// Throw items out of a slot (or off the pointer) into the world.
+    Throw { slot: usize, count: u8 },
 }
 
 /// Predicts a move and proposes it to the server, which checks it by the same rules.
@@ -149,6 +156,9 @@ fn send(net: &Net, actions: &Actions, inventory: &mut Inventory, action: Move) {
         }
         Move::Quick(slot) => (inventory.quick_move(slot), "core:quick_move", ActionTarget::Slot(slot as u8)),
         Move::Stow => (inventory.stow_cursor(), "core:stow", ActionTarget::None),
+        Move::Throw { slot, count } => {
+            (inventory.take(slot, count).is_some(), "core:drop", ActionTarget::Stack { slot: slot as u8, count })
+        }
     };
     if moved {
         net.propose(actions.0.expect(name), target);
@@ -221,6 +231,7 @@ fn click(
     mut player: ResMut<LocalPlayer>,
     mut gesture: ResMut<Gesture>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
+    card: Query<&RelativeCursorPosition, With<InventoryCard>>,
 ) {
     if !ui.inventory_open {
         return;
@@ -265,6 +276,16 @@ fn click(
     let left = mouse.just_pressed(MouseButton::Left);
     let right = mouse.just_pressed(MouseButton::Right) || (left && control);
     let left = left && !control;
+    // Outside the panel, a click throws the held stack, a right click one item of it.
+    let outside = card.single().is_ok_and(|card| !card.cursor_over());
+    if outside
+        && (left || right)
+        && let Some(held) = inventory.cursor
+    {
+        let count = if right { 1 } else { held.count };
+        send(&net, &actions, inventory, Move::Throw { slot: CURSOR, count });
+        return;
+    }
     let Some(slot) = over.filter(|_| left || right) else { return };
     let double = gesture.last_click.filter(|c| left && c.slot == slot && now - c.at < DOUBLE_CLICK);
     let mut record = LastClick { slot, at: now, picked_up: false, sent: None };
@@ -323,6 +344,15 @@ fn number_keys(
         KeyCode::Digit9,
     ];
     if !ui.inventory_open || gesture.drag.is_some() || player.inventory.cursor.is_some() {
+        return;
+    }
+    // Q throws one item from the slot under the pointer, Ctrl+Q all of it.
+    if keys.just_pressed(KeyCode::KeyQ)
+        && let Some(slot) = hovered(&slots)
+        && let Some(stack) = player.inventory.get(slot)
+    {
+        let whole = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        send(&net, &actions, &mut player.inventory, Move::Throw { slot, count: if whole { stack.count } else { 1 } });
         return;
     }
     let (Some(slot), Some(key)) = (hovered(&slots), DIGITS.iter().position(|&k| keys.just_pressed(k))) else { return };

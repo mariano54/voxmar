@@ -13,6 +13,7 @@ pub mod chunk;
 pub mod command;
 pub mod content;
 pub mod coords;
+pub mod dropped;
 pub mod field;
 pub mod fluid;
 pub mod inventory;

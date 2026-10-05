@@ -82,7 +82,7 @@
         ),
         // Ice falling: hail rattling on everything, sleet's fine patter.
         (
-            name: "hail", sound: Hail, volume: 0.45, fade: 2,
+            name: "hail", recording: ["sounds/hail_1.mp3", "sounds/hail_2.mp3", "sounds/hail_3.mp3"], volume: 0.55, fade: 2,
             when: {"hail": (min: 0.25, fade: 0.25)},
         ),
         (
@@ -140,19 +140,20 @@
             when: {"water": (min: 0.4, fade: 0.4), "continentalness": (max: 0.05, fade: 0.15), "height": (max: 12, fade: 25), "sky": (min: 0.4, fade: 0.4)},
             duck: {"rain": 0.3},
         ),
-        // The still air of caves: a slight room tone, deeper the deeper the cave.
+        // The still air of caves, recorded in a quarry tunnel: a slight room tone with drips
+        // far off.
         (
-            name: "cave", sound: Cave, volume: 0.16, fade: 5,
+            name: "cave", recording: ["sounds/cave_1.mp3", "sounds/cave_2.mp3", "sounds/cave_3.mp3"], volume: 0.45, fade: 5,
             when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05)},
         ),
         // Lava seething and bubbling, near it.
         (
-            name: "lava", sound: Lava, volume: 0.3, fade: 2,
+            name: "lava", recording: ["sounds/lava_1.mp3", "sounds/lava_2.mp3", "sounds/lava_3.mp3"], volume: 0.42, fade: 2,
             when: {"lava": (min: 0.35, fade: 0.3)},
         ),
         // A waterfall's roar, from the curtain of water pouring down.
         (
-            name: "waterfall", sound: Waterfall, volume: 0.42, fade: 3,
+            name: "waterfall", recording: ["sounds/waterfall_1.mp3", "sounds/waterfall_2.mp3", "sounds/waterfall_3.mp3"], volume: 0.4, fade: 3,
             when: {"falls": (min: 0.5, fade: 0.45), "air": (min: 0.05, fade: 0.1)},
             duck: {"stream": 0.6},
         ),
@@ -265,7 +266,7 @@
         ),
         // Far drips in a cave, echoing from somewhere off in the dark.
         (
-            name: "far_drip", sound: Drip, volume: 0.18, at: Around(distance: (14, 30), height: (-4, 6)), per_minute: 3, cooldown: 6,
+            name: "far_drip", sound: Drip, volume: 0.15, at: Around(distance: (14, 30), height: (-4, 6)), per_minute: 1.5, cooldown: 10,
             pitch: (0.7, 1.0), reach: 10,
             when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "reverb": (min: 0.3, fade: 0.3)},
         ),

@@ -10,6 +10,7 @@ use voxmar_engine::action::{ActionId, ActionTarget};
 use voxmar_engine::block::RenderKind;
 use voxmar_server::ServerHandle;
 
+use crate::drops::Drops;
 use crate::breaking::{BlockBroken, SHOWN_WITHIN, shows_breaking};
 use crate::hud::console::Console;
 use crate::menu::{Notice, Screen};
@@ -99,6 +100,13 @@ pub struct RemotePlayers {
     players: FxHashMap<PlayerId, (PlayerView, Option<Entity>)>,
 }
 
+impl RemotePlayers {
+    /// Where another player stands, if they are in sight.
+    pub fn position(&self, id: PlayerId) -> Option<Vec3> {
+        self.players.get(&id).map(|(view, _)| view.position)
+    }
+}
+
 /// Applies what the server sent. If it refuses us or goes away, returns to the menus with
 /// the reason.
 #[allow(clippy::too_many_arguments)]
@@ -114,6 +122,7 @@ fn receive(
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
+    mut drops: ResMut<Drops>,
     mut broken: MessageWriter<BlockBroken>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
@@ -218,6 +227,7 @@ fn receive(
             }
             ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
+            ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
         }
     }
 }

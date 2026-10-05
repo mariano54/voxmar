@@ -35,6 +35,7 @@ use crate::weather::{ClientWeather, DRIFT_WRAP};
 pub mod atmosphere;
 pub mod cloud_map;
 pub mod cracks;
+pub mod items;
 pub mod lod;
 pub mod pack;
 pub mod particles;
@@ -76,6 +77,7 @@ impl Plugin for RenderPlugin {
             lod::LodPlugin,
             precipitation::PrecipitationPlugin,
             particles::ParticlePlugin,
+            items::ItemPlugin,
             cracks::CrackPlugin,
             volumetric::VolumetricPlugin,
             cloud_map::CloudMapPlugin,

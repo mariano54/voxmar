@@ -154,11 +154,49 @@ impl Inventory {
         left != stack.count
     }
 
+    /// How many of `item` [`Inventory::add`] would take, up to `count`.
+    pub fn room_for(&self, item: BlockId, count: u8) -> u8 {
+        let room: u32 = self
+            .slots
+            .iter()
+            .map(|slot| match slot {
+                None => MAX_STACK as u32,
+                Some(stack) if stack.item == item => (MAX_STACK - stack.count) as u32,
+                Some(_) => 0,
+            })
+            .sum();
+        room.min(count as u32) as u8
+    }
+
+    /// Takes up to `count` items from `slot` (or [`CURSOR`]), returning what it took.
+    pub fn take(&mut self, slot: usize, count: u8) -> Option<ItemStack> {
+        let stack = self.get(slot).filter(|_| slot <= CURSOR)?;
+        let taken = count.min(stack.count);
+        if taken == 0 {
+            return None;
+        }
+        self.set(slot, Some(ItemStack { count: stack.count - taken, ..stack }));
+        Some(ItemStack { count: taken, ..stack })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn room_and_taking_part_of_a_stack() {
+        let mut inv = Inventory { slots: vec![stack(SAND, 64); SLOTS], ..Default::default() };
+        inv.slots[3] = stack(DIRT, 60);
+        assert_eq!((inv.room_for(DIRT, 10), inv.room_for(SAND, 10)), (4, 0));
+        inv.slots[7] = None;
+        assert_eq!(inv.room_for(DIRT, 255), 68);
+        assert_eq!(inv.take(3, 1), stack(DIRT, 1));
+        assert_eq!(inv.take(3, 100), stack(DIRT, 59));
+        assert_eq!((inv.get(3), inv.take(3, 1)), (None, None));
+        inv.cursor = stack(DIRT, 2);
+        assert_eq!((inv.take(CURSOR, 5), inv.cursor), (stack(DIRT, 2), None));
+    }
 
     #[test]
     fn add_stacks_then_spills() {

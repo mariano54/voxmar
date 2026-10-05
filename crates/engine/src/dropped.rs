@@ -1,0 +1,206 @@
+//! Dropped items: stacks lying loose in the world, as Minecraft's item entities. A broken
+//! block pops its drops out with a little hop, a thrown stack flies from the hand, and
+//! both fall, bounce, slide to rest and float in water, until a player walks close enough
+//! to draw them in.
+//!
+//! The server owns them (see `server::items`); this is the motion they share with anything
+//! that wants to predict it. Numbers follow Minecraft's item entity, converted from ticks
+//! to seconds.
+
+use glam::{IVec3, Vec3};
+
+use crate::movement::Surroundings;
+use crate::physics::{Aabb, move_and_slide};
+
+/// Width and height of a dropped item's box (Minecraft's 0.25).
+pub const SIZE: f32 = 0.25;
+/// Blocks per second squared (Minecraft's 0.04 a tick).
+pub const GRAVITY: f32 = 16.0;
+/// How quickly speed decays in the air, per second (Minecraft keeps 0.98 a tick).
+pub const AIR_DRAG: f32 = 0.4;
+/// How quickly an item sliding on the ground slows, per second (Minecraft keeps 0.588 a
+/// tick on most blocks).
+pub const GROUND_DRAG: f32 = 10.6;
+/// Of the speed an item lands with, how much it bounces back up (Minecraft's half).
+pub const BOUNCE: f32 = 0.5;
+/// Landings slower than this, in blocks per second, don't bounce: the item settles.
+const SETTLE: f32 = 1.5;
+/// Upward push in water, against gravity, so items rise to the surface and bob there.
+const BUOYANCY: f32 = 22.0;
+/// How quickly water slows an item, per second.
+const WATER_DRAG: f32 = 3.0;
+/// Speeds below this, in blocks per second, count as resting.
+const REST: f32 = 0.01;
+
+/// Seconds after a block breaks before its drops can be picked up (Minecraft's ten
+/// ticks), so they are seen to pop out first.
+pub const PICKUP_DELAY: f32 = 0.5;
+/// Seconds after a player throws a stack before anyone can pick it up (Minecraft's two
+/// seconds), so it isn't caught again at once.
+pub const THROWN_PICKUP_DELAY: f32 = 2.0;
+/// Seconds a dropped item lasts before it vanishes (Minecraft's five minutes).
+pub const LIFETIME: f32 = 300.0;
+/// Speed a thrown stack leaves the hand at, in blocks per second (Minecraft's 0.3 a tick).
+pub const THROW_SPEED: f32 = 6.0;
+
+/// The moving state of a dropped item.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Loose {
+    /// Bottom centre of its box.
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub on_ground: bool,
+}
+
+impl Loose {
+    pub fn new(position: Vec3, velocity: Vec3) -> Self {
+        Self { position, velocity, on_ground: false }
+    }
+
+    pub fn aabb(&self) -> Aabb {
+        Aabb::standing(self.position, SIZE, SIZE)
+    }
+
+    /// Lying still on the ground: nothing moves it until the ground goes or something
+    /// pushes it.
+    pub fn resting(&self) -> bool {
+        self.on_ground && self.velocity.length_squared() < REST * REST
+    }
+
+    /// Advances the item by `dt` seconds. Returns whether it moved.
+    pub fn step(&mut self, world: &impl Surroundings, dt: f32) -> bool {
+        let (depth, current) = world.water(&self.aabb());
+        let floating = depth > 0.1 * SIZE;
+        if self.resting() && !floating {
+            // Asleep, as long as something still holds it up.
+            let mut below = self.aabb();
+            below.translate(Vec3::Y * -0.01);
+            if below.intersects(|c| world.solid(c)) {
+                return false;
+            }
+            self.on_ground = false;
+        }
+        if floating {
+            // Rises towards the surface and drifts with the current.
+            let lift = if depth > 0.5 * SIZE { BUOYANCY } else { GRAVITY };
+            self.velocity.y += (lift - GRAVITY) * dt;
+            let flow = Vec3::new(current.x, 0.0, current.y);
+            self.velocity = flow + (self.velocity - flow) * (-WATER_DRAG * dt).exp();
+        } else {
+            self.velocity.y -= GRAVITY * dt;
+            let drag = if self.on_ground { GROUND_DRAG } else { AIR_DRAG };
+            let keep = (-drag * dt).exp();
+            self.velocity.x *= keep;
+            self.velocity.z *= keep;
+            self.velocity.y *= (-AIR_DRAG * dt).exp();
+        }
+
+        let before = self.position;
+        let falling = self.velocity.y;
+        let mut aabb = self.aabb();
+        let blocked = move_and_slide(&mut aabb, self.velocity * dt, |p| world.solid(p));
+        self.on_ground = blocked[1] && falling <= 0.0;
+        for axis in [0, 2] {
+            if blocked[axis] {
+                self.velocity[axis] = 0.0;
+            }
+        }
+        if blocked[1] {
+            // A hard landing bounces, a soft one settles.
+            self.velocity.y = if falling < -SETTLE { -falling * BOUNCE } else { 0.0 };
+            self.on_ground &= self.velocity.y == 0.0;
+        }
+        if self.on_ground && self.velocity.with_y(0.0).length_squared() < REST * REST {
+            self.velocity = Vec3::ZERO;
+        }
+        self.position = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
+        self.position != before
+    }
+}
+
+/// Where the drops of the block at `cell` start, and how they pop out, from three random
+/// numbers in 0..1: near the middle of the block, thrown up and a little sideways
+/// (Minecraft's 0.2 up and up to 0.1 across a tick).
+pub fn popped(cell: IVec3, random: [f32; 3]) -> Loose {
+    let [a, b, c] = random;
+    let offset = Vec3::new(a - 0.5, 0.0, b - 0.5) * 0.5;
+    let angle = c * std::f32::consts::TAU;
+    let velocity = Vec3::new(angle.cos() * 1.5, 4.0, angle.sin() * 1.5);
+    Loose::new(cell.as_vec3() + Vec3::new(0.5, 0.25, 0.5) + offset, velocity)
+}
+
+/// A stack thrown from `eye` towards `look`, as Minecraft throws one: from just below the
+/// eye, at [`THROW_SPEED`], with a little lift.
+pub fn thrown(eye: Vec3, look: Vec3) -> Loose {
+    let look = look.normalize_or(Vec3::NEG_Z);
+    Loose::new(eye - Vec3::Y * 0.3 - Vec3::Y * SIZE / 2.0, look * THROW_SPEED + Vec3::Y * 2.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec2;
+
+    struct Scene<F: Fn(IVec3) -> bool> {
+        solid: F,
+        water: Option<f32>,
+    }
+
+    impl<F: Fn(IVec3) -> bool> Surroundings for Scene<F> {
+        fn solid(&self, cell: IVec3) -> bool {
+            (self.solid)(cell)
+        }
+
+        fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
+            (self.water.map_or(0.0, |surface| (surface - aabb.min.y).max(0.0)), Vec2::ZERO)
+        }
+    }
+
+    fn run(item: &mut Loose, world: &impl Surroundings, seconds: f32) {
+        for _ in 0..(seconds * 20.0) as usize {
+            item.step(world, 0.05);
+        }
+    }
+
+    #[test]
+    fn popped_drops_hop_out_and_come_to_rest_on_the_ground() {
+        let floor = Scene { solid: |c: IVec3| c.y < 0, water: None };
+        let mut item = popped(IVec3::new(0, 0, 0), [0.5, 0.5, 0.25]);
+        let mut highest = item.position.y;
+        for _ in 0..20 {
+            item.step(&floor, 0.05);
+            highest = highest.max(item.position.y);
+        }
+        assert!(highest > 0.5, "no hop: {highest}");
+        run(&mut item, &floor, 3.0);
+        assert!(item.resting(), "{item:?}");
+        assert!(item.position.y.abs() < 1e-4);
+        // Asleep: another step changes nothing.
+        assert!(!item.step(&floor, 0.05));
+    }
+
+    #[test]
+    fn items_fall_when_the_ground_goes() {
+        let mut item = Loose { position: Vec3::new(0.5, 0.0, 0.5), velocity: Vec3::ZERO, on_ground: true };
+        let gone = Scene { solid: |c: IVec3| c.y < -3, water: None };
+        run(&mut item, &gone, 2.0);
+        assert!((item.position.y + 3.0).abs() < 1e-4, "{item:?}");
+    }
+
+    #[test]
+    fn items_float_up_to_the_surface() {
+        let pond = Scene { solid: |c: IVec3| c.y < -4, water: Some(0.0) };
+        let mut item = Loose::new(Vec3::new(0.5, -3.5, 0.5), Vec3::ZERO);
+        run(&mut item, &pond, 6.0);
+        assert!(item.position.y > -SIZE && item.position.y < 0.1, "{item:?}");
+    }
+
+    #[test]
+    fn thrown_stacks_fly_forward_and_stop_at_walls() {
+        let floor = Scene { solid: |c: IVec3| c.y < 0 || c.x >= 3, water: None };
+        let mut item = thrown(Vec3::new(0.5, 1.62, 0.5), Vec3::X);
+        run(&mut item, &floor, 3.0);
+        assert!(item.position.x > 2.0 && item.position.x <= 3.0 - SIZE / 2.0 + 1e-3, "{item:?}");
+        assert!(item.resting());
+    }
+}

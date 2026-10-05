@@ -52,8 +52,17 @@ The inventory works as Minecraft's: click picks up, puts down, merges or swaps a
 right click (or Control-click) takes half or puts down one; dragging a held stack spreads it
 evenly over the slots crossed (right button: one each); a double click gathers the item onto
 the pointer; Shift-click moves a stack between the hotbar and the pack (Shift double click:
-every stack of it); 1-9 over a slot swaps it with that hotbar slot. Hovering an item names it,
-coloured by rarity, with what it is good for. Esc or E closes it and puts back what you hold.
+every stack of it); 1-9 over a slot swaps it with that hotbar slot; Q over a slot throws one
+item (Ctrl+Q the stack), and clicking outside the panel throws the held stack (right click:
+one item). Hovering an item names it, coloured by rarity, with what it is good for. Esc or E
+closes it and puts back what you hold.
+
+Broken blocks drop items, as in Minecraft: what a block gives pops out as a tiny copy of it
+(a plant as a flat sprite with thickness) that turns and bobs where it lands, floats in
+water, merges with nearby stacks of the same thing, and lasts five minutes. After half a
+second, walking near draws it in with a pop. Q throws one item from the hand, Ctrl+Q the
+whole stack; thrown items wait two seconds before they can be picked up again. Dropped items
+are kept with the world (`items.ron`).
 
 The interface (menus, HUD, inventory) has one look: a pixel font drawn in
 `assets/ui/font.txt` and pixel-art pieces that are `ui/*` textures of the default pack
@@ -86,7 +95,9 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
 - `/setblock X Y Z BLOCK` puts a block somewhere (`~` again means where you are), and
   `/fill X1 Y1 Z1 X2 Y2 Z2 BLOCK` fills a box (at most 32768 blocks and 128 across; `air`
   empties it). Both load the columns they touch first. `/give BLOCK [COUNT]` hands you blocks
-  (64 unless you say), so `/give water` lets you pour water. Block names may leave out the
+  (64 unless you say; what does not fit drops at your feet), so `/give water` lets you pour
+  water. `/drop ITEM [COUNT] [X Y Z]` drops a stack into the world, at your feet unless you
+  say where. Block names may leave out the
   package (`water` for `base:water`).
 - `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
   (within 4000 blocks unless you say).
@@ -573,10 +584,9 @@ sand and snow it meets, nearer ones counting more. With the climate and biome fr
 generator, height above the land around, depth underground, the weather and the time of day,
 that makes an environment vector, and `ambience.ron` in any content package lists what plays
 where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
-surf, a slight cave air, lava seething and bubbling, a waterfall's roar by falling water,
-synthesized; rain by strength and cover, dripping trees, streams and lakes,
-recorded) as stereo segments that crossfade and never repeat back to back, and one-shots at a
-rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker on a trunk,
+surf, synthesized; rain by strength and cover, hail, dripping trees, streams, lakes, a
+waterfall's roar by falling water, a slight cave air and lava bubbling, recorded) as stereo
+segments that crossfade and never repeat back to back, and one-shots at a rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker on a trunk,
 owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips
 near and far and rumbles in caves, lava bursting bubbles). Recordings are CC0 field recordings in the package
 (`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
