@@ -31,7 +31,8 @@
         ),
         (
             // Game trails: worn lines of coarse dirt and gravel along a noise's zero contour,
-            // a block or two wide, keeping to gentle ground and fading at their sides.
+            // a block or two wide, keeping to gentle ground and fading at their sides. No
+            // biome includes them for now: they read as paths, which belong near settlements.
             name: "trails",
             rules: [
                 (when: [Not(Slope(1.0, 2.0)), Band((name: "game_trails", scale: 140.0), 0.009)], place: (top: Mix([Name("coarse_dirt", 4.0), Name("gravel", 1.0)]), filler: Block("dirt"))),
