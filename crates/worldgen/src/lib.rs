@@ -718,7 +718,7 @@ impl Sampler<'_> {
         let share = Biomes::blend(pick.edge, regional.fertility);
         if !geo.submerged() {
             site.vegetation = ecology::ground_cover(temperature, site.soil_moisture());
-            site.forest = self.world.ecology.forest(site.stand, site.clearing, pick.home, pick.neighbour, share, regional.fertility);
+            site.forest = self.world.ecology.forest(site.stand, site.clearing, pick.home, pick.neighbour, share, regional.fertility, temperature, site.soil_moisture());
         }
         let dither = if share > 0.0 || geo.river > 0.0 { self.world.blend_dither(x, z) } else { 1.0 };
         site.biome = if dither < share { pick.neighbour } else { pick.home };
