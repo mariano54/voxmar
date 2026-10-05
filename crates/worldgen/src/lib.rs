@@ -97,6 +97,10 @@ pub struct Site {
     pub height: i32,
     /// Steepest height step to a neighbouring position, in blocks.
     pub slope: i32,
+    /// How steep the ground is around the position, in blocks of rise per block, from the
+    /// heights two blocks away on either side: smooth from one block to the next, so rules
+    /// switching on it make coherent patches rather than a checkerboard on stepped slopes.
+    pub steepness: f32,
     /// Mean annual air temperature at the surface, °C, after cooling with altitude.
     pub temperature: f32,
     /// Annual precipitation, mm.
@@ -251,7 +255,7 @@ pub struct Overworld {
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 18;
+    pub const VERSION: u32 = 17;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.
@@ -507,6 +511,19 @@ impl Overworld {
     }
 }
 
+/// How steep the ground is at a position whose heights around it `height` gives by offset:
+/// the gradient of the heights two blocks away on either side, averaged over the three rows
+/// and columns through the position, so the single steps of gentle ground read as an even
+/// slope (see `Site::steepness`).
+pub(crate) fn steepness(height: impl Fn(i32, i32) -> i32) -> f32 {
+    let (mut dx, mut dz) = (0, 0);
+    for k in -1..=1 {
+        dx += height(2, k) - height(-2, k);
+        dz += height(k, 2) - height(k, -2);
+    }
+    (dx as f32 / 12.0).hypot(dz as f32 / 12.0)
+}
+
 /// The ground with rivers and lakes, as trails see it: crags are left at their preliminary
 /// surface, which is near enough for planning routes that keep off them anyway (and a
 /// trail's own ground is whole, see `Trails::apply`).
@@ -544,13 +561,14 @@ impl Sampler<'_> {
     /// The parameters of the surface at a position inside the sampler's area.
     pub fn site(&self, x: i32, z: i32) -> Site {
         let geo = self.world.ground(x, z);
-        self.site_on(&geo, x, z, self.world.slope(x, z, geo.height))
+        let steepness = steepness(|dx, dz| self.world.height(x + dx, z + dz));
+        self.site_on(&geo, x, z, self.world.slope(x, z, geo.height), steepness)
     }
 
     /// What the surface looks like from far away; see [`Overworld::surface_sample`].
     pub fn surface(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
         let geo = GeoSample { height, ..self.world.ground(x, z) };
-        let site = self.site_on(&geo, x, z, slope);
+        let site = self.site_on(&geo, x, z, slope, slope as f32);
         let (ground, water) = self.world.surface_blocks(&site, x, z);
         let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
             .map(|(tree, cover)| (self.world.terrain.leaves(tree), cover));
@@ -679,7 +697,7 @@ impl Sampler<'_> {
     }
 
     /// The site on already sampled geology.
-    fn site_on(&self, geo: &GeoSample, x: i32, z: i32, slope: i32) -> Site {
+    fn site_on(&self, geo: &GeoSample, x: i32, z: i32, slope: i32, steepness: f32) -> Site {
         let _stage = stage::enter(Stage::Climate);
         let regional = self.grid.at(x, z);
         // Cooled by the height of the land, not of the towers and spires standing on it.
@@ -687,6 +705,7 @@ impl Sampler<'_> {
         let mut site = Site {
             height: geo.height,
             slope,
+            steepness,
             temperature,
             precipitation: regional.precipitation,
             moisture: regional.moisture(),
@@ -2869,7 +2888,7 @@ mod tests {
                 let def = content.shapes.iter().find(|s| s.name == shapes.name(id)).unwrap();
                 // Those that stand alone weigh the climate at their centre, and their flanks
                 // may reach past it.
-                if matches!(def.kind, content::ShapeKind::Volcanoes { .. } | content::ShapeKind::Mountain { .. }) {
+                if matches!(def.kind, content::ShapeKind::Volcanoes { .. }) {
                     continue;
                 }
                 let regional = world.geology.regional(x, z);
@@ -2905,6 +2924,98 @@ mod tests {
         let sampler = world.sampler(IVec2::new(-300, 200), IVec2::new(100, 700));
         for (x, z) in [(-300, 200), (-1, 450), (37, 699), (100, 700)] {
             assert_eq!(sampler.site(x, z), world.site(x, z));
+        }
+    }
+
+    /// `SEED=7 X=3600 Z=680 cargo test -p voxmar_worldgen surface_busy -- --ignored --nocapture`
+    /// TEMP: top blocks around a position, how often neighbours differ, by steepness.
+    #[test]
+    #[ignore]
+    fn surface_busy() {
+        use voxmar_engine::block::RenderKind;
+        use voxmar_engine::coords::CHUNK_SIZE;
+        let env = |name: &str| std::env::var(name).ok();
+        let seed: u64 = env("SEED").and_then(|s| s.parse().ok()).unwrap_or(7);
+        let size: i32 = env("SIZE").and_then(|s| s.parse().ok()).unwrap_or(4);
+        let x: i32 = env("X").and_then(|s| s.parse().ok()).unwrap_or(3600);
+        let z: i32 = env("Z").and_then(|s| s.parse().ok()).unwrap_or(680);
+        let step: i32 = env("STEP").and_then(|s| s.parse().ok()).unwrap_or(2);
+        let registry = registry();
+        let world = Overworld::new(seed, registry.clone());
+        let first = ColumnPos::of_block(IVec3::new(x, 0, z)).offset(-size / 2, -size / 2);
+        let columns = generate_area(&world, first, size);
+        let origin = first.origin();
+        let span = size * CHUNK_SIZE;
+        let top = |dx: i32, dz: i32| {
+            let c = &columns[((dz >> 5) * size + (dx >> 5)) as usize];
+            let mut y = world.height(origin.x + dx, origin.z + dz) + 2;
+            loop {
+                let b = c.block(IVec3::new(dx & 31, y, dz & 31));
+                let def = registry.def(b);
+                if !b.is_air() && def.solid && def.render != RenderKind::Leaves && !def.name.contains("log") && !def.name.contains("wood") {
+                    return b;
+                }
+                y -= 1;
+            }
+        };
+        let tops: Vec<BlockId> = (0..span * span).map(|i| top(i % span, i / span)).collect();
+        let at = |dx: i32, dz: i32| tops[(dz * span + dx) as usize];
+        let steep = |dx: i32, dz: i32| steepness(|a, b| world.height(origin.x + dx + a, origin.z + dz + b));
+        let mut bins: Vec<std::collections::BTreeMap<String, u32>> = vec![Default::default(); 4];
+        let (mut pairs, mut changes, mut lonely, mut inner) = ([0u32; 4], [0u32; 4], [0u32; 4], [0u32; 4]);
+        let mut legend: Vec<BlockId> = Vec::new();
+        let mut kinds: std::collections::BTreeMap<String, u32> = Default::default();
+        let mut rows = Vec::new();
+        for dz in 1..span - 1 {
+            let mut row = String::new();
+            for dx in 1..span - 1 {
+                let s = steep(dx, dz);
+                let bin = if s < 0.7 { 0 } else if s < 1.3 { 1 } else if s < 2.0 { 2 } else { 3 };
+                let b = at(dx, dz);
+                *bins[bin].entry(registry.def(b).name.clone()).or_default() += 1;
+                let n = [at(dx + 1, dz), at(dx - 1, dz), at(dx, dz + 1), at(dx, dz - 1)];
+                pairs[bin] += 2;
+                changes[bin] += (n[0] != b) as u32 + (n[2] != b) as u32;
+                inner[bin] += 1;
+                lonely[bin] += (n.iter().filter(|&&o| o != b).count() >= 3) as u32;
+                if n.iter().filter(|&&o| o != b).count() >= 3 {
+                    let other = n.iter().find(|&&o| o != b).copied().unwrap();
+                    *kinds.entry(format!("{} in {}", registry.def(b).name, registry.def(other).name)).or_insert(0u32) += 1;
+                }
+                let k = legend.iter().position(|&l| l == b).unwrap_or_else(|| {
+                    legend.push(b);
+                    legend.len() - 1
+                });
+                if dx % step == 1 % step && dz % step == 1 % step {
+                    row.push((b'a' + (k % 26) as u8) as char);
+                }
+            }
+            if dz % step == 1 % step {
+                rows.push(row);
+            }
+        }
+        for (i, name) in ["gentle <0.7", "0.7..1.3", "1.3..2", "steep >2"].iter().enumerate() {
+            let total: u32 = bins[i].values().sum();
+            let mut list: Vec<_> = bins[i].iter().collect();
+            list.sort_by(|a, b| b.1.cmp(a.1));
+            let shares: Vec<String> = list.iter().take(6).map(|(n, c)| format!("{n} {:.0}%", 100.0 * **c as f32 / total.max(1) as f32)).collect();
+            println!(
+                "{name}: {total} cols, changes {:.1}%, lonely {:.1}%: {}",
+                100.0 * changes[i] as f32 / pairs[i].max(1) as f32,
+                100.0 * lonely[i] as f32 / inner[i].max(1) as f32,
+                shares.join(", ")
+            );
+        }
+        let mut kinds: Vec<_> = kinds.into_iter().collect();
+        kinds.sort_by(|a, b| b.1.cmp(&a.1));
+        println!("lonely: {:?}", &kinds[..kinds.len().min(12)]);
+        if env("MAP").is_some() {
+            for (k, b) in legend.iter().enumerate() {
+                println!("{} = {}", (b'a' + (k % 26) as u8) as char, registry.def(*b).name);
+            }
+            for row in rows {
+                println!("{row}");
+            }
         }
     }
 }

@@ -29,7 +29,6 @@ use crate::lattice::{self, Lattice, Profile};
 use crate::resources::Resources;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
-use crate::shapes::{Anchors, Piece};
 use crate::stage::{self, Stage};
 use crate::surface::{Fill, Layers, Palette, Spot, Surface};
 use crate::trails::Marker;
@@ -321,8 +320,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     // Trees reach in from candidates around the column, so sample the climate there too.
     let area = world.dense_sampler(corner - features::REACH, corner + CHUNK_SIZE - 1 + features::REACH);
 
-    // Geology for the column plus a one-block border (for slopes).
-    let geology = GeoGrid::new(world, (origin.x - 1, origin.z - 1), CHUNK_SIZE + 2);
+    // Geology for the column plus a two-block border (for slopes and steepness).
+    let geology = GeoGrid::new(world, (origin.x - 2, origin.z - 2), CHUNK_SIZE + 4);
     let top = geology.samples().iter().map(|g| g.height.max(g.water)).max().unwrap_or(0).max(SEA_LEVEL);
 
     let mut caves = {
@@ -373,7 +372,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
             let (wx, wz) = (origin.x + x, origin.z + z);
             let geo = geology.get(wx, wz);
             let height = geo.height;
-            let site = area.site_on(&geo, wx, wz, geology.slope(wx, wz));
+            let site = area.site_on(&geo, wx, wz, geology.slope(wx, wz), geology.steepness(wx, wz));
             let colors = area.colors_of(&site, wx, wz);
             column.colors[(z * CHUNK_SIZE + x) as usize] = [colors.grass, colors.foliage, colors.water];
             let surface = stage::enter(Stage::Surface);
@@ -426,7 +425,13 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                     height + 1
                 }
             };
-            let hollow_at = |y: i32| y >= hollow_from && hollow.get((y - hollow_from) as usize).copied().unwrap_or(false);
+            // The window under an arch: open from its foot to a few blocks under its top,
+            // where no water beside it could pour in.
+            let foot = geo.form.base.floor() as i32;
+            let window = geo.form.window as i32;
+            let beside_water = || sides_of(&geology, wx, wz).iter().any(|n| n.wet().is_some_and(|(_, top)| top > foot));
+            let window = if window > 0 && height >= foot + window + 3 && !geo.submerged() && !beside_water() { window } else { 0 };
+            let hollow_at = |y: i32| (y > foot && y <= foot + window) || (y >= hollow_from && hollow.get((y - hollow_from) as usize).copied().unwrap_or(false));
 
             for y in 0..=height {
                 let below_surface = height - y;
@@ -458,7 +463,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 } else if below_surface <= layers.depth && layers.filler != Fill::Stones {
                     match layers.filler {
                         Fill::Block(block) => block,
-                        Fill::Rock => terrain.band(bands, y, wx, wz),
+                        Fill::Rock | Fill::Beds => terrain.band(bands, y, wx, wz),
                         _ => terrain.band(strata, y, wx, wz),
                     }
                 } else {
@@ -529,20 +534,16 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         }
     }
 
-    // The arches and leaning spires near enough for the column to build, or for a tree or
-    // decoration reaching into it to keep clear of (see `features::ROCK_REACH`).
-    let pieces = {
+    {
         let _stage = stage::enter(Stage::Shapes);
-        let pieces = world.pieces(corner - features::ROCK_REACH, corner + CHUNK_SIZE - 1 + features::ROCK_REACH);
-        sculpt(world, &geology, origin, &pieces, &surfaces, &mut blocks);
-        pieces
-    };
+        notches(world, &geology, origin, &surfaces, &mut blocks);
+    }
     {
         let _stage = stage::enter(Stage::Ores);
         terrain.resources.place(world.seed, pos, &mut blocks);
     }
     let decoration = stage::enter(Stage::Decoration);
-    terrain.features.place(world, &area, &geology, &caves, &pieces, pos, &mut blocks, &mut column.colors);
+    terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks, &mut column.colors);
     {
         let _stage = stage::enter(Stage::Trails);
         terrain.markers(world, &area, &geology, pos, &mut blocks);
@@ -612,50 +613,14 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     column
 }
 
-/// Height of the sections 3D shapes are worked in.
-const SECTION: i32 = 16;
 /// How far into a sea cliff waves cut a notch at the waterline, in blocks.
 const NOTCH: i32 = 3;
 
-/// The 3D work of terrain shapes on a column: arches and leaning spires of the rock
-/// beneath, section by section wherever they reach, and notches cut by the waves at the
-/// foot of sea cliffs.
-fn sculpt(world: &Overworld, geology: &GeoGrid, origin: IVec3, pieces: &[Piece], surfaces: &[(Site, BlockId)], blocks: &mut Blocks) {
+/// Notches cut by the waves at the foot of sea cliffs, deepest at the face, where no fresh
+/// water is near.
+fn notches(world: &Overworld, geology: &GeoGrid, origin: IVec3, surfaces: &[(Site, BlockId)], blocks: &mut Blocks) {
     let terrain = &world.terrain;
-    let corner = IVec2::new(origin.x, origin.z);
-    let rock = |site: &Site, x: i32, y: i32, z: i32| {
-        let strata = &world.biomes.get(site.biome).strata;
-        if strata.is_empty() {
-            stone_at(&terrain.ids, world.stones(site), terrain.rock.get_noise_3d(x as f32, y as f32, z as f32), world.seed, y, x, z)
-        } else {
-            terrain.band(strata, y, x, z)
-        }
-    };
     let shapes = world.geology.shapes();
-    for piece in pieces {
-        let (low, high) = piece.heights();
-        let (low, high) = (low.max(1), high.min(WORLD_HEIGHT - 1));
-        for section in low.div_euclid(SECTION)..=high.div_euclid(SECTION) {
-            let (y0, y1) = ((section * SECTION).max(low), (section * SECTION + SECTION - 1).min(high));
-            let Some((min, max)) = piece.extent(y0, y1) else { continue };
-            let (min, max) = ((min - corner).max(IVec2::ZERO), (max - corner).min(IVec2::splat(CHUNK_SIZE - 1)));
-            for z in min.y..=max.y {
-                for x in min.x..=max.x {
-                    let (wx, wz) = (origin.x + x, origin.z + z);
-                    // Only over the ground: caves beneath are left open.
-                    let site = &surfaces[(z * CHUNK_SIZE + x) as usize].0;
-                    for y in y0.max(site.height + 1)..=y1 {
-                        let here = blocks.get_local(x, y, z);
-                        if (here.is_air() || here == terrain.ids.water) && shapes.solid(piece, wx, y, wz) {
-                            blocks.set_local(x, y, z, rock(site, wx, y, wz));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Notches at the foot of sea cliffs, deepest at the face, where no fresh water is near.
     const SIDES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
@@ -757,7 +722,7 @@ impl Terrain {
             match marker {
                 Marker::Cairn => {
                     // Where trees grow, the forest marks the way well enough.
-                    let site = area.site_on(&geo, at.x, at.y, 0);
+                    let site = area.site_on(&geo, at.x, at.y, 0, 0.0);
                     let bare = site.forest < 0.05 && (site.height - SEA_LEVEL > 60 || site.temperature < 2.0 || site.vegetation < 0.2);
                     if !bare {
                         continue;
@@ -790,12 +755,13 @@ impl Terrain {
         }
     }
 
-    /// A uniform-ish 0..1 value for dithering thresholds: smooth patches plus per-block
-    /// speckle, so materials interleave in clumps and scattered blocks across a band.
+    /// A uniform-ish 0..1 value for dithering thresholds: smooth patches with a little
+    /// per-block roughness at their edges, so materials meet in clumps and wavering lines
+    /// rather than interleaving block by block.
     pub(crate) fn dither(&self, x: i32, z: i32) -> f32 {
         let speckle = (hash3(self.seed ^ 0x5fac, x, 0, z) & 0xffff) as f32 / 65536.0;
         let patch = self.patches.get_noise_2d(x as f32, z as f32) * 0.6 + 0.5;
-        (0.55 * patch + 0.45 * speckle).clamp(0.0, 1.0)
+        (0.96 * patch + 0.04 * speckle).clamp(0.0, 1.0)
     }
 
     /// Uniform per-column randomness for the surface rules.
@@ -804,11 +770,11 @@ impl Terrain {
     }
 
     /// Another clumpy value in 0..1, independent of `dither`, for choosing among mixed
-    /// blocks so that each forms patches with speckled edges.
+    /// blocks so that each forms patches with slightly ragged edges.
     pub(crate) fn mix(&self, x: i32, z: i32) -> f32 {
         let speckle = (hash3(self.seed ^ 0x3a1f, x, 0, z) & 0xffff) as f32 / 65536.0;
         let patch = crate::climate::uniform(self.mixes.get_noise_2d(x as f32, z as f32));
-        (0.8 * patch + 0.2 * speckle).clamp(0.0, 0.9999)
+        (0.97 * patch + 0.03 * speckle).clamp(0.0, 0.9999)
     }
 
     /// Strata: bands of rock, one block each, that wobble gently.
@@ -869,19 +835,6 @@ impl Terrain {
 }
 
 impl Overworld {
-    /// The arches and leaning spires that reach the columns of blocks from `min` to `max`.
-    pub(crate) fn pieces(&self, min: IVec2, max: IVec2) -> Vec<Piece> {
-        let anchors = Anchors {
-            regional: &|x, z| self.geology.regional(x, z),
-            ground: &|x, z| {
-                let geo = self.geo(x, z);
-                if geo.submerged() { f32::NAN } else { geo.height as f32 }
-            },
-            edge: &|x, z| self.site(x, z).edge,
-        };
-        self.geology.shapes().pieces(min, max, &anchors)
-    }
-
     /// The surface rules a site's ground follows and the strata they band with: its biome's,
     /// or those of a terrain shape with ground of its own where the shape stands tallest.
     pub(crate) fn surface_of(&self, site: &Site, x: i32, z: i32) -> (&Surface, &[BlockId]) {
@@ -948,9 +901,12 @@ impl Overworld {
             // A dry closed basin crusts over with salt.
             return Layers { top: if d < 0.75 { ids.salt } else { ids.sand }, filler: Fill::Block(ids.sand), depth: 3 };
         }
-        // Bare rock on cliffs, and on high ground exposed to the weather where no snow lies.
+        // Bare rock on cliffs, and on high ground exposed to the weather where no snow lies:
+        // judged by the steepness around the position, so a cliff is one patch of rock, with
+        // the tallest single steps counted too.
         let cliff = || rules.cliff(surface, &spot, stones, strata);
-        if past(site.slope as f32, 3.0, 5.5) {
+        let steep = site.steepness.max(0.5 * site.slope as f32);
+        if past(steep, 2.3, 3.2) {
             return cliff();
         }
         // Cold: ground under snow, then deep snow (powdery where it is coldest).
@@ -958,7 +914,7 @@ impl Overworld {
             let powder = past(-t, 8.0, 12.0) && terrain.patches.get_noise_2d(x as f32, z as f32) > 0.15;
             return Layers { top: if powder { ids.powder } else { ids.snow }, filler: Fill::Block(ids.snow), depth: 2 };
         }
-        let exposure = site.slope as f32 + ((above - 95.0) / 12.0).max(0.0);
+        let exposure = steep + ((above - 95.0) / 12.0).max(0.0);
         if past(exposure, 3.0, 5.5) {
             return cliff();
         }
@@ -966,6 +922,12 @@ impl Overworld {
         // (`Site::biome` takes it near fresh water).
         let beach = site.body == Body::Sea && site.continentalness < 0.7 && !past(above, 0.5, 2.5);
         let mut ground = rules.ground(surface, &spot, beach, stones, strata);
+        // Where steps are two blocks high and more, rock shows in the risers under the
+        // ground's lip rather than bare soil.
+        if past(site.steepness, 1.2, 1.7) && matches!(ground.filler, Fill::Block(block) if terrain.ground(block) == Ground::Soil) {
+            let bands = self.rock_bands(site);
+            ground = if bands.is_empty() { Layers { filler: Fill::Stones, depth: 0, ..ground } } else { Layers { filler: Fill::Beds, depth: 8, ..ground } };
+        }
         // A trail's worn tread, thinning out at its edges into trodden grass.
         if site.trail * 0.95 > d {
             ground.top = terrain.tread(&biome.tags, x, z);

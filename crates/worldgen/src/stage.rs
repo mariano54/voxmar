@@ -33,7 +33,7 @@ pub(crate) enum Stage {
     CaveBiomes,
     /// Filling the ground with stone, strata and deepslate.
     Fill,
-    /// Terrain shapes built in 3D: arches, leaning spires and the notches of sea cliffs.
+    /// The notches waves cut at the foot of sea cliffs.
     Shapes,
     Ores,
     Trees,

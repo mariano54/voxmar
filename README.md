@@ -259,10 +259,12 @@ no two worlds share a rarity table. Everything else is a continuous field:
 - **Terrain shapes** (`terrain.ron`, `worldgen/src/shapes.rs`) rise where the climate calls
   for them, on the same bands as the biome table and never by asking which biome won:
   wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
-  stepped canyons, karst towers on limestone, clusters of spires (some leaning, built in 3D),
-  volcanoes with craters where the world is volcanic, very rare natural arches, sea cliffs notched at the waterline with stacks offshore, and fjords
-  where valleys meet cold coasts. Rarer shapes take only some regions of their climate. Towers and
-  spires do not cool the climate on their tops.
+  stepped canyons, karst towers on limestone, clusters of spires, volcanoes with breached
+  craters on land where the world is volcanic, very rare natural arches (fins of rock with
+  windows under them), sea cliffs notched at the waterline with stacks offshore, and fjords
+  where valleys meet cold coasts. Every outline follows noise, so none is a circle; only
+  volcanoes stand around a centre. Rarer shapes take only some regions of their climate.
+  Towers and spires do not cool the climate on their tops.
 - **Temperature** falls towards the poles (latitude repeats along z every 9–11 km from pole
   to equator, `zones` in `climate.ron`, colder to the north, so hot, temperate and cold land
   always lie in that order, with anomalies kilometres wide) and with altitude.

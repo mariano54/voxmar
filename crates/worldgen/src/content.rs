@@ -1125,13 +1125,12 @@ pub enum ShapeKind {
     Canyons { depth: f32, width: f32 },
     /// Steep-sided towers with rounded tops, standing in the plain.
     Towers { height: f32, spacing: f32 },
-    /// Clusters of thin rock spikes, a share `lean` of them leaning and curving.
-    Spires { height: f32, spacing: f32, lean: f32 },
+    /// Clusters of thin rock spikes.
+    Spires { height: f32, spacing: f32 },
     /// Cones with a crater, as many and as tall as the world's volcanism allows.
     Volcanoes { height: f32, radius: f32 },
-    /// A lone massif rising far above the land around it, seen from far away.
-    Mountain { height: f32, radius: f32 },
-    /// Natural arches: ribbons of rock bridging open ground.
+    /// Natural arches: fins of rock, `span` apart along their lines, with windows under
+    /// them.
     Arches { span: f32, height: f32 },
     /// Cliffs where upland meets the sea, undercut at the waterline, with stacks offshore.
     SeaCliffs { height: f32 },
@@ -1146,10 +1145,10 @@ impl ShapeKind {
             ShapeKind::Hills { height, spacing }
             | ShapeKind::Dunes { height, spacing }
             | ShapeKind::Mesas { height, spacing }
-            | ShapeKind::Towers { height, spacing } => vec![height, spacing],
+            | ShapeKind::Towers { height, spacing }
+            | ShapeKind::Spires { height, spacing } => vec![height, spacing],
             ShapeKind::Canyons { depth, width } => vec![depth, width],
-            ShapeKind::Spires { height, spacing, lean } => vec![height, spacing, 1.0 - lean, lean + 1.0],
-            ShapeKind::Volcanoes { height, radius } | ShapeKind::Mountain { height, radius } => vec![height, radius],
+            ShapeKind::Volcanoes { height, radius } => vec![height, radius],
             ShapeKind::Arches { span, height } => vec![span, height],
             ShapeKind::SeaCliffs { height } => vec![height],
             ShapeKind::Fjords { depth } => vec![depth],
@@ -1754,7 +1753,7 @@ impl WorldContent {
                 return Err(ContentError(format!("{}: defined twice", at())));
             }
             if shape.kind.sizes().iter().any(|&size| !(size > 0.0 && size.is_finite())) {
-                return Err(ContentError(format!("{}: sizes must be positive (and `lean` below 1)", at())));
+                return Err(ContentError(format!("{}: sizes must be positive", at())));
             }
             for climate in &shape.climate {
                 if climate.aether.is_some() || climate.depth.is_some() || climate.height.is_some() || climate.provinces.is_some() {

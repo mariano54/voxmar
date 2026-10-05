@@ -438,7 +438,7 @@ impl UndergroundColumn<'_> {
             }
             // The stones beneath: the cave biome's own, or those of the column.
             let stones = biome.stones.as_ref().unwrap_or(column_stones);
-            let at = Site { height: y, slope: 0, ..*site };
+            let at = Site { height: y, slope: 0, steepness: 0.0, ..*site };
             let spot = Spot { site: &at, x: wx, z: wz, dither, mix: &mix, chance, bands: &[], sampled: Default::default() };
             let pos = IVec3::new(wx, y, wz);
             if floor && work.floor {
@@ -453,7 +453,7 @@ impl UndergroundColumn<'_> {
                         match layers.filler {
                             Fill::Block(block) => blocks.replace_stone(below, block),
                             Fill::Strata => blocks.replace_stone(below, biome.strata[(y - k).rem_euclid(biome.strata.len() as i32) as usize]),
-                            Fill::Stones | Fill::Rock => {}
+                            Fill::Stones | Fill::Rock | Fill::Beds => {}
                         }
                     }
                 }

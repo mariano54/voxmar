@@ -242,6 +242,9 @@ So: thorough on features, shallow on the foundation.
 
 ## 4. How ours is built
 
+As it stood on 4 October, before the steps of section 8; each step's *as built* note there
+says what has changed since.
+
 | Stage | File | What it does |
 | --- | --- | --- |
 | Geology | `geology.rs` | A 2D height per position: folded continental noise through an 11-knot curve; ranges along a folded noise with a strength noise, ridged peaks and crags; two-tier plateaus with escarpments; folded valley network; hills by a hilliness noise; height stretch and ceiling ease |
