@@ -295,8 +295,8 @@ no two worlds share a rarity table. Everything else is a continuous field:
   for them, on the same bands as the biome table and never by asking which biome won:
   wind-aligned dunes with steep lee faces, banded mesas stepping down to the valleys,
   stepped canyons, karst towers on limestone, clusters of spires, volcanoes with breached
-  craters gathered in volcanic fields on land, very rare natural arches (fins of rock with
-  windows under them), sea cliffs notched at the waterline with stacks offshore, and fjords
+  craters gathered in volcanic fields on land, very rare natural arches (short, thick spans of
+  rock with a window through the middle), sea cliffs notched at the waterline with stacks offshore, and fjords
   where valleys meet cold coasts. Every outline follows noise, so none is a circle; only
   volcanoes stand around a centre, their outlines warped into irregular lobes. Rarer shapes
   take only some regions of their climate.

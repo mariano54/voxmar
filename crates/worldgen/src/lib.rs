@@ -772,6 +772,10 @@ impl Generator for Overworld {
                 if !(SEA_LEVEL + 3..=SEA_LEVEL + 30).contains(&height) {
                     continue;
                 }
+                // Level ground first, from the neighbours' heights alone: cheaper than a site.
+                if [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dz)| self.height(x + dx, z + dz) != height) {
+                    continue;
+                }
                 let site = self.site(x, z);
                 let pleasant = (8.0..20.0).contains(&site.temperature) && (0.6..1.6).contains(&site.soil_moisture());
                 let open = site.slope == 0 && site.forest < 0.35 && site.river < 0.1;
@@ -2932,6 +2936,25 @@ mod tests {
         let sampler = world.sampler(IVec2::new(-300, 200), IVec2::new(100, 700));
         for (x, z) in [(-300, 200), (-1, 450), (37, 699), (100, 700)] {
             assert_eq!(sampler.site(x, z), world.site(x, z));
+        }
+    }
+
+    /// TEMPARCH
+    #[test]
+    #[ignore]
+    fn arch_windows() {
+        for seed in [1u64, 3, 7, 42] {
+            let world = Overworld::new(seed, registry());
+            let mut found: Vec<(f32, i32, i32)> = Vec::new();
+            for z in (-6000..6000).step_by(6) {
+                for x in (-6000..6000).step_by(6) {
+                    let land = world.geology.land(x, z);
+                    if land.form.window >= 6.0 && !found.iter().any(|f| (f.1 - x).abs() < 200 && (f.2 - z).abs() < 200) {
+                        found.push((land.form.window, x, z));
+                    }
+                }
+            }
+            println!("seed {seed}: {} arches with windows: {:?}", found.len(), &found[..found.len().min(6)]);
         }
     }
 

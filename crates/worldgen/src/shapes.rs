@@ -21,8 +21,8 @@
 //! Most shapes change the height of the land. Volcanoes, mesas, dunes, canyons, hills and
 //! sea cliffs are terrain, which the climate cools with; towers, spires and the fins of
 //! arches are features standing on it, which it does not, so a karst tower in a jungle grows
-//! no snow cap. An arch is a fin with a window under it (`Shaped::window`), which
-//! generation opens in the column.
+//! no snow cap. An arch is a short, thick span of rock with a window through it
+//! (`Shaped::window`), which generation opens in the column.
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
@@ -370,31 +370,34 @@ impl Shapes {
                 (-cut, 0.0, weight * walls)
             }
             ShapeKind::Arches { span, height } => {
-                // Fins of rock along the zero line of a noise, which come and go along it;
-                // where a second noise rises along a fin, a window opens under it (`window`).
-                // The noise's typical slope where it crosses zero (about 3 per unit) turns
-                // its value into blocks from the line.
+                // Short, thick spans of rock along the zero line of a noise, where a second
+                // noise rises in blobs about a span across: each a rock mass with a window
+                // through its middle (`window`), standing on legs at its ends. The line
+                // noise's typical slope where it crosses zero (about 3 per unit) turns its
+                // value into blocks from the line.
                 let scale = span * 5.0;
                 let d = n0.get_noise_2d(x / scale, z / scale).abs() / (3.0 / scale);
-                let wide = 2.0 + 1.5 * (0.5 + 0.5 * n2.get_noise_2d(x / 40.0, z / 40.0));
-                let fin = (1.0 - smoothstep(wide - 1.0, wide + 0.5, d)) * smoothstep(0.05, 0.25, n1.get_noise_2d(x / (span * 3.0), z / (span * 3.0)));
-                // A fin stands full height from halfway into its climate: a low fin reads
-                // as a wall, not an arch.
-                let rise = smoothstep(0.0, 0.5, weight) * height * fin;
+                let wide = 3.0 + 2.0 * (0.5 + 0.5 * n2.get_noise_2d(x / 40.0, z / 40.0));
+                let mass = arch_mass(n1, span, x, z);
+                let fin = (1.0 - smoothstep(wide - 1.0, wide + 0.5, d)) * smoothstep(ARCH_MASS, ARCH_MASS + 0.08, mass);
+                // Full height from halfway into its climate (a low span reads as a wall),
+                // and highest over its window.
+                let crown = 0.8 + 0.2 * smoothstep(ARCH_MASS, ARCH_CORE + 0.1, mass);
+                let rise = smoothstep(0.0, 0.5, weight) * height * fin * crown;
                 (0.0, rise, weight * fin)
             }
         }
     }
 
-    /// How high a window opens under a fin of an arch at (x, z), from the ground, given
-    /// the fin's height there: all of it but the top four blocks, which carry it, where a
-    /// noise rises along the fin, the opening rounding over towards its ends like an arch.
+    /// How high a window opens under an arch at (x, z), from the ground, given the rock's
+    /// height there: in the middle of the span, all of it but the top four blocks, which
+    /// carry it, the opening rounding down towards the legs at the span's ends.
     fn window(&self, shape: &Shape, x: f32, z: f32, fin: f32) -> f32 {
         let ShapeKind::Arches { span, .. } = shape.kind else { return 0.0 };
         if fin < 9.0 {
             return 0.0;
         }
-        let open = smoothstep(0.0, 0.4, shape.noises[2].get_noise_2d(x / span + 91.0, z / span));
+        let open = smoothstep(ARCH_CORE, ARCH_CORE + 0.12, arch_mass(&shape.noises[1], span, x, z));
         (open.sqrt() * (fin - 4.0)).floor()
     }
 
@@ -533,6 +536,17 @@ impl Shape {
         let fade = (share / 2.0).min(0.03);
         smoothstep(1.0 - share, 1.0 - share + fade, u)
     }
+}
+
+/// Where an arch's rock stands along its line (its mass noise past `ARCH_MASS`), and
+/// where its window opens (past `ARCH_CORE`, well inside the rock, leaving legs at both
+/// ends).
+const ARCH_MASS: f32 = 0.22;
+const ARCH_CORE: f32 = 0.36;
+
+/// The noise whose blobs are an arch's spans, about `span` blocks across.
+fn arch_mass(noise: &FastNoiseLite, span: f32, x: f32, z: f32) -> f32 {
+    noise.get_noise_2d(x / (span * 1.6), z / (span * 1.6))
 }
 
 /// What rolling hills of the given height make of a position where their weight is
