@@ -125,7 +125,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
-            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack · 1-9: swap · Q: throw";
+            let help = "Right-click: half · Drag: spread\nShift-click: hotbar ↔ pack\n1-9: swap · Q: throw";
             let help = (text(font, help, BODY, MUTED), TextLayout::justify(Justify::Center));
             card.spawn((Node { margin: UiRect::top(Val::Px(5.0 * PX)), ..default() }, help));
             let skills = (text(font, "", BODY, SOFT), TextLayout::justify(Justify::Center), SkillsLine);

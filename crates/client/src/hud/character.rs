@@ -22,7 +22,7 @@ pub struct CharacterPlugin;
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Guide>()
-            .add_systems(PostStartup, spawn)
+            .add_systems(PostStartup, (spawn, open_start_guide))
             .add_systems(
                 Update,
                 ((show, pick_skill, draw_skills, draw_guide).chain().after(ScreenSystems), draw_condition).run_if(in_state(Screen::InGame)),
@@ -34,6 +34,17 @@ impl Plugin for CharacterPlugin {
 /// The skill whose guide is open, if any.
 #[derive(Resource, Default)]
 struct Guide(Option<SkillId>);
+
+/// A skill guide to open at startup, by the skill's name (`--guide`, for captures).
+#[derive(Resource)]
+pub struct StartGuide(pub String);
+
+fn open_start_guide(start: Option<Res<StartGuide>>, launch: Res<Launch>, mut guide: ResMut<Guide>) {
+    let skills = &launch.content.skills;
+    if let Some(id) = start.and_then(|start| skills.ids().find(|&id| skills.get(id).name.ends_with(&start.0) || skills.get(id).title.eq_ignore_ascii_case(&start.0))) {
+        guide.0 = Some(id);
+    }
+}
 
 #[derive(Component)]
 struct CharacterScreen;
@@ -237,7 +248,8 @@ fn draw_guide(
             page.spawn(row).with_children(|row| {
                 row.spawn(text(font, if reached { "◆" } else { "◇" }, BODY, if reached { ACCENT } else { MUTED }));
                 row.spawn((Node { width: Val::Px(22.0 * PX), flex_shrink: 0.0, ..default() }, text(font, format!("{at}"), BODY, if reached { GOLD } else { MUTED })));
-                row.spawn((Node { min_width: Val::ZERO, ..default() }, text(font, line, BODY, if reached { TEXT } else { MUTED })));
+                let fill = Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() };
+                row.spawn((fill, text(font, line, BODY, if reached { TEXT } else { MUTED })));
             });
         }
     });
@@ -268,17 +280,20 @@ struct HungerMeter;
 #[derive(Component)]
 struct FeltLine;
 
+/// Room for a meter's label: six letters of the monospace fonts.
+const LABEL: f32 = 38.0 * PX;
+
 /// A condition panel, filling its parent's width.
 pub fn spawn_condition(parent: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     let column = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), width: Val::Percent(100.0), ..default() };
     parent.spawn((Condition, column)).with_children(|panel| {
         let row = || Node { column_gap: Val::Px(3.0 * PX), align_items: AlignItems::Center, ..default() };
         panel.spawn(row()).with_children(|row| {
-            row.spawn((Node { width: Val::Px(28.0 * PX), flex_shrink: 0.0, ..default() }, text(font, "Health", BODY, MUTED)));
+            row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, text(font, "Health", BODY, MUTED)));
             spawn_meter(row, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
         });
         panel.spawn(row()).with_children(|row| {
-            row.spawn((Node { width: Val::Px(28.0 * PX), flex_shrink: 0.0, ..default() }, text(font, "Hunger", BODY, MUTED)));
+            row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, text(font, "Hunger", BODY, MUTED)));
             spawn_meter(row, font, Piece::BarHunger, Val::Percent(100.0), HungerMeter);
         });
         panel.spawn((FeltLine, text(font, "", BODY, SOFT)));

@@ -8,7 +8,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen),
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
@@ -93,6 +93,9 @@ struct Options {
     menu: bool,
     inventory: bool,
     character: bool,
+    /// `--tab NAME`: the settings tab to open; `--guide SKILL`: the skill guide to open.
+    tab: Option<String>,
+    guide: Option<String>,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
     /// `--press left|right`: hold a mouse button at the start of the clip.
@@ -126,6 +129,8 @@ fn parse_options() -> Result<Options, String> {
         menu: false,
         inventory: false,
         character: false,
+        tab: None,
+        guide: None,
         flicker: None,
         clip: None,
         press: None,
@@ -161,6 +166,8 @@ fn parse_options() -> Result<Options, String> {
             "--menu" => options.menu = true,
             "--inventory" => options.inventory = true,
             "--character" => options.character = true,
+            "--tab" => options.tab = Some(value()?),
+            "--guide" => options.guide = Some(value()?),
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
@@ -310,6 +317,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Screen::Title
     };
     app.insert_resource(FirstScreen(first)).insert_resource(launch);
+    if let Some(tab) = options.tab {
+        app.insert_resource(settings::StartTab(tab));
+    }
+    if let Some(skill) = options.guide {
+        app.insert_resource(hud::character::StartGuide(skill));
+    }
     // Slow frames of real play are recorded for later (see slow_frames.rs); captures and
     // gate runs, which run on a busy machine by design, are not.
     // The renderer's part of a slow frame's record is always there to be set.
