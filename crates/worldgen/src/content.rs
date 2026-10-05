@@ -1373,6 +1373,9 @@ pub struct WorldContent {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TrailsDef {
+    /// Where trails are laid: near settlements (the default), or everywhere.
+    #[serde(default)]
+    pub laid: TrailsWhere,
     /// The first rule whose tags the biome has picks the tread.
     pub tread: Vec<TreadDef>,
     /// What grass at the edge of the tread is worn to.
@@ -1384,6 +1387,16 @@ pub struct TrailsDef {
     /// The stones of cairns and of waymarkers.
     pub cairn: Vec<Select>,
     pub waymarker: Vec<Select>,
+}
+
+/// Where hiking trails are laid.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum TrailsWhere {
+    /// Over all the land, between its summits, lakes, waterfalls and trailheads.
+    Everywhere,
+    /// Only within reach of a settlement. There are none yet, so no trails at all.
+    #[default]
+    NearSettlements,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -1514,6 +1527,7 @@ impl WorldContent {
                     let tread = def.tread.iter().map(|t| TreadDef { blocks: t.blocks.iter().map(|s| qualify_select(&file.package, s)).collect(), ..t.clone() }).collect();
                     let stones = |s: &[Select]| s.iter().map(|s| qualify_select(&file.package, s)).collect();
                     trails = Some(TrailsDef {
+                        laid: def.laid,
                         tread,
                         edge: q(&def.edge),
                         bridge: q(&def.bridge),

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
+use crate::movement::Tuning;
 use crate::weather::WeatherTable;
 
 #[derive(Clone)]
@@ -21,6 +22,8 @@ pub struct Content {
     pub actions: Arc<ActionRegistry>,
     pub commands: Arc<CommandRegistry>,
     pub weather: Arc<WeatherTable>,
+    /// How players move.
+    pub movement: Arc<Tuning>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
 }
@@ -51,6 +54,7 @@ impl Content {
         let mut actions = ActionRegistry::default();
         let mut commands = CommandRegistry::default();
         let mut weather = WeatherTable::default();
+        let mut movement = None;
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -69,17 +73,26 @@ impl Content {
                     "actions.ron" => actions.extend(package, &source)?,
                     "commands.ron" => commands.extend(package, &source)?,
                     "weather.ron" => weather.extend(package, &source)?,
+                    "movement.ron" => {
+                        if movement.replace(Tuning::from_ron(&source)?).is_some() {
+                            return Err(RegistryError(format!("{package}/movement.ron: another package already sets movement")));
+                        }
+                        // Kept with the other files too, so the fingerprint covers it.
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     _ => files.push(ContentFile { package: package.clone(), name, source }),
                 }
             }
         }
         let blocks = BlockRegistry::expand(blocks)?;
         weather.validate()?;
+        let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?;
         Ok(Self {
             blocks: Arc::new(BlockRegistry::new(blocks)?),
             actions: Arc::new(actions),
             commands: Arc::new(commands),
             weather: Arc::new(weather),
+            movement: Arc::new(movement),
             files: Arc::new(files),
         })
     }
