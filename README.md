@@ -39,10 +39,14 @@ the last few servers are remembered) and Settings. A new world takes a name, an 
 (a number, or any text, which is hashed; empty means random) and a game mode: Creative allows
 flight, Survival does not. Either way you are the world's admin, who can run commands.
 
-Controls: WASD move, Space jump, Ctrl sprint, Shift descend, F toggle flight, left mouse break
+Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
 inventory, T chat, / command, F3 debug overlay, Esc menu, R respawn, C (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
+Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
+into a wall, and widens the view a little; sprint-jumping is fastest. Swimming up against a
+bank and holding jump hops you out onto it, up to a block above the water. The speeds, jump
+and gravity are content (`content/core/movement.ron`), which client and server both read.
 
 The inventory works as Minecraft's: click picks up, puts down, merges or swaps a stack;
 right click (or Control-click) takes half or puts down one; dragging a held stack spreads it
@@ -98,10 +102,11 @@ line explaining the setting under the pointer; a choice steps forward on click a
 right click, and the wheel moves a slider. The settings: render distance, far detail (Balanced, Fast or Full: how soon
 distant chunks merge two or four columns into one, which draws far terrain much faster),
 resolution (75%, 50% or Full: how many pixels the world is drawn at before it is stretched over
-the window; menus and text stay sharp), field of view, shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
+the window; menus and text stay sharp), field of view, FOV effects (the view widening while
+sprinting), shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
 broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
-HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the zoom key
+HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
 smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
 to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/settings.ron` in
@@ -208,7 +213,8 @@ their own blocks and drop the plant, as many as their size. Blocks carry tags (`
 How the design primitives map to the code today:
 
 - **Definition**: blocks (`content/base/blocks.ron`), actions (`content/core/actions.ron`),
-  console commands (`content/core/commands.ron`) and kinds of weather (`content/base/weather.ron`),
+  console commands (`content/core/commands.ron`), kinds of weather (`content/base/weather.ron`)
+  and how players move (`content/core/movement.ron`),
   namespaced per package (`base:stone`, `core:mine`; `core:air` is built in).
 - **Action**: the only way discrete changes happen. Every action goes through one lifecycle on
   the server (propose, validate, schedule one completion, re-validate, commit or cancel) and

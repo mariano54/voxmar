@@ -89,6 +89,12 @@ pub struct Settings {
     pub zoom_key: Key,
     /// Key that opens the console to chat (`/` always opens it for a command).
     pub chat_key: Key,
+    /// Key that starts a sprint.
+    pub sprint_key: Key,
+    /// Whether tapping forward twice quickly starts a sprint too.
+    pub double_tap_sprint: bool,
+    /// Whether the view widens a little while sprinting.
+    pub fov_effects: bool,
     /// Magnification when zooming in, in percent.
     pub zoom: i32,
     /// Whether the view follows the mouse smoothly while zoomed.
@@ -278,6 +284,9 @@ impl Default for Settings {
             anti_aliasing: AntiAliasing::default(),
             zoom_key: Key(KeyCode::KeyC),
             chat_key: Key(KeyCode::KeyT),
+            sprint_key: Key(KeyCode::ControlLeft),
+            double_tap_sprint: true,
+            fov_effects: true,
             zoom: 400,
             cinematic_zoom: true,
             zoom_in_survival: false,
@@ -456,6 +465,8 @@ enum Toggle {
     DebugOverlay,
     CinematicZoom,
     ZoomInSurvival,
+    DoubleTapSprint,
+    FovEffects,
 }
 
 impl Toggle {
@@ -466,6 +477,8 @@ impl Toggle {
             Toggle::DebugOverlay => "Debug overlay",
             Toggle::CinematicZoom => "Cinematic zoom",
             Toggle::ZoomInSurvival => "Zoom in survival",
+            Toggle::DoubleTapSprint => "Double-tap sprint",
+            Toggle::FovEffects => "FOV effects",
         }
     }
 
@@ -476,6 +489,8 @@ impl Toggle {
             Toggle::DebugOverlay => settings.debug_overlay,
             Toggle::CinematicZoom => settings.cinematic_zoom,
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
+            Toggle::DoubleTapSprint => settings.double_tap_sprint,
+            Toggle::FovEffects => settings.fov_effects,
         }
     }
 
@@ -486,6 +501,8 @@ impl Toggle {
             Toggle::DebugOverlay => &mut settings.debug_overlay,
             Toggle::CinematicZoom => &mut settings.cinematic_zoom,
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
+            Toggle::DoubleTapSprint => &mut settings.double_tap_sprint,
+            Toggle::FovEffects => &mut settings.fov_effects,
         } = on;
     }
 }
@@ -573,6 +590,7 @@ fn cycle<T: Copy + PartialEq>(all: &[T], current: T, forward: bool) -> T {
 /// A key the player can rebind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Binding {
+    Sprint,
     Zoom,
     Chat,
 }
@@ -580,6 +598,7 @@ enum Binding {
 impl Binding {
     fn label(self) -> &'static str {
         match self {
+            Binding::Sprint => "Sprint key",
             Binding::Zoom => "Zoom key",
             Binding::Chat => "Chat key",
         }
@@ -587,6 +606,7 @@ impl Binding {
 
     fn get(self, settings: &Settings) -> Key {
         match self {
+            Binding::Sprint => settings.sprint_key,
             Binding::Zoom => settings.zoom_key,
             Binding::Chat => settings.chat_key,
         }
@@ -594,6 +614,7 @@ impl Binding {
 
     fn set(self, settings: &mut Settings, key: Key) {
         *match self {
+            Binding::Sprint => &mut settings.sprint_key,
             Binding::Zoom => &mut settings.zoom_key,
             Binding::Chat => &mut settings.chat_key,
         } = key;
@@ -635,6 +656,8 @@ impl Control {
             Control::Switch(Toggle::DebugOverlay) => "Frame rate, position and what you look at, top left. F3 also toggles it.",
             Control::Switch(Toggle::CinematicZoom) => "The view follows the mouse smoothly while zoomed.",
             Control::Switch(Toggle::ZoomInSurvival) => "Lets the zoom key work in survival, not only in creative.",
+            Control::Switch(Toggle::DoubleTapSprint) => "Tapping forward twice quickly starts a sprint, as the sprint key does.",
+            Control::Switch(Toggle::FovEffects) => "The view widens a little while you sprint.",
             Control::Choice(Choice::FarDetail) => "How soon far chunks merge blocks. Fast suits slower machines and huge distances.",
             Control::Choice(Choice::Resolution) => "How many pixels the world is drawn at; menus and text stay sharp. Lower is faster.",
             Control::Choice(Choice::AntiAliasing) => "How edges are smoothed. MSAA also smooths leaves and plants.",
@@ -645,6 +668,7 @@ impl Control {
             Control::Choice(Choice::Particles) => "How many particles effects such as breaking blocks show.",
             Control::Key(Binding::Chat) => "Opens the chat line. / always opens it for a command.",
             Control::Key(Binding::Zoom) => "Hold to zoom in.",
+            Control::Key(Binding::Sprint) => "Starts a sprint, which lasts while you keep moving forward.",
         }
     }
 }
@@ -659,6 +683,7 @@ const SECTIONS: [(&str, &[Control]); 5] = [
             Control::Choice(Choice::FarDetail),
             Control::Choice(Choice::Resolution),
             Control::Slider(Slider::Fov),
+            Control::Switch(Toggle::FovEffects),
             Control::Choice(Choice::AntiAliasing),
             Control::Switch(Toggle::Vsync),
             Control::Choice(Choice::Textures),
@@ -679,6 +704,8 @@ const SECTIONS: [(&str, &[Control]); 5] = [
         "Controls",
         &[
             Control::Slider(Slider::Sensitivity),
+            Control::Key(Binding::Sprint),
+            Control::Switch(Toggle::DoubleTapSprint),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Zoom),
             Control::Slider(Slider::Zoom),
