@@ -151,6 +151,8 @@ enum Step {
 #[derive(Resource)]
 struct Gate {
     dir: PathBuf,
+    /// When the run began, to tell whether files changed during it.
+    started_at: Option<std::time::SystemTime>,
     target: Handle<Image>,
     step: Step,
     /// When the step started (seconds of game time), and frames since.
@@ -186,6 +188,7 @@ impl Gate {
     fn new(dir: PathBuf) -> Self {
         Self {
             dir,
+            started_at: Some(std::time::SystemTime::now()),
             target: Handle::default(),
             step: Step::Load,
             since: 0.0,
@@ -564,6 +567,17 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                     Err(format!("still at {screen:?} a second after leaving"))
                 };
                 gate.check("leave", result);
+                // The session changed settings and closed the menu, which saves them in a
+                // player's game; a gate run must leave the player's file as it found it.
+                let modified = crate::settings::file().and_then(|file| std::fs::metadata(file).and_then(|m| m.modified()).ok());
+                let untouched = if !crate::settings::file_untouched() {
+                    Err("settings would be saved to the player's file".to_owned())
+                } else if modified.is_some_and(|at| gate.started_at.is_some_and(|start| at > start)) {
+                    Err("the settings file changed during the run".to_owned())
+                } else {
+                    Ok("the player's settings file was left alone".to_owned())
+                };
+                gate.check("settings: untouched", untouched);
                 gate.next(Step::Done, now);
             }
         }

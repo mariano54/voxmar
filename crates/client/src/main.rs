@@ -218,6 +218,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.
     let reproducible = headless && std::env::var_os("VOXMAR_CONFIG").is_none();
+    // Captures and gate runs change settings as they go (the gate's short view distance,
+    // silent ambience); none of it may reach the player's settings file.
+    if headless {
+        settings::leave_file_untouched();
+    }
     let mut settings = if reproducible { Settings::default() } else { Settings::load() };
     settings.view_distance = options.view_distance.unwrap_or(settings.view_distance);
     settings.fov = options.fov.unwrap_or(settings.fov);
