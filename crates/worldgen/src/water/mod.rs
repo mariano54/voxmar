@@ -680,7 +680,9 @@ fn crag_tops(geology: &Geology, samples: &mut [GeoSample], at: impl Fn(usize) ->
 ///   only, which pours nothing over the step;
 /// - water two or more blocks above a neighbour's runs over a sill of ground just above
 ///   that neighbour's water, so the curtain a fall pours (which the terrain stamps) has no
-///   upper water beside its foot, where water lying on more water would spread.
+///   upper water beside its foot, where water lying on more water would spread;
+/// - over a drop of three or more, the water at the lip is at least a block deep under
+///   its top eighth, so the fall has a full block of water beside it to pour from.
 fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
     let Some((_, top)) = sample.wet() else {
         // The water beside it is the water it is the bank of, which trails cut down to.
@@ -692,14 +694,24 @@ fn settle(mut sample: GeoSample, neighbours: &[GeoSample; 4]) -> GeoSample {
         }
         return sample;
     };
+    let (mut sill, mut lip) = (i32::MIN, false);
     for n in neighbours {
         let Some((_, below)) = n.wet() else { continue };
         if below < top {
             sample.top = 1;
         }
-        if below <= top - 2 && sample.cavity.is_none() {
-            sample.height = sample.height.max(below + 1);
+        if below <= top - 2 {
+            sill = sill.max(below + 1);
         }
+        lip |= below <= top - 3;
+    }
+    if sample.cavity.is_none() {
+        // At the lip of a fall, a full block of water lies under the eighth, so the fall
+        // has water to pour.
+        if lip {
+            sample.height = sample.height.min(top - 2);
+        }
+        sample.height = sample.height.max(sill);
     }
     sample
 }
