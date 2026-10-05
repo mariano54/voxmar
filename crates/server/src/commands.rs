@@ -8,6 +8,7 @@
 use voxmar_engine::command::{self, CommandDef, Lookup, Permission, Run};
 use voxmar_engine::weather::{INTENSITIES, parse_intensity};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
+use voxmar_engine::inventory::{ItemStack, MAX_STACK};
 use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
 use voxmar_protocol::{ChatKind, MAX_LINE, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
@@ -158,6 +159,7 @@ impl Server {
             Run::SetBlock => self.set_block_command(id, args),
             Run::Fill => self.fill(id, args),
             Run::Give => self.give(id, args),
+            Run::Drop => self.drop_command(id, args),
             Run::Biome => Ok(self.biome(id)),
             Run::Locate => self.locate(id, args),
         };
@@ -508,9 +510,43 @@ impl Server {
             }
         }
         player.changed(voxmar_engine::traits::INVENTORY);
-        let given = count - left;
+        // What does not fit drops at the player's feet, as Minecraft's /give does.
+        let feet = player.position;
+        let mut spilled = left;
+        while spilled > 0 {
+            let count = spilled.min(MAX_STACK as u16) as u8;
+            let body = voxmar_engine::dropped::Loose::new(feet, Vec3::ZERO);
+            self.items.spawn(ItemStack { item: block, count }, body, 0.0);
+            spilled -= count as u16;
+        }
         let name = &self.content.blocks.def(block).name;
-        if left > 0 { Ok(format!("Gave {given} {name}; the rest did not fit.")) } else { Ok(format!("Gave {given} {name}.")) }
+        if left > 0 { Ok(format!("Gave {count} {name}; {left} did not fit and dropped at your feet.")) } else { Ok(format!("Gave {count} {name}.")) }
+    }
+
+    fn drop_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let (name, rest) = args.split_first().ok_or("Drop what?")?;
+        let (count, at) = match rest {
+            [] => ("1", None),
+            [count] => (count.as_str(), None),
+            [count, x, y, z] => (count.as_str(), Some([x, y, z])),
+            _ => return Err("Give a count, then x y z if not at your feet.".into()),
+        };
+        let count = count.parse::<u8>().ok().filter(|c| (1..=MAX_STACK).contains(c)).ok_or_else(|| format!("`{count}` is not a count from 1 to {MAX_STACK}."))?;
+        let block = self.find_block(name)?;
+        if block.is_air() {
+            return Err("Air cannot be dropped.".into());
+        }
+        let position = match at {
+            Some(words) => {
+                let cell = self.block_position(source, words)?;
+                self.load_area(cell, cell);
+                cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
+            }
+            None => self.position_of(source),
+        };
+        let body = voxmar_engine::dropped::Loose::new(position, Vec3::ZERO);
+        self.items.spawn(ItemStack { item: block, count }, body, voxmar_engine::dropped::PICKUP_DELAY);
+        Ok(format!("Dropped {count} {} at {:.1} {:.1} {:.1}.", self.content.blocks.def(block).name, position.x, position.y, position.z))
     }
 
     /// Loads the columns under a box, so commands can build anywhere, not only where

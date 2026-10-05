@@ -405,10 +405,19 @@ copied.
   shift-click between hotbar and pack, number keys to swap), item names coloured by rarity
   in tooltips and above the hotbar, middle-click to pick a block, and the blurred world
   behind menus (1.20.5). Our font and interface art are our own drawings, not Minecraft's.
+  How players move: sprinting (sprint key or a double tap of forward, kept while moving
+  forward, a jump boost and a small widening of the view), jumping from shallow water even
+  with nothing underfoot so a bank a block above the water can be reached, with its
+  ten-tick jump delay. Dropped items: how they pop from a broken block, fall, bounce,
+  slide and float, their pickup delays, reach, merging and five-minute life, the copies a
+  big stack shows, the spin and bob, flat items drawn extruded a texel thick, Q and Ctrl+Q
+  to throw, and the pickup pop (`entity.item.pickup`, read from the player's install).
 - Where: `crates/engine/src/fluid.rs`, `crates/client/src/breaking.rs`,
   `render/cracks.rs`, `render/lighting.wgsl`, `music.rs`, `sfx/minecraft.rs`,
   `textures.rs`, `crates/worldgen/src/caves.rs`, `crates/engine/src/inventory.rs`,
-  `crates/client/src/hud/inventory.rs`, `hud.rs`, `interact.rs` and `ui/blur.rs`.
+  `crates/client/src/hud/inventory.rs`, `hud.rs`, `interact.rs`, `ui/blur.rs`,
+  `crates/engine/src/movement.rs`, `crates/engine/src/dropped.rs`,
+  `crates/server/src/items.rs`, `crates/client/src/drops.rs` and `render/items.rs`.
 - Planned in [docs/terrain-foundation.md](docs/terrain-foundation.md): the 1.18 noise
   router as the foundation of our terrain. Continentalness, erosion and peaks-and-valleys
   noises define a point at every position; nested cubic Hermite splines turn it into the

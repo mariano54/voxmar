@@ -61,9 +61,16 @@
         (
             name: "give",
             usage: "<block> [count]",
-            help: "Gives you blocks, 64 unless you say: /give water to pour some.",
+            help: "Gives you blocks, 64 unless you say: /give water to pour some. What does not fit drops at your feet.",
             permission: Admin,
             run: Give,
+        ),
+        (
+            name: "drop",
+            usage: "<item> [count] [x y z]",
+            help: "Drops a stack of an item into the world (up to 64 at a time) at a block (~ is where you are), or at your feet.",
+            permission: Admin,
+            run: Drop,
         ),
         (name: "biome", help: "Names the biome you stand in, and its climate.", run: Biome),
         (

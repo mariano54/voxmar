@@ -98,10 +98,12 @@ pub enum Cue {
     Break,
     /// One tap while mining.
     Hit,
+    /// A dropped item picked up: the same pop whatever it is made of.
+    Pickup,
 }
 
 impl Cue {
-    const ALL: [Cue; 5] = [Cue::Step, Cue::Land, Cue::Place, Cue::Break, Cue::Hit];
+    const ALL: [Cue; 6] = [Cue::Step, Cue::Land, Cue::Place, Cue::Break, Cue::Hit, Cue::Pickup];
 
     fn gain(self) -> f32 {
         match self {
@@ -110,6 +112,7 @@ impl Cue {
             Cue::Place => 0.55,
             Cue::Break => 0.6,
             Cue::Hit => 0.22,
+            Cue::Pickup => 0.3,
         }
     }
 }
@@ -174,6 +177,10 @@ impl Sfx {
 /// The Minecraft sound event a cue plays for a material, with the volume and pitch
 /// Minecraft gives that use of a block's sounds.
 fn minecraft_event(sound: Sound, cue: Cue) -> Option<(String, f32, f32)> {
+    // Minecraft pops at 0.2 and about twice the clip's pitch, whatever was picked up.
+    if cue == Cue::Pickup {
+        return Some(("entity.item.pickup".to_owned(), 0.2, 2.0));
+    }
     let kind = match sound {
         Sound::Stone => "stone",
         Sound::Wood => "wood",
@@ -200,6 +207,7 @@ fn minecraft_event(sound: Sound, cue: Cue) -> Option<(String, f32, f32)> {
         Cue::Place => ("place", 1.0, 0.8),
         Cue::Break => ("break", 1.0, 0.8),
         Cue::Hit => ("hit", 0.25, 0.5),
+        Cue::Pickup => unreachable!("answered above"),
     };
     Some((format!("block.{kind}.{event}"), volume, pitch))
 }
@@ -605,6 +613,9 @@ fn recipe(sound: Sound) -> Recipe {
 
 /// Synthesizes one variant of a cue as mono samples in -1..1.
 fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
+    if cue == Cue::Pickup {
+        return pop(seed);
+    }
     if sound == Sound::Water {
         return water(cue, seed);
     }
@@ -615,6 +626,7 @@ fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
         Cue::Place => (1.1, 0.9, 1.2),
         Cue::Break => (1.8, 0.82, 1.6),
         Cue::Hit => (0.6, 1.1, 0.7),
+        Cue::Pickup => unreachable!("rendered by `pop`"),
     };
     let mut noise = Noise(seed);
     let length = recipe.length * length_scale * (0.9 + 0.2 * noise.unit());
@@ -677,6 +689,27 @@ fn render(sound: Sound, cue: Cue, seed: u64) -> Vec<f32> {
         let tail = ((len - i) as f32 / fade as f32).min(1.0);
         *sample *= scale * tail;
     }
+    samples
+}
+
+/// Picking an item up: a short, soft pop whose pitch springs upward, like a bubble
+/// bursting, a little different each time.
+fn pop(seed: u64) -> Vec<f32> {
+    let mut noise = Noise(seed);
+    let base = dsp::between(&mut noise, 520.0, 760.0);
+    let length = 0.09;
+    let count = (length * RATE as f32) as usize;
+    let mut phase = 0.0f32;
+    let mut samples: Vec<f32> = (0..count)
+        .map(|i| {
+            let t = i as f32 / RATE as f32;
+            let frequency = base * (1.0 + 1.3 * (1.0 - (-t * 55.0).exp()));
+            phase += TAU * frequency / RATE as f32;
+            let envelope = (t / 0.002).min(1.0) * (-t * 48.0).exp();
+            (phase.sin() + 0.25 * (2.0 * phase).sin()) * envelope
+        })
+        .collect();
+    dsp::normalise(&mut samples, 0.16, 0.9);
     samples
 }
 

@@ -7,7 +7,7 @@
             name: "mine",
             duration: TargetHardness,
             requires: [Alive, InReach, Breakable],
-            effects: [GiveDrop, ClearTarget],
+            effects: [DropLoot, ClearTarget],
         ),
         (
             name: "place",
@@ -20,6 +20,9 @@
         (name: "transfer", duration: Instant, requires: [Alive], effects: [MoveItems]),
         (name: "quick_move", duration: Instant, requires: [Alive], effects: [QuickMove]),
         (name: "stow", duration: Instant, effects: [StowCursor]),
+        // Throwing items from the hand (Q, or Ctrl+Q for the whole stack), or the stack on
+        // the pointer by clicking outside the inventory.
+        (name: "drop", duration: Instant, requires: [Alive], effects: [Throw]),
         (name: "respawn", duration: Instant, requires: [Dead], effects: [Respawn]),
     ],
 )

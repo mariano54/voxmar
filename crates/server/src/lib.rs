@@ -4,6 +4,7 @@
 mod actions;
 mod commands;
 mod fluids;
+mod items;
 mod player;
 mod process;
 pub mod save;
@@ -220,6 +221,8 @@ pub(crate) struct Server {
     /// The same generator, for what commands ask about the land.
     overworld: Arc<Overworld>,
     executor: Executor,
+    /// Dropped items lying about.
+    items: items::Items,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -290,6 +293,11 @@ impl Server {
         let spawn = find_ground(&world, &content.blocks, spawn_block);
         let (generated_tx, generated_rx) = unbounded();
         tracing::info!("world seed {:#x}, spawn at {spawn}", meta.seed);
+        let saved_items = save.as_ref().map_or(Ok(Vec::new()), |save| save.read_items()).unwrap_or_else(|e| {
+            tracing::error!("could not load dropped items: {e}");
+            Vec::new()
+        });
+        let items = items::Items::restore(saved_items, |name| content.blocks.id(name));
         Self {
             config,
             tick,
@@ -301,6 +309,7 @@ impl Server {
             generator,
             overworld,
             executor: Executor::default(),
+            items,
             processes,
             temperature,
             wear_rules,
@@ -395,6 +404,7 @@ impl Server {
         self.day += self.day_speed as f64;
         self.complete_actions();
         self.run_processes();
+        self.tick_items();
         self.flow();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
@@ -430,6 +440,10 @@ impl Server {
         });
         for player in self.players.values().filter(|p| p.joined) {
             self.save_player(player);
+        }
+        let blocks = &self.content.blocks;
+        if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
+            tracing::error!("could not save dropped items: {e}");
         }
         self.meta.time = self.tick;
         self.meta.day = Some(self.day as u64);

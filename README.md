@@ -52,8 +52,17 @@ The inventory works as Minecraft's: click picks up, puts down, merges or swaps a
 right click (or Control-click) takes half or puts down one; dragging a held stack spreads it
 evenly over the slots crossed (right button: one each); a double click gathers the item onto
 the pointer; Shift-click moves a stack between the hotbar and the pack (Shift double click:
-every stack of it); 1-9 over a slot swaps it with that hotbar slot. Hovering an item names it,
-coloured by rarity, with what it is good for. Esc or E closes it and puts back what you hold.
+every stack of it); 1-9 over a slot swaps it with that hotbar slot; Q over a slot throws one
+item (Ctrl+Q the stack), and clicking outside the panel throws the held stack (right click:
+one item). Hovering an item names it, coloured by rarity, with what it is good for. Esc or E
+closes it and puts back what you hold.
+
+Broken blocks drop items, as in Minecraft: what a block gives pops out as a tiny copy of it
+(a plant as a flat sprite with thickness) that turns and bobs where it lands, floats in
+water, merges with nearby stacks of the same thing, and lasts five minutes. After half a
+second, walking near draws it in with a pop. Q throws one item from the hand, Ctrl+Q the
+whole stack; thrown items wait two seconds before they can be picked up again. Dropped items
+are kept with the world (`items.ron`).
 
 The interface (menus, HUD, inventory) has one look: a pixel font drawn in
 `assets/ui/font.txt` and pixel-art pieces that are `ui/*` textures of the default pack
@@ -86,7 +95,9 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
 - `/setblock X Y Z BLOCK` puts a block somewhere (`~` again means where you are), and
   `/fill X1 Y1 Z1 X2 Y2 Z2 BLOCK` fills a box (at most 32768 blocks and 128 across; `air`
   empties it). Both load the columns they touch first. `/give BLOCK [COUNT]` hands you blocks
-  (64 unless you say), so `/give water` lets you pour water. Block names may leave out the
+  (64 unless you say; what does not fit drops at your feet), so `/give water` lets you pour
+  water. `/drop ITEM [COUNT] [X Y Z]` drops a stack into the world, at your feet unless you
+  say where. Block names may leave out the
   package (`water` for `base:water`).
 - `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
   (within 4000 blocks unless you say).

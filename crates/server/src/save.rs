@@ -7,6 +7,7 @@
 //!   together with the names of the blocks it uses, so saves survive content changes that
 //!   renumber blocks. Untouched columns are not stored: generation recreates them exactly.
 //! - `players/<name>.ron`: each player's position, game mode, health and inventory.
+//! - `items.ron`: the dropped items lying about, by item name.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
 //! never leaves a half-written file behind.
@@ -31,6 +32,7 @@ use voxmar_engine::world::{COLUMN_AREA, Column};
 use voxmar_worldgen::Overworld;
 
 const META_FILE: &str = "world.ron";
+const ITEMS_FILE: &str = "items.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
 const COLUMN_MAGIC: &[u8; 4] = b"vxc4";
@@ -280,6 +282,33 @@ impl WorldSave {
         let path = self.player_path(name);
         std::fs::create_dir_all(path.parent().expect("player files are in a directory"))?;
         write_atomic(&path, text.as_bytes())
+    }
+}
+
+/// A dropped item as a save keeps it: by item name, so it survives content changes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedItem {
+    pub item: String,
+    pub count: u8,
+    pub position: [f32; 3],
+    /// Seconds it has lain.
+    pub age: f32,
+}
+
+impl WorldSave {
+    /// The dropped items lying about, none if the world has no items file.
+    pub fn read_items(&self) -> io::Result<Vec<SavedItem>> {
+        let path = self.dir.join(ITEMS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_items(&self, items: &[SavedItem]) -> io::Result<()> {
+        let text = ron::ser::to_string(items).map_err(io::Error::other)?;
+        write_atomic(&self.dir.join(ITEMS_FILE), text.as_bytes())
     }
 }
 

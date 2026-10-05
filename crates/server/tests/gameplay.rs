@@ -7,15 +7,20 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, Face};
 use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::world::VoxelWorld;
 use voxmar_protocol::{
-    ChatKind, ClientConnection, ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, TICKS_PER_DAY, Weather,
-    local_pair, tcp,
+    ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY,
+    Weather, local_pair, tcp,
 };
 use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
 
 struct Client {
     connection: ClientConnection,
+    id: PlayerId,
+    /// Dropped items in sight, and the ones we picked up.
+    items: std::collections::HashMap<u32, ItemView>,
+    collected: Vec<u32>,
     world: VoxelWorld,
     position: Vec3,
     admin: bool,
@@ -65,6 +70,9 @@ impl Client {
         connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint() });
         let mut client = Self {
             connection,
+            id: 0,
+            items: Default::default(),
+            collected: Vec::new(),
             world: VoxelWorld::default(),
             position: Vec3::ZERO,
             admin: false,
@@ -97,7 +105,8 @@ impl Client {
 
     fn apply(&mut self, message: ServerMessage) {
         match message {
-            ServerMessage::Welcome { position, admin, allow_flight, .. } => {
+            ServerMessage::Welcome { player, position, admin, allow_flight, .. } => {
+                self.id = player;
                 self.position = position;
                 self.admin = admin;
                 self.allow_flight = allow_flight;
@@ -128,6 +137,17 @@ impl Client {
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
                 self.admin = admin;
+            }
+            ServerMessage::Items { changed, gone } => {
+                for view in changed {
+                    self.items.insert(view.id, view);
+                }
+                for gone in gone {
+                    self.items.remove(&gone.id);
+                    if gone.collector == Some(self.id) {
+                        self.collected.push(gone.id);
+                    }
+                }
             }
             _ => {}
         }
@@ -191,6 +211,30 @@ fn break_and_place_blocks() {
     client.propose("core:place", ActionTarget::Block { block: below - IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.world.block(below) == Some(item.item));
     client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(item.count - 1));
+}
+
+#[test]
+fn broken_blocks_pop_out_items_that_are_picked_up_and_thrown_stacks_fly() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    let ground = client.world.block(below).unwrap();
+    let drop = client.content.blocks.info(ground).drops;
+    client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
+    // The drop appears in the world first, popping up from the broken block...
+    client.pump_until(|c| c.items.values().any(|i| i.stack.item == drop && i.velocity.y > 0.0));
+    let popped = *client.items.values().next().unwrap();
+    assert!((popped.position.floor().as_ivec3() - below).abs().max_element() <= 1, "{popped:?} from {below}");
+    // ...then, after the pickup delay, goes into the inventory of the player standing over it.
+    let started = Instant::now();
+    client.pump_until(|c| c.collected.contains(&popped.id));
+    assert!(started.elapsed() >= Duration::from_millis(300), "picked up before it could be seen");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == drop));
+
+    // Throwing one item from the first slot sends it flying the way we look (yaw 0: -z).
+    let before = client.inventory.get(0).unwrap();
+    client.propose("core:drop", ActionTarget::Stack { slot: 0, count: 1 });
+    client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(before.count - 1));
+    client.pump_until(|c| c.items.values().any(|i| i.stack == ItemStack { item: before.item, count: 1 } && i.velocity.z < -1.0));
 }
 
 #[test]
