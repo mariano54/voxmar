@@ -114,11 +114,12 @@ pub enum WaterQuality {
 impl WaterQuality {
     pub const ALL: [WaterQuality; 3] = [WaterQuality::Low, WaterQuality::Medium, WaterQuality::High];
 
-    pub fn label(self) -> &'static str {
+    /// The key of its name in the settings (see `lang`).
+    pub fn key(self) -> &'static str {
         match self {
-            WaterQuality::Low => "Low",
-            WaterQuality::Medium => "Medium",
-            WaterQuality::High => "High",
+            WaterQuality::Low => "settings.value.low",
+            WaterQuality::Medium => "settings.value.medium",
+            WaterQuality::High => "settings.value.high",
         }
     }
 

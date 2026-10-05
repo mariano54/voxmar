@@ -68,6 +68,10 @@ pub enum Requirement {
     SkillLevel,
     /// The target is a ripe crop that fruits again when picked.
     Ripe,
+    /// The actor holds something it can eat.
+    HoldingFood,
+    /// The actor has room for food.
+    Hungry,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -98,6 +102,11 @@ pub enum Effect {
     /// Pick a ripe crop's harvest, leaving the plant to fruit again, and grant the crop's
     /// harvest experience.
     Pick,
+    /// Eat one held item, filling the actor's hunger by its food value.
+    EatHeld,
+    /// Craft what the actor's crafting grid holds: once onto the pointer
+    /// (`ActionTarget::Slot(1)`), or as many times as it can into the inventory (`Slot(0)`).
+    Craft,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -180,6 +189,10 @@ pub trait ActionContext {
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
+    /// The actor's hunger points (see [`crate::vitals`]); full unless a context keeps it.
+    fn actor_hunger(&self) -> u8 {
+        crate::vitals::MAX_HUNGER
+    }
     /// Whether any agent's body overlaps the cell.
     fn occupied(&self, cell: IVec3) -> bool;
 }
@@ -244,6 +257,8 @@ impl ActionDef {
                 let room = ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()));
                 face == Face::PosY && fits && room
             }
+            Requirement::HoldingFood => ctx.actor_held().is_some_and(|b| ctx.info(b).food > 0),
+            Requirement::Hungry => ctx.actor_hunger() < crate::vitals::MAX_HUNGER,
             Requirement::SkillLevel => match ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)) {
                 Some(crop) => {
                     let crop = ctx.crops().get(crop);

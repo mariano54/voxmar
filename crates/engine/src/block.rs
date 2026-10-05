@@ -447,6 +447,9 @@ pub struct BlockInfo {
     pub fluid: Option<FluidState>,
     /// Whether holding it and using it places it: false for items (see [`BlockDef::item`]).
     pub placeable: bool,
+    /// Hunger points eating it fills, from its tags (see [`crate::vitals::food_value`]);
+    /// 0 for what is not food.
+    pub food: u8,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -649,6 +652,7 @@ impl BlockRegistry {
                 drop_count: def.drop_count,
                 fluid,
                 placeable: !def.item && def.action.is_none(),
+                food: crate::vitals::food_value(&def.tags),
             });
         }
         if textures.len() > 4096 {

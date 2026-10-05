@@ -178,10 +178,9 @@ fn ink(canvas: &Canvas, text: &str) -> Result<Ink, Error> {
     let palette = canvas.palette(name)?;
     let count = canvas.palettes[palette as usize].len();
     let shade: usize = shade.parse().map_err(|_| Error(format!("`{text}`: `{shade}` is not a shade number")))?;
-    if shade >= count {
-        return Err(Error(format!("`{text}`: palette `{name}` has only {count} shades")));
-    }
-    Ok(Ink::Shade(palette, shade as u8))
+    // A sprite drawn with more shades than a recolouring palette has takes its lightest:
+    // a derived plant can swap in a shorter palette without redrawing its grid.
+    Ok(Ink::Shade(palette, shade.min(count - 1) as u8))
 }
 
 fn draw_grid(canvas: &mut Canvas, grid: &Grid) -> Result<(), Error> {
@@ -316,7 +315,8 @@ fn draw_stamp(canvas: &mut Canvas, stamp: &Stamp, image: &Image) {
     let size = canvas.size;
     let mut stamped = vec![false; size.len()];
     let origins = if stamp.at.is_empty() { vec![(0, 0)] } else { stamp.at.clone() };
-    for (ox, oy) in origins {
+    let unit = if stamp.relative { image.width as i32 / 16 } else { 1 }.max(1);
+    for (ox, oy) in origins.into_iter().map(|(x, y)| (x * unit, y * unit)) {
         for sy in 0..image.height as i32 {
             for sx in 0..image.width as i32 {
                 let (x, y) = (ox + sx, oy + sy);

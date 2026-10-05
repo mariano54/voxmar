@@ -5,6 +5,7 @@
 
 use bevy::prelude::*;
 
+use crate::lang::Localized;
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
@@ -34,11 +35,12 @@ pub enum GameScreen {
 impl GameScreen {
     const ALL: [GameScreen; 3] = [GameScreen::Inventory, GameScreen::Character, GameScreen::Menu];
 
+    /// The key of its name (see `lang`).
     fn title(self) -> &'static str {
         match self {
-            GameScreen::Inventory => "Inventory",
-            GameScreen::Character => "Character",
-            GameScreen::Menu => "Menu",
+            GameScreen::Inventory => "screen.inventory",
+            GameScreen::Character => "screen.character",
+            GameScreen::Menu => "screen.menu",
         }
     }
 
@@ -127,7 +129,7 @@ fn label_hotkeys(
                     let cap = Node { padding: UiRect::new(Val::Px(3.0 * PX), Val::Px(3.0 * PX), Val::Px(PX), Val::Px(2.0 * PX)), ..default() };
                     let piece = if current { Piece::ButtonSelected } else { Piece::Button };
                     key.spawn((cap, piece.image())).with_child(shadowed(&font.0, screen.key_label(&settings), BODY, if current { GOLD } else { TEXT }));
-                    key.spawn(text(&font.0, screen.title(), BODY, if current { GOLD } else { MUTED }));
+                    key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
                 });
             }
         });

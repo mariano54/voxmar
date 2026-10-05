@@ -167,6 +167,10 @@ pub struct Stamp {
     /// `Paint` does: a grass block's side is its overlay's fringe stamped on dirt, with
     /// the dirt darkened under it.
     pub shadow: i32,
+    /// Read `at` in sixteenths of the stamped texture's width rather than in texels, and
+    /// take a recipe's size from the texture it stamps first when it gives none: a
+    /// template that stamps a flower twice works for 16×16 and 32×32 flowers alike.
+    pub relative: bool,
 }
 
 /// Small blobs of a palette scattered over the texture (ore, pebbles, lichen, petals).
