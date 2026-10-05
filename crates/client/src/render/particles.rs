@@ -335,11 +335,10 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
                 (2, storage_buffer_read_only_sized(false, None)),
                 // The air and light, at the binding lighting.wgsl expects.
                 (6, uniform_buffer::<Atmosphere>(false)),
-                // Each texture layer's overlay, at the terrain's binding, and the cloud maps.
+                // Each texture layer's overlay, at the terrain's binding, and the cloud map.
                 (7, texture_2d(TextureSampleType::Float { filterable: false })),
                 (8, texture_2d(TextureSampleType::Float { filterable: true })),
                 (9, sampler(SamplerBindingType::Filtering)),
-                (10, texture_2d(TextureSampleType::Float { filterable: true })),
             ),
         ),
     );
@@ -408,7 +407,6 @@ fn prepare_bind_group(
             (7, &layers.texture_view),
             (8, &cloud_map.view),
             (9, &cloud_map.sampler),
-            (10, &cloud_map.shade),
         )),
     );
     gpu.bind_group = Some(bind_group);

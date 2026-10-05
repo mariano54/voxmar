@@ -658,7 +658,7 @@ fn update_environment(
     let view = atmosphere::View { distance: cycle.view_distance, eye_height: camera.translation.y, underwater: cycle.underwater };
     let mut air = atmosphere::Atmosphere::new(&light, shown, &air, &pack, *quality, view);
     if !cycle.underwater {
-        air = air.with_clouds(shown, layer, position, env.light_direction, seconds, flash, &pack);
+        air = air.with_clouds(shown, layer, cloud_map::corner(DVec2::new(position.x, position.z)), seconds, flash, &pack);
     }
     atmosphere.set_if_neq(air);
 

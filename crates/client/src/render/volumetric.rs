@@ -201,13 +201,12 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>, device: Res<Rend
                     (
                         (0, depth),
                         (1, uniform_buffer::<Atmosphere>(false)),
-                        // The cloud noise (clouds.wgsl) and the cloud maps (cloud_map.rs).
+                        // The cloud noise (clouds.wgsl) and the cloud map (cloud_map.rs).
                         (2, texture_2d(noise)),
                         (3, texture_3d(noise)),
                         (4, sampler(SamplerBindingType::Filtering)),
                         (8, texture_2d(noise)),
                         (9, sampler(SamplerBindingType::Filtering)),
-                        (10, texture_2d(noise)),
                     ),
                 ),
             )
@@ -352,7 +351,6 @@ fn prepare(
                 (4, &pipelines.noise.sampler),
                 (8, &cloud_map.view),
                 (9, &cloud_map.sampler),
-                (10, &cloud_map.shade),
             )),
         );
         let composite_group = device.create_bind_group(

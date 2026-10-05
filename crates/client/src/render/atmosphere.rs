@@ -11,7 +11,6 @@
 //! atmosphere.wgsl for how the shaders use it.
 
 use bevy::color::ColorToComponents;
-use bevy::math::{DVec2, DVec3};
 use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_resource::{Buffer, BufferDescriptor, BufferUsages, ShaderType, encase};
@@ -20,7 +19,6 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::load_shader_library;
 use voxmar_protocol::Weather;
 
-use super::cloud_map;
 use super::pack::ShaderPack;
 use super::Quality;
 
@@ -99,7 +97,6 @@ pub struct Atmosphere {
     pub cloud_shape: Vec4,
     pub cloud_look: Vec4,
     pub cloud_map: Vec4,
-    pub cloud_shade: Vec4,
     pub ground: Vec4,
 }
 
@@ -188,7 +185,6 @@ impl Atmosphere {
                 cloud_shape: Vec4::new(1.0, 2.0, 0.0, 0.0),
                 cloud_look: Vec4::ZERO,
                 cloud_map: Vec4::ZERO,
-                cloud_shade: Vec4::ZERO,
                 ground: Vec4::new(0.0, 0.0, 0.0, pack.bounce),
             };
         }
@@ -233,7 +229,6 @@ impl Atmosphere {
             cloud_shape: Vec4::new(1.0, 2.0, 0.0, 0.0),
             cloud_look: Vec4::ZERO,
             cloud_map: Vec4::ZERO,
-            cloud_shade: Vec4::ZERO,
             ground: Vec4::new(
                 weather.wetness.clamp(0.0, 1.0) * pack.wet_ground,
                 weather.frost.clamp(0.0, 1.0) * pack.frost,
@@ -245,21 +240,11 @@ impl Atmosphere {
 
     /// Adds the low cloud: a layer in the world whose base comes down in wet weather and
     /// which heaps up with convection, its noise coordinates over the eye (`layer`, as
-    /// `SkyParams::weather.xy`), where the eye is and the direction to the light (for the
-    /// cloud maps' places), how long it has been forming and a lightning flash in it.
+    /// `SkyParams::weather.xy`), the cloud map's corner from the eye (`map`,
+    /// `cloud_map::corner`), how long it has been forming and a lightning flash in it.
     /// Its shadows on the land fade as the sky closes over, when the cloud's dimming of the
     /// whole sky (in the sun's colour) takes over.
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_clouds(
-        mut self,
-        weather: &Weather,
-        layer: Vec2,
-        eye: DVec3,
-        to_light: Vec3,
-        seconds: f32,
-        flash: f32,
-        pack: &ShaderPack,
-    ) -> Self {
+    pub fn with_clouds(mut self, weather: &Weather, layer: Vec2, map: Vec2, seconds: f32, flash: f32, pack: &ShaderPack) -> Self {
         // Rain only falls from a well covered sky.
         let cover = (weather.cover + 0.25 * weather.precipitation).min(1.0);
         let strength = pack.cloud_shadows * (1.0 - smoothstep(0.6, 0.95, cover));
@@ -270,19 +255,7 @@ impl Atmosphere {
         self.clouds = Vec4::new(layer.x, layer.y, cover, weather.convection);
         self.cloud_shape = Vec4::new(base, base + depth, seconds, storm);
         self.cloud_look = Vec4::new(strength, flash, if cover > 0.005 { CLOUD_STEPS } else { 0.0 }, CLOUD_FAR);
-        let drawn = if cover > 0.005 { 1.0 } else { 0.0 };
-        let map = cloud_map::corner(eye.xz());
-        self.cloud_map = Vec4::new(map.x, map.y, cloud_map::EXTENT, drawn);
-        // Ground around the eye takes its shadow from the cloud towards the light above it,
-        // up to a quarter of the shade map away (a low sun's shadows come from far off).
-        let middle = (base + depth / 2.0) as f64;
-        let mut towards = DVec2::ZERO;
-        if to_light.y > 0.02 {
-            towards = (to_light.xz() / to_light.y).as_dvec2() * (middle - eye.y).max(0.0);
-            towards = towards.clamp_length_max(cloud_map::SHADE_EXTENT as f64 / 4.0);
-        }
-        let shade = cloud_map::shade_corner(eye.xz(), eye.xz() + towards);
-        self.cloud_shade = Vec4::new(shade.x, shade.y, cloud_map::SHADE_EXTENT, drawn);
+        self.cloud_map = Vec4::new(map.x, map.y, super::cloud_map::EXTENT, if cover > 0.005 { 1.0 } else { 0.0 });
         self
     }
 }
@@ -374,7 +347,7 @@ mod tests {
     fn the_low_cloud_comes_down_in_rain() {
         let pack = ShaderPack::default();
         let air = Atmosphere::new(&Light::default(), &Weather::NONE, &Air::default(), &pack, Quality::default(), View::new(2000.0));
-        let cloud = |weather: Weather| air.with_clouds(&weather, Vec2::ZERO, DVec3::ZERO, Vec3::Y, 0.0, 0.0, &pack);
+        let cloud = |weather: Weather| air.with_clouds(&weather, Vec2::ZERO, Vec2::ZERO, 0.0, 0.0, &pack);
         assert_eq!(cloud(Weather::NONE).cloud_look.z, 0.0, "a clear sky has no cloud to march");
         let fair = cloud(Weather { cover: 0.4, ..Weather::NONE });
         let rain = cloud(Weather { cover: 1.0, precipitation: 1.0, ..Weather::NONE });
