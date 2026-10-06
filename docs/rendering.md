@@ -237,6 +237,13 @@ nearest-texel when minified, and sub-pixel grass. Now:
 Measured as pixels that change by more than 60 levels when the camera moves 4 cm: 0.33%
 before, 0.12% now.
 
+Under MSAA every pass Bevy draws into the camera's image also resolves the four samples
+into the main image when it ends, a full screen of memory traffic each time. The water and
+the volumetric composite now draw into the samples without resolving, and the image is
+resolved once after the transparent pass (`render::resolve`): 0.3-0.5 ms off 5-6 ms frames
+at 2268×1473 on the Linux box's L4. MSAA as a whole still cost 1.7 ms of flight75's 5 ms
+there before this.
+
 A far waterline under MSAA showed a row of black dashes with bright blue glints that
 crawled as the camera moved. With MSAA the fragment shader runs once per pixel, at the
 pixel's centre even where a triangle covers only a corner of it, so its inputs are
