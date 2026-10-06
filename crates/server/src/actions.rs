@@ -260,6 +260,7 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
+                    self.picked(agent, block);
                     self.reward_break(agent, block);
                     let plants = supported_by(&Context { server: self, agent }, block);
                     let cells: Vec<IVec3> = std::iter::once(block).chain(plants).collect();
@@ -288,6 +289,7 @@ impl Server {
                     if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) {
                         self.placed.insert(cell);
                     }
+                    self.placed_plant(item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();

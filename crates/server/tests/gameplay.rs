@@ -1028,3 +1028,25 @@ fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
     owner.propose("core:respawn", ActionTarget::None);
     owner.pump_until(|c| c.health > 0 && carried(c) == 47);
 }
+
+#[test]
+fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
+    let mut client = Client::join();
+    let (near, far) = (client.position.floor().as_ivec3() + IVec3::new(2, 0, 0), client.position.floor().as_ivec3() + IVec3::new(-2, 0, 0));
+    for line in ["/fill ~-2 ~-1 ~ ~2 ~-1 ~ grass_block", "/fill ~-2 ~ ~ ~2 ~ ~ air", "/setblock ~2 ~ ~ poppy", "/setblock ~-2 ~ ~ poppy"] {
+        client.ok(line);
+    }
+    let poppy = client.content.blocks.expect("base:poppy");
+    client.pump_until(|c| c.world.block(near) == Some(poppy) && c.world.block(far) == Some(poppy));
+    for at in [near, far] {
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    }
+    // The far one's ground is dug out and put back: a different block, so it is gone.
+    client.ok("/setblock ~-2 ~-1 ~ dirt");
+    client.ok("/grow");
+    client.pump_until(|c| c.world.block(near) == Some(poppy));
+    std::thread::sleep(Duration::from_millis(1500));
+    client.pump_until(|_| true);
+    assert_eq!(client.world.block(far), Some(BlockId::AIR), "a flower came back on ground that was replaced");
+}

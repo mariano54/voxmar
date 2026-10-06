@@ -33,6 +33,7 @@ pub mod mesh;
 pub mod movement;
 pub mod physics;
 pub mod recipe_book;
+pub mod regrowth;
 pub mod schedule;
 pub mod skill;
 pub mod tool;

@@ -46,6 +46,8 @@ pub struct Content {
     pub tools: Arc<ToolRegistry>,
     /// What bites where.
     pub fishing: Arc<FishingRegistry>,
+    /// Which wild plants come back where they were picked, and how soon.
+    pub regrowth: Arc<crate::regrowth::Regrowth>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -88,6 +90,7 @@ impl Content {
         let mut tools = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
+        let mut regrowth = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -131,6 +134,10 @@ impl Content {
                         fishing.push(FishingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "regrowth.ron" => {
+                        regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "stacking.ron" => {
                         stacking.push(source.clone());
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -166,6 +173,7 @@ impl Content {
         let effects = EffectRegistry::new(effects)?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
+        let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
@@ -182,6 +190,7 @@ impl Content {
             effects: Arc::new(effects),
             tools: Arc::new(tools),
             fishing: Arc::new(fishing),
+            regrowth: Arc::new(regrowth),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
         })

@@ -78,6 +78,18 @@ kinds in all. A seed pouch in hand sows (`actor_seed`: the first seed in it the 
 Farming level allows) and right click empties it (`base:empty_pouch`). What a pouch holds
 stays with the player if the pouch is dropped; a pouch is needed to put more in.
 
+## Wild plants grow back
+
+Flowers, herbs, fungi and berry bushes the world grew come back where they were picked
+(`regrowth.ron`, engine `regrowth.rs`, server `regrow.rs`), as long as the block they grew
+from is still there: dig out or replace the ground and the spot is gone. Commons take 20
+minutes of world time, uncommons an hour, rares half a day, very rares two days and
+legendaries four. Herbs cannot be sown, and a plant a player places does not come back,
+except on a herb planter (planks and dirt at a crafting table, Engineering 5) for a player
+whose Farming level reaches the plant's (1, 15, 40, 60, 80 by rarity); picking one there
+teaches Farming. Waiting plants are saved with the world (`WorldMeta::regrowing`), and
+`/grow` brings back those near you at once.
+
 ## Dying
 
 Dying costs what you carried, not your skills (Mariano, 2026-10-06). You keep your three most

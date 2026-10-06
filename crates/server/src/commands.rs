@@ -789,7 +789,8 @@ impl Server {
             [count] => count.parse::<u8>().ok().filter(|&c| c > 0).ok_or_else(|| Words::key("command.error.not_stages").with("word", count.as_str()))?,
             _ => return Err(Words::key("command.error.grow_how_much")),
         };
-        let grown = self.grow_around(self.position_of(source), 8.0, stages);
+        let at = self.position_of(source);
+        let grown = self.grow_around(at, 8.0, stages) + self.hurry_regrowth(at, 8.0);
         Ok(Words::key("command.grow").with("count", Words::text(grown)))
     }
 

@@ -14,6 +14,8 @@
         (pattern: [["{name}_planks"], ["{name}_planks"]], output: "stick", count: 4, xp: 1.0),
         // Four planks make a crafting table, for the bigger recipes.
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "crafting_table", skill: "core:engineering", xp: 8.0),
+        // A herb planter: a box of soil herbs grow back in.
+        (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:engineering", level: 5, xp: 10.0),
         // Ore smelted with coal, by hand for now (a furnace comes later).
         (pattern: [["copper_ore"], ["coal_ore"]], output: "copper_ingot", skill: "core:engineering", level: 5, xp: 6.0),
         (pattern: [["iron_ore"], ["coal_ore"]], output: "iron_ingot", skill: "core:engineering", level: 15, xp: 12.0),

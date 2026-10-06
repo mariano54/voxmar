@@ -7,6 +7,7 @@ mod cooking;
 mod creatures;
 mod fishing;
 mod death;
+mod regrow;
 mod farm;
 mod husbandry;
 mod inspect;
@@ -279,6 +280,8 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// Picked wild plants waiting to grow back (see `regrow`).
+    regrowing: FxHashMap<IVec3, regrow::Regrowing>,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
     /// Animals and monsters about.
@@ -367,6 +370,7 @@ impl Server {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
+        let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let mut server = Self {
             config,
             tick,
@@ -381,6 +385,7 @@ impl Server {
             items,
             farm,
             placed,
+            regrowing,
             arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
             processes,
@@ -496,6 +501,7 @@ impl Server {
         self.day += self.day_speed as f64;
         self.run_processes();
         self.bury_the_dead();
+        self.regrow();
         self.tick_items();
         self.tick_creatures();
         self.flow();
@@ -547,6 +553,7 @@ impl Server {
         }
         self.meta.time = self.tick;
         self.meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        self.meta.regrowing = self.saved_regrowing();
         self.meta.day = Some(self.day as u64);
         self.meta.day_speed = self.day_speed;
         self.meta.last_played = save::unix_time();

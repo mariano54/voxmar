@@ -80,6 +80,18 @@ pub struct WorldMeta {
     /// nothing: experience comes from what the world holds, not from placing and breaking.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
+    /// Picked wild plants waiting to grow back.
+    #[serde(default)]
+    pub regrowing: Vec<SavedRegrowing>,
+}
+
+/// How a regrowing plant is saved, by block names.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedRegrowing {
+    pub pos: [i32; 3],
+    pub plant: String,
+    pub ground: String,
+    pub due: u64,
 }
 
 fn normal_speed() -> f32 {
@@ -101,6 +113,7 @@ impl WorldMeta {
             day: None,
             day_speed: 1.0,
             placed: Vec::new(),
+            regrowing: Vec::new(),
         }
     }
 }
