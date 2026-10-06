@@ -366,8 +366,10 @@ vertex data is needed.
 A plant's block data picks its shape (`model`, voxmar_engine::block::PlantModel) and
 height (`plant_height`, a share of the usual, so 1.4 for a big flower): `Cross`, the two
 diagonal quads every plant had; `Hash`, four straight quads in a # standing square with
-the blocks, for crops and reeds; `Cap`, a crossed stem under a flat cap of the block's top
-texture, for mushrooms; and `Bush`, the cross with a straight one through it. Every model
+the blocks, for crops and reeds; `Cap`, a mushroom of eight quads: a thin crossed stem (the
+side texture), a flat crown and four sloping sides down to a wider rim (the top texture),
+and gills under the rim (the bottom texture), each mushroom a little bigger or smaller and
+leaning its own way by a hash of its cell; and `Bush`, the cross with a straight one through it. Every model
 starts with the crossed pair; the mesher packs each further quad as a diagonal one, with
 the model in bits 28..29 and which quad it is in bits 30..31 and the face's low bit, and
 the height in eighths in word 1 bits 14..18, so the vertex stays 8 bytes; the shader
