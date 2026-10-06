@@ -665,7 +665,9 @@ impl Sampler<'_> {
             own
         };
         let (home, neighbour) = (own(pick.home), own(pick.neighbour));
-        std::array::from_fn(|i| mix3(home[i], neighbour[i], share))
+        let mut colors: [[f32; 3]; 3] = std::array::from_fn(|i| mix3(home[i], neighbour[i], share));
+        colors[0] = hue::soften_grass(colors[0]);
+        colors
     }
 
     /// The biome picker's fields and the rock province at (x, z), for cave biomes.
