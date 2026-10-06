@@ -37,8 +37,10 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use bevy::app::MainScheduleOrder;
+use bevy::ecs::schedule::ScheduleLabel;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
@@ -57,6 +59,7 @@ use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
 use crate::session::Launch;
+use crate::settings::Settings;
 use crate::world::ClientWorld;
 
 pub struct GatePlugin {
@@ -116,7 +119,27 @@ impl Plugin for GatePlugin {
             .add_systems(PostStartup, render_offscreen)
             .add_systems(Update, crate::capture::target_ui)
             .add_systems(Last, run);
+        let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
+        order.insert_after(Update, BeforePostUpdate);
+        order.insert_after(PostUpdate, AfterPostUpdate);
+        app.init_resource::<PostUpdateTime>()
+            .add_systems(BeforePostUpdate, |mut time: ResMut<PostUpdateTime>| time.start = Some(Instant::now()))
+            .add_systems(AfterPostUpdate, |mut time: ResMut<PostUpdateTime>| {
+                time.ms = time.start.take().map_or(0.0, |start| start.elapsed().as_secs_f32() * 1000.0);
+            });
     }
+}
+
+/// How long this frame's PostUpdate took (UI layout, transforms, visibility), for the
+/// overlay step.
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct BeforePostUpdate;
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct AfterPostUpdate;
+#[derive(Resource, Default)]
+struct PostUpdateTime {
+    start: Option<Instant>,
+    ms: f32,
 }
 
 fn render_offscreen(
@@ -148,10 +171,18 @@ enum Step {
     /// A row of blocks of every hardness, broken with the bare hand, a held block and every
     /// tool, under load: client and server agree on every one, and none comes back.
     Breaks,
+    /// Sticks and a crafting table from planks; the table placed and right clicked opens a
+    /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
+    /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
+    /// teaching Mining; a hoe tills dirt into farmland.
+    Workshop,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
     Screens,
+    /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
+    /// it open than closed.
+    Overlay,
     /// A storm and a snowfall come, drawn with their particles, then clear again.
     Weather,
     /// The sun by day, the moon and stars by night.
@@ -219,6 +250,9 @@ struct Gate {
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
     gorge: IVec3,
+    /// Whether the player has arrived there: the river's current may carry them off while
+    /// the world around loads, which says nothing about the world.
+    gorge_reached: bool,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -233,7 +267,13 @@ struct Gate {
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    /// While taming, frames the junglefowl was under the crosshair, another creature was,
+    /// or none was, and the nearest the player came to it.
+    tame_aim: [u32; 3],
+    tame_nearest: f32,
     breaks: Breaks,
+    /// Mining experience before the workshop's ore was broken.
+    mining_before: Option<u32>,
     failures: Vec<String>,
     passes: usize,
     /// The weather's fractions as shown last frame, and the biggest change from one frame
@@ -244,6 +284,8 @@ struct Gate {
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
+    /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
+    overlay_ms: [Vec<f32>; 2],
 }
 
 impl Gate {
@@ -267,6 +309,7 @@ impl Gate {
             count_before: 0,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
+            gorge_reached: false,
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
@@ -274,13 +317,17 @@ impl Gate {
             spills: Vec::new(),
             font: None,
             food_moved: false,
+            tame_aim: [0; 3],
+            tame_nearest: f32::MAX,
             breaks: Breaks::default(),
+            mining_before: None,
             failures: Vec::new(),
             passes: 0,
             weather_last: None,
             weather_jump: (0.0, "", 0.0),
             frame_ms: Vec::new(),
             longest: default(),
+            overlay_ms: default(),
         }
     }
 
@@ -451,6 +498,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Gorge => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
         Step::Strike => STRIKE_LIMIT,
+        Step::Breaks => BREAKS_LIMIT + 15.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -655,8 +703,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::Breaks => breaks(world, gate, now, in_phase),
+        Step::Workshop => workshop(world, gate, now, in_phase),
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
+        Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
@@ -730,14 +780,18 @@ fn weather_effects(world: &World) -> Vec<String> {
 /// Blocks of every hardness the breaks step lays out: glass and snow break in a blink,
 /// stone and cobblestone take seconds.
 const BREAK_BLOCKS: [&str; 6] = ["base:glass", "base:dirt", "base:stone", "base:snow_block", "base:gravel", "base:cobblestone"];
-/// Where the player's feet go for the breaks step, and the first block of the row,
-/// from the test ground's middle.
+/// Where the player's feet go for the breaks step, from the test ground's middle, and the
+/// cells within reach west of there where the blocks go: three columns of seven, and three
+/// more north and south.
 const BREAK_STAND: IVec3 = IVec3::new(-1, 0, 0);
-const BREAK_ROW: IVec3 = IVec3::new(-3, 0, -2);
+fn break_cells() -> Vec<IVec3> {
+    let west = (-4..=-2).flat_map(|x| (-3..=3).map(move |z| IVec3::new(x, 0, z)));
+    west.chain([IVec3::new(-1, 0, -3), IVec3::new(0, 0, -3), IVec3::new(-1, 0, 3)]).collect()
+}
 /// The hotbar slot tools are swapped into.
 const TOOL_SLOT: usize = voxmar_engine::inventory::HOTBAR_SLOTS - 1;
 /// Longest the row may take to break, in seconds of game time.
-const BREAKS_LIMIT: f32 = 25.0;
+const BREAKS_LIMIT: f32 = 45.0;
 
 /// What a block is broken with in the breaks step.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -758,6 +812,8 @@ struct Breaks {
     done: usize,
     began: f32,
     thrown: bool,
+    /// The tools given so far, each for its block.
+    given: Vec<BlockId>,
     /// Cells the client has shown broken, and any it has seen come back since.
     shown: Vec<IVec3>,
     came_back: Vec<IVec3>,
@@ -826,17 +882,16 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let feet = gate.feet;
     match gate.phase {
         0 => {
-            let (row, tools) = {
+            let row = {
                 let registry = &world.resource::<ClientWorld>().registry;
                 let tools: Vec<BlockId> = registry.ids().filter(|&id| registry.def(id).has_tag("tool")).collect();
                 let mut holders = vec![Holder::Hand, Holder::Planks];
                 holders.extend(tools.iter().map(|&t| Holder::Tool(t)));
                 let blocks: Vec<BlockId> = BREAK_BLOCKS.iter().filter_map(|name| registry.id(name)).collect();
-                let count = blocks.len().max(holders.len());
-                let row: Vec<(IVec3, BlockId, Holder)> =
-                    (0..count).map(|i| (feet + BREAK_ROW + IVec3::new(-(i as i32 / 6), 0, i as i32 % 6), blocks[i % blocks.len()], holders[i % holders.len()])).collect();
-                let names: Vec<String> = tools.iter().map(|&t| registry.def(t).name.clone()).collect();
-                (row, names)
+                // Every holder once (as many as there are cells), every hardness at least once.
+                let cells = break_cells();
+                let count = blocks.len().max(holders.len()).min(cells.len());
+                (0..count).map(|i| (feet + cells[i], blocks[i % blocks.len()], holders[i % holders.len()])).collect::<Vec<_>>()
             };
             let net = world.resource::<Net>();
             let stand = feet + BREAK_STAND;
@@ -845,30 +900,23 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for &(cell, block, _) in &row {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
-            for tool in tools {
-                net.command(&format!("give {tool} 1"));
-            }
             gate.breaks = Breaks { row, ..default() };
             gate.advance(now);
         }
         1 => {
-            // The row in place on both sides, the tools in the inventory, the player there.
+            // The row in place on both sides, the player there.
             let row = gate.breaks.row.clone();
             let client = world.resource::<ClientWorld>();
             let built = |side: &dyn Fn(IVec3) -> Option<BlockId>| row.iter().all(|&(cell, block, _)| side(cell) == Some(block));
             let server = gate.observer.as_ref().is_none_or(|o| built(&|p| o.world.block(p)));
             let player = world.resource::<LocalPlayer>();
-            let tools = row.iter().all(|&(_, _, holder)| match holder {
-                Holder::Tool(tool) => (0..voxmar_engine::inventory::SLOTS).any(|s| player.inventory.get(s).is_some_and(|stack| stack.item == tool)),
-                _ => true,
-            });
             let standing = player.on_ground && player.position.floor().as_ivec3() == feet + BREAK_STAND;
-            if built(&|p| client.block(p)) && server && tools && standing {
+            if built(&|p| client.block(p)) && server && standing {
                 gate.breaks.load = Some(Load::start());
                 gate.breaks.began = now;
                 gate.advance(now);
             } else if in_phase > 10.0 {
-                gate.check("breaks", Err(format!("the row was never built (client {}, server {server}), the tools never came ({tools}) or the player never stood there", built(&|p| client.block(p)))));
+                gate.check("breaks", Err(format!("the row was never built (client {}, server {server}) or the player never stood there", built(&|p| client.block(p)))));
                 end_breaks(world, gate, now);
             }
         }
@@ -883,11 +931,22 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     breaks.came_back.push(cell);
                 }
             }
+            let mut finished = Vec::new();
             while breaks.done < breaks.row.len() && client.block(breaks.row[breaks.done].0).is_some_and(|b| b.is_air()) {
+                finished.push(breaks.row[breaks.done].2);
                 breaks.done += 1;
                 breaks.began = now;
                 breaks.thrown = false;
             }
+            // Each tool is given for its block and put away after it, so the hotbar keeps
+            // room for a bare hand.
+            for holder in finished {
+                if let Holder::Tool(tool) = holder {
+                    world.resource::<Net>().command(&format!("clear {}", client.registry.def(tool).name));
+                }
+            }
+            let breaks = &mut gate.breaks;
+            let client = world.resource::<ClientWorld>();
             let Some(&(cell, _, holder)) = breaks.row.get(breaks.done) else {
                 mouse(world, MouseButton::Left, false);
                 gate.advance(now);
@@ -899,6 +958,20 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("breaks", Err(stuck));
                 end_breaks(world, gate, now);
                 return;
+            }
+            // This block's tool, and the next one's while this one is mined, so the next
+            // is in hand without waiting on the server.
+            let next = gate.breaks.row.get(gate.breaks.done + 1).map(|&(.., holder)| holder);
+            for (i, wanted) in [Some(holder), next].into_iter().enumerate() {
+                let Some(Holder::Tool(tool)) = wanted else { continue };
+                let had = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == tool);
+                if !had && !gate.breaks.given.contains(&tool) {
+                    gate.breaks.given.push(tool);
+                    world.resource::<Net>().command(&format!("give {} 1", client.registry.def(tool).name));
+                }
+                if !had && i == 0 {
+                    return;
+                }
             }
             hold(world, holder);
             // Q halfway through the planks' block: thrown while the break goes on.
@@ -932,13 +1005,10 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if differ > 0 {
                 wrong.push(format!("{differ} blocks around differ between client and server"));
             }
-            let holders: Vec<String> = gate.breaks.row.iter().map(|&(_, _, holder)| match holder {
-                Holder::Tool(tool) => client.registry.def(tool).name.clone(),
-                other => format!("{other:?}").to_lowercase(),
-            }).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            let tools = gate.breaks.row.iter().filter(|(.., holder)| matches!(holder, Holder::Tool(_))).count();
             let longest = gate.longest.get(&Step::Breaks).copied().unwrap_or(0.0);
             let result = if wrong.is_empty() {
-                Ok(format!("{} blocks of {} hardnesses broke with {} under load (frames up to {longest:.0} ms), and stayed broken on both sides", gate.breaks.row.len(), BREAK_BLOCKS.len(), holders.join(", ")))
+                Ok(format!("{} blocks of {} hardnesses broke with the bare hand, planks and {tools} tools under load (frames up to {longest:.0} ms), and stayed broken on both sides", gate.breaks.row.len(), BREAK_BLOCKS.len()))
             } else {
                 Err(wrong.join("; "))
             };
@@ -987,22 +1057,272 @@ fn hold(world: &mut World, holder: Holder) {
     }
 }
 
-/// Lifts the load, puts the tools away (later steps want room in the hotbar) and goes on
-/// to the pool.
+/// Lifts the load, puts the last tool away (later steps want room in the hotbar) and goes
+/// on to the workshop.
 fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
     gate.breaks.load = None;
     mouse(world, MouseButton::Left, false);
     key(world, KeyCode::KeyQ, false);
     let registry = world.resource::<ClientWorld>().registry.clone();
     let net = world.resource::<Net>();
-    for &(_, _, holder) in &gate.breaks.row {
-        if let Holder::Tool(tool) = holder {
-            net.command(&format!("clear {}", registry.def(tool).name));
+    let held = &world.resource::<LocalPlayer>().inventory;
+    for &tool in gate.breaks.given.iter().filter(|&&tool| held.slots.iter().flatten().any(|s| s.item == tool)) {
+        net.command(&format!("clear {}", registry.def(tool).name));
+    }
+    gate.next(Step::Workshop, now);
+}
+
+/// Where the workshop puts the crafting table, the ore, and the soil it tills, from the
+/// test ground's middle (west of the breaks' stand, where the row was).
+const TABLE_AT: IVec3 = IVec3::new(-2, 0, 1);
+const ORE_AT: IVec3 = IVec3::new(-3, 0, 0);
+const TILL_AT: IVec3 = IVec3::new(-2, -1, -1);
+/// Longest a workshop stage may wait for the server.
+const WORKSHOP_WAIT: f32 = 8.0;
+
+/// How many of item `name` the inventory holds, and the first slot holding one.
+fn holding(world: &World, name: &str) -> (u32, Option<usize>) {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    let Some(item) = client.registry.id(name) else { return (0, None) };
+    let slots = &player.inventory.slots;
+    let count = slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum();
+    (count, slots.iter().position(|s| s.is_some_and(|s| s.item == item)))
+}
+
+/// Puts one of item `name` into each crafting cell in `cells` and crafts as many as it
+/// can, as the inventory's clicks would: the server moves and crafts.
+fn lay_and_craft(world: &mut World, cells: &[(usize, &str)]) -> bool {
+    let actions = world.resource::<crate::Actions>().0.clone();
+    let mut slots = Vec::new();
+    for &(cell, item) in cells {
+        let Some(slot) = holding(world, item).1 else { return false };
+        slots.push((slot, cell));
+    }
+    let net = world.resource::<Net>();
+    for (slot, cell) in slots {
+        let target = voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count: 1 };
+        net.propose(actions.expect("core:transfer"), target);
+    }
+    net.propose(actions.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+    true
+}
+
+/// Selects the hotbar slot holding `name`, swapping it in from the pack first if need be.
+fn select(world: &mut World, name: &str) -> bool {
+    let Some(slot) = holding(world, name).1 else { return false };
+    if slot >= voxmar_engine::inventory::HOTBAR_SLOTS {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        let target = voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: TOOL_SLOT as u8, count: u8::MAX };
+        world.resource::<Net>().propose(actions.expect("core:transfer"), target);
+        world.resource_mut::<LocalPlayer>().inventory.move_items(slot, TOOL_SLOT, u8::MAX);
+        world.resource_mut::<LocalPlayer>().selected = TOOL_SLOT;
+    } else {
+        world.resource_mut::<LocalPlayer>().selected = slot;
+    }
+    true
+}
+
+/// The level of a skill, as the client was last told.
+fn skill_level(world: &World, name: &str) -> (u8, u32) {
+    let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+    let skills = &launch.content.skills;
+    skills.id(name).map_or((1, 0), |id| (skills.level(player.skills.xp(id)), player.skills.xp(id)))
+}
+
+/// Crafting, a crafting table, tool tiers and Mining levels, and tilling: see `Step::Workshop`.
+fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let feet = gate.feet;
+    let (table, ore, till) = (feet + TABLE_AT, feet + ORE_AT, feet + TILL_AT);
+    let fail = |world: &mut World, gate: &mut Gate, what: &str, why: String| {
+        gate.check(&format!("workshop: {what}"), Err(why));
+        end_workshop(world, gate, now);
+    };
+    let block_is = |world: &World, gate: &Gate, at: IVec3, name: &str| {
+        let client = world.resource::<ClientWorld>();
+        let want = client.registry.id(name);
+        client.block(at) == want && gate.observer.as_ref().is_none_or(|o| o.world.block(at) == want)
+    };
+    match gate.phase {
+        // Two planks, one over the other in the two-by-two grid, make four sticks.
+        0 => {
+            mouse(world, MouseButton::Left, false);
+            gate.count_before = holding(world, "base:stick").0;
+            if lay_and_craft(world, &[(0, "base:oak_planks"), (3, "base:oak_planks")]) {
+                gate.advance(now);
+            } else {
+                fail(world, gate, "sticks", "no planks to make sticks of".into());
+            }
         }
+        1 => {
+            let sticks = holding(world, "base:stick").0;
+            if sticks >= gate.count_before + 4 {
+                gate.check("workshop: sticks", Ok(format!("two planks made {} sticks", sticks - gate.count_before)));
+                let (_, xp) = skill_level(world, "core:engineering");
+                gate.count_before = xp;
+                lay_and_craft(world, &[(0, "base:oak_planks"), (1, "base:oak_planks"), (3, "base:oak_planks"), (4, "base:oak_planks")]);
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "sticks", format!("two planks in the grid made {} sticks", sticks - gate.count_before));
+            }
+        }
+        // Four planks make a crafting table, teaching Engineering; placed with a right click.
+        2 => {
+            if holding(world, "base:crafting_table").0 > 0 {
+                let (_, xp) = skill_level(world, "core:engineering");
+                let learnt = xp.saturating_sub(gate.count_before);
+                let result = if learnt > 0 { Ok(format!("four planks made a crafting table, {:.1} Engineering experience", learnt as f32 / 10.0)) } else { Err("a crafting table was made but taught no Engineering".into()) };
+                gate.check("workshop: table", result);
+                select(world, "base:crafting_table");
+                aim(world, table - IVec3::Y);
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "table", "four planks in the grid made no crafting table".into());
+            }
+        }
+        3 => {
+            let pressed = gate.frames % 2 == 0;
+            mouse(world, MouseButton::Right, pressed && !block_is(world, gate, table, "base:crafting_table"));
+            if block_is(world, gate, table, "base:crafting_table") {
+                mouse(world, MouseButton::Right, false);
+                aim(world, table);
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                mouse(world, MouseButton::Right, false);
+                fail(world, gate, "table", "a right click did not place the crafting table on both sides".into());
+            }
+        }
+        // Right clicking the table opens the inventory with a three-by-three grid, where
+        // three cobblestone over two sticks make a stone pickaxe.
+        4 => {
+            let open = world.resource::<UiState>().inventory_open && world.resource::<LocalPlayer>().station == Some(table);
+            if !open {
+                mouse(world, MouseButton::Right, gate.frames % 2 == 0);
+                if in_phase > WORKSHOP_WAIT {
+                    mouse(world, MouseButton::Right, false);
+                    fail(world, gate, "table: open", "right clicking the crafting table did not open its grid".into());
+                }
+                return;
+            }
+            mouse(world, MouseButton::Right, false);
+            let mut cells = world.query::<(&crate::hud::inventory::CraftCell, &Node)>();
+            let shown = cells.iter(world).filter(|(_, node)| node.display != Display::None).count();
+            if shown < voxmar_engine::craft::GRID {
+                // The grid is laid out the next frame.
+                if in_phase > 2.0 {
+                    fail(world, gate, "table: open", format!("the table's grid shows {shown} cells, not {}", voxmar_engine::craft::GRID));
+                }
+                return;
+            }
+            gate.check("workshop: table: open", Ok(format!("a right click opened the table's grid of {shown} cells")));
+            gate.count_before = skill_level(world, "core:engineering").1;
+            let laid = lay_and_craft(world, &[(0, "base:cobblestone"), (1, "base:cobblestone"), (2, "base:cobblestone"), (4, "base:stick"), (7, "base:stick")]);
+            if laid {
+                gate.advance(now);
+            } else {
+                fail(world, gate, "pickaxe", "no cobblestone or sticks for a pickaxe".into());
+            }
+        }
+        5 => {
+            if holding(world, "base:stone_pickaxe").0 > 0 {
+                // A shot of the table's grid, for a look.
+                if gate.shot(world, "table-grid").is_none() {
+                    return;
+                }
+                gate.check("workshop: pickaxe", Ok("three cobblestone over two sticks made a stone pickaxe at the table".into()));
+                // Leaving the screen leaves the table.
+                world.resource_mut::<UiState>().inventory_open = false;
+                let net = world.resource::<Net>();
+                net.command(&format!("setblock {} {} {} iron_ore", ore.x, ore.y, ore.z));
+                net.command("skill mining 1");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "pickaxe", "the table's grid made no stone pickaxe".into());
+            }
+        }
+        // An iron ore asks for Mining 15 and a stone pickaxe: refused with the level shown,
+        // then broken at level 15 with the pickaxe, teaching Mining.
+        6 => {
+            if !block_is(world, gate, ore, "base:iron_ore") || world.resource::<LocalPlayer>().station.is_some() {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "ore", "the iron ore never came, or the table's grid stayed open".into());
+                }
+                return;
+            }
+            select(world, "base:stone_pickaxe");
+            aim(world, ore);
+            mouse(world, MouseButton::Left, gate.frames % 2 == 0);
+            let locale = world.resource::<Locale>();
+            let launch = world.resource::<Launch>();
+            let mining = launch.content.skills.id("core:mining").map(|id| locale.skill(launch.content.skills.get(id))).unwrap_or_default();
+            let words = locale.format("skills.needs", &[("skill", &mining), ("level", &15)]);
+            if world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&words) {
+                mouse(world, MouseButton::Left, false);
+                gate.check("workshop: ore: refused", Ok(format!("at Mining 1 the iron ore refused the pickaxe: \"{words}\"")));
+                world.resource::<Net>().command("skill mining 15");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                mouse(world, MouseButton::Left, false);
+                fail(world, gate, "ore: refused", format!("clicking the iron ore at Mining 1 never said \"{words}\""));
+            }
+        }
+        7 => {
+            if skill_level(world, "core:mining").0 < 15 {
+                return;
+            }
+            let xp = skill_level(world, "core:mining").1;
+            let before = *gate.mining_before.get_or_insert(xp);
+            aim(world, ore);
+            mouse(world, MouseButton::Left, true);
+            let gone = world.resource::<ClientWorld>().block(ore).is_some_and(|b| b.is_air()) && gate.observer.as_ref().is_none_or(|o| o.world.block(ore).is_some_and(|b| b.is_air()));
+            let learnt = xp.saturating_sub(before);
+            if gone && learnt > 0 {
+                mouse(world, MouseButton::Left, false);
+                gate.check("workshop: ore", Ok(format!("at Mining 15 the stone pickaxe broke the iron ore on both sides, {:.1} Mining experience", learnt as f32 / 10.0)));
+                world.resource::<Net>().command("give wooden_hoe 1");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                mouse(world, MouseButton::Left, false);
+                fail(world, gate, "ore", format!("at Mining 15 with the pickaxe the ore {} and taught {learnt} tenths", if gone { "broke" } else { "stayed" }));
+            }
+        }
+        // A hoe tills dirt into farmland with a right click.
+        8 => {
+            if !select(world, "base:wooden_hoe") {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "till", "the hoe never came".into());
+                }
+                return;
+            }
+            aim(world, till);
+            mouse(world, MouseButton::Right, gate.frames % 2 == 0);
+            if block_is(world, gate, till, "base:farmland") {
+                mouse(world, MouseButton::Right, false);
+                if gate.shot(world, "workshop").is_none() {
+                    return;
+                }
+                gate.check("workshop: till", Ok("a right click with a hoe tilled the dirt into farmland on both sides".into()));
+                end_workshop(world, gate, now);
+            } else if in_phase > WORKSHOP_WAIT {
+                mouse(world, MouseButton::Right, false);
+                fail(world, gate, "till", "right clicking dirt with a hoe made no farmland".into());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Puts the workshop's tools away and goes on to the pool.
+fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Left, false);
+    mouse(world, MouseButton::Right, false);
+    world.resource_mut::<UiState>().inventory_open = false;
+    let net = world.resource::<Net>();
+    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick"] {
+        net.command(&format!("clear {tool}"));
     }
     let feet = gate.feet;
     let line = format!("tp {} {} {}", feet.x as f32 + 4.5, feet.y - 2, feet.z as f32 + 0.5);
-    world.resource::<Net>().command(&line);
+    net.command(&line);
     gate.next(Step::Swim, now);
 }
 
@@ -1059,6 +1379,83 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// How long a screen is given to open, close or be shot: on a machine loaded far past its
 /// cores a shot alone can take seconds.
 const SCREEN_WAIT: f32 = 10.0;
+
+/// How long PostUpdate is timed with the debug overlay closed and then open, in seconds
+/// (after a moment to settle), and the least number of frames each.
+const OVERLAY_TIMED: f32 = 2.0;
+const OVERLAY_FRAMES: usize = 60;
+
+/// F3 opens the debug overlay and closes it again, and with it open PostUpdate takes no
+/// longer than with it closed: an overlay that rewrote its text every frame had UI layout
+/// redone every frame, 10 to 25 ms of Mariano's slow frames.
+fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let shown = world.resource::<Settings>().debug_overlay;
+    let ms = world.resource::<PostUpdateTime>().ms;
+    let timed = |gate: &Gate, i: usize| in_phase > OVERLAY_TIMED + 0.5 && gate.overlay_ms[i].len() >= OVERLAY_FRAMES;
+    match gate.phase {
+        0 => {
+            if shown {
+                key(world, KeyCode::F3, true);
+                key(world, KeyCode::F3, false);
+                return;
+            }
+            if in_phase > 0.5 {
+                gate.overlay_ms[0].push(ms);
+            }
+            if timed(gate, 0) {
+                key(world, KeyCode::F3, true);
+                gate.advance(now);
+            }
+        }
+        1 => {
+            key(world, KeyCode::F3, false);
+            if !shown {
+                if in_phase > SCREEN_WAIT {
+                    gate.check("overlay", Err("F3 did not open the debug overlay".into()));
+                    gate.next(Step::Weather, now);
+                }
+                return;
+            }
+            if in_phase > 0.5 {
+                gate.overlay_ms[1].push(ms);
+            }
+            if timed(gate, 1) {
+                key(world, KeyCode::F3, true);
+                gate.advance(now);
+            }
+        }
+        2 => {
+            key(world, KeyCode::F3, false);
+            if shown {
+                if in_phase > SCREEN_WAIT {
+                    gate.check("overlay", Err("F3 did not close the debug overlay".into()));
+                    gate.next(Step::Weather, now);
+                }
+                return;
+            }
+            let stats = |times: &[f32]| {
+                let mut sorted = times.to_vec();
+                sorted.sort_by(f32::total_cmp);
+                let at = |q: f32| sorted[((sorted.len() - 1) as f32 * q) as usize];
+                (at(0.5), at(0.9))
+            };
+            let ((closed, closed_p90), (open, open_p90)) = (stats(&gate.overlay_ms[0]), stats(&gate.overlay_ms[1]));
+            let detail = format!(
+                "PostUpdate median {open:.2} ms open against {closed:.2} ms closed, p90 {open_p90:.2} against {closed_p90:.2} ms ({} and {} frames)",
+                gate.overlay_ms[1].len(),
+                gate.overlay_ms[0].len()
+            );
+            let result = if open <= closed + OVERLAY_MARGIN_MS && open_p90 <= closed_p90 * 1.5 + OVERLAY_MARGIN_MS { Ok(detail) } else { Err(detail) };
+            gate.check("overlay: no layout every frame", result);
+            gate.next(Step::Weather, now);
+        }
+        _ => {}
+    }
+}
+
+/// How much longer PostUpdate may take with the overlay open: its text changing a few times
+/// a second costs a layout then, a fraction of a millisecond in the median.
+const OVERLAY_MARGIN_MS: f32 = 0.5;
 
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
@@ -1231,10 +1628,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
             if count >= 4 {
                 gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
-                gate.next(Step::Weather, now);
+                gate.next(Step::Overlay, now);
             } else if in_phase > 5.0 {
                 gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
-                gate.next(Step::Weather, now);
+                gate.next(Step::Overlay, now);
             }
         }
         _ => {}
@@ -1932,9 +2329,13 @@ const FIRE_PARTICLES: u32 = 4;
 fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let Some(species) = world.resource::<Launch>().content.creatures.find("base:junglefowl") else { return };
+    // The junglefowl summoned on the pad: the newest one there. A wild one that wandered
+    // near (they spawn about the test ground too) is often older, outside the pad's walls,
+    // and was the one aimed at when this picked the oldest: "nearest 20 blocks".
+    let centre = (pad.as_vec3() + Vec3::new(-1.5, 0.0, 0.5)).xz();
     let hen = |world: &World| {
         let creatures = world.resource::<crate::creatures::Creatures>();
-        creatures.views().filter(|v| v.species == species).min_by_key(|v| v.id).copied()
+        creatures.views().filter(|v| v.species == species && v.position.xz().distance(centre) < 7.0).max_by_key(|v| v.id).copied()
     };
     match gate.phase {
         0 => {
@@ -1993,7 +2394,11 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
                 let (wheat, trust) = (item_count(world, "base:wheat"), view.trust);
-                gate.check("tame", Err(format!("25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left")));
+                let [on, other, none] = gate.tame_aim;
+                gate.check("tame", Err(format!(
+                    "25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left; the crosshair was on it {on} frames, on another creature {other}, on none {none}; nearest {:.1} blocks",
+                    gate.tame_nearest
+                )));
                 gate.next(Step::Gorge, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
@@ -2001,7 +2406,10 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 aim_at(world, view.position + Vec3::Y * 0.3);
                 // Only with the junglefowl itself under the crosshair: a mouflon wandering in
                 // front would be offered the wheat instead (they love it too).
-                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                let under = world.resource::<crate::interact::Target>().creature;
+                let aimed = under == Some(view.id);
+                gate.tame_aim[if aimed { 0 } else if under.is_some() { 1 } else { 2 }] += 1;
+                gate.tame_nearest = gate.tame_nearest.min(world.resource::<LocalPlayer>().eye().distance(view.position));
                 mouse(world, MouseButton::Right, aimed && ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
@@ -2208,7 +2616,8 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // The columns around it on the server's side and the player's, meshed (the
             // distance may still be loading; the check needs only these).
             let held = gate.observer.as_ref().is_some_and(|o| columns_around(at).into_iter().all(|c| o.world.contains(c)));
-            let there = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2()) < 4.0;
+            gate.gorge_reached |= world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2()) < 4.0;
+            let there = gate.gorge_reached;
             let client = world.resource::<ClientWorld>();
             let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
             if !(held && there && shown && in_phase > 1.0) {
@@ -2222,12 +2631,13 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let meshing = columns.iter().filter(|&&c| client.meshing(c)).count();
                     let away = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2());
                     let n = columns.len();
+                    let reached = if gate.gorge_reached { "got there and is now" } else { "never got within 4 blocks and is" };
                     gate.check(
                         "gorge",
                         Err(format!(
                             "the world around the gorge at {at} did not load in {limit:.0}s (load {load:.0} on {cores} cores): \
                              the server has {on_server} of its {n} columns, the client {on_client} with {meshing} still meshing, \
-                             and the player is {away:.0} blocks away"
+                             and the player {reached} {away:.0} blocks away"
                         )),
                     );
                     gate.next(Step::Recipes, now);

@@ -76,6 +76,10 @@ pub struct WorldMeta {
     /// How fast the time of day runs, 0 when frozen.
     #[serde(default = "normal_speed")]
     pub day_speed: f32,
+    /// Where players put blocks that teach a skill when broken (ores), which then teach
+    /// nothing: experience comes from what the world holds, not from placing and breaking.
+    #[serde(default)]
+    pub placed: Vec<[i32; 3]>,
 }
 
 fn normal_speed() -> f32 {
@@ -96,6 +100,7 @@ impl WorldMeta {
             time: 0,
             day: None,
             day_speed: 1.0,
+            placed: Vec::new(),
         }
     }
 }

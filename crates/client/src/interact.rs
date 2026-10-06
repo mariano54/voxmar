@@ -185,6 +185,10 @@ impl ActionContext for ClientContext<'_> {
     fn cooking(&self) -> Option<&voxmar_engine::cooking::CookingRegistry> {
         Some(&self.content.cooking)
     }
+
+    fn tools(&self) -> Option<&voxmar_engine::tool::ToolRegistry> {
+        Some(&self.content.tools)
+    }
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
@@ -194,7 +198,7 @@ impl ActionContext for ClientContext<'_> {
 fn break_and_place(
     time: Res<Time>,
     mouse: Res<ButtonInput<MouseButton>>,
-    ui: Res<UiState>,
+    mut ui: ResMut<UiState>,
     net: Res<Net>,
     actions: Res<Actions>,
     mut world: ResMut<ClientWorld>,
@@ -247,6 +251,14 @@ fn break_and_place(
                     target.breaking = Some((pos, progress));
                 }
             }
+            // A block that asks for a skill level or a better tool says so on a fresh click.
+            _ if mouse.just_pressed(MouseButton::Left)
+                && let Err(Rejection::Unmet(need @ (Requirement::BlockLevel | Requirement::ToolGood))) = def.validate(&context, action_target) =>
+            {
+                if let Some(words) = refusal(&world, &launch.content, &locale, hit.block, need) {
+                    toasts.refused(words, time.elapsed_secs());
+                }
+            }
             _ if target.mine_cooldown <= 0.0 && def.validate(&context, action_target).is_ok() => {
                 target.mining_seconds = def.seconds(&context, action_target);
                 target.mining = Some(action_target);
@@ -268,6 +280,17 @@ fn break_and_place(
     // put it on. Eating takes a moment, so it starts on the press, not again while held.
     if mouse.just_pressed(MouseButton::Right) && ui.cursor_locked && !player.dead {
         let content = &launch.content;
+        // A crafting table opens the inventory with its three-by-three grid.
+        if let (Some(hit), Some(use_table)) = (hit, actions.0.id("base:use_table")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(use_table).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, use_table, action_target);
+                player.station = Some(hit.block);
+                ui.inventory_open = true;
+                return;
+            }
+        }
         // Using what a station cooks on that station cooks it, before eating or placing.
         if let (Some(hit), Some(cook)) = (hit, actions.0.id("base:cook")) {
             let context = ClientContext { world: &world, player: &player, content };
@@ -371,6 +394,12 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
                 world.set_block(target + IVec3::Y, sprout);
                 cues.write(SoundCue::for_block(world, sprout, Cue::Place));
             }
+            Effect::Till => {
+                if let Some(farmland) = world.registry.id("base:farmland") {
+                    world.set_block(target, farmland);
+                    cues.write(SoundCue::for_block(world, farmland, Cue::Place));
+                }
+            }
             Effect::Pick => {
                 let Some((crop, _)) = world.block(target).and_then(|b| content.crops.stage_of(b)) else { continue };
                 let crop = content.crops.get(crop);
@@ -379,6 +408,22 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
                 world.set_block(target, crop.stages[regrow as usize]);
             }
             _ => {}
+        }
+    }
+}
+
+/// What to tell a player whose click a block refused: the skill level it asks for, or the
+/// least tool that would do.
+fn refusal(world: &ClientWorld, content: &Content, locale: &Locale, block: IVec3, need: Requirement) -> Option<String> {
+    let rule = content.tools.rule(world.block(block)?)?;
+    match need {
+        Requirement::BlockLevel => {
+            let skill = locale.skill(content.skills.get(rule.skill?));
+            Some(locale.format("skills.needs", &[("skill", &skill), ("level", &rule.level)]))
+        }
+        _ => {
+            let tool = content.tools.first_of(rule.tool?, rule.tier)?;
+            Some(locale.format("tools.needs", &[("tool", &locale.block(world.registry.def(tool)))]))
         }
     }
 }

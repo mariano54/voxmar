@@ -5068,6 +5068,7 @@ dependencies = [
  "bytemuck",
  "crossbeam-channel",
  "image",
+ "libc",
  "parley",
  "rayon",
  "ron",

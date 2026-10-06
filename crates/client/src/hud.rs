@@ -407,6 +407,9 @@ fn show_held_name(
 const RECENT_SECONDS: f32 = 5.0;
 /// A frame over this many ms is counted as slow on the debug overlay (as in slow_frames.rs).
 const SLOW_FRAME_MS: f32 = 25.0;
+/// How often the debug overlay's text is rewritten, in seconds. New text means laying out
+/// the UI again; rewritten every frame, that was 10 to 25 ms of Mariano's slow frames.
+const DEBUG_REFRESH: f32 = 0.25;
 
 /// The wall-clock length of every frame in the last `RECENT_SECONDS`, kept while the overlay
 /// is hidden too, so its worst frames are there the moment it opens.
@@ -437,6 +440,7 @@ impl RecentFrames {
 fn update_debug(
     time: Res<Time<Real>>,
     mut recent: Local<RecentFrames>,
+    mut next_refresh: Local<f32>,
     diagnostics: Res<DiagnosticsStore>,
     world: Res<ClientWorld>,
     player: Res<LocalPlayer>,
@@ -447,12 +451,14 @@ fn update_debug(
     mut text: Query<&mut Text, With<DebugText>>,
     mut plate: Query<&mut Visibility, With<DebugPlate>>,
 ) {
-    recent.push(time.elapsed_secs(), time.delta_secs() * 1000.0);
+    let now = time.elapsed_secs();
+    recent.push(now, time.delta_secs() * 1000.0);
     let (Ok(mut text), Ok(mut visibility)) = (text.single_mut(), plate.single_mut()) else { return };
-    visibility.set_if_neq(if settings.debug_overlay { Visibility::Inherited } else { Visibility::Hidden });
-    if !settings.debug_overlay {
+    let opened = visibility.set_if_neq(if settings.debug_overlay { Visibility::Inherited } else { Visibility::Hidden }) && settings.debug_overlay;
+    if !settings.debug_overlay || (!opened && now < *next_refresh) {
         return;
     }
+    *next_refresh = now + DEBUG_REFRESH;
     let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
     let frame_ms = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
     let (worst, p99, slow) = recent.summary();
@@ -470,7 +476,7 @@ fn update_debug(
     if raining > 0 {
         sky.push_str(&format!(" | rain in {raining} of the 25 cells around"));
     }
-    text.0 = format!(
+    let new = format!(
         "{fps:.0} fps ({frame_ms:.2} ms) | last {RECENT_SECONDS:.0} s: worst {worst:.1} ms, p99 {p99:.1} ms, {slow} over {SLOW_FRAME_MS:.0} ms\n\
          xyz {:.1} {:.1} {:.1}{}\n\
          columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
@@ -491,4 +497,8 @@ fn update_debug(
         lod.progress().0,
         lod.progress().1,
     );
+    // Only new text: an unchanged one assigned would still count as a change to lay out.
+    if text.0 != new {
+        text.0 = new;
+    }
 }

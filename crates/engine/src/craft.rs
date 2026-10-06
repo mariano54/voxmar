@@ -1,18 +1,27 @@
 //! Crafting: recipes are content (each package's `recipes.ron`), matched against the
-//! inventory's two-by-two crafting grid (see [`crate::inventory`]).
+//! inventory's crafting grid (see [`crate::inventory`]): two by two anywhere, three by
+//! three at a crafting table.
 //!
-//! A recipe is shaped (a pattern of up to two rows of two, which may sit anywhere in the
-//! grid) or shapeless (ingredients in any arrangement). A name with `{name}` in it makes
-//! a family of recipes, one for every name that fits all of the recipe's blocks: one line
-//! turns every wood's log into its planks.
+//! A recipe is shaped (a pattern of up to three rows of three, which may sit anywhere in
+//! the grid) or shapeless (ingredients in any arrangement). One bigger than two by two, or
+//! with more than four ingredients, needs a table. A name with `{name}` in it makes a
+//! family of recipes, one for every name that fits all of the recipe's blocks: one line
+//! turns every wood's log into its planks. A recipe trains a skill (Crafting unless it
+//! says), may need a level in it, and gives experience for every one made.
 
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
 use crate::block::{BlockId, BlockRegistry, RegistryError};
+use crate::skill::{SkillId, SkillRegistry};
 
-/// The crafting grid's cells, row by row: top left, top right, bottom left, bottom right.
-pub const GRID: usize = 4;
+/// The crafting grid's side and cells, row by row from the top left. Away from a table
+/// only the top left two by two is used (cells 0, 1, 3 and 4).
+pub const SIDE: usize = 3;
+pub const GRID: usize = SIDE * SIDE;
+
+/// The cells of the two-by-two grid the inventory has away from a table.
+pub const SMALL: [usize; 4] = [0, 1, SIDE, SIDE + 1];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +35,14 @@ pub struct RecipeDef {
     pub output: String,
     #[serde(default = "one")]
     pub count: u8,
+    /// The skill it trains (Crafting unless given), the level it needs, and the
+    /// experience each one made gives.
+    #[serde(default)]
+    pub skill: Option<String>,
+    #[serde(default = "one")]
+    pub level: u8,
+    #[serde(default)]
+    pub xp: f32,
 }
 
 fn one() -> u8 {
@@ -39,7 +56,7 @@ struct RecipeFile {
 }
 
 /// A recipe with its names resolved.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Recipe {
     /// The pattern's rows, for a shaped recipe.
     pattern: Option<Vec<Vec<Option<BlockId>>>>,
@@ -47,6 +64,9 @@ pub struct Recipe {
     ingredients: Vec<BlockId>,
     pub output: BlockId,
     pub count: u8,
+    pub skill: Option<SkillId>,
+    pub level: u8,
+    pub xp: f32,
 }
 
 impl Recipe {
@@ -58,7 +78,7 @@ impl Recipe {
             Some(rows) => {
                 for (r, row) in rows.iter().enumerate() {
                     for (c, item) in row.iter().enumerate() {
-                        cells[r * 2 + c] = *item;
+                        cells[r * SIDE + c] = *item;
                     }
                 }
             }
@@ -70,6 +90,23 @@ impl Recipe {
     /// Whether its ingredients go in any arrangement.
     pub fn shapeless(&self) -> bool {
         self.pattern.is_none()
+    }
+
+    /// Whether it takes a crafting table: bigger than two by two, or more than four
+    /// ingredients.
+    pub fn needs_table(&self) -> bool {
+        match &self.pattern {
+            Some(rows) => rows.len() > 2 || rows.iter().any(|row| row.len() > 2),
+            None => self.ingredients.len() > 4,
+        }
+    }
+
+    /// How many rows and columns it takes laid out (see `cells`).
+    pub fn size(&self) -> (usize, usize) {
+        match &self.pattern {
+            Some(rows) => (rows.len(), rows.first().map_or(0, Vec::len)),
+            None => (self.ingredients.len().div_ceil(SIDE).max(1), self.ingredients.len().min(SIDE)),
+        }
     }
 
     fn matches(&self, grid: &[Option<BlockId>; GRID]) -> bool {
@@ -87,9 +124,18 @@ impl Recipe {
 /// The grid's filled cells cut down to their bounding rows and columns, so a pattern
 /// matches wherever it sits.
 fn shape_of(grid: &[Option<BlockId>; GRID]) -> Option<Vec<Vec<Option<BlockId>>>> {
-    let cell = |row: usize, column: usize| grid[row * 2 + column];
-    let rows: Vec<usize> = (0..2).filter(|&r| (0..2).any(|c| cell(r, c).is_some())).collect();
-    let columns: Vec<usize> = (0..2).filter(|&c| (0..2).any(|r| cell(r, c).is_some())).collect();
+    let cell = |row: usize, column: usize| grid[row * SIDE + column];
+    let rows: Vec<usize> = (0..SIDE).filter(|&r| (0..SIDE).any(|c| cell(r, c).is_some())).collect();
+    let columns: Vec<usize> = (0..SIDE).filter(|&c| (0..SIDE).any(|r| cell(r, c).is_some())).collect();
+    // A gap row or column inside the shape is part of it.
+    let rows: Vec<usize> = match (rows.first(), rows.last()) {
+        (Some(&first), Some(&last)) => (first..=last).collect(),
+        _ => rows,
+    };
+    let columns: Vec<usize> = match (columns.first(), columns.last()) {
+        (Some(&first), Some(&last)) => (first..=last).collect(),
+        _ => columns,
+    };
     if rows.is_empty() {
         return None;
     }
@@ -105,7 +151,8 @@ pub struct RecipeRegistry {
 impl RecipeRegistry {
     /// Reads one package's `recipes.ron`; unqualified names go into `namespace`.
     pub fn read(namespace: &str, source: &str) -> Result<Vec<RecipeDef>, RegistryError> {
-        let file: RecipeFile = ron::from_str(source).map_err(|e| RegistryError(format!("{namespace}/recipes.ron: {e}")))?;
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let file: RecipeFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/recipes.ron: {e}")))?;
         let qualify = |name: &mut String| {
             if !name.is_empty() && !name.contains(':') {
                 *name = format!("{namespace}:{name}");
@@ -120,17 +167,22 @@ impl RecipeRegistry {
         Ok(defs)
     }
 
-    pub fn new(defs: Vec<RecipeDef>, blocks: &BlockRegistry) -> Result<Self, RegistryError> {
+    pub fn new(defs: Vec<RecipeDef>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
         let mut recipes = Vec::new();
+        let crafting = skills.id("core:crafting");
         for def in defs {
             let names: Vec<&String> = def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).collect();
             let bad = |what: &str| RegistryError(format!("recipe for {}: {what}", def.output));
-            if def.pattern.len() > 2 || def.pattern.iter().any(|row| row.len() > 2 || row.len() != def.pattern[0].len()) {
-                return Err(bad("a pattern is up to two rows of two"));
+            if def.pattern.len() > SIDE || def.pattern.iter().any(|row| row.len() > SIDE || row.len() != def.pattern[0].len()) {
+                return Err(bad("a pattern is up to three rows of three"));
             }
             if def.pattern.is_empty() == def.ingredients.is_empty() || def.ingredients.len() > GRID {
-                return Err(bad("give either a pattern or up to four ingredients"));
+                return Err(bad("give either a pattern or up to nine ingredients"));
             }
+            let skill = match &def.skill {
+                Some(name) => Some(skills.id(name).ok_or_else(|| bad(&format!("no skill `{name}`")))?),
+                None => crafting,
+            };
             // A family: one recipe for every name that fits all of the recipe's blocks.
             let fills: Vec<Option<String>> = match names.iter().find(|n| n.contains("{name}")) {
                 None => vec![None],
@@ -161,7 +213,7 @@ impl RecipeRegistry {
                     let mut grid = [None; GRID];
                     for (r, row) in rows.iter().enumerate() {
                         for (c, item) in row.iter().enumerate() {
-                            grid[r * 2 + c] = *item;
+                            grid[r * SIDE + c] = *item;
                         }
                     }
                     shape_of(&grid)
@@ -169,7 +221,7 @@ impl RecipeRegistry {
                 let mut ingredients: Vec<BlockId> = def.ingredients.iter().map(resolve).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
                 ingredients.sort();
                 let output = resolve(&def.output)?.ok_or_else(|| bad("no output"))?;
-                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1) });
+                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp });
             }
         }
         Ok(Self { recipes })
@@ -213,6 +265,23 @@ mod tests {
         BlockRegistry::new(names.iter().map(|n| BlockDef { name: n.to_string(), ..Default::default() }).collect()).unwrap()
     }
 
+    /// A grid from rows of up to three cells, as the player sees it.
+    fn grid(rows: &[&[Option<BlockId>]]) -> [Option<BlockId>; GRID] {
+        let mut grid = [None; GRID];
+        for (r, row) in rows.iter().enumerate() {
+            for (c, item) in row.iter().enumerate() {
+                grid[r * SIDE + c] = *item;
+            }
+        }
+        grid
+    }
+
+    fn registry(blocks: &BlockRegistry, source: &str) -> RecipeRegistry {
+        let mut skills = SkillRegistry::default();
+        skills.extend("core", r#"(curve: RuneScape(max: 99), skills: [(name: "crafting", title: "", description: ""), (name: "engineering", title: "", description: "")])"#).unwrap();
+        RecipeRegistry::new(RecipeRegistry::read("test", source).unwrap(), blocks, &skills).unwrap()
+    }
+
     #[test]
     fn families_shapes_and_shapeless() {
         let blocks = blocks();
@@ -221,20 +290,40 @@ mod tests {
             (pattern: [["stone", "stone"], ["stone", "stone"]], output: "stone_bricks", count: 4),
             (pattern: [["wheat", "wheat"]], output: "bread"),
         ])"#;
-        let registry = RecipeRegistry::new(RecipeRegistry::read("test", source).unwrap(), &blocks).unwrap();
+        let registry = registry(&blocks, source);
         // Oak and birch have planks; fir has none, so it gets no recipe.
         assert_eq!(registry.len(), 4);
         let id = |name: &str| blocks.id(&format!("test:{name}")).unwrap();
-        let birch = [None, None, Some(id("birch_log")), None];
+        let birch = grid(&[&[], &[Some(id("birch_log"))]]);
         assert_eq!(registry.find(&birch).map(|r| (r.output, r.count)), Some((id("birch_planks"), 4)));
-        assert!(registry.find(&[Some(id("fir_log")), None, None, None]).is_none());
+        assert!(registry.find(&grid(&[&[Some(id("fir_log"))]])).is_none());
         // A shaped recipe matches in any row, but not turned on its side.
         let wheat = Some(id("wheat"));
-        assert!(registry.find(&[None, None, wheat, wheat]).is_some_and(|r| r.output == id("bread")));
-        assert!(registry.find(&[wheat, None, wheat, None]).is_none());
+        assert!(registry.find(&grid(&[&[], &[], &[None, wheat, wheat]])).is_some_and(|r| r.output == id("bread")));
+        assert!(registry.find(&grid(&[&[wheat], &[wheat]])).is_none());
         let stone = Some(id("stone"));
-        assert!(registry.find(&[stone; GRID]).is_some_and(|r| r.output == id("stone_bricks")));
-        assert!(registry.find(&[stone, stone, stone, None]).is_none());
+        assert!(registry.find(&grid(&[&[stone, stone], &[stone, stone]])).is_some_and(|r| r.output == id("stone_bricks")));
+        assert!(registry.find(&grid(&[&[stone, stone], &[stone]])).is_none());
         assert!(registry.find(&[None; GRID]).is_none());
+        // Planks train Crafting, and no recipe so far needs a table.
+        assert!(registry.iter().all(|r| r.skill.is_some() && !r.needs_table()));
+    }
+
+    #[test]
+    fn three_by_three_recipes_need_a_table_and_keep_their_gaps() {
+        let blocks = blocks();
+        let source = r#"(recipes: [
+            (pattern: [["stone", "stone", "stone"], ["", "oak_planks", ""], ["", "oak_planks", ""]], output: "bread", skill: "core:engineering", level: 5, xp: 12.5),
+            (pattern: [["wheat", ""], ["", "wheat"]], output: "stone"),
+        ])"#;
+        let registry = registry(&blocks, source);
+        let id = |name: &str| Some(blocks.id(&format!("test:{name}")).unwrap());
+        let pick = registry.find(&grid(&[&[id("stone"), id("stone"), id("stone")], &[None, id("oak_planks")], &[None, id("oak_planks")]])).unwrap();
+        assert!(pick.needs_table());
+        assert_eq!((pick.level, pick.xp, pick.size()), (5, 12.5, (3, 3)));
+        // A diagonal keeps its gap, anywhere in the grid.
+        let wheat = id("wheat");
+        assert!(registry.find(&grid(&[&[], &[None, wheat], &[None, None, wheat]])).is_some());
+        assert!(registry.find(&grid(&[&[wheat], &[None, None, wheat]])).is_none(), "a wider gap is another shape");
     }
 }

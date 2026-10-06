@@ -262,7 +262,7 @@ fn texel(body: &Body, index: usize, part: &Part, f: usize, face: &Face, rect: Re
     // Where the texel lies in the box's own frame.
     let local = (face.normal * 0.5 + face.u * (u - 0.5) + face.v * (v - 0.5)) * part.size;
     let rim = i == 0 || j == 0 || i + 1 == rect.w || j + 1 == rect.h;
-    paint_at(body, index, part, f, local, rim)
+    paint_at(body, index, part, f, local, rim, true)
 }
 
 /// Paints an individual's skin through a volume: `dims` texels of [`TEXELS`] a block from
@@ -299,7 +299,12 @@ pub fn paint_volume(def: &BodyDef, parts: &[Part], seed: u32, origin: Vec3, dims
                 // the box.
                 let n = FACES[f].normal;
                 let on = local - n * local.dot(n) + n * (part.size * 0.5).dot(n.abs());
-                let colour = paint_at(&body, index, part, f, on, false).clamp(Vec3::ZERO, Vec3::ONE) * 255.0;
+                // Eyes and nostrils only where the surface is near the face they sit on: on a
+                // rounded head the sides fall away behind the face, and painting through them
+                // would smear an eye across the cheek.
+                let half = (part.size * 0.5).dot(n.abs());
+                let features = local.dot(n) > half * 0.72;
+                let colour = paint_at(&body, index, part, f, on, false, features).clamp(Vec3::ZERO, Vec3::ONE) * 255.0;
                 let i = ((z * h + y) * w + x) * 4;
                 pixels[i..i + 4].copy_from_slice(&[colour.x.round() as u8, colour.y.round() as u8, colour.z.round() as u8, 255]);
             }
@@ -310,7 +315,7 @@ pub fn paint_volume(def: &BodyDef, parts: &[Part], seed: u32, origin: Vec3, dims
 
 /// The colour at `local`, a point in part `index`'s own frame on (or near) its face `f`;
 /// `rim` darkens it as a face's edge.
-fn paint_at(body: &Body, index: usize, part: &Part, f: usize, local: Vec3, rim: bool) -> Rgb {
+fn paint_at(body: &Body, index: usize, part: &Part, f: usize, local: Vec3, rim: bool, features: bool) -> Rgb {
     let skin = &body.def.skin;
     let face = &FACES[f];
     let at = part.at_rest(local);
@@ -405,7 +410,7 @@ fn paint_at(body: &Body, index: usize, part: &Part, f: usize, local: Vec3, rim: 
     }
 
     // Eyes, nostrils, beak tips.
-    if Some(index) == body.head {
+    if Some(index) == body.head && features {
         for &eye in &body.eyes {
             let d = (local - eye).abs();
             // Measured across the face the eye sits on, by the larger of the other two.
@@ -434,7 +439,7 @@ fn paint_at(body: &Body, index: usize, part: &Part, f: usize, local: Vec3, rim: 
             }
         }
     }
-    if part.role == Role::Snout && f == FRONT {
+    if part.role == Role::Snout && f == FRONT && features {
         // A hunter's nose is a dark pad on the tip; a grazer's, two nostrils near the
         // top, or one small pink nose on a tiny muzzle.
         let wide = part.size.x * TEXELS;

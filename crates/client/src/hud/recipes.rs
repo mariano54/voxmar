@@ -13,7 +13,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use voxmar_engine::block::BlockId;
-use voxmar_engine::craft::GRID;
+use voxmar_engine::craft::{GRID, SIDE};
 use voxmar_engine::recipe_book::{Entry, Method, RecipeBook};
 
 use super::{HudImages, SLOT};
@@ -288,10 +288,12 @@ fn draw(
                         // Looking up a use, the variant with that item; else they take turns.
                         let wanted = |cells: &&[Option<BlockId>; GRID]| lookup.uses && cells.contains(&Some(lookup.item));
                         let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
-                        let grid = Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(2, SLOT), row_gap: Val::Px(PX), column_gap: Val::Px(PX), ..default() };
+                        // Two by two, or three by three for what takes a crafting table.
+                        let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
+                        let grid = Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(side as u16, SLOT), row_gap: Val::Px(PX), column_gap: Val::Px(PX), ..default() };
                         card.spawn(grid).with_children(|grid| {
-                            for cell in cells.iter().take(GRID) {
-                                item_cell(grid, font, &images, *cell, None);
+                            for i in (0..GRID).filter(|i| i % SIDE < side && i / SIDE < side) {
+                                item_cell(grid, font, &images, cells[i], None);
                             }
                         });
                     }

@@ -40,6 +40,9 @@ const FLAG_COOLS: u32 = 4u;
 // What a cooling particle's colour is multiplied by at the end of its life: dimmer, and
 // redder, as blue and green go first.
 const COOLED: vec3<f32> = vec3(0.5, 0.2, 0.05);
+// A flame's white-hot core, and what its edge is multiplied by: hue-shifted towards red.
+const CORE: vec3<f32> = vec3(1.0, 0.86, 0.55);
+const EDGE: vec3<f32> = vec3(0.75, 0.32, 0.16);
 // Of the speed a particle hits the floor with, how much it hops back up.
 const BOUNCE: f32 = 0.35;
 // How quickly a particle that has touched the floor slows, per second.
@@ -48,6 +51,9 @@ const GROUND_DRAG: f32 = 8.0;
 const FADE: f32 = 0.35;
 // Brightness of a glowing particle against a sunlit block.
 const GLOW: f32 = 2.5;
+// Fire is less bright, so its oranges and reds hold rather than washing out to white: as
+// bright as the fire's own sprite.
+const FIRE_GLOW: f32 = 1.25;
 
 const CORNERS = array<vec2<f32>, 6>(
     vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
@@ -204,6 +210,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             albedo *= texel.rgb;
         }
     }
+    if glowing && (in.flags & FLAG_COOLS) != 0u {
+        // Fire is drawn in bands, as pixel art is: a white-yellow core, the particle's own
+        // colour, and an edge turned towards deep red, cooling with it as it ages.
+        let heat = 1.0 - tongue;
+        albedo = select(albedo * EDGE, albedo, heat > 0.3);
+        albedo = select(albedo, mix(albedo, CORE, 0.7), heat > 0.7);
+    } else if !crisp {
+        // Smoke is a little darker at its thin edge than in its body.
+        albedo *= mix(0.8, 1.0, coverage);
+    }
 #ifdef ALPHA_TO_COVERAGE
     // Sharpened so texel edges stay crisp; the fade spreads over the samples. Smoke
     // stays soft: its edge thins out like its fade.
@@ -221,7 +237,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 #endif
-    var color = albedo * GLOW;
+    var color = albedo * select(GLOW, FIRE_GLOW, (in.flags & FLAG_COOLS) != 0u);
     if (in.flags & FLAG_GLOW) == 0u {
         let sky = f32(in.surface >> 28u) / 15.0;
         let block = f32((in.surface >> 24u) & 15u) / 15.0;
