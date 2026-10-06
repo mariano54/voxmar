@@ -120,6 +120,7 @@
     "settings.textures.hint": "優先するテクスチャパック。次にゲームを起動したときに反映されます。",
     "settings.textures.minecraft": "Minecraft優先",
     "settings.textures.voxmar": "Voxmar",
+    "settings.textures.voxmar_hd": "Voxmar HD",
 
     "settings.shader_pack": "シェーダーパック",
     "settings.shader_pack.hint": "光、空、水、色合いの見た目。",

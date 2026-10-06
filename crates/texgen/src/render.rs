@@ -265,7 +265,15 @@ fn draw_clusters(canvas: &mut Canvas, clusters: &Clusters, seed: u32) -> Result<
                         continue;
                     }
                     let touching = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().filter(|(ax, ay)| blob.contains(&wrap((next.0 + ax, next.1 + ay)))).count();
-                    let score = touching as f32 + weight * 1.3 * unit(seed, k * 64 + step, next.0 * 31 + next.1);
+                    let mut score = touching as f32 + weight * 1.3 * unit(seed, k * 64 + step, next.0 * 31 + next.1);
+                    // Big blobs (a high-resolution pack's, or a 16×16 recipe drawn finer)
+                    // grow outwards from their centre, or packing alone makes them square.
+                    let round = clusters.round.unwrap_or(if target > 16 { 2.5 } else { 0.0 });
+                    if round > 0.0 {
+                        let (dx, dy) = ((next.0 - centre.0).rem_euclid(w), (next.1 - centre.1).rem_euclid(h));
+                        let (dx, dy) = (dx.min(w - dx) as f32 / clusters.spread.0.max(0.1), dy.min(h - dy) as f32 / clusters.spread.1.max(0.1));
+                        score -= round * dx.hypot(dy) / (target as f32).sqrt();
+                    }
                     if best.is_none_or(|(_, b)| score > b) {
                         best = Some((next, score));
                     }

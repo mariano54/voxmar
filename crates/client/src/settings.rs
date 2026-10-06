@@ -203,7 +203,7 @@ impl FarDetail {
     }
 }
 
-/// Which texture pack the game prefers (see `textures`). `$VOXMAR_TEXTURES` overrides both.
+/// Which texture pack the game prefers (see `textures`). `$VOXMAR_TEXTURES` overrides them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextureOrder {
     /// The player's Minecraft textures where they have them, ours for everything else.
@@ -211,13 +211,18 @@ pub enum TextureOrder {
     Minecraft,
     /// Our own pack for everything.
     Voxmar,
+    /// Voxmar HD (`assets/packs/voxmar_hd`, docs/voxmar-hd.md): our own 32×32 look.
+    VoxmarHd,
 }
 
 impl TextureOrder {
+    pub const ALL: [TextureOrder; 3] = [TextureOrder::Minecraft, TextureOrder::Voxmar, TextureOrder::VoxmarHd];
+
     fn key(self) -> &'static str {
         match self {
             TextureOrder::Minecraft => "settings.textures.minecraft",
             TextureOrder::Voxmar => "settings.textures.voxmar",
+            TextureOrder::VoxmarHd => "settings.textures.voxmar_hd",
         }
     }
 }
@@ -684,7 +689,7 @@ impl Choice {
             Choice::Shadows => settings.shadows = cycle(&ShadowQuality::ALL, settings.shadows, forward),
             Choice::Water => settings.water_quality = cycle(&WaterQuality::ALL, settings.water_quality, forward),
             Choice::Textures => {
-                settings.textures = cycle(&[TextureOrder::Minecraft, TextureOrder::Voxmar], settings.textures, forward);
+                settings.textures = cycle(&TextureOrder::ALL, settings.textures, forward);
             }
             Choice::Particles => settings.particles = cycle(&ParticleAmount::ALL, settings.particles, forward),
         }
