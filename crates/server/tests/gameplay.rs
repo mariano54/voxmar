@@ -47,6 +47,7 @@ struct Client {
     deaths: u32,
     blows: u32,
     journal: voxmar_engine::journal::Journal,
+    quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
     _server: Option<ServerHandle>,
 }
@@ -115,6 +116,7 @@ impl Client {
             deaths: 0,
             blows: 0,
             journal: Default::default(),
+            quests: Vec::new(),
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -197,6 +199,7 @@ impl Client {
             }
             ServerMessage::Struck { .. } => self.blows += 1,
             ServerMessage::Journal { entries } => self.journal.merge(entries),
+            ServerMessage::Quests { states } => self.quests = states,
             ServerMessage::Items { changed, gone } => {
                 for view in changed {
                     self.items.insert(view.id, view);
@@ -1100,4 +1103,25 @@ fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
     client.pump_until(|c| c.health == 0);
     client.propose("core:respawn", ActionTarget::None);
     client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
+
+#[test]
+fn quests_finish_from_what_was_done_and_reward_it() {
+    let mut client = Client::join();
+    let done = |c: &Client, name: &str| c.quests.iter().any(|q| q.name == name && q.done);
+    client.pump_until(|c| !c.quests.is_empty());
+    assert!(!done(&client, "base:crafting_table"));
+    // Four planks in the hand's grid make a crafting table: the quest asking for one is
+    // done, and its Engineering comes with it.
+    for line in ["/clear", "/give oak_planks 4"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.inventory.get(0).is_some());
+    for cell in voxmar_engine::craft::SMALL {
+        let to = (voxmar_engine::inventory::CRAFT + cell) as u8;
+        client.propose("core:transfer", ActionTarget::Slots { from: 0, to, count: 1 });
+    }
+    client.propose("core:craft", ActionTarget::Slot(0));
+    client.chat.clear();
+    client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
 }

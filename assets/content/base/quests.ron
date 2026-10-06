@@ -1,0 +1,89 @@
+// Quests (engine/src/quest.rs): the quest book's chapters, one per age. A quest completes
+// the moment one of its `tasks` holds, however long ago it was done: every goal of the task
+// is read from what the player has done (their journal, what they made and cooked, their
+// skills, what they carry, a home). Nothing is locked behind a quest; they point the way
+// and reward the walk. `after` names quests that come first (`"a|b"` for either).
+//
+// Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
+// Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
+// Discover(page, n), Level(skill, n), Have(item, n), Home. Items and creatures may be
+// `any` or `tag:TAG`. Rewards: Xp(skill, xp), Item(item, count).
+//
+// The Nomad chapter as far as the game has it today (quest book v2's N01 to N18); quests
+// for what is still to come (tracks, snares, slings, teas, Old Tusk) join as it lands.
+(
+    quests: [
+        (
+            name: "first_night", age: "nomad", branch: "main", title: "First Night",
+            why: "Night comes fast. Cooked food heals far more than raw, and a fire keeps the cold off.",
+            tasks: [[Cook("any", 1)]],
+            rewards: [Xp("cooking", 93.0), Item("torch", 4)],
+        ),
+        (
+            name: "stone_in_hand", age: "nomad", branch: "main", title: "Stone in Hand",
+            why: "Bare hands are slow. Stone tools mine twice as fast and reach coal for torches.",
+            tasks: [[Craft("stone_pickaxe", 1), Craft("stone_axe", 1)]],
+            rewards: [Xp("engineering", 51.0), Xp("mining", 31.0)],
+        ),
+        (
+            name: "where_to_settle", age: "nomad", branch: "main", title: "Where to Settle",
+            why: "Biomes help different work: the woods heal, the water fishes, the mountains mine. Where you build decides what your home gives.",
+            tasks: [[Visit(3)]],
+            after: ["stone_in_hand"],
+            rewards: [Xp("farming", 75.0), Xp("mining", 75.0), Xp("fishing", 75.0)],
+        ),
+        (
+            name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
+            why: "Your home: you wake here after dying, and the Farm age opens. A hearthstone in a ring of stone, with a chimney at a corner.",
+            tasks: [[Home]],
+            after: ["first_night", "where_to_settle"],
+            rewards: [Item("seed_pouch", 1), Item("bread", 4)],
+        ),
+        (
+            name: "a_friend_in_the_wild", age: "nomad", branch: "hunter", title: "A Friend in the Wild",
+            why: "A tamed junglefowl lays eggs at home: your first step to a farm, and to pets.",
+            tasks: [[Tame("junglefowl", 1)], [Tame("rabbit", 1)]],
+            rewards: [Xp("hunter", 180.0), Item("seed_mix", 5)],
+        ),
+        (
+            name: "bare_hands", age: "nomad", branch: "fishing", title: "First Catch",
+            why: "Fish are the easiest food near water, and heal well once cooked.",
+            tasks: [[Catch("any", 5)]],
+            after: ["stone_in_hand"],
+            rewards: [Xp("fishing", 130.0)],
+        ),
+        (
+            name: "twine_and_thong", age: "nomad", branch: "crafting", title: "Twine and Thong",
+            why: "Twine goes into rod lines, pouches, snares and bows.",
+            tasks: [[Craft("twine", 10)]],
+            rewards: [Xp("crafting", 67.0)],
+        ),
+        (
+            name: "pockets", age: "nomad", branch: "qol", title: "Pockets",
+            why: "Herbs and seeds eat slots; a pouch holds a thousand of a kind in one.",
+            tasks: [[Craft("herb_pouch", 1)], [Craft("seed_pouch", 1)]],
+            after: ["twine_and_thong"],
+            rewards: [Xp("crafting", 40.0)],
+        ),
+        (
+            name: "torchlight", age: "nomad", branch: "main", title: "Torchlight",
+            why: "Light keeps monsters off and lets you work at night.",
+            tasks: [[Craft("torch", 8)]],
+            after: ["first_night"],
+            rewards: [Xp("engineering", 21.0)],
+        ),
+        (
+            name: "crafting_table", age: "nomad", branch: "main", title: "Crafting Table",
+            why: "Its three-by-three grid makes every tool and weapon.",
+            tasks: [[Craft("crafting_table", 1)]],
+            rewards: [Xp("engineering", 18.0)],
+        ),
+        (
+            name: "first_ore", age: "nomad", branch: "mining", title: "Red Metal Underfoot",
+            why: "Copper is the first ore your stone pickaxe can take, and the start of every metal.",
+            tasks: [[Mine("copper_ore", 5)]],
+            after: ["stone_in_hand"],
+            rewards: [Xp("mining", 60.0)],
+        ),
+    ],
+)

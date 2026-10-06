@@ -1494,6 +1494,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
+                // The crafting table made earlier finished the quest that asks for one.
+                let quests = &world.resource::<LocalPlayer>().quests;
+                let table = quests.iter().find(|q| q.name == "base:crafting_table").map(|q| q.done);
+                gate.check("workshop: quests", match table {
+                    Some(true) => Ok(format!("the crafting table quest is done ({} of {} quests)", quests.iter().filter(|q| q.done).count(), quests.len())),
+                    Some(false) => Err("a crafting table was made, but its quest is not done".into()),
+                    None => Err("the server sent no quests".into()),
+                });
                 // A small pack to die with, so what is left lies in a few stacks by the feet.
                 let net = world.resource::<Net>();
                 for line in ["clear", "give stone_pickaxe 1", "give bread 1", "give stick 10", "give dirt 20", "give oak_planks 12"] {
