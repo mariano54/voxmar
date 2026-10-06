@@ -45,7 +45,11 @@ it takes well under a minute.
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
    first break once compiled three pipelines on the spot); on a machine asked for more
    than all its cores (load average over the core count), a long frame says nothing about
-   the game, so that check is reported as SKIPPED instead. It fails on any failed
+   the game, so that check is reported as SKIPPED instead. A skipped check is not a pass:
+   the gate waits for the load to fall under the core count (up to 20 minutes), plays the
+   session again on its own and judges that run, and fails if a check is skipped again.
+   (The gorge, a fresh area to generate, waits up to four minutes on an overloaded machine
+   instead of one, and fails, saying what was missing, rather than being skipped.) It fails on any failed
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
@@ -62,7 +66,7 @@ changes don't move it, and checks:
 
 | step | what the player does | what must follow |
 | --- | --- | --- |
-| load | | the world around spawn loads and is meshed |
+| load | | the world around spawn loads and is meshed, and the weather is ready (`weather::WeatherReady`), showing the server's report from its first frame (no change from the menus' sky into it) |
 | arrive | clicks into the game | the mouse is grabbed |
 | place | three right clicks on the ground | the planks are on the client and the server, the two agree on every block around, the renderer has every column as it now is, the middle of the screen changed, the hand holds three fewer |
 | dig | holds the left button over the ground | a hole three blocks deep, with the same four checks |
@@ -70,7 +74,7 @@ changes don't move it, and checks:
 | breaks | holds the left button along a row of glass, dirt, stone, snow, gravel and cobblestone, with the bare hand, the starting planks (throwing one with Q halfway) and every item tagged `tool`, while threads spin on every core and the game's own frames stall 80 to 320 ms every fifth frame or so | every block ends broken on the client and the server, none comes back, the two agree on every block around. The server judges breaks by when the player's messages arrived, so a server held up decides as one that kept up (crates/server/src/actions.rs) |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
-| weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
+| weather | `/weather storm`, `/weather snow`, `/weather clear` | each arrives and changes the view (rain, snow, their particles); from joining to here, no weather fraction shown changed in a frame by more than easing allows (`weather::fastest`: a full swing over six seconds at the quickest, after a command) |
 | sky | looks at the morning sun, flies above the world's top, looks towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a lit sky from above the world, a sunset sky warmer towards the sun than away, stars |
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
 | cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
@@ -157,16 +161,22 @@ and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/pla
 
 ## Staying out of his way, and quiet windows
 
-Every heavy command goes through `memcap`, which gets out of the way:
+Every heavy command goes through `memcap`, which gets out of the way. The copy every thread
+runs is `~/Projects/voxmar-wt/memcap`; install a new version only by copying `tools/memcap`
+next to it and renaming it over the old one (`cp tools/memcap ~/Projects/voxmar-wt/memcap.new
+&& mv -f ~/Projects/voxmar-wt/memcap.new ~/Projects/voxmar-wt/memcap`). Bash reads a running
+script from its file as it goes, so writing over the file in place breaks every copy that is
+running: on 2026-10-06 that turned the play binary and a thread's build into six-byte files.
+
 
 - When Mariano says he will play, the coordinator writes `~/Projects/voxmar-wt/PLAYING`.
   While it exists nothing new starts and whatever is running pauses, builds, tests and
   game runs alike, until it is removed when he is done. (Our builds on every core gave
   him 40–140 ms frames and under 60 fps while flying.) He wants work to go on otherwise,
-  game open or not, so his game alone holds nothing. So that a forgotten flag cannot stall
-  everything, memcap ignores it 30 minutes after his game (voxmar not as a capture or
-  gate, or Minecraft) was last seen running, or two hours after it was written if his
-  game never appeared.
+  game open or not, so his game alone holds nothing. memcap removes the flag a minute
+  after his game (voxmar not as a capture or gate, or Minecraft) exits, so everything
+  waiting starts as soon as he quits; if his game never appears, the flag holds two hours
+  after it was written.
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or

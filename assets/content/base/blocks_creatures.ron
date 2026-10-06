@@ -43,6 +43,12 @@
         (template: "drop", name: "sunwing_feather", tags: ["feather", "aether", "fire"], all: (color: (255, 200, 80), light: 8, rarity: Rare)),
         (template: "drop", name: "frost_antler", tags: ["antler", "aether", "cold"], all: (color: (190, 220, 250), light: 5, rarity: Rare)),
         (template: "drop", name: "bat_wing", tags: ["membrane", "small"], all: (color: (60, 50, 48))),
+        (template: "drop", name: "sand_fur", tags: ["hide", "fur", "light"], all: (color: (232, 204, 160), rarity: Uncommon)),
+        (template: "drop", name: "leopard_pelt", tags: ["hide", "fur", "warm"], all: (color: (214, 210, 200), rarity: Rare)),
+        (template: "drop", name: "beaver_pelt", tags: ["hide", "fur", "waterproof"], all: (color: (110, 74, 46))),
+        (template: "drop", name: "bright_feather", tags: ["feather", "dye"], all: (color: (220, 40, 36))),
+        (template: "drop", name: "spore_cap", tags: ["fungus", "aether", "edible", "food:1"], all: (color: (160, 90, 200), light: 5, rarity: Uncommon)),
+        (template: "drop", name: "beetle_crystal", tags: ["crystal", "aether"], all: (color: (120, 210, 230), light: 6, rarity: Uncommon)),
         (template: "drop", name: "wool", tags: ["fibre", "wool", "warm"], all: (color: (235, 232, 222))),
         (template: "drop", name: "feather", tags: ["feather", "light"], all: (color: (240, 240, 235))),
         // Parts.

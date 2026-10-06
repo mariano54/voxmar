@@ -79,7 +79,8 @@ pub const SERVER_LAG: Lag = Lag {
 /// Size of the gate's shots: enough to judge, quick to read back.
 const SHOT: UVec2 = UVec2::new(960, 540);
 /// Longest the whole session may take, and the world to load, in seconds of game time.
-const TIME_LIMIT: f32 = 300.0;
+/// The whole session has room for the gorge's longest wait on an overloaded machine.
+const TIME_LIMIT: f32 = 300.0 + GORGE_OVERLOADED_LIMIT;
 const LOAD_LIMIT: f32 = 180.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
@@ -221,11 +222,18 @@ struct Gate {
     readout_seen: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// The interface font before the gate tried another, to go back to.
+    font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
     breaks: Breaks,
     failures: Vec<String>,
     passes: usize,
+    /// The weather's fractions as shown last frame, and the biggest change from one frame
+    /// to the next relative to the most it may change in a frame (over 1 is a jump), with
+    /// which and when.
+    weather_last: Option<[f32; 24]>,
+    weather_jump: (f32, &'static str, f32),
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
@@ -256,10 +264,13 @@ impl Gate {
             blows_seen: 0,
             readout_seen: false,
             spills: Vec::new(),
+            font: None,
             food_moved: false,
             breaks: Breaks::default(),
             failures: Vec::new(),
             passes: 0,
+            weather_last: None,
+            weather_jump: (0.0, "", 0.0),
             frame_ms: Vec::new(),
             longest: default(),
         }
@@ -396,6 +407,11 @@ fn run(world: &mut World) {
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
     *longest = longest.max(frame_ms);
+    if screen == Screen::InGame && world.resource::<crate::weather::WeatherReady>().0 {
+        watch_weather(world, &mut gate, now);
+    } else {
+        gate.weather_last = None;
+    }
     if gate.step != Step::Done {
         match guard(world, &mut gate, now, screen) {
             Ok(()) => step(world, &mut gate, now),
@@ -424,7 +440,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
-        Step::Gorge => GORGE_LOAD_LIMIT + STEP_LIMIT,
+        Step::Gorge => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
         Step::Strike => STRIKE_LIMIT,
         _ => STEP_LIMIT,
@@ -446,7 +462,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     let feet = gate.feet;
     match gate.step {
         Step::Load => {
-            if loaded(world) {
+            // As a loading screen would, waiting for the weather to show too.
+            if loaded(world) && world.resource::<crate::weather::WeatherReady>().0 {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
                 land(world, gate);
                 // From here on, anything first drawn compiles its pipeline in that frame
@@ -1067,6 +1084,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     },
                 );
                 set_language(world, "en");
+                // And another interface font, as the setting changes it.
+                let mut settings = world.resource_mut::<crate::settings::Settings>();
+                gate.font = Some(settings.font);
+                settings.font = crate::ui::skin::InterfaceFont::ALL.into_iter().find(|f| *f != settings.font).unwrap_or_default();
                 gate.advance(now);
             }
         }
@@ -1075,6 +1096,17 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let words = localized_text(world, "menu.quit_game");
                 let back = if words.as_deref() == Some("Quit game") { Ok("back in English".into()) } else { Err(format!("reads {words:?} after switching back")) };
                 gate.check("language: English", back);
+                let font = world.resource::<crate::settings::Settings>().font;
+                gate.check(
+                    "font change",
+                    match crate::lang::texts_without_a_font(world) {
+                        None => Ok(format!("every text has {}", font.label())),
+                        Some(lost) => Err(format!("in {}, {lost} have no font: every letter a box", font.label())),
+                    },
+                );
+                if let Some(font) = gate.font.take() {
+                    world.resource_mut::<crate::settings::Settings>().font = font;
+                }
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
             }
@@ -1372,6 +1404,39 @@ fn localized_text(world: &mut World, key: &str) -> Option<String> {
     texts.iter(world).find(|(localized, _)| localized.0 == key).map(|(_, text)| text.0.clone())
 }
 
+/// Follows the weather shown from frame to frame once it is ready. On the first frame it
+/// must already be the server's (joining shows the real weather, not a change from the
+/// menus' sky into it); after that no fraction may change faster than easing lets it
+/// (`weather::fastest`), so fog, rain and the rest come and go gradually.
+fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
+    let weather = world.resource::<crate::weather::ClientWeather>();
+    let shown = weather.current.fractions();
+    let values = shown.map(|(_, v)| v);
+    match gate.weather_last {
+        None if gate.step == Step::Load => {
+            let target = weather.target().map(|t| t.fractions());
+            let off = target.map_or(f32::INFINITY, |t| t.iter().zip(&shown).map(|(t, s)| (t.1 - s.1).abs()).fold(0.0, f32::max));
+            let result = if off < 0.02 {
+                Ok(format!("ready at {now:.1}s, showing the server's weather at once: {}", weather.current.summary()))
+            } else {
+                Err(format!("first shown {} away from the server's report: {}", off, weather.current.summary()))
+            };
+            gate.check("weather: joined", result);
+        }
+        None => {}
+        Some(last) => {
+            let dt = world.resource::<Time>().delta_secs();
+            for (i, (&(name, value), was)) in shown.iter().zip(last).enumerate() {
+                let ratio = (value - was).abs() / (crate::weather::fastest(i) * dt + 1e-4);
+                if ratio > gate.weather_jump.0 {
+                    gate.weather_jump = (ratio, name, now);
+                }
+            }
+        }
+    }
+    gate.weather_last = Some(values);
+}
+
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
 /// clear skies again.
 fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -1394,7 +1459,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         phase @ (1 | 2) => {
             let (kind, name, arrived) = kinds[phase as usize - 1];
             if !arrived(&shown) {
-                if in_phase > 8.0 {
+                if in_phase > 12.0 {
                     gate.check(&format!("weather: {kind}"), Err(format!("it did not come: {}", shown.summary())));
                     world.resource::<Net>().command("weather clear 600");
                     gate.phase = 3;
@@ -1417,13 +1482,29 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource::<Net>().command(&next);
             gate.advance(now);
         }
-        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => gate.next(Step::Sky, now),
-        3 if in_phase > 8.0 => {
+        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
+            eased(gate);
+            gate.next(Step::Sky, now);
+        }
+        3 if in_phase > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
+            eased(gate);
             gate.next(Step::Sky, now);
         }
         _ => {}
     }
+}
+
+/// Whether every change of weather so far (the commands' storm, snow and clearing among
+/// them) eased in without a jump.
+fn eased(gate: &mut Gate) {
+    let (ratio, name, at) = gate.weather_jump;
+    let result = if ratio <= 1.01 {
+        Ok(format!("no jumps, at most {:.0}% of the fastest easing allows ({name})", ratio * 100.0))
+    } else {
+        Err(format!("{name} jumped at {at:.1}s, {ratio:.1} times what easing allows in a frame"))
+    };
+    gate.check("weather: eases", result);
 }
 
 /// A small tree grows on the test ground: a trunk under a crown of leaves with an apple
@@ -1529,6 +1610,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.shot(world, "creatures").is_some() {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                gate.check("creature voices", crate::creature_sounds::loaded(world));
                 gate.next(Step::Strike, now);
             }
         }
@@ -1596,6 +1678,11 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    // Its cries reached the sound system (a silent run plays none).
+                    let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
+                    let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
+                    let result = if cries.iter().all(|&n| n > 0) { Ok(format!("{} hurt and {} death sounds asked for", cries[0], cries[1])) } else { Err(format!("hurt and death sounds asked for: {cries:?}")) };
+                    gate.known("creature cries", result, "the creatures thread adds the sound hooks");
                     if !gate.readout_seen {
                         gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
                     }
@@ -1943,8 +2030,13 @@ const GORGE_WALLS: i32 = 6;
 /// running deep in a slot gorge; the player goes there by day, and the server's world has
 /// water there with ground standing at least `GORGE_WALLS` over it on both sides, 3 to 8
 /// blocks off across it, straight or diagonally.
-/// How long the world around the gorge, a fresh area far away, is given to load.
+/// How long the world around the gorge, a fresh area far away, is given to load: it
+/// takes 2 to 5 s, so a minute on a machine with cores to spare is plenty.
 const GORGE_LOAD_LIMIT: f32 = 60.0;
+/// The same on a machine asked for more than all its cores (other threads' builds), where
+/// generating a fresh area can take ten times as long or more. The step waits rather than
+/// being skipped: a skipped check would let a landing in untested.
+const GORGE_OVERLOADED_LIMIT: f32 = 240.0;
 
 fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
@@ -1993,17 +2085,24 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
             if !(held && there && shown && in_phase > 1.0) {
-                if in_phase > GORGE_LOAD_LIMIT {
-                    // Generating a fresh area takes the cores; on a machine asked for more
-                    // than all of them (other threads' builds) it can take minutes, which
-                    // says nothing about the game. On any other it fails.
-                    let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
-                    let problem = format!("the world around the gorge at {at} did not load in {GORGE_LOAD_LIMIT:.0}s");
-                    if load > cores {
-                        info!("gate: SKIPPED gorge: {problem} (the machine was overloaded, load {load:.0} on {cores} cores)");
-                    } else {
-                        gate.check("gorge", Err(problem));
-                    }
+                let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
+                let limit = if load > cores { GORGE_OVERLOADED_LIMIT } else { GORGE_LOAD_LIMIT };
+                if in_phase > limit {
+                    // What was missing, so a slow load can be told from one that never comes.
+                    let columns = columns_around(at);
+                    let on_server = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+                    let on_client = columns.iter().filter(|&&c| client.voxels.contains(c)).count();
+                    let meshing = columns.iter().filter(|&&c| client.meshing(c)).count();
+                    let away = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2());
+                    let n = columns.len();
+                    gate.check(
+                        "gorge",
+                        Err(format!(
+                            "the world around the gorge at {at} did not load in {limit:.0}s (load {load:.0} on {cores} cores): \
+                             the server has {on_server} of its {n} columns, the client {on_client} with {meshing} still meshing, \
+                             and the player is {away:.0} blocks away"
+                        )),
+                    );
                     gate.next(Step::Recipes, now);
                 }
                 return;
