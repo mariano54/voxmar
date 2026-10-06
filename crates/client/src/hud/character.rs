@@ -37,6 +37,26 @@ impl Plugin for CharacterPlugin {
 #[derive(Resource, Default)]
 pub(crate) struct Guide(pub(crate) Option<SkillId>);
 
+/// For the gate: how many skills there are, how many tiles the screen has for them, and
+/// how many of those lie wholly on screen.
+pub fn skill_tiles(world: &mut World) -> (usize, usize, usize) {
+    let skills = world.resource::<Launch>().content.skills.ids().count();
+    let screen = world.query_filtered::<&ComputedNode, With<CharacterScreen>>().iter(world).next().map(ComputedNode::size);
+    let mut tiles = world.query::<(&SkillRow, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility)>();
+    let (mut shown, mut inside) = (0, 0);
+    for (_, node, place, visible) in tiles.iter(world) {
+        if !visible.get() {
+            continue;
+        }
+        shown += 1;
+        let (low, high) = (place.translation - node.size() / 2.0, place.translation + node.size() / 2.0);
+        if screen.is_some_and(|screen| low.min_element() >= 0.0 && high.x <= screen.x && high.y <= screen.y) {
+            inside += 1;
+        }
+    }
+    (skills, shown, inside)
+}
+
 /// A skill guide to open at startup, by the skill's name (`--guide`, for captures).
 #[derive(Resource)]
 pub struct StartGuide(pub String);
@@ -64,8 +84,10 @@ struct BackToSkills;
 #[derive(Component)]
 struct HealthMeter;
 
-const WIDTH: f32 = 460.0 * PX;
+const WIDTH: f32 = 540.0 * PX;
 const LEFT: f32 = 160.0 * PX;
+/// Skill tiles across: three, so fifteen skills stand in five rows with no scrolling.
+const COLUMNS: u16 = 3;
 /// The line at the foot of the panel, saying what can be done next.
 #[derive(Component)]
 struct CharacterHint;
@@ -102,7 +124,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 columns.spawn(right).with_children(|right| {
                     let list = Node {
                         display: Display::Grid,
-                        grid_template_columns: RepeatedGridTrack::flex(2, 1.0),
+                        grid_template_columns: RepeatedGridTrack::flex(COLUMNS, 1.0),
                         row_gap: Val::Px(space::GAP),
                         column_gap: Val::Px(space::GAP),
                         align_content: AlignContent::Start,
