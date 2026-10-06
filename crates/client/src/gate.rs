@@ -1910,9 +1910,13 @@ const FIRE_PARTICLES: u32 = 4;
 fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let Some(species) = world.resource::<Launch>().content.creatures.find("base:junglefowl") else { return };
+    // The junglefowl summoned on the pad: the newest one there. A wild one that wandered
+    // near (they spawn about the test ground too) is often older, outside the pad's walls,
+    // and was the one aimed at when this picked the oldest: "nearest 20 blocks".
+    let centre = (pad.as_vec3() + Vec3::new(-1.5, 0.0, 0.5)).xz();
     let hen = |world: &World| {
         let creatures = world.resource::<crate::creatures::Creatures>();
-        creatures.views().filter(|v| v.species == species).min_by_key(|v| v.id).copied()
+        creatures.views().filter(|v| v.species == species && v.position.xz().distance(centre) < 7.0).max_by_key(|v| v.id).copied()
     };
     match gate.phase {
         0 => {

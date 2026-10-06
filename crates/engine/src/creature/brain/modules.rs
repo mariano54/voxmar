@@ -63,7 +63,7 @@ impl Module for Roam {
         // Not while someone is with it: a player close by, one offering food, or one who
         // hurt it. An animal being fed, tamed or fought stays in the moment.
         let engaged = ctx.attacker().is_some()
-            || ctx.at.players.iter().any(|p| ctx.distance(p.position) < 6.0 || (p.tempting && ctx.distance(p.position) < ctx.sight));
+            || ctx.at.players.iter().any(|p| ctx.distance(p.position) < 6.0 || (p.tempting && ctx.distance(p.position) < ctx.sight.max(16.0)));
         if engaged {
             return None;
         }
