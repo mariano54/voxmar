@@ -275,6 +275,8 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
+    /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
+    placed: FxHashSet<IVec3>,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     processes: Vec<Box<dyn Process>>,
@@ -360,6 +362,7 @@ impl Server {
         let farm = farm::Farm::restore(saved_crops, |name| {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
+        let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let mut server = Self {
             config,
             tick,
@@ -373,6 +376,7 @@ impl Server {
             executor: Executor::default(),
             items,
             farm,
+            placed,
             creatures: creatures::Creatures::default(),
             processes,
             temperature,
@@ -536,6 +540,7 @@ impl Server {
             tracing::error!("could not save crops: {e}");
         }
         self.meta.time = self.tick;
+        self.meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
         self.meta.day = Some(self.day as u64);
         self.meta.day_speed = self.day_speed;
         self.meta.last_played = save::unix_time();
