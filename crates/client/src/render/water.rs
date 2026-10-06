@@ -241,12 +241,13 @@ pub fn layout(multisampled: bool) -> BindGroupLayoutDescriptor {
 }
 
 #[derive(Resource)]
-struct WaterGpu {
-    uniform: Buffer,
+pub(super) struct WaterGpu {
+    pub(super) uniform: Buffer,
     sampler: Sampler,
-    /// The wave texture (`waves`), and its sampler, which repeats and filters its mips.
-    waves: TextureView,
-    wave_sampler: Sampler,
+    /// The wave texture (`waves`), and its sampler, which repeats and filters its mips; the
+    /// distant terrain's water sheets read them too (terrain.rs, `distant_layout`).
+    pub(super) waves: TextureView,
+    pub(super) wave_sampler: Sampler,
     /// The half-resolution depth's layouts and pipelines, without and with MSAA.
     depth_layouts: [BindGroupLayoutDescriptor; 2],
     depth_pipelines: [CachedRenderPipelineId; 2],
