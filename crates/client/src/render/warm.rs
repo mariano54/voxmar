@@ -50,6 +50,14 @@ pub fn warm<M: Material>(commands: &mut Commands, mesh: Handle<Mesh>, material: 
     }
 }
 
+/// As [`warm`], for a skinned mesh (creature bodies): its one joint is the speck that
+/// follows the eye, since a skinned mesh is placed by its joints.
+pub fn warm_skinned<M: Material>(commands: &mut Commands, mesh: Handle<Mesh>, material: Handle<M>, binds: Handle<bevy::mesh::skinning::SkinnedMeshInverseBindposes>, lifetime: impl Bundle + Clone) {
+    let joint = commands.spawn((FollowEye(SPECK), Transform::default(), lifetime.clone())).id();
+    let skinned = bevy::mesh::skinning::SkinnedMesh { inverse_bindposes: binds, joints: vec![joint] };
+    commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), skinned, Transform::default(), NoFrustumCulling, lifetime));
+}
+
 fn follow_eye(camera: Query<&GlobalTransform, With<Camera3d>>, mut followers: Query<(&mut Transform, &FollowEye), Without<Camera3d>>) {
     let Ok(eye) = camera.single() else { return };
     for (mut transform, follow) in &mut followers {

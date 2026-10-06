@@ -202,8 +202,8 @@ impl Body<'_> {
     }
 }
 
-/// Paints an individual's skin: `layout.width × layout.height` texels, RGBA, sRGB.
-pub fn paint(def: &BodyDef, parts: &[Part], layout: &Layout, seed: u32) -> Vec<u8> {
+/// What the painter knows of an individual's body.
+fn body_of<'a>(def: &'a BodyDef, parts: &'a [Part], seed: u32) -> Body<'a> {
     let skin = &def.skin;
     let head = parts.iter().position(|p| p.role == Role::Head).or_else(|| (!parts.iter().any(|p| p.role == Role::Eye)).then_some(0));
     let (eyes, eye_size) = match head.map(|h| parts[h].size) {
@@ -226,8 +226,13 @@ pub fn paint(def: &BodyDef, parts: &[Part], layout: &Layout, seed: u32) -> Vec<u
     };
     let tail = parts.iter().find(|p| p.role == Role::Tail).map(|p| (p.at_rest(Vec3::NEG_Y * p.size.y / 2.0), p.at_rest(Vec3::Y * p.size.y / 2.0)));
     let torso = parts.iter().find(|p| p.role == Role::Torso).map_or(Vec3::ZERO, |p| p.centre);
-    let body = Body { def, parts, seed: mix(seed as u64, 0x5c1), head, eyes, eye_size, tail, torso };
+    Body { def, parts, seed: mix(seed as u64, 0x5c1), head, eyes, eye_size, tail, torso }
 
+}
+
+/// Paints an individual's skin: `layout.width × layout.height` texels, RGBA, sRGB.
+pub fn paint(def: &BodyDef, parts: &[Part], layout: &Layout, seed: u32) -> Vec<u8> {
+    let body = body_of(def, parts, seed);
     let (width, height) = (layout.width as usize, layout.height as usize);
     let mut pixels = vec![0u8; width * height * 4];
     for (p, part) in parts.iter().enumerate() {
@@ -253,15 +258,65 @@ pub fn paint(def: &BodyDef, parts: &[Part], layout: &Layout, seed: u32) -> Vec<u
 /// The colour of one texel.
 #[allow(clippy::too_many_arguments)]
 fn texel(body: &Body, index: usize, part: &Part, f: usize, face: &Face, rect: Rect, i: u32, j: u32) -> Rgb {
-    let skin = &body.def.skin;
     let (u, v) = ((i as f32 + 0.5) / rect.w as f32, (j as f32 + 0.5) / rect.h as f32);
-    // Where the texel lies in the box's own frame, and on the body at rest.
+    // Where the texel lies in the box's own frame.
     let local = (face.normal * 0.5 + face.u * (u - 0.5) + face.v * (v - 0.5)) * part.size;
+    let rim = i == 0 || j == 0 || i + 1 == rect.w || j + 1 == rect.h;
+    paint_at(body, index, part, f, local, rim)
+}
+
+/// Paints an individual's skin through a volume: `dims` texels of [`TEXELS`] a block from
+/// `origin`, RGBA, sRGB, x fastest. Each texel within `shell` blocks of the surface takes the
+/// colour of the part `nearest` names (with its distance), as if on that part's nearest
+/// face, so the painting runs across a smooth body as it does over boxes; the rest are left
+/// clear.
+pub fn paint_volume(def: &BodyDef, parts: &[Part], seed: u32, origin: Vec3, dims: [u32; 3], shell: f32, nearest: impl Fn(Vec3) -> Option<(usize, f32)>) -> Vec<u8> {
+    let body = body_of(def, parts, seed);
+    let [w, h, d] = dims.map(|n| n as usize);
+    let mut pixels = vec![0u8; w * h * d * 4];
+    for z in 0..d {
+        for y in 0..h {
+            for x in 0..w {
+                let at = origin + (Vec3::new(x as f32, y as f32, z as f32) + 0.5) / TEXELS;
+                let Some((index, distance)) = nearest(at) else { continue };
+                if distance.abs() > shell {
+                    continue;
+                }
+                let part = &parts[index];
+                // In the part's frame, and the face it is nearest, by its own proportions.
+                let local = part.rest.inverse() * (at - part.centre);
+                let across = (local / (part.size * 0.5).max(Vec3::splat(1e-4))).abs();
+                let f = if across.x >= across.y && across.x >= across.z {
+                    if local.x > 0.0 { 2 } else { 3 }
+                } else if across.y >= across.z {
+                    if local.y > 0.0 { 0 } else { 1 }
+                } else if local.z > 0.0 {
+                    4
+                } else {
+                    FRONT
+                };
+                // Onto the face, so its features (eyes, nostrils) land where they would on
+                // the box.
+                let n = FACES[f].normal;
+                let on = local - n * local.dot(n) + n * (part.size * 0.5).dot(n.abs());
+                let colour = paint_at(&body, index, part, f, on, false).clamp(Vec3::ZERO, Vec3::ONE) * 255.0;
+                let i = ((z * h + y) * w + x) * 4;
+                pixels[i..i + 4].copy_from_slice(&[colour.x.round() as u8, colour.y.round() as u8, colour.z.round() as u8, 255]);
+            }
+        }
+    }
+    pixels
+}
+
+/// The colour at `local`, a point in part `index`'s own frame on (or near) its face `f`;
+/// `rim` darkens it as a face's edge.
+fn paint_at(body: &Body, index: usize, part: &Part, f: usize, local: Vec3, rim: bool) -> Rgb {
+    let skin = &body.def.skin;
+    let face = &FACES[f];
     let at = part.at_rest(local);
     // How far up the box it is (0 at its bottom, 1 at its top), and along it.
     let up = (local.y / part.size.y + 0.5).clamp(0.0, 1.0);
     let normal = part.rest * face.normal;
-    let rim = i == 0 || j == 0 || i + 1 == rect.w || j + 1 == rect.h;
     let seed = body.seed;
 
     let coat = matches!(part.role, Role::Torso | Role::Hump | Role::Neck | Role::Head | Role::Tail | Role::Thigh | Role::Ear);
@@ -297,7 +352,7 @@ fn texel(body: &Body, index: usize, part: &Part, f: usize, face: &Face, rect: Re
 
     // The pale inside of an ear.
     if part.role == Role::Ear && f == FRONT {
-        let inset_u = (i > 0 && i + 1 < rect.w) || rect.w < 3;
+        let inset_u = local.x.abs() < part.size.x * 0.5 - 1.0 / TEXELS || part.size.x * TEXELS < 3.0;
         if inset_u && up < 0.85 && up > 0.06 {
             // Pink on prey; hunters' are furred, a shade of their second colour.
             colour = if skin.eyes == Eyes::Side { body.colour(1).lerp(Vec3::new(0.86, 0.6, 0.6), 0.45) } else { body.colour(1) * 0.8 };
