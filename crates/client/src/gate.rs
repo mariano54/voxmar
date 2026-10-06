@@ -1372,17 +1372,29 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
-                gate.count_before = carried(world);
-                gate.fell = world.resource::<LocalPlayer>().position;
-                world.resource::<Net>().command("kill");
+                // A small pack to die with, so what is left lies in a few stacks by the feet.
+                let net = world.resource::<Net>();
+                for line in ["clear", "give stone_pickaxe 1", "give bread 1", "give stick 10", "give dirt 20", "give oak_planks 12"] {
+                    net.command(line);
+                }
                 gate.advance(now);
             } else if in_phase > 40.0 {
                 mouse(world, MouseButton::Right, false);
                 fail(world, gate, "fishing", "40 seconds of casting into the pool at Fishing 80 caught nothing".into());
             }
         }
-        // Dead: the three most valuable items stay, the rest lie where the player fell.
         12 => {
+            if carried(world) == 44 {
+                gate.count_before = 44;
+                gate.fell = world.resource::<LocalPlayer>().position;
+                world.resource::<Net>().command("kill");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "death keeps three", format!("the pack to die with never came: carrying {}", carried(world)));
+            }
+        }
+        // Dead: the three most valuable items stay, the rest lie where the player fell.
+        13 => {
             let (dead, kept) = (world.resource::<LocalPlayer>().dead, carried(world));
             if dead && kept == 3 {
                 let lying = world.resource::<crate::drops::Drops>().lying().filter(|(_, _, at)| at.distance(gate.fell) < 4.0).count();
@@ -1396,7 +1408,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Awake again, back where they fell, the player picks everything up.
-        13 => {
+        14 => {
             if world.resource::<LocalPlayer>().dead {
                 if in_phase > WORKSHOP_WAIT {
                     fail(world, gate, "grave", "the player never woke after asking to respawn".into());
@@ -1410,6 +1422,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let back = carried(world);
             if back >= gate.count_before {
                 gate.check("workshop: grave", Ok(format!("woke and picked all {back} items back up where the player fell")));
+                // The kit a new player starts with, for the steps after.
+                let net = world.resource::<Net>();
+                for line in ["clear", "give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
+                    net.command(line);
+                }
                 end_workshop(world, gate, now);
             } else if in_phase > 15.0 {
                 fail(world, gate, "grave", format!("15 seconds back where the player fell, carrying {back} of {} items", gate.count_before));
