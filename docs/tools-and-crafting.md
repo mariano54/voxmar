@@ -56,3 +56,15 @@ with Engineering 30.
 - **Seed mix** (Cooking 8) readies any kept animal to breed (`breeding_feed`).
 - A creature too wild for your Hunter level, or a kept one your Farming cannot breed yet,
   turns food down instead of eating it for nothing.
+
+## Fishing
+
+`base/fishing.ron` (engine/src/fishing.rs) lists what bites: an item, the Fishing level it
+takes, its experience, a weight, salt or fresh water (salt is a biome tagged `ocean`),
+biome tags, and when (day, night, rain). A cast (`base:fish`, five seconds, a rod in hand,
+water within nine blocks with open air above) lands something with a chance that starts at
+about a third for the water's best fish at its level and grows with each level above it
+and with the rod's tier, up to nine in ten; which fish is a weighted draw among those that
+can bite, rarer ones a little more often with a better rod's yield. Fish cook at a
+campfire (cooking.ron). Fishing tops out at level 75 for now (glimmer koi), with the cape
+perk at 80.

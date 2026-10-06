@@ -5,6 +5,7 @@ mod actions;
 mod commands;
 mod cooking;
 mod creatures;
+mod fishing;
 mod farm;
 mod husbandry;
 mod inspect;
@@ -285,6 +286,8 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// When the player message being handled arrived (see `actions`).
+    arrival: Instant,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     processes: Vec<Box<dyn Process>>,
@@ -385,6 +388,7 @@ impl Server {
             items,
             farm,
             placed,
+            arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
             processes,
             temperature,

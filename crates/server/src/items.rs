@@ -13,7 +13,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::dropped::{self, LIFETIME, Loose};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
-use voxmar_engine::inventory::{ItemStack, MAX_STACK};
+use voxmar_engine::inventory::{ItemStack, MAX_STACK, max_stack};
 use voxmar_engine::movement::{self, Surroundings};
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::traits;
@@ -163,15 +163,16 @@ impl Server {
         let ids: Vec<u32> = items.all.keys().copied().collect();
         for &id in &ids {
             let item = items.all.get_mut(&id).expect("listed above");
-            if !self.world.contains(ColumnPos::of_block(item.body.position.floor().as_ivec3())) {
-                continue;
-            }
+            // Items age by the world's clock, loaded or not.
             item.age += 1;
-            item.pickup_in = item.pickup_in.saturating_sub(1);
             if item.age as f32 >= LIFETIME * TICKS_PER_SECOND as f32 || item.body.position.y < -64.0 {
                 items.remove(id, None);
                 continue;
             }
+            if !self.world.contains(ColumnPos::of_block(item.body.position.floor().as_ivec3())) {
+                continue;
+            }
+            item.pickup_in = item.pickup_in.saturating_sub(1);
             if item.body.step(&Around(self), dt) {
                 items.changed.insert(id);
             }
@@ -275,7 +276,7 @@ fn merge(items: &mut Items, tick: u64) {
     // Bucketed by block, so each item only meets its neighbours.
     let mut cells: FxHashMap<IVec3, Vec<u32>> = FxHashMap::default();
     for (&id, item) in &items.all {
-        if item.stack.count < MAX_STACK {
+        if item.stack.count < max_stack(item.stack.item) {
             cells.entry(item.body.position.floor().as_ivec3()).or_default().push(id);
         }
     }
@@ -295,7 +296,7 @@ fn merge(items: &mut Items, tick: u64) {
                         let Some(o) = items.all.get(&other) else { continue };
                         if other != id
                             && o.stack.item == item.stack.item
-                            && o.stack.count < MAX_STACK
+                            && o.stack.count < max_stack(o.stack.item)
                             && o.body.position.distance(item.body.position) < MERGE_WITHIN
                         {
                             partner = Some(other);
@@ -310,7 +311,7 @@ fn merge(items: &mut Items, tick: u64) {
         // The smaller stack goes into the larger; ties keep the older item.
         let (into, from) = if (o.stack.count, o.age) >= (item.stack.count, item.age) { (other, id) } else { (id, other) };
         let (into_item, from_item) = (items.all[&into], items.all[&from]);
-        let moved = from_item.stack.count.min(MAX_STACK - into_item.stack.count);
+        let moved = from_item.stack.count.min(max_stack(into_item.stack.item).saturating_sub(into_item.stack.count));
         let target = items.all.get_mut(&into).expect("listed");
         target.stack.count += moved;
         // The merged stack lasts as long as the younger of the two would have, and can be
