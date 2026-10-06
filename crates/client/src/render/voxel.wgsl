@@ -587,16 +587,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
 #endif
     var base = albedo.rgb * biome_tint(in.surface, in.colours, in.world_position, in.face);
-<<<<<<< HEAD
 #ifdef FRINGE
     if in.card == FRUIT_UNRIPE {
         let grey = dot(base, vec3(0.3, 0.55, 0.15));
         base = grey * vec3(0.75, 1.15, 0.45);
     }
 #endif
-    let entry = textureLoad(block_layers, vec2(layer, 0), 0);
-=======
->>>>>>> main
 #ifndef TRANSLUCENT
     // A tinted overlay, as the fringe of grass on a grass block's side has, takes the
     // biome colour the top has.
