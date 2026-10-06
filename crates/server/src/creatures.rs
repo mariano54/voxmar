@@ -283,7 +283,8 @@ impl Server {
                 continue;
             }
             let nearest = self.players.values().filter(|p| p.joined).map(|p| p.position.distance(position)).fold(f32::MAX, f32::min);
-            let every = if nearest < NEAR { NEAR_THINK } else { FAR_THINK };
+            // Each thinks at its own beat, so neighbours do not all decide at once.
+            let every = if nearest < NEAR { NEAR_THINK } else { FAR_THINK } + creature.seed % 3;
             if (self.tick + id as u64).is_multiple_of(every) {
                 let range = species.def.senses.sight.max(species.def.senses.hearing).max(16.0) * 1.5;
                 let players = self.seen_from(position, range, &species.favourite, creature.owner.as_deref());
@@ -719,8 +720,16 @@ impl Server {
         }) else {
             return;
         };
+        // Groups vary: even herd animals turn up alone or in pairs now and then.
         let group = self.content.creatures.get(species).def.group.size;
-        let count = group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8;
+        let roll = unit_from(mix(seed, 4));
+        let count = if roll < 0.18 {
+            1
+        } else if roll < 0.32 {
+            group.1.min(2)
+        } else {
+            group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
+        };
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
             let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
