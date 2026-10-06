@@ -288,6 +288,17 @@ copied.
 - Where: `crates/client/src/render/terrain.rs` (`DistantView`) and docs/rendering.md ("What
   we took from Voxy").
 
+### Alacrity (the look of its grass and flowers)
+
+- Author: Satellence
+- Licence: all rights reserved; its terms forbid using any part of it elsewhere. Nothing
+  of it was downloaded, opened or viewed: we worked only from a written description of how
+  a meadow looks with it.
+- What we took: the idea of fine, soft grass and of flowers as rounded clumps of dozens of
+  tiny blossoms at several heights rather than one big flower per block. Our own art and
+  code: `tools/plants/clumps.py`, `assets/packs/default/recipes/flowers.ron` and the
+  `meadow_grass_top` recipe in `soil.ron`.
+
 ### Rainbow's Foliage
 
 - Author: PoeticRainbow

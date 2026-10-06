@@ -83,9 +83,14 @@ closes it and puts back what you hold, and what is left in the crafting grid.
 
 Above the pack is a two-by-two crafting grid: put items in it as in any slot, and click
 what it makes to craft one onto the pointer (Shift-click: as many as fit into the
-inventory). Recipes are content (`recipes.ron`): a log makes four of its planks, four stone
-make stone bricks, four sand sandstone, moss and stonework mossy stonework, and two wheat a
-loaf of bread.
+inventory). Recipes are content (`recipes.ron`): a log makes four of its planks, two planks
+four sticks, four planks a crafting table, four stone stone bricks, and two wheat a loaf of
+bread. Right click a crafting table to work at its three-by-three grid, for tools (wooden,
+stone, copper and iron pickaxes, axes, shovels, hoes and knives) and anything else bigger
+than two by two. Each recipe trains a skill (Crafting, Engineering for tools and stations,
+Cooking for food) and may need a level in it. Tools mine what they are made for faster and
+find more there; ores ask for a Mining level and a pickaxe tier (`tools.ron`). A hoe tills
+soil into farmland, where crops are sown. See docs/tools-and-crafting.md.
 
 The recipe viewer works as NEI does: over any item in the inventory (or in the viewer),
 R shows the recipes that make it and U everything it goes into, drawn as they happen (the

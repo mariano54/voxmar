@@ -52,6 +52,8 @@ pub enum Run {
     Give,
     /// Empties the player's inventory, or takes an item out of it.
     Clear,
+    /// Gives the player a timed effect, or clears them.
+    Effect,
     /// Drops a stack of items into the world.
     Drop,
     /// Grows the crops around the player.
