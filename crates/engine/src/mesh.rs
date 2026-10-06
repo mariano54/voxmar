@@ -26,7 +26,8 @@
 //! Bit 27 marks the same quads used as leaf cards (`ChunkMesh::fringe`), with flag 2 for a
 //! flat card, bit 28 for a conifer's needles and bits 29..31 for the face of the crown it is
 //! shaded as; their top edge is flag 1, as on a plant. Fruit hanging from fruiting leaves
-//! shares the stream (bit 25, see `emit_fruit`).
+//! shares the stream (bit 25, see `emit_fruit`): bits 28..30 the face of one of its model's
+//! boxes, word 1 bits 12..19 which box.
 //!
 //! Faces of translucent fluids (water) carry the fluid's state instead of ambient
 //! occlusion, which their shading has no use for:
@@ -72,8 +73,8 @@ pub const PLANT_ANTIDIAGONAL: u32 = 7;
 const FLAG_INNER: u32 = 1 << 23;
 /// Marks the quads of a leaf card, which the shader grows out of the leaf block.
 const FLAG_FRINGE: u32 = 1 << 27;
-/// On a fringe: fruit rather than a leaf card (bit 25), unripe (bit 26); a fruit's quad
-/// axis is in bits 29..30 and which of the block's fruits in bit 31.
+/// On a fringe: fruit rather than a leaf card (bit 25), unripe (bit 26); a fruit's box face
+/// is in bits 28..30 and which of the block's fruits in bit 31.
 const FLAG_FRUIT: u32 = 1 << 25;
 const FLAG_UNRIPE: u32 = 1 << 26;
 /// On a fringe: the face of the crown the card is shaded as (bits 29..31).
@@ -188,9 +189,10 @@ struct Look {
     /// Texture layer and tint of each face, by `Face`.
     layers: [u16; 6],
     tints: [Tint; 6],
-    /// On leaves bearing fruit, unripe or ripe: the fruit's own texture layer, and whether
-    /// it is unripe. The fruit hangs from them in 3D (`emit_fruit`).
-    fruit: Option<(u16, bool)>,
+    /// On leaves bearing fruit, unripe or ripe: the fruit's own texture layer, whether it
+    /// is unripe, and its model (in `FRUIT_MODELS`). The fruit hangs from them in 3D
+    /// (`emit_fruit`).
+    fruit: Option<(u16, bool, u8)>,
 }
 
 impl Look {
@@ -209,9 +211,9 @@ impl Look {
 }
 
 /// The fruit a fruiting leaf block shows, by the template's names (`{name}_leaves_2`
-/// unripe, `{name}_leaves` ripe, the fruit itself `{name}`): its texture layer, and
-/// whether it is unripe. Bare leaves and blossom show none.
-fn fruit_of(registry: &BlockRegistry, block: BlockId) -> Option<(u16, bool)> {
+/// unripe, `{name}_leaves` ripe, the fruit itself `{name}`): its texture layer, whether
+/// it is unripe, and its model. Bare leaves and blossom show none.
+fn fruit_of(registry: &BlockRegistry, block: BlockId) -> Option<(u16, bool, u8)> {
     let def = registry.def(block);
     if !def.has_tag("fruit_leaves") {
         return None;
@@ -222,8 +224,76 @@ fn fruit_of(registry: &BlockRegistry, block: BlockId) -> Option<(u16, bool)> {
         None => return None,
     };
     let fruit = registry.id(stem)?;
-    Some((registry.info(fruit).layers[Face::PosY as usize], unripe))
+    let bare = stem.rsplit(':').next().unwrap_or(stem);
+    let model = FRUIT_SHAPES.iter().find(|(name, _)| *name == bare).map_or("apple", |&(_, model)| model);
+    let model = FRUIT_MODELS.iter().position(|m| m.name == model).unwrap_or(0) as u8;
+    Some((registry.info(fruit).layers[Face::PosY as usize], unripe, model))
 }
+
+/// A fruit's model: boxes `first..first + boxes` of voxel.wgsl's `FRUIT_BOXES`, which the
+/// shader shapes, and how many fruits (or bunches) hang from each fruiting leaf block.
+struct FruitModel {
+    name: &'static str,
+    first: u32,
+    boxes: u32,
+    fruits: u32,
+}
+
+const FRUIT_MODELS: [FruitModel; 23] = [
+    FruitModel { name: "apple", first: 0, boxes: 5, fruits: 2 },
+    FruitModel { name: "plum", first: 5, boxes: 4, fruits: 2 },
+    FruitModel { name: "walnut", first: 9, boxes: 4, fruits: 2 },
+    FruitModel { name: "orange", first: 13, boxes: 6, fruits: 2 },
+    FruitModel { name: "ember", first: 19, boxes: 6, fruits: 2 },
+    FruitModel { name: "pear", first: 25, boxes: 6, fruits: 2 },
+    FruitModel { name: "avocado", first: 31, boxes: 6, fruits: 2 },
+    FruitModel { name: "fig", first: 37, boxes: 5, fruits: 2 },
+    FruitModel { name: "lemon", first: 42, boxes: 6, fruits: 2 },
+    FruitModel { name: "mango", first: 48, boxes: 4, fruits: 2 },
+    FruitModel { name: "cherries", first: 52, boxes: 10, fruits: 2 },
+    FruitModel { name: "rowan", first: 62, boxes: 9, fruits: 2 },
+    FruitModel { name: "olives", first: 71, boxes: 7, fruits: 2 },
+    FruitModel { name: "hazelnut", first: 78, boxes: 10, fruits: 2 },
+    FruitModel { name: "chestnut", first: 88, boxes: 13, fruits: 2 },
+    FruitModel { name: "almond", first: 101, boxes: 4, fruits: 2 },
+    FruitModel { name: "banana", first: 105, boxes: 14, fruits: 1 },
+    FruitModel { name: "coconut", first: 119, boxes: 5, fruits: 2 },
+    FruitModel { name: "cacao", first: 124, boxes: 9, fruits: 2 },
+    FruitModel { name: "baobab", first: 133, boxes: 4, fruits: 1 },
+    FruitModel { name: "dates", first: 137, boxes: 15, fruits: 1 },
+    FruitModel { name: "tamarind", first: 152, boxes: 7, fruits: 2 },
+    FruitModel { name: "pinecone", first: 159, boxes: 8, fruits: 2 },
+];
+
+/// Which model each fruit hangs as; any other (a mod's) hangs as an apple.
+const FRUIT_SHAPES: [(&str, &str); 26] = [
+    ("apple", "apple"),
+    ("golden_apple", "apple"),
+    ("plum", "plum"),
+    ("marula", "plum"),
+    ("walnut", "walnut"),
+    ("orange", "orange"),
+    ("emberfruit", "ember"),
+    ("pear", "pear"),
+    ("avocado", "avocado"),
+    ("fig", "fig"),
+    ("lemon", "lemon"),
+    ("mango", "mango"),
+    ("cherries", "cherries"),
+    ("wild_cherries", "cherries"),
+    ("rowan_berries", "rowan"),
+    ("olives", "olives"),
+    ("hazelnut", "hazelnut"),
+    ("chestnut", "chestnut"),
+    ("almond", "almond"),
+    ("banana", "banana"),
+    ("coconut", "coconut"),
+    ("cacao", "cacao"),
+    ("baobab_fruit", "baobab"),
+    ("dates", "dates"),
+    ("tamarind", "tamarind"),
+    ("pine_nuts", "pinecone"),
+];
 
 /// A chunk's working tables, kept per thread between chunks: allocating and clearing
 /// fresh ones cost as much as filling them.
@@ -1172,27 +1242,28 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, looks: &[Look], 
         }
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
     }
-    if let Some((layer, unripe)) = looks[leaf.0 as usize].fruit {
+    if let Some((layer, unripe, model)) = looks[leaf.0 as usize].fruit {
         // Under the block if it is open below, else out of an open side.
         let hang = if clear(cell(padded - IVec3::Y)) { Face::NegY } else { side };
         let w1 = layer as u32 | ((sky << 4 | block) as u32) << 24;
-        emit_fruit(out, pos, hang, unripe, w1);
+        emit_fruit(out, pos, hang, unripe, &FRUIT_MODELS[model as usize], w1);
     }
 }
 
-/// Fruit hanging from a fruiting leaf block at `pos`, out of its `hang` face: two fruits,
-/// each three crossed quads of the fruit's own texture, so it has a shape from every
-/// side. The shader places, sizes and sways them (`fruit_vertex` in voxel.wgsl); unripe
-/// fruit is smaller and green.
-fn emit_fruit(out: &mut MeshBuffers, pos: IVec3, hang: Face, unripe: bool, w1: u32) {
+/// Fruit hanging from a fruiting leaf block at `pos`, out of its `hang` face: the
+/// model's fruits, each every face of each of its boxes. The shader shapes, places, sizes,
+/// turns and sways them (`fruit_vertex` in voxel.wgsl); unripe fruit is smaller and green.
+fn emit_fruit(out: &mut MeshBuffers, pos: IVec3, hang: Face, unripe: bool, model: &FruitModel, w1: u32) {
     let w0 = pos.x as u32 | (pos.y as u32) << 6 | (pos.z as u32) << 12 | (hang as u32) << 18 | FLAG_FRINGE | FLAG_FRUIT | if unripe { FLAG_UNRIPE } else { 0 };
-    for fruit in 0..2u32 {
-        for axis in 0..3u32 {
-            let base = out.vertices.len() as u32;
-            for corner in 0..4u32 {
-                out.vertices.push([w0 | corner << 21 | axis << 29 | fruit << 31, w1]);
+    for fruit in 0..model.fruits {
+        for b in model.first..model.first + model.boxes {
+            for face in 0..6u32 {
+                let base = out.vertices.len() as u32;
+                for corner in 0..4u32 {
+                    out.vertices.push([w0 | corner << 21 | face << 28 | fruit << 31, w1 | b << 12]);
+                }
+                out.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
             }
-            out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
         }
     }
 }
@@ -1418,6 +1489,31 @@ mod tests {
         heap.set_block(IVec3::new(4, 39, 4), stone);
         heap.set_block(IVec3::new(4, 40, 4), leaves);
         assert_eq!(cards(heap), 0);
+    }
+
+    /// The fruit models name the shader's boxes as voxel.wgsl's `FRUIT_BOXES` lays them out.
+    #[test]
+    fn fruit_models_match_the_shader() {
+        let shader = include_str!("../../client/src/render/voxel.wgsl");
+        let table = &shader[shader.find("const FRUIT_BOXES").unwrap()..];
+        let table = &table[..table.find(");").unwrap()];
+        let laid: Vec<(&str, u32)> = table
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("// ")?.split_once(": "))
+            .map(|(name, boxes)| (name, boxes.parse().unwrap()))
+            .collect();
+        let ours: Vec<(&str, u32)> = FRUIT_MODELS.iter().map(|m| (m.name, m.boxes)).collect();
+        assert_eq!(laid, ours);
+        let mut first = 0;
+        for model in &FRUIT_MODELS {
+            assert_eq!(model.first, first, "{}", model.name);
+            first += model.boxes;
+        }
+        assert_eq!(table.matches("vec4(").count() as u32, first * 2);
+        assert!(first < 256, "box ids take 8 bits");
+        for (_, model) in FRUIT_SHAPES {
+            assert!(FRUIT_MODELS.iter().any(|m| m.name == model), "{model}");
+        }
     }
 
     #[test]

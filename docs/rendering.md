@@ -410,10 +410,18 @@ texture and colour, then their light; their bushy geometry was the smaller part.
   a dense forest the cards in the shadow cascades were most of their cost.
 
 - **Fruit.** Unripe and ripe fruit hangs from its leaves in 3D rather than being painted
-  on them: each fruiting leaf block on the outside of a crown adds two fruits to the card
-  stream, each three crossed quads of the fruit's own texture (so it has a shape from
-  every side), placed by the shader under the block at the cards' hem, or out of an open
-  side, turned and sized at random (`emit_fruit` in mesh.rs, `fruit_vertex` in voxel.wgsl).
+  on them. Each fruit is a small model of boxes, as a voxel artist builds one in model
+  pixels (16 to a block): a round fruit is three crossed boxes a pixel shy of a cube at
+  every edge, with a stem and perhaps a leaf; a pear adds a neck, a lemon a tip, cherries
+  hang in pairs on long stems, a chestnut burr is spiked, a cacao pod ridged, bananas grow
+  up a stalk in hands above a purple flower, dates hang in strands. The 23 models live in
+  voxel.wgsl (`FRUIT_BOXES`), and mesh.rs (`FRUIT_MODELS`, `FRUIT_SHAPES`) says which fruit
+  hangs as which; another fruit hangs as an apple. Each fruiting leaf block on the outside
+  of a crown adds one or two fruits to the card stream, every face of every box, which the
+  shader places under the block at the cards' hem (or out of an open side), turns and
+  sizes at random and sways as one piece (`emit_fruit` in mesh.rs, `fruit_vertex` in
+  voxel.wgsl). The colour is the fruit texture's own at the middle of the fruit drawn
+  there, in a pixel artist's three shades; stems, leaves and husks have their own.
   Unripe fruit is smaller and green. Fruit shares the cards' distance and casts no shadow.
 
 Measured in a dense forest from a hill and inside it (release, 1920×1080 at 75%):

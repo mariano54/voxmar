@@ -251,6 +251,11 @@ struct Card {
     uv: vec2<f32>,
     // Varies the outline of the cluster from card to card.
     seed: u32,
+    // Fruit only: the point it hangs from, which it sways about as one piece, the face
+    // it is lit as, and its colour and material (`fruit_vertex`).
+    pivot: vec3<f32>,
+    face: u32,
+    fruit: u32,
 }
 
 const CARD_SIZE = vec2(2.0, 1.75);
@@ -295,47 +300,304 @@ fn card_vertex(w0: u32, origin: vec3<f32>) -> Card {
     return card;
 }
 
-// A vertex of fruit hanging from a fruiting leaf block (mesh.rs `emit_fruit`): each of the
-// block's two fruits is three crossed quads of the fruit's own texture, so it reads as a
-// small solid shape from any side, set at a hash of the block under it (or out of an open
-// side), turned at random and sized by ripeness. Unripe fruit is smaller (and green, in
-// the fragment shader).
-fn fruit_vertex(w0: u32, origin: vec3<f32>) -> Card {
+// Fruit is modelled from boxes, as a voxel artist would build it: a round fruit is three
+// crossed boxes, a pixel shy of a cube at every edge, with a stem and perhaps a leaf; a pear
+// adds a neck, cherries hang in pairs on long stems, bananas grow up a stalk in hands. Each
+// box is two corners in model pixels (16 to a block) hanging from the origin, with its
+// material in the first corner's w. Which boxes are whose: mesh.rs `FRUIT_MODELS`.
+const FRUIT_BOXES = array<vec4<f32>, 334>(
+    // apple: 5
+    vec4(-3.0, -7.0, -2.0, 0.0), vec4(3.0, -3.0, 2.0, 0.0),
+    vec4(-2.0, -8.0, -2.0, 0.0), vec4(2.0, -2.0, 2.0, 0.0),
+    vec4(-2.0, -7.0, -3.0, 0.0), vec4(2.0, -3.0, 3.0, 0.0),
+    vec4(-0.5, -2.5, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    vec4(0.5, -1.25, -0.75, 2.0), vec4(3.0, -0.75, 0.75, 0.0),
+    // plum: 4
+    vec4(-2.5, -6.0, -1.5, 0.0), vec4(2.5, -3.0, 1.5, 0.0),
+    vec4(-1.5, -7.0, -1.5, 0.0), vec4(1.5, -2.0, 1.5, 0.0),
+    vec4(-1.5, -6.0, -2.5, 0.0), vec4(1.5, -3.0, 2.5, 0.0),
+    vec4(-0.5, -2.0, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // walnut: 4
+    vec4(-3.0, -7.0, -2.0, 0.0), vec4(3.0, -3.0, 2.0, 0.0),
+    vec4(-2.0, -8.0, -2.0, 0.0), vec4(2.0, -2.0, 2.0, 0.0),
+    vec4(-2.0, -7.0, -3.0, 0.0), vec4(2.0, -3.0, 3.0, 0.0),
+    vec4(-0.5, -2.0, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // orange: 6
+    vec4(-3.5, -8.0, -2.5, 0.0), vec4(3.5, -3.0, 2.5, 0.0),
+    vec4(-2.5, -9.0, -2.5, 0.0), vec4(2.5, -2.0, 2.5, 0.0),
+    vec4(-2.5, -8.0, -3.5, 0.0), vec4(2.5, -3.0, 3.5, 0.0),
+    vec4(-1.0, -2.25, -1.0, 2.0), vec4(1.0, -1.75, 1.0, 0.0),
+    vec4(-0.5, -1.75, -0.5, 3.0), vec4(0.5, -1.0, 0.5, 0.0),
+    vec4(-0.5, -1.0, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // ember: 6
+    vec4(-2.5, -7.5, -1.5, 0.0), vec4(2.5, -4.5, 1.5, 0.0),
+    vec4(-1.5, -8.5, -1.5, 0.0), vec4(1.5, -3.5, 1.5, 0.0),
+    vec4(-1.5, -7.5, -2.5, 0.0), vec4(1.5, -4.5, 2.5, 0.0),
+    vec4(-1.5, -4.0, -1.5, 4.0), vec4(1.5, -2.5, 1.5, 0.0),
+    vec4(-0.5, -2.5, -0.5, 4.0), vec4(0.5, -1.5, 0.5, 0.0),
+    vec4(-0.5, -1.5, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // pear: 6
+    vec4(-3.0, -9.0, -2.0, 0.0), vec4(3.0, -5.0, 2.0, 0.0),
+    vec4(-2.0, -10.0, -2.0, 0.0), vec4(2.0, -4.0, 2.0, 0.0),
+    vec4(-2.0, -9.0, -3.0, 0.0), vec4(2.0, -5.0, 3.0, 0.0),
+    vec4(-2.0, -5.5, -2.0, 0.0), vec4(2.0, -4.0, 2.0, 0.0),
+    vec4(-1.5, -4.0, -1.5, 0.0), vec4(1.5, -2.0, 1.5, 0.0),
+    vec4(-0.5, -2.0, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // avocado: 6
+    vec4(-3.0, -10.5, -2.0, 0.0), vec4(3.0, -5.5, 2.0, 0.0),
+    vec4(-2.0, -11.5, -2.0, 0.0), vec4(2.0, -4.5, 2.0, 0.0),
+    vec4(-2.0, -10.5, -3.0, 0.0), vec4(2.0, -5.5, 3.0, 0.0),
+    vec4(-2.0, -5.0, -2.0, 0.0), vec4(2.0, -3.5, 2.0, 0.0),
+    vec4(-1.5, -3.5, -1.5, 0.0), vec4(1.5, -2.5, 1.5, 0.0),
+    vec4(-0.5, -2.5, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // fig: 5
+    vec4(-2.5, -7.5, -1.5, 0.0), vec4(2.5, -4.5, 1.5, 0.0),
+    vec4(-1.5, -8.5, -1.5, 0.0), vec4(1.5, -3.5, 1.5, 0.0),
+    vec4(-1.5, -7.5, -2.5, 0.0), vec4(1.5, -4.5, 2.5, 0.0),
+    vec4(-1.0, -4.0, -1.0, 0.0), vec4(1.0, -2.5, 1.0, 0.0),
+    vec4(-0.5, -2.5, -0.5, 2.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // lemon: 6
+    vec4(-2.5, -8.0, -1.5, 0.0), vec4(2.5, -3.0, 1.5, 0.0),
+    vec4(-1.5, -9.0, -1.5, 0.0), vec4(1.5, -2.0, 1.5, 0.0),
+    vec4(-1.5, -8.0, -2.5, 0.0), vec4(1.5, -3.0, 2.5, 0.0),
+    vec4(-0.5, -10.0, -0.5, 0.0), vec4(0.5, -9.0, 0.5, 0.0),
+    vec4(-0.5, -2.0, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    vec4(0.5, -1.25, -0.75, 2.0), vec4(3.0, -0.75, 0.75, 0.0),
+    // mango: 4
+    vec4(-3.0, -10.0, -1.5, 0.0), vec4(3.0, -3.0, 1.5, 0.0),
+    vec4(-2.0, -11.0, -1.5, 0.0), vec4(2.0, -2.0, 1.5, 0.0),
+    vec4(-2.0, -10.0, -2.5, 0.0), vec4(2.0, -3.0, 2.5, 0.0),
+    vec4(-0.5, -2.0, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // cherries: 10
+    vec4(-3.25, -8.0, -1.0, 0.0), vec4(-0.25, -6.0, 1.0, 0.0),
+    vec4(-2.75, -8.5, -1.0, 0.0), vec4(-0.75, -5.5, 1.0, 0.0),
+    vec4(-2.75, -8.0, -1.5, 0.0), vec4(-0.75, -6.0, 1.5, 0.0),
+    vec4(0.0, -7.0, -0.5, 0.0), vec4(3.0, -5.0, 1.5, 0.0),
+    vec4(0.5, -7.5, -0.5, 0.0), vec4(2.5, -4.5, 1.5, 0.0),
+    vec4(0.5, -7.0, -1.0, 0.0), vec4(2.5, -5.0, 2.0, 0.0),
+    vec4(-2.0, -5.5, -0.25, 1.0), vec4(-1.5, -0.75, 0.25, 0.0),
+    vec4(1.25, -4.5, 0.25, 1.0), vec4(1.75, -0.75, 0.75, 0.0),
+    vec4(-2.0, -0.75, -0.25, 1.0), vec4(1.75, -0.25, 0.75, 0.0),
+    vec4(-0.25, -0.25, 0.0, 1.0), vec4(0.25, 0.5, 0.5, 0.0),
+    // rowan: 9
+    vec4(-0.25, -3.0, -0.25, 1.0), vec4(0.25, 0.5, 0.25, 0.0),
+    vec4(-0.875, -4.875, -0.875, 0.0), vec4(0.875, -3.125, 0.875, 0.0),
+    vec4(1.125, -4.375, -0.375, 0.0), vec4(2.875, -2.625, 1.375, 0.0),
+    vec4(-2.875, -4.375, -1.375, 0.0), vec4(-1.125, -2.625, 0.375, 0.0),
+    vec4(-0.375, -4.375, 1.125, 0.0), vec4(1.375, -2.625, 2.875, 0.0),
+    vec4(-1.375, -4.375, -2.875, 0.0), vec4(0.375, -2.625, -1.125, 0.0),
+    vec4(0.625, -6.125, -2.375, 0.0), vec4(2.375, -4.375, -0.625, 0.0),
+    vec4(-2.375, -6.125, 0.625, 0.0), vec4(-0.625, -4.375, 2.375, 0.0),
+    vec4(0.375, -6.375, 0.625, 0.0), vec4(2.125, -4.625, 2.375, 0.0),
+    // olives: 7
+    vec4(-0.25, -5.0, -0.25, 1.0), vec4(0.25, 0.5, 0.25, 0.0),
+    vec4(-2.25, -5.75, -0.75, 0.0), vec4(-0.75, -2.25, 0.75, 0.0),
+    vec4(-2.5, -5.25, -1.0, 0.0), vec4(-0.5, -2.75, 1.0, 0.0),
+    vec4(0.5, -6.75, 0.0, 0.0), vec4(2.0, -3.25, 1.5, 0.0),
+    vec4(0.25, -6.25, -0.25, 0.0), vec4(2.25, -3.75, 1.75, 0.0),
+    vec4(-0.75, -8.5, -2.0, 0.0), vec4(0.75, -5.0, -0.5, 0.0),
+    vec4(-1.0, -8.0, -2.25, 0.0), vec4(1.0, -5.5, -0.25, 0.0),
+    // hazelnut: 10
+    vec4(-0.25, -2.5, -0.25, 1.0), vec4(0.25, 0.5, 0.25, 0.0),
+    vec4(-2.5, -5.75, -1.0, 0.0), vec4(-0.5, -2.75, 1.0, 0.0),
+    vec4(-2.75, -5.25, -1.25, 0.0), vec4(-0.25, -3.25, 1.25, 0.0),
+    vec4(-3.0, -3.5, -1.5, 2.0), vec4(0.0, -2.5, 1.5, 0.0),
+    vec4(0.5, -6.25, -0.5, 0.0), vec4(2.5, -3.25, 1.5, 0.0),
+    vec4(0.25, -5.75, -0.75, 0.0), vec4(2.75, -3.75, 1.75, 0.0),
+    vec4(0.0, -4.0, -1.0, 2.0), vec4(3.0, -3.0, 2.0, 0.0),
+    vec4(-1.0, -6.75, -2.75, 0.0), vec4(1.0, -3.75, -0.75, 0.0),
+    vec4(-1.25, -6.25, -3.0, 0.0), vec4(1.25, -4.25, -0.5, 0.0),
+    vec4(-1.5, -4.5, -3.25, 2.0), vec4(1.5, -3.5, -0.25, 0.0),
+    // chestnut: 13
+    vec4(-2.5, -6.5, -1.5, 0.0), vec4(2.5, -3.5, 1.5, 0.0),
+    vec4(-1.5, -7.5, -1.5, 0.0), vec4(1.5, -2.5, 1.5, 0.0),
+    vec4(-1.5, -6.5, -2.5, 0.0), vec4(1.5, -3.5, 2.5, 0.0),
+    vec4(2.5, -5.5, -0.5, 4.0), vec4(3.5, -4.5, 0.5, 0.0),
+    vec4(-3.5, -5.5, -0.5, 4.0), vec4(-2.5, -4.5, 0.5, 0.0),
+    vec4(-0.5, -5.5, 2.5, 4.0), vec4(0.5, -4.5, 3.5, 0.0),
+    vec4(-0.5, -5.5, -3.5, 4.0), vec4(0.5, -4.5, -2.5, 0.0),
+    vec4(-0.5, -8.5, -0.5, 4.0), vec4(0.5, -7.5, 0.5, 0.0),
+    vec4(1.5, -3.5, 1.5, 4.0), vec4(2.5, -2.5, 2.5, 0.0),
+    vec4(-2.5, -3.5, -2.5, 4.0), vec4(-1.5, -2.5, -1.5, 0.0),
+    vec4(1.5, -7.5, -2.5, 4.0), vec4(2.5, -6.5, -1.5, 0.0),
+    vec4(-2.5, -7.5, 1.5, 4.0), vec4(-1.5, -6.5, 2.5, 0.0),
+    vec4(-0.5, -2.5, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // almond: 4
+    vec4(-1.5, -6.0, -1.0, 0.0), vec4(1.5, -2.5, 1.0, 0.0),
+    vec4(-1.0, -6.75, -0.75, 0.0), vec4(1.0, -2.0, 0.75, 0.0),
+    vec4(-1.0, -5.5, -1.25, 0.0), vec4(1.0, -3.0, 1.25, 0.0),
+    vec4(-0.5, -2.0, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // banana: 14
+    vec4(-0.75, -13.0, -0.75, 2.0), vec4(0.75, 0.5, 0.75, 0.0),
+    vec4(-1.25, -16.0, -1.25, 5.0), vec4(1.25, -13.0, 1.25, 0.0),
+    vec4(1.5, -6.5, -0.75, 0.0), vec4(3.0, -1.5, 0.75, 0.0),
+    vec4(2.0, -1.5, -0.5, 3.0), vec4(3.0, -0.75, 0.5, 0.0),
+    vec4(-0.75, -6.5, 1.5, 0.0), vec4(0.75, -1.5, 3.0, 0.0),
+    vec4(-0.5, -1.5, 2.0, 3.0), vec4(0.5, -0.75, 3.0, 0.0),
+    vec4(-3.0, -6.5, -0.75, 0.0), vec4(-1.5, -1.5, 0.75, 0.0),
+    vec4(-3.0, -1.5, -0.5, 3.0), vec4(-2.0, -0.75, 0.5, 0.0),
+    vec4(-0.75, -6.5, -3.0, 0.0), vec4(0.75, -1.5, -1.5, 0.0),
+    vec4(-0.5, -1.5, -3.0, 3.0), vec4(0.5, -0.75, -2.0, 0.0),
+    vec4(1.5, -12.0, -0.75, 0.0), vec4(3.0, -7.0, 0.75, 0.0),
+    vec4(2.0, -7.0, -0.5, 3.0), vec4(3.0, -6.25, 0.5, 0.0),
+    vec4(-3.0, -12.0, -0.75, 0.0), vec4(-1.5, -7.0, 0.75, 0.0),
+    vec4(-3.0, -7.0, -0.5, 3.0), vec4(-2.0, -6.25, 0.5, 0.0),
+    // coconut: 5
+    vec4(-4.0, -7.0, -2.0, 0.0), vec4(4.0, -3.0, 2.0, 0.0),
+    vec4(-2.0, -9.0, -2.0, 0.0), vec4(2.0, -1.0, 2.0, 0.0),
+    vec4(-2.0, -7.0, -4.0, 0.0), vec4(2.0, -3.0, 4.0, 0.0),
+    vec4(-3.0, -8.0, -3.0, 0.0), vec4(3.0, -2.0, 3.0, 0.0),
+    vec4(-0.75, -1.5, -0.75, 2.0), vec4(0.75, 0.5, 0.75, 0.0),
+    // cacao: 9
+    vec4(-2.5, -9.5, -1.5, 0.0), vec4(2.5, -2.5, 1.5, 0.0),
+    vec4(-1.5, -10.5, -1.5, 0.0), vec4(1.5, -1.5, 1.5, 0.0),
+    vec4(-1.5, -9.5, -2.5, 0.0), vec4(1.5, -2.5, 2.5, 0.0),
+    vec4(-0.5, -11.5, -0.5, 0.0), vec4(0.5, -10.5, 0.5, 0.0),
+    vec4(2.5, -9.0, -0.25, 3.0), vec4(2.75, -3.0, 0.25, 0.0),
+    vec4(-2.75, -9.0, -0.25, 3.0), vec4(-2.5, -3.0, 0.25, 0.0),
+    vec4(-0.25, -9.0, 2.5, 3.0), vec4(0.25, -3.0, 2.75, 0.0),
+    vec4(-0.25, -9.0, -2.75, 3.0), vec4(0.25, -3.0, -2.5, 0.0),
+    vec4(-0.5, -1.5, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+    // baobab: 4
+    vec4(-0.25, -6.0, -0.25, 1.0), vec4(0.25, 0.5, 0.25, 0.0),
+    vec4(-2.5, -14.0, -1.5, 0.0), vec4(2.5, -7.0, 1.5, 0.0),
+    vec4(-1.5, -15.0, -1.5, 0.0), vec4(1.5, -6.0, 1.5, 0.0),
+    vec4(-1.5, -14.0, -2.5, 0.0), vec4(1.5, -7.0, 2.5, 0.0),
+    // dates: 15
+    vec4(-0.5, -4.0, -0.5, 6.0), vec4(0.5, 0.5, 0.5, 0.0),
+    vec4(-2.0, -4.5, -0.25, 6.0), vec4(2.0, -4.0, 0.25, 0.0),
+    vec4(-0.25, -4.5, -2.0, 6.0), vec4(0.25, -4.0, 2.0, 0.0),
+    vec4(1.5, -12.0, -0.25, 6.0), vec4(2.0, -4.5, 0.25, 0.0),
+    vec4(-2.0, -12.0, -0.25, 6.0), vec4(-1.5, -4.5, 0.25, 0.0),
+    vec4(-0.25, -12.0, 1.5, 6.0), vec4(0.25, -4.5, 2.0, 0.0),
+    vec4(-0.25, -12.0, -2.0, 6.0), vec4(0.25, -4.5, -1.5, 0.0),
+    vec4(1.7, -8.25, -0.75, 0.0), vec4(3.2, -5.75, 0.75, 0.0),
+    vec4(1.7, -12.25, -0.75, 0.0), vec4(3.2, -9.75, 0.75, 0.0),
+    vec4(-3.2, -8.25, -0.75, 0.0), vec4(-1.7, -5.75, 0.75, 0.0),
+    vec4(-3.2, -12.25, -0.75, 0.0), vec4(-1.7, -9.75, 0.75, 0.0),
+    vec4(-0.75, -9.75, 1.7, 0.0), vec4(0.75, -7.25, 3.2, 0.0),
+    vec4(-0.75, -13.75, 1.7, 0.0), vec4(0.75, -11.25, 3.2, 0.0),
+    vec4(-0.75, -9.75, -3.2, 0.0), vec4(0.75, -7.25, -1.7, 0.0),
+    vec4(-0.75, -13.75, -3.2, 0.0), vec4(0.75, -11.25, -1.7, 0.0),
+    // tamarind: 7
+    vec4(-2.75, -5.0, -0.5, 0.0), vec4(-1.25, -0.5, 0.5, 0.0),
+    vec4(-2.25, -9.0, -0.5, 0.0), vec4(-0.75, -5.0, 0.5, 0.0),
+    vec4(-0.5, -5.0, 0.5, 0.0), vec4(1.0, -0.5, 1.5, 0.0),
+    vec4(0.0, -9.0, 0.5, 0.0), vec4(1.5, -5.0, 1.5, 0.0),
+    vec4(1.25, -5.0, -1.25, 0.0), vec4(2.75, -0.5, -0.25, 0.0),
+    vec4(1.75, -9.0, -1.25, 0.0), vec4(3.25, -5.0, -0.25, 0.0),
+    vec4(-2.0, 0.0, -0.25, 1.0), vec4(2.75, 0.5, 1.0, 0.0),
+    // pinecone: 8
+    vec4(-3.0, -7.0, -2.0, 0.0), vec4(3.0, -2.0, 2.0, 0.0),
+    vec4(-2.0, -8.0, -2.0, 0.0), vec4(2.0, -1.0, 2.0, 0.0),
+    vec4(-2.0, -7.0, -3.0, 0.0), vec4(2.0, -2.0, 3.0, 0.0),
+    vec4(-3.25, -3.25, -2.0, 3.0), vec4(3.25, -2.75, 2.0, 0.0),
+    vec4(-2.0, -3.25, -3.25, 3.0), vec4(2.0, -2.75, 3.25, 0.0),
+    vec4(-3.25, -6.25, -2.0, 3.0), vec4(3.25, -5.75, 2.0, 0.0),
+    vec4(-2.0, -6.25, -3.25, 3.0), vec4(2.0, -5.75, 3.25, 0.0),
+    vec4(-0.5, -1.5, -0.5, 1.0), vec4(0.5, 0.5, 0.5, 0.0),
+);
+// Materials: the fruit's own colour (from its texture), wood, green (leaf, calyx, husk),
+// the fruit darker and lighter, a banana flower and a date stalk.
+const FRUIT_WOOD = vec3(0.10, 0.048, 0.019);
+const FRUIT_GREEN = vec3(0.078, 0.195, 0.025);
+const FRUIT_BUD = vec3(0.10, 0.010, 0.040);
+const FRUIT_GOLD = vec3(0.48, 0.25, 0.030);
+// A box face's two edges, u × v its outward normal, so it winds counter-clockwise seen from
+// outside: by face (+x, -x, +y, -y, +z, -z), the axis each runs along.
+const BOX_U = array<u32, 6>(1u, 2u, 2u, 0u, 0u, 1u);
+const BOX_V = array<u32, 6>(2u, 1u, 0u, 2u, 1u, 0u);
+
+// A fruit's colour: its texture's at the middle of the fruit drawn there (an apple's, a
+// coconut's), or else of the left cherry of a pair, as every fruit's texture is drawn.
+fn fruit_skin(layer: i32) -> vec3<f32> {
+    let texels = f32(textureDimensions(block_textures).x) / 16.0;
+    let spots = array<vec2<f32>, 3>(vec2(8.5, 8.5), vec2(3.5, 10.5), vec2(12.5, 10.5));
+    var colour = vec3(0.3, 0.15, 0.1);
+    for (var i = 2; i >= 0; i--) {
+        let texel = textureLoad(block_textures, vec2<i32>(spots[i] * texels), layer, 0);
+        if texel.a > 0.5 {
+            colour = texel.rgb;
+        }
+    }
+    return colour;
+}
+
+// A vertex of fruit hanging from a fruiting leaf block (mesh.rs `emit_fruit`): a corner of
+// a face of one of its model's boxes. The model hangs under the block (or out of an open
+// side) at a hash of the block, turned and sized at random and by ripeness: unripe fruit
+// is smaller and green.
+fn fruit_vertex(w0: u32, w1: u32, origin: vec3<f32>) -> Card {
     let cell = origin + local_position(w0);
     let corner = (w0 >> 21u) & 3u;
-    let across = vec2(f32(corner == 1u || corner == 2u), f32(corner >= 2u));
-    let axis = (w0 >> 29u) & 3u;
+    let side = (w0 >> 28u) & 7u;
     let index = w0 >> 31u;
+    let id = (w1 >> 12u) & 255u;
+    let lo = FRUIT_BOXES[id * 2u];
+    let hi = FRUIT_BOXES[id * 2u + 1u];
     let unripe = (w0 & FLAG_UNRIPE) != 0u;
     let h = pcg3d(vec3<u32>(vec3<i32>(floor(cell + 0.5)) + vec3(i32(index) * 13, 211, 0)));
-    let size = select(0.65, 0.4, unripe) * (0.85 + 0.3 * h.x);
+
+    // The corner, in model pixels.
+    let axis = side / 2u;
+    let u = BOX_U[side];
+    let v = BOX_V[side];
+    let along = vec2(f32(corner == 1u || corner == 2u), f32(corner >= 2u));
+    var p = select(lo.xyz, hi.xyz, side % 2u == 0u);
+    p[u] = mix(lo[u], hi[u], along.x);
+    p[v] = mix(lo[v], hi[v], along.y);
+
+    // Where it hangs from.
     let hang = face_of(w0);
-    var centre = cell + 0.5;
-    let spread = (h.yz - 0.5) * 0.55;
-    if hang == 3u {
-        // Under the block, at the leaf cards' hem, a little apart from each other.
-        centre += vec3(spread.x, -0.45 - size * 0.4, spread.y);
-    } else {
+    let spread = (h.yz - 0.5) * 0.5;
+    var pivot = cell + vec3(0.5 + spread.x, 0.1, 0.5 + spread.y);
+    if hang != 3u {
         // NORMALS lives in lighting.wgsl, which the depth prepass doesn't import.
         var n = vec3(0.0);
         n[hang / 2u] = 1.0 - 2.0 * f32(hang % 2u);
         let t = vec3(n.z, 0.0, -n.x);
-        centre += n * (0.55 + size * 0.2) + t * spread.x - vec3(0.0, 0.3 + 0.3 * h.y, 0.0);
+        pivot = cell + 0.5 + n * 0.68 + t * spread.x + vec3(0.0, 0.3 + 0.3 * spread.y, 0.0);
     }
-    let a = across.x - 0.5;
-    let b = across.y - 0.5;
-    var offset: vec3<f32>;
-    switch axis {
-        case 0u: { offset = vec3(0.0, b, a); }
-        case 1u: { offset = vec3(a, 0.0, b); }
-        default: { offset = vec3(a, b, 0.0); }
-    }
-    let turn = h.x * 6.2832;
-    offset = vec3(offset.x * cos(turn) - offset.z * sin(turn), offset.y, offset.x * sin(turn) + offset.z * cos(turn));
+    // Turned a quarter turn at random and a little more, so its pixels stay square on to
+    // the light.
+    let turn = floor(h.z * 4.0) * 1.5708 + (h.y - 0.5) * 0.35;
+    let c = cos(turn);
+    let s = sin(turn);
+    let size = select(1.0, 0.7, unripe) * (0.9 + 0.2 * h.x) / 16.0;
+    let q = p * size;
     var fruit: Card;
-    fruit.world = centre + offset * size;
-    fruit.uv = vec2(across.x, 1.0 - across.y);
+    fruit.world = pivot + vec3(q.x * c - q.z * s, q.y, q.x * s + q.z * c);
+    fruit.pivot = pivot;
+    fruit.uv = vec2(p[u] - lo[u], p[v] - lo[v]);
     fruit.seed = select(FRUIT_RIPE, FRUIT_UNRIPE, unripe);
+    // Lit as the cube face its own face turned towards.
+    fruit.face = side;
+    if axis != 1u {
+        var n = vec2(0.0);
+        n[axis / 2u] = 1.0 - 2.0 * f32(side % 2u);
+        let m = vec2(n.x * c - n.y * s, n.x * s + n.y * c);
+        fruit.face = select(select(5u, 4u, m.y > 0.0), select(1u, 0u, m.x > 0.0), abs(m.x) > abs(m.y));
+    }
+
+    // Its colour: unripe fruit greys towards green; the materials not its own keep theirs.
+    var skin = fruit_skin(i32(w1 & 0xFFFu));
+    if unripe {
+        skin = dot(skin, vec3(0.3, 0.55, 0.15)) * vec3(0.75, 1.15, 0.45);
+    }
+    let material = u32(lo.w);
+    var colour = skin;
+    switch material {
+        case 1u: { colour = FRUIT_WOOD; }
+        case 2u: { colour = FRUIT_GREEN; }
+        case 3u: { colour = skin * 0.55; }
+        case 4u: { colour = min(skin * 1.35, vec3(1.0)); }
+        case 5u: { colour = FRUIT_BUD; }
+        case 6u: { colour = FRUIT_GOLD; }
+        default: {}
+    }
+    // Packed as its square root, so dark fruit keeps its shades in 8 bits; the alpha holds
+    // the material and a seed for the pixels' pattern.
+    fruit.fruit = pack4x8unorm(vec4(sqrt(colour), 0.0)) | ((material | (u32(h.x * 31.0) << 3u)) << 24u);
     return fruit;
 }
 
@@ -479,6 +741,8 @@ struct VertexOutput {
     @location(6) @interpolate(flat) colours: u32,
 #ifdef FRINGE
     @location(10) @interpolate(flat) card: u32,
+    // Fruit's colour and material (`fruit_vertex`).
+    @location(11) @interpolate(flat) fruit: u32,
 #endif
 #ifdef TRANSLUCENT
     // Water's flow, blocks per second along x and z, whether it is falling, and how much
@@ -496,14 +760,17 @@ fn vertex(in: Vertex) -> VertexOutput {
     var out: VertexOutput;
 #ifdef FRINGE
     // The fringe pass draws only leaf cards and fruit.
+    let fruit = (w0 & FLAG_FRUIT) != 0u;
     var card: Card;
-    if (w0 & FLAG_FRUIT) != 0u {
-        card = fruit_vertex(w0, vec3<f32>(chunk_of(in).xyz));
+    if fruit {
+        card = fruit_vertex(w0, w1, vec3<f32>(chunk_of(in).xyz));
     } else {
         card = card_vertex(w0, vec3<f32>(chunk_of(in).xyz));
+        card.pivot = card.world;
     }
-    out.world_position = card.world + leaf_flutter(card.world) * motion_near(card.world);
+    out.world_position = card.world + leaf_flutter(card.pivot) * motion_near(card.pivot);
     out.card = card.seed;
+    out.fruit = card.fruit;
 #else
     out.world_position = world_position(in);
 #endif
@@ -519,15 +786,21 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.uv = select(face_uv(local_position(w0), out.face), plant_uv(w0), out.face >= FACE_PLANT);
 #ifdef FRINGE
     out.uv = card.uv;
-    // Lit as the face of the crown it grows from, so a card seen edge on matches it; fruit
-    // as a side face.
-    out.face = select(w0 >> CARD_FACE_SHIFT, 4u, (w0 & FLAG_FRUIT) != 0u);
+    // Lit as the face of the crown it grows from, so a card seen edge on matches it.
+    out.face = select(w0 >> CARD_FACE_SHIFT, card.face, fruit);
 #endif
     // Plants have no ambient occlusion; their AO bits hold the corner, and water's its flow.
     let water = tint_kind(w1) == TINT_WATER;
     let ao = select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, face_of(w0) >= FACE_PLANT || water);
     out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
+#ifdef FRINGE
+    if fruit {
+        // Its texture layer alone: fruit takes no tint, and no corner shading.
+        out.surface = w1 & 0xFFFu;
+        out.light.x = 1.0;
+    }
+#endif
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
     out.colours = u32(chunk_of(in).w);
 #ifdef TRANSLUCENT
@@ -638,9 +911,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     var albedo = textureSampleGrad(block_textures, block_sampler, look.uv, layer, look.dx, look.dy);
     let kind = tint_kind(in.surface);
 #ifdef FRINGE
-    // Fruit is cut by its own texture's alpha alone.
     if in.card < FRUIT_UNRIPE && !card_mask(in.uv, in.card, length(fwidth(in.uv)) * 16.0) {
         discard;
+    }
+    if in.card >= FRUIT_UNRIPE {
+        // Fruit is solid, in its colour in a pixel artist's three shades: mostly the middle
+        // one, some pixels darker and a few lighter.
+        let packed = unpack4x8unorm(in.fruit);
+        let pattern = in.fruit >> 24u;
+        let pixel = vec2<u32>(vec2<i32>(floor(in.uv)) + 64);
+        let r = pcg3d(vec3(pixel, in.face * 32u + (pattern >> 3u))).x;
+        let shade = select(select(1.0, 0.78, r < 0.22), 1.2, r > 0.86);
+        albedo = vec4(packed.rgb * packed.rgb * shade, 1.0);
     }
 #endif
 #ifdef ALPHA_TO_COVERAGE
@@ -661,12 +943,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
 #endif
     var base = albedo.rgb * biome_tint(in.surface, in.colours, in.world_position, in.face);
-#ifdef FRINGE
-    if in.card == FRUIT_UNRIPE {
-        let grey = dot(base, vec3(0.3, 0.55, 0.15));
-        base = grey * vec3(0.75, 1.15, 0.45);
-    }
-#endif
 #ifndef TRANSLUCENT
     // A tinted overlay, as the fringe of grass on a grass block's side has, takes the
     // biome colour the top has.
@@ -674,7 +950,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #ifdef FRINGE
     // A card shows its block's overlay (fruit among the leaves) only over the block itself,
     // not repeated across the cluster around it.
-    if any(in.uv < vec2(0.0)) || any(in.uv > vec2(1.0)) {
+    if any(in.uv < vec2(0.0)) || any(in.uv > vec2(1.0)) || in.card >= FRUIT_UNRIPE {
         overlay = 0u;
     }
 #endif

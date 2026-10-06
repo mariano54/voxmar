@@ -1,8 +1,9 @@
 // Fruit on trees (content/base/crops.ron): each fruit's leaves are its tree's own leaves
 // (bare, in blossom, unripe and ripe). Blossom is an overlay the game draws over the
-// tinted leaves untinted; unripe and ripe fruit hangs from the leaves in 3D, drawn with the
-// fruit's own texture (engine mesh.rs `emit_fruit`), so their overlays are left clear. Same legend as
-// flora.ron and crops.ron; `u`–`w` glow for the emberfruit. Then the fruit itself.
+// tinted leaves untinted; unripe and ripe fruit hangs from the leaves in 3D, modelled in
+// boxes in the colour of the fruit's own texture (engine mesh.rs `emit_fruit`), so their
+// overlays are left clear. Same legend as flora.ron and crops.ron; `u`–`w` glow for the
+// emberfruit. Then the fruit itself.
 (
     legend: {
         'a': "leaf:0", 'b': "leaf:1", 'c': "leaf:2", 'd': "leaf:3", 'e': "leaf:4",
