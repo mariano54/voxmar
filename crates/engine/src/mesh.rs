@@ -23,7 +23,8 @@
 //! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`).
 //! Bit 27 marks the same quads used as leaf cards (`ChunkMesh::fringe`), with flag 2 for a
 //! flat card, bit 28 for a conifer's needles and bits 29..31 for the face of the crown it is
-//! shaded as; their top edge is flag 1, as on a plant.
+//! shaded as; their top edge is flag 1, as on a plant. Fruit hanging from fruiting leaves
+//! shares the stream (bit 25, see `emit_fruit`).
 //!
 //! Faces of translucent fluids (water) carry the fluid's state instead of ambient
 //! occlusion, which their shading has no use for:
@@ -69,6 +70,10 @@ pub const PLANT_ANTIDIAGONAL: u32 = 7;
 const FLAG_INNER: u32 = 1 << 23;
 /// Marks the quads of a leaf card, which the shader grows out of the leaf block.
 const FLAG_FRINGE: u32 = 1 << 27;
+/// On a fringe: fruit rather than a leaf card (bit 25), unripe (bit 26); a fruit's quad
+/// axis is in bits 29..30 and which of the block's fruits in bit 31.
+const FLAG_FRUIT: u32 = 1 << 25;
+const FLAG_UNRIPE: u32 = 1 << 26;
 /// On a fringe: the face of the crown the card is shaded as (bits 29..31).
 const CARD_FACE_SHIFT: u32 = 29;
 /// On a fringe: the card lies flat rather than upright (flag 2).
@@ -176,6 +181,9 @@ struct Look {
     /// Texture layer and tint of each face, by `Face`.
     layers: [u16; 6],
     tints: [Tint; 6],
+    /// On leaves bearing fruit, unripe or ripe: the fruit's own texture layer, and whether
+    /// it is unripe. The fruit hangs from them in 3D (`emit_fruit`).
+    fruit: Option<(u16, bool)>,
 }
 
 impl Look {
@@ -188,8 +196,26 @@ impl Look {
             grass_top: info.render == RenderKind::Opaque && info.tints[Face::PosY as usize] == Tint::Grass,
             layers: info.layers,
             tints: info.tints,
+            fruit: fruit_of(registry, block),
         }
     }
+}
+
+/// The fruit a fruiting leaf block shows, by the template's names (`{name}_leaves_2`
+/// unripe, `{name}_leaves` ripe, the fruit itself `{name}`): its texture layer, and
+/// whether it is unripe. Bare leaves and blossom show none.
+fn fruit_of(registry: &BlockRegistry, block: BlockId) -> Option<(u16, bool)> {
+    let def = registry.def(block);
+    if !def.has_tag("fruit_leaves") {
+        return None;
+    }
+    let (stem, unripe) = match def.name.strip_suffix("_leaves_2") {
+        Some(stem) => (stem, true),
+        None if def.has_tag("ripe") => (def.name.strip_suffix("_leaves")?, false),
+        None => return None,
+    };
+    let fruit = registry.id(stem)?;
+    Some((registry.info(fruit).layers[Face::PosY as usize], unripe))
 }
 
 /// A chunk's working tables, kept per thread between chunks: allocating and clearing
@@ -353,7 +379,7 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
             while row != 0 {
                 let x = row.trailing_zeros() as usize;
                 row &= row - 1;
-                emit_fringe(&mut mesh.fringe, registry, cells, IVec3::new(x as i32, y as i32, z as i32));
+                emit_fringe(&mut mesh.fringe, registry, looks, cells, IVec3::new(x as i32, y as i32, z as i32));
             }
         }
     }
@@ -1086,7 +1112,7 @@ fn quantise_flow(flow: Vec2) -> (u8, u8) {
 /// through the block, and a flat one if it is open to the sky, which the shader turns,
 /// grows past the block and cuts to a round cluster (`voxel.wgsl`), lit by the open side.
 /// `padded` is the block's position in the padded cells.
-fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], padded: IVec3) {
+fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, looks: &[Look], cells: &[Cell], padded: IVec3) {
     let cell = |p: IVec3| &cells[pidx(p.x as usize, p.y as usize, p.z as usize)];
     let clear = |c: &Cell| !c.occludes && registry.info(c.block).render != RenderKind::Leaves;
     let open: Vec<&Cell> = Face::ALL.iter().map(|face| cell(padded + face.normal())).filter(|c| clear(c)).collect();
@@ -1121,6 +1147,29 @@ fn emit_fringe(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], 
             out.vertices.push([w0 | FLAG_FRINGE | needles | shape | (side as u32) << CARD_FACE_SHIFT, w1]);
         }
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
+    }
+    if let Some((layer, unripe)) = looks[leaf.0 as usize].fruit {
+        // Under the block if it is open below, else out of an open side.
+        let hang = if clear(cell(padded - IVec3::Y)) { Face::NegY } else { side };
+        let w1 = layer as u32 | ((sky << 4 | block) as u32) << 24;
+        emit_fruit(out, pos, hang, unripe, w1);
+    }
+}
+
+/// Fruit hanging from a fruiting leaf block at `pos`, out of its `hang` face: two fruits,
+/// each three crossed quads of the fruit's own texture, so it has a shape from every
+/// side. The shader places, sizes and sways them (`fruit_vertex` in voxel.wgsl); unripe
+/// fruit is smaller and green.
+fn emit_fruit(out: &mut MeshBuffers, pos: IVec3, hang: Face, unripe: bool, w1: u32) {
+    let w0 = pos.x as u32 | (pos.y as u32) << 6 | (pos.z as u32) << 12 | (hang as u32) << 18 | FLAG_FRINGE | FLAG_FRUIT | if unripe { FLAG_UNRIPE } else { 0 };
+    for fruit in 0..2u32 {
+        for axis in 0..3u32 {
+            let base = out.vertices.len() as u32;
+            for corner in 0..4u32 {
+                out.vertices.push([w0 | corner << 21 | axis << 29 | fruit << 31, w1]);
+            }
+            out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
+        }
     }
 }
 

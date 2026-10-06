@@ -70,8 +70,9 @@ struct Species {
     leaves: BlockId,
     /// Leaves used instead of `leaves` on a fraction of trees (flowering azaleas).
     alternate: Option<(BlockId, f32)>,
-    /// Fruiting leaves, and the share of the crown's outer leaves they take.
-    fruit: Option<(BlockId, f32)>,
+    /// Fruiting leaves, the share of the crown's outer leaves they take, and whether the
+    /// trunk bears them too.
+    fruit: Option<(BlockId, f32, bool)>,
     roots_block: BlockId,
     height: (i32, i32),
     /// A 2×2 trunk.
@@ -166,7 +167,7 @@ impl Trees {
                     // A tree without leaves never places them.
                     leaves: def.leaves.as_deref().map_or(BlockId::AIR, |name| registry.expect(name)),
                     alternate: def.alternate.as_ref().map(|(name, share)| (registry.expect(name), *share)),
-                    fruit: def.fruit.as_ref().map(|f| (registry.expect(&f.leaves), f.share)),
+                    fruit: def.fruit.as_ref().map(|f| (registry.expect(&f.leaves), f.share, f.trunk)),
                     roots_block: def.root_block.as_deref().map_or(wood, |name| registry.expect(name)),
                     height: def.height,
                     thick: def.thick,
@@ -238,7 +239,7 @@ impl Trees {
         if let Crown::Bush { radius } = s.crown {
             let r = pick(rng, radius) * k.sqrt();
             g.mound(r, leaves, s.log, rng);
-            if let Some((fruit, share)) = s.fruit {
+            if let Some((fruit, share, _)) = s.fruit {
                 g.fruit(leaves, fruit, share);
             }
             return;
@@ -512,8 +513,22 @@ impl Trees {
             }
             Crown::Bare => {}
         }
-        if let Some((fruit, share)) = s.fruit {
+        if let Some((fruit, share, on_trunk)) = s.fruit {
             g.fruit(leaves, fruit, share);
+            if on_trunk {
+                // Pods on the trunk's sides below the crown, where their tree bears them.
+                for y in 1..height.min(6) {
+                    let at = trunk(y as f32 / height as f32).floor().as_ivec3();
+                    for d in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
+                        if g.unit_of(FRUIT ^ 2, at + d) < share * 2.0 {
+                            g.leaf(at + d, fruit);
+                            if g.blocks.contains(at + d) && g.blocks.get(at + d) == fruit {
+                                g.parts.fruit.push(at + d);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

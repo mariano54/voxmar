@@ -64,6 +64,12 @@ const FLAG_NEEDLES: u32 = 1u << 28u;
 const FLAG_FLAT: u32 = 1u << 24u;
 // On a leaf card: the face of the crown it is shaded as.
 const CARD_FACE_SHIFT: u32 = 29u;
+// In the fringe pass: fruit hanging from fruiting leaves (see `fruit_vertex`), and unripe.
+const FLAG_FRUIT: u32 = 1u << 25u;
+const FLAG_UNRIPE: u32 = 1u << 26u;
+// A fruit's `card`, which no leaf card's seed reaches: ripe and unripe.
+const FRUIT_UNRIPE: u32 = 0xfffffffeu;
+const FRUIT_RIPE: u32 = 0xffffffffu;
 // Leaf cards shrink back into their block between these distances, in blocks (the renderer
 // stops drawing them a little beyond, terrain.rs `CARD_DISTANCE`).
 const CARD_FADE = vec2(40.0, 60.0);
@@ -215,6 +221,48 @@ fn card_vertex(w0: u32, origin: vec3<f32>) -> Card {
     }
     card.uv = vec2(0.5 + (across.x - 0.5) * size.x, 0.5 - (top - 0.5) * size.y);
     return card;
+}
+
+// A vertex of fruit hanging from a fruiting leaf block (mesh.rs `emit_fruit`): each of the
+// block's two fruits is three crossed quads of the fruit's own texture, so it reads as a
+// small solid shape from any side, set at a hash of the block under it (or out of an open
+// side), turned at random and sized by ripeness. Unripe fruit is smaller (and green, in
+// the fragment shader).
+fn fruit_vertex(w0: u32, origin: vec3<f32>) -> Card {
+    let cell = origin + local_position(w0);
+    let corner = (w0 >> 21u) & 3u;
+    let across = vec2(f32(corner == 1u || corner == 2u), f32(corner >= 2u));
+    let axis = (w0 >> 29u) & 3u;
+    let index = w0 >> 31u;
+    let unripe = (w0 & FLAG_UNRIPE) != 0u;
+    let h = pcg3d(vec3<u32>(vec3<i32>(floor(cell + 0.5)) + vec3(i32(index) * 13, 211, 0)));
+    let size = select(0.65, 0.4, unripe) * (0.85 + 0.3 * h.x);
+    let hang = face_of(w0);
+    var centre = cell + 0.5;
+    let spread = (h.yz - 0.5) * 0.55;
+    if hang == 3u {
+        // Under the block, at the leaf cards' hem, a little apart from each other.
+        centre += vec3(spread.x, -0.45 - size * 0.4, spread.y);
+    } else {
+        let n = NORMALS[hang];
+        let t = vec3(n.z, 0.0, -n.x);
+        centre += n * (0.55 + size * 0.2) + t * spread.x - vec3(0.0, 0.3 + 0.3 * h.y, 0.0);
+    }
+    let a = across.x - 0.5;
+    let b = across.y - 0.5;
+    var offset: vec3<f32>;
+    switch axis {
+        case 0u: { offset = vec3(0.0, b, a); }
+        case 1u: { offset = vec3(a, 0.0, b); }
+        default: { offset = vec3(a, b, 0.0); }
+    }
+    let turn = h.x * 6.2832;
+    offset = vec3(offset.x * cos(turn) - offset.z * sin(turn), offset.y, offset.x * sin(turn) + offset.z * cos(turn));
+    var fruit: Card;
+    fruit.world = centre + offset * size;
+    fruit.uv = vec2(across.x, 1.0 - across.y);
+    fruit.seed = select(FRUIT_RIPE, FRUIT_UNRIPE, unripe);
+    return fruit;
 }
 
 // Whether a leaf card is solid at `uv`: inside a round cluster the size of the card, its
@@ -373,8 +421,13 @@ fn vertex(in: Vertex) -> VertexOutput {
     let w1 = in.packed.y;
     var out: VertexOutput;
 #ifdef FRINGE
-    // The fringe pass draws only leaf cards.
-    let card = card_vertex(w0, vec3<f32>(chunk_of(in).xyz));
+    // The fringe pass draws only leaf cards and fruit.
+    var card: Card;
+    if (w0 & FLAG_FRUIT) != 0u {
+        card = fruit_vertex(w0, vec3<f32>(chunk_of(in).xyz));
+    } else {
+        card = card_vertex(w0, vec3<f32>(chunk_of(in).xyz));
+    }
     out.world_position = card.world + leaf_flutter(card.world) * motion_near(card.world);
     out.card = card.seed;
 #else
@@ -392,8 +445,9 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.uv = face_uv(local_position(w0), out.face);
 #ifdef FRINGE
     out.uv = card.uv;
-    // Lit as the face of the crown it grows from, so a card seen edge on matches it.
-    out.face = w0 >> CARD_FACE_SHIFT;
+    // Lit as the face of the crown it grows from, so a card seen edge on matches it; fruit
+    // as a side face.
+    out.face = select(w0 >> CARD_FACE_SHIFT, 4u, (w0 & FLAG_FRUIT) != 0u);
 #endif
     // Plants have no ambient occlusion; their AO bits hold the corner, and water's its flow.
     let water = tint_kind(w1) == TINT_WATER;
@@ -472,7 +526,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
     let kind = tint_kind(in.surface);
 #ifdef FRINGE
-    if !card_mask(in.uv, in.card, length(fwidth(in.uv)) * 16.0) {
+    // Fruit is cut by its own texture's alpha alone.
+    if in.card < FRUIT_UNRIPE && !card_mask(in.uv, in.card, length(fwidth(in.uv)) * 16.0) {
         discard;
     }
 #endif
@@ -494,6 +549,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
 #endif
     var base = albedo.rgb * biome_tint(in.surface, in.colours, in.world_position, in.face);
+#ifdef FRINGE
+    if in.card == FRUIT_UNRIPE {
+        let grey = dot(base, vec3(0.3, 0.55, 0.15));
+        base = grey * vec3(0.75, 1.15, 0.45);
+    }
+#endif
     let entry = textureLoad(block_layers, vec2(layer, 0), 0);
 #ifndef TRANSLUCENT
     // A tinted overlay, as the fringe of grass on a grass block's side has, takes the
@@ -532,7 +593,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #ifdef FRINGE
         // A flat leaf card, and the upper half of an upright one, catch snow and frost as
         // the top of the crown does, so a canopy whitens under snow.
-        if (in.card & 1u) != 0u || in.uv.y < 0.5 {
+        if in.card < FRUIT_UNRIPE && ((in.card & 1u) != 0u || in.uv.y < 0.5) {
             weather_normal = vec3(0.0, 1.0, 0.0);
         }
 #endif

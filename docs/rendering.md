@@ -393,6 +393,13 @@ texture and colour, then their light; their bushy geometry was the smaller part.
   They cast no shadow: a card's shadow is the crown's own blurred by a few texels, and in
   a dense forest the cards in the shadow cascades were most of their cost.
 
+- **Fruit.** Unripe and ripe fruit hangs from its leaves in 3D rather than being painted
+  on them: each fruiting leaf block on the outside of a crown adds two fruits to the card
+  stream, each three crossed quads of the fruit's own texture (so it has a shape from
+  every side), placed by the shader under the block at the cards' hem, or out of an open
+  side, turned and sized at random (`emit_fruit` in mesh.rs, `fruit_vertex` in voxel.wgsl).
+  Unripe fruit is smaller and green. Fruit shares the cards' distance and casts no shadow.
+
 Measured in a dense forest from a hill and inside it (release, 1920×1080 at 75%):
 cards casting shadows cost 1.2–1.5 ms over none; casting none, they were within the
 noise of main in every interleaved round.

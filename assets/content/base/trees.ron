@@ -19,7 +19,8 @@
 // in old-growth cores: giants keep to the cores, shrubs to the edges. Trees grow taller
 // where the stand is high.
 //
-// `fruit: (leaves: "apple_leaves", share: 0.06)` swaps that share of a crown's outer leaves,
+// `fruit: (leaves: "apple_leaves", share: 0.06)` (with `trunk: true`, on the trunk below the
+// crown too) swaps that share of a crown's outer leaves,
 // most of them on its underside and rim, for a fruiting kind of its leaves.
 //
 // Tags: broadleaf, conifer, tropical, palm (as on wood families), plus temperate, cold,
@@ -365,7 +366,7 @@
             // A small tree of the jungle's shade, its pods hanging under the leaves.
             name: "cacao", tags: ["gathering", "fruit", "hot", "wet"], rarity: VeryRare, habitat: Shade,
             log: "jungle_log", leaves: "jungle_leaves", height: (3, 5), lean: 0.5,
-            fruit: (leaves: "cacao_leaves", share: 0.06),
+            fruit: (leaves: "cacao_leaves", share: 0.06, trunk: true),
             crown: Round(reach: (1.2, 2.0), radius: (1.4, 1.8), squash: 0.9, start: 0.4),
             comfort: (temperature: (21.0, 40.0), moisture: (1.0, 8.0)),
         ),

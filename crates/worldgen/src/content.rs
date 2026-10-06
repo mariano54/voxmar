@@ -707,12 +707,16 @@ pub struct TreeDef {
 
 /// Fruit on a tree: a leaf block bearing it (`leaves`, rendered as leaves, whose regrowth
 /// the game handles), for a `share` of the crown's outer leaves, most of them on its
-/// underside and rim, where fruit hangs and can be reached.
+/// underside and rim, where fruit hangs and can be reached; with `trunk`, also on the
+/// trunk itself below the crown.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Fruit {
     pub leaves: String,
     pub share: f32,
+    /// Also borne on the trunk below the crown, as cacao's pods are.
+    #[serde(default)]
+    pub trunk: bool,
 }
 
 /// What a plant is good for, read by cooking, alchemy and dyeing (later). Left out, each
@@ -1500,7 +1504,7 @@ impl WorldContent {
                             leaves: t.leaves.as_deref().map(q),
                             alternate: t.alternate.as_ref().map(|(n, share)| (q(n), *share)),
                             root_block: t.root_block.as_deref().map(q),
-                            fruit: t.fruit.as_ref().map(|f| Fruit { leaves: q(&f.leaves), share: f.share }),
+                            fruit: t.fruit.as_ref().map(|f| Fruit { leaves: q(&f.leaves), ..f.clone() }),
                             ..t
                         }
                     }));

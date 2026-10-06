@@ -1,6 +1,7 @@
 // Fruit on trees (content/base/crops.ron): each fruit's leaves are its tree's own leaves
-// (bare, in blossom, unripe and ripe), and each stage after bare carries an overlay of
-// blossom or fruit that the game draws over the tinted leaves untinted. Same legend as
+// (bare, in blossom, unripe and ripe). Blossom is an overlay the game draws over the
+// tinted leaves untinted; unripe and ripe fruit hangs from the leaves in 3D, drawn with the
+// fruit's own texture (engine mesh.rs `emit_fruit`), so their overlays are left clear. Same legend as
 // flora.ron and crops.ron; `u`–`w` glow for the emberfruit. Then the fruit itself.
 (
     legend: {
@@ -30,7 +31,7 @@
         "plum_ripe": ["#2e0e36", "#5e2a6e", "#9058a0"],
         "hazelnut_ripe": ["#4e3216", "#7e5428", "#ae8048"],
         "walnut_ripe": ["#3a521a", "#5a762a", "#86a046"],
-        "chestnut_ripe": ["#5a6418", "#8a9a28", "#bcc458"],
+        "chestnut_ripe": ["#7a5a10", "#b8922a", "#e6cc5a"],
         "wild_cherries_ripe": ["#4a0410", "#8e0a1e", "#d0303e"],
         "rowan_berries_ripe": ["#8a1a06", "#d0400e", "#ff7a30"],
         "olives_ripe": ["#262414", "#46441e", "#6a6636"],
@@ -39,8 +40,8 @@
         "almond_ripe": ["#5e6e34", "#90a056", "#c4cc86"],
         "banana_ripe": ["#a08a10", "#e0c830", "#fff27a"],
         "mango_ripe": ["#c05a10", "#e8a020", "#ffd84a"],
-        "avocado_ripe": ["#1a3410", "#2a5218", "#46722a"],
-        "cacao_ripe": ["#6a3010", "#a85a20", "#d89040"],
+        "avocado_ripe": ["#1c1020", "#3a2438", "#5e4048"],
+        "cacao_ripe": ["#8a2a0c", "#d05a16", "#f8a028"],
         "baobab_fruit_ripe": ["#56563a", "#86865a", "#b6b28a"],
         "marula_ripe": ["#a08a10", "#d8c030", "#f4e47a"],
         // Dates, tamarind and pine nuts: their ripe fruit.
@@ -88,7 +89,7 @@
             "..jh............",
             "..hf............",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/apple_leaves_overlay": (base: "shape/plant", palettes: {"fruit": "apple_red", "wood": ["#3c2a1a", "#5a412a", "#7a5a3c"], "glow": "warm_glow"}, layers: [Grid(rows: [
             "................",
             "..........k.....",
@@ -106,7 +107,7 @@
             "..jhh...........",
             "..hhf...........",
             "...f............",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/apple": (base: "shape/plant", palettes: {"fruit": "apple_red", "leaf": "fresh_green", "glow": "warm_glow", "centre": "brown_centre"}, layers: [Grid(rows: [
             "................",
             "................",
@@ -164,7 +165,7 @@
             "..k.............",
             "..jh............",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/cherries_leaves_overlay": (base: "shape/plant", palettes: {"fruit": "cherry_red", "wood": ["#3c2a1a", "#5a412a", "#7a5a3c"], "glow": "warm_glow"}, layers: [Grid(rows: [
             "................",
             ".........k.k....",
@@ -182,7 +183,7 @@
             "...k............",
             "..jhf...........",
             "..hf............",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/cherries": (base: "shape/plant", palettes: {"fruit": "cherry_red", "leaf": "fresh_green", "glow": "warm_glow", "centre": "brown_centre"}, layers: [Grid(rows: [
             "................",
             "..........cd....",
@@ -240,7 +241,7 @@
             "..jh............",
             "..hf............",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/orange_leaves_overlay": (base: "shape/plant", palettes: {"fruit": "orange_peel", "wood": ["#3c2a1a", "#5a412a", "#7a5a3c"], "glow": "warm_glow"}, layers: [Grid(rows: [
             "................",
             "..........jh....",
@@ -258,7 +259,7 @@
             "..jhh...........",
             "..hhf...........",
             "...f............",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/orange": (base: "shape/plant", palettes: {"fruit": "orange_peel", "leaf": "fresh_green", "glow": "warm_glow", "centre": "brown_centre"}, layers: [Grid(rows: [
             "................",
             "................",
@@ -316,7 +317,7 @@
             "..jh............",
             "..hf............",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/coconut_leaves_overlay": (base: "shape/plant", palettes: {"fruit": "coconut_husk", "wood": ["#3c2a1a", "#5a412a", "#7a5a3c"], "glow": "warm_glow"}, layers: [Grid(rows: [
             "................",
             "..........hf....",
@@ -334,7 +335,7 @@
             "................",
             "................",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/coconut": (base: "shape/plant", palettes: {"fruit": "coconut_husk", "leaf": "fresh_green", "glow": "warm_glow", "centre": "brown_centre"}, layers: [Grid(rows: [
             "................",
             "................",
@@ -392,7 +393,7 @@
             "..jh............",
             "..hf............",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/golden_apple_leaves_overlay": (base: "shape/plant", palettes: {"fruit": "gold_fruit", "wood": ["#3c2a1a", "#5a412a", "#7a5a3c"], "glow": "warm_glow"}, layers: [Grid(rows: [
             "................",
             "..........k.....",
@@ -410,7 +411,7 @@
             "................",
             "................",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/golden_apple": (base: "shape/plant", palettes: {"fruit": "gold_fruit", "leaf": "fresh_green", "glow": "warm_glow", "centre": "brown_centre"}, layers: [Grid(rows: [
             "................",
             "................",
@@ -468,7 +469,7 @@
             "..jh............",
             "..hf............",
             "................",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/emberfruit_leaves_overlay": (base: "shape/plant", palettes: {"fruit": "ember_fruit", "wood": ["#3c2a1a", "#5a412a", "#7a5a3c"], "glow": "ember"}, layers: [Grid(rows: [
             "................",
             "..........w.....",
@@ -486,7 +487,7 @@
             "..vwv...........",
             "..uvu...........",
             "...u............",
-        ])]),
+        ]), Cut(mask: [Flat(1.0)], above: 0.5)]),
         "block/emberfruit": (base: "shape/plant", palettes: {"fruit": "ember_fruit", "leaf": "fresh_green", "glow": "ember", "centre": "brown_centre"}, layers: [Grid(rows: [
             "................",
             ".......w........",
