@@ -36,6 +36,8 @@ pub struct Lang {
     code: String,
     strings: FxHashMap<String, String>,
     english: FxHashMap<String, String>,
+    /// How this language's names read, by their keys (`lang/readings/<code>.ron`).
+    readings: FxHashMap<String, String>,
 }
 
 /// A language some package has strings for.
@@ -50,10 +52,19 @@ impl Lang {
     /// Reads language `code` (and English) from every package in `content_dir`. Files that
     /// cannot be read are reported and skipped: a broken translation never stops the game.
     pub fn load(content_dir: &Path, code: &str) -> Self {
-        let files = read_files(content_dir, |file_code| file_code == code || file_code == ENGLISH);
-        let (lang, problems) = Self::from_files(code, files.iter().map(|(package, code, source)| (package.as_str(), code.as_str(), source.as_str())));
+        let files = read_files(content_dir, "lang", |file_code| file_code == code || file_code == ENGLISH);
+        let (mut lang, problems) = Self::from_files(code, files.iter().map(|(package, code, source)| (package.as_str(), code.as_str(), source.as_str())));
         for problem in problems {
             tracing::warn!("{problem}");
+        }
+        for (package, _, source) in read_files(content_dir, "lang/readings", |file_code| file_code == code) {
+            match parse(&source) {
+                // As with strings, the first package to give a reading keeps it.
+                Ok(readings) => readings.into_iter().for_each(|(key, reading)| {
+                    lang.readings.entry(key).or_insert(reading);
+                }),
+                Err(e) => tracing::warn!("{package}/lang/readings/{code}.ron: {e}"),
+            }
         }
         lang
     }
@@ -156,6 +167,36 @@ impl Lang {
         title_from_id(&def.name)
     }
 
+    /// How the name at `key` reads, for a name written with kanji (`lang/readings/<code>.ron`):
+    /// kanji in hiragana, the rest as written. None for a name that needs no reading, or
+    /// that the language gives none.
+    pub fn reading(&self, key: &str) -> Option<String> {
+        self.find(key).filter(|name| has_kanji(name)).and_then(|_| self.readings.get(key).cloned())
+    }
+
+    /// How a block or item's name reads (see [`Lang::reading`]), made as its name is (see
+    /// [`Lang::block`]): a template's reading is its member's with the family's filled in.
+    pub fn block_reading(&self, def: &BlockDef) -> Option<String> {
+        let key = def_key("block", &def.name);
+        if self.find(&key).is_some() {
+            return self.reading(&key);
+        }
+        let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+        if let Some(family) = &def.family {
+            let family_local = family.rsplit(':').next().unwrap_or(family);
+            let (member, family) = (format!("block.{namespace}.{}", local.replacen(family_local, "{name}", 1)), def_key("family", family));
+            if let (Some(member_name), Some(family_name)) = (self.find(&member), self.find(&family)) {
+                if !has_kanji(member_name) && !has_kanji(family_name) {
+                    return None;
+                }
+                // Each part reads as written unless it holds kanji.
+                let read = |key: &str, name: &str| if has_kanji(name) { self.readings.get(key).cloned() } else { Some(name.to_owned()) };
+                return Some(fill(&read(&member, member_name)?, &[("name", &read(&family, family_name)?)]));
+            }
+        }
+        def.variant_of.as_deref().map(|plant| def_key("block", plant)).filter(|plant| self.find(plant).is_some()).and_then(|plant| self.reading(&plant))
+    }
+
     /// `words` in this language. Blocks are looked up in `blocks`.
     pub fn render(&self, words: &Words, blocks: &BlockRegistry) -> String {
         match words {
@@ -195,11 +236,16 @@ impl Lang {
     }
 }
 
+/// Whether `text` holds kanji, which a reading spells out.
+pub fn has_kanji(text: &str) -> bool {
+    text.chars().any(|c| matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}' | '々'))
+}
+
 /// The languages any package in `content_dir` has strings for, English first, then by
 /// code.
 pub fn languages(content_dir: &Path) -> Vec<Language> {
     let mut names: FxHashMap<String, Option<String>> = FxHashMap::default();
-    for (_, code, source) in read_files(content_dir, |_| true) {
+    for (_, code, source) in read_files(content_dir, "lang", |_| true) {
         let name = parse(&source).ok().and_then(|mut strings| strings.remove(NAME_KEY));
         let entry = names.entry(code).or_default();
         if entry.is_none() {
@@ -352,13 +398,13 @@ fn parse(source: &str) -> Result<FxHashMap<String, String>, String> {
 
 /// `(package, language, source)` of every language file whose language `wanted` accepts,
 /// in package order.
-fn read_files(content_dir: &Path, wanted: impl Fn(&str) -> bool) -> Vec<(String, String, String)> {
+fn read_files(content_dir: &Path, sub: &str, wanted: impl Fn(&str) -> bool) -> Vec<(String, String, String)> {
     let Ok(entries) = std::fs::read_dir(content_dir) else { return Vec::new() };
     let mut packages: Vec<String> = entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()).collect();
     packages.sort();
     let mut files = Vec::new();
     for package in packages {
-        let dir = content_dir.join(&package).join("lang");
+        let dir = content_dir.join(&package).join(sub);
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         let mut names: Vec<String> = entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()).collect();
         names.sort();
@@ -369,7 +415,7 @@ fn read_files(content_dir: &Path, wanted: impl Fn(&str) -> bool) -> Vec<(String,
             }
             match std::fs::read_to_string(dir.join(&name)) {
                 Ok(source) => files.push((package.clone(), code.to_owned(), source)),
-                Err(e) => tracing::warn!("{package}/lang/{name}: {e}"),
+                Err(e) => tracing::warn!("{package}/{sub}/{name}: {e}"),
             }
         }
     }

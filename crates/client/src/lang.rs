@@ -30,7 +30,16 @@ impl Plugin for LangPlugin {
         app.init_resource::<SmoothFonts>()
             .add_systems(Startup, load_smooth_fonts)
             .add_systems(Update, switch.run_if(resource_changed::<Settings>))
-            .add_systems(PostUpdate, (localize.before(bevy::ui::UiSystems::Prepare), fall_back_to_smooth_fonts.run_if(resource_changed::<FontCx>).after(bevy::text::load_font_assets_into_font_collection).before(bevy::ui::UiSystems::Prepare)));
+            .add_systems(
+                PostUpdate,
+                (
+                    localize.before(bevy::ui::UiSystems::Prepare),
+                    (register_rebuilt_fonts, fall_back_to_smooth_fonts.run_if(resource_changed::<FontCx>))
+                        .chain()
+                        .after(bevy::text::load_font_assets_into_font_collection)
+                        .before(bevy::ui::UiSystems::Prepare),
+                ),
+            );
     }
 }
 
@@ -59,6 +68,32 @@ impl Locale {
     /// What the block called `name` is called (see [`Locale::block`]).
     pub fn block_named(&self, blocks: &BlockRegistry, name: &str) -> String {
         blocks.id(name).map_or_else(|| title_from_id(name), |id| self.block(blocks.def(id)))
+    }
+
+    /// How a block or item's name reads, when it holds kanji: kanji in hiragana, the rest as
+    /// written (オークのげんぼく for オークの原木). None for a name with no kanji, and in a
+    /// language that has none. The same for the others below.
+    #[allow(dead_code, reason = "the interface shows readings with names (Shift over one)")]
+    pub fn block_reading(&self, def: &BlockDef) -> Option<String> {
+        self.lang.block_reading(def)
+    }
+
+    /// How a creature's name reads (see [`Locale::block_reading`]).
+    #[allow(dead_code, reason = "the interface shows readings with names (Shift over one)")]
+    pub fn creature_reading(&self, def: &CreatureDef) -> Option<String> {
+        self.reading(&def_key("creature", &def.name))
+    }
+
+    /// How a skill's name reads (see [`Locale::block_reading`]).
+    #[allow(dead_code, reason = "the interface shows readings with names (Shift over one)")]
+    pub fn skill_reading(&self, def: &SkillDef) -> Option<String> {
+        self.reading(&def_key("skill", &def.name))
+    }
+
+    /// How a condition's name reads (see [`Locale::block_reading`]).
+    #[allow(dead_code, reason = "the interface shows readings with names (Shift over one)")]
+    pub fn effect_reading(&self, effect: Effect) -> Option<String> {
+        self.reading(&format!("effect.{}", effect_key(effect)))
     }
 
     /// What a creature is called.
@@ -199,6 +234,43 @@ fn localize(
 /// CJK scripts, from radicals and punctuation on.
 fn drawn_smooth(c: char) -> bool {
     c as u32 >= 0x2E80 && !(0xE000..0xF900).contains(&(c as u32))
+}
+
+/// Puts a font rebuilt into a handle that already had one (the interface font, when the
+/// setting changes) into the font collection under a new name, and points text at it. Bevy
+/// only adds fonts with new handles, so text would otherwise ask for a name nothing has:
+/// every glyph a missing-glyph box.
+fn register_rebuilt_fonts(mut fonts: ResMut<Assets<Font>>, mut font_cx: ResMut<FontCx>, mut texts: Query<&mut TextFont>, mut built: Local<u32>) {
+    let rebuilt: Vec<_> = fonts.iter().filter(|(_, font)| font.alias.is_empty()).map(|(id, _)| id).collect();
+    if rebuilt.is_empty() {
+        return;
+    }
+    for id in rebuilt {
+        let Some(font) = fonts.get_mut_untracked(id) else { continue };
+        *built += 1;
+        font.alias = format!("asset_id:{id:?} build {}", *built);
+        let name = parley::fontique::FontInfoOverride { family_name: Some(font.alias.as_str()), ..default() };
+        font_cx.collection.register_fonts(font.data.clone(), Some(name));
+    }
+    for mut font in &mut texts {
+        font.set_changed();
+    }
+}
+
+/// The texts whose font isn't in the font collection, so that every character draws a
+/// missing-glyph box: how many, and what the first reads. None when every text has one.
+pub fn texts_without_a_font(world: &mut World) -> Option<String> {
+    let mut texts = world.query::<(&Text, &TextFont)>();
+    let names: Vec<(String, String)> = texts
+        .iter(world)
+        .filter_map(|(text, font)| match &font.font {
+            bevy::text::FontSource::Handle(handle) => Some((text.0.clone(), world.resource::<Assets<Font>>().get(handle.id()).map_or(String::new(), |f| f.alias.clone()))),
+            _ => None,
+        })
+        .collect();
+    let collection = &mut world.resource_mut::<FontCx>().into_inner().collection;
+    let lost: Vec<String> = names.into_iter().filter(|(_, name)| name.is_empty() || collection.family_id(name).is_none()).map(|(text, _)| text).collect();
+    lost.first().map(|first| format!("{} texts, the first reading {first:?}", lost.len()))
 }
 
 /// The smooth fallback fonts (see `assets/ui/fonts/fallback.ron`), in order.
@@ -377,17 +449,10 @@ mod tests {
         assert!(unknown.is_empty(), "keys missing from en.ron:\n{}", unknown.into_iter().collect::<Vec<_>>().join("\n"));
     }
 
-    /// Every character any language writes is in the interface's fonts, with the pixel
-    /// fallback fonts merged in, or else in a smooth fallback font: no tofu boxes.
-    #[test]
-    fn every_character_is_drawn() {
-        let fonts = assets().join("ui/fonts");
-        let read = |name: &str| std::fs::read_to_string(fonts.join(name)).ok();
-        let fallback = &crate::ui::skin::read_fallback(&fonts);
-        let smooth: BTreeSet<char> = crate::ui::skin::smooth_fallbacks(&fonts)
-            .iter()
-            .flat_map(|data| voxmar_texgen::font::characters(data).unwrap())
-            .collect();
+    /// Every character anything on screen writes: every language's strings and names, and
+    /// the characters the client's own string literals hold (symbols, markers), from the
+    /// lines that aren't comments.
+    fn every_text_written() -> Vec<String> {
         let loaded = voxmar_server::load_content(&assets()).unwrap();
         let mut texts: Vec<String> = Vec::new();
         for language in languages(&content()) {
@@ -395,13 +460,112 @@ mod tests {
             texts.extend(locale.keys().map(|key| locale.get(key).to_owned()));
             texts.extend(definition_names(&loaded, &locale).into_iter().map(|(_, name)| name));
         }
+        let mut sources = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(path) = sources.pop() {
+            if path.is_dir() {
+                sources.extend(std::fs::read_dir(&path).unwrap().map(|entry| entry.unwrap().path()));
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                for line in std::fs::read_to_string(&path).unwrap().lines().filter(|line| !line.trim_start().starts_with("//")) {
+                    // The text between each pair of quotes, string or character.
+                    for quote in ['"', '\''] {
+                        let parts: Vec<&str> = line.split(quote).collect();
+                        texts.extend(parts.iter().skip(1).step_by(2).filter(|part| !part.is_ascii()).map(|part| part.to_string()));
+                    }
+                }
+            }
+        }
+        texts
+    }
+
+    /// Every text the game writes, shaped as the game shapes it (in each interface font,
+    /// falling back to the smooth fonts for the CJK scripts, see `fall_back_to_smooth_fonts`),
+    /// has a glyph for every character: no missing-glyph boxes in any language or font.
+    #[test]
+    fn no_text_shows_a_missing_glyph_box() {
+        use parley::fontique::{Blob, FallbackKey, FontInfoOverride, Script};
+        use parley::{FontFamily, PositionedLayoutItem, StyleProperty};
+        let fonts = assets().join("ui/fonts");
+        let read = |name: &str| std::fs::read_to_string(fonts.join(name)).ok();
+        let fallback = crate::ui::skin::read_fallback(&fonts);
+        let mut cx = parley::FontContext::default();
+        let smooth: Vec<_> = crate::ui::skin::smooth_fallbacks(&fonts)
+            .into_iter()
+            .enumerate()
+            .map(|(i, data)| {
+                let name = format!("smooth {i}");
+                cx.collection.register_fonts(Blob::from(data), Some(FontInfoOverride { family_name: Some(&name), ..Default::default() }))[0].0
+            })
+            .collect();
+        for script in SMOOTH_SCRIPTS {
+            cx.collection.set_fallbacks(FallbackKey::new(Script::from_bytes(script), None), smooth.iter().copied());
+        }
+        let texts = every_text_written();
+        assert!(texts.iter().any(|text| text.contains('▴')) && texts.iter().any(|text| text.contains("設定")), "the texts are not all there");
+        let mut layouts = parley::LayoutContext::<()>::new();
+        let mut boxes = |cx: &mut parley::FontContext, family: &str, text: &str| {
+            let mut builder = layouts.ranged_builder(cx, text, 1.0, true);
+            builder.push_default(StyleProperty::FontFamily(FontFamily::named(family)));
+            builder.push_default(StyleProperty::FontSize(16.0));
+            let mut layout = builder.build(text);
+            layout.break_all_lines(None);
+            layout
+                .lines()
+                .flat_map(|line| line.items().collect::<Vec<_>>())
+                .any(|item| matches!(item, PositionedLayoutItem::GlyphRun(run) if run.glyphs().any(|glyph| glyph.id == 0)))
+        };
         for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
             let mut font = voxmar_texgen::font::PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
-            font.fill_from(fallback);
-            let drawn = |c: &char| c.is_whitespace() || font.glyphs.contains_key(c) || (drawn_smooth(*c) && smooth.contains(c));
-            let missing: BTreeSet<char> = texts.iter().flat_map(|text| text.chars()).filter(|c| !drawn(c)).collect();
-            assert!(missing.is_empty(), "{file} lacks {}", missing.into_iter().collect::<String>());
+            font.fill_from(&fallback);
+            let family = format!("test {file}");
+            let name = FontInfoOverride { family_name: Some(&family), ..Default::default() };
+            cx.collection.register_fonts(Blob::from(font.to_ttf(&family)), Some(name));
+            // The check itself sees boxes: a private-use character no font draws makes one.
+            assert!(boxes(&mut cx, &family, "a\u{E000}") && !boxes(&mut cx, &family, "a 経験値"), "{file}: the box check is broken");
+            // Each text with a box, then the characters in it that draw one on their own.
+            let mut missing = BTreeSet::new();
+            let boxed: Vec<&String> = texts.iter().filter(|text| boxes(&mut cx, &family, text)).collect();
+            for text in boxed {
+                let alone: Vec<char> = text.chars().filter(|c| !c.is_whitespace() && boxes(&mut cx, &family, &c.to_string())).collect();
+                missing.insert(if alone.is_empty() { format!("{text:?}") } else { alone.into_iter().map(|c| format!("{c} (U+{:04X})", c as u32)).collect::<Vec<_>>().join(", ") });
+            }
+            assert!(missing.is_empty(), "{file}: missing glyphs: {}", missing.into_iter().collect::<Vec<_>>().join("; "));
         }
+    }
+
+    /// Every Japanese name with kanji (blocks and items, creatures, skills, conditions) has
+    /// a reading, in kana alone, for the interface to show with it.
+    #[test]
+    fn every_japanese_name_with_kanji_reads() {
+        use voxmar_engine::lang::has_kanji;
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let locale = Locale::load(&content(), "ja");
+        let mut unread = BTreeSet::new();
+        let mut check = |name: String, reading: Option<String>| match reading {
+            Some(reading) if !has_kanji(&reading) => {}
+            _ if !has_kanji(&name) => {}
+            other => {
+                unread.insert(format!("{name} ({other:?})"));
+            }
+        };
+        let blocks = &loaded.blocks;
+        for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
+            let def = blocks.def(id);
+            check(locale.block(def), locale.block_reading(def));
+        }
+        for (_, creature) in loaded.creatures.iter() {
+            check(locale.creature(&creature.def), locale.creature_reading(&creature.def));
+        }
+        for id in loaded.skills.ids() {
+            let def = loaded.skills.get(id);
+            check(locale.skill(def), locale.skill_reading(def));
+        }
+        for key in locale.keys().filter(|key| key.split_once('.').is_some_and(|(kind, rest)| kind == "effect" && !rest.contains('.'))) {
+            check(locale.get(key).to_owned(), locale.reading(key));
+        }
+        assert!(unread.is_empty(), "Japanese names without a reading (add them to lang/readings/ja.ron): {}", unread.into_iter().collect::<Vec<_>>().join(", "));
+        let oak = blocks.id("base:oak_log").map(|id| blocks.def(id)).unwrap();
+        assert_eq!((locale.block(oak).as_str(), locale.block_reading(oak).as_deref()), ("オークの原木", Some("オークのげんぼく")));
+        assert_eq!(Locale::load(&content(), "en").block_reading(oak), None);
     }
 
     #[test]

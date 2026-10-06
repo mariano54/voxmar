@@ -35,6 +35,7 @@ use voxmar_engine::physics::Aabb;
 use voxmar_protocol::{CreatureGone, CreatureView};
 
 use crate::Actions;
+use crate::creature_sounds::{CreatureSound, CreatureSounds, Kind as Sound};
 use crate::breaking::sky_light;
 use crate::drops::block_light;
 use crate::interact::Target;
@@ -172,6 +173,8 @@ struct Shown {
     skin: Handle<Image>,
     /// Stride phase, in cycles.
     stride: f32,
+    /// Seconds until it may make an idle noise or call again.
+    quiet: f32,
     flash: f32,
     /// Seconds since it died, if it did.
     dying: Option<f32>,
@@ -361,6 +364,11 @@ fn skin_volume(def: &creature::BodyDef, parts: &[Part], body: &SpeciesBody, seed
     image
 }
 
+/// A sound a creature makes now.
+fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
+    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young }
+}
+
 /// Applies what the server sent, then moves and animates every creature, and handles
 /// aiming at and striking them.
 #[allow(clippy::too_many_arguments)]
@@ -380,6 +388,7 @@ fn show(
     mut transforms: Query<&mut Transform>,
     mut looks: Query<&mut MeshMaterial3d<StandardMaterial>>,
     mut visible: Query<&mut Visibility>,
+    mut sounds: ResMut<CreatureSounds>,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -419,6 +428,7 @@ fn show(
         match creatures.shown.get_mut(&gone.id) {
             Some(shown) if gone.died => {
                 shown.dying = Some(0.0);
+                sounds.push(sound(Sound::Death, gone.id, &shown.view, shown.position, 0.0));
                 creatures.deaths += 1;
             }
             Some(shown) => {
@@ -435,6 +445,23 @@ fn show(
         if let Some(shown) = creatures.shown.get_mut(&view.id) {
             if view.health < shown.view.health {
                 shown.flash = FLASH;
+                sounds.push(sound(Sound::Hurt, view.id, &view, shown.position, 0.0));
+            }
+            // What it does now, heard as it starts.
+            if view.pose != shown.view.pose {
+                let kind = match view.pose {
+                    Pose::Grazing => Some(Sound::Graze),
+                    Pose::Alert => Some(Sound::Alert),
+                    Pose::Resting => Some(Sound::Rest),
+                    Pose::Attacking => Some(Sound::Attack),
+                    Pose::Idle | Pose::Crouched => None,
+                };
+                if let Some(kind) = kind {
+                    sounds.push(sound(kind, view.id, &view, shown.position, 0.0));
+                }
+            }
+            if view.ready && !shown.view.ready {
+                sounds.push(sound(Sound::Ready, view.id, &view, shown.position, 0.0));
             }
             shown.view = view;
             shown.told_at = now;
@@ -469,6 +496,7 @@ fn show(
                 material,
                 skin,
                 stride: 0.0,
+                quiet: 2.0 + creature::unit_from(creature::mix(view.seed as u64, 77)) * 8.0,
                 flash: 0.0,
                 dying: None,
                 struck: false,
@@ -499,7 +527,20 @@ fn show(
         let speed = (shown.position - before).with_y(0.0).length() / dt.max(1e-4);
         let scale = shown.view.scale;
         let height = def.body.size.1 * scale;
+        let before_step = (shown.stride * 2.0).floor();
         shown.stride += speed * dt / (def.body.size.0.max(0.3) * 1.6 * scale);
+        // A footfall each half stride, while it walks on something.
+        if (shown.stride * 2.0).floor() != before_step && speed > 0.3 && shown.dying.is_none() && def.movement.style != Style::Drifter {
+            sounds.push(sound(Sound::Step, id, &shown.view, shown.position, speed));
+        }
+        // Now and then, at its own pace, a contented noise, or a call to its kind.
+        shown.quiet -= dt;
+        if shown.quiet <= 0.0 && shown.dying.is_none() {
+            let roll = creature::unit_from(creature::mix(shown.view.seed as u64, (now * 10.0) as u64));
+            let kind = if roll < 0.25 { Sound::Call } else { Sound::Idle };
+            sounds.push(sound(kind, id, &shown.view, shown.position, speed));
+            shown.quiet = 6.0 + roll * 18.0;
+        }
         shown.flash = (shown.flash - dt).max(0.0);
 
         let (nod, crouch) = match shown.view.pose {

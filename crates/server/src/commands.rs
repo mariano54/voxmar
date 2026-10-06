@@ -169,6 +169,7 @@ impl Server {
             Run::SetBlock => self.set_block_command(id, args),
             Run::Fill => self.fill(id, args),
             Run::Give => self.give(id, args),
+            Run::Clear => self.clear(id, args),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -738,6 +739,18 @@ impl Server {
         }
         let gave = Words::key("command.give").with("count", Words::text(count)).with("block", Words::Block(self.content.blocks.def(block).name.clone()));
         if left > 0 { Ok(Words::key("command.give.spilled").with("gave", gave).with("left", Words::text(left))) } else { Ok(gave) }
+    }
+
+    fn clear(&mut self, source: Source, args: &[String]) -> Reply {
+        let item = match args {
+            [] => None,
+            [name] => Some(self.find_block(name)?),
+            _ => return Err(Words::key("command.error.clear_what")),
+        };
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        let count = player.inventory.clear(|held| item.is_none_or(|item| held == item));
+        player.changed(voxmar_engine::traits::INVENTORY);
+        Ok(Words::key("command.clear").with("count", Words::text(count)))
     }
 
     fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {
