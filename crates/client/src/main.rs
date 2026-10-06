@@ -428,10 +428,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.insert_resource(hud::recipes::StartLookup(name, uses));
     }
     // Slow frames of real play are recorded for later (see slow_frames.rs); captures and
-    // gate runs, which run on a busy machine by design, are not.
+    // gate runs, which run on a busy machine by design, are not, unless
+    // VOXMAR_RECORD_SLOW_FRAMES asks (with VOXMAR_CONFIG elsewhere, to keep them apart).
     // The renderer's part of a slow frame's record is always there to be set.
     app.init_resource::<slow_frames::SlowFrameExtra>();
-    if !headless {
+    if !headless || std::env::var_os("VOXMAR_RECORD_SLOW_FRAMES").is_some() {
         app.add_plugins(slow_frames::SlowFramesPlugin);
     }
     if options.music && !headless {
