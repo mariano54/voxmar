@@ -169,17 +169,16 @@ fi
 # The test binaries (already built) and the session run side by side, under one memcap
 # (one heavy slot, held as a game run's: `--gate` names the script), rather than one after another as `cargo test` runs them; each test
 # binary runs from its crate's directory as cargo would.
-# The tests run a step below the session (background QoS on a Mac, nice elsewhere): the
-# session's server and renderer must keep up, and the tests' own servers and worlds once
-# starved it so far that nine of its checks failed together, while every test is judged
-# by its result alone.
+# The tests run a step below the session (nice 10): the session's server and renderer
+# must keep up, and the tests' own servers and worlds once starved it so far that nine of
+# its checks failed together. Not background QoS: that also throttles timers, and a test
+# that times a break by the clock then failed.
 run='
   out=$1 session=$2; shift 2
   if [[ $session == 1 ]]; then
     (VOXMAR_MUTE=1 target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
   fi
-  lower=()
-  if [[ $(uname -s) == Darwin ]] && command -v taskpolicy >/dev/null; then lower=(taskpolicy -c background); else lower=(nice -n 10); fi
+  lower=(nice -n 10)
   while IFS=$(printf "\t") read -r dir exe; do
     (cd "$dir" && "${lower[@]}" "$exe" "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
   done <"$out/tests.list"

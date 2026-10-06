@@ -55,7 +55,7 @@ it takes well under a minute.
 
    Steps judge what the server does by its own clock (`ServerHandle::ticks`), not the
    wall's or the game's: a server running behind takes longer, not too long. The tests run
-   a step below the session (background QoS), so they cannot starve its server; once they
+   a step below the session (`nice 10`), so they cannot starve its server; once they
    did, and nine checks failed together. A step that fails lets go of every key and
    button, so it cannot fail the steps after it. `VOXMAR_GATE_STALL=1` (with
    `--server-lag 150`) stalls every frame and slows the server as a machine loaded far
