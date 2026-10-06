@@ -182,6 +182,12 @@ running: on 2026-10-06 that turned the play binary and a thread's build into six
   after his game (voxmar not as a capture or gate, or Minecraft) exits, so everything
   waiting starts as soon as he quits; if his game never appears, the flag holds two hours
   after it was written.
+- Everything memcap runs is at background priority: on a Mac, background QoS, which keeps
+  it to the efficiency cores (6 of the 18 are performance cores); elsewhere `nice 19`. At
+  his look-down pose, a full build alongside gave a 326 ms worst frame at normal priority
+  and 57 ms at background QoS (p99 43 against 27 ms), and the build still went at about
+  nine tenths of its speed. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
+  (`VOXMAR_FOREGROUND=1`) run as his game does, and a timing run takes no slot.
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or
