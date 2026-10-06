@@ -257,7 +257,9 @@ copied.
   (`crates/worldgen/src/ores.rs`, `content/base/ores.ron`, the `*_ore_sample` blocks and
   the `Rock` plant model in `crates/engine/src/block.rs` and `voxel.wgsl`). Our own
   additions: veins that favour or shun rock provinces, lens and pipe shapes, and
-  `/locate ore`.
+  `/locate ore`. Motherlodes, huge deep veins to mine for hours from one spot, follow the
+  deep veins of Old School RuneScape's Motherlode Mine and GregTech's large veins under
+  its drilling rigs.
 
 ## Rendering
 
