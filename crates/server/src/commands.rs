@@ -259,7 +259,7 @@ impl Server {
             0.0 => Words::key("command.time.frozen"),
             1.0 => Words::key("command.time.normal"),
             speed => {
-                let minutes = TICKS_PER_DAY as f32 / TICKS_PER_SECOND as f32 / 60.0 / speed;
+                let minutes = self.content.commands.day_minutes() / speed;
                 let day = if minutes >= 1.0 {
                     Words::key("command.time.minutes").with("minutes", Words::text(format!("{minutes:.1}")))
                 } else {
