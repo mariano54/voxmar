@@ -22,6 +22,7 @@ pub mod crop;
 pub mod effect;
 pub mod dropped;
 pub mod field;
+pub mod fishing;
 pub mod fluid;
 pub mod genes;
 pub mod inventory;

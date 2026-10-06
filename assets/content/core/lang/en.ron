@@ -265,6 +265,7 @@
     "target.ready": "Ready to breed",
     "skills.needs": "Needs {skill} {level}",
     "tools.needs": "Needs a {tool} or better",
+    "fishing.nothing": "Nothing bites.",
 
     "character.health": "Health",
     "character.hunger": "Hunger",

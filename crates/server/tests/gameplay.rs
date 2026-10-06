@@ -950,3 +950,26 @@ fn cooked_food_takes_a_slot_each_and_ingredients_stack() {
     assert!(client.inventory.slots.iter().flatten().all(|s| s.item != bread || s.count == 1), "bread stacked");
     assert_eq!(client.inventory.slots.iter().flatten().filter(|s| s.item == wheat).map(|s| s.count).collect::<Vec<_>>(), [3], "wheat should stack");
 }
+
+#[test]
+fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
+    let mut client = Client::join();
+    let water = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/give fishing_rod 1", "/skill fishing 80"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(4).is_some());
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 4, flying: false }));
+    let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
+    // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
+    for _ in 0..6 {
+        client.propose("base:fish", ActionTarget::Block { block: water, face: Face::PosY });
+        let up = Instant::now() + Duration::from_millis(5600);
+        client.pump_until(|c| fish(c) || Instant::now() > up);
+        if fish(&client) {
+            break;
+        }
+    }
+    assert!(fish(&client), "six casts at Fishing 80 caught nothing");
+    client.pump_until(|c| !c.earned.is_empty());
+}

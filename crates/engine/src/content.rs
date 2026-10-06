@@ -18,6 +18,7 @@ use crate::creature::CreatureRegistry;
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
 use crate::effect::EffectRegistry;
+use crate::fishing::FishingRegistry;
 use crate::lang::{ENGLISH, Lang};
 use crate::movement::Tuning;
 use crate::skill::SkillRegistry;
@@ -43,6 +44,8 @@ pub struct Content {
     pub effects: Arc<EffectRegistry>,
     /// What tools do to breaking blocks, and what breaking them takes and teaches.
     pub tools: Arc<ToolRegistry>,
+    /// What bites where.
+    pub fishing: Arc<FishingRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -84,6 +87,7 @@ impl Content {
         let mut effects = Vec::new();
         let mut tools = Vec::new();
         let mut stacking = Vec::new();
+        let mut fishing = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -123,6 +127,10 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "fishing.ron" => {
+                        fishing.push(FishingRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "stacking.ron" => {
                         stacking.push(source.clone());
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -157,6 +165,7 @@ impl Content {
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
+        let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         Ok(Self {
             blocks: Arc::new(blocks),
@@ -171,6 +180,7 @@ impl Content {
             recipes: Arc::new(recipes),
             effects: Arc::new(effects),
             tools: Arc::new(tools),
+            fishing: Arc::new(fishing),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
         })

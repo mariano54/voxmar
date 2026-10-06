@@ -309,6 +309,7 @@ impl Server {
                     player.connection.send(ServerMessage::Teleport { position: spawn });
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
+                (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);

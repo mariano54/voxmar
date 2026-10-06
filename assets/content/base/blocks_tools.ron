@@ -41,8 +41,12 @@
         (template: "drop", name: "iron_shovel", tags: ["shovel", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
         (template: "drop", name: "iron_hoe", tags: ["hoe", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:till"))),
         (template: "drop", name: "iron_knife", tags: ["knife", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
+        // Fishing rods (fishing.ron): a better rod lands more and rarer fish.
+        (template: "drop", name: "fishing_rod", tags: ["rod", "tool", "tier:1"], all: (color: (130, 95, 55), action: Some("base:fish"))),
+        (template: "drop", name: "fine_rod", tags: ["rod", "tool", "tier:3", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:fish"))),
         // Materials.
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
+        (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
         (template: "drop", name: "iron_ingot", tags: ["ingot", "metal:iron"], all: (color: (200, 205, 215))),
         // For taming and breeding: a treat no wild animal you can tame refuses, and taken

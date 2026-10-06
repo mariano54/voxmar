@@ -1,0 +1,25 @@
+// Fishing (engine/src/fishing.rs): what a line cast into water brings up. Each catch has
+// the Fishing level it takes, its experience, a `weight` (how often it bites among those
+// that can), the `water` it bites in (Salt: a biome tagged ocean; Fresh: rivers, lakes and
+// ponds; Any), the biome tags it wants (any of them; anywhere when none), and `when` it
+// bites (Day, Night, Rain; all must hold). Rare fish come a little more often with a
+// better rod. Nothing here asks for more than level 80.
+(
+    catches: [
+        (item: "raw_shrimp", level: 1, xp: 10.0, weight: 6.0),
+        (item: "raw_minnow", level: 1, xp: 8.0, weight: 6.0, water: Fresh),
+        (item: "raw_sardine", level: 5, xp: 20.0, weight: 5.0, water: Salt),
+        (item: "raw_perch", level: 10, xp: 30.0, weight: 4.0, water: Fresh),
+        (item: "raw_trout", level: 15, xp: 50.0, weight: 4.0, water: Fresh, biomes: ["cold", "cool", "frozen", "mountain", "conifer"]),
+        (item: "raw_cod", level: 20, xp: 55.0, weight: 4.0, water: Salt, biomes: ["cold", "cool", "frozen"]),
+        (item: "raw_salmon", level: 25, xp: 70.0, weight: 3.0, water: Fresh, biomes: ["cold", "cool", "conifer", "river"]),
+        (item: "raw_carp", level: 30, xp: 75.0, weight: 3.0, water: Fresh, biomes: ["warm", "temperate", "wetland"]),
+        (item: "raw_bass", level: 35, xp: 90.0, weight: 3.0, water: Salt),
+        (item: "raw_pike", level: 40, xp: 100.0, weight: 2.0, water: Fresh, biomes: ["temperate", "cool", "wetland", "forest"]),
+        (item: "raw_eel", level: 45, xp: 110.0, weight: 2.0, water: Fresh, when: [Night], rarity: Uncommon),
+        (item: "raw_tuna", level: 50, xp: 120.0, weight: 2.0, water: Salt, biomes: ["warm", "hot", "tropical"]),
+        (item: "raw_swordfish", level: 65, xp: 160.0, weight: 1.0, water: Salt, biomes: ["warm", "hot", "tropical"], rarity: Rare),
+        // Supernatural: a koi that glows, in fantastical waters on rainy nights.
+        (item: "raw_glimmer_koi", level: 75, xp: 220.0, weight: 0.5, water: Fresh, biomes: ["fantastical"], when: [Night, Rain], rarity: VeryRare),
+    ],
+)

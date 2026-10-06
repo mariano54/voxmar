@@ -174,7 +174,8 @@ enum Step {
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
-    /// teaching Mining; a hoe tills dirt into farmland.
+    /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
+    /// cast into the pool catches a fish.
     Workshop,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
@@ -506,6 +507,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Striking judges itself by the blows the server answers (see `strike`).
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
+        // Crafting, mining, tilling and fishing until something bites.
+        Step::Workshop => 75.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -1322,9 +1325,35 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if stacks.len() >= 3 {
                 let result = if stacks.iter().all(|&n| n == 1) { Ok("three loaves took three slots".to_owned()) } else { Err(format!("bread stacked: {stacks:?}")) };
                 gate.check("workshop: food takes a slot each", result);
-                end_workshop(world, gate, now);
+                let net = world.resource::<Net>();
+                net.command("give fishing_rod 1");
+                net.command("skill fishing 80");
+                gate.advance(now);
             } else if in_phase > WORKSHOP_WAIT {
                 fail(world, gate, "food takes a slot each", format!("three loaves given, the inventory shows {stacks:?}"));
+            }
+        }
+        // A rod held over the pool, right button down, casts until something bites.
+        10 => {
+            let fish = |world: &World| {
+                let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+                player.inventory.slots.iter().flatten().find(|s| client.registry.def(s.item).has_tag("fish")).map(|s| client.registry.def(s.item).name.clone())
+            };
+            if !select(world, "base:fishing_rod") {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "fishing", "the rod never came".into());
+                }
+                return;
+            }
+            aim(world, feet + IVec3::new(4, -1, 0));
+            mouse(world, MouseButton::Right, true);
+            if let Some(caught) = fish(world) {
+                mouse(world, MouseButton::Right, false);
+                gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
+                end_workshop(world, gate, now);
+            } else if in_phase > 40.0 {
+                mouse(world, MouseButton::Right, false);
+                fail(world, gate, "fishing", "40 seconds of casting into the pool at Fishing 80 caught nothing".into());
             }
         }
         _ => {}
@@ -1337,7 +1366,7 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     world.resource_mut::<UiState>().inventory_open = false;
     let net = world.resource::<Net>();
-    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread"] {
+    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fishing_rod"] {
         net.command(&format!("clear {tool}"));
     }
     let feet = gate.feet;

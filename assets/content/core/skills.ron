@@ -128,6 +128,25 @@
             ],
         ),
         (
+            name: "fishing", title: "Fishing", description: "Catching fish with rods, nets and traps, in sea and fresh water.",
+            guide: [
+                (level: 1, text: "Shrimp in any water, minnows in fresh; twine and a fishing rod", icon: "fishing_rod"),
+                (level: 5, text: "Sardines in the sea", icon: "raw_sardine"),
+                (level: 10, text: "Perch in lakes and rivers", icon: "raw_perch"),
+                (level: 15, text: "Trout in cold fresh water", icon: "raw_trout"),
+                (level: 20, text: "Cod in cold seas; a fine rod lands more and rarer fish", icon: "raw_cod"),
+                (level: 25, text: "Salmon in cold rivers", icon: "raw_salmon"),
+                (level: 30, text: "Carp in warm and marshy water", icon: "raw_carp"),
+                (level: 35, text: "Bass in the sea", icon: "raw_bass"),
+                (level: 40, text: "Pike in temperate lakes", icon: "raw_pike"),
+                (level: 45, text: "Eels in fresh water at night", icon: "raw_eel"),
+                (level: 50, text: "Tuna in warm seas", icon: "raw_tuna"),
+                (level: 65, text: "Swordfish in warm seas, rarely", icon: "raw_swordfish"),
+                (level: 75, text: "Glimmer koi in fantastical waters on rainy nights", icon: "raw_glimmer_koi"),
+                (level: 80, text: "Cape perk: casts land a little more often (to come)"),
+            ],
+        ),
+        (
             name: "attack", title: "Attack", description: "Hitting hard and often, with weapons, fangs and claws.",
             guide: [
                 (level: 1, text: "Fists, wooden and stone weapons, and a bone club; your blows land and hurt more as you level", icon: "bone"),

@@ -93,6 +93,14 @@ find more there; ores ask for a Mining level and a pickaxe tier (`tools.ron`). A
 soil into farmland, where crops are sown. See docs/tools-and-crafting.md. Cooked food, drinks and potions take a slot each, as in
 RuneScape, so what you carry is a choice (`stacking.ron`).
 
+Fishing: twine (three wheat) and sticks make a fishing rod at a crafting table. Hold right
+click with it over water to cast, again each time the line comes up: after a few seconds a
+fish bites or nothing does. What bites depends on your Fishing level, salt or fresh water,
+the biome, day or night and rain (`fishing.ron`): shrimp and minnows at 1, trout in cold
+rivers at 15, eels at night at 45, tuna in warm seas at 50, and glimmer koi in fantastical
+waters on rainy nights at 75. Levels and a fine rod land more often; fish cook on a
+campfire.
+
 The recipe viewer works as NEI does: over any item in the inventory (or in the viewer),
 R shows the recipes that make it and U everything it goes into, drawn as they happen (the
 crafting grid, a campfire, shears on a mouflon, a creature that drops it); arrows turn the

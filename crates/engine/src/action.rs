@@ -19,6 +19,8 @@ use crate::physics::player::REACH;
 /// How far a player reaches to strike a creature, from the eye to its box (Minecraft's 3,
 /// with a little slack for a server running behind).
 pub const REACH_CREATURE: f32 = 3.6;
+/// How far a fishing line is cast, from the eye.
+pub const CAST: f32 = 9.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ActionId(pub u16);
@@ -96,6 +98,9 @@ pub enum Requirement {
     Tillable,
     /// The target is a crafting table.
     CraftingTable,
+    /// The actor holds a fishing rod and the target is water with open air above, near
+    /// enough to cast to.
+    Fishable,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -144,6 +149,8 @@ pub enum Effect {
     Till,
     /// Work at the target crafting table: its three-by-three grid, until the actor walks away.
     UseTable,
+    /// Bring up what bites in the target water, if anything (`fishing.ron`).
+    Fish,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -361,6 +368,14 @@ impl ActionDef {
                 let tilled = ctx.block(block).map(|b| ctx.blocks().def(b));
                 let soil = tilled.is_some_and(|def| def.has_tag("soil") && !def.has_tag("tilled"));
                 soil && ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()))
+            }
+            Requirement::Fishable => {
+                let (block, _) = block_target()?;
+                let rod = ctx.actor_held().is_some_and(|b| ctx.blocks().def(b).has_tag("rod"));
+                // Any fluid but a hot one (lava): water, its flows and rivers.
+                let water = |p: IVec3| ctx.block(p).is_some_and(|b| ctx.info(b).fluid.is_some() && !ctx.blocks().def(b).has_tag("hot"));
+                let open = ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || water(block + IVec3::Y));
+                rod && water(block) && open && ctx.actor_eye().distance(block.as_vec3() + 0.5) <= CAST
             }
             Requirement::CraftingTable => {
                 let (block, _) = block_target()?;

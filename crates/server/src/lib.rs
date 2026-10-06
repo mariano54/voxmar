@@ -5,6 +5,7 @@ mod actions;
 mod commands;
 mod cooking;
 mod creatures;
+mod fishing;
 mod farm;
 mod husbandry;
 mod inspect;
