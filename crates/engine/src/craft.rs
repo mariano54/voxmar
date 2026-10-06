@@ -50,6 +50,28 @@ pub struct Recipe {
 }
 
 impl Recipe {
+    /// The grid laid out as the recipe asks: a pattern from the top left corner, or the
+    /// ingredients cell by cell.
+    pub fn cells(&self) -> [Option<BlockId>; GRID] {
+        let mut cells = [None; GRID];
+        match &self.pattern {
+            Some(rows) => {
+                for (r, row) in rows.iter().enumerate() {
+                    for (c, item) in row.iter().enumerate() {
+                        cells[r * 2 + c] = *item;
+                    }
+                }
+            }
+            None => self.ingredients.iter().zip(&mut cells).for_each(|(item, cell)| *cell = Some(*item)),
+        }
+        cells
+    }
+
+    /// Whether its ingredients go in any arrangement.
+    pub fn shapeless(&self) -> bool {
+        self.pattern.is_none()
+    }
+
     fn matches(&self, grid: &[Option<BlockId>; GRID]) -> bool {
         match &self.pattern {
             Some(pattern) => shape_of(grid).is_some_and(|shape| shape == *pattern),
@@ -156,6 +178,11 @@ impl RecipeRegistry {
     /// The recipe the grid holds, if any.
     pub fn find(&self, grid: &[Option<BlockId>; GRID]) -> Option<&Recipe> {
         self.recipes.iter().find(|recipe| recipe.matches(grid))
+    }
+
+    /// Every recipe, in the order packages list them.
+    pub fn iter(&self) -> impl Iterator<Item = &Recipe> {
+        self.recipes.iter()
     }
 
     pub fn len(&self) -> usize {
