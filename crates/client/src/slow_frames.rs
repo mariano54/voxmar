@@ -9,7 +9,9 @@
 //! waiting for the render thread, extraction, the window's events), what the client was
 //! busy with (meshing jobs, columns waiting, quads handed to the renderer, distant tiles),
 //! where the player was and what they had set, the weather, what happened that frame
-//! (blocks broken), and `render`: what the renderer adds through [`SlowFrameExtra`].
+//! (blocks broken), `render_thread_ms`: how the render thread spent its last few frames
+//! (see `render::frame_timing`), and `render`: what the renderer adds through
+//! [`SlowFrameExtra`].
 //! Frames while the world loads, or just after a teleport, are marked `loading`.
 //!
 //! While frames are fine this costs six `Instant`s and a ring of frame times; nothing is
@@ -161,6 +163,7 @@ fn record(
     screen: Res<State<Screen>>,
     player: Res<LocalPlayer>,
     (world, lod, settings, weather): (Res<ClientWorld>, Option<Res<Lod>>, Res<Settings>, Res<ClientWeather>),
+    spans: Option<Res<crate::render::frame_timing::PostUpdateSpans>>,
 ) {
     let end = Instant::now();
     let frames = &mut *frames;
@@ -203,6 +206,8 @@ fn record(
             "first": stages[0], "pre_update": stages[1], "update": stages[2], "post_update": stages[3], "last": stages[4],
         },
         "outside_ms": (frame_ms - main_ms).max(0.0),
+        "render_thread_ms": crate::render::frame_timing::recent(),
+        "post_update_ms": spans.map_or(Value::Null, |spans| spans.json()),
         "world": {
             "columns": world.voxels.len(),
             "jobs_in_flight": stats.jobs_in_flight,
