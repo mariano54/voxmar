@@ -25,6 +25,7 @@ use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, LARGE, MUTED, Pressed, SCRIM, SOFT, Selected, TEXT, UiFont, button_row, panel, screen,
     shadowed, spawn_button, spawn_rule, text,
 };
+use crate::ui::widgets::space;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::{DayCycle, Quality, ShadowQuality};
@@ -956,16 +957,16 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
     let tallest = SECTIONS.iter().map(|(_, controls)| controls.len()).max().unwrap_or(0) as f32;
     commands.spawn((MenuRoot, screen(SCRIM), GlobalZIndex(1), Visibility::Hidden)).with_children(|root| {
         root.spawn(panel(PANEL_WIDTH)).with_children(|panel| {
-            let title = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
+            let title = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
             panel.spawn(title).with_children(|row| {
                 row.spawn(shadowed(font, "◆", BODY, ACCENT));
                 row.spawn((MenuTitle, shadowed(font, "", LARGE, GOLD)));
                 row.spawn(shadowed(font, "◆", BODY, ACCENT));
             });
             spawn_rule(panel, 4.0 * PX);
-            let body = Node { column_gap: Val::Px(8.0 * PX), min_height: Val::Px(tallest * ROW), ..default() };
+            let body = Node { column_gap: Val::Px(space::SECTION), min_height: Val::Px(tallest * ROW), ..default() };
             panel.spawn(body).with_children(|body| {
-                let tabs = Node { width: Val::Px(TAB_WIDTH), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0 * PX), ..default() };
+                let tabs = Node { width: Val::Px(TAB_WIDTH), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
                 body.spawn(tabs).with_children(|tabs| {
                     for (index, (name, _)) in SECTIONS.iter().enumerate() {
                         tabs.spawn(Node::default()).with_children(|row| {
@@ -1036,7 +1037,7 @@ fn spawn_slider(row: &mut ChildSpawnerCommands, font: &Handle<Font>, slider: Sli
         ..default()
     };
     let value = Node { width: Val::Px(VALUE_WIDTH), justify_content: JustifyContent::FlexEnd, ..default() };
-    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), ..default() }).with_children(|control| {
+    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|control| {
         control.spawn((Button, SliderTrack(slider), RelativeCursorPosition::default(), area)).with_children(|area| {
             area.spawn((track, Piece::Well.image())).with_children(|track| {
                 track.spawn((SliderFill(slider), fill, Piece::Bar.image())).with_child((knob, Piece::Knob.image()));

@@ -12,6 +12,7 @@ use crate::menu::Screen;
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, SHADOW, TEXT, UiFont, shadowed};
+use crate::ui::widgets::space;
 
 /// Seconds a line stays, the last of them fading out as it rises.
 const LINE_SECONDS: f32 = 2.5;
@@ -116,11 +117,11 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
     let column = Node {
         position_type: PositionType::Absolute,
-        right: Val::Px(8.0 * PX),
+        right: Val::Px(space::SECTION),
         top: Val::Percent(38.0),
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::FlexEnd,
-        row_gap: Val::Px(2.0 * PX),
+        row_gap: Val::Px(space::HAIR),
         ..default()
     };
     commands.spawn((column, GlobalZIndex(1))).with_children(|column| {
@@ -129,11 +130,11 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         }
     });
     // Just above the experience lines, so the two read as one quiet corner.
-    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(8.0 * PX), bottom: Val::Percent(63.0), ..default() };
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(space::SECTION), bottom: Val::Percent(63.0), ..default() };
     let plate = Node {
         align_items: AlignItems::Center,
-        column_gap: Val::Px(3.0 * PX),
-        padding: UiRect::new(Val::Px(3.0 * PX), Val::Px(4.0 * PX), Val::Px(2.0 * PX), Val::Px(2.0 * PX)),
+        column_gap: Val::Px(space::INNER),
+        padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
         ..default()
     };
     commands.spawn((corner, GlobalZIndex(1))).with_children(|corner| {
