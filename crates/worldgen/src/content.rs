@@ -470,6 +470,7 @@ struct RawBiome {
     rarity: Option<Rarity>,
     surface: Option<SurfaceDef>,
     stones: Option<Stones>,
+    field_stones: Option<Vec<Select>>,
     strata: Option<Vec<String>>,
     colors: Option<Colors>,
     flora: Option<FloraDef>,
@@ -493,6 +494,10 @@ pub struct BiomeDef {
     pub rarity: Rarity,
     pub surface: SurfaceDef,
     pub stones: Stones,
+    /// The stones lying on gentle open ground (boulders, rocks), where a biome wants its own
+    /// rather than the bare rock's: a bright meadow's pale or mossy stone, not dark basalt.
+    /// Empty for the rock's own. Cliffs, slopes, scree and streams keep the rock's.
+    pub field_stones: Vec<Select>,
     /// Blocks of banded rock, one block each, bottom to top, repeating up the world.
     pub strata: Vec<String>,
     pub colors: Colors,
@@ -2458,6 +2463,7 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             Stones::Province => Stones::Province,
             Stones::Blocks(selects) => Stones::Blocks(selects.iter().map(|s| qualify_select(package, s)).collect()),
         }),
+        field_stones: biome.field_stones.map(|v| v.iter().map(|s| qualify_select(package, s)).collect()),
         variants: biome.variants.map(|v| v.into_iter().map(|(name, share)| (q(&name), share)).collect()),
         cave_decoration: biome.cave_decoration.map(|list| {
             list.into_iter()
@@ -2514,6 +2520,7 @@ fn inherit(raw: &[(String, RawBiome)]) -> Result<Vec<BiomeDef>, ContentError> {
                 rarity: field!(rarity).unwrap_or_default(),
                 surface,
                 stones: field!(stones).unwrap_or_default(),
+                field_stones: field!(field_stones).unwrap_or_default(),
                 strata: field!(strata).unwrap_or_default(),
                 colors: field!(colors).unwrap_or_default(),
                 flora: field!(flora).unwrap_or_default(),

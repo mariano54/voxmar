@@ -394,8 +394,9 @@ impl Decor {
                     if area.unfit(x, z) || (area.height(x, z) - base.y + 1).abs() > 2 {
                         continue;
                     }
-                    // Half sunk: the smallest lie flush with the ground.
-                    let centre = Vec3::new(x as f32 + 0.5, area.height(x, z) as f32 + 0.2 + 0.5 * r, z as f32 + 0.5);
+                    // Half sunk, yet standing high enough that a rock shows a shape above the
+                    // grass (a mound of a few blocks), never a lone cube on a buried disc.
+                    let centre = Vec3::new(x as f32 + 0.5, area.height(x, z) as f32 + 0.5 + 0.5 * r, z as f32 + 0.5);
                     self.rock(area, centre, Vec3::new(r, r * 0.75, r), block, damp, seed, blocks);
                 }
             }
@@ -588,7 +589,12 @@ impl Decor {
     fn stones<'a>(&self, area: &'a Area, site: &Site, mat: &'a Mat) -> &'a Palette {
         match mat {
             Mat::Blocks(palette) => palette,
-            Mat::Stones => area.world.outcrop(site),
+            // On gentle open ground, the biome's own field stones where it has them; where
+            // the ground is cut (slopes, streams), the bare rock's.
+            Mat::Stones => match &area.world.biomes.get(site.biome).field_stones {
+                Some(field) if site.slope <= 1 && site.river < 0.5 => field,
+                _ => area.world.outcrop(site),
+            },
         }
     }
 

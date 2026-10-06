@@ -109,6 +109,8 @@
         (
             name: "plains",
             tags: ["grassland", "temperate", "open"],
+            // Stones on gentle open ground: pale or mossy, of the grassland, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("mossy_cobblestone", 1.5), Name("andesite", 1.0)],
             climate: [(
                 temperature: ("cool", "temperate"),
                 moisture: ("moderate", "moderate"),
@@ -150,6 +152,8 @@
             name: "forest_steppe",
             inherit: "plains",
             tags: ["grassland", "temperate", "open", "groves"],
+            // Stones on gentle open ground: pale or mossy, of the grassland, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("mossy_cobblestone", 1.0), Name("andesite", 1.0)],
             flora: (
                 forest: 0.2,
                 trees: [Name("oak", 1.0), Name("birch", 1.0), Name("pine", 0.4), Name("shrub", 0.8), Name("pear_tree", 0.12), Name("wild_cherry", 0.12), Name("hazel", 0.3)],
@@ -162,6 +166,8 @@
             // Lush lowland grass, tall and deep, with old oaks standing alone.
             name: "meadow",
             tags: ["grassland", "temperate", "open", "lush"],
+            // Stones on gentle open ground: pale or mossy, of the grassland, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("mossy_cobblestone", 2.0), Name("andesite", 1.0)],
             weight: 0.5,
             climate: [(temperature: ("temperate", "temperate"), moisture: ("humid", "humid"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"))],
             flora: (
@@ -440,6 +446,8 @@
             // heath in places.
             name: "steppe",
             tags: ["grassland", "dry", "open"],
+            // Stones on gentle open ground: pale or mossy, of the grassland, not the dark rock.
+            field_stones: [Name("stone", 3.0), Name("andesite", 1.5), Name("limestone", 0.5)],
             // Dry grass, straw-olive.
             colors: (grass: (164, 164, 100)),
             climate: [
@@ -807,6 +815,8 @@
             // Sunny scrub hills: cypress spires, sage, thyme and lavender, pale stone.
             name: "mediterranean",
             tags: ["scrubland", "warm", "dry", "open"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("limestone", 3.0), Name("calcite", 0.6)],
             weight: 0.7,
             climate: [(temperature: ("warm", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "slopes"))],
             flora: (
@@ -833,6 +843,8 @@
             name: "lavender_fields",
             inherit: "mediterranean",
             tags: ["scrubland", "warm", "dry", "open", "flowers"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("limestone", 3.0), Name("calcite", 0.6)],
             rarity: Rare,
             flora: (
                 forest: 0.05,
@@ -1010,6 +1022,8 @@
         (
             name: "savanna",
             tags: ["grassland", "hot", "dry", "open", "savanna"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("limestone", 3.0), Name("granite", 1.0)],
             // Dry grass: dull olive to straw, as dry grassland reads, not the climate's green.
             colors: (grass: (184, 174, 92), foliage: (170, 160, 64)),
             climate: [
@@ -1104,6 +1118,8 @@
             // patches and veins.
             name: "moonlit_meadow",
             tags: ["grassland", "temperate", "open", "fantastical"],
+            // Stones on gentle open ground: pale or mossy, of the grassland, not the dark rock.
+            field_stones: [Name("diorite", 2.0), Name("calcite", 1.0), Name("stone", 1.0)],
             rarity: Uncommon,
             climate: [(
                 temperature: ("cool", "temperate"),
@@ -1249,6 +1265,8 @@
             // than found.
             name: "sunspire_downs",
             tags: ["grassland", "warm", "open", "fantastical"],
+            // Stones on gentle open ground: pale, sun-bleached, of the place.
+            field_stones: [Name("chalk", 2.0), Name("limestone", 2.0)],
             rarity: Legendary,
             climate: [(temperature: ("temperate", "warm"), moisture: ("dry", "moderate"), continentalness: ("coast", "far_inland"), erosion: ("flat", "hills"), aether: (0.85, 1.0))],
             flora: (

@@ -55,7 +55,7 @@
         (
             // Lumps of the rock beneath, in fields of them, mossy in damp woods.
             name: "boulder", tags: ["forest", "grassland", "mountain", "highland", "tundra", "rocky"],
-            shape: Boulder(radius: (1.2, 2.0), stones: Stones, moss: 0.7),
+            shape: Boulder(radius: (1.6, 2.2), stones: Stones, moss: 0.7),
             spacing: 40.0,
             follows: [(Noise((name: "boulder_fields", scale: 140.0, octaves: 2)), -0.15, 0.45)],
         ),
