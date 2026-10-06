@@ -1538,8 +1538,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
+            // Walk to each stack still lying near where they fell, as a player gathers
+            // them: one that rolled into the pool or down a step is out of reach from the
+            // spot itself.
+            let fell = gate.fell;
+            let lying: Vec<Vec3> = world.resource::<crate::drops::Drops>().lying().map(|(_, _, at)| at).filter(|at| at.distance(fell) < 10.0).collect();
             if gate.frames % 30 == 0 {
-                let line = format!("tp {} {} {}", gate.fell.x, gate.fell.y, gate.fell.z);
+                let to = lying.iter().copied().min_by(|a, b| a.distance(fell).total_cmp(&b.distance(fell))).unwrap_or(fell);
+                let line = format!("tp {} {} {}", to.x, to.y, to.z);
                 world.resource::<Net>().command(&line);
             }
             let back = carried(world);
@@ -1557,7 +1563,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 end_workshop(world, gate, now);
             } else if gate.server_now - gate.gathered.1 > 15.0 {
-                fail(world, gate, "grave", format!("back where the player fell, nothing more was picked up for 15 server seconds, carrying {back} of {} items", gate.count_before));
+                let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
+                fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
             }
         }
         _ => {}
@@ -1863,6 +1870,12 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("changed the screen from the inventory's by only {change:.1} levels"))
                 };
                 gate.check("character", shown);
+                // Every skill has its tile, all of them on screen, three across.
+                let (skills, tiles, inside) = crate::hud::character::skill_tiles(world);
+                gate.check(
+                    "character: skills",
+                    if skills > 0 && tiles == skills && inside == skills { Ok(format!("all {skills} skills on screen")) } else { Err(format!("{skills} skills, {tiles} tiles shown, {inside} on screen")) },
+                );
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
             } else if in_phase > SCREEN_WAIT {
@@ -2020,7 +2033,10 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (chip, left) = reading(world);
             let (chip_s, left_s) = (chip.as_deref().and_then(seconds), left.as_deref().and_then(seconds));
             let counted = chip_s.is_some_and(|c| c < gate.count_before) && chip_s == left_s;
-            if !counted && in_phase < 3.0 {
+            // While the server holds the effect itself (the session's cooking gives it), the
+            // count moves on the server's clock, which a loaded machine slows: given five of
+            // the server's seconds, however long they take.
+            if !counted && gate.server_in_phase() < 5.0 {
                 return;
             }
             let first = gate.count_before;
