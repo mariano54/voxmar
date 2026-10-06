@@ -1494,18 +1494,12 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("loading cover", result);
             }
             if gate.shot(world, "game").is_some() {
-                // The HUD reads health and hunger off the server's vitals.
-                let hunger = world.resource::<LocalPlayer>().vitals.hunger;
+                // The HUD's one meter reads health off the server's word on it.
+                let (health, most) = { let player = world.resource::<LocalPlayer>(); (player.health, player.max_health) };
+                let reading = format!("{health}/{most}");
                 let mut texts = world.query::<&Text>();
-                let meters = texts.iter(world).filter(|text| text.0 == "20/20").count();
-                gate.check(
-                    "vitals",
-                    if hunger == voxmar_engine::vitals::MAX_HUNGER && meters >= 2 {
-                        Ok(format!("full health and hunger, shown on {meters} meters"))
-                    } else {
-                        Err(format!("hunger {hunger} and {meters} meters reading 20/20"))
-                    },
-                );
+                let meters = texts.iter(world).filter(|text| text.0 == reading).count();
+                gate.check("vitals", if health > 0 && meters >= 1 { Ok(format!("health {reading}, shown on its meter")) } else { Err(format!("health {reading} and {meters} meters reading it")) });
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
             }
