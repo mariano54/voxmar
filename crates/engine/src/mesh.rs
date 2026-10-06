@@ -91,8 +91,9 @@ const OPEN_WATER_REACH: i32 = 12;
 /// On plant vertices, bits 25..27 hold how many plant cells lie below in the same stack.
 const PLANT_STACK_SHIFT: u32 = 25;
 /// On plant vertices, bits 28..29 the model and 30..31 the quad of it (with the face's low
-/// bit); word 1 bits 14..18 the plant's height in eighths.
+/// bit); word 1 bits 14..18 the plant's height in eighths. Bit 24 is the model's third bit.
 const PLANT_MODEL_SHIFT: u32 = 28;
+const PLANT_MODEL_HIGH_SHIFT: u32 = 24;
 const PLANT_PIECE_SHIFT: u32 = 30;
 const PLANT_HEIGHT_SHIFT: u32 = 14;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
@@ -1054,16 +1055,18 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
         // A stem of two quads and a cap of six: crown, four sides, gills.
         PlantModel::Cap => 8,
         PlantModel::Hash | PlantModel::Bush => 4,
+        // A lump of five quads (top and four sides) and a chip of three.
+        PlantModel::Rock => 8,
     };
     for piece in 0..pieces {
         let (face, (x0, z0), (x1, z1)) =
             if piece % 2 == 0 { (PLANT_DIAGONAL, (0, 0), (1, 1)) } else { (PLANT_ANTIDIAGONAL, (1, 0), (0, 1)) };
         // A mushroom's stem is drawn with the block's side texture, its crown and sides with
         // the top texture and its gills with the bottom one (voxel.wgsl `cap_vertex`).
-        let cap = info.model == PlantModel::Cap && piece >= 2;
+        let cap = info.model == PlantModel::Cap && piece >= 2 || info.model == PlantModel::Rock;
         let w1 = w1(match (cap, piece) {
             (false, _) => Face::PosX,
-            (true, 7) => Face::NegY,
+            (true, 7) if info.model == PlantModel::Cap => Face::NegY,
             (true, _) => Face::PosY,
         });
         let base = out.vertices.len() as u32;
@@ -1077,7 +1080,8 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
                 | (corner as u32) << 21
                 | (top as u32) << 23
                 | stack << PLANT_STACK_SHIFT
-                | (info.model as u32) << PLANT_MODEL_SHIFT
+                | (info.model as u32 & 3) << PLANT_MODEL_SHIFT
+                | (info.model as u32 >> 2) << PLANT_MODEL_HIGH_SHIFT
                 | (piece as u32 / 2) << PLANT_PIECE_SHIFT;
             out.vertices.push([w0, w1]);
         }

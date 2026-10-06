@@ -117,6 +117,9 @@ struct LevelIcon;
 struct LevelSkill;
 #[derive(Component)]
 struct LevelReached;
+/// What the level opens, from the skill's guide.
+#[derive(Component)]
+struct LevelOpens;
 
 /// The toasts' and the level plate's places, at the right of the screen, or its left while
 /// creative mode's catalogue fills the right.
@@ -165,6 +168,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             plate.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|lines| {
                 lines.spawn((shadowed(font, "", BODY, GOLD), LevelSkill));
                 lines.spawn((shadowed(font, "", BODY, TEXT), LevelReached));
+                lines.spawn((Node { max_width: Val::Px(140.0 * PX), ..default() }, shadowed(font, "", BODY, ACCENT), LevelOpens));
             });
         });
     });
@@ -182,6 +186,7 @@ fn show(
     mut icon: Query<&mut ImageNode, (With<LevelIcon>, Without<LevelPlate>)>,
     mut skill_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelSkill>, Without<ToastLine>, Without<LevelReached>)>,
     mut reached_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelReached>, Without<ToastLine>, Without<LevelSkill>)>,
+    mut opens_text: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Node), (With<LevelOpens>, Without<ToastLine>, Without<LevelSkill>, Without<LevelReached>)>,
 ) {
     let now = time.elapsed_secs();
     let skills = &launch.content.skills;
@@ -235,6 +240,24 @@ fn show(
             text.0 = words;
         }
         color.set_if_neq(TextColor(base.with_alpha(alpha)));
+        shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
+    }
+    // What it opens: the guide's lines at that level, the first and how many more.
+    if let Ok((mut text, mut color, mut shadow, mut node)) = opens_text.single_mut() {
+        let opened: Vec<String> = super::guide::entries(&locale, &launch, skill).into_iter().filter(|e| e.level == reached).map(|e| e.words).collect();
+        let words = match opened.as_slice() {
+            [] => String::new(),
+            [one] => locale.format("skills.opens", &[("what", one)]),
+            [first, rest @ ..] => locale.format("skills.opens_more", &[("what", first), ("count", &rest.len())]),
+        };
+        let display = if words.is_empty() { Display::None } else { Display::Flex };
+        if node.display != display {
+            node.display = display;
+        }
+        if text.0 != words {
+            text.0 = words;
+        }
+        color.set_if_neq(TextColor(ACCENT.with_alpha(alpha)));
         shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
     }
     visibility.set_if_neq(Visibility::Inherited);
