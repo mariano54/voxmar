@@ -271,4 +271,3 @@ pub fn load(source: &mut Source, images: &mut Assets<Image>) {
         let _ = images.insert(&piece.handle(), ui_image(&art));
     }
 }
-
