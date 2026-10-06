@@ -93,6 +93,17 @@ whose Farming level reaches the plant's (1, 15, 40, 60, 80 by rarity); picking o
 teaches Farming. Waiting plants are saved with the world (`WorldMeta::regrowing`), and
 `/grow` brings back those near you at once.
 
+## Multiblocks and the Homestead Hearth
+
+A multiblock is a structure recognised from a pattern of blocks (`multiblocks.ron`, engine
+`multiblock.rs`): layers from the bottom up, a key from characters to items, `tag:TAG` or
+`a|b`, `.` for anything and a space for air, and a core block; it counts turned any of four
+ways. The first is the Homestead Hearth, the Nomad age's gate: a hearthstone (eight
+cobbles at a crafting table, Mining 5) in a ring of stone, with a chimney (cobbles and
+clay, Crafting 3) two blocks tall at one corner. Right click the hearthstone
+(`base:light_hearth`): if the hearth stands, it is your home (`Player::home`, saved) and
+you wake on it after dying; if not, you are told what it needs.
+
 ## Dying
 
 Dying costs what you carried, not your skills (Mariano, 2026-10-06). You keep your three most

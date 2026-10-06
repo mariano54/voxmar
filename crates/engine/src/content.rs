@@ -46,6 +46,8 @@ pub struct Content {
     pub tools: Arc<ToolRegistry>,
     /// What bites where.
     pub fishing: Arc<FishingRegistry>,
+    /// Structures recognised from patterns of blocks (the Homestead Hearth).
+    pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
     /// What it takes to study and master the journal's entries.
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
@@ -94,6 +96,7 @@ impl Content {
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
         let mut journal = Vec::new();
+        let mut multiblocks = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -135,6 +138,10 @@ impl Content {
                     }
                     "fishing.ron" => {
                         fishing.push(FishingRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "multiblocks.ron" => {
+                        multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "journal.ron" => {
@@ -181,6 +188,7 @@ impl Content {
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
+        let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
@@ -198,6 +206,7 @@ impl Content {
             tools: Arc::new(tools),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            multiblocks: Arc::new(multiblocks),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),

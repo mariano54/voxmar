@@ -10,6 +10,16 @@
             name: "crafting_table", sound: Wood, textures: Sides(top: "crafting_table_top", bottom: "oak_planks", side: "crafting_table_side"),
             hardness: 2.5, color: (150, 110, 70), tags: ["station", "crafting_table", "wood", "fuel", "building"],
         ),
+        // The Homestead Hearth's pieces (multiblocks.ron): a hearthstone, ringed with stone
+        // and lit with a right click, and a chimney two blocks tall at a corner.
+        (
+            name: "hearthstone", sound: Stone, textures: Sides(top: "hearthstone_top", bottom: "cobblestone", side: "hearthstone_side"),
+            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "station", "building"], light: 6,
+        ),
+        (
+            name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),
+            hardness: 2.0, color: (130, 100, 90), tags: ["chimney", "building"],
+        ),
         // A herb planter: herbs and flowers placed in it grow back when picked (regrowth.ron),
         // for a gardener whose Farming level is enough for them. Herbs cannot be sown.
         (

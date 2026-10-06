@@ -7,6 +7,7 @@ mod cooking;
 mod creatures;
 mod fishing;
 mod death;
+mod hearth;
 mod journal;
 mod regrow;
 mod farm;

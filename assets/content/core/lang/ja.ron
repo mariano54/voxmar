@@ -257,6 +257,8 @@
     "fishing.nothing": "何もかからない。",
     "death.left": "残した物は倒れた場所 {x} {y} {z} に{minutes}分間あります。拾えるのはあなただけです。",
     "farming.planter_needs": "{plant}がプランターで再び育つには農業{level}が必要です。",
+    "hearth.claimed": "炉に火が灯った。ここが家になり、倒れてもここで目覚める。",
+    "hearth.incomplete": "炉には、炉石を囲む石の輪と、角に2ブロックの高さの煙突が必要です。",
     "pouch.holds": "{item} × {count}",
     "pouch.nothing": "空",
     "pouch.hint": "手に持って右クリックで中身を取り出す",

@@ -14,6 +14,10 @@
         (pattern: [["{name}_planks"], ["{name}_planks"]], output: "stick", count: 4, xp: 1.0),
         // Four planks make a crafting table, for the bigger recipes.
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "crafting_table", skill: "core:engineering", xp: 8.0),
+        // The Homestead Hearth's pieces: eight cobbles dressed into a hearthstone (Mining 5,
+        // as the plan has it), and cobbles and clay for each block of chimney.
+        (pattern: [["tag:cobbled", "tag:cobbled", "tag:cobbled"], ["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "hearthstone", skill: "core:mining", level: 5, xp: 20.0),
+        (pattern: [["tag:cobbled", "clay", "tag:cobbled"], ["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "clay", "tag:cobbled"]], output: "chimney", level: 3, xp: 10.0),
         // A herb planter: a box of soil herbs grow back in.
         (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:engineering", level: 5, xp: 10.0),
         // Ore smelted with coal, by hand for now (a furnace comes later).

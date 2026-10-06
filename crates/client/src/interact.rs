@@ -297,6 +297,15 @@ fn break_and_place(
                 return;
             }
         }
+        // A hearthstone is lit: the server says whether the hearth around it stands.
+        if let (Some(hit), Some(light)) = (hit, actions.0.id("base:light_hearth")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(light).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, light, action_target);
+                return;
+            }
+        }
         // Using what a station cooks on that station cooks it, before eating or placing.
         if let (Some(hit), Some(cook)) = (hit, actions.0.id("base:cook")) {
             let context = ClientContext { world: &world, player: &player, content };

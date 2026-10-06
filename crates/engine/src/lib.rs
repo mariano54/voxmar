@@ -33,6 +33,7 @@ pub mod light;
 pub mod loot;
 pub mod mesh;
 pub mod movement;
+pub mod multiblock;
 pub mod physics;
 pub mod recipe_book;
 pub mod regrowth;

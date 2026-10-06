@@ -338,6 +338,7 @@ impl Server {
                         player.changed(traits::INVENTORY);
                     }
                 }
+                (Effect::ClaimHome, ActionTarget::Block { block, .. }) => self.claim_home(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }

@@ -1056,3 +1056,33 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
     client.pump_until(|_| true);
     assert_eq!(client.world.block(far), Some(BlockId::AIR), "a flower came back on ground that was replaced");
 }
+
+#[test]
+fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
+    let mut client = Client::join_remote("owner", &["owner"]);
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in [
+        "/fill ~3 ~ ~-1 ~5 ~3 ~1 air",
+        "/fill ~3 ~ ~-1 ~5 ~ ~1 cobblestone",
+        "/setblock ~4 ~ ~ hearthstone",
+    ] {
+        client.ok(line);
+    }
+    let hearthstone = client.content.blocks.expect("base:hearthstone");
+    client.pump_until(|c| c.world.block(core) == Some(hearthstone));
+    let light = |client: &mut Client| {
+        client.chat.clear();
+        client.propose("base:light_hearth", ActionTarget::Block { block: core, face: Face::PosY });
+        client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("hearth")));
+        std::mem::take(&mut client.chat).into_iter().map(|(_, t)| t).collect::<String>()
+    };
+    assert!(light(&mut client).contains("needs"), "no chimney yet");
+    client.ok("/fill ~5 ~1 ~1 ~5 ~2 ~1 chimney");
+    assert!(light(&mut client).contains("your home"));
+    // Dying far off, they wake on the hearthstone.
+    client.ok("/tp ~-20 ~ ~");
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
