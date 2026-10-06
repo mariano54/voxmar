@@ -163,6 +163,8 @@ enum Message {
     UploadTile(Box<TileMesh>),
     RemoveTile(TileKey),
     RealColumns(i32),
+    /// Where the distant rings are laid out around.
+    Rings(IVec2),
     Clear,
 }
 
@@ -171,15 +173,16 @@ enum Message {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Subject {
     Chunk(ChunkPos),
-    Tile(TileKey),
+    /// Every tile message, and the rings' layout, which must not get ahead of the tiles
+    /// it was decided on.
+    Tiles,
 }
 
 impl Message {
     fn subject(&self) -> Option<Subject> {
         match self {
             Message::Upload { chunk, .. } | Message::Remove { chunk, .. } | Message::Blades { chunk, .. } => Some(Subject::Chunk(*chunk)),
-            Message::UploadTile(tile) => Some(Subject::Tile(tile.key)),
-            Message::RemoveTile(key) => Some(Subject::Tile(*key)),
+            Message::UploadTile(_) | Message::RemoveTile(_) | Message::Rings(_) => Some(Subject::Tiles),
             _ => None,
         }
     }
@@ -229,6 +232,11 @@ impl Terrain {
 
     pub fn remove_tile(&self, key: TileKey) {
         let _ = self.tx.send(Message::RemoveTile(key));
+    }
+
+    /// Lays the distant rings out around `camera` (a block position across the land).
+    pub fn set_rings_around(&self, camera: IVec2) {
+        let _ = self.tx.send(Message::Rings(camera));
     }
 
     /// The radius of real chunks, which water ripples on distant terrain fade out from.
@@ -601,6 +609,8 @@ struct DistantView {
     /// does where its reflections leave the screen.
     zenith: Vec4,
     horizon: Vec4,
+    /// xy: the block position across the land the rings are laid out around.
+    rings: IVec4,
 }
 
 /// Render world state: pages, chunk records and the bind group shared by every draw.
@@ -625,6 +635,8 @@ pub(super) struct TerrainGpu {
     columns: FxHashMap<IVec2, u32>,
     visible: VisibleChunks,
     real_columns: i32,
+    /// Where the distant rings are laid out around.
+    rings: IVec2,
     /// Where the camera is this frame.
     camera: Vec3,
     /// Messages past a frame's upload budget, in the order they came, for the next frames.
@@ -671,6 +683,7 @@ impl Default for TerrainGpu {
             columns: FxHashMap::default(),
             visible: VisibleChunks::default(),
             real_columns: 0,
+            rings: IVec2::ZERO,
             camera: Vec3::ZERO,
             pending: VecDeque::new(),
             free_slots: Vec::new(),
@@ -978,7 +991,12 @@ impl TerrainGpu {
         });
         queue.write_buffer(coverage, 0, bytemuck::cast_slice(&bits));
         let [zenith, horizon] = sky;
-        let view = DistantView { coverage: IVec4::new(first.x, first.y, COVERAGE_SIZE, self.real_columns), zenith, horizon };
+        let view = DistantView {
+            coverage: IVec4::new(first.x, first.y, COVERAGE_SIZE, self.real_columns),
+            zenith,
+            horizon,
+            rings: self.rings.extend(0).extend(0),
+        };
         let mut uniform = encase::UniformBuffer::new(Vec::<u8>::new());
         uniform.write(&view).expect("distant view fits a uniform");
         let buffer = self.distant_view.get_or_insert_with(|| {
@@ -1024,11 +1042,19 @@ fn receive(
     // While the world streams in (a fast flight), more meshes can arrive in a frame than
     // it should spend uploading: past the budget the far ones wait for the next frames,
     // and with them anything after them about the same chunk or tile, so each is changed
-    // in the order it was sent. Near chunks go in at once.
+    // in the order it was sent. Near chunks go in at once. A column once begun is finished
+    // in the same frame: the distant terrain gives way to a column as soon as any of its
+    // chunks is in, so a column whose sea floor went in while its water waited showed as a
+    // grey strip of bare floor along the edge of the loaded world.
     let start = std::time::Instant::now();
     let mut messages = std::mem::take(&mut gpu.pending);
     messages.extend(inbox.0.try_iter());
     let mut waiting: rustc_hash::FxHashSet<Subject> = rustc_hash::FxHashSet::default();
+    let column_of = |message: &Message| match message.subject() {
+        Some(Subject::Chunk(chunk)) => Some(chunk.0.xz()),
+        _ => None,
+    };
+    let mut begun: Option<IVec2> = None;
     for message in messages {
         if matches!(message, Message::Clear) {
             // Everything before it is gone anyway.
@@ -1036,10 +1062,15 @@ fn receive(
             waiting.clear();
         } else {
             let behind = message.subject().is_some_and(|subject| waiting.contains(&subject));
-            if behind || (message.heavy() && !near(&message) && start.elapsed() >= UPLOAD_BUDGET) {
+            let column = column_of(&message);
+            let finishing = column.is_some() && column == begun;
+            if behind || (message.heavy() && !near(&message) && !finishing && start.elapsed() >= UPLOAD_BUDGET) {
                 waiting.extend(message.subject());
                 gpu.pending.push_back(message);
                 continue;
+            }
+            if message.heavy() {
+                begun = column;
             }
         }
         match message {
@@ -1052,6 +1083,7 @@ fn receive(
             Message::UploadTile(tile) => gpu.upload_tile(&device, &queue, *tile),
             Message::RemoveTile(key) => gpu.remove_tile(key),
             Message::RealColumns(columns) => gpu.real_columns = columns,
+            Message::Rings(camera) => gpu.rings = camera,
             Message::Clear => gpu.clear(),
         }
     }
@@ -1296,7 +1328,7 @@ fn cull(
         draws.distant.clear();
         if !is_light {
             for (&key, tile) in &gpu.tiles {
-                if frustum.intersects(tile.min, tile.max) && !(key.level == 0 && gpu.covered_by_real(key)) {
+                if frustum.intersects(tile.min, tile.max) && !gpu.covered_by_real(key) {
                     draws.distant.push(TileDraw {
                         page: tile.mesh.page,
                         indices: tile.mesh.indices.clone(),
