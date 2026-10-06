@@ -135,7 +135,7 @@ fn show(
     mut dots: Query<(&ReadoutDot, &mut Visibility), (Without<ReadoutTag>, Without<ReadoutPlate>, Without<ReadoutBar>)>,
     players: Res<RemotePlayers>,
 ) {
-    let screen_open = ui.inventory_open || ui.character_open || ui.menu_open;
+    let screen_open = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open;
     let creature = target.creature.or_else(|| creatures.fighting(time.elapsed_secs(), FIGHTING)).filter(|_| !screen_open && !player.dead);
     let sighting = creature.and_then(|id| Some((id, creatures.sighting(id)?)));
     let next = match sighting {

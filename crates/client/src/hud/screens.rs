@@ -1,5 +1,5 @@
 //! The in-game screens and the keys between them: the inventory (E), the character
-//! screen (C) and the menu (Esc). Each key opens its screen from play or from another
+//! screen (C), the journal (J) and the menu (Esc). Each key opens its screen from play or from another
 //! screen, and closes it again; every screen shows the keys to the others along its foot,
 //! and the keys can be clicked too. The keys are the player's bindings (`Settings`).
 
@@ -30,17 +30,19 @@ pub struct ScreenSystems;
 pub enum GameScreen {
     Inventory,
     Character,
+    Journal,
     Menu,
 }
 
 impl GameScreen {
-    const ALL: [GameScreen; 3] = [GameScreen::Inventory, GameScreen::Character, GameScreen::Menu];
+    const ALL: [GameScreen; 4] = [GameScreen::Inventory, GameScreen::Character, GameScreen::Journal, GameScreen::Menu];
 
     /// The key of its name (see `lang`).
     fn title(self) -> &'static str {
         match self {
             GameScreen::Inventory => "screen.inventory",
             GameScreen::Character => "screen.character",
+            GameScreen::Journal => "screen.journal",
             GameScreen::Menu => "screen.menu",
         }
     }
@@ -49,6 +51,7 @@ impl GameScreen {
         match self {
             GameScreen::Inventory => settings.inventory_key.label(),
             GameScreen::Character => settings.character_key.label(),
+            GameScreen::Journal => settings.journal_key.label(),
             GameScreen::Menu => "Esc",
         }
     }
@@ -57,6 +60,7 @@ impl GameScreen {
         match self {
             GameScreen::Inventory => ui.inventory_open,
             GameScreen::Character => ui.character_open,
+            GameScreen::Journal => ui.journal_open,
             GameScreen::Menu => ui.menu_open,
         }
     }
@@ -67,6 +71,7 @@ fn toggle(ui: &mut UiState, screen: GameScreen) {
     let open = !screen.is_open(ui);
     ui.inventory_open = open && screen == GameScreen::Inventory;
     ui.character_open = open && screen == GameScreen::Character;
+    ui.journal_open = open && screen == GameScreen::Journal;
     ui.menu_open = open && screen == GameScreen::Menu;
 }
 
@@ -76,6 +81,7 @@ fn switch(keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, player: Res<
     if player.dead {
         ui.inventory_open = false;
         ui.character_open = false;
+        ui.journal_open = false;
         return;
     }
     if ui.console_open {
@@ -85,6 +91,8 @@ fn switch(keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, player: Res<
         toggle(&mut ui, GameScreen::Inventory);
     } else if keys.just_pressed(settings.character_key.0) {
         toggle(&mut ui, GameScreen::Character);
+    } else if keys.just_pressed(settings.journal_key.0) {
+        toggle(&mut ui, GameScreen::Journal);
     }
 }
 

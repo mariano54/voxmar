@@ -2255,6 +2255,8 @@ enum View {
     Character,
     /// The character screen with one skill's guide open.
     Guide(usize),
+    /// The journal on one page.
+    Journal(usize),
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -2290,6 +2292,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
+            .chain((0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal))
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -2345,17 +2348,21 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<crate::settings::Settings>().debug_overlay = debug;
     }
     let mut ui = world.resource_mut::<UiState>();
-    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open, ui.journal_open) = (false, false, false, false, false);
     match view {
         Some(View::Inventory) => ui.inventory_open = true,
         Some(View::Character | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
+        Some(View::Journal(_)) => ui.journal_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
     }
     if !matches!(view, Some(View::Recipes(_))) {
         ui.recipes_open = false;
+    }
+    if let Some(View::Journal(page)) = view {
+        world.resource_mut::<crate::hud::journal::JournalView>().page = page;
     }
     let lookup = match view {
         Some(View::Recipes(index)) => {
