@@ -216,6 +216,14 @@ struct Fallback {
     /// ours. None for a smooth font, which text falls back to as it is, at the text's size.
     #[serde(default)]
     pixels_per_em: Option<u32>,
+    /// For a pixel-outline font, how big its pixels are drawn, in ours: below 1, its glyphs
+    /// keep all their detail and take less room.
+    #[serde(default = "full_size")]
+    scale: f32,
+}
+
+fn full_size() -> f32 {
+    1.0
 }
 
 /// The fonts listed in the fonts directory `dir`, with their files' bytes, in order.
@@ -246,7 +254,7 @@ pub fn read_fallback(dir: &std::path::Path) -> PixelFont {
     let mut merged = PixelFont::default();
     for (entry, data) in fallback_fonts(dir) {
         let Some(pixels_per_em) = entry.pixels_per_em else { continue };
-        match voxmar_texgen::font::import(&data, pixels_per_em) {
+        match voxmar_texgen::font::import(&data, pixels_per_em, entry.scale) {
             Ok(font) => merged.fill_from(&font),
             Err(e) => warn!("cannot read the fallback font {}: {e}", entry.file),
         }

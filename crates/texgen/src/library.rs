@@ -7,7 +7,8 @@ use crate::colour::{self, Rgba};
 use crate::field::{hash, seed_of};
 use crate::recipe::{Book, Layer, Palette, Recipe};
 use crate::render::{self, Resolved};
-use crate::{Error, Image};
+use crate::scale;
+use crate::{Error, Image, Manifest};
 
 /// How deep `base` chains may go, which also catches cycles.
 const MAX_DEPTH: usize = 32;
@@ -23,12 +24,29 @@ impl Library {
     /// returned) instead of failing them all, so one mistake in a pack, or a book written
     /// for a newer texgen, costs only that book's textures.
     pub fn from_books_lenient<'a>(books: impl IntoIterator<Item = (&'a str, &'a str)>) -> (Self, Vec<Error>) {
-        let (good, errors): (Vec<_>, Vec<_>) = books
+        Self::from_layers_lenient([books.into_iter().collect::<Vec<_>>()])
+    }
+
+    /// [`Self::from_layers`], leaving out books that cannot be read (see
+    /// [`Self::from_books_lenient`]).
+    pub fn from_layers_lenient<'a>(layers: impl IntoIterator<Item = Vec<(&'a str, &'a str)>>) -> (Self, Vec<Error>) {
+        let mut errors = Vec::new();
+        let layers: Vec<Vec<(&str, &str)>> = layers
             .into_iter()
-            .map(|(origin, source)| options().from_str::<Book>(source).map(|_| (origin, source)).map_err(|e| Error(format!("{origin}: {e}"))))
-            .partition(Result::is_ok);
-        let errors: Vec<Error> = errors.into_iter().map(|e| e.unwrap_err()).collect();
-        match Self::from_books(good.into_iter().map(Result::unwrap)) {
+            .map(|books| {
+                books
+                    .into_iter()
+                    .filter(|&(origin, source)| match options().from_str::<Book>(source) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            errors.push(Error(format!("{origin}: {e}")));
+                            false
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        match Self::from_layers(layers) {
             Ok(library) => (library, errors),
             Err(e) => (Library::default(), errors.into_iter().chain([e]).collect()),
         }
@@ -37,54 +55,77 @@ impl Library {
     /// Merges recipe books, given as (name for errors, RON source). Texture and palette
     /// names must be unique across books; family textures give way to explicit ones.
     pub fn from_books<'a>(books: impl IntoIterator<Item = (&'a str, &'a str)>) -> Result<Self, Error> {
+        Self::from_layers([books.into_iter().collect::<Vec<_>>()])
+    }
+
+    /// Merges layers of recipe books, each as [`Self::from_books`] takes them: a pack's
+    /// own books over the books of the pack it extends. Within a layer every name must be
+    /// unique; a later layer's palette or texture replaces an earlier one of the same
+    /// name, and its template members replace those of the same pattern, so a
+    /// high-resolution pack can redraw every wood's planks by replacing one template
+    /// member, or recolour every texture made with a palette by replacing the palette.
+    /// Explicit textures still beat family textures, from whichever layer.
+    pub fn from_layers<'a>(layers: impl IntoIterator<Item = Vec<(&'a str, &'a str)>>) -> Result<Self, Error> {
         let mut library = Library::default();
         let mut templates = BTreeMap::new();
         let mut families = Vec::new();
-        for (origin, source) in books {
-            let book: Book = options().from_str(source).map_err(|e| Error(format!("{origin}: {e}")))?;
-            for (name, palette) in book.palettes {
-                if library.palettes.insert(name.clone(), palette).is_some() {
-                    return Err(Error(format!("{origin}: palette `{name}` is defined twice")));
+        for (level, books) in layers.into_iter().enumerate() {
+            let mut palettes_here = std::collections::BTreeSet::new();
+            let mut textures_here = std::collections::BTreeSet::new();
+            let mut templates_here = std::collections::BTreeSet::new();
+            for (origin, source) in books {
+                let book: Book = options().from_str(source).map_err(|e| Error(format!("{origin}: {e}")))?;
+                for (name, palette) in book.palettes {
+                    if !palettes_here.insert(name.clone()) {
+                        return Err(Error(format!("{origin}: palette `{name}` is defined twice")));
+                    }
+                    library.palettes.insert(name, palette);
                 }
-            }
-            let with_legend = |mut recipe: Recipe| {
-                for layer in &mut recipe.layers {
-                    if let Layer::Grid(grid) = layer {
-                        for (&ch, ink) in &book.legend {
-                            grid.legend.entry(ch).or_insert_with(|| ink.clone());
+                let with_legend = |mut recipe: Recipe| {
+                    for layer in &mut recipe.layers {
+                        if let Layer::Grid(grid) = layer {
+                            for (&ch, ink) in &book.legend {
+                                grid.legend.entry(ch).or_insert_with(|| ink.clone());
+                            }
                         }
                     }
-                }
-                recipe
-            };
-            let templates_with_legend: Vec<(String, BTreeMap<String, Recipe>)> = book
-                .templates
-                .into_iter()
-                .map(|(name, members)| (name, members.into_iter().map(|(n, r)| (n, with_legend(r))).collect()))
-                .collect();
-            for (name, recipe) in book.textures {
-                let recipe = with_legend(recipe);
-                for layer in &recipe.layers {
-                    if let Layer::Grid(grid) = layer
-                        && let Some(row) = grid.rows.iter().find(|r| r.chars().count() != grid.rows[0].chars().count())
-                    {
-                        return Err(Error(format!("{origin}: texture `{name}`: grid row `{row}` is not as long as the first")));
+                    recipe
+                };
+                let templates_with_legend: Vec<(String, BTreeMap<String, Recipe>)> = book
+                    .templates
+                    .into_iter()
+                    .map(|(name, members)| (name, members.into_iter().map(|(n, r)| (n, with_legend(r))).collect()))
+                    .collect();
+                for (name, recipe) in book.textures {
+                    let recipe = with_legend(recipe);
+                    for layer in &recipe.layers {
+                        if let Layer::Grid(grid) = layer
+                            && let Some(row) = grid.rows.iter().find(|r| r.chars().count() != grid.rows[0].chars().count())
+                        {
+                            return Err(Error(format!("{origin}: texture `{name}`: grid row `{row}` is not as long as the first")));
+                        }
                     }
+                    if !textures_here.insert(name.clone()) {
+                        return Err(Error(format!("{origin}: texture `{name}` is defined twice")));
+                    }
+                    library.recipes.insert(name, recipe);
                 }
-                if library.recipes.insert(name.clone(), recipe).is_some() {
-                    return Err(Error(format!("{origin}: texture `{name}` is defined twice")));
+                for (name, template) in templates_with_legend {
+                    if !templates_here.insert(name.clone()) {
+                        return Err(Error(format!("{origin}: template `{name}` is defined twice")));
+                    }
+                    // A later layer redraws a template's members one by one: those it
+                    // names replace the earlier ones, the rest stay.
+                    templates.entry(name).or_insert_with(BTreeMap::new).extend(template);
                 }
+                families.extend(book.families.into_iter().map(|family| (level, origin.to_owned(), family)));
             }
-            for (name, template) in templates_with_legend {
-                if templates.insert(name.clone(), template).is_some() {
-                    return Err(Error(format!("{origin}: template `{name}` is defined twice")));
-                }
-            }
-            families.extend(book.families.into_iter().map(|family| (origin.to_owned(), family)));
         }
 
-        let mut made = BTreeMap::new();
-        for (origin, family) in families {
+        // Each family is made with the template as finally replaced; a later layer's
+        // family replaces an earlier layer's texture of the same name.
+        let mut made: BTreeMap<String, (usize, Recipe)> = BTreeMap::new();
+        for (level, origin, family) in families {
             let template = templates
                 .get(&family.template)
                 .ok_or_else(|| Error(format!("{origin}: family `{}` uses unknown template `{}`", family.name, family.template)))?;
@@ -115,28 +156,39 @@ impl Library {
                 if !own_base {
                     recipe.seed = family.seed.or(recipe.seed).or(Some(seed_of(&family.name)));
                 }
-                if made.insert(name.clone(), recipe).is_some() {
-                    return Err(Error(format!("{origin}: two families make texture `{name}`")));
+                match made.get(&name) {
+                    Some((earlier, _)) if *earlier == level => {
+                        return Err(Error(format!("{origin}: two families make texture `{name}`")));
+                    }
+                    Some((earlier, _)) if *earlier > level => continue,
+                    _ => {
+                        made.insert(name, (level, recipe));
+                    }
                 }
             }
         }
-        library.recipes.extend(made);
+        library.recipes.extend(made.into_iter().map(|(name, (_, recipe))| (name, recipe)));
         Ok(library)
     }
 
-    /// Reads every `recipes/*.ron` book in a pack folder (none is fine).
+    /// Reads every `recipes/*.ron` book in a pack folder (none is fine), over the books
+    /// of the packs its manifest extends (see [`Manifest`]).
     pub fn load(pack: &Path) -> Result<Self, Error> {
-        let dir = pack.join("recipes");
-        let mut paths: Vec<_> = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "ron")).collect(),
-            Err(_) => Vec::new(),
-        };
-        paths.sort();
-        let sources: Vec<(String, String)> = paths
-            .iter()
-            .map(|p| std::fs::read_to_string(p).map(|s| (p.display().to_string(), s)).map_err(|e| Error(format!("{}: {e}", p.display()))))
-            .collect::<Result<_, _>>()?;
-        Self::from_books(sources.iter().map(|(o, s)| (o.as_str(), s.as_str())))
+        let mut layers = Vec::new();
+        for folder in Manifest::chain(pack)? {
+            let dir = folder.join("recipes");
+            let mut paths: Vec<_> = match std::fs::read_dir(&dir) {
+                Ok(entries) => entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "ron")).collect(),
+                Err(_) => Vec::new(),
+            };
+            paths.sort();
+            let sources: Vec<(String, String)> = paths
+                .iter()
+                .map(|p| std::fs::read_to_string(p).map(|s| (p.display().to_string(), s)).map_err(|e| Error(format!("{}: {e}", p.display()))))
+                .collect::<Result<_, _>>()?;
+            layers.push(sources);
+        }
+        Self::from_layers(layers.iter().map(|books| books.iter().map(|(o, s)| (o.as_str(), s.as_str())).collect()))
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -150,23 +202,36 @@ impl Library {
 
     /// Renders a texture, or `None` if the library has no recipe by that name.
     pub fn render(&self, name: &str) -> Option<Result<Image, Error>> {
+        self.render_at_least(name, 0)
+    }
+
+    /// Renders a texture at least `texels` across: a recipe written smaller is drawn
+    /// two, four or more times finer (see the `scale` module), so a 32×32 pack can take
+    /// every texture it does not redraw from 16×16 books and still show 32×32 detail.
+    pub fn render_at_least(&self, name: &str, texels: u32) -> Option<Result<Image, Error>> {
         self.contains(name).then(|| {
-            let resolved = self.resolve(name, 0)?;
+            let native = self.resolve(name, 0, 1)?;
+            let mut k = 1;
+            while native.size.0 * k * 2 <= texels {
+                k *= 2;
+            }
+            let resolved = if k == 1 { native } else { self.resolve(name, 0, k)? };
             render::render(&resolved).map_err(|Error(e)| Error(format!("{name}: {e}")))
         })
     }
 
-    fn resolve(&self, name: &str, depth: usize) -> Result<Resolved, Error> {
+    /// The recipe with its bases folded in, drawn `k` times finer than written.
+    fn resolve(&self, name: &str, depth: usize, k: u32) -> Result<Resolved, Error> {
         if depth > MAX_DEPTH {
             return Err(Error(format!("{name}: `base` chain too deep (a cycle?)")));
         }
         let recipe = self.recipes.get(name).ok_or_else(|| Error(format!("no texture `{name}`")))?;
         let mut resolved = match &recipe.base {
-            Some(base) => self.resolve(base, depth + 1).map_err(|Error(e)| Error(format!("{name}: {e}")))?,
-            None => Resolved { size: (16, 16), seed: seed_of(name), palettes: BTreeMap::new(), layers: Vec::new(), stamps: BTreeMap::new() },
+            Some(base) => self.resolve(base, depth + 1, k).map_err(|Error(e)| Error(format!("{name}: {e}")))?,
+            None => Resolved { size: (16 * k, 16 * k), seed: seed_of(name), palettes: BTreeMap::new(), layers: Vec::new(), stamps: BTreeMap::new() },
         };
-        if let Some(size) = recipe.size {
-            resolved.size = size;
+        if let Some((w, h)) = recipe.size {
+            resolved.size = (w * k, h * k);
         }
         // An explicit seed reseeds every layer, inherited ones too (a family's maple
         // planks differ from oak's); otherwise inherited layers keep their pattern and
@@ -184,7 +249,7 @@ impl Library {
             if let Layer::Stamp(stamp) = layer
                 && !resolved.stamps.contains_key(&stamp.texture)
             {
-                let image = self.resolve(&stamp.texture, depth + 1).and_then(|r| render::render(&r)).map_err(|Error(e)| Error(format!("{name}: {e}")))?;
+                let image = self.resolve(&stamp.texture, depth + 1, k).and_then(|r| render::render(&r)).map_err(|Error(e)| Error(format!("{name}: {e}")))?;
                 resolved.stamps.insert(stamp.texture.clone(), image);
             }
         }
@@ -195,7 +260,10 @@ impl Library {
             resolved.size = (image.width, image.height);
         }
         let first = resolved.layers.len();
-        resolved.layers.extend(recipe.layers.iter().cloned().enumerate().map(|(i, layer)| (Some(hash(own, (first + i) as i32, 0x1a7e)), layer)));
+        resolved.layers.extend(recipe.layers.iter().enumerate().map(|(i, layer)| {
+            let layer = if k == 1 { layer.clone() } else { scale::layer(layer, k) };
+            (Some(hash(own, (first + i) as i32, 0x1a7e)), layer)
+        }));
         Ok(resolved)
     }
 
@@ -336,5 +404,50 @@ mod tests {
         assert!(library.contains("x") && !library.contains("y"));
         assert_eq!(errors.len(), 1);
         assert!(errors[0].0.starts_with("bad:"));
+    }
+
+    #[test]
+    fn later_layers_replace_earlier_ones() {
+        let overlay = r##"(
+            palettes: {"red": ["#ff0000"]},
+            textures: {"block/rock": (size: (32, 32), palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.9)])},
+            templates: {"wood": {"block/{name}_planks_dark": (layers: [Paint(palette: "wood", base: 0.0)])}},
+        )"##;
+        let library = Library::from_layers([vec![("base", BOOK)], vec![("hd", overlay)]]).unwrap();
+        // A replaced texture, and the textures derived from it, take the new recipe.
+        let rock = library.render("block/rock").unwrap().unwrap();
+        assert_eq!((rock.width, rock.height), (32, 32));
+        assert_eq!(rock.get(5, 5), [0xe0, 0xe0, 0xe0, 255]);
+        assert_eq!(library.render("block/red_rock").unwrap().unwrap().width, 32);
+        // A replaced palette recolours what uses it.
+        assert!(library.render("block/red_rock").unwrap().unwrap().pixels.chunks(4).all(|p| p == [0xff, 0, 0, 0xff]));
+        // A replaced template member redraws it for every family; the others stay.
+        let dark = library.render("block/pine_planks_dark").unwrap().unwrap();
+        assert!(dark.pixels.chunks(4).all(|p| p == [0x20, 0x20, 0x20, 0xff]));
+        assert!(library.contains("block/pine_planks_pair"));
+        // Within one layer, names stay unique.
+        assert!(Library::from_layers([vec![("a", "(textures: {\"x\": ()})"), ("b", "(textures: {\"x\": ()})")]]).is_err());
+    }
+
+    #[test]
+    fn renders_finer_at_a_higher_resolution() {
+        let library = library();
+        for name in library.names() {
+            let fine = library.render_at_least(name, 32).unwrap().unwrap();
+            assert_eq!((fine.width, fine.height), (32, 32), "{name}");
+        }
+        // Shapes keep their place and proportions: the flower's sprite is twice as big.
+        let flower = library.render("block/flower").unwrap().unwrap();
+        let fine = library.render_at_least("block/flower", 32).unwrap().unwrap();
+        for (x, y) in [(7, 10), (6, 10), (7, 13), (0, 0)] {
+            assert_eq!(fine.get(2 * x, 2 * y), flower.get(x, y));
+            assert_eq!(fine.get(2 * x + 1, 2 * y + 1), flower.get(x, y));
+        }
+        // A stamp lands where it did, in finer texels.
+        let pair = library.render_at_least("block/pine_planks_pair", 32).unwrap().unwrap();
+        let planks = library.render_at_least("block/pine_planks", 32).unwrap().unwrap();
+        assert_eq!(pair.get(0, 6), planks.get(16, 6));
+        // Already large enough: drawn as written.
+        assert_eq!(library.render_at_least("block/rock", 16).unwrap().unwrap(), library.render("block/rock").unwrap().unwrap());
     }
 }

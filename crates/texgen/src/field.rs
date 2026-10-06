@@ -210,7 +210,7 @@ fn cells(c: &Cells, size: Size, seed: u32, field: &mut [f32]) {
                 value += c.bevel * 0.5 * (-(dx + dy) / (2.0 * radius)).clamp(-1.0, 1.0);
                 value -= c.round * (dx.hypot(dy) / radius).min(1.5);
                 if differs(-1, 0) || differs(0, -1) {
-                    value += c.bevel;
+                    value += c.lip.unwrap_or(c.bevel);
                 }
             }
             field[i] += value;

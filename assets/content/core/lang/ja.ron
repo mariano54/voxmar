@@ -120,6 +120,7 @@
     "settings.textures.hint": "優先するテクスチャパック。次にゲームを起動したときに反映されます。",
     "settings.textures.minecraft": "Minecraft優先",
     "settings.textures.voxmar": "Voxmar",
+    "settings.textures.voxmar_hd": "Voxmar HD",
 
     "settings.shader_pack": "シェーダーパック",
     "settings.shader_pack.hint": "光、空、水、色合いの見た目。",
@@ -258,6 +259,7 @@
     "character.health": "体力",
     "character.feels_like": "体感 {temperature}°C",
     "character.no_effects": "状態異常はありません。",
+    "hud.effect_left": "残り{time}",
     "inventory.craft": "クラフト",
     "inventory.craft.take": "クリックで1つ、Shift+クリックで全部作る",
     "inventory.craft.nothing": "作れるものがない",

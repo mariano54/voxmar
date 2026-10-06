@@ -458,8 +458,11 @@ fn draw_condition(
                 list.spawn((row, Button, super::effects::EffectHover(active.effect), bevy::ui::RelativeCursorPosition::default())).with_children(|row| {
                     let color = if buff { ACCENT } else { crate::ui::widgets::ERROR };
                     row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|line| {
-                        line.spawn((Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::new(images.effect(active.effect))));
+                        line.spawn(super::effect_icon(&images, active.effect));
                         line.spawn(shadowed(&font.0, locale.effect(def), BODY, color));
+                        if active.seconds_left.is_some() {
+                            line.spawn((text(&font.0, "", BODY, SOFT), super::EffectTimer(active.effect)));
+                        }
                     });
                     row.spawn(text(&font.0, locale.effect_description(def), BODY, MUTED));
                 });
