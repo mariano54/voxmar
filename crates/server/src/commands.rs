@@ -524,7 +524,17 @@ impl Server {
                     creature.breeds_again = 0;
                 }
                 // Stands still for a minute: for a closer look, or a picture.
-                "hold" => creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64,
+                // Stands still for a minute, side on to whoever asked, for a closer look or
+                // a picture.
+                "hold" => {
+                    creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64;
+                    let to = (at - creature.body.position).with_y(0.0);
+                    let side = voxmar_engine::glam::Vec3::new(to.z, 0.0, -to.x);
+                    if side.length_squared() > 1e-4 {
+                        creature.body.yaw = voxmar_engine::creature::motion::yaw_of(side);
+                    }
+                    creature.body.velocity = voxmar_engine::glam::Vec3::ZERO;
+                }
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {
