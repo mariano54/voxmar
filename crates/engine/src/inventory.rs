@@ -367,6 +367,12 @@ impl Inventory {
                 self.set(slot, None);
             }
         }
+        // What pouches hold goes too.
+        self.pouched.retain(|&(item, n)| {
+            let gone = which(item);
+            count += if gone { n as u32 } else { 0 };
+            !gone
+        });
         count
     }
 
