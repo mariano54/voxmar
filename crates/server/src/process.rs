@@ -22,6 +22,11 @@ const BURN_TICKS: u64 = TICKS_PER_SECOND as u64 / 2;
 pub(crate) trait Process: Send {
     fn tier(&self) -> Tier;
     fn run(&mut self, server: &mut Server);
+    /// Whether to run this tick even though its tier is not due: for news a player who
+    /// just joined must not wait for, such as the weather where they are.
+    fn urgent(&self, _server: &Server) -> bool {
+        false
+    }
 }
 
 pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
@@ -208,7 +213,7 @@ impl Server {
     pub(crate) fn run_processes(&mut self) {
         let mut processes = std::mem::take(&mut self.processes);
         for process in &mut processes {
-            if process.tier().due(self.tick) {
+            if process.tier().due(self.tick) || process.urgent(self) {
                 process.run(self);
             }
         }
