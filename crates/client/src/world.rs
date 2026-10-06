@@ -119,6 +119,7 @@ pub struct ClientWorld {
     terrain: Terrain,
     /// Set when chunk meshes or connectivity changed, so culling must rerun.
     visibility_dirty: bool,
+    culler: Culler,
     pub view_distance: i32,
     pub stats: WorldStats,
 }
@@ -150,6 +151,7 @@ impl ClientWorld {
             detail_center: ColumnPos::new(0, 0),
             terrain,
             visibility_dirty: true,
+            culler: Culler::spawn(),
             view_distance,
             stats: WorldStats::default(),
         }
@@ -399,6 +401,55 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
 /// How long chunks that arrived wait at most before cave culling takes them in.
 const CULL_AGAIN: f32 = 0.1;
 
+/// Cave culling's walk, on a thread of its own: at view distance 32 it took 3-5 ms, which
+/// on the main thread lengthened every frame it ran in (every `CULL_AGAIN` while the world
+/// streams in) and set flying's p99 frame. The main thread hands it the chunks' connectivity
+/// and takes the visible set back a frame or so later. Not a pool worker: those are busy
+/// with streaming, and the walk would queue behind it. The thread ends with its world (a
+/// reset makes a new one), so a walk of a world left behind is never applied.
+struct Culler {
+    jobs: Sender<CullJob>,
+    results: Receiver<CullResult>,
+    busy: bool,
+}
+
+struct CullJob {
+    eye: IVec3,
+    radius: i32,
+    /// Every chunk's position, connectivity and quads.
+    chunks: Vec<(ChunkPos, Connectivity, usize)>,
+}
+
+struct CullResult {
+    visible: voxmar_engine::visibility::VisibleChunks,
+    count: usize,
+    quads: usize,
+}
+
+impl Culler {
+    fn spawn() -> Self {
+        let (jobs, job_rx) = unbounded::<CullJob>();
+        let (result_tx, results) = unbounded();
+        let walk = move || {
+            while let Ok(job) = job_rx.recv() {
+                let visible = visible_among(job.eye, job.radius, job.chunks.iter().map(|&(pos, connectivity, _)| (pos, connectivity)));
+                let (mut count, mut quads) = (0, 0);
+                for &(pos, _, chunk_quads) in &job.chunks {
+                    if visible.contains(pos) {
+                        count += 1;
+                        quads += chunk_quads;
+                    }
+                }
+                if result_tx.send(CullResult { visible, count, quads }).is_err() {
+                    return;
+                }
+            }
+        };
+        std::thread::Builder::new().name("cave-culling".into()).spawn(walk).expect("the cave culling thread starts");
+        Self { jobs, results, busy: false }
+    }
+}
+
 /// Hides chunks the camera cannot see through the terrain (cave culling).
 fn cull_chunks(
     time: Res<Time<Real>>,
@@ -406,15 +457,23 @@ fn cull_chunks(
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut last: Local<Option<(IVec3, f32)>>,
 ) {
+    let world = &mut *world;
+    if let Ok(result) = world.culler.results.try_recv() {
+        world.culler.busy = false;
+        world.stats.visible_chunks = result.count;
+        world.stats.visible_quads = result.quads;
+        world.terrain.set_visible(result.visible);
+    }
     let Ok(camera) = camera.single() else { return };
     let eye = camera.translation().floor().as_ivec3();
     let camera_chunk = eye.div_euclid(IVec3::splat(CHUNK_SIZE));
     let now = time.elapsed_secs();
     // A new camera chunk walks again at once; chunks arriving (which mark visibility dirty
     // nearly every frame while the world streams in) at most every `CULL_AGAIN` seconds.
+    // One walk at a time: one asked for meanwhile goes as soon as it is back.
     let moved = last.is_none_or(|(chunk, _)| chunk != camera_chunk);
     let due = world.visibility_dirty && last.is_none_or(|(_, at)| now - at >= CULL_AGAIN);
-    if !moved && !due {
+    if (!moved && !due) || world.culler.busy {
         return;
     }
     *last = Some((camera_chunk, now));
@@ -428,15 +487,7 @@ fn cull_chunks(
     // dark slab of sea floor at the edge of the loaded chunks.
     let camera_column = ColumnPos::of_block(eye);
     let radius = world.voxels.columns().map(|(pos, _)| (pos.0 - camera_column.0).abs().max_element()).max().unwrap_or(0);
-    let visible = visible_among(eye, radius.max(world.view_distance), world.chunks.iter().map(|(&pos, c)| (pos, c.connectivity)));
-    let (mut count, mut quads) = (0, 0);
-    for (&pos, render) in &world.chunks {
-        if visible.contains(pos) {
-            count += 1;
-            quads += render.quads.iter().sum::<usize>();
-        }
-    }
-    world.stats.visible_chunks = count;
-    world.stats.visible_quads = quads;
-    world.terrain.set_visible(visible);
+    let chunks = world.chunks.iter().map(|(&pos, c)| (pos, c.connectivity, c.quads.iter().sum())).collect();
+    let job = CullJob { eye, radius: radius.max(world.view_distance), chunks };
+    world.culler.busy = world.culler.jobs.send(job).is_ok();
 }
