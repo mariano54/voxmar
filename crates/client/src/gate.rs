@@ -1973,6 +1973,20 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let viewer = world.resource::<RecipeViewer>();
             let back = viewer.trail.last().is_some_and(|lookup| lookup.item == log && lookup.uses);
             gate.check("recipes: back", if back { Ok("Back returns to the log's uses".into()) } else { Err(format!("after Back the viewer shows {:?}", viewer.trail.last())) });
+            // A log's tooltip says what it goes into, planks among them.
+            let lines = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                let planks_name = locale.block(launch.content.blocks.def(planks));
+                world.resource::<RecipeViewer>().book().map(|book| (crate::hud::inventory::origins_and_uses(locale, &launch.content, book, log), planks_name))
+            };
+            gate.check(
+                "tooltip: used in",
+                match lines {
+                    Some((lines, planks)) if lines.iter().any(|line| line.contains(&planks)) => Ok(format!("an oak log's tooltip: {}", lines.join(" / "))),
+                    Some((lines, _)) => Err(format!("an oak log's tooltip says {lines:?}")),
+                    None => Err("no recipe book to read".into()),
+                },
+            );
             world.resource_mut::<RecipeViewer>().trail.clear();
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
