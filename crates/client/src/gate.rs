@@ -286,6 +286,10 @@ struct Gate {
     longest: FxHashMap<Step, f32>,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
+    /// Frames on which the open overlay's text changed (each one lays the UI out again),
+    /// and when counting began and last went on.
+    overlay_changes: u32,
+    overlay_counted: (f32, f32),
 }
 
 impl Gate {
@@ -328,6 +332,8 @@ impl Gate {
             frame_ms: Vec::new(),
             longest: default(),
             overlay_ms: default(),
+            overlay_changes: 0,
+            overlay_counted: (0.0, 0.0),
         }
     }
 
@@ -1385,9 +1391,12 @@ const SCREEN_WAIT: f32 = 10.0;
 const OVERLAY_TIMED: f32 = 2.0;
 const OVERLAY_FRAMES: usize = 60;
 
-/// F3 opens the debug overlay and closes it again, and with it open PostUpdate takes no
-/// longer than with it closed: an overlay that rewrote its text every frame had UI layout
-/// redone every frame, 10 to 25 ms of Mariano's slow frames.
+/// F3 opens the debug overlay and closes it again, and while it is open its text changes
+/// only a few times a second: an overlay that rewrote its text every frame had UI layout
+/// redone every frame, 10 to 25 ms of Mariano's slow frames. That is judged by counting
+/// the changes, which a loaded machine cannot blur; PostUpdate's time with the overlay
+/// closed and open is reported beside it (before the fix it rose 0.77 ms in the median,
+/// within the noise of a loaded machine).
 fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let shown = world.resource::<Settings>().debug_overlay;
     let ms = world.resource::<PostUpdateTime>().ms;
@@ -1418,6 +1427,15 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if in_phase > 0.5 {
                 gate.overlay_ms[1].push(ms);
+                // An exclusive system sees changes made since its last run: this frame's.
+                let mut text = world.query_filtered::<Ref<Text>, With<crate::hud::DebugText>>();
+                if text.iter(world).any(|text| text.is_changed()) {
+                    gate.overlay_changes += 1;
+                }
+                if gate.overlay_counted.0 == 0.0 {
+                    gate.overlay_counted.0 = now;
+                }
+                gate.overlay_counted.1 = now;
             }
             if timed(gate, 1) {
                 key(world, KeyCode::F3, true);
@@ -1440,22 +1458,22 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (at(0.5), at(0.9))
             };
             let ((closed, closed_p90), (open, open_p90)) = (stats(&gate.overlay_ms[0]), stats(&gate.overlay_ms[1]));
+            let seconds = (gate.overlay_counted.1 - gate.overlay_counted.0).max(0.1);
+            let rate = gate.overlay_changes as f32 / seconds;
+            let most = 1.0 / crate::hud::DEBUG_REFRESH + 1.0;
             let detail = format!(
-                "PostUpdate median {open:.2} ms open against {closed:.2} ms closed, p90 {open_p90:.2} against {closed_p90:.2} ms ({} and {} frames)",
+                "its text changed on {} of {} frames in {seconds:.1}s, {rate:.1} a second (at most {most:.0}); \
+                 PostUpdate median {open:.2} ms open against {closed:.2} ms closed, p90 {open_p90:.2} against {closed_p90:.2} ms",
+                gate.overlay_changes,
                 gate.overlay_ms[1].len(),
-                gate.overlay_ms[0].len()
             );
-            let result = if open <= closed + OVERLAY_MARGIN_MS && open_p90 <= closed_p90 * 1.5 + OVERLAY_MARGIN_MS { Ok(detail) } else { Err(detail) };
+            let result = if gate.overlay_changes > 0 && rate <= most { Ok(detail) } else { Err(detail) };
             gate.check("overlay: no layout every frame", result);
             gate.next(Step::Weather, now);
         }
         _ => {}
     }
 }
-
-/// How much longer PostUpdate may take with the overlay open: its text changing a few times
-/// a second costs a layout then, a fraction of a millisecond in the median.
-const OVERLAY_MARGIN_MS: f32 = 0.5;
 
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
