@@ -2,7 +2,7 @@
 // crafting table's three by three (right click one) for anything bigger.
 //
 // A recipe is a `pattern` (up to three rows of three item names, "" for an empty cell; it
-// matches wherever it fits in the grid) or `ingredients` (in any arrangement), and makes
+// matches wherever it fits in the grid; `tag:TAG` takes anything with the tag, `a|b` either) or `ingredients` (in any arrangement), and makes
 // `count` of `output`. A name with {name} in it makes one recipe for every name that fits
 // all of the recipe's blocks, so one line serves every wood. Each trains a `skill`
 // (Crafting unless it says; Engineering for tools, stations and machines), may need a
@@ -67,8 +67,7 @@
         (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire", skill: "core:engineering", xp: 10.0),
         // Coal or charcoal on a stick makes four torches, in the hand's grid: light for the
         // first night.
-        (pattern: [["coal_ore"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
-        (pattern: [["charcoal"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
+        (pattern: [["coal_ore|charcoal"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
         // Two stones crossed make shears, for wool; two planks a pail, for milk.
         (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears", skill: "core:engineering", xp: 10.0),
         (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail", skill: "core:engineering", xp: 10.0),

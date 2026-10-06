@@ -6,8 +6,10 @@
 //! the grid) or shapeless (ingredients in any arrangement). One bigger than two by two, or
 //! with more than four ingredients, needs a table. A name with `{name}` in it makes a
 //! family of recipes, one for every name that fits all of the recipe's blocks: one line
-//! turns every wood's log into its planks. A recipe trains a skill (Crafting unless it
-//! says), may need a level in it, and gives experience for every one made.
+//! turns every wood's log into its planks. A cell or ingredient may also accept several
+//! items: `tag:TAG` takes anything with that tag, and `a|b` either of two. A recipe trains a
+//! skill (Crafting unless it says), may need a level in it, and gives experience for every
+//! one made.
 
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -58,13 +60,16 @@ struct RecipeFile {
     recipes: Vec<RecipeDef>,
 }
 
+/// What a cell or ingredient accepts: one item, or any of several (sorted).
+pub type Accepts = Vec<BlockId>;
+
 /// A recipe with its names resolved.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Recipe {
     /// The pattern's rows, for a shaped recipe.
-    pattern: Option<Vec<Vec<Option<BlockId>>>>,
-    /// The ingredients, sorted, for a shapeless one.
-    ingredients: Vec<BlockId>,
+    pattern: Option<Vec<Vec<Option<Accepts>>>>,
+    /// The ingredients, for a shapeless one.
+    ingredients: Vec<Accepts>,
     pub output: BlockId,
     pub count: u8,
     pub skill: Option<SkillId>,
@@ -74,19 +79,24 @@ pub struct Recipe {
 }
 
 impl Recipe {
-    /// The grid laid out as the recipe asks: a pattern from the top left corner, or the
-    /// ingredients cell by cell.
+    /// The grid laid out as the recipe asks, with the first item each cell accepts: a
+    /// pattern from the top left corner, or the ingredients cell by cell.
     pub fn cells(&self) -> [Option<BlockId>; GRID] {
+        self.alternatives().map(|cell| cell.and_then(|accepts| accepts.first().copied()))
+    }
+
+    /// The grid laid out as the recipe asks, with everything each cell accepts.
+    pub fn alternatives(&self) -> [Option<&[BlockId]>; GRID] {
         let mut cells = [None; GRID];
         match &self.pattern {
             Some(rows) => {
                 for (r, row) in rows.iter().enumerate() {
-                    for (c, item) in row.iter().enumerate() {
-                        cells[r * SIDE + c] = *item;
+                    for (c, accepts) in row.iter().enumerate() {
+                        cells[r * SIDE + c] = accepts.as_deref();
                     }
                 }
             }
-            None => self.ingredients.iter().zip(&mut cells).for_each(|(item, cell)| *cell = Some(*item)),
+            None => self.ingredients.iter().zip(&mut cells).for_each(|(accepts, cell)| *cell = Some(accepts.as_slice())),
         }
         cells
     }
@@ -115,22 +125,47 @@ impl Recipe {
 
     fn matches(&self, grid: &[Option<BlockId>; GRID]) -> bool {
         match &self.pattern {
-            Some(pattern) => shape_of(grid).is_some_and(|shape| shape == *pattern),
+            Some(pattern) => shape_of(grid).is_some_and(|shape| {
+                shape.len() == pattern.len()
+                    && shape.iter().zip(pattern).all(|(row, want)| {
+                        row.len() == want.len()
+                            && row.iter().zip(want).all(|(item, accepts)| match (item, accepts) {
+                                (None, None) => true,
+                                (Some(item), Some(accepts)) => accepts.binary_search(item).is_ok(),
+                                _ => false,
+                            })
+                    })
+            }),
             None => {
-                let mut items: Vec<BlockId> = grid.iter().flatten().copied().collect();
-                items.sort();
-                items == self.ingredients
+                let items: Vec<BlockId> = grid.iter().flatten().copied().collect();
+                items.len() == self.ingredients.len() && assign(&items, &self.ingredients, &mut vec![false; items.len()])
             }
         }
     }
 }
 
+/// Whether every ingredient can take a different one of `items` (few enough to search).
+fn assign(items: &[BlockId], ingredients: &[Accepts], used: &mut Vec<bool>) -> bool {
+    let Some((first, rest)) = ingredients.split_first() else { return true };
+    for i in 0..items.len() {
+        if !used[i] && first.binary_search(&items[i]).is_ok() {
+            used[i] = true;
+            if assign(items, rest, used) {
+                return true;
+            }
+            used[i] = false;
+        }
+    }
+    false
+}
+
 /// The grid's filled cells cut down to their bounding rows and columns, so a pattern
 /// matches wherever it sits.
-fn shape_of(grid: &[Option<BlockId>; GRID]) -> Option<Vec<Vec<Option<BlockId>>>> {
-    let cell = |row: usize, column: usize| grid[row * SIDE + column];
-    let rows: Vec<usize> = (0..SIDE).filter(|&r| (0..SIDE).any(|c| cell(r, c).is_some())).collect();
-    let columns: Vec<usize> = (0..SIDE).filter(|&c| (0..SIDE).any(|r| cell(r, c).is_some())).collect();
+fn shape_of<T: Clone>(grid: &[Option<T>; GRID]) -> Option<Vec<Vec<Option<T>>>> {
+    let cell = |row: usize, column: usize| grid[row * SIDE + column].clone();
+    let filled = |row: usize, column: usize| grid[row * SIDE + column].is_some();
+    let rows: Vec<usize> = (0..SIDE).filter(|&r| (0..SIDE).any(|c| filled(r, c))).collect();
+    let columns: Vec<usize> = (0..SIDE).filter(|&c| (0..SIDE).any(|r| filled(r, c))).collect();
     // A gap row or column inside the shape is part of it.
     let rows: Vec<usize> = match (rows.first(), rows.last()) {
         (Some(&first), Some(&last)) => (first..=last).collect(),
@@ -157,9 +192,10 @@ impl RecipeRegistry {
     pub fn read(namespace: &str, source: &str) -> Result<Vec<RecipeDef>, RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let file: RecipeFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/recipes.ron: {e}")))?;
+        // Each of `a|b`'s names; `tag:` names a tag, not an item.
         let qualify = |name: &mut String| {
-            if !name.is_empty() && !name.contains(':') {
-                *name = format!("{namespace}:{name}");
+            if !name.is_empty() && !name.starts_with("tag:") {
+                *name = name.split('|').map(|n| if n.contains(':') { n.to_owned() } else { format!("{namespace}:{n}") }).collect::<Vec<_>>().join("|");
             }
         };
         let mut defs = file.recipes;
@@ -175,7 +211,8 @@ impl RecipeRegistry {
         let mut recipes = Vec::new();
         let crafting = skills.id("core:crafting");
         for def in defs {
-            let names: Vec<&String> = def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).collect();
+            // The single item names, for families (`tag:` and `a|b` cells stand apart).
+            let names: Vec<&String> = def.pattern.iter().flatten().chain(&def.ingredients).chain([&def.output]).filter(|n| !n.starts_with("tag:") && !n.contains('|')).collect();
             let bad = |what: &str| RegistryError(format!("recipe for {}: {what}", def.output));
             if def.pattern.len() > SIDE || def.pattern.iter().any(|row| row.len() > SIDE || row.len() != def.pattern[0].len()) {
                 return Err(bad("a pattern is up to three rows of three"));
@@ -201,30 +238,41 @@ impl RecipeRegistry {
                 }
             };
             for fill in fills {
-                let resolve = |name: &String| -> Result<Option<BlockId>, RegistryError> {
+                let item = |name: &str| -> Result<BlockId, RegistryError> {
+                    let name = fill.as_ref().map_or_else(|| name.to_owned(), |fill| name.replace("{name}", fill));
+                    blocks.id(&name).ok_or_else(|| bad(&format!("no block `{name}`")))
+                };
+                let resolve = |name: &String| -> Result<Option<Accepts>, RegistryError> {
                     if name.is_empty() {
                         return Ok(None);
                     }
-                    let name = fill.as_ref().map_or_else(|| name.clone(), |fill| name.replace("{name}", fill));
-                    blocks.id(&name).map(Some).ok_or_else(|| bad(&format!("no block `{name}`")))
+                    let mut accepts: Accepts = match name.strip_prefix("tag:") {
+                        Some(tag) => (0..blocks.len() as u16).map(BlockId).filter(|&id| blocks.def(id).has_tag(tag)).collect(),
+                        None => name.split('|').map(item).collect::<Result<_, _>>()?,
+                    };
+                    if accepts.is_empty() {
+                        return Err(bad(&format!("nothing has the tag in `{name}`")));
+                    }
+                    accepts.sort();
+                    accepts.dedup();
+                    Ok(Some(accepts))
                 };
                 let pattern = if def.pattern.is_empty() {
                     None
                 } else {
-                    let rows: Vec<Vec<Option<BlockId>>> =
+                    let rows: Vec<Vec<Option<Accepts>>> =
                         def.pattern.iter().map(|row| row.iter().map(resolve).collect()).collect::<Result<_, _>>()?;
                     // Patterns are compared trimmed, like the grid.
-                    let mut grid = [None; GRID];
-                    for (r, row) in rows.iter().enumerate() {
-                        for (c, item) in row.iter().enumerate() {
-                            grid[r * SIDE + c] = *item;
+                    let mut grid: [Option<Accepts>; GRID] = Default::default();
+                    for (r, row) in rows.into_iter().enumerate() {
+                        for (c, accepts) in row.into_iter().enumerate() {
+                            grid[r * SIDE + c] = accepts;
                         }
                     }
                     shape_of(&grid)
                 };
-                let mut ingredients: Vec<BlockId> = def.ingredients.iter().map(resolve).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
-                ingredients.sort();
-                let output = resolve(&def.output)?.ok_or_else(|| bad("no output"))?;
+                let ingredients: Vec<Accepts> = def.ingredients.iter().map(resolve).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+                let output = item(&def.output)?;
                 recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm });
             }
         }
@@ -329,5 +377,37 @@ mod tests {
         let wheat = id("wheat");
         assert!(registry.find(&grid(&[&[], &[None, wheat], &[None, None, wheat]])).is_some());
         assert!(registry.find(&grid(&[&[wheat], &[None, None, wheat]])).is_none(), "a wider gap is another shape");
+    }
+
+    #[test]
+    fn cells_may_take_any_item_with_a_tag_or_either_of_two() {
+        let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![
+            tagged("test:oak_log", &["log"]),
+            tagged("test:birch_log", &["log"]),
+            tagged("test:coal", &[]),
+            tagged("test:charcoal", &[]),
+            tagged("test:torch", &[]),
+            tagged("test:stick", &[]),
+            tagged("test:campfire", &[]),
+        ])
+        .unwrap();
+        let source = r#"(recipes: [
+            (pattern: [["coal|charcoal"], ["stick"]], output: "torch", count: 4),
+            (ingredients: ["tag:log", "tag:log", "stick"], output: "campfire"),
+        ])"#;
+        let registry = registry(&blocks, source);
+        let id = |name: &str| Some(blocks.id(&format!("test:{name}")).unwrap());
+        for fuel in ["coal", "charcoal"] {
+            assert!(registry.find(&grid(&[&[id(fuel)], &[id("stick")]])).is_some_and(|r| r.output == id("torch").unwrap()), "{fuel}");
+        }
+        assert!(registry.find(&grid(&[&[id("stick")], &[id("stick")]])).is_none());
+        // Two logs of different woods, in any arrangement.
+        let fire = registry.find(&grid(&[&[id("stick"), id("oak_log")], &[id("birch_log")]])).unwrap();
+        assert_eq!(fire.output, id("campfire").unwrap());
+        assert!(registry.find(&grid(&[&[id("stick"), id("oak_log")], &[id("coal")]])).is_none());
+        // The viewer shows the first of each cell's choices.
+        assert_eq!(fire.cells()[..3], [id("oak_log"), id("oak_log"), id("stick")]);
+        assert_eq!(fire.alternatives()[0].map(<[BlockId]>::len), Some(2));
     }
 }
