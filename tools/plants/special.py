@@ -169,16 +169,34 @@ def cap_top(spots=0, ring=False, seed=0):
     return f
 
 
-def cap_side(seed=0):
+def cap_stem(seed=0):
+    """The stem's own texture, across its whole width (it is drawn on two narrow quads):
+    lit on the left, shaded on the right, a little fibrous."""
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        for y in range(32):
+            for x in range(32):
+                u = x / 31
+                s_ = 2 - (u > 0.55) - (u > 0.8) + (u < 0.25)
+                if r.random() < 0.08: s_ -= 1
+                c.put(x, y, 'C', s_)
+        return c
+    return f
+
+
+def cap_gills(seed=0):
+    """The underside: gills radiating from the stem, darker towards it."""
     def f():
         c = Canvas()
-        for y in range(13, 32):
-            c.put(15, y, 'C', 2); c.put(16, y, 'C', 1); c.put(17, y, 'C', 0)
-            if y > 27: c.put(14, y, 'C', 2); c.put(18, y, 'C', 0)
-        ellipse(c, 16, 12, 12, 2.2, 'P', 2)
-        for x in range(6, 27, 2): c.put(x, 14, 'C', 0)
-        for x in (3, 28): c.put(x, 31, 'L', 3); c.put(x, 30, 'L', 4)
-        rim(c); return c
+        for y in range(32):
+            for x in range(32):
+                dx, dy = x - 15.5, y - 15.5; d = math.hypot(dx, dy)
+                if d > 15.5: continue
+                a = math.atan2(dy, dx)
+                gill = math.cos(a * 18) > 0.2
+                c.put(x, y, 'C', (1 if gill else 0) + (1 if d > 9 else 0))
+        for x, y in [(15, 15), (16, 15), (15, 16), (16, 16)]: c.put(x, y, 'C', 2)
+        return c
     return f
 
 
@@ -197,4 +215,5 @@ CAPS = {
 CAP_ART = {}
 for name, (spots, ring, colours) in CAPS.items():
     CAP_ART[f'{name}_cap'] = (cap_top(spots, ring, len(name)), colours)
-    CAP_ART[f'{name}_stem'] = (cap_side(len(name)), colours)
+    CAP_ART[f'{name}_stem'] = (cap_stem(len(name)), colours)
+    CAP_ART[f'{name}_gills'] = (cap_gills(len(name)), colours)

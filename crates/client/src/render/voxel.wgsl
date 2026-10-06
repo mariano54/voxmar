@@ -123,9 +123,14 @@ const MODEL_BUSH: u32 = 3u;
 const PLANT_MODEL_SHIFT: u32 = 28u;
 const PLANT_PIECE_SHIFT: u32 = 30u;
 const PLANT_HEIGHT_SHIFT: u32 = 14u;
-// How far up its plant a mushroom's cap lies, and how far it spreads in from the cell's edge.
-const CAP_HEIGHT: f32 = 0.6;
-const CAP_INSET: f32 = 0.12;
+// A mushroom (`MODEL_CAP`, eight quads): a stem of two narrow quads crossing square with
+// the cell, and a cap with volume: a flat crown, four sloping sides down to a wider rim and
+// gills beneath it. Sizes are in blocks across and shares of the plant's height up.
+const CAP_RIM: f32 = 0.56;
+const CAP_CROWN: f32 = 0.74;
+const CAP_RIM_HALF: f32 = 0.38;
+const CAP_CROWN_HALF: f32 = 0.2;
+const STEM_HALF: f32 = 0.075;
 
 fn plant_model(w0: u32) -> u32 {
     return (w0 >> PLANT_MODEL_SHIFT) & 3u;
@@ -137,8 +142,50 @@ fn plant_piece(w0: u32) -> u32 {
     return ((w0 >> PLANT_PIECE_SHIFT) & 3u) * 2u + (face_of(w0) - FACE_PLANT);
 }
 
-fn is_cap(w0: u32) -> bool {
-    return plant_model(w0) == MODEL_CAP && plant_piece(w0) == 2u;
+// A mushroom vertex: x and z across the cell from its centre, y up the plant, and its texture
+// coordinates (the stem's own texture, the cap's top texture, or the gills).
+struct CapVertex {
+    at: vec3<f32>,
+    uv: vec2<f32>,
+}
+
+fn cap_vertex(w0: u32) -> CapVertex {
+    let corner = (w0 >> 21u) & 3u;
+    let piece = plant_piece(w0);
+    var square = array<vec2<f32>, 4>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
+    var out: CapVertex;
+    if piece < 2u {
+        // The stem: corners 0 and 1 at its foot, 2 and 3 under the cap.
+        let far = select(-1.0, 1.0, corner == 1u || corner == 2u);
+        let up = select(0.0, CAP_RIM, corner >= 2u);
+        let across = select(vec2(far * STEM_HALF, 0.0), vec2(0.0, far * STEM_HALF), piece == 1u);
+        out.at = vec3(across.x, up, across.y);
+        out.uv = vec2(far * 0.5 + 0.5, 1.0 - up);
+        return out;
+    }
+    if piece == 2u {
+        let p = square[corner] * CAP_CROWN_HALF;
+        out.at = vec3(p.x, CAP_CROWN, p.y);
+        out.uv = 0.5 + p * (0.5 / CAP_RIM_HALF);
+        return out;
+    }
+    if piece == 7u {
+        let p = square[corner] * CAP_RIM_HALF * 0.96;
+        out.at = vec3(p.x, CAP_RIM - 0.01, p.y);
+        out.uv = 0.5 + square[corner] * 0.5;
+        return out;
+    }
+    // A side, from the crown's edge down to the rim: pieces 3..6 face -z, +x, +z, -x.
+    let side = piece - 3u;
+    var ends = array<vec2<f32>, 4>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
+    let first = ends[side];
+    let second = ends[(side + 1u) % 4u];
+    let along = select(first, second, corner == 1u || corner == 2u);
+    let lower = corner < 2u;
+    let p = along * select(CAP_CROWN_HALF, CAP_RIM_HALF, lower);
+    out.at = vec3(p.x, select(CAP_CROWN, CAP_RIM, lower), p.y);
+    out.uv = 0.5 + p * (0.5 / CAP_RIM_HALF);
+    return out;
 }
 
 // Where a model's quad's vertex lies across its cell: past the two crossed diagonal quads
@@ -154,10 +201,7 @@ fn model_across(w0: u32) -> vec2<f32> {
             return select(vec2(side, far), vec2(far, side), piece < 2u);
         }
         case MODEL_CAP: {
-            if piece == 2u {
-                var square = array<vec2<f32>, 4>(vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));
-                return CAP_INSET + square[corner] * (1.0 - 2.0 * CAP_INSET);
-            }
+            return 0.5 + cap_vertex(w0).at.xz;
         }
         case MODEL_BUSH: {
             if piece == 2u {
@@ -174,8 +218,8 @@ fn model_across(w0: u32) -> vec2<f32> {
 
 // A plant vertex's texture coordinates: along the quad and up it, or across a flat cap.
 fn plant_uv(w0: u32) -> vec2<f32> {
-    if is_cap(w0) {
-        return model_across(w0);
+    if plant_model(w0) == MODEL_CAP {
+        return cap_vertex(w0).uv;
     }
     return face_uv(local_position(w0), face_of(w0));
 }
@@ -202,13 +246,19 @@ fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
     // The corner of the cell the whole plant stands in.
     let base = origin + local_position(w0) - vec3(packed.x, up, packed.y);
     let model = plant_model(w0);
-    let across = model_across(w0);
-    if is_cap(w0) {
-        up = stack + CAP_HEIGHT;
-    }
+    var across = model_across(w0);
     let cell = vec3<i32>(floor(base + 0.5));
     let a = pcg3d(vec3<u32>(cell));
     let b = pcg3d(vec3<u32>(cell + vec3(0, 991, 0)));
+    var tilt = vec2(0.0);
+    if model == MODEL_CAP {
+        // Each mushroom its own size, as wide as it is tall, and leaning a little its own way.
+        let cap = cap_vertex(w0);
+        let size = mix(0.75, 1.15, b.x);
+        across = 0.5 + cap.at.xz * size;
+        up = stack + cap.at.y;
+        tilt = (a.yz - 0.5) * 0.35;
+    }
     // Crops stand straight with the blocks, in rows.
     let angle = select((a.x - 0.5) * 1.4, 0.0, model == MODEL_HASH);
     let offset = across - 0.5;
@@ -227,7 +277,7 @@ fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
         lean = (sway(centre.xz, 1.25, b.z * 2.0).lean + parting(centre)) * 0.4 * near;
     }
     let rise = up * height;
-    let bend = lean * select(sqrt(rise), rise * rise, rise < 1.0);
+    let bend = lean * select(sqrt(rise), rise * rise, rise < 1.0) + tilt * rise;
     let lowered = rise / sqrt(1.0 + dot(lean, lean) * up * up);
     return vec3(centre.x + turned.x + shift.x + bend.x, base.y + lowered - sink, centre.z + turned.y + shift.y + bend.y);
 }
