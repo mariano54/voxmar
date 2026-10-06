@@ -153,7 +153,7 @@ pub fn take(net: &Net, item: BlockId, held: bool, stack: bool) {
 }
 
 #[derive(Component)]
-struct CataloguePanel;
+pub struct CataloguePanel;
 #[derive(Component)]
 struct SearchField;
 #[derive(Component)]
