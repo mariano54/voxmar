@@ -246,7 +246,8 @@ mod tests {
     /// Every tip has its words in English and Japanese.
     #[test]
     fn every_tip_has_words() {
-        let content = voxmar_server::assets_dir().join("content");
+        // This checkout's own words, not the installed game's.
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         for code in ["en", "ja"] {
             let locale = Locale::load(&content, code);
             for name in super::TIPS.iter().map(|name| format!("tip.{name}")).chain(["tip.label".to_owned()]) {
