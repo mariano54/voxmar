@@ -1,28 +1,65 @@
-// Recipes for the inventory's two-by-two crafting grid (engine/src/craft.rs).
+// Recipes for the crafting grid (engine/src/craft.rs): the inventory's two by two, or a
+// crafting table's three by three (right click one) for anything bigger.
 //
-// A recipe is a `pattern` (up to two rows of two item names, "" for an empty cell; it
+// A recipe is a `pattern` (up to three rows of three item names, "" for an empty cell; it
 // matches wherever it fits in the grid) or `ingredients` (in any arrangement), and makes
 // `count` of `output`. A name with {name} in it makes one recipe for every name that fits
-// all of the recipe's blocks, so one line serves every wood.
+// all of the recipe's blocks, so one line serves every wood. Each trains a `skill`
+// (Crafting unless it says; Engineering for tools, stations and machines), may need a
+// `level` in it, and gives `xp` for every one made.
 (
     recipes: [
-        // Every log splits into four planks of its wood.
-        (ingredients: ["{name}_log"], output: "{name}_planks", count: 4),
+        // Every log splits into four planks of its wood; two planks make four sticks.
+        (ingredients: ["{name}_log"], output: "{name}_planks", count: 4, xp: 1.0),
+        (pattern: [["{name}_planks"], ["{name}_planks"]], output: "stick", count: 4, xp: 1.0),
+        // Four planks make a crafting table, for the bigger recipes.
+        (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "crafting_table", skill: "core:engineering", xp: 8.0),
+        // Ore smelted with coal, by hand for now (a furnace comes later).
+        (pattern: [["copper_ore"], ["coal_ore"]], output: "copper_ingot", skill: "core:engineering", level: 5, xp: 6.0),
+        (pattern: [["iron_ore"], ["coal_ore"]], output: "iron_ingot", skill: "core:engineering", level: 15, xp: 12.0),
+        // Wooden tools (tier 1), Engineering 1.
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["", "stick", ""], ["", "stick", ""]], output: "wooden_pickaxe", skill: "core:engineering", level: 1, xp: 4),
+        (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "stick"], ["", "stick"]], output: "wooden_axe", skill: "core:engineering", level: 1, xp: 4),
+        (pattern: [["{name}_planks"], ["stick"], ["stick"]], output: "wooden_shovel", skill: "core:engineering", level: 1, xp: 4),
+        (pattern: [["{name}_planks", "{name}_planks"], ["", "stick"], ["", "stick"]], output: "wooden_hoe", skill: "core:engineering", level: 1, xp: 4),
+        (pattern: [["{name}_planks"], ["stick"]], output: "wooden_knife", skill: "core:engineering", level: 1, xp: 4),
+        // Stone tools (tier 2), Engineering 1.
+        (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["", "stick", ""], ["", "stick", ""]], output: "stone_pickaxe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["cobblestone", "cobblestone"], ["cobblestone", "stick"], ["", "stick"]], output: "stone_axe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["cobblestone"], ["stick"], ["stick"]], output: "stone_shovel", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["cobblestone", "cobblestone"], ["", "stick"], ["", "stick"]], output: "stone_hoe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["cobblestone"], ["stick"]], output: "stone_knife", skill: "core:engineering", level: 1, xp: 6),
+        // Copper tools (tier 3), Engineering 5.
+        (pattern: [["copper_ingot", "copper_ingot", "copper_ingot"], ["", "stick", ""], ["", "stick", ""]], output: "copper_pickaxe", skill: "core:engineering", level: 5, xp: 16),
+        (pattern: [["copper_ingot", "copper_ingot"], ["copper_ingot", "stick"], ["", "stick"]], output: "copper_axe", skill: "core:engineering", level: 5, xp: 16),
+        (pattern: [["copper_ingot"], ["stick"], ["stick"]], output: "copper_shovel", skill: "core:engineering", level: 5, xp: 16),
+        (pattern: [["copper_ingot", "copper_ingot"], ["", "stick"], ["", "stick"]], output: "copper_hoe", skill: "core:engineering", level: 5, xp: 16),
+        (pattern: [["copper_ingot"], ["stick"]], output: "copper_knife", skill: "core:engineering", level: 5, xp: 16),
+        // Iron tools (tier 4), Engineering 15.
+        (pattern: [["iron_ingot", "iron_ingot", "iron_ingot"], ["", "stick", ""], ["", "stick", ""]], output: "iron_pickaxe", skill: "core:engineering", level: 15, xp: 32),
+        (pattern: [["iron_ingot", "iron_ingot"], ["iron_ingot", "stick"], ["", "stick"]], output: "iron_axe", skill: "core:engineering", level: 15, xp: 32),
+        (pattern: [["iron_ingot"], ["stick"], ["stick"]], output: "iron_shovel", skill: "core:engineering", level: 15, xp: 32),
+        (pattern: [["iron_ingot", "iron_ingot"], ["", "stick"], ["", "stick"]], output: "iron_hoe", skill: "core:engineering", level: 15, xp: 32),
+        (pattern: [["iron_ingot"], ["stick"]], output: "iron_knife", skill: "core:engineering", level: 15, xp: 32),
+        // For taming and breeding: a treat any tameable animal takes, twice as gladly as its
+        // own food; seed mix that readies any kept animal to breed.
+        (ingredients: ["wheat", "wheat", "apple", "egg"], output: "taming_treat", count: 2, skill: "core:cooking", level: 27, xp: 30.0),
+        (ingredients: ["wheat_seeds", "wheat_seeds", "wheat"], output: "seed_mix", count: 2, skill: "core:cooking", level: 8, xp: 6.0),
         // Four of a stone dress into four of its bricks or blocks.
-        (pattern: [["stone", "stone"], ["stone", "stone"]], output: "stone_bricks", count: 4),
-        (pattern: [["sand", "sand"], ["sand", "sand"]], output: "sandstone"),
-        (pattern: [["red_sand", "red_sand"], ["red_sand", "red_sand"]], output: "red_sandstone"),
+        (pattern: [["stone", "stone"], ["stone", "stone"]], output: "stone_bricks", count: 4, xp: 2.0),
+        (pattern: [["sand", "sand"], ["sand", "sand"]], output: "sandstone", xp: 2.0),
+        (pattern: [["red_sand", "red_sand"], ["red_sand", "red_sand"]], output: "red_sandstone", xp: 2.0),
         // Moss grows over stonework.
-        (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks"),
-        (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone"),
+        (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks", xp: 3.0),
+        (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone", xp: 3.0),
         // Two logs over two cobblestones make a campfire, which cooks (cooking.ron).
-        (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire"),
+        (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire", skill: "core:engineering", xp: 10.0),
         // Coal on a plank makes four torches.
-        (pattern: [["coal_ore"], ["{name}_planks"]], output: "torch", count: 4),
+        (pattern: [["coal_ore"], ["{name}_planks"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
         // Two stones crossed make shears, for wool; two planks a pail, for milk.
-        (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears"),
-        (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail"),
+        (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears", skill: "core:engineering", xp: 10.0),
+        (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail", skill: "core:engineering", xp: 10.0),
         // Two wheat side by side bake into bread, which fills more than the grain.
-        (pattern: [["wheat", "wheat"]], output: "bread"),
+        (pattern: [["wheat", "wheat"]], output: "bread", skill: "core:cooking", xp: 8.0),
     ],
 )

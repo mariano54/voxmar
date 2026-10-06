@@ -80,6 +80,11 @@ impl SkillToasts {
     }
 
     /// An action refused, with why, at `now`; the same reason again only refreshes it.
+    /// Whether a refusal saying `why` is showing.
+    pub fn shows_refusal(&self, why: &str) -> bool {
+        self.lines.iter().any(|l| matches!(&l.kind, LineKind::Refused(w) if w == why))
+    }
+
     pub fn refused(&mut self, why: String, now: f32) {
         if let Some(line) = self.lines.iter_mut().find(|l| l.kind == LineKind::Refused(why.clone())) {
             line.at = now;

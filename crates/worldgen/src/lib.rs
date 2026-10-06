@@ -1494,6 +1494,50 @@ mod tests {
         }
     }
 
+    /// Flowers in 9 columns (a 3×3 area) well inside each biome near the origin, averaged over
+    /// a few seeds: `BIOMES=plains,meadow cargo test --profile iter -p voxmar_worldgen
+    /// flower_counts -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn flower_counts() {
+        let registry = registry();
+        let names = std::env::var("BIOMES").unwrap_or_else(|_| "plains,meadow,flower_meadow,forest,birch_forest,cherry_grove,savanna".into());
+        let seeds = [1u64, 7, 42];
+        let worlds: Vec<Overworld> = seeds.iter().map(|&s| Overworld::new(s, registry.clone())).collect();
+        for name in names.split(',') {
+            let (mut flowers, mut areas) = (0, 0);
+            let mut kinds = std::collections::BTreeMap::<String, i32>::new();
+            for world in &worlds {
+                let Some(at) = world.locate_biome(name, IVec2::ZERO, 8000) else { continue };
+                let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+                for column in generate_area(world, first, 3) {
+                    for z in 0..32 {
+                        for x in 0..32 {
+                            for y in (1..WORLD_HEIGHT_FOR_TESTS).rev() {
+                                let b = column.block(IVec3::new(x, y, z));
+                                if b.is_air() {
+                                    continue;
+                                }
+                                if registry.def(b).has_tag("flower") && registry.info(b).render == voxmar_engine::block::RenderKind::Plant {
+                                    flowers += 1;
+                                    *kinds.entry(registry.def(b).name.clone()).or_default() += 1;
+                                }
+                                if registry.info(b).render != voxmar_engine::block::RenderKind::Plant {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                areas += 1;
+            }
+            let mut top: Vec<_> = kinds.into_iter().collect();
+            top.sort_by_key(|k| -k.1);
+            top.truncate(4);
+            println!("{name}: {:.0} flowers per 9 columns ({areas} seeds); most: {top:?}", flowers as f32 / areas.max(1) as f32);
+        }
+    }
+
     /// Most open grass in a meadow carries a plant, but few of them are flowers.
     #[test]
     fn meadows_are_carpeted_and_flowers_stay_sparse() {

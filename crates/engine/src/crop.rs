@@ -57,8 +57,9 @@ pub struct CropDef {
     /// The least light, sky or lamp, 0..=15, it grows in.
     #[serde(default = "nine")]
     pub light: u8,
-    /// Tags the ground it is planted in must have one of.
-    #[serde(default = "soil")]
+    /// Tags the ground it is planted in must have one of: farmland a hoe tilled, unless
+    /// it says.
+    #[serde(default = "tilled")]
     pub ground: Vec<String>,
     /// For crops that keep fruiting (berries, tomatoes): picking a ripe one by hand takes
     /// it back to this stage instead of breaking it.
@@ -90,8 +91,8 @@ fn nine() -> u8 {
     9
 }
 
-fn soil() -> Vec<String> {
-    vec!["soil".into()]
+fn tilled() -> Vec<String> {
+    vec!["tilled".into()]
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -367,7 +368,7 @@ mod tests {
     fn names_are_qualified_and_defaults_filled() {
         let def = def();
         assert_eq!((def.name.as_str(), def.seed.as_str(), def.stages[2].as_str()), ("base:kale", "base:kale_seeds", "base:kale_2"));
-        assert_eq!((def.skill.as_str(), def.light, def.ground.clone()), ("core:farming", 9, vec!["soil".to_owned()]));
+        assert_eq!((def.skill.as_str(), def.light, def.ground.clone()), ("core:farming", 9, vec!["tilled".to_owned()]));
         assert_eq!(def.harvest[1].item, "base:kale_seeds");
         let plain = CropRegistry::read("base", r#"(crops: [(name: "leek", xp: (plant: 1.0, harvest: 1.0), minutes: 5.0, harvest: [], wild: ["wild_leek"])])"#).unwrap();
         assert_eq!(plain[0].stages, ["base:leek_crop_0", "base:leek_crop_1", "base:leek_crop_2", "base:leek_crop"]);

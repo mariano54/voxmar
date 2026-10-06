@@ -13,5 +13,9 @@
         (name: "inspect", duration: Instant, requires: [Alive, CreatureInReach], effects: [Inspect]),
         // Cooking what is in hand on a station that cooks it (cooking.ron).
         (name: "cook", duration: Instant, requires: [Alive, InReach, Cookable, CookingLevel], effects: [Cook]),
+        // Tilling soil into farmland with a hoe (right click), where crops are sown.
+        (name: "till", duration: Instant, requires: [Alive, InReach, Tillable], effects: [Till]),
+        // Working at a crafting table (right click): its three-by-three grid.
+        (name: "use_table", duration: Instant, requires: [Alive, InReach, CraftingTable], effects: [UseTable]),
     ],
 )

@@ -281,16 +281,27 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     let mut client = Client::join();
     let feet = client.position.floor().as_ivec3();
     let (ground, other) = (feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 2));
-    for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5"] {
+    for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5", "/give wooden_hoe 1"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(5).is_some());
+    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(6).is_some());
     let blocks = &client.content.blocks;
     let (sprout, ripe, wheat) = (blocks.expect("base:wheat_crop_0"), blocks.expect("base:wheat_crop"), blocks.expect("base:wheat"));
+    let farmland = blocks.expect("base:farmland");
     assert_eq!(client.inventory.get(4).map(|s| s.item), blocks.id("base:wheat_seeds"));
     let hold = |client: &Client, slot: u8| {
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
+
+    // Seeds go on farmland only: sowing on dirt is refused, and a hoe tills it.
+    hold(&client, 4);
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    hold(&client, 6);
+    for block in [ground, other] {
+        client.propose("base:till", ActionTarget::Block { block, face: Face::PosY });
+    }
+    client.pump_until(|c| c.world.block(ground) == Some(farmland) && c.world.block(other) == Some(farmland));
+    assert_eq!(client.world.block(ground + IVec3::Y), Some(BlockId::AIR), "sown on untilled dirt");
 
     // Saffron takes farming 60: refused, nothing sown, no experience.
     hold(&client, 5);
@@ -846,3 +857,64 @@ const SLOW: voxmar_server::Lag = voxmar_server::Lag {
     stall_every: 5,
     proposal_stall: Duration::from_millis(400),
 };
+
+#[test]
+fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
+    let mut client = Client::join();
+    let ore = client.position.floor().as_ivec3() + IVec3::new(0, -1, 1);
+    client.ok("/setblock ~ ~-1 ~1 iron_ore");
+    client.ok("/give stone_pickaxe 1");
+    client.pump_until(|c| c.world.block(ore) == c.content.blocks.id("base:iron_ore") && c.inventory.get(4).is_some());
+    let iron = client.world.block(ore).unwrap();
+    let mine = |client: &Client| client.propose("core:mine", ActionTarget::Block { block: ore, face: Face::PosY });
+    let hold = |client: &Client, slot: u8| {
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
+    };
+    // At Mining 1, even with the pickaxe: refused.
+    hold(&client, 4);
+    mine(&client);
+    let waited = Instant::now() + Duration::from_millis(1500);
+    client.pump_until(|_| Instant::now() > waited);
+    assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
+    // At Mining 15 with a bare hand: refused too.
+    client.ok("/skill mining 15");
+    hold(&client, 5);
+    mine(&client);
+    let waited = Instant::now() + Duration::from_millis(1500);
+    client.pump_until(|_| Instant::now() > waited);
+    assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
+    // At Mining 15 with the stone pickaxe: broken, quicker than by hand, teaching Mining (35).
+    hold(&client, 4);
+    let started = Instant::now();
+    mine(&client);
+    client.pump_until(|c| c.world.block(ore) == Some(BlockId::AIR) && c.earned.contains(&350));
+    let hardness = client.content.blocks.info(iron).hardness;
+    assert!(started.elapsed().as_secs_f32() < hardness * 0.5, "a stone pickaxe should mine iron ore at four times a hand's speed");
+}
+
+#[test]
+fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
+    let mut client = Client::join();
+    let table = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
+    for line in ["/clear", "/give cobblestone 3", "/give stick 2", "/fill ~1 ~ ~1 ~1 ~ ~1 crafting_table"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(table) == c.content.blocks.id("base:crafting_table") && c.inventory.get(1).is_some());
+    let pickaxe = client.content.blocks.expect("base:stone_pickaxe");
+    let lay = |client: &Client| {
+        for (slot, cell) in [(0u8, 0u8), (0, 1), (0, 2), (1, 4), (1, 7)] {
+            let to = voxmar_engine::inventory::CRAFT as u8 + cell;
+            client.propose("core:transfer", ActionTarget::Slots { from: slot, to, count: 1 });
+        }
+        client.propose("core:craft", ActionTarget::Slot(0));
+    };
+    // Away from a table the three-by-three pattern makes nothing.
+    lay(&client);
+    let waited = Instant::now() + Duration::from_millis(800);
+    client.pump_until(|_| Instant::now() > waited);
+    assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "a pickaxe was crafted without a table");
+    // At the table it makes a stone pickaxe, teaching Engineering.
+    client.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
+    client.propose("core:craft", ActionTarget::Slot(0));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == pickaxe) && c.earned.contains(&60));
+}

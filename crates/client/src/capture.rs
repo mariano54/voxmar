@@ -505,10 +505,11 @@ fn showcase(
 }
 
 /// Lays `--grid`'s items into the crafting grid as the inventory's clicks would, once
-/// the world has settled; the server does the moving.
+/// the world has settled; the server does the moving. Up to four go into the inventory's
+/// two by two; more show a crafting table's three by three, row by row.
 fn fill_grid(
     mut state: ResMut<Capture>,
-    player: Res<LocalPlayer>,
+    mut player: ResMut<LocalPlayer>,
     world: Res<ClientWorld>,
     actions: Res<crate::Actions>,
     net: Res<crate::net::Net>,
@@ -517,6 +518,11 @@ fn fill_grid(
         return;
     }
     let Some(names) = state.grid.take() else { return };
+    let table = names.len() > voxmar_engine::craft::SMALL.len();
+    if table {
+        player.station = Some(player.position.floor().as_ivec3());
+    }
+    let cell = |i: usize| if table { i } else { voxmar_engine::craft::SMALL[i] };
     let mut taken = vec![0u8; voxmar_engine::inventory::SLOTS];
     for (i, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
         let item = world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")));
@@ -526,7 +532,7 @@ fn fill_grid(
             continue;
         };
         taken[from] += 1;
-        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + i) as u8, count: 1 };
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + cell(i)) as u8, count: 1 };
         net.propose(actions.0.expect("core:transfer"), target);
     }
 }
