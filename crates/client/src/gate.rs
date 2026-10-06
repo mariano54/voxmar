@@ -215,6 +215,8 @@ enum Step {
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
+    /// The journal key opens the journal, whose Plants page lists what there is to find.
+    Journal,
     /// In creative mode the inventory's catalogue finds an item by its English name and by
     /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
     Catalogue,
@@ -854,6 +856,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
+        Step::Journal => journal(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
@@ -2097,7 +2100,7 @@ fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let skills = &world.resource::<Launch>().content.skills;
     let Some(farming) = skills.ids().find(|&id| skills.get(id).name.ends_with("farming")) else {
         gate.check("guides", Err("no Farming skill in the content".into()));
-        gate.next(Step::Catalogue, now);
+        gate.next(Step::Journal, now);
         return;
     };
     match gate.phase {
@@ -2132,6 +2135,31 @@ fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             *world.resource_mut::<GuideView>() = GuideView::default();
             world.resource_mut::<Guide>().0 = None;
             world.resource_mut::<UiState>().character_open = false;
+            gate.next(Step::Journal, now);
+        }
+    }
+}
+
+fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::journal::Page;
+    let key_code = world.resource::<crate::settings::Settings>().journal_key.0;
+    match gate.phase {
+        0 => {
+            let plants = Page::ALL.iter().position(|page| *page == Page::Plants).unwrap_or(0);
+            world.resource_mut::<crate::hud::journal::JournalView>().page = plants;
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, key_code, false);
+            let open = world.resource::<UiState>().journal_open;
+            let cells = world.query_filtered::<(), With<Button>>().iter(world).count();
+            if !open && in_phase < 2.0 {
+                return;
+            }
+            let found = world.resource::<LocalPlayer>().journal.entries().count();
+            gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
+            world.resource_mut::<UiState>().journal_open = false;
             gate.next(Step::Catalogue, now);
         }
     }
