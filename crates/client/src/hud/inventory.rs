@@ -37,6 +37,7 @@ use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::{Silent, UiSound};
 use crate::session::Launch;
 use crate::ui::widgets::{BODY, ERROR, GOLD, LARGE, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, spawn_heading, text};
+use crate::ui::widgets::space;
 use crate::world::ClientWorld;
 
 pub struct InventoryPlugin;
@@ -48,7 +49,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap).after(InventorySystems))
+                ((toggle, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -132,7 +133,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     .with_children(|cell| slot_contents(cell, font, slot));
             };
             // The crafting grid and what it makes, above the pack.
-            let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), margin: UiRect::bottom(Val::Px(5.0 * PX)), ..default() };
+            let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
                 row.spawn((Localized("inventory.craft"), text(font, "", BODY, MUTED)));
                 let square = Node {
@@ -164,7 +165,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             position_type: PositionType::Absolute,
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(PX),
-            padding: UiRect::new(Val::Px(5.0 * PX), Val::Px(5.0 * PX), Val::Px(4.0 * PX), Val::Px(5.0 * PX)),
+            padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
             ..default()
         };
         root.spawn((Tooltip, TooltipLines, tip, Piece::Tooltip.image(), Visibility::Hidden, GlobalZIndex(4)));
@@ -271,7 +272,8 @@ fn toggle(
     }
     *was_open = ui.inventory_open;
     if let Ok(mut visibility) = root.single_mut() {
-        visibility.set_if_neq(if ui.inventory_open { Visibility::Inherited } else { Visibility::Hidden });
+        // The recipe viewer takes the screen while it is open.
+        visibility.set_if_neq(if ui.inventory_open && !ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 
@@ -584,20 +586,42 @@ fn spawn_legend(card: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     let legend = Node {
         display: Display::Grid,
         grid_template_columns: RepeatedGridTrack::auto(2),
-        column_gap: Val::Px(8.0 * PX),
-        row_gap: Val::Px(2.0 * PX),
-        margin: UiRect::top(Val::Px(6.0 * PX)),
+        column_gap: Val::Px(space::SECTION),
+        row_gap: Val::Px(space::HAIR),
+        margin: UiRect::top(Val::Px(space::SECTION)),
         ..default()
     };
     card.spawn(legend).with_children(|legend| {
         for (key, hint) in LEGEND {
-            legend.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(3.0 * PX), ..default() }).with_children(|entry| {
-                let cap = Node { padding: UiRect::axes(Val::Px(3.0 * PX), Val::Px(2.0 * PX)), ..default() };
+            legend.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|entry| {
+                let cap = Node { padding: UiRect::all(Val::Px(space::INNER)), ..default() };
                 entry.spawn((cap, Piece::Button.image())).with_child((Localized(key), shadowed(font, "", BODY, SOFT), TightLine));
                 entry.spawn((Localized(hint), text(font, "", BODY, MUTED)));
             });
         }
     });
+}
+
+/// Tells the recipe viewer which item the pointer is over: a slot's, or what the crafting
+/// grid makes.
+fn hover_item(
+    ui: Res<UiState>,
+    player: Res<LocalPlayer>,
+    launch: Res<Launch>,
+    slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
+    output: Query<&RelativeCursorPosition, With<OutputSlot>>,
+    mut over: ResMut<super::recipes::HoveredItem>,
+    window: Query<&Window, With<PrimaryWindow>>,
+) {
+    // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
+    if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
+        return;
+    }
+    let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find(&player.inventory.grid()).map(|r| r.output)).flatten();
+    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made) } else { None };
+    if over.0 != item {
+        over.0 = item;
+    }
 }
 
 /// Names the item under the pointer, beside it, while nothing is held.

@@ -25,6 +25,7 @@ use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, LARGE, MUTED, Pressed, SCRIM, SOFT, Selected, TEXT, UiFont, button_row, panel, screen,
     shadowed, spawn_button, spawn_rule, text,
 };
+use crate::ui::widgets::space;
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::{DayCycle, Quality, ShadowQuality};
@@ -136,6 +137,9 @@ pub struct Settings {
     pub inventory_key: Key,
     /// Key that opens and closes the character screen (skills and how you are).
     pub character_key: Key,
+    /// Keys that show, over an item, the recipes that make it and the ones it goes into.
+    pub recipes_key: Key,
+    pub uses_key: Key,
     /// The language's code (`en`, `ja`), or empty to follow the system's.
     pub language: String,
 }
@@ -299,6 +303,8 @@ impl Default for Settings {
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
+            recipes_key: Key(KeyCode::KeyR),
+            uses_key: Key(KeyCode::KeyU),
             language: String::new(),
         }
     }
@@ -680,6 +686,8 @@ enum Binding {
     Chat,
     Inventory,
     Character,
+    Recipes,
+    Uses,
 }
 
 impl Binding {
@@ -690,6 +698,8 @@ impl Binding {
             Binding::Chat => "settings.key.chat",
             Binding::Inventory => "settings.key.inventory",
             Binding::Character => "settings.key.character",
+            Binding::Recipes => "settings.key.recipes",
+            Binding::Uses => "settings.key.uses",
         }
     }
 
@@ -700,6 +710,8 @@ impl Binding {
             Binding::Chat => settings.chat_key,
             Binding::Inventory => settings.inventory_key,
             Binding::Character => settings.character_key,
+            Binding::Recipes => settings.recipes_key,
+            Binding::Uses => settings.uses_key,
         }
     }
 
@@ -710,6 +722,8 @@ impl Binding {
             Binding::Chat => &mut settings.chat_key,
             Binding::Inventory => &mut settings.inventory_key,
             Binding::Character => &mut settings.character_key,
+            Binding::Recipes => &mut settings.recipes_key,
+            Binding::Uses => &mut settings.uses_key,
         } = key;
     }
 }
@@ -790,6 +804,9 @@ impl Control {
 
 /// The panel's tabs (by the keys of their names), each a page of settings. A new setting
 /// goes into the page where players would look for it.
+/// How many tabs the settings have.
+pub(crate) const TABS: usize = SECTIONS.len();
+
 const SECTIONS: [(&str, &[Control]); 6] = [
     (
         "settings.tab.video",
@@ -831,6 +848,8 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         &[
             Control::Key(Binding::Inventory),
             Control::Key(Binding::Character),
+            Control::Key(Binding::Recipes),
+            Control::Key(Binding::Uses),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Sprint),
             Control::Key(Binding::Zoom),
@@ -925,7 +944,7 @@ struct Rebinding(Option<Binding>);
 
 /// The tab showing; kept while the panel is closed, so it opens where it was left.
 #[derive(Resource, Default)]
-struct OpenSection(usize);
+pub(crate) struct OpenSection(pub(crate) usize);
 
 /// A settings tab to open at startup, by name (`--tab`, for captures).
 #[derive(Resource)]
@@ -942,6 +961,8 @@ fn open_start_tab(start: Option<Res<StartTab>>, mut open: ResMut<OpenSection>) {
 const PANEL_WIDTH: f32 = 430.0 * PX;
 const TAB_WIDTH: f32 = 72.0 * PX;
 const ROW: f32 = 18.0 * PX;
+/// A control's height: room for a line of any language's letters inside its frame.
+const CONTROL: f32 = 16.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
 const VALUE_WIDTH: f32 = 62.0 * PX;
 const CONTROL_WIDTH: f32 = 124.0 * PX;
@@ -953,16 +974,16 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
     let tallest = SECTIONS.iter().map(|(_, controls)| controls.len()).max().unwrap_or(0) as f32;
     commands.spawn((MenuRoot, screen(SCRIM), GlobalZIndex(1), Visibility::Hidden)).with_children(|root| {
         root.spawn(panel(PANEL_WIDTH)).with_children(|panel| {
-            let title = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
+            let title = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
             panel.spawn(title).with_children(|row| {
                 row.spawn(shadowed(font, "◆", BODY, ACCENT));
                 row.spawn((MenuTitle, shadowed(font, "", LARGE, GOLD)));
                 row.spawn(shadowed(font, "◆", BODY, ACCENT));
             });
             spawn_rule(panel, 4.0 * PX);
-            let body = Node { column_gap: Val::Px(8.0 * PX), min_height: Val::Px(tallest * ROW), ..default() };
+            let body = Node { column_gap: Val::Px(space::SECTION), min_height: Val::Px(tallest * ROW), ..default() };
             panel.spawn(body).with_children(|body| {
-                let tabs = Node { width: Val::Px(TAB_WIDTH), flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0 * PX), ..default() };
+                let tabs = Node { width: Val::Px(TAB_WIDTH), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
                 body.spawn(tabs).with_children(|tabs| {
                     for (index, (name, _)) in SECTIONS.iter().enumerate() {
                         tabs.spawn(Node::default()).with_children(|row| {
@@ -1033,7 +1054,7 @@ fn spawn_slider(row: &mut ChildSpawnerCommands, font: &Handle<Font>, slider: Sli
         ..default()
     };
     let value = Node { width: Val::Px(VALUE_WIDTH), justify_content: JustifyContent::FlexEnd, ..default() };
-    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), ..default() }).with_children(|control| {
+    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|control| {
         control.spawn((Button, SliderTrack(slider), RelativeCursorPosition::default(), area)).with_children(|area| {
             area.spawn((track, Piece::Well.image())).with_children(|track| {
                 track.spawn((SliderFill(slider), fill, Piece::Bar.image())).with_child((knob, Piece::Knob.image()));
@@ -1065,7 +1086,7 @@ fn spawn_choice(row: &mut ChildSpawnerCommands, font: &Handle<Font>, choice: Cho
     });
     row.commands().entity(button).insert(Node {
         flex_grow: 1.0,
-        height: Val::Px(14.0 * PX),
+        height: Val::Px(CONTROL),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
         ..default()
@@ -1081,7 +1102,7 @@ fn spawn_key(row: &mut ChildSpawnerCommands, font: &Handle<Font>, binding: Bindi
     });
     row.commands().entity(button).insert(Node {
         flex_grow: 1.0,
-        height: Val::Px(14.0 * PX),
+        height: Val::Px(CONTROL),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
         ..default()
@@ -1110,7 +1131,7 @@ fn spawn_dropdown(row: &mut ChildSpawnerCommands, font: &Handle<Font>, dropdown:
     });
     row.commands().entity(button).insert(Node {
         flex_grow: 1.0,
-        height: Val::Px(14.0 * PX),
+        height: Val::Px(CONTROL),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
         ..default()

@@ -7,6 +7,7 @@ use crate::ui::skin::{PX, font_size};
 use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, ERROR, GOLD, MUTED, Pressed, UiFont, button_row, panel, shadowed, spawn_button, text,
 };
+use crate::ui::widgets::space;
 use super::{Notice, Screen};
 
 pub struct TitlePlugin;
@@ -43,7 +44,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, mut notice: ResMut<Notice>) 
     };
     commands.spawn((DespawnOnExit(Screen::Title), root, BackgroundGradient::from(shade))).with_children(|root| {
         // The name in big gold pixels, between teal diamonds.
-        let title = Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), margin: UiRect::bottom(Val::Px(18.0 * PX)), ..default() };
+        let title = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::OUTER + space::GAP)), ..default() };
         root.spawn(title).with_children(|title| {
             title.spawn(shadowed(font, "◆", font_size(4), ACCENT));
             title.spawn(shadowed(font, "VOXMAR", font_size(10), GOLD));
@@ -51,7 +52,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, mut notice: ResMut<Notice>) 
         });
 
         let mut card = panel(200.0 * PX);
-        card.0.row_gap = Val::Px(4.0 * PX);
+        card.0.row_gap = Val::Px(space::INNER);
         root.spawn(card).with_children(|card| {
             card.spawn(button_row(0.0)).with_children(|row| {
                 spawn_button(row, font, "menu.singleplayer", ButtonStyle::Primary, Action::Singleplayer);
@@ -69,7 +70,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, mut notice: ResMut<Notice>) 
             }
         });
 
-        let corner = Node { position_type: PositionType::Absolute, left: Val::Px(6.0 * PX), bottom: Val::Px(5.0 * PX), ..default() };
+        let corner = Node { position_type: PositionType::Absolute, left: Val::Px(space::GAP), bottom: Val::Px(space::GAP), ..default() };
         root.spawn((corner, shadowed(font, concat!("voxmar ", env!("CARGO_PKG_VERSION")), BODY, MUTED)));
     });
 }

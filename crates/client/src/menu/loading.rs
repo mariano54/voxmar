@@ -10,6 +10,7 @@ use super::Screen;
 use crate::lang::Locale;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{BODY, GOLD, LARGE, MUTED, UiFont, shadowed};
+use crate::ui::widgets::space;
 use crate::net::Net;
 use crate::player::LocalPlayer;
 use crate::world::ClientWorld;
@@ -63,7 +64,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, assets: Res<AssetServer>) {
         flex_direction: FlexDirection::Column,
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
-        row_gap: Val::Px(5.0 * PX),
+        row_gap: Val::Px(space::GAP),
         ..default()
     };
     // Above the HUD and the settings panel, which may open meanwhile.
@@ -81,7 +82,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, assets: Res<AssetServer>) {
         let track = Node {
             width: Val::Px(BAR),
             height: Val::Px(6.0 * PX),
-            margin: UiRect::top(Val::Px(8.0 * PX)),
+            margin: UiRect::top(Val::Px(space::SECTION)),
             padding: UiRect::all(Val::Px(PX)),
             ..default()
         };

@@ -16,6 +16,7 @@ use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, MUTED, SOFT, TEXT, UiFont, shadowed, text};
+use crate::ui::widgets::space;
 
 /// Seconds the creature last struck at stays in the readout after the crosshair leaves it.
 const FIGHTING: f32 = 6.0;
@@ -71,15 +72,15 @@ struct ReadoutDot(usize);
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
-    let strip = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), top: Val::Px(6.0 * PX), justify_content: JustifyContent::Center, ..default() };
+    let strip = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), top: Val::Px(space::GAP), justify_content: JustifyContent::Center, ..default() };
     let plate = Node {
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::Center,
-        row_gap: Val::Px(2.0 * PX),
-        padding: UiRect::new(Val::Px(4.0 * PX), Val::Px(4.0 * PX), Val::Px(2.0 * PX), Val::Px(3.0 * PX)),
+        row_gap: Val::Px(space::HAIR),
+        padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
         ..default()
     };
-    let line = Node { column_gap: Val::Px(4.0 * PX), ..default() };
+    let line = Node { column_gap: Val::Px(space::INNER), ..default() };
     let bar = Node { align_self: AlignSelf::Stretch, min_width: Val::Px(40.0 * PX), height: Val::Px(4.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
     commands.spawn((strip, GlobalZIndex(1))).with_children(|strip| {
         strip.spawn((plate, Piece::Tooltip.image(), ReadoutPlate, Visibility::Hidden)).with_children(|plate| {
@@ -87,7 +88,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 line.spawn((shadowed(font, "", BODY, TEXT), ReadoutName));
                 line.spawn((shadowed(font, "", BODY, GOLD), ReadoutLevel));
             });
-            let tags = Node { column_gap: Val::Px(4.0 * PX), display: Display::None, ..default() };
+            let tags = Node { column_gap: Val::Px(space::INNER), display: Display::None, ..default() };
             plate.spawn((tags, ReadoutTags)).with_children(|tags| {
                 for i in 0..TAGS {
                     // A dot before every tag but the first.

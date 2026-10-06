@@ -1,5 +1,7 @@
 //! Stage 3: ore veins. Each column seeds its own veins; a column also places the parts of
-//! its neighbours' veins that reach into it, so veins cross borders seamlessly.
+//! its neighbours' veins that reach into it, so veins cross borders seamlessly. Where a
+//! vein runs through deepslate it takes the ore's deepslate form (`deepslate_{name}`),
+//! drawn over deepslate, so the deep layers' ore matches the rock around it.
 
 use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::coords::ColumnPos;
@@ -13,6 +15,8 @@ const PURPOSE: u64 = 0x04e5;
 
 struct Ore {
     block: BlockId,
+    /// Its form in deepslate, if it has one.
+    deep: Option<BlockId>,
     attempts: u32,
     heights: (i32, i32),
     size: u32,
@@ -20,12 +24,20 @@ struct Ore {
 
 pub struct Resources {
     ores: Vec<Ore>,
+    deepslate: BlockId,
 }
 
 impl Resources {
     pub fn new(registry: &BlockRegistry) -> Self {
-        let ore = |name, attempts, heights, size| Ore { block: registry.expect(&format!("base:{name}")), attempts, heights, size };
+        let ore = |name, attempts, heights, size| Ore {
+            block: registry.expect(&format!("base:{name}")),
+            deep: registry.id(&format!("base:deepslate_{name}")),
+            attempts,
+            heights,
+            size,
+        };
         Self {
+            deepslate: registry.expect("base:deepslate"),
             ores: vec![
                 ore("coal_ore", 24, (SEA_LEVEL - 59, SEA_LEVEL + 126), 12),
                 ore("copper_ore", 10, (SEA_LEVEL - 59, SEA_LEVEL + 46), 9),
@@ -46,7 +58,11 @@ impl Resources {
                     for _ in 0..ore.attempts {
                         let mut p = origin + IVec3::new(rng.below(32), rng.range(ore.heights.0, ore.heights.1), rng.below(32));
                         for _ in 0..ore.size {
-                            blocks.replace_stone(p, ore.block);
+                            let block = match ore.deep {
+                                Some(deep) if blocks.get(p) == self.deepslate => deep,
+                                _ => ore.block,
+                            };
+                            blocks.replace_stone(p, block);
                             p[rng.below(3) as usize] += if rng.chance(0.5) { 1 } else { -1 };
                         }
                     }

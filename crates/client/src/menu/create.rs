@@ -12,6 +12,7 @@ use crate::ui::widgets::{
     BODY, ButtonStyle, ERROR, MUTED, Pressed, SCRIM, Selected, TextField, UiFont, button_row, label, panel, spawn_heading,
     screen, spawn_button, spawn_text_field, text,
 };
+use crate::ui::widgets::space;
 use super::{Screen, worlds_dir};
 use crate::session::{self, Launch};
 
@@ -57,8 +58,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, locale: Res<Locale>) {
                 spawn_button(row, font, "mode.survival", ButtonStyle::Secondary, Action::Mode(GameMode::Survival));
                 spawn_button(row, font, "mode.creative", ButtonStyle::Secondary, Action::Mode(GameMode::Creative));
             });
-            panel.spawn((ModeHint, Node { margin: UiRect::top(Val::Px(4.0 * PX)), ..default() }, text(font, "", BODY, MUTED)));
-            panel.spawn((ErrorText, Node { margin: UiRect::top(Val::Px(4.0 * PX)), ..default() }, text(font, "", BODY, ERROR)));
+            panel.spawn((ModeHint, Node { margin: UiRect::top(Val::Px(space::INNER)), ..default() }, text(font, "", BODY, MUTED)));
+            panel.spawn((ErrorText, Node { margin: UiRect::top(Val::Px(space::INNER)), ..default() }, text(font, "", BODY, ERROR)));
             panel.spawn(button_row(6.0 * PX)).with_children(|row| {
                 spawn_button(row, font, "create.create", ButtonStyle::Primary, Action::Create);
                 spawn_button(row, font, "menu.back", ButtonStyle::Secondary, Action::Back);

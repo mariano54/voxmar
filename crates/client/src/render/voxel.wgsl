@@ -121,6 +121,71 @@ fn tufts(p: vec2<f32>) -> f32 {
     return mix(mix(at.x, at.y, w.x), mix(at.z, at.w, w.x), w.y);
 }
 
+// Plant models (voxmar_engine::block::PlantModel) and where their bits lie (mesh.rs).
+const MODEL_CROSS: u32 = 0u;
+const MODEL_HASH: u32 = 1u;
+const MODEL_CAP: u32 = 2u;
+const MODEL_BUSH: u32 = 3u;
+const PLANT_MODEL_SHIFT: u32 = 28u;
+const PLANT_PIECE_SHIFT: u32 = 30u;
+const PLANT_HEIGHT_SHIFT: u32 = 14u;
+// How far up its plant a mushroom's cap lies, and how far it spreads in from the cell's edge.
+const CAP_HEIGHT: f32 = 0.6;
+const CAP_INSET: f32 = 0.12;
+
+fn plant_model(w0: u32) -> u32 {
+    return (w0 >> PLANT_MODEL_SHIFT) & 3u;
+}
+
+// Which quad of its model a plant vertex belongs to: the even ones are packed along one
+// diagonal, the odd along the other.
+fn plant_piece(w0: u32) -> u32 {
+    return ((w0 >> PLANT_PIECE_SHIFT) & 3u) * 2u + (face_of(w0) - FACE_PLANT);
+}
+
+fn is_cap(w0: u32) -> bool {
+    return plant_model(w0) == MODEL_CAP && plant_piece(w0) == 2u;
+}
+
+// Where a model's quad's vertex lies across its cell: past the two crossed diagonal quads
+// every model starts with, a # of four straight quads (crops), a flat cap (mushrooms) or a
+// straight cross through the middle (bushes).
+fn model_across(w0: u32) -> vec2<f32> {
+    let corner = (w0 >> 21u) & 3u;
+    let far = select(0.0, 1.0, corner == 1u || corner == 2u);
+    let piece = plant_piece(w0);
+    switch plant_model(w0) {
+        case MODEL_HASH: {
+            let side = select(0.3, 0.7, (piece & 1u) == 1u);
+            return select(vec2(side, far), vec2(far, side), piece < 2u);
+        }
+        case MODEL_CAP: {
+            if piece == 2u {
+                var square = array<vec2<f32>, 4>(vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));
+                return CAP_INSET + square[corner] * (1.0 - 2.0 * CAP_INSET);
+            }
+        }
+        case MODEL_BUSH: {
+            if piece == 2u {
+                return vec2(far, 0.5);
+            }
+            if piece == 3u {
+                return vec2(0.5, far);
+            }
+        }
+        default: {}
+    }
+    return plant_across(w0);
+}
+
+// A plant vertex's texture coordinates: along the quad and up it, or across a flat cap.
+fn plant_uv(w0: u32) -> vec2<f32> {
+    if is_cap(w0) {
+        return model_across(w0);
+    }
+    return face_uv(local_position(w0), face_of(w0));
+}
+
 // Where a plant quad's vertex lies across its cell, from its corner: (0, 0) to (1, 1) along
 // one diagonal, (1, 0) to (0, 1) along the other.
 fn plant_across(w0: u32) -> vec2<f32> {
@@ -136,19 +201,26 @@ fn plant_across(w0: u32) -> vec2<f32> {
 // Rainbow's Foliage varies its models: turned up to 40° either way, shifted and sunk a
 // little, and taller or shorter, in tufts across a meadow. It bends from its base with the
 // wind and away from the player.
-fn plant_position(w0: u32, origin: vec3<f32>) -> vec3<f32> {
-    let across = plant_across(w0);
-    let up = f32((w0 >> 23u) & 1u) + f32((w0 >> PLANT_STACK_SHIFT) & 3u);
+fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
+    let packed = plant_across(w0);
+    let stack = f32((w0 >> PLANT_STACK_SHIFT) & 3u);
+    var up = f32((w0 >> 23u) & 1u) + stack;
     // The corner of the cell the whole plant stands in.
-    let base = origin + local_position(w0) - vec3(across.x, up, across.y);
+    let base = origin + local_position(w0) - vec3(packed.x, up, packed.y);
+    let model = plant_model(w0);
+    let across = model_across(w0);
+    if is_cap(w0) {
+        up = stack + CAP_HEIGHT;
+    }
     let cell = vec3<i32>(floor(base + 0.5));
     let a = pcg3d(vec3<u32>(cell));
     let b = pcg3d(vec3<u32>(cell + vec3(0, 991, 0)));
-    let angle = (a.x - 0.5) * 1.4;
+    // Crops stand straight with the blocks, in rows.
+    let angle = select((a.x - 0.5) * 1.4, 0.0, model == MODEL_HASH);
     let offset = across - 0.5;
     let turned = vec2(offset.x * cos(angle) - offset.y * sin(angle), offset.x * sin(angle) + offset.y * cos(angle));
     let shift = (a.yz - 0.5) * 0.3;
-    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x));
+    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x)) * f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
     let sink = b.y * 0.25;
     // Bent along a curve from the base, and lower for it; the whole plant leans alike, so
     // a tall plant's two blocks stay joined.
@@ -289,7 +361,7 @@ fn chunk_of(in: Vertex) -> vec4<i32> {
 fn world_position(in: Vertex) -> vec3<f32> {
     let origin = vec3<f32>(chunk_of(in).xyz);
     if face_of(in.packed.x) >= FACE_PLANT {
-        return plant_position(in.packed.x, origin);
+        return plant_position(in.packed.x, in.packed.y, origin);
     }
     var world = origin + local_position(in.packed.x);
     let tint = tint_kind(in.packed.y);
@@ -368,7 +440,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.unclipped_depth = out.position.z;
     out.position.z = min(out.position.z, 1.0);
 #endif
-    out.uv = face_uv(local_position(in.packed.x), face_of(in.packed.x));
+    out.uv = select(face_uv(local_position(in.packed.x), face_of(in.packed.x)), plant_uv(in.packed.x), face_of(in.packed.x) >= FACE_PLANT);
     out.surface = in.packed.y & 0xFFFFFFu;
     return out;
 }
@@ -444,7 +516,7 @@ fn vertex(in: Vertex) -> VertexOutput {
     }
     out.clip_position = view.clip_from_world * vec4(out.world_position, 1.0);
     out.face = face_of(w0);
-    out.uv = face_uv(local_position(w0), out.face);
+    out.uv = select(face_uv(local_position(w0), out.face), plant_uv(w0), out.face >= FACE_PLANT);
 #ifdef FRINGE
     out.uv = card.uv;
     // Lit as the face of the crown it grows from, so a card seen edge on matches it; fruit

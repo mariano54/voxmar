@@ -46,8 +46,10 @@ between the shots (the sun and wind moving), as shadows and leaves flicker over 
 DIR, and `--server-lag MS` makes every tick of the integrated server take that much longer,
 as on a busy machine (see docs/quality.md).
 
-Before landing on main, run `tools/gate` (a quick gate: the build, the tests the change can
-reach and that session in a small world); play builds pass `tools/gate --full`. For changes
+Land on main with `tools/land`: it merges origin's main and the local one in, runs
+`tools/gate` (a quick gate: the build, the tests the change can reach and that session in a
+small world), fast-forwards main and pushes it, and checks that origin has it. Play builds
+pass `tools/gate --full`. For changes
 that can cost frame time, `tools/bench` compares frame times with main's on a quiet
 machine. All are described in docs/quality.md.
 
@@ -80,6 +82,13 @@ what it makes to craft one onto the pointer (Shift-click: as many as fit into th
 inventory). Recipes are content (`recipes.ron`): a log makes four of its planks, four stone
 make stone bricks, four sand sandstone, moss and stonework mossy stonework, and two wheat a
 loaf of bread.
+
+The recipe viewer works as NEI does: over any item in the inventory (or in the viewer),
+R shows the recipes that make it and U everything it goes into, drawn as they happen (the
+crafting grid, a campfire, shears on a mouflon, a creature that drops it); arrows turn the
+pages, clicking an item looks up its recipes (right-click, its uses) and Back retraces the
+steps. Both keys can be changed in Settings, Keys. It reads the same content the game plays
+by, so a package's recipes show up in it on their own.
 
 The character screen (C) shows health, hunger, how warm you feel and the effects on you,
 and every skill with its icon, level and progress; click a skill for its guide, what each
@@ -184,7 +193,8 @@ resolution (75%, 50% or Full: how many pixels the world is drawn at before it is
 the window; menus and text stay sharp), field of view, FOV effects (the view widening while
 sprinting), shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
-broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
+broken blocks and the chips while mining, and the smoke, embers, sparks and flames fires
+and torches give off), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
 smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
@@ -608,6 +618,11 @@ and drifting near the eye, so they look like volumes from inside and above; rain
 and fills puddles; frost whitens it; clouds cast moving shadows. Rainbows, halos, aurora,
 shooting stars and heat haze are in the weather the client receives and wait on the renderer
 (docs/weather-effects.md). F3 shows the weather and the effects showing.
+
+Blocks give off particles near the player as their data says (`particles` in blocks.ron, each a
+`style` of Smoke, Ember, Spark or Flame with its rate, burst count, place, spread, colour and size;
+`engine::block::Emission`): a campfire smokes, floats embers and now and then crackles with
+sparks, and a torch's flame flickers. The nearest 32 within 24 blocks emit (client/src/emitters.rs).
 
 An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
 (kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`

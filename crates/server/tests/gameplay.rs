@@ -718,4 +718,15 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
         let until = Instant::now() + Duration::from_millis(200);
         client.pump_until(|_| Instant::now() > until);
     }
+    // The chick inherits its plumage from its parents: each of its two alleles is one of
+    // theirs (no mutation is that likely here).
+    let genes = &client.content.creatures.get(hen).def.genes;
+    assert!(!genes.is_empty(), "junglefowl have genes");
+    let alleles = |v: &voxmar_protocol::CreatureView| match voxmar_engine::genes::unpack(genes, &v.genes).0[0] {
+        voxmar_engine::genes::Gene::Pair(a, b) => [a, b],
+        _ => panic!("plumage is an allele gene"),
+    };
+    let parents: Vec<u8> = hens.iter().flat_map(|id| alleles(&client.creatures[id])).collect();
+    let chick = client.creatures.values().find(|v| v.young && v.kept).expect("born");
+    assert!(alleles(chick).iter().all(|a| parents.contains(a)), "{:?} from parents {parents:?}", alleles(chick));
 }

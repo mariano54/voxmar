@@ -153,15 +153,25 @@ enum Step {
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
     /// over picks up.
     Strike,
-    /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory.
+    /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
+    /// smoke and embers rise from the fire.
     Cook,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
+    /// Over a log in the inventory, the uses key shows what it goes into (planks, a
+    /// campfire); clicking planks shows their recipe, and Back returns.
+    Recipes,
+    /// Every in-game screen and state, in English and Japanese: no text reaches past the
+    /// element it sits in.
+    Fit,
     /// Leaving the world for the title screen.
     Leave,
+    /// The title screen and every menu before a game, in English and Japanese: no text
+    /// reaches past the element it sits in.
+    FitMenus,
     Done,
 }
 
@@ -200,6 +210,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// Texts found not to fit, each once per language: what, and where it was first seen.
+    spills: Vec<(String, String)>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
     failures: Vec<String>,
@@ -233,6 +245,7 @@ impl Gate {
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
+            spills: Vec::new(),
             food_moved: false,
             failures: Vec::new(),
             passes: 0,
@@ -389,7 +402,7 @@ fn run(world: &mut World) {
 /// What ends the session early: leaving the game, the observer cut off, or time running
 /// out.
 fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result<(), String> {
-    if !matches!(gate.step, Step::Load | Step::Leave) && screen != Screen::InGame {
+    if !matches!(gate.step, Step::Load | Step::Leave | Step::FitMenus) && screen != Screen::InGame {
         let notice = world.resource::<Notice>().0.clone().unwrap_or_default();
         return Err(format!("left the game for {screen:?}: {notice}"));
     }
@@ -408,7 +421,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         return Err(format!("{:?} took longer than {limit}s", gate.step));
     }
     if let Some(observer) = &mut gate.observer
-        && gate.step != Step::Leave
+        && !matches!(gate.step, Step::Leave | Step::FitMenus)
     {
         observer.pump()?;
     }
@@ -616,6 +629,9 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
+        Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Fit => fit(world, gate, now, in_phase),
+        Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
                 let late: Vec<String> = world.resource::<crate::render::warm::PipelineWatch>().stop().into_iter().filter(|l| !GATE_PIPELINES.contains(&l.as_str())).collect();
@@ -649,7 +665,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                     Ok("the player's settings file was left alone".to_owned())
                 };
                 gate.check("settings: untouched", untouched);
-                gate.next(Step::Done, now);
+                gate.next(Step::FitMenus, now);
             }
         }
         Step::Done => {}
@@ -859,6 +875,199 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         _ => {}
+    }
+}
+
+/// The recipe viewer: U over an oak log in the inventory lists what it goes into, then an
+/// item clicked in the viewer shows its own recipes, and Back returns.
+fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::recipes::{HoveredItem, RecipeViewer};
+    let blocks = world.resource::<Launch>().content.blocks.clone();
+    let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
+        gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
+        gate.next(Step::Fit, now);
+        return;
+    };
+    let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
+    match gate.phase {
+        0 => {
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.character_open, ui.console_open, ui.inventory_open) = (false, false, false, true);
+            // As if the pointer were over a log, the uses key pressed.
+            world.resource_mut::<HoveredItem>().0 = Some(log);
+            key(world, uses_key, true);
+            gate.advance(now);
+        }
+        1 => {
+            key(world, uses_key, false);
+            let viewer = world.resource::<RecipeViewer>();
+            let outputs: Vec<BlockId> = viewer.found().iter().map(|entry| entry.output).collect();
+            let open = world.resource::<UiState>().recipes_open;
+            if open && outputs.contains(&planks) && outputs.contains(&campfire) {
+                gate.check("recipes: uses", Ok(format!("U over an oak log lists {} uses, planks and the campfire among them", outputs.len())));
+                // As if planks were clicked in the viewer.
+                world.resource_mut::<RecipeViewer>().open(planks, false);
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
+                gate.next(Step::Fit, now);
+            }
+        }
+        2 => {
+            let made: Vec<String> = world.resource::<RecipeViewer>().found().iter().map(|entry| format!("{:?}", entry.method)).collect();
+            let title = world.query_filtered::<&Text, With<Localized>>().iter(world).count();
+            let crafted = made.iter().any(|m| m.starts_with("Craft") && m.contains(&format!("{log:?}")));
+            if crafted || in_phase > 2.0 {
+                gate.check("recipes: click", if crafted { Ok(format!("planks show {} recipes, the log in the grid ({title} texts drawn)", made.len())) } else { Err(format!("planks show {made:?}")) });
+                world.resource_mut::<RecipeViewer>().trail.pop();
+                gate.advance(now);
+            }
+        }
+        _ => {
+            let viewer = world.resource::<RecipeViewer>();
+            let back = viewer.trail.last().is_some_and(|lookup| lookup.item == log && lookup.uses);
+            gate.check("recipes: back", if back { Ok("Back returns to the log's uses".into()) } else { Err(format!("after Back the viewer shows {:?}", viewer.trail.last())) });
+            world.resource_mut::<RecipeViewer>().trail.clear();
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.recipes_open, ui.inventory_open) = (false, false);
+            world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Fit, now);
+        }
+    }
+}
+
+/// A screen or state the text-fit tour opens.
+#[derive(Clone, Copy, Debug)]
+enum View {
+    /// The HUD alone, with experience, a refusal and a level-up showing.
+    Hud,
+    Inventory,
+    Character,
+    /// The character screen with one skill's guide open.
+    Guide(usize),
+    /// The menu on one settings tab.
+    Menu(usize),
+    /// Dead, waiting to respawn.
+    Dead,
+    /// The chat and command line, open.
+    Console,
+    /// The recipe viewer over the inventory: a campfire's recipes, or an oak log's uses.
+    Recipes(bool),
+    /// The menus before a game: the title screen, the worlds, a new world, joining one,
+    /// and the settings on one tab.
+    Title,
+    Worlds,
+    Create,
+    Join,
+    Settings(usize),
+}
+
+/// The languages the text-fit tour checks, and how long it leaves each view to lay out.
+const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
+const FIT_SETTLE: f32 = 0.4;
+
+/// Opens every view in turn, in each language, and lists the texts that do not fit (see
+/// `ui::fit`): one check for the lot, naming each.
+fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let skills = world.resource::<Launch>().content.skills.len();
+    let views: Vec<View> = if gate.step == Step::FitMenus {
+        [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
+    } else {
+        [View::Hud, View::Dead, View::Console, View::Inventory, View::Recipes(false), View::Recipes(true), View::Character]
+            .into_iter()
+            .chain((0..skills).map(View::Guide))
+            .chain((0..crate::settings::TABS).map(View::Menu))
+            .collect()
+    };
+    let menus = gate.step == Step::FitMenus;
+    let index = gate.phase as usize;
+    let Some((language, view)) = FIT_LANGUAGES.get(index / views.len()).map(|language| (*language, views[index % views.len()])) else {
+        let spills: Vec<String> = std::mem::take(&mut gate.spills).into_iter().map(|(_, line)| line).collect();
+        let result = if spills.is_empty() {
+            Ok(format!("every text fits on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+        } else {
+            Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
+        };
+        gate.check(if menus { "text fits: menus" } else { "text fits" }, result);
+        show_view(world, None, now);
+        set_language(world, "en");
+        gate.next(if menus { Step::Done } else { Step::Leave }, now);
+        return;
+    };
+    if world.resource::<Locale>().code() != language {
+        set_language(world, language);
+    }
+    show_view(world, Some(view), now);
+    if in_phase < FIT_SETTLE {
+        return;
+    }
+    for spill in crate::ui::fit::find(world) {
+        let what = format!("{language}: {spill}");
+        if !gate.spills.iter().any(|(known, _)| *known == what) {
+            gate.spills.push((what, format!("{language}, {view:?}: {spill}")));
+        }
+    }
+    gate.advance(now);
+}
+
+/// Opens one view of [`fit`]'s tour, or closes every screen.
+fn show_view(world: &mut World, view: Option<View>, now: f32) {
+    let screen = match view {
+        Some(View::Title) => Some(Screen::Title),
+        Some(View::Worlds) => Some(Screen::Worlds),
+        Some(View::Create) => Some(Screen::CreateWorld),
+        Some(View::Join) => Some(Screen::Join),
+        Some(View::Settings(_)) => Some(Screen::Settings),
+        _ => None,
+    };
+    if let Some(screen) = screen
+        && *world.resource::<State<Screen>>().get() != screen
+    {
+        world.resource_mut::<NextState<Screen>>().set(screen);
+    }
+    world.resource_mut::<LocalPlayer>().dead = matches!(view, Some(View::Dead));
+    let mut ui = world.resource_mut::<UiState>();
+    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+    match view {
+        Some(View::Inventory) => ui.inventory_open = true,
+        Some(View::Character | View::Guide(_)) => ui.character_open = true,
+        Some(View::Menu(_)) => ui.menu_open = true,
+        Some(View::Console) => ui.console_open = true,
+        Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
+        _ => {}
+    }
+    if !matches!(view, Some(View::Recipes(_))) {
+        ui.recipes_open = false;
+    }
+    let lookup = match view {
+        Some(View::Recipes(uses)) => {
+            let blocks = &world.resource::<Launch>().content.blocks;
+            blocks.id(if uses { "base:oak_log" } else { "base:campfire" }).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
+        }
+        _ => None,
+    };
+    world.resource_mut::<crate::hud::recipes::RecipeViewer>().trail = lookup.into_iter().collect();
+    let guide = match view {
+        Some(View::Guide(index)) => world.resource::<Launch>().content.skills.ids().nth(index),
+        _ => None,
+    };
+    world.resource_mut::<crate::hud::character::Guide>().0 = guide;
+    if let Some(View::Menu(tab) | View::Settings(tab)) = view {
+        world.resource_mut::<crate::settings::OpenSection>().0 = tab;
+    }
+    if let Some(View::Hud) = view {
+        // The HUD's passing notes, as long as they come: a gain, a refusal, a new level.
+        let launch = world.resource::<Launch>().clone();
+        let locale = world.resource::<Locale>().clone();
+        let skills = &launch.content.skills;
+        if let Some(skill) = skills.ids().max_by_key(|&id| locale.skill(skills.get(id)).chars().count()) {
+            let name = locale.skill(skills.get(skill));
+            let needs = locale.format("skills.needs", &[("skill", &name), ("level", &99)]);
+            let mut toasts = world.resource_mut::<crate::hud::skills::SkillToasts>();
+            toasts.gained(skill, 12_345, now);
+            toasts.refused(needs, now);
+            toasts.level_up(skill, 99, now);
+        }
     }
 }
 
@@ -1172,7 +1381,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if cooked > gate.count_before {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
-                gate.next(Step::Tame, now);
+                gate.advance(now);
             } else if in_phase > 15.0 {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
@@ -1181,9 +1390,32 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
+        // The air over the fire, twice a little apart: its smoke and embers move it.
+        3 => {
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 1.6, 0.5));
+            if in_phase > 0.5 && gate.shot(world, "fire").is_some() {
+                gate.advance(now);
+            }
+        }
+        4 if in_phase > 0.6 => {
+            let Some(later) = gate.shot(world, "fire_later") else { return };
+            let change = gate.earlier_shot("fire").map_or(0.0, |earlier| change(&earlier, &later, 0.4));
+            let result = if change >= FIRE_CHANGE {
+                Ok(format!("smoke and embers rise, changing the view over it by {change:.2} levels"))
+            } else {
+                Err(format!("nothing rises from it: the view over it changed by {change:.2} levels"))
+            };
+            gate.check("campfire smoke", result);
+            gate.next(Step::Tame, now);
+        }
         _ => {}
     }
 }
+
+/// How much the middle of the view over a campfire must change in a little over half a
+/// second, in levels (of 255) on average: its smoke and embers drifting up. Nothing else
+/// there moves but the odd leaf.
+const FIRE_CHANGE: f32 = 0.3;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).
@@ -1422,7 +1654,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("gorge"))) else {
                 if in_phase > 20.0 {
                     gate.check("gorge", Err("no answer to /locate gorge".into()));
-                    gate.next(Step::Leave, now);
+                    gate.next(Step::Recipes, now);
                 }
                 return;
             };
@@ -1433,7 +1665,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("gorge", Err(format!("/locate gorge: {reply}")));
-                gate.next(Step::Leave, now);
+                gate.next(Step::Recipes, now);
                 return;
             };
             gate.gorge = at;
@@ -1465,7 +1697,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     } else {
                         gate.check("gorge", Err(problem));
                     }
-                    gate.next(Step::Leave, now);
+                    gate.next(Step::Recipes, now);
                 }
                 return;
             }
@@ -1503,7 +1735,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the walls by the water at {} {} {} stand only {walls} blocks high", at.x, water, at.z)),
             };
             gate.check("gorge", result);
-            gate.next(Step::Leave, now);
+            gate.next(Step::Recipes, now);
         }
         _ => {}
     }

@@ -200,6 +200,12 @@ That is how each part of the terrain's shading was weighed: a scratch build pass
 `VOXMAR_ABLATE` to the terrain pipelines as shader defs that switch parts off (fog,
 shadows, cloud shade, biome tint, weathering, all lighting), one run each.
 
+On the Linux box (Vulkan on an NVIDIA L4), `VOXMAR_GPU_TIMES=1` makes a capture print
+the GPU time of every pass that records a span (Bevy's `RenderDiagnosticsPlugin`, from
+timestamp queries; passes without a span are not listed), and `perf record -p` on a
+running capture shows the CPU side by thread. There, most scenes are limited by the CPU:
+the GPU was 40% busy in the creature scene.
+
 A run at a tiny size (640×416) shows the CPU's limit, as the GPU then does little:
 about 3.6–4.2 ms a frame in Low Power Mode. No thread is busy for all of it (the render
 thread about 40%): the frame waits on hand-offs between the main and render threads and
@@ -343,8 +349,18 @@ blocks, sunk up to 0.25, and scaled 0.6–1.25 in height, with a smooth noise ma
 tufts of taller and shorter plants across a meadow. Stacks (tall grass, sugar cane) are
 shaped as one plant. The mesher marks each plant vertex with its corner (in the AO bits,
 which plants do not use) and how many plant cells it stands on (bits 25..27), so no extra
-vertex data is needed. Model variants with their own textures can come from block data
-later; the placement already varies every plant.
+vertex data is needed.
+
+A plant's block data picks its shape (`model`, voxmar_engine::block::PlantModel) and
+height (`plant_height`, a share of the usual, so 1.4 for a big flower): `Cross`, the two
+diagonal quads every plant had; `Hash`, four straight quads in a # standing square with
+the blocks, for crops and reeds; `Cap`, a crossed stem under a flat cap of the block's top
+texture, for mushrooms; and `Bush`, the cross with a straight one through it. Every model
+starts with the crossed pair; the mesher packs each further quad as a diagonal one, with
+the model in bits 28..29 and which quad it is in bits 30..31 and the face's low bit, and
+the height in eighths in word 1 bits 14..18, so the vertex stays 8 bytes; the shader
+(`model_across`) places the quads, and they sway and turn as the cross does (crops stay
+square with the blocks). Mariano asked for more things in 3D (2026-10-06).
 
 Grass blocks open to the air also grow blades, in the spirit of the Grassier Grass mod.
 The mesher records one 4-byte seed per such block (`ChunkMesh::blades`: position in the

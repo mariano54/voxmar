@@ -23,9 +23,14 @@ Two gates share one script. Forced checks must be quick, or they slow every thre
 so the one every landing passes runs only what the change can reach; the full one, which
 every play build passes, runs everything.
 
-`tools/gate`, before every landing: run it from the root of your worktree, after merging
-main and committing, then `git -C ~/Projects/voxmar merge --ff-only <branch>`. On a typical
-change it takes well under a minute.
+`tools/gate`, before every landing. Land with `tools/land`, from the root of your worktree
+with everything committed: it fetches origin and merges origin/main and main into your
+branch (main moves on GitHub too: the GPU box pushes straight to origin, so the local main
+can be behind), runs `tools/gate` on the result, fast-forwards main to it, pushes main and
+fetches it back to check that origin has the commit. When main moved meanwhile, here or on origin, it merges
+again, up to three times; it never forces. Only its last line, `land: <commit> landed`,
+means landed; anything else, the push included, failed and says why. On a typical change
+it takes well under a minute.
 
 1. Hygiene: `git diff main --check` and no conflict markers.
 2. An incremental build of the workspace, tests included (`--profile iter`); any warning
@@ -44,7 +49,7 @@ change it takes well under a minute.
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
-A change that touches only docs or tools skips 3 and 4. A tree that already passed is not
+A change that touches only docs or tools skips 2, 3 and 4. A tree that already passed is not
 gated again, so merging or rebasing without changing anything costs nothing.
 
 `tools/gate --full`, before every play build: every test and the session at the normal
@@ -67,6 +72,7 @@ changes don't move it, and checks:
 | weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
 | sky | looks at the morning sun, flies above the world's top, looks towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a lit sky from above the world, a sunset sky warmer towards the sun than away, stars |
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
+| cook | a campfire on the pad, raw rabbit used on it, then looks at the air above | cooked (or burnt) food comes back; the fire's smoke and embers move the view over it |
 | gorge | `/locate gorge`, then goes there | the server's world has water there between walls standing six blocks over it on both sides, within eight blocks |
 | pipelines | everything from the world loading to leaving it | no pipeline compiles meanwhile: on Metal each is a hitch in the frame it is first needed, a few hundred ms on a fresh build. What shows only now and then is warmed at load (`render::warm`: other players, creatures, breaking, the menu blur); something new drawn on first use fails this until it is warmed too |
 | leave | quits to the title screen | the world closes cleanly |

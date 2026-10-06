@@ -37,6 +37,22 @@ pub const ERROR: Color = Color::srgb(1.0, 0.52, 0.48);
 /// The dark under pixel text.
 pub const SHADOW: Color = Color::srgba(0.0, 0.0, 0.02, 0.85);
 
+/// The interface's spacing scale, in screen pixels: every margin, padding and gap is one
+/// of these steps, so screens line up with one another and nothing sits on a border.
+pub mod space {
+    use crate::ui::skin::PX;
+    /// Between lines of one block, and a mark and its words.
+    pub const HAIR: f32 = 2.0 * PX;
+    /// Inside small elements (chips, caps, tiles), and between rows of a list.
+    pub const INNER: f32 = 4.0 * PX;
+    /// Between tiles, controls and the elements of a section.
+    pub const GAP: f32 = 6.0 * PX;
+    /// Between the sections of a panel.
+    pub const SECTION: f32 = 8.0 * PX;
+    /// A panel's margin inside its frame.
+    pub const OUTER: f32 = 12.0 * PX;
+}
+
 /// Text sizes: two screen pixels per font pixel for body text, three for headings.
 pub const BODY: f32 = font_size(2);
 pub const LARGE: f32 = font_size(3);
@@ -64,7 +80,7 @@ pub fn shadowed(font: &Handle<Font>, value: impl Into<String>, size: f32, color:
 /// A panel's title, in gold between two teal diamonds, over a gold rule. `key` names its
 /// words in the player's language (see `lang`), as for every widget with a label.
 pub fn spawn_heading(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, key: &'static str) {
-    let row = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
+    let row = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
     parent.spawn(row).with_children(|row| {
         row.spawn(shadowed(font, "◆", BODY, ACCENT));
         row.spawn((Localized(key), shadowed(font, "", LARGE, GOLD)));
@@ -84,7 +100,7 @@ pub fn spawn_rule(parent: &mut ChildSpawnerCommands, margin: f32) {
 
 /// A small label above a group of controls.
 pub fn label(font: &Handle<Font>, key: &'static str) -> (Node, Localized, Text, TextFont, TextColor) {
-    let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(7.0 * PX), Val::Px(3.0 * PX));
+    let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(space::SECTION), Val::Px(space::INNER));
     let (text, font, color) = text(font, "", BODY, MUTED);
     (Node { margin, ..default() }, Localized(key), text, font, color)
 }
@@ -108,7 +124,7 @@ pub fn panel(width: f32) -> (Node, ImageNode) {
     let node = Node {
         width: Val::Px(width),
         flex_direction: FlexDirection::Column,
-        padding: UiRect::new(Val::Px(14.0 * PX), Val::Px(14.0 * PX), Val::Px(10.0 * PX), Val::Px(12.0 * PX)),
+        padding: UiRect::all(Val::Px(space::OUTER)),
         ..default()
     };
     (node, Piece::Panel.image())
@@ -116,7 +132,7 @@ pub fn panel(width: f32) -> (Node, ImageNode) {
 
 /// A row of equally wide buttons.
 pub fn button_row(top: f32) -> Node {
-    Node { margin: UiRect::top(Val::Px(top)), column_gap: Val::Px(4.0 * PX), ..default() }
+    Node { margin: UiRect::top(Val::Px(top)), column_gap: Val::Px(space::INNER), ..default() }
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -179,15 +195,25 @@ pub fn spawn_button(
     button.id()
 }
 
+/// A button's top padding as built, kept so pressing it only adds to it.
+#[derive(Component, Clone, Copy)]
+struct RestPadding(Val);
+
 /// Draws each button for its state: the hover piece under the pointer, the pressed piece
 /// with its label two pixels lower while held, gold when selected, faded when disabled.
 /// Screens have a few dozen buttons at most, so every one is checked each frame and only
 /// what differs is written.
 fn style_buttons(
-    mut buttons: Query<(&ButtonStyle, &Interaction, Has<Disabled>, Has<Selected>, &mut ImageNode, &mut Node, &Children)>,
+    mut commands: Commands,
+    mut buttons: Query<(Entity, &ButtonStyle, &Interaction, Has<Disabled>, Has<Selected>, &mut ImageNode, &mut Node, &Children, Option<&RestPadding>)>,
     mut colors: Query<&mut TextColor>,
 ) {
-    for (style, interaction, disabled, selected, mut image, mut node, children) in &mut buttons {
+    for (entity, style, interaction, disabled, selected, mut image, mut node, children, rest_padding) in &mut buttons {
+        // The padding it was built with, which sinking adds to.
+        let Some(&RestPadding(rest_top)) = rest_padding else {
+            commands.entity(entity).insert(RestPadding(node.padding.top));
+            continue;
+        };
         let [rest, hover, down] = style.pieces();
         let piece = match (disabled, interaction) {
             (true, _) => rest,
@@ -202,7 +228,7 @@ fn style_buttons(
             image.color = tint;
         }
         let sunk = !disabled && *interaction == Interaction::Pressed;
-        let top = Val::Px(if sunk { 2.0 * PX } else { 0.0 });
+        let top = if sunk { rest_top.try_add(Val::Px(2.0 * PX)).unwrap_or(rest_top) } else { rest_top };
         if node.padding.top != top {
             node.padding.top = top;
         }
@@ -253,7 +279,7 @@ pub struct ScrollMore(Entity);
 
 /// The arrow for `list`, which must share `parent` with it.
 pub fn spawn_scroll_more(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, list: Entity) {
-    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(PX), bottom: Val::ZERO, ..default() };
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(space::INNER), bottom: Val::Px(space::HAIR), ..default() };
     parent.spawn((corner, shadowed(font, "▼", BODY, GOLD), ScrollMore(list), Visibility::Hidden, ZIndex(1)));
 }
 
@@ -297,7 +323,7 @@ pub fn spawn_text_field(
 ) -> Entity {
     let node = Node {
         height: Val::Px(BUTTON),
-        padding: UiRect::horizontal(Val::Px(5.0 * PX)),
+        padding: UiRect::horizontal(Val::Px(space::INNER)),
         align_items: AlignItems::Center,
         overflow: Overflow::clip(),
         ..default()
@@ -434,7 +460,8 @@ pub struct Meter {
 
 /// A meter `width` screen pixels wide.
 pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece: Piece, width: Val, marker: impl Bundle) -> Entity {
-    let well = Node { width, height: Val::Px(10.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
+    // Tall enough for its number to sit inside the frame with a pixel to spare.
+    let well = Node { width, height: Val::Px(12.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
     let mut meter = parent.spawn((well, Piece::Well.image(), marker));
     let (mut fill, mut label) = (Entity::PLACEHOLDER, Entity::PLACEHOLDER);
     meter.with_children(|well| {

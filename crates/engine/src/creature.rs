@@ -10,16 +10,20 @@
 //! list no behaviours get a set made from their temperament and diet, the first layer of
 //! the behaviour generator (docs/creature-ai.md, "Behaviour generation").
 //!
-//! Bodies are boxes from a small part library ([`Model`]), coloured by the species and
-//! animated from how fast the creature moves, so the client needs no model files.
+//! Bodies are boxes from a small part library ([`Model`]), skinned with a texture painted
+//! for each individual from its species' colours and markings ([`skin`]) and animated from
+//! how the creature moves, so the client needs no model files.
 
 pub mod brain;
 pub mod husbandry;
+pub mod model;
 pub mod motion;
+pub mod skin;
+
+pub use model::{HornShape, Model, Part, Role, Swing};
 
 use std::sync::Arc;
 
-use glam::Vec3;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -117,206 +121,26 @@ pub struct BodyDef {
     /// Drawn glowing: unshaded and bright, for supernatural creatures that give light.
     #[serde(default)]
     pub glows: bool,
+    /// How its skin is painted: eyes, grain, belly, markings ([`skin`]).
+    #[serde(default)]
+    pub skin: skin::SkinDef,
 }
 
-/// A body plan from the part library. Sizes are (width, height, length) in blocks.
-#[derive(Clone, Debug, Deserialize)]
-pub enum Model {
-    /// Four legs: rabbits to bears.
-    Quadruped {
-        body: (f32, f32, f32),
-        head: (f32, f32, f32),
-        /// Leg length.
-        legs: f32,
-        #[serde(default)]
-        ears: Option<(f32, f32)>,
-        #[serde(default)]
-        tail: Option<(f32, f32, f32)>,
-        #[serde(default)]
-        horns: Option<(f32, f32)>,
-        #[serde(default)]
-        snout: Option<(f32, f32, f32)>,
-    },
-    /// Two legs: birds and walking things.
-    Biped {
-        body: (f32, f32, f32),
-        head: (f32, f32, f32),
-        legs: f32,
-        /// Arm length; none for birds.
-        #[serde(default)]
-        arms: Option<f32>,
-        #[serde(default)]
-        wings: Option<(f32, f32)>,
-        #[serde(default)]
-        beak: Option<(f32, f32, f32)>,
-        #[serde(default)]
-        tail: Option<(f32, f32, f32)>,
-    },
-    /// Many legs low to the ground: spiders and crabs.
-    Crawler { body: (f32, f32, f32), head: (f32, f32, f32), legs: f32, pairs: u8 },
-    /// A body with no legs: snails, slugs, wisps.
-    Blob {
-        body: (f32, f32, f32),
-        #[serde(default)]
-        head: Option<(f32, f32, f32)>,
-        #[serde(default)]
-        shell: Option<(f32, f32, f32)>,
-    },
-}
-
-/// What a part does when the creature moves.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Swing {
-    Still,
-    /// Swings fore and aft with the stride; the phase is 0 or a half step.
-    Leg { phase: f32 },
-    /// Turns toward what the creature attends to and dips when it grazes.
-    Head,
-    /// Sways behind.
-    Tail,
-    /// Flaps, on the given side (−1 left, 1 right).
-    Wing { side: f32 },
-}
-
-/// One box of a body, in model space: feet at the origin, facing −Z (as yaw 0 looks).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Part {
-    pub size: Vec3,
-    /// The box's centre.
-    pub centre: Vec3,
-    /// The point it swings about (a leg's hip, the neck).
-    pub pivot: Vec3,
-    /// Index into the body's colours, or [`EYE`].
-    pub colour: u8,
-    pub swing: Swing,
-}
-
-/// The colour index of eyes, drawn dark (or glowing, for glowing bodies).
-pub const EYE: u8 = u8::MAX;
-
-impl Model {
-    /// The boxes the plan is made of, scaled by `scale`.
-    pub fn parts(&self, scale: f32) -> Vec<Part> {
-        let v = |(x, y, z): (f32, f32, f32)| Vec3::new(x, y, z) * scale;
-        let mut parts = Vec::new();
-        let mut part = |size: Vec3, centre: Vec3, pivot: Vec3, colour: u8, swing: Swing| {
-            parts.push(Part { size, centre, pivot, colour, swing });
-        };
-        // Two eyes on the front of a head, high on its sides.
-        let eyes = |part: &mut dyn FnMut(Vec3, Vec3, Vec3, u8, Swing), head: Vec3, centre: Vec3, pivot: Vec3| {
-            let eye = Vec3::splat((head.y * 0.18).max(0.03));
-            for side in [-1.0, 1.0] {
-                let at = centre + Vec3::new(side * head.x * 0.3, head.y * 0.15, -head.z / 2.0 - eye.z * 0.3);
-                part(eye, at, pivot, EYE, Swing::Head);
-            }
-        };
-        match self {
-            Model::Quadruped { body, head, legs, ears, tail, horns, snout } => {
-                let (body, head, legs) = (v(*body), v(*head), *legs * scale);
-                let torso = Vec3::new(0.0, legs + body.y / 2.0, 0.0);
-                part(body, torso, torso, 0, Swing::Still);
-                let leg = Vec3::new((body.x * 0.28).max(0.06), legs, (body.z * 0.16).max(0.06));
-                for (i, (sx, sz)) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)].into_iter().enumerate() {
-                    let hip = Vec3::new(sx * (body.x / 2.0 - leg.x / 2.0), legs, sz * (body.z / 2.0 - leg.z / 2.0));
-                    let phase = if i == 0 || i == 3 { 0.0 } else { 0.5 };
-                    part(leg, hip - Vec3::Y * legs / 2.0, hip, 1, Swing::Leg { phase });
-                }
-                // The head sits forward of the body, its bottom at the body's top third.
-                let neck = Vec3::new(0.0, legs + body.y * 0.75, -body.z / 2.0);
-                let centre = neck + Vec3::new(0.0, head.y * 0.25, -head.z * 0.4);
-                part(head, centre, neck, 0, Swing::Head);
-                eyes(&mut part, head, centre, neck);
-                if let Some(snout) = snout.map(v) {
-                    part(snout, centre + Vec3::new(0.0, -head.y / 2.0 + snout.y / 2.0, -head.z / 2.0 - snout.z / 2.0), neck, 1, Swing::Head);
-                }
-                if let Some((w, h)) = *ears {
-                    let ear = Vec3::new(w * scale, h * scale, w * scale * 0.5);
-                    for side in [-1.0, 1.0] {
-                        part(ear, centre + Vec3::new(side * head.x * 0.3, head.y / 2.0 + ear.y / 2.0, head.z * 0.15), neck, 0, Swing::Head);
-                    }
-                }
-                if let Some((w, h)) = *horns {
-                    let horn = Vec3::new(w * scale, h * scale, w * scale);
-                    for side in [-1.0, 1.0] {
-                        part(horn, centre + Vec3::new(side * head.x * 0.4, head.y / 2.0 + horn.y / 2.0, 0.0), neck, 2, Swing::Head);
-                    }
-                }
-                if let Some(tail) = tail.map(v) {
-                    let root = Vec3::new(0.0, legs + body.y * 0.8, body.z / 2.0);
-                    part(tail, root + Vec3::new(0.0, -tail.y * 0.3, tail.z / 2.0), root, 1, Swing::Tail);
-                }
-            }
-            Model::Biped { body, head, legs, arms, wings, beak, tail } => {
-                let (body, head, legs) = (v(*body), v(*head), *legs * scale);
-                let torso = Vec3::new(0.0, legs + body.y / 2.0, 0.0);
-                part(body, torso, torso, 0, Swing::Still);
-                let leg = Vec3::new((body.x * 0.25).max(0.05), legs, (body.x * 0.25).max(0.05));
-                for (side, phase) in [(-1.0, 0.0), (1.0, 0.5)] {
-                    let hip = Vec3::new(side * body.x * 0.25, legs, 0.0);
-                    part(leg, hip - Vec3::Y * legs / 2.0, hip, 2, Swing::Leg { phase });
-                }
-                let neck = Vec3::new(0.0, legs + body.y, -body.z * 0.2);
-                let centre = neck + Vec3::new(0.0, head.y / 2.0, -head.z * 0.1);
-                part(head, centre, neck, 0, Swing::Head);
-                eyes(&mut part, head, centre, neck);
-                if let Some(beak) = beak.map(v) {
-                    part(beak, centre + Vec3::new(0.0, -head.y * 0.1, -head.z / 2.0 - beak.z / 2.0), neck, 2, Swing::Head);
-                }
-                if let Some(arms) = arms.map(|a| a * scale) {
-                    let arm = Vec3::new(leg.x * 0.9, arms, leg.z * 0.9);
-                    for (side, phase) in [(-1.0, 0.5), (1.0, 0.0)] {
-                        let shoulder = Vec3::new(side * (body.x / 2.0 + arm.x / 2.0), legs + body.y * 0.9, 0.0);
-                        part(arm, shoulder - Vec3::Y * arms / 2.0, shoulder, 0, Swing::Leg { phase });
-                    }
-                }
-                if let Some((w, l)) = *wings {
-                    let wing = Vec3::new(w * scale, body.y * 0.6, l * scale);
-                    for side in [-1.0, 1.0] {
-                        let shoulder = Vec3::new(side * body.x / 2.0, legs + body.y * 0.75, 0.0);
-                        part(wing, shoulder + Vec3::new(side * wing.x / 2.0, -wing.y / 2.0, 0.0), shoulder, 1, Swing::Wing { side });
-                    }
-                }
-                if let Some(tail) = tail.map(v) {
-                    let root = Vec3::new(0.0, legs + body.y * 0.6, body.z / 2.0);
-                    part(tail, root + Vec3::new(0.0, 0.0, tail.z / 2.0), root, 1, Swing::Tail);
-                }
-            }
-            Model::Crawler { body, head, legs, pairs } => {
-                let (body, head, legs) = (v(*body), v(*head), *legs * scale);
-                let height = legs * 0.5;
-                let torso = Vec3::new(0.0, height + body.y / 2.0, 0.0);
-                part(body, torso, torso, 0, Swing::Still);
-                let centre = Vec3::new(0.0, height + head.y / 2.0, -body.z / 2.0 - head.z / 2.0);
-                part(head, centre, centre, 0, Swing::Head);
-                eyes(&mut part, head, centre, centre);
-                let pairs = (*pairs).clamp(1, 4) as usize;
-                let leg = Vec3::new(legs, (legs * 0.12).max(0.04), (legs * 0.12).max(0.04));
-                for i in 0..pairs {
-                    let z = -body.z / 2.0 + body.z * (i as f32 + 0.5) / pairs as f32;
-                    for side in [-1.0, 1.0] {
-                        let hip = Vec3::new(side * body.x / 2.0, height + body.y * 0.3, z);
-                        let phase = if (i % 2 == 0) == (side > 0.0) { 0.0 } else { 0.5 };
-                        part(leg, hip + Vec3::new(side * legs / 2.0, -height * 0.4, 0.0), hip, 1, Swing::Leg { phase });
-                    }
-                }
-            }
-            Model::Blob { body, head, shell } => {
-                let body = v(*body);
-                let torso = Vec3::new(0.0, body.y / 2.0, 0.0);
-                part(body, torso, torso, 0, Swing::Still);
-                if let Some(head) = head.map(v) {
-                    let centre = Vec3::new(0.0, body.y * 0.6 + head.y / 2.0, -body.z / 2.0 + head.z / 2.0);
-                    part(head, centre, centre, 0, Swing::Head);
-                    eyes(&mut part, head, centre, centre);
-                } else {
-                    eyes(&mut part, body, torso, torso);
-                }
-                if let Some(shell) = shell.map(v) {
-                    part(shell, Vec3::new(0.0, body.y + shell.y / 2.0 - body.y * 0.2, body.z * 0.1), torso, 1, Swing::Still);
-                }
+impl BodyDef {
+    /// The body as an individual's genes show it: colours replaced, markings added, the
+    /// species' own markings dropped for a solid coat.
+    pub fn with(&self, traits: &crate::genes::Traits) -> BodyDef {
+        let mut body = self.clone();
+        for &(index, rgb) in &traits.colours {
+            if let Some(colour) = body.colours.get_mut(index as usize) {
+                *colour = rgb;
             }
         }
-        parts
+        if traits.plain {
+            body.skin.markings.clear();
+        }
+        body.skin.markings.extend(traits.markings.iter().cloned());
+        body
     }
 }
 
@@ -586,6 +410,10 @@ pub struct CreatureDef {
     /// What kept ones give on timers.
     #[serde(default)]
     pub products: Vec<husbandry::Product>,
+    /// What individuals inherit: coat colours, size, yield, temper (docs/breeding.md). At
+    /// most [`crate::genes::MOST`].
+    #[serde(default)]
+    pub genes: Vec<crate::genes::GeneDef>,
 }
 
 fn first() -> u8 {
@@ -610,8 +438,9 @@ pub struct Creature {
     /// The modules that run its behaviours, each with its weight, then the ones every
     /// creature has.
     pub modules: Vec<(Arc<dyn brain::Module>, f32)>,
-    /// Its body's boxes at full size.
+    /// Its body's boxes at full size, and where each face lies in its skin.
     pub parts: Vec<Part>,
+    pub layout: skin::Layout,
     pub loot: Vec<loot::Resolved>,
     /// What it eats and what tempts it, as blocks.
     pub eats: Vec<crate::block::BlockId>,
@@ -684,6 +513,9 @@ impl CreatureRegistry {
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
+            if def.genes.len() > crate::genes::MOST {
+                return Err(error(format!("has more than {} genes", crate::genes::MOST)));
+            }
             if def.supernatural && def.habitat.comfort.aether.0 <= 0.0 {
                 return Err(error("a supernatural creature needs an aether minimum in its comfort".into()));
             }
@@ -724,6 +556,7 @@ impl CreatureRegistry {
             };
             let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
             let parts = def.body.model.parts(1.0);
+            let layout = skin::layout(&parts);
             let modules = behaviours
                 .iter()
                 .map(|entry| (brain::modules::module(entry.behaviour), entry.weight))
@@ -733,7 +566,7 @@ impl CreatureRegistry {
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, modules, parts, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
         }
         Ok(registry)
     }
@@ -877,9 +710,10 @@ mod tests {
         for expected in [Behaviour::Graze, Behaviour::Flee { radius: 0.0 }, Behaviour::Freeze, Behaviour::Herd { spacing: 0.0 }, Behaviour::Tempted { radius: 0.0 }] {
             assert!(kinds.contains(&std::mem::discriminant(&expected)), "{expected:?} missing");
         }
-        // Body, four legs, head, two eyes, two ears, a tail.
-        assert_eq!(rabbit.parts.len(), 11);
+        // Body, four legs, head, two ears, a tail.
+        assert_eq!(rabbit.parts.len(), 9);
         assert!(rabbit.parts.iter().all(|p| p.centre.y - p.size.y / 2.0 >= -1e-4), "a part pokes through the ground");
+        assert_eq!(rabbit.layout.faces.len(), 9);
     }
 
     #[test]
