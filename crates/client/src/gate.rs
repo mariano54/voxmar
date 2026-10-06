@@ -700,6 +700,23 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
+/// The player's effects that the weather brings on, by name in English.
+fn weather_effects(world: &World) -> Vec<String> {
+    let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+    let weathery = |c: &voxmar_engine::effect::Condition| {
+        use voxmar_engine::effect::Condition::*;
+        matches!(c, Rain(_) | Snow(_) | Hail(_) | Wind(_) | Dust(_) | Storm(_))
+    };
+    player
+        .vitals
+        .effects
+        .iter()
+        .map(|a| launch.content.effects.get(a.effect))
+        .filter(|def| def.when.as_ref().is_some_and(weathery))
+        .map(|def| def.title.to_lowercase())
+        .collect()
+}
+
 /// Blocks of every hardness the breaks step lays out: glass and snow break in a blink,
 /// stone and cobblestone take seconds.
 const BREAK_BLOCKS: [&str; 6] = ["base:glass", "base:dirt", "base:stone", "base:snow_block", "base:gravel", "base:cobblestone"];
@@ -1466,11 +1483,19 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            // Let it fill the air before the shot.
-            if in_phase < 1.0 {
+            // Let it fill the air before the shot, and the server tell the player they are
+            // out in it (effects are judged once a second).
+            let weathered = weather_effects(world);
+            if in_phase < 1.0 || (weathered.is_empty() && in_phase < 5.0) {
                 return;
             }
             let Some(shot) = gate.shot(world, name) else { return };
+            let felt = if weathered.is_empty() {
+                Err(format!("out in it, the player has no weather effect (felt {:.0} °C)", world.resource::<LocalPlayer>().vitals.felt))
+            } else {
+                Ok(format!("out in it, the player is {}", weathered.join(", ")))
+            };
+            gate.check(&format!("weather: {kind}: effects"), felt);
             let change = gate.earlier_shot("clear").map_or(0.0, |clear| change(&clear, &shot, 0.0));
             let result = if change >= SCREEN_CHANGE {
                 Ok(format!("{}, changing the view by {change:.1} levels", shown.summary()))

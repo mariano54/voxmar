@@ -15,7 +15,8 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::action::ActionTarget;
-use voxmar_engine::vitals::{Effect, MAX_HUNGER, Vitals};
+use voxmar_engine::effect::{EffectDef, Kind};
+use voxmar_engine::vitals::{MAX_HUNGER, Vitals};
 
 use crate::lang::Locale;
 use crate::Actions;
@@ -95,8 +96,6 @@ struct HungerMeter;
 #[derive(Component)]
 struct EffectChips;
 
-/// The most health a player has, as the server keeps it.
-const MAX_HEALTH: u8 = 20;
 #[derive(Component)]
 struct StatusText;
 #[derive(Component)]
@@ -284,17 +283,18 @@ fn update_vitals(
     mut nodes: Query<&mut Node>,
     children: Query<&Children>,
     mut texts: Query<&mut Text>,
-    mut shown: Local<Option<(u8, Vitals)>>,
-    locale: Res<Locale>,
+    mut shown: Local<Option<(u8, u8, Vitals)>>,
+    (locale, launch): (Res<Locale>, Res<crate::session::Launch>),
 ) {
-    let state = (player.health, player.vitals.clone());
+    let state = (player.health, player.max_health, player.vitals.clone());
     if shown.as_ref() == Some(&state) && !locale.is_changed() {
         return;
     }
-    let effects_changed = locale.is_changed() || shown.as_ref().is_none_or(|(_, v)| v.effects != state.1.effects);
+    let effects_changed = locale.is_changed() || shown.as_ref().is_none_or(|(_, _, v)| v.effects != state.2.effects);
     *shown = Some(state);
     if let Ok(meter) = health.single() {
-        set_meter(meter, player.health as f32 / MAX_HEALTH as f32, &format!("{}/{MAX_HEALTH}", player.health), &mut nodes, &children, &mut texts);
+        let most = player.max_health.max(1);
+        set_meter(meter, player.health as f32 / most as f32, &format!("{}/{most}", player.health), &mut nodes, &children, &mut texts);
     }
     if let Ok(meter) = hunger.single() {
         let value = player.vitals.hunger;
@@ -302,17 +302,17 @@ fn update_vitals(
     }
     if effects_changed && let Ok(row) = chips.single() {
         commands.entity(row).despawn_children().with_children(|row| {
-            for &effect in &player.vitals.effects {
-                spawn_effect_chip(row, &font.0, &locale, effect);
+            for active in &player.vitals.effects {
+                spawn_effect_chip(row, &font.0, &locale, launch.content.effects.get(active.effect));
             }
         });
     }
 }
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
-pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, effect: Effect) {
+pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, effect: &EffectDef) {
     let chip = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
-    let color = if effect.is_buff() { ACCENT } else { ERROR };
+    let color = if effect.kind == Kind::Buff { ACCENT } else { ERROR };
     parent.spawn((chip, Piece::Tooltip.image())).with_child((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
 }
 

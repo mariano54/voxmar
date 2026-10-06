@@ -17,6 +17,7 @@ use crate::cooking::CookingRegistry;
 use crate::creature::CreatureRegistry;
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
+use crate::effect::EffectRegistry;
 use crate::lang::{ENGLISH, Lang};
 use crate::movement::Tuning;
 use crate::skill::SkillRegistry;
@@ -37,6 +38,8 @@ pub struct Content {
     pub cooking: Arc<CookingRegistry>,
     /// What the inventory's crafting grid makes.
     pub recipes: Arc<RecipeRegistry>,
+    /// Buffs and debuffs.
+    pub effects: Arc<EffectRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -75,6 +78,7 @@ impl Content {
         let mut creatures = Vec::new();
         let mut cooking = Vec::new();
         let mut recipes = Vec::new();
+        let mut effects = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -114,6 +118,10 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "effects.ron" => {
+                        effects.push(EffectRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "movement.ron" => {
                         if movement.replace(Tuning::from_ron(&source)?).is_some() {
                             return Err(RegistryError(format!("{package}/movement.ron: another package already sets movement")));
@@ -134,6 +142,7 @@ impl Content {
         let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks)?;
+        let effects = EffectRegistry::new(effects)?;
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -145,6 +154,7 @@ impl Content {
             creatures: Arc::new(creatures),
             cooking: Arc::new(cooking),
             recipes: Arc::new(recipes),
+            effects: Arc::new(effects),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
         })
