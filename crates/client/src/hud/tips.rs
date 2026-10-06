@@ -105,13 +105,17 @@ fn announce_effects(
     mut tips: ResMut<Tips>,
     column: Query<Entity, With<Popups>>,
     shown: Query<&Popup>,
+    shows: Option<Res<super::effects::ShowEffects>>,
 ) {
     // Before the server has said, the player has no effects to compare with.
     if player.vitals_at <= 0.0 {
         return;
     }
     let now: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).collect();
-    let Some(before) = tips.effects.replace(now.clone()) else { return };
+    // Effects a screenshot shows (`--effect`) come on after the ones the player joined with.
+    let shown_on = |id: &EffectId| shows.as_ref().is_some_and(|shows| shows.0.iter().any(|(name, _)| launch.content.effects.find(name) == Some(*id)));
+    let joined: Vec<EffectId> = now.iter().copied().filter(|id| !shown_on(id)).collect();
+    let Some(before) = tips.effects.replace(now.clone()).or_else(|| (!joined.is_empty() || shows.is_some()).then_some(joined)) else { return };
     let Ok(column) = column.single() else { return };
     let mut showing = shown.iter().count();
     for &id in now.iter().filter(|id| !before.contains(id)) {
@@ -140,7 +144,11 @@ fn announce_effects(
     }
 }
 
-fn age_popups(mut commands: Commands, time: Res<Time>, popups: Query<(Entity, &Popup)>) {
+fn age_popups(mut commands: Commands, time: Res<Time>, popups: Query<(Entity, &Popup)>, shows: Option<Res<super::effects::ShowEffects>>) {
+    // Held while a screenshot or the gate shows effects (`--effect`).
+    if shows.is_some() {
+        return;
+    }
     for (entity, popup) in &popups {
         if time.elapsed_secs() - popup.1 > POPUP_SECONDS {
             commands.entity(entity).despawn();
