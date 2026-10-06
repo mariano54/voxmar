@@ -2016,8 +2016,10 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (chip, left) = reading(world);
             let (chip_s, left_s) = (chip.as_deref().and_then(seconds), left.as_deref().and_then(seconds));
             let counted = chip_s.is_some_and(|c| c < gate.count_before) && chip_s == left_s;
-            // The count may move on the server's clock, which a loaded machine slows.
-            if !counted && in_phase < 10.0 {
+            // While the server holds the effect itself (the session's cooking gives it), the
+            // count moves on the server's clock, which a loaded machine slows: given five of
+            // the server's seconds, however long they take.
+            if !counted && gate.server_in_phase() < 5.0 {
                 return;
             }
             let first = gate.count_before;
