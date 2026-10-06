@@ -768,6 +768,8 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     "language",
                     if words.as_deref() != Some(japanese.as_str()) || japanese == "Quit game" {
                         Err(format!("the menu still reads {words:?} in Japanese"))
+                    } else if !crate::lang::smooth_fonts_ready(world) {
+                        Err("kana and kanji have no font to fall back to".into())
                     } else if change < 1.0 {
                         Err(format!("Japanese changed the screen by only {change:.1} levels"))
                     } else {

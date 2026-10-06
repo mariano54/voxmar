@@ -210,6 +210,18 @@ fn load_smooth_fonts(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
     commands.insert_resource(SmoothFonts(handles));
 }
 
+/// Whether text in the CJK scripts falls back to the smooth fonts, as it should once they
+/// have loaded (true when `fallback.ron` lists none).
+pub fn smooth_fonts_ready(world: &mut World) -> bool {
+    let fonts: Vec<_> = world.resource::<SmoothFonts>().0.iter().map(|font| format!("asset_id:{:?}", font.id())).collect();
+    let collection = &mut world.resource_mut::<FontCx>().into_inner().collection;
+    let Some(first) = fonts.first().and_then(|name| collection.family_id(name)) else { return fonts.is_empty() };
+    SMOOTH_SCRIPTS.iter().all(|script| {
+        let key = parley::fontique::FallbackKey::new(parley::fontique::Script::from_bytes(*script), None);
+        collection.fallback_families(key).next() == Some(first)
+    })
+}
+
 /// The scripts the smooth fallback fonts are for: Japanese.
 const SMOOTH_SCRIPTS: [[u8; 4]; 4] = [*b"Hira", *b"Kana", *b"Hani", *b"Zyyy"];
 
