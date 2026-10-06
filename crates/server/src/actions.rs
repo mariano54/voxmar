@@ -1,49 +1,71 @@
-//! The action executor: propose, validate, schedule one completion, then commit
-//! atomically or cancel. Long actions (mining) are a single scheduled event, not work
-//! done every tick.
+//! The action executor: propose, validate, then commit at once (instant actions) or when
+//! the action's time is up (timed ones, mining), or cancel.
 //!
-//! A player's client times their action too, and shows it done when its own clock says so
-//! (a broken block vanishes at once). When the server runs behind (a busy machine, or
-//! ticks skipped to catch up), its completion comes later than the client's, and the
-//! client's next proposal (the block behind) must not cancel an action the player saw
-//! finish. The client says when it shows one done (`Finished`): if most of its time has
-//! passed by the server's clock it completes then, as Minecraft accepts a block broken once
-//! most of its time has passed; otherwise it completes in its own time, whatever the
-//! player starts next. A server stalled when the proposal came (streaming, a slow tick)
-//! starts its clock late, and judged by that clock alone the break was lost.
+//! A player's client times their action too and shows it done when its own clock says so
+//! (a broken block vanishes at once). Client and server must agree on every break, so the
+//! server never judges a player's timed action by its own clock: it judges it by when the
+//! player's messages arrived (stamped by the transport, see `voxmar_protocol`), in the
+//! order they were sent. An action is due its time after its proposal arrived, and before
+//! each later message from that player is handled, the player's action due by then
+//! completes. A server held up (a long tick, streaming, saving) or running behind on ticks
+//! therefore decides exactly what a server that kept up would have: a release before the
+//! time is up cancels, a release after it is too late. Lost breaks came from each of the
+//! ways the server's clock and the client's had parted before (17bf62f, f77a0ee).
+//!
+//! The client's clock can still run a frame ahead of the arrival clock (or the network
+//! behind it), so it says when it shows the action done (`Finished`). If most of the time
+//! has passed by then, as Minecraft accepts a block broken once 70% of its time has
+//! passed, it completes then; otherwise in its own time. Either way nothing the player
+//! does next cancels it. If the server has no such action (it refused the proposal), it
+//! answers with the truth about the target: every break the client predicts is either
+//! made or undone, never left standing on one side only.
+//!
+//! A player has at most one timed action going. A new timed proposal replaces it, and an
+//! instant one (placing, throwing, an inventory move) runs alongside it.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::glam::{IVec3, Vec3};
-use voxmar_engine::schedule::{EventId, Scheduler};
 use voxmar_engine::traits;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::player::MAX_HEALTH;
 
-/// An action waiting for its completion tick.
-pub struct Pending {
+/// A timed action waiting for its time to be up.
+struct Timed {
     agent: PlayerId,
     action: ActionId,
     target: ActionTarget,
+    /// When its proposal arrived, and when it is due.
+    started: Instant,
+    due: Instant,
+    /// The player's client shows it done: nothing cancels it now.
+    finished: bool,
 }
 
-/// Share of a timed action's time that must have passed by the clock for a new proposal
-/// to complete it rather than cancel it (Minecraft's 0.7 for breaking blocks).
+impl Timed {
+    fn mostly_done(&self, at: Instant) -> bool {
+        at.saturating_duration_since(self.started) >= self.due.duration_since(self.started).mul_f32(MOSTLY_DONE)
+    }
+}
+
+/// Actions shorter than half a tick complete at once.
+const INSTANT: f32 = 0.5 / TICKS_PER_SECOND as f32;
+
+/// Share of a timed action's time that must have passed when the client shows it done (or
+/// replaces it) for it to complete then (Minecraft's 0.7 for breaking blocks).
 const MOSTLY_DONE: f32 = 0.7;
 
 #[derive(Default)]
 pub struct Executor {
-    scheduler: Scheduler<Pending>,
-    /// Each agent performs at most one timed action at a time: its event, when it started
-    /// by the clock, and how long it takes.
-    in_progress: FxHashMap<PlayerId, (EventId, Instant, f32)>,
+    /// Timed actions in progress: at most one unfinished per player, and any number the
+    /// player's client has shown done waiting for their time.
+    timed: Vec<Timed>,
     /// Actions proposed so far, for `Lag::proposal_stall`.
     proposals: u64,
 }
@@ -113,78 +135,95 @@ impl Server {
         self.content.actions.get(action).cloned()
     }
 
-    pub(crate) fn propose(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
+    pub(crate) fn propose(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget, at: Instant) {
         self.executor.proposals += 1;
         let stall = self.config.lag.proposal_stall;
         if !stall.is_zero() && self.executor.proposals % 2 == 1 {
             std::thread::sleep(stall);
         }
-        self.supersede_action(agent);
         let Some(def) = self.action_def(action) else { return };
+        let context = Context { server: self, agent };
+        let seconds = def.seconds(&context, target);
+        let timed = seconds >= INSTANT;
+        if timed {
+            self.supersede_action(agent, at);
+        }
         let context = Context { server: self, agent };
         if def.validate(&context, target).is_err() {
             self.reject(agent, target);
-            return;
-        }
-        let seconds = def.seconds(&context, target);
-        let ticks = (seconds * TICKS_PER_SECOND as f32).round() as u64;
-        if ticks == 0 {
+        } else if !timed {
             self.commit(agent, &def, target);
         } else {
-            let id = self.executor.scheduler.schedule(self.tick + ticks, Pending { agent, action, target });
-            self.executor.in_progress.insert(agent, (id, Instant::now(), seconds));
+            let due = at + Duration::from_secs_f32(seconds);
+            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false });
         }
     }
 
+    /// The player let go before the time was up: their unfinished timed action is dropped.
     pub(crate) fn cancel_action(&mut self, agent: PlayerId) {
-        if let Some((id, ..)) = self.executor.in_progress.remove(&agent) {
-            self.executor.scheduler.cancel(id);
+        self.executor.timed.retain(|t| t.agent != agent || t.finished);
+    }
+
+    /// The player's client shows the timed action at `target` done (see the module docs).
+    pub(crate) fn finished_action(&mut self, agent: PlayerId, target: ActionTarget, at: Instant) {
+        let Some(i) = self.executor.timed.iter().position(|t| t.agent == agent && !t.finished && t.target == target) else {
+            // Refused, or replaced: the client is told what is really there.
+            self.reject(agent, target);
+            return;
+        };
+        if self.executor.timed[i].mostly_done(at) {
+            let timed = self.executor.timed.swap_remove(i);
+            self.finish(timed.agent, timed.action, timed.target);
+        } else {
+            self.executor.timed[i].finished = true;
         }
     }
 
-    /// The player's client shows the action in progress done: it completes now if most of
-    /// its time has passed by the clock, otherwise at its own completion tick, no longer
-    /// in the way of (or cancelled by) the player's next action.
-    pub(crate) fn finished_action(&mut self, agent: PlayerId) {
-        let Some((id, started, seconds)) = self.executor.in_progress.remove(&agent) else { return };
-        if started.elapsed().as_secs_f32() >= seconds * MOSTLY_DONE
-            && let Some(pending) = self.executor.scheduler.cancel(id)
-        {
-            self.finish(pending);
-        }
-    }
-
-    /// Makes way for a new action: the one in progress is completed now if most of its
-    /// time has passed by the clock (the player saw it finish), otherwise cancelled.
-    fn supersede_action(&mut self, agent: PlayerId) {
-        let Some((id, started, seconds)) = self.executor.in_progress.remove(&agent) else { return };
-        let Some(pending) = self.executor.scheduler.cancel(id) else { return };
-        if started.elapsed().as_secs_f32() >= seconds * MOSTLY_DONE {
-            self.finish(pending);
+    /// Makes way for a new timed action: the unfinished one is completed now if most of
+    /// its time has passed (the player saw it nearly done), otherwise dropped.
+    fn supersede_action(&mut self, agent: PlayerId, at: Instant) {
+        let Some(i) = self.executor.timed.iter().position(|t| t.agent == agent && !t.finished) else { return };
+        let timed = self.executor.timed.swap_remove(i);
+        if timed.mostly_done(at) {
+            self.finish(timed.agent, timed.action, timed.target);
         }
     }
 
     /// Commits an action whose time is up, if its requirements still hold.
-    fn finish(&mut self, pending: Pending) {
-        if !self.players.contains_key(&pending.agent) {
+    fn finish(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
+        if !self.players.contains_key(&agent) {
             return;
         }
-        let Some(def) = self.action_def(pending.action) else { return };
-        if def.validate(&Context { server: self, agent: pending.agent }, pending.target).is_ok() {
-            self.commit(pending.agent, &def, pending.target);
+        let Some(def) = self.action_def(action) else { return };
+        if def.validate(&Context { server: self, agent }, target).is_ok() {
+            self.commit(agent, &def, target);
         } else {
-            self.reject(pending.agent, pending.target);
+            self.reject(agent, target);
         }
     }
 
-    /// Completes every action due this tick. Requirements are checked again, since the
-    /// world may have changed while the action was in progress.
-    pub(crate) fn complete_actions(&mut self) {
-        while let Some((_, id, pending)) = self.executor.scheduler.pop_due(self.tick) {
-            if self.executor.in_progress.get(&pending.agent).is_some_and(|&(current, ..)| current == id) {
-                self.executor.in_progress.remove(&pending.agent);
-            }
-            self.finish(pending);
+    /// Completes every timed action due by `now`, earliest first. Requirements are checked
+    /// again, since the world may have changed while the action was in progress.
+    pub(crate) fn complete_actions(&mut self, now: Instant) {
+        self.complete_due(now, None);
+    }
+
+    /// Completes `agent`'s timed actions due by `at`, when a message of theirs that arrived
+    /// then is about to be handled.
+    pub(crate) fn complete_actions_of(&mut self, agent: PlayerId, at: Instant) {
+        self.complete_due(at, Some(agent));
+    }
+
+    fn complete_due(&mut self, by: Instant, agent: Option<PlayerId>) {
+        let is_due = |t: &Timed| t.due <= by && agent.is_none_or(|a| a == t.agent);
+        if !self.executor.timed.iter().any(is_due) {
+            return;
+        }
+        let (mut due, rest): (Vec<Timed>, Vec<Timed>) = std::mem::take(&mut self.executor.timed).into_iter().partition(is_due);
+        self.executor.timed = rest;
+        due.sort_by_key(|t| (t.due, t.agent));
+        for timed in due {
+            self.finish(timed.agent, timed.action, timed.target);
         }
     }
 
