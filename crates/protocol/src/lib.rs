@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 22;
+pub const PROTOCOL_VERSION: u32 = 23;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -130,6 +130,8 @@ pub enum ServerMessage {
     Died,
     /// Journal entries found or changed: all of them on joining, then those that change.
     Journal { entries: Vec<voxmar_engine::journal::Entry> },
+    /// Every quest's state: all on joining, then whenever any changes.
+    Quests { states: Vec<voxmar_engine::quest::QuestState> },
     /// Dropped items near the player that appeared or changed, and those that went: picked
     /// up (by `collector`), merged into another, despawned, or out of range.
     Items { changed: Vec<ItemView>, gone: Vec<ItemGone> },

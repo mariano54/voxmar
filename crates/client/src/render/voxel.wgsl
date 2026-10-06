@@ -41,6 +41,8 @@
 // of an overlay drawn over it, tinted (a grass block side's fringe), plus one (0 for
 // none), b the overlay's tint, a how brightly the layer glows by itself.
 @group(2) @binding(7) var block_layers: texture_2d<f32>;
+// The tint byte's bit for a layer whose texture is a strip of frames.
+const ANIMATED: u32 = 32u;
 #endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
@@ -685,6 +687,19 @@ fn biome_colour(kind: u32, colours: u32, world: vec3<f32>, face: u32) -> vec3<f3
     return colour;
 }
 
+#ifndef PREPASS_PIPELINE
+// The layer showing now for an animated layer: its frames, from the layer table's second
+// row (render/mod.rs, `layer_table`), each for its time, the layer itself first.
+fn animation_frame(layer: i32) -> i32 {
+    let animation = textureLoad(block_layers, vec2(layer, 1), 0);
+    let first = u32(animation.r * 255.0 + 0.5) | (u32(animation.g * 255.0 + 0.5) << 8u);
+    let frames = max(u32(animation.b * 255.0 + 0.5), 1u);
+    let ticks = max(animation.a * 255.0, 1.0);
+    let frame = u32(floor(globals.time * 20.0 / ticks)) % frames;
+    return select(i32(first + frame) - 1, layer, frame == 0u);
+}
+#endif
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
 #ifdef TRANSLUCENT
@@ -694,10 +709,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let footprint = length(fwidth(in.world_position.xz));
     let tilt = cross(dpdx(in.world_position), dpdy(in.world_position));
 #endif
-    let layer = i32(in.surface & 0xFFFu);
+    var layer = i32(in.surface & 0xFFFu);
     // The layer's overlay, tint, variety and glow (render/mod.rs, `layer_table`).
     let entry = textureLoad(block_layers, vec2(layer, 0), 0);
     let tint_byte = u32(entry.b * 255.0 + 0.5);
+    if (tint_byte & ANIMATED) != 0u {
+        layer = animation_frame(layer);
+    }
     var look = Laid(in.uv, dpdx(in.uv), dpdy(in.uv));
     if tint_byte >= 64u {
         let cell = vec3<i32>(floor(in.world_position - NORMALS[in.face] * 0.5));
@@ -741,7 +759,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
     if overlay != 0u {
         let over = textureSampleGrad(block_textures, block_sampler, look.uv, i32(overlay - 1u), look.dx, look.dy);
-        let tint = biome_colour(tint_byte & 63u, in.colours, in.world_position, in.face);
+        let tint = biome_colour(tint_byte & 31u, in.colours, in.world_position, in.face);
         base = mix(base, over.rgb * tint, over.a);
     }
 #endif

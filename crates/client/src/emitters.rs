@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use voxmar_engine::block::{BlockId, BlockRegistry, Emission, ParticleStyle};
+use voxmar_engine::block::{BlockId, BlockRegistry, Emission, ParticleBlend, ParticleStyle};
 use voxmar_engine::coords::{CHUNK_BITS, CHUNK_SIZE, ColumnPos, WORLD_HEIGHT, local_index};
 
 use crate::breaking::sky_light;
@@ -36,6 +36,8 @@ const MAX_DRIFT: f32 = 6.0;
 /// Emitters nearer than this give off all their particles; beyond, fewer, down to
 /// `FAR_SHARE` at `RANGE`.
 const NEAR: f32 = 10.0;
+/// The opacity, so the share of its light, an added flame gives (of 255).
+const FLAME_LIGHT: u8 = 150;
 const FAR_SHARE: f32 = 0.3;
 
 pub struct EmittersPlugin;
@@ -291,6 +293,11 @@ fn particle(emission: &Emission, emitter: &Emitter, light: u8, wind: Vec3, dice:
         },
     };
     particle.blend = emission.blend.unwrap_or(emission.style.blend());
+    // Added light builds up where flames overlap: each gives a share, so a crowd of
+    // tongues glows as one fire instead of burning out to white.
+    if emission.style == ParticleStyle::Flame && particle.blend == ParticleBlend::Add {
+        particle.color[3] = FLAME_LIGHT;
+    }
     // Rising further: faster and for longer, both by the square root, and with drag
     // eased to match, so the distance grows with the height asked for.
     if let Some(height) = emission.height {

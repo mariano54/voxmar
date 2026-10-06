@@ -65,6 +65,11 @@ pub struct Player {
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
+    /// Quests finished, tallies of what quests count (`crafted:base:torch`), and the quest
+    /// states last sent (`quests`).
+    pub quests_done: Vec<String>,
+    pub tallies: rustc_hash::FxHashMap<String, u32>,
+    pub quests_sent: Vec<voxmar_engine::quest::QuestState>,
     pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
@@ -103,6 +108,9 @@ impl Player {
             home: None,
             buried: false,
             journal: Default::default(),
+            quests_done: Vec::new(),
+            tallies: Default::default(),
+            quests_sent: Vec::new(),
             food_clock: 0.0,
             heal_clock: 0.0,
             hurt_clock: 0.0,
@@ -169,6 +177,8 @@ impl Player {
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
             home: self.home.map(|h| h.to_array()),
             journal: self.journal.entries().cloned().collect(),
+            quests: self.quests_done.clone(),
+            tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
         }
     }
 }
@@ -270,6 +280,8 @@ impl Server {
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.home = saved.home.map(Vec3::from_array);
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
+                player.quests_done = saved.quests;
+                player.tallies = saved.tallies.into_iter().collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
             }
             // Players who left dead come back to life at the spawn point.
@@ -277,6 +289,8 @@ impl Server {
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
+                player.quests_done = saved.quests;
+                player.tallies = saved.tallies.into_iter().collect();
             }
             None => {
                 for (block, count) in start_kit {
