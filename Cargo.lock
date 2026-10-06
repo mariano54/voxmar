@@ -5036,6 +5036,7 @@ dependencies = [
  "bevy",
  "bytemuck",
  "crossbeam-channel",
+ "parley",
  "rayon",
  "ron",
  "rustc-hash 2.1.3",
