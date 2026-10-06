@@ -48,6 +48,8 @@ pub struct Content {
     pub fishing: Arc<FishingRegistry>,
     /// Structures recognised from patterns of blocks (the Homestead Hearth).
     pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
+    /// The quest book.
+    pub quests: Arc<crate::quest::QuestRegistry>,
     /// What it takes to study and master the journal's entries.
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
@@ -97,6 +99,7 @@ impl Content {
         let mut regrowth = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
+        let mut quests = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -138,6 +141,10 @@ impl Content {
                     }
                     "fishing.ron" => {
                         fishing.push(FishingRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "quests.ron" => {
+                        quests.push(crate::quest::QuestRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "multiblocks.ron" => {
@@ -207,6 +214,7 @@ impl Content {
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             multiblocks: Arc::new(multiblocks),
+            quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),

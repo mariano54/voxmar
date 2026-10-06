@@ -19,7 +19,29 @@ pub struct Rgba {
     pub pixels: Vec<u8>,
 }
 
+/// The frames of an animated block texture after its first, which the texture itself is:
+/// a strip of square frames one under another, as Minecraft's are, shown for `ticks`
+/// twentieths of a second each.
+pub struct Animation {
+    pub frames: Vec<Rgba>,
+    pub ticks: u8,
+}
+
+/// Twentieths of a second a frame shows for when no `.mcmeta` says: a fire's four frames
+/// take 0.6 s, slow enough to read as flickering rather than buzzing.
+const FRAME_TICKS: u8 = 3;
+
 impl Rgba {
+    /// Its square frames, top first, if it is a strip of more than one; itself otherwise.
+    fn frames(&self) -> Vec<Rgba> {
+        let side = self.width;
+        if side == 0 || self.height <= side || self.height % side != 0 {
+            return vec![self.clone()];
+        }
+        let size = (side * side * 4) as usize;
+        self.pixels.chunks(size).map(|pixels| Rgba { width: side, height: side, pixels: pixels.to_vec() }).collect()
+    }
+
     fn solid(width: u32, height: u32, color: [u8; 4]) -> Self {
         Self { width, height, pixels: color.repeat((width * height) as usize) }
     }
@@ -177,6 +199,17 @@ impl Pack {
             || self.recipes.contains(path)
     }
 
+    /// The frame time an image's `<path>.png.mcmeta` gives (`animation.frametime`, in
+    /// ticks), as Minecraft's packs and those made for it carry one.
+    fn frame_ticks(&mut self, path: &str) -> Option<u8> {
+        let bytes = ["textures", "assets/minecraft/textures"]
+            .iter()
+            .find_map(|root| self.files.iter_mut().find_map(|files| files.read(&format!("{root}/{path}.png.mcmeta"))))?;
+        let meta: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let ticks = meta.get("animation")?.get("frametime")?.as_u64()?;
+        Some(ticks.clamp(1, 255) as u8)
+    }
+
     fn read(&mut self, path: &str) -> Option<Rgba> {
         // Blocks and items only: interface sprites are laid out texel for texel.
         let resolution = if path.starts_with("block/") || path.starts_with("item/") { self.resolution } else { 0 };
@@ -262,9 +295,10 @@ impl Source {
         self.packs.iter_mut().find_map(|pack| pack.read(path))
     }
 
-    /// One square texture per block texture reference, all `size`×`size`. Logs how many
-    /// each pack provided.
-    pub fn block_textures(&mut self, refs: &[TextureRef]) -> (u32, Vec<Rgba>) {
+    /// One square texture per block texture reference, all `size`×`size`, its first frame
+    /// if it is an animation strip, and the rest of each strip's frames. Logs how many each
+    /// pack provided.
+    pub fn block_textures(&mut self, refs: &[TextureRef]) -> (u32, Vec<Rgba>, Vec<Option<Animation>>) {
         let loaded: Vec<Option<Rgba>> = refs.iter().map(|r| self.read(&format!("block/{}", r.name))).collect();
         // What a texture is drawn over (an ore's host rock), from whichever pack has it.
         let unders: Vec<Option<Rgba>> =
@@ -277,6 +311,21 @@ impl Source {
             .collect();
         bevy::log::info!("block textures: {}", served.join(", "));
         let size = loaded.iter().chain(&unders).flatten().map(|t| t.width.min(t.height)).max().unwrap_or(16).next_power_of_two();
+        // A strip without a rock under it animates (an ore over its host keeps its first
+        // frame), each frame for the time its pack's .mcmeta gives.
+        let animations = loaded
+            .iter()
+            .zip(&unders)
+            .zip(refs)
+            .map(|((texture, under), r)| {
+                let frames = texture.as_ref().filter(|_| under.is_none())?.frames();
+                (frames.len() > 1).then(|| {
+                    let path = format!("block/{}", r.name);
+                    let ticks = self.packs.iter_mut().find(|pack| pack.contains(&path)).and_then(|pack| pack.frame_ticks(&path));
+                    Animation { frames: frames[1..].iter().map(|frame| frame.square(size)).collect(), ticks: ticks.unwrap_or(FRAME_TICKS) }
+                })
+            })
+            .collect();
         let textures = loaded
             .into_iter()
             .zip(unders)
@@ -288,7 +337,7 @@ impl Source {
                 (None, _) => placeholder(size, r.color, &r.name),
             })
             .collect();
-        (size, textures)
+        (size, textures, animations)
     }
 
     /// For each texture reference `wanted`, its overlay, `block/<name>_overlay`, drawn over

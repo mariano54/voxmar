@@ -47,10 +47,10 @@
                 ], clean: true),
             ]),
             "block/mossy_cobbled_{name}": (base: "block/cobbled_{name}", palettes: {"moss": "stone_moss"}, layers: [
-                Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.6), Grain(0.25)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.2, amount: 0.2)], above: 0.45, clean: true, shadow: -1),
+                Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.4), Noise(cells: (32, 32), amount: 0.45)], mask: [Noise(cells: (4, 4), octaves: 2, amount: 1.4), Noise(cells: (16, 16), amount: 0.4)], above: 0.45, clean: true, shadow: -1),
             ]),
             "block/cracked_{name}_bricks": (base: "block/{name}_bricks", layers: [
-                Paint(palette: "main", base: 0.0, mask: [Ridge(cells: (2, 2), octaves: 2, width: 0.06, amount: 1.0), Noise(cells: (3, 3), amount: 0.9)], above: 0.74, light: 1),
+                Paint(palette: "main", base: 0.05, mask: [Ridge(cells: (3, 3), octaves: 1, width: 0.05, amount: 1.0), Noise(cells: (4, 4), amount: 1.0), Border(width: 3, amount: -3.0)], above: 0.95, light: 1),
             ]),
         },
     },

@@ -180,6 +180,10 @@ struct Look {
     fluid: u8,
     /// An opaque block whose top is tinted like grass, which grows grass blades.
     grass_top: bool,
+    /// A solid cube that does not hide what is behind it (glass, ice, leaves): water and
+    /// ice show no face against one, as they show none against stone, or the side of a
+    /// pool of water seen through a pane of glass stood in it is a wall of deep water.
+    wall: bool,
     /// Texture layer and tint of each face, by `Face`.
     layers: [u16; 6],
     tints: [Tint; 6],
@@ -193,6 +197,10 @@ impl Look {
             render: info.render,
             fluid: info.fluid.map_or(0, |f| f.fluid.0 + 1),
             grass_top: info.render == RenderKind::Opaque && info.tints[Face::PosY as usize] == Tint::Grass,
+            wall: info.solid
+                && !info.occludes
+                && matches!(info.render, RenderKind::Cutout | RenderKind::Leaves | RenderKind::Translucent)
+                && info.fluid.is_none(),
             layers: info.layers,
             tints: info.tints,
         }
@@ -204,6 +212,8 @@ impl Look {
 struct Scratch {
     cells: Vec<Cell>,
     occ: Axes,
+    /// `occ` and the see-through solid cubes (`Look::wall`), which hide translucent faces.
+    walled: Axes,
     opaque: Axes,
     cutout: Axes,
     translucent: Axes,
@@ -220,6 +230,7 @@ impl Default for Scratch {
         Self {
             cells: Vec::new(),
             occ: Axes::default(),
+            walled: Axes::default(),
             opaque: Axes::default(),
             cutout: Axes::default(),
             translucent: Axes::default(),
@@ -235,7 +246,7 @@ impl Scratch {
     /// Clears the bit tables; every cell is written before it is read.
     fn reset(&mut self, registry: &BlockRegistry) {
         self.cells.resize(P * P * P, Cell::default());
-        for axes in [&mut self.occ, &mut self.opaque, &mut self.cutout, &mut self.translucent, &mut self.joins.hidden, &mut self.joins.single] {
+        for axes in [&mut self.occ, &mut self.walled, &mut self.opaque, &mut self.cutout, &mut self.translucent, &mut self.joins.hidden, &mut self.joins.single] {
             axes.clear();
         }
         *self.leaves = [[0; P]; P];
@@ -248,7 +259,7 @@ impl Scratch {
 }
 
 fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion, column: &Column, cy: i32, detail: i32) -> ChunkMesh {
-    let Scratch { cells, occ, opaque, cutout, translucent, joins, leaves, looks, .. } = scratch;
+    let Scratch { cells, occ, walled, opaque, cutout, translucent, joins, leaves, looks, .. } = scratch;
     let origin = IVec3::new(-1, cy * CHUNK_SIZE - 1, -1);
     let mut plants = Vec::new();
     let mut grids: Vec<LodGrid> =
@@ -297,7 +308,10 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
                 cells[pidx(x, y, z)] = cell;
                 if occludes {
                     occ.set(x, y, z);
+                    walled.set(x, y, z);
                     occluding += 1;
+                } else if look.wall {
+                    walled.set(x, y, z);
                 }
                 grass |= look.grass_top;
                 match render {
@@ -331,7 +345,8 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     if occluding == P * P * P {
         return ChunkMesh { connectivity: Connectivity::NONE, ..Default::default() };
     }
-    let (cells, occ, opaque, cutout, translucent, joins, leaves) = (&*cells, &*occ, &*opaque, &*cutout, &*translucent, joins, &**leaves);
+    let (cells, occ, walled, opaque, cutout, translucent, joins, leaves) =
+        (&*cells, &*occ, &*walled, &*opaque, &*cutout, &*translucent, joins, &**leaves);
 
     join_leaves(leaves, occ, joins);
 
@@ -341,7 +356,7 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     for face in Face::ALL {
         mesher.mesh_faces(face, occ, opaque, joins, &mut mesh.opaque);
         mesher.mesh_faces(face, occ, cutout, joins, &mut mesh.cutout);
-        mesher.mesh_faces(face, occ, translucent, joins, &mut mesh.translucent);
+        mesher.mesh_faces(face, walled, translucent, joins, &mut mesh.translucent);
     }
     mesh.inner = split_inner(&mut mesh.cutout);
     for i in plants {
@@ -1405,6 +1420,7 @@ mod tests {
     const FLUIDS: &str = r#"(
         blocks: [
             (name: "stone"),
+            (name: "glass", render: Cutout),
             (
                 name: "water", render: Translucent, solid: false, tint: Water, hardness: -1.0,
                 fluid: (tick: 5, drop: 1, slope: 4, infinite: true, pools: true, currents: true),
@@ -1434,6 +1450,19 @@ mod tests {
         let w = v[0];
         let p = IVec3::new((w & 63) as i32, (w >> 6 & 63) as i32, (w >> 12 & 63) as i32);
         (p, w >> 18 & 7, w >> 21 & 3, w >> SURFACE_DROP_SHIFT & 7, w >> FLOW_DIRECTION_SHIFT)
+    }
+
+    #[test]
+    fn water_shows_no_face_against_glass() {
+        // A source with glass on one side and air on the other three: its top and the three
+        // open sides, but nothing against the glass, as against stone.
+        let mesh = water_mesh(|reg, water, column| {
+            column.set_block(IVec3::new(5, 32, 5), water.source);
+            column.set_block(IVec3::new(6, 32, 5), reg.expect("test:glass"));
+        });
+        let faces: Vec<u32> = mesh.vertices.chunks(4).map(|quad| unpack(quad[0]).1).collect();
+        assert_eq!(faces.len(), 4, "{faces:?}");
+        assert!(!faces.contains(&(Face::PosX as u32)), "{faces:?}");
     }
 
     #[test]

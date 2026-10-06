@@ -209,6 +209,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// An effect that comes on pops up with its name, and the first look at the inventory
+    /// brings its tip.
+    Tips,
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
@@ -849,6 +852,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -1490,6 +1494,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
+                // The crafting table made earlier finished the quest that asks for one.
+                let quests = &world.resource::<LocalPlayer>().quests;
+                let table = quests.iter().find(|q| q.name == "base:crafting_table").map(|q| q.done);
+                gate.check("workshop: quests", match table {
+                    Some(true) => Ok(format!("the crafting table quest is done ({} of {} quests)", quests.iter().filter(|q| q.done).count(), quests.len())),
+                    Some(false) => Err("a crafting table was made, but its quest is not done".into()),
+                    None => Err("the server sent no quests".into()),
+                });
                 // A small pack to die with, so what is left lies in a few stacks by the feet.
                 let net = world.resource::<Net>();
                 for line in ["clear", "give stone_pickaxe 1", "give bread 1", "give stick 10", "give dirt 20", "give oak_planks 12"] {
@@ -1534,8 +1546,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
+            // Walk to each stack still lying near where they fell, as a player gathers
+            // them: one that rolled into the pool or down a step is out of reach from the
+            // spot itself.
+            let fell = gate.fell;
+            let lying: Vec<Vec3> = world.resource::<crate::drops::Drops>().lying().map(|(_, _, at)| at).filter(|at| at.distance(fell) < 10.0).collect();
             if gate.frames % 30 == 0 {
-                let line = format!("tp {} {} {}", gate.fell.x, gate.fell.y, gate.fell.z);
+                let to = lying.iter().copied().min_by(|a, b| a.distance(fell).total_cmp(&b.distance(fell))).unwrap_or(fell);
+                let line = format!("tp {} {} {}", to.x, to.y, to.z);
                 world.resource::<Net>().command(&line);
             }
             let back = carried(world);
@@ -1553,7 +1571,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 end_workshop(world, gate, now);
             } else if gate.server_now - gate.gathered.1 > 15.0 {
-                fail(world, gate, "grave", format!("back where the player fell, nothing more was picked up for 15 server seconds, carrying {back} of {} items", gate.count_before));
+                let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
+                fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
             }
         }
         _ => {}
@@ -1859,6 +1878,12 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("changed the screen from the inventory's by only {change:.1} levels"))
                 };
                 gate.check("character", shown);
+                // Every skill has its tile, all of them on screen, three across.
+                let (skills, tiles, inside) = crate::hud::character::skill_tiles(world);
+                gate.check(
+                    "character: skills",
+                    if skills > 0 && tiles == skills && inside == skills { Ok(format!("all {skills} skills on screen")) } else { Err(format!("{skills} skills, {tiles} tiles shown, {inside} on screen")) },
+                );
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
             } else if in_phase > SCREEN_WAIT {
@@ -2016,7 +2041,10 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (chip, left) = reading(world);
             let (chip_s, left_s) = (chip.as_deref().and_then(seconds), left.as_deref().and_then(seconds));
             let counted = chip_s.is_some_and(|c| c < gate.count_before) && chip_s == left_s;
-            if !counted && in_phase < 3.0 {
+            // While the server holds the effect itself (the session's cooking gives it), the
+            // count moves on the server's clock, which a loaded machine slows: given five of
+            // the server's seconds, however long they take.
+            if !counted && gate.server_in_phase() < 5.0 {
                 return;
             }
             let first = gate.count_before;
@@ -2028,6 +2056,37 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Tips, now);
+        }
+    }
+}
+
+fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::effects::ShowEffects;
+    use crate::hud::tips::{Popup, Tips};
+    let Some(warmed) = world.resource::<Launch>().content.effects.find("ember_warmed") else {
+        gate.check("tips", Err("no ember_warmed effect in the content".into()));
+        gate.next(Step::Guides, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            // As for a player who has seen none.
+            world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
+            world.insert_resource(ShowEffects(vec![("ember_warmed".into(), 60)]));
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        _ => {
+            let popped = world.query::<&Popup>().iter(world).any(|popup| popup.0 == warmed);
+            let tip = world.resource::<Tips>().showing.map(|(name, _)| name);
+            if !(popped && tip.is_some()) && in_phase < 3.0 {
+                return;
+            }
+            gate.check("tips: effect", if popped { Ok("Ember-warmed popped up as it came on".into()) } else { Err("an effect came on with no pop-up".into()) });
+            gate.check("tips: first look", match tip { Some(name) => Ok(format!("the {name} tip showed")), None => Err("opening the inventory brought no tip".into()) });
+            world.remove_resource::<ShowEffects>();
+            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }
     }
