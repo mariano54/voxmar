@@ -138,6 +138,13 @@ impl CookingRegistry {
         self.by_input.get(&item)?.iter().map(|&i| &self.recipes[i]).find(|r| station.contains(&r.def.station))
     }
 
+    /// Every recipe with each item it takes, by item, then in the order defined.
+    pub fn iter(&self) -> impl Iterator<Item = (BlockId, &Recipe)> {
+        let mut inputs: Vec<&BlockId> = self.by_input.keys().collect();
+        inputs.sort();
+        inputs.into_iter().flat_map(move |&input| self.by_input[&input].iter().map(move |&i| (input, &self.recipes[i])))
+    }
+
     pub fn len(&self) -> usize {
         self.recipes.len()
     }

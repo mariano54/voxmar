@@ -125,6 +125,8 @@ pub struct UiState {
     pub menu_open: bool,
     /// The chat and command line.
     pub console_open: bool,
+    /// The recipe viewer, over another screen (`hud::recipes`).
+    pub recipes_open: bool,
     pub cursor_locked: bool,
 }
 
@@ -142,6 +144,8 @@ fn grab_cursor(
     if keys.just_pressed(KeyCode::Escape) {
         if ui.console_open {
             ui.console_open = false;
+        } else if ui.recipes_open {
+            ui.recipes_open = false;
         } else if ui.inventory_open || ui.character_open {
             ui.inventory_open = false;
             ui.character_open = false;
@@ -149,7 +153,7 @@ fn grab_cursor(
             ui.menu_open = !ui.menu_open;
         }
     }
-    let screen_open = ui.inventory_open || ui.character_open || ui.menu_open || ui.console_open || player.dead;
+    let screen_open = ui.inventory_open || ui.character_open || ui.menu_open || ui.console_open || ui.recipes_open || player.dead;
     let want_locked = !screen_open && (ui.cursor_locked || *screen_was_open || mouse.just_pressed(MouseButton::Left));
     *screen_was_open = screen_open;
     let changed = want_locked != ui.cursor_locked;

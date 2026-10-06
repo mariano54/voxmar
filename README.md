@@ -81,6 +81,13 @@ inventory). Recipes are content (`recipes.ron`): a log makes four of its planks,
 make stone bricks, four sand sandstone, moss and stonework mossy stonework, and two wheat a
 loaf of bread.
 
+The recipe viewer works as NEI does: over any item in the inventory (or in the viewer),
+R shows the recipes that make it and U everything it goes into, drawn as they happen (the
+crafting grid, a campfire, shears on a mouflon, a creature that drops it); arrows turn the
+pages, clicking an item looks up its recipes (right-click, its uses) and Back retraces the
+steps. Both keys can be changed in Settings, Keys. It reads the same content the game plays
+by, so a package's recipes show up in it on their own.
+
 The character screen (C) shows health, hunger, how warm you feel and the effects on you,
 and every skill with its icon, level and progress; click a skill for its guide, what each
 level opens up. Hunger empties slowly, faster while cold, and food fills it: right-click
