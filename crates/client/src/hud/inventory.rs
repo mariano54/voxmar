@@ -502,6 +502,7 @@ fn follow_pointer(
     mut held: Query<&mut Node, With<PointerStack>>,
     mut slots: Query<(&InventorySlot, &RelativeCursorPosition, &mut ImageNode)>,
     gesture: Res<Gesture>,
+    scale: Res<UiScale>,
 ) {
     if !ui.inventory_open {
         return;
@@ -509,6 +510,8 @@ fn follow_pointer(
     if let (Ok(window), Ok(mut node)) = (window.single(), held.single_mut())
         && let Some(at) = window.cursor_position()
     {
+        // The pointer is in the window's points, the interface laid out at its own scale.
+        let at = at / scale.0;
         node.left = Val::Px(at.x - SLOT / 2.0);
         node.top = Val::Px(at.y - SLOT / 2.0);
     }
@@ -665,9 +668,11 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
-    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool)>>,
+    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
+    (keys, scale): (Res<ButtonInput<KeyCode>>, Res<UiScale>),
+    mut japanese: Local<Option<Locale>>,
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
@@ -679,12 +684,34 @@ fn tooltip(
         *shown = None;
         return;
     };
-    let key = (item, settings.debug_overlay);
+    // Shift shows how the name reads: in Japanese, the kana over the name; in another
+    // language, the Japanese name with its kana under it.
+    let reading = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let key = (item, settings.debug_overlay, reading);
     if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
+        let readings: Vec<String> = if !reading {
+            Vec::new()
+        } else if locale.code() == "ja" {
+            locale.block_reading(def).into_iter().collect()
+        } else {
+            let japanese = japanese.get_or_insert_with(|| Locale::load(&voxmar_server::assets_dir().join("content"), "ja"));
+            [Some(japanese.block(def)), japanese.block_reading(def)].into_iter().flatten().collect()
+        };
+        let in_japanese = locale.code() == "ja";
         commands.entity(entity).despawn_children().with_children(|lines| {
+            if in_japanese {
+                for line in &readings {
+                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                }
+            }
             lines.spawn(shadowed(&font.0, locale.block(def), BODY, rarity_color(def.rarity)));
+            if !in_japanese {
+                for line in &readings {
+                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                }
+            }
             let lines_after = seed_line(&locale, &launch.content, &player, item).into_iter().chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
                 lines.spawn(text(&font.0, line, BODY, color));
@@ -695,9 +722,11 @@ fn tooltip(
     if let Ok(window) = window.single()
         && let Some(at) = window.cursor_position()
     {
-        // Up and to the right of the pointer, kept on screen.
+        // Up and to the right of the pointer, kept on screen; the pointer is in the
+        // window's points, the interface laid out at its own scale.
+        let (at, width) = (at / scale.0, window.width() / scale.0);
         let size = computed.size() * computed.inverse_scale_factor();
-        let left = (at.x + 6.0 * PX).min(window.width() - size.x - 2.0 * PX);
+        let left = (at.x + 6.0 * PX).min(width - size.x - 2.0 * PX);
         let top = (at.y - size.y - 2.0 * PX).max(2.0 * PX);
         node.left = Val::Px(left);
         node.top = Val::Px(top);
