@@ -1298,10 +1298,24 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     return;
                 }
                 gate.check("workshop: till", Ok("a right click with a hoe tilled the dirt into farmland on both sides".into()));
-                end_workshop(world, gate, now);
+                world.resource::<Net>().command("give bread 3");
+                gate.advance(now);
             } else if in_phase > WORKSHOP_WAIT {
                 mouse(world, MouseButton::Right, false);
                 fail(world, gate, "till", "right clicking dirt with a hoe made no farmland".into());
+            }
+        }
+        // Cooked food takes a slot each, as in RuneScape.
+        9 => {
+            let player = world.resource::<LocalPlayer>();
+            let bread = world.resource::<ClientWorld>().registry.id("base:bread");
+            let stacks: Vec<u8> = player.inventory.slots.iter().flatten().filter(|s| Some(s.item) == bread).map(|s| s.count).collect();
+            if stacks.len() >= 3 {
+                let result = if stacks.iter().all(|&n| n == 1) { Ok("three loaves took three slots".to_owned()) } else { Err(format!("bread stacked: {stacks:?}")) };
+                gate.check("workshop: food takes a slot each", result);
+                end_workshop(world, gate, now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "food takes a slot each", format!("three loaves given, the inventory shows {stacks:?}"));
             }
         }
         _ => {}
@@ -1314,7 +1328,7 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     world.resource_mut::<UiState>().inventory_open = false;
     let net = world.resource::<Net>();
-    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick"] {
+    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread"] {
         net.command(&format!("clear {tool}"));
     }
     let feet = gate.feet;

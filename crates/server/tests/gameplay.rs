@@ -918,3 +918,16 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     client.propose("core:craft", ActionTarget::Slot(0));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == pickaxe) && c.earned.contains(&60));
 }
+
+#[test]
+fn cooked_food_takes_a_slot_each_and_ingredients_stack() {
+    let mut client = Client::join();
+    for line in ["/clear", "/give bread 3", "/give wheat 3"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (bread, wheat) = (blocks.expect("base:bread"), blocks.expect("base:wheat"));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().filter(|s| s.item == bread).count() == 3 && c.inventory.slots.iter().flatten().any(|s| s.item == wheat));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != bread || s.count == 1), "bread stacked");
+    assert_eq!(client.inventory.slots.iter().flatten().filter(|s| s.item == wheat).map(|s| s.count).collect::<Vec<_>>(), [3], "wheat should stack");
+}

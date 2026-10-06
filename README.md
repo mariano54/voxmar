@@ -90,7 +90,8 @@ stone, copper and iron pickaxes, axes, shovels, hoes and knives) and anything el
 than two by two. Each recipe trains a skill (Crafting, Engineering for tools and stations,
 Cooking for food) and may need a level in it. Tools mine what they are made for faster and
 find more there; ores ask for a Mining level and a pickaxe tier (`tools.ron`). A hoe tills
-soil into farmland, where crops are sown. See docs/tools-and-crafting.md.
+soil into farmland, where crops are sown. See docs/tools-and-crafting.md. Cooked food, drinks and potions take a slot each, as in
+RuneScape, so what you carry is a choice (`stacking.ron`).
 
 The recipe viewer works as NEI does: over any item in the inventory (or in the viewer),
 R shows the recipes that make it and U everything it goes into, drawn as they happen (the
@@ -129,7 +130,7 @@ fruit leaves to pick them, at any level, and they bear again.
 
 Broken blocks drop items, as in Minecraft: what a block gives pops out as a tiny copy of it
 (a plant as a flat sprite with thickness) that turns and bobs where it lands, floats in
-water, merges with nearby stacks of the same thing, and lasts five minutes. After half a
+water, merges with nearby stacks of the same thing, and lasts half an hour of world time. After half a
 second, walking near draws it in with a pop. Q throws one item from the hand, Ctrl+Q the
 whole stack; thrown items wait two seconds before they can be picked up again. Dropped items
 are kept with the world (`items.ron`).
