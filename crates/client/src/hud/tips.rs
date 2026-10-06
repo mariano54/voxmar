@@ -22,7 +22,7 @@ impl Plugin for TipsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tips>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (announce_effects, notice, show_tip, age_popups).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (announce_effects, notice, show_tip, age_popups, clear_debug).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut tips: ResMut<Tips>| *tips = Tips::default());
     }
 }
@@ -141,6 +141,20 @@ fn announce_effects(
                 plate.spawn(text(&font.0, locale.effect_description(effect), BODY, SOFT));
             });
         });
+    }
+}
+
+/// The pop-ups go under the debug overlay while it shows, rather than over its lines.
+fn clear_debug(debug: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<super::DebugPlate>>, mut column: Query<&mut Node, With<Popups>>) {
+    let Ok(mut node) = column.single_mut() else { return };
+    let below = debug
+        .iter()
+        .filter(|(_, _, visible)| visible.get())
+        .map(|(plate, place, _)| (place.translation.y + plate.size().y / 2.0) * plate.inverse_scale_factor() + space::GAP)
+        .next();
+    let top = below.map_or(Val::Percent(12.0), Val::Px);
+    if node.top != top {
+        node.top = top;
     }
 }
 

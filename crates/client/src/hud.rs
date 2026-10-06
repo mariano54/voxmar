@@ -115,7 +115,7 @@ struct EffectChips;
 pub(crate) struct DebugText;
 /// The plate the debug overlay sits in.
 #[derive(Component)]
-struct DebugPlate;
+pub struct DebugPlate;
 #[derive(Component)]
 struct BreakBar;
 /// The name of the item in hand, shown above the hotbar for a moment after it changes.
