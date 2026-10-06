@@ -71,7 +71,10 @@ impl Plugin for VolumetricPlugin {
         render_app
             .add_systems(RenderStartup, init)
             .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
-            .add_systems(Core3d, volumetric_light.after(WaterPass).before(main_transparent_pass_3d).in_set(Core3dSystems::MainPass));
+            .add_systems(
+                Core3d,
+                volumetric_light.in_set(VolumetricPass).after(WaterPass).before(main_transparent_pass_3d).in_set(Core3dSystems::MainPass),
+            );
     }
 }
 
@@ -115,6 +118,10 @@ struct Passes {
     accumulate: CachedRenderPipelineId,
     composite: CachedRenderPipelineId,
 }
+
+/// The volumetric pass in the `Core3d` schedule, which particles that blend draw over.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VolumetricPass;
 
 /// This frame's pipelines, bind groups and half-resolution target for a camera that draws
 /// volumetric light.
