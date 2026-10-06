@@ -272,7 +272,7 @@
     "guide.category.general": "その他",
     "guide.hint.breeding": "好物で手なずけて囲いで飼い、2匹に餌をやると繁殖する。",
     "guide.hint.planting": "水辺の耕した土にまく。",
-    "guide.wild": "種は野生の{plant}から取れる",
+    "guide.wild": "{plant}を採ると種が取れる",
     "guide.ground.tilled": "くわで耕した土にまく",
     "guide.climate.cold": "寒い所でよく育つ",
     "guide.climate.mild": "穏やかな気候でよく育つ",
