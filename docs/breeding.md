@@ -128,7 +128,7 @@ What players do with it:
   pass a species' thresholds for a few generations, the line becomes its domestic form
   (mouflon to sheep, wild boar to pig, aurochs to cattle, junglefowl to hen). Domestic
   forms have their own looks, products and drops.
-- **Named breeds.** A breed is a data definition: a set of gene conditions (a highland
+- **Named breeds** (in the game now: `breeds: [(name, title, when: [Shows(gene, allele), Above(gene, n), Below(gene, n)])]` per species, named when inspecting at Farming 10). A breed is a data definition: a set of gene conditions (a highland
   aurochs: cold coat, long hair, hardy to −10 °C). When an animal meets one, it is that
   breed, named in the studbook, with experience the first time. Mods add breeds as data.
 - **Hybrids.** Species in the same family may cross where data says so: horse × donkey =
@@ -159,6 +159,11 @@ moonhares breed true. This is how a farm in a mundane valley can raise supernatu
 animals, at the cost of building where aether is high or bringing aether feed from far.
 
 ## Inspecting
+
+**In the game now:** right-click a creature with nothing it wants in hand. Anyone sees its
+kind, level, keeper, health, age and temper; Farming 10 shows what its genes show,
+20 what it carries hidden, 30 the exact numbers, 40 the odds of a mutation where it
+stands (server `inspect.rs`).
 
 The inspect action shows more with Farming level: condition, age and personality in words
 at 1; visible genes in words ("long wool, calm") at 15; hidden alleles and carriers at 30;

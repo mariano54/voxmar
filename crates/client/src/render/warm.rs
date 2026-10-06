@@ -4,15 +4,19 @@
 //! it, holding that frame: tens of milliseconds with the system's shader cache warm, a few
 //! hundred on a fresh build. Whatever shows only now and then (another player, a creature,
 //! the first block broken) would stall the frame it first appears in. `warm` keeps a mesh
-//! and material drawn from the start where nothing of it shows: as a box around the eye, so
-//! large the eye stays inside it and sees only its back faces, which are culled; and, for
-//! what casts shadows, as a speck at the eye, which the shadow maps take in at a size no
-//! texel shows. `PipelineWatch` lists the pipelines compiled while it watches; the gate
-//! watches from the world having loaded until leaving it, and fails on any.
+//! and material drawn from the start where nothing of it shows: shrunk to a speck at the
+//! eye, a millionth of its size, and never culled, so every view (and, for what casts
+//! shadows, every shadow map) draws it and so needs its pipeline, while its triangles cover
+//! no pixel and no texel. (It was once a box around the eye showing only back faces, which
+//! are culled; but the box showed as a huge flat salmon wall, another player's colour, in
+//! dark caves, so nothing that relies on where the eye is can draw anything large.)
+//! `PipelineWatch` lists the pipelines compiled while it watches; the gate watches from the
+//! world having loaded until leaving it, and fails on any.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::{PipelineCache, PipelineDescriptor};
@@ -30,32 +34,26 @@ impl Plugin for WarmPlugin {
     }
 }
 
-/// How much larger than its mesh a warming box is: the eye stays inside it however far it
-/// moves in a frame (the eye's position here is a frame old).
-const AROUND: f32 = 400.0;
-/// How small the speck that keeps the shadow pipeline compiled.
-const SPECK: f32 = 1e-3;
+/// How small the speck is, as a share of its mesh.
+const SPECK: f32 = 1e-6;
 
 /// Keeps an entity on the eye, at its scale.
 #[derive(Component)]
 struct FollowEye(f32);
 
-/// Keeps `material` on `mesh` compiled from now on: `mesh` is a box centred on its origin,
-/// as the player and creature models are, so the eye inside it sees nothing. `lifetime`
-/// goes on what is spawned (say, `DespawnOnExit` of the screen it serves).
-pub fn warm<M: Material>(commands: &mut Commands, mesh: Handle<Mesh>, material: Handle<M>, casts_shadows: bool, lifetime: impl Bundle + Clone) {
-    let drawn = (Mesh3d(mesh), MeshMaterial3d(material), Transform::default());
-    if casts_shadows {
-        commands.spawn((FollowEye(SPECK), drawn.clone(), lifetime.clone()));
+/// Keeps `material` on `mesh` compiled from now on. `lifetime` goes on what is spawned
+/// (say, `DespawnOnExit` of the screen it serves).
+pub fn warm<M: Material>(commands: &mut Commands, mesh: Handle<Mesh>, material: Handle<M>, casts_shadows: bool, lifetime: impl Bundle) {
+    let speck = commands.spawn((FollowEye(SPECK), Mesh3d(mesh), MeshMaterial3d(material), Transform::default(), NoFrustumCulling, lifetime)).id();
+    if !casts_shadows {
+        commands.entity(speck).insert(NotShadowCaster);
     }
-    commands.spawn((FollowEye(AROUND), drawn, NotShadowCaster, lifetime));
 }
 
-fn follow_eye(camera: Query<&Transform, With<Camera3d>>, mut followers: Query<(&mut Transform, &FollowEye), Without<Camera3d>>) {
-    // The camera's own transform (it has no parent), as this frame moved it.
+fn follow_eye(camera: Query<&GlobalTransform, With<Camera3d>>, mut followers: Query<(&mut Transform, &FollowEye), Without<Camera3d>>) {
     let Ok(eye) = camera.single() else { return };
     for (mut transform, follow) in &mut followers {
-        *transform = Transform::from_translation(eye.translation).with_scale(Vec3::splat(follow.0));
+        *transform = Transform::from_translation(eye.translation()).with_scale(Vec3::splat(follow.0));
     }
 }
 

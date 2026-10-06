@@ -253,9 +253,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = parse_options()?;
     // A gate run is a capture that plays and checks a session rather than taking a shot.
     let headless = options.capture.is_some() || options.gate.is_some();
-    // Leave a core for the main and render threads; worldgen, lighting and meshing share
-    // the rest, at a lower priority so bursts of streaming never delay a frame.
-    let workers = std::thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(2).max(2));
+    // Leave two cores for the main and render threads; worldgen, lighting and meshing share
+    // the rest, at a lower priority so bursts of streaming never delay a frame. Cores, not
+    // hardware threads: on a machine with two threads a core (the Linux box's 16-core EPYC),
+    // workers on every thread slowed every frame system about threefold while the world
+    // streamed in, whatever their priority, and took flightfast's p99 frame from 11 to 25 ms.
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("worker-{i}"))
@@ -444,6 +448,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(code.get().into());
     }
     Ok(())
+}
+
+/// Physical cores, where they differ from hardware threads (Linux, from sysfs).
+fn physical_cores() -> Option<usize> {
+    let mut cores = std::collections::HashSet::new();
+    for entry in std::fs::read_dir("/sys/devices/system/cpu").ok()?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.strip_prefix("cpu").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            && let Ok(siblings) = std::fs::read_to_string(entry.path().join("topology/thread_siblings_list"))
+        {
+            cores.insert(siblings.trim().to_owned());
+        }
+    }
+    (!cores.is_empty()).then_some(cores.len())
 }
 
 /// Lowers the calling thread's scheduling priority below the game's frame threads.

@@ -38,6 +38,11 @@
         (template: "drop", name: "horn", tags: ["horn", "bone"], all: (color: (60, 56, 52), rarity: Uncommon)),
         (template: "drop", name: "ember_scale", tags: ["scale", "aether", "fire"], all: (color: (240, 120, 40), light: 6, rarity: Uncommon)),
         (template: "drop", name: "glimmer_dust", tags: ["dust", "aether"], all: (color: (210, 210, 255), light: 4, rarity: Uncommon)),
+        (template: "drop", name: "snail_shell", tags: ["shell", "small"], all: (color: (150, 106, 60))),
+        (template: "drop", name: "horsehair", tags: ["fibre", "hair"], all: (color: (60, 50, 44))),
+        (template: "drop", name: "sunwing_feather", tags: ["feather", "aether", "fire"], all: (color: (255, 200, 80), light: 8, rarity: Rare)),
+        (template: "drop", name: "frost_antler", tags: ["antler", "aether", "cold"], all: (color: (190, 220, 250), light: 5, rarity: Rare)),
+        (template: "drop", name: "bat_wing", tags: ["membrane", "small"], all: (color: (60, 50, 48))),
         (template: "drop", name: "wool", tags: ["fibre", "wool", "warm"], all: (color: (235, 232, 222))),
         (template: "drop", name: "feather", tags: ["feather", "light"], all: (color: (240, 240, 235))),
         // Parts.

@@ -14,7 +14,8 @@
 //! The pipelines are built from the mesh pipeline's descriptor for the view, like the
 //! terrain's, so the view bind group and its shader defs (multisampling among them) match
 //! exactly; only the shaders, targets and our own group 2 differ. Under MSAA the composite
-//! draws into the multisampled image, which the transparent pass carries on in. The pass is
+//! draws into the multisampled image, which the transparent pass carries on in and which is
+//! resolved once, at the end (`resolve`). The pass is
 //! skipped when there is no cloud, ground fog or light shafts to draw, and under water.
 
 use bevy::asset::embedded_asset;
@@ -387,7 +388,8 @@ fn volumetric_light(
         return;
     };
     // March into the half-resolution target, accumulate it there, then blend it over the
-    // image (the multisampled one under MSAA, resolved at the end of the pass).
+    // image (the multisampled one under MSAA, resolved at the end of the main passes; see
+    // `resolve`).
     let half = |view| {
         Some(RenderPassColorAttachment {
             view,
@@ -398,7 +400,7 @@ fn volumetric_light(
     };
     let march_targets = [half(&volumetric.target.default_view), half(&volumetric.ray_depths.default_view)];
     let accumulate_targets = [half(&volumetric.accumulated.default_view), half(&volumetric.accumulated_depths.default_view)];
-    let composite_target = [Some(target.get_color_attachment())];
+    let composite_target = [Some(super::resolve::unresolved_color_attachment(target))];
     let passes = [
         ("volumetric_march", &march_targets[..], march, &volumetric.march_group),
         ("volumetric_accumulate", &accumulate_targets[..], accumulate, &volumetric.accumulate_group),

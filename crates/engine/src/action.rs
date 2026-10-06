@@ -117,6 +117,8 @@ pub enum Effect {
     /// Tend the target creature with what the actor holds: feed it (taming it, or readying
     /// a kept one to breed) or take its product with a tool.
     Tend,
+    /// Look closely at the target creature: what the actor learns grows with Farming.
+    Inspect,
     /// Restore the actor's health and return it to spawn.
     Respawn,
     /// Sow one held seed on top of the target, and grant the crop's planting experience.
