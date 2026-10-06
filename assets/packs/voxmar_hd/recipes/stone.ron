@@ -21,7 +21,7 @@
             // left, rounding off into shadow at its rim.
             "block/cobbled_{name}": (size: (32, 32), palettes: {"main": "{name}"}, layers: [
                 Paint(palette: "main", base: 0.66, shade: [
-                    Cells(count: (3, 3), jitter: 0.85, value: 0.34, edge: -1.0, width: 2.0, bevel: 0.6, round: 0.5, warp: 2.0),
+                    Cells(count: (3, 3), jitter: 0.85, value: 0.34, edge: -1.0, width: 2.0, bevel: 0.6, lip: 0.25, round: 0.5, warp: 2.0),
                     Noise(cells: (4, 4), octaves: 2, amount: 0.1),
                     Grain(0.05),
                 ], clean: true),
@@ -57,18 +57,19 @@
         },
     },
     textures: {
-        // A few large, softly faceted plates of rock, each shaded smoothly from a lit top
-        // left to a darker rim and parted by thin fractures with a lit lip, plus one or
-        // two long cracks: big shapes drawn at high resolution, little grit. Nothing
-        // directional, as stone turns from block to block.
+        // The most repeated block of all, so its big shapes stay quiet: soft, broad
+        // clouding with no grit, then a scatter of chunky mineral flecks, pale and dark,
+        // a few texels each and lit from the top left, and a short crack with a lit lip
+        // kept well inside the block. (Big facets or plates made a wall of turned and
+        // mirrored blocks into a kaleidoscope; see docs/voxmar-hd.md, Tiling.)
         "block/stone": (size: (32, 32), palettes: {"main": "stone"}, layers: [
-            Paint(palette: "main", base: 0.56, shade: [
-                Cells(count: (3, 3), jitter: 0.9, value: 0.2, edge: -0.12, width: 1.0, bevel: 0.5, lip: 0.08, round: 0.1, warp: 3.0),
-                Noise(cells: (2, 2), octaves: 2, amount: 0.16),
-                Grain(0.05),
+            Paint(palette: "main", base: 0.54, shade: [
+                Noise(cells: (4, 4), octaves: 2, amount: 0.24),
+                Noise(cells: (8, 8), amount: 0.08),
             ], clean: true),
-            Paint(palette: "main", base: 0.15, mask: [Ridge(cells: (2, 2), octaves: 2, width: 0.04, amount: 1.0), Noise(cells: (2, 2), amount: 1.0)], above: 0.95, light: 1),
-            Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.012, amount: 1.0, seed: 6)], above: 0.5),
+            Clusters(palette: "main", count: 7, size: (3, 6), spacing: 8.0, shade: 5, shadow: -1, seed: 3),
+            Clusters(palette: "main", count: 5, size: (2, 4), spacing: 9.0, shade: 1, seed: 4),
+            Paint(palette: "main", base: 0.22, mask: [Ridge(cells: (3, 3), octaves: 1, width: 0.04, amount: 1.0), Noise(cells: (3, 3), amount: 1.0), Border(width: 6, amount: -3.0)], above: 1.1, light: 1),
         ]),
         // Ores, our own drawing at 32×32 rather than lumps: crystal ores are one big
         // cluster of hexagonal shards (lit face, shaded face, bright tip) and two small

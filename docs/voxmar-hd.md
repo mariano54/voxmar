@@ -126,6 +126,13 @@ Rules of thumb:
   their texture from block to block (`texture_variety` in `blocks.ron`), which removes
   most visible repeats; their textures must therefore look right in any of the eight
   orientations: no directional strata on them.
+- Big shapes and turning don't mix freely: a large facet or crack that meets the block's
+  edge meets its own mirror image in the next block, and a wall of them becomes a
+  kaleidoscope (stone with big plates did, 2026-10-07). So on the blocks seen in their
+  thousands (stone, dirt, sand) the big shapes are many small-to-medium ones of a kind
+  (chunky flecks, clods, pebbles) over quiet clouding, cracks stay well inside the
+  block, and the boldest shapes go on blocks seen in smaller runs (cobble, bark, planks,
+  ores, leaves).
 - Blocks with a direction (logs, planks, bricks, sandstone strata) keep one orientation,
   so their repeats are hidden by the pattern itself: boards with joints at varied places,
   bricks of varied tone, bark plates of varied width.
