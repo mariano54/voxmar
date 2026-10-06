@@ -9,6 +9,7 @@
         'W': "#fbf8ee", 'D': "#2a2220",
     },
     palettes: {
+        "crab_cooked": ["#8e2a0e", "#d0501e", "#f08850"],
         "cooked_light": ["#7a4420", "#a86a38", "#d09a60"],
         "cooked_mid": ["#5e3014", "#8a5028", "#b87a48"],
         "cooked_dark": ["#4a2410", "#6e3a1c", "#9a5a34"],
@@ -29,6 +30,8 @@
     textures: {
         "block/cooked_rabbit": (base: "block/raw_rabbit", palettes: {"fruit": "cooked_light", "wood": "crust_rim"}),
         "block/cooked_chicken": (base: "block/raw_rabbit", palettes: {"fruit": "cooked_light", "wood": "crust_rim"}),
+        "block/cooked_frog": (base: "block/raw_rabbit", palettes: {"fruit": "cooked_light", "wood": "crust_rim"}),
+        "block/cooked_crab": (base: "block/raw_rabbit", palettes: {"fruit": "crab_cooked", "wood": "crust_rim"}),
         "block/cooked_duck": (base: "block/raw_rabbit", palettes: {"fruit": "cooked_mid", "wood": "crust_rim"}),
         "block/cooked_mutton": (base: "block/raw_rabbit", palettes: {"fruit": "cooked_mid", "wood": "crust_rim"}),
         "block/cooked_pork": (base: "block/raw_rabbit", palettes: {"fruit": "cooked_light", "wood": "crust_rim"}),

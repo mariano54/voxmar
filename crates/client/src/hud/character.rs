@@ -4,6 +4,7 @@
 //! guide in skills.ron and every crop that needs it, marked as reached or not.
 
 use bevy::prelude::*;
+use voxmar_engine::block::BlockId;
 use voxmar_engine::skill::{SkillId, SkillRegistry};
 
 use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
@@ -63,14 +64,17 @@ struct BackToSkills;
 #[derive(Component)]
 struct HealthMeter;
 
-const WIDTH: f32 = 400.0 * PX;
-const LEFT: f32 = 150.0 * PX;
+const WIDTH: f32 = 460.0 * PX;
+const LEFT: f32 = 160.0 * PX;
 /// The line at the foot of the panel, saying what can be done next.
 #[derive(Component)]
 struct CharacterHint;
 /// The player's combat level, at the foot of the condition section.
 #[derive(Component)]
 struct CombatLine;
+/// The condition section, put away while a guide takes the whole panel.
+#[derive(Component)]
+struct ConditionColumn;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -87,7 +91,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     padding: UiRect::all(Val::Px(space::GAP)),
                     ..default()
                 };
-                columns.spawn((left, Piece::Well.image())).with_children(|left| {
+                columns.spawn((left, Piece::Well.image(), ConditionColumn)).with_children(|left| {
                     spawn_condition(left, font);
                     // Pushed to the bottom of the section.
                     left.spawn((Node { margin: UiRect::top(Val::Auto), ..default() }, CombatLine, shadowed(font, "", BODY, GOLD)));
@@ -136,7 +140,8 @@ fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<CharacterScreen>
     }
     *was_open = ui.character_open;
     if let Ok(mut visibility) = root.single_mut() {
-        visibility.set_if_neq(if ui.character_open { Visibility::Inherited } else { Visibility::Hidden });
+        // The recipe viewer takes the screen while it is open.
+        visibility.set_if_neq(if ui.character_open && !ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 
@@ -180,6 +185,7 @@ fn draw_skills(
     mut list: Query<(Entity, &mut Visibility, Option<&Children>), With<SkillList>>,
     mut progress: Query<(&SkillProgress, &mut Node), Without<SkillList>>,
     mut hint: Query<&mut Text, With<CharacterHint>>,
+    mut condition: Query<&mut Node, (With<ConditionColumn>, Without<SkillProgress>)>,
 ) {
     let Ok((entity, mut visibility, rows)) = list.single_mut() else { return };
     if locale.is_changed()
@@ -194,6 +200,13 @@ fn draw_skills(
     // Hidden under an open guide, but still there: its tiles give the guide its height.
     let shown = ui.character_open;
     visibility.set_if_neq(if guide.0.is_none() { Visibility::Inherited } else { Visibility::Hidden });
+    // A guide takes the whole panel; the list shares it with how you are.
+    if let Ok(mut node) = condition.single_mut() {
+        let display = if guide.0.is_some() { Display::None } else { Display::Flex };
+        if node.display != display {
+            node.display = display;
+        }
+    }
     let words = locale.get(if guide.0.is_some() { "character.guide_hint" } else { "character.hint" });
     if let Ok(mut text) = hint.single_mut()
         && text.0 != words
@@ -211,7 +224,7 @@ fn draw_skills(
                 let tile = Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(space::INNER),
-                    padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
+                    padding: UiRect::all(Val::Px(space::GAP)),
                     ..default()
                 };
                 let button = spawn_button(list, &font.0, "", ButtonStyle::Secondary, SkillRow(id));
@@ -274,6 +287,7 @@ fn draw_guide(
     mut page: Query<(Entity, &mut Node), With<GuidePage>>,
     mut levels: Query<(&SkillLevel, &mut Text)>,
     mut drawn: Local<Option<SkillId>>,
+    images: Res<super::HudImages>,
 ) {
     draw_levels(&locale, &launch, &player, &mut levels);
     let Ok((entity, mut node)) = page.single_mut() else { return };
@@ -305,18 +319,23 @@ fn draw_guide(
         if steps.is_empty() {
             page.spawn((Node { flex_shrink: 0.0, ..default() }, Localized("character.untrained"), text(font, "", BODY, MUTED)));
         }
-        for (at, line) in steps {
+        let fallback = images.skills.get(id.0 as usize).cloned().unwrap_or_default();
+        for (at, line, icon) in steps {
             let reached = level >= at;
             // A grid, so the step's words wrap to exactly the width their column gets.
             let row = Node {
                 display: Display::Grid,
-                grid_template_columns: vec![GridTrack::auto(), GridTrack::px(22.0 * PX), GridTrack::flex(1.0)],
-                column_gap: Val::Px(space::INNER),
+                grid_template_columns: vec![GridTrack::px(16.0 * PX), GridTrack::px(22.0 * PX), GridTrack::flex(1.0)],
+                column_gap: Val::Px(space::GAP),
+                align_items: AlignItems::Start,
                 flex_shrink: 0.0,
                 ..default()
             };
             page.spawn(row).with_children(|row| {
-                row.spawn(text(font, if reached { "◆" } else { "◇" }, BODY, if reached { ACCENT } else { MUTED }));
+                // What it opens, or the skill's own mark; dim until reached.
+                let image = icon.and_then(|item| images.icons.get(item.0 as usize).cloned()).unwrap_or_else(|| fallback.clone());
+                let tint = if reached { Color::WHITE } else { Color::srgba(1.0, 1.0, 1.0, 0.45) };
+                row.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(image).with_color(tint)));
                 row.spawn(text(font, format!("{at}"), BODY, if reached { GOLD } else { MUTED }));
                 row.spawn((Node { min_width: Val::ZERO, ..default() }, text(font, line, BODY, if reached { TEXT } else { MUTED })));
             });
@@ -326,14 +345,28 @@ fn draw_guide(
 
 /// What a skill opens up, by level: its own guide in skills.ron, and every crop it
 /// needs to sow.
-fn guide_steps(locale: &Locale, launch: &Launch, skill: SkillId) -> Vec<(u8, String)> {
+fn guide_steps(locale: &Locale, launch: &Launch, skill: SkillId) -> Vec<(u8, String, Option<BlockId>)> {
     let content = &launch.content;
     let def = content.skills.get(skill);
-    let mut steps: Vec<(u8, String)> = def.guide.iter().enumerate().map(|(i, step)| (step.level, locale.skill_guide(def, i))).collect();
+    let item = |name: &str| content.blocks.id(name).or_else(|| content.blocks.id(&format!("base:{name}")));
+    let mut steps: Vec<(u8, String, Option<BlockId>)> =
+        def.guide.iter().enumerate().map(|(i, step)| (step.level, locale.skill_guide(def, i), step.icon.as_deref().and_then(item))).collect();
     for (_, crop) in content.crops.iter().filter(|(_, crop)| crop.skill == skill && crop.def.sown) {
-        steps.push((crop.def.level, locale.format("character.sow", &[("crop", &locale.block_named(&content.blocks, &crop.def.name))])));
+        let words = locale.format("character.sow", &[("crop", &locale.block_named(&content.blocks, &crop.def.name))]);
+        steps.push((crop.def.level, words, item(&crop.def.name)));
     }
-    steps.sort_by_key(|(level, _)| *level);
+    // Everything cooked, at the level it starts at, once each.
+    if content.cooking.skill == Some(skill) {
+        let mut cooked: Vec<BlockId> = Vec::new();
+        for (_, recipe) in content.cooking.iter() {
+            if !cooked.contains(&recipe.output) {
+                cooked.push(recipe.output);
+                let words = locale.format("character.cook", &[("item", &locale.block(content.blocks.def(recipe.output)))]);
+                steps.push((recipe.def.level, words, Some(recipe.output)));
+            }
+        }
+    }
+    steps.sort_by_key(|(level, _, _)| *level);
     steps
 }
 

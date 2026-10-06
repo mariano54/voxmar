@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use bevy::text::FontSmoothing;
 use voxmar_protocol::{ChatKind, MAX_LINE};
 
+use crate::ui::widgets::space;
 use crate::ui::ime::{Composing, ImeSystems};
 use crate::menu::Screen;
 use crate::ui::skin::Piece;
@@ -120,7 +121,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     commands.spawn((root, ConsoleRoot, DespawnOnExit(Screen::InGame))).with_children(|console| {
         for i in 0..SHOWN {
             console.spawn((
-                Node { padding: UiRect::axes(Val::Px(6.0), Val::Px(1.0)), ..default() },
+                Node { padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)), ..default() },
                 BackgroundColor(Color::NONE),
                 Visibility::Hidden,
                 ConsoleLine(i),
@@ -128,7 +129,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             ));
         }
         console.spawn((
-            Node { padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)), margin: UiRect::top(Val::Px(4.0)), ..default() },
+            Node { padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)), margin: UiRect::top(Val::Px(space::INNER)), ..default() },
             Piece::Well.image(),
             Visibility::Hidden,
             ConsoleInput,

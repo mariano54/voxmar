@@ -195,15 +195,25 @@ pub fn spawn_button(
     button.id()
 }
 
+/// A button's top padding as built, kept so pressing it only adds to it.
+#[derive(Component, Clone, Copy)]
+struct RestPadding(Val);
+
 /// Draws each button for its state: the hover piece under the pointer, the pressed piece
 /// with its label two pixels lower while held, gold when selected, faded when disabled.
 /// Screens have a few dozen buttons at most, so every one is checked each frame and only
 /// what differs is written.
 fn style_buttons(
-    mut buttons: Query<(&ButtonStyle, &Interaction, Has<Disabled>, Has<Selected>, &mut ImageNode, &mut Node, &Children)>,
+    mut commands: Commands,
+    mut buttons: Query<(Entity, &ButtonStyle, &Interaction, Has<Disabled>, Has<Selected>, &mut ImageNode, &mut Node, &Children, Option<&RestPadding>)>,
     mut colors: Query<&mut TextColor>,
 ) {
-    for (style, interaction, disabled, selected, mut image, mut node, children) in &mut buttons {
+    for (entity, style, interaction, disabled, selected, mut image, mut node, children, rest_padding) in &mut buttons {
+        // The padding it was built with, which sinking adds to.
+        let Some(&RestPadding(rest_top)) = rest_padding else {
+            commands.entity(entity).insert(RestPadding(node.padding.top));
+            continue;
+        };
         let [rest, hover, down] = style.pieces();
         let piece = match (disabled, interaction) {
             (true, _) => rest,
@@ -218,7 +228,7 @@ fn style_buttons(
             image.color = tint;
         }
         let sunk = !disabled && *interaction == Interaction::Pressed;
-        let top = Val::Px(if sunk { 2.0 * PX } else { 0.0 });
+        let top = if sunk { rest_top.try_add(Val::Px(2.0 * PX)).unwrap_or(rest_top) } else { rest_top };
         if node.padding.top != top {
             node.padding.top = top;
         }
@@ -450,7 +460,8 @@ pub struct Meter {
 
 /// A meter `width` screen pixels wide.
 pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece: Piece, width: Val, marker: impl Bundle) -> Entity {
-    let well = Node { width, height: Val::Px(10.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
+    // Tall enough for its number to sit inside the frame with a pixel to spare.
+    let well = Node { width, height: Val::Px(12.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
     let mut meter = parent.spawn((well, Piece::Well.image(), marker));
     let (mut fill, mut label) = (Entity::PLACEHOLDER, Entity::PLACEHOLDER);
     meter.with_children(|well| {

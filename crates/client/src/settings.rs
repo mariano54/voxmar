@@ -137,6 +137,9 @@ pub struct Settings {
     pub inventory_key: Key,
     /// Key that opens and closes the character screen (skills and how you are).
     pub character_key: Key,
+    /// Keys that show, over an item, the recipes that make it and the ones it goes into.
+    pub recipes_key: Key,
+    pub uses_key: Key,
     /// The language's code (`en`, `ja`), or empty to follow the system's.
     pub language: String,
 }
@@ -300,6 +303,8 @@ impl Default for Settings {
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
+            recipes_key: Key(KeyCode::KeyR),
+            uses_key: Key(KeyCode::KeyU),
             language: String::new(),
         }
     }
@@ -681,6 +686,8 @@ enum Binding {
     Chat,
     Inventory,
     Character,
+    Recipes,
+    Uses,
 }
 
 impl Binding {
@@ -691,6 +698,8 @@ impl Binding {
             Binding::Chat => "settings.key.chat",
             Binding::Inventory => "settings.key.inventory",
             Binding::Character => "settings.key.character",
+            Binding::Recipes => "settings.key.recipes",
+            Binding::Uses => "settings.key.uses",
         }
     }
 
@@ -701,6 +710,8 @@ impl Binding {
             Binding::Chat => settings.chat_key,
             Binding::Inventory => settings.inventory_key,
             Binding::Character => settings.character_key,
+            Binding::Recipes => settings.recipes_key,
+            Binding::Uses => settings.uses_key,
         }
     }
 
@@ -711,6 +722,8 @@ impl Binding {
             Binding::Chat => &mut settings.chat_key,
             Binding::Inventory => &mut settings.inventory_key,
             Binding::Character => &mut settings.character_key,
+            Binding::Recipes => &mut settings.recipes_key,
+            Binding::Uses => &mut settings.uses_key,
         } = key;
     }
 }
@@ -835,6 +848,8 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         &[
             Control::Key(Binding::Inventory),
             Control::Key(Binding::Character),
+            Control::Key(Binding::Recipes),
+            Control::Key(Binding::Uses),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Sprint),
             Control::Key(Binding::Zoom),
@@ -946,6 +961,8 @@ fn open_start_tab(start: Option<Res<StartTab>>, mut open: ResMut<OpenSection>) {
 const PANEL_WIDTH: f32 = 430.0 * PX;
 const TAB_WIDTH: f32 = 72.0 * PX;
 const ROW: f32 = 18.0 * PX;
+/// A control's height: room for a line of any language's letters inside its frame.
+const CONTROL: f32 = 16.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
 const VALUE_WIDTH: f32 = 62.0 * PX;
 const CONTROL_WIDTH: f32 = 124.0 * PX;
@@ -1069,7 +1086,7 @@ fn spawn_choice(row: &mut ChildSpawnerCommands, font: &Handle<Font>, choice: Cho
     });
     row.commands().entity(button).insert(Node {
         flex_grow: 1.0,
-        height: Val::Px(14.0 * PX),
+        height: Val::Px(CONTROL),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
         ..default()
@@ -1085,7 +1102,7 @@ fn spawn_key(row: &mut ChildSpawnerCommands, font: &Handle<Font>, binding: Bindi
     });
     row.commands().entity(button).insert(Node {
         flex_grow: 1.0,
-        height: Val::Px(14.0 * PX),
+        height: Val::Px(CONTROL),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
         ..default()
@@ -1114,7 +1131,7 @@ fn spawn_dropdown(row: &mut ChildSpawnerCommands, font: &Handle<Font>, dropdown:
     });
     row.commands().entity(button).insert(Node {
         flex_grow: 1.0,
-        height: Val::Px(14.0 * PX),
+        height: Val::Px(CONTROL),
         justify_content: JustifyContent::Center,
         align_items: AlignItems::Center,
         ..default()
