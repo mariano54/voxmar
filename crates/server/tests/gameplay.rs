@@ -1033,7 +1033,21 @@ fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
     assert!(thief.collected.is_empty(), "someone else picked up a dead player's things");
     // The owner wakes at spawn, by their things, and gathers them all.
     owner.propose("core:respawn", ActionTarget::None);
-    owner.pump_until(|c| c.health > 0 && carried(c) == 47);
+    owner.pump_until(|c| c.health > 0);
+    // Walking to whatever still lies about, as a player gathers it; a stack that rolled a
+    // little way is out of reach from the spot itself. Each round waits on the server.
+    for _ in 0..12 {
+        let wait = Instant::now() + Duration::from_secs(5);
+        owner.pump_until(|c| carried(c) == 47 || Instant::now() > wait);
+        if carried(&owner) == 47 {
+            break;
+        }
+        if let Some(at) = owner.items.values().map(|i| i.position).next() {
+            owner.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
+        }
+    }
+    let lying: Vec<_> = owner.items.values().map(|i| (i.stack.count, i.position)).collect();
+    assert_eq!(carried(&owner), 47, "the owner at {:?} could not gather {lying:?}", owner.position);
 }
 
 #[test]
