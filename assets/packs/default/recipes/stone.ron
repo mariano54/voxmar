@@ -186,22 +186,28 @@
             ], clean: true),
             Paint(palette: "main", base: 0.05, mask: [Speckle(chance: 0.35, amount: 1.0), Stripes(period: 4.0, width: 0.25, amount: 1.0, warp: 0.8, phase: 2.0), Noise(cells: (16, 4), amount: 0.6)], above: 1.6, light: 1),
         ]),
-        // Ores: the host rock with clumps of mineral, lit from the top left.
-        "block/coal_ore": (base: "block/stone", palettes: {"ore": ["#121214", "#1e1e21", "#2e2e32", "#45454a"]}, layers: [
+        // Ores: clumps of mineral on clear texels, lit from the top left, drawn over the
+        // rock they lie in (their block's `host`). The deepslate forms are the same clumps.
+        "block/coal_ore": (palettes: {"ore": ["#121214", "#1e1e21", "#2e2e32", "#45454a"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (9, 14), spacing: 5.5, shade: 1, margin: 1),
         ]),
-        "block/iron_ore": (base: "block/stone", palettes: {"ore": ["#6d4c37", "#a77a5c", "#d2a888", "#ead0b8"]}, layers: [
+        "block/iron_ore": (palettes: {"ore": ["#6d4c37", "#a77a5c", "#d2a888", "#ead0b8"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (9, 14), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
         ]),
-        "block/copper_ore": (base: "block/stone", palettes: {"ore": ["#6c331b", "#b05a32", "#de8a54", "#5fae8c"]}, layers: [
+        "block/copper_ore": (palettes: {"ore": ["#6c331b", "#b05a32", "#de8a54", "#5fae8c"]}, layers: [
             Clusters(palette: "ore", count: 5, size: (7, 11), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
         ]),
-        "block/gold_ore": (base: "block/stone", palettes: {"ore": ["#8a5f0f", "#d39c1e", "#f6d24a", "#fff3a8"]}, layers: [
+        "block/gold_ore": (palettes: {"ore": ["#8a5f0f", "#d39c1e", "#f6d24a", "#fff3a8"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (8, 12), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
         ]),
-        "block/diamond_ore": (base: "block/stone", palettes: {"ore": ["#156d6b", "#2fb7b0", "#6ff0e6", "#d8fffb"]}, layers: [
+        "block/diamond_ore": (palettes: {"ore": ["#156d6b", "#2fb7b0", "#6ff0e6", "#d8fffb"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (6, 10), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
         ]),
+        "block/deepslate_coal_ore": (base: "block/coal_ore"),
+        "block/deepslate_iron_ore": (base: "block/iron_ore"),
+        "block/deepslate_copper_ore": (base: "block/copper_ore"),
+        "block/deepslate_gold_ore": (base: "block/gold_ore"),
+        "block/deepslate_diamond_ore": (base: "block/diamond_ore"),
         "block/cobalt_ore": (palettes: {"ore": ["#16246e", "#2d47b8", "#5a80f0", "#b6cbff"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (8, 12), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
         ]),

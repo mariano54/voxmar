@@ -522,6 +522,8 @@ impl Server {
                     creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
                     creature.breeds_again = 0;
                 }
+                // Stands still for a minute: for a closer look, or a picture.
+                "hold" => creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64,
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {
