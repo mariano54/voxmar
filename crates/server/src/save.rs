@@ -157,6 +157,9 @@ struct PlayerFile {
     effects: Vec<(String, f32)>,
     #[serde(default)]
     home: Option<[f32; 3]>,
+    /// What pouches hold, by item name.
+    #[serde(default)]
+    pouched: Vec<(String, u16)>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -287,6 +290,7 @@ impl WorldSave {
                 .filter(|&(_, count)| count > 0)
                 .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
         }
+        inventory.pouched = file.pouched.iter().filter_map(|(item, count)| Some((registry.id(item)?, *count))).filter(|&(_, n)| n > 0).collect();
         let position = Vec3::from(file.position);
         if !position.is_finite() {
             return Err(invalid(&path, "position is not finite"));
@@ -315,6 +319,7 @@ impl WorldSave {
             skills: player.skills.clone(),
             effects: player.effects.clone(),
             home: player.home,
+            pouched: held.pouched.iter().map(|&(item, count)| (registry.def(item).name.clone(), count)).collect(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -535,6 +540,7 @@ mod tests {
         let registry = registry(false);
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
+        inventory.pouched.push((registry.expect("base:cobblestone"), 300));
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,
