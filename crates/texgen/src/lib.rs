@@ -25,13 +25,16 @@ pub mod font;
 pub mod icon;
 mod image;
 mod library;
+mod manifest;
 pub mod recipe;
 mod render;
+mod scale;
 pub mod sheet;
 
 pub use colour::parse as parse_colour;
 pub use image::Image;
 pub use library::Library;
+pub use manifest::Manifest;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error(pub String);

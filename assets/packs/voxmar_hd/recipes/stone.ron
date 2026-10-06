@@ -1,0 +1,99 @@
+// Voxmar HD rocks (docs/voxmar-hd.md). Warmer ramps with more shades replace the default
+// pack's palettes of the same name, so every texture drawn with them (each rock's raw,
+// cobbled, polished and brick forms, and everything derived from those) takes them; the
+// `stone` template's members are redrawn at 32×32 for every rock at once.
+(
+    palettes: {
+        // Warm grey, violet in the shadows, a little straw in the light.
+        "stone": (ramp: "#878079", shades: 8, light: 0.34, hue: 22.0, chroma: -0.3),
+        "andesite": (ramp: "#7f7c79", shades: 8, light: 0.34, hue: 20.0, chroma: -0.3),
+        "granite": (ramp: "#93695a", shades: 8, light: 0.34, hue: 18.0, chroma: -0.35),
+        "diorite": (ramp: "#c4c0b8", shades: 8, light: 0.3, hue: 20.0, chroma: -0.3),
+        "tuff": (ramp: "#77776a", shades: 8, light: 0.32, hue: 20.0, chroma: -0.3),
+        "deepslate": (ramp: "#4b4a54", shades: 8, light: 0.3, hue: 16.0, chroma: -0.3),
+        "limestone": (ramp: "#c2b799", shades: 8, light: 0.3, hue: 20.0, chroma: -0.3),
+        "sandstone": (ramp: "#d6c493", shades: 8, light: 0.3, hue: 18.0, chroma: -0.35),
+        "stone_moss": (ramp: "#5f7a33", shades: 6, light: 0.3, hue: 24.0, chroma: -0.3),
+    },
+    templates: {
+        "stone": {
+            // Rounded stones of every size packed in dark mortar, each lit from the top
+            // left and rounding off into shadow at its rim, with fine grit on top.
+            "block/cobbled_{name}": (size: (32, 32), palettes: {"main": "{name}"}, layers: [
+                Paint(palette: "main", base: 0.64, shade: [
+                    Cells(count: (4, 4), jitter: 0.95, value: 0.36, edge: -0.95, width: 1.0, bevel: 0.5, round: 0.32, warp: 2.2),
+                    Noise(cells: (8, 8), octaves: 2, amount: 0.16),
+                    Grain(0.14),
+                ], clean: true),
+                // Small chips wedged in the mortar between the big stones.
+                Clusters(palette: "main", count: 7, size: (3, 6), spacing: 6.0, shade: 3, shadow: -1),
+                Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.03, amount: 1.0, seed: 4)], above: 0.5),
+            ]),
+            // Dressed stone: a smooth face with soft clouding, a crisp lit edge top left
+            // and a shadowed one bottom right, so a floor of it reads as laid slabs.
+            "block/polished_{name}": (size: (32, 32), palettes: {"main": "{name}"}, layers: [
+                Paint(palette: "main", base: 0.6, shade: [
+                    Noise(cells: (4, 4), octaves: 2, amount: 0.16),
+                    Grain(0.08),
+                    Border(width: 1, amount: -0.32, sides: (0.0, 1.0, 1.0, 0.0)),
+                    Border(width: 1, amount: 0.22, sides: (1.0, 0.0, 0.0, 1.0)),
+                    Border(width: 3, amount: -0.08),
+                ], clean: true),
+                Shift(by: [Flat(-1.0)], mask: [Speckle(chance: 0.012, amount: 1.0, seed: 2)], above: 0.5),
+            ]),
+            // Two bricks across, four courses, each a little different in tone, lit on
+            // its upper edge, with worn chips at a few corners.
+            "block/{name}_bricks": (size: (32, 32), palettes: {"main": "{name}"}, layers: [
+                Paint(palette: "main", base: 0.58, shade: [
+                    Bricks(size: (16, 8), mortar: -0.6, value: 0.22, bevel: 0.14),
+                    Noise(cells: (8, 8), octaves: 2, amount: 0.16),
+                    Grain(0.1),
+                ], clean: true),
+                Paint(palette: "main", base: 0.12, mask: [Ridge(cells: (4, 4), width: 0.05, amount: 1.0), Noise(cells: (4, 4), amount: 0.9)], above: 0.95, light: 1),
+            ]),
+            "block/mossy_cobbled_{name}": (base: "block/cobbled_{name}", palettes: {"moss": "stone_moss"}, layers: [
+                Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.6), Grain(0.25)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.2, amount: 0.2)], above: 0.45, clean: true, shadow: -1),
+            ]),
+            "block/cracked_{name}_bricks": (base: "block/{name}_bricks", layers: [
+                Paint(palette: "main", base: 0.0, mask: [Ridge(cells: (2, 2), octaves: 2, width: 0.06, amount: 1.0), Noise(cells: (3, 3), amount: 0.9)], above: 0.74, light: 1),
+            ]),
+        },
+    },
+    textures: {
+        // Smooth rock with soft clouding, a few thin fractures with a lit lip, and sparse
+        // mineral flecks; nothing directional, as stone turns from block to block.
+        "block/stone": (size: (32, 32), palettes: {"main": "stone"}, layers: [
+            Paint(palette: "main", base: 0.52, shade: [
+                Noise(cells: (3, 3), octaves: 3, gain: 0.55, amount: 0.42),
+                Noise(cells: (8, 8), octaves: 2, amount: 0.14),
+                Grain(0.16),
+            ], clean: true),
+            Paint(palette: "main", base: 0.2, mask: [Ridge(cells: (3, 3), octaves: 2, width: 0.045, amount: 1.0), Noise(cells: (4, 4), amount: 0.9)], above: 0.9, light: 1),
+            Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.035, amount: 1.0, seed: 6)], above: 0.5),
+            Shift(by: [Flat(-1.0)], mask: [Speckle(chance: 0.025, amount: 1.0, seed: 7)], above: 0.5),
+        ]),
+        // Ores, our own drawing at 32×32 rather than lumps: crystal ores are a few
+        // clusters of hexagonal shards (lit face, shaded face, bright tip) with loose
+        // shards about them; metal and coal ores are rounded nuggets. Each casts a soft
+        // shadow on the rock it is drawn over (its block's `host`). The ores keep the
+        // default pack's four-shade palettes: outline, shade, face, highlight.
+        "block/hd_crystal_ore": (size: (32, 32), palettes: {"ore": ["#0f5452", "#2fb7b0", "#6ff0e6", "#d8fffb"]}, layers: [
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: ["....oo....", "...ohlo...", "...ohmooo.", "...olmohlo", ".ooolmolmo", "ohlolmolmo", "olmolmolmo", "olmolmomoo", "omoomoomo.", "oooooooo..", ".sssssss.."], at: [(2, 3), (17, 18)], wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: ["....oo....", "...ohlo...", "...ohmooo.", "...olmohlo", ".ooolmolmo", "ohlolmolmo", "olmolmolmo", "olmolmomoo", "omoomoomo.", "oooooooo..", ".sssssss.."], at: [(19, 1), (3, 19)], mirror: true, wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".o.", "oho", "olo", "olm", "omo", "ooo", ".s."], at: [(13, 11), (28, 12), (12, 26), (27, 27)], wrap: true),
+        ]),
+        "block/hd_nugget_ore": (size: (32, 32), palettes: {"ore": ["#5e4030", "#a77a5c", "#d2a888", "#f0d8c2"]}, layers: [
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".oo..", "ohlo.", "olmmo", ".omoo", "..ss."], at: [(3, 3), (8, 4), (19, 7), (24, 8), (26, 12), (8, 20), (13, 21), (23, 24), (27, 27)], wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".oo..", "ohlo.", "olmmo", ".omoo", "..ss."], at: [(5, 8), (21, 12), (10, 25), (15, 13), (1, 15)], mirror: true, wrap: true),
+        ]),
+        "block/coal_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#121214", "#26262a", "#3a3a40", "#5a5a62"]}),
+        "block/iron_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#5e4030", "#a77a5c", "#d2a888", "#f0d8c2"]}),
+        "block/copper_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#5a2a16", "#b05a32", "#de8a54", "#7fcaa6"]}),
+        "block/gold_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#6e4a0c", "#d39c1e", "#f6d24a", "#fff3a8"]}),
+        "block/tin_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#4a5458", "#97a5aa", "#c8d4d7", "#eef5f6"]}),
+        "block/silver_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#5c5f68", "#b0b5c0", "#dfe3ec", "#ffffff"]}),
+        "block/diamond_ore": (base: "block/hd_crystal_ore", palettes: {"ore": ["#0f5452", "#2fb7b0", "#6ff0e6", "#d8fffb"]}),
+        "block/cobalt_ore": (base: "block/hd_crystal_ore", palettes: {"ore": ["#121c58", "#2d47b8", "#5a80f0", "#b6cbff"]}),
+        "block/aetherite_ore": (base: "block/hd_crystal_ore", palettes: {"ore": ["#3a1870", "#8a4cf0", "#c39bff", "#f2e6ff"]}),
+    },
+)

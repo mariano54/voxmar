@@ -1,0 +1,71 @@
+// Voxmar HD woods (docs/voxmar-hd.md). These members replace the default pack's `wood`
+// template members of the same pattern, so every wood's log, log end, stripped log,
+// planks and leaves are drawn at 32×32 from its own palettes; the oak palettes are warmer
+// and finer ramps of the default ones.
+(
+    palettes: {
+        "leaf_grey": ["#4c4c4c", "#5c5c5c", "#6e6e6e", "#808080", "#929292", "#a4a4a4", "#b6b6b6", "#c8c8c8"],
+        "oak_bark": (ramp: "#6e5a44", shades: 8, light: 0.3, hue: 18.0, chroma: -0.3),
+        "oak_wood": (ramp: "#a27b52", shades: 8, light: 0.3, hue: 16.0, chroma: -0.3),
+    },
+    templates: {
+        "wood": {
+            // Bark: tall, uneven plates parted by deep furrows, each plate lit on its left
+            // edge and streaked up and down, with fine grit.
+            "block/{name}_log": (size: (32, 32), layers: [
+                Paint(palette: "bark", base: 0.56, shade: [
+                    Cells(count: (5, 3), jitter: 0.9, value: 0.3, edge: -0.85, width: 1.0, bevel: 0.4, round: 0.15, warp: 1.4, stretch: (1.0, 3.2)),
+                    Noise(cells: (16, 2), octaves: 2, amount: 0.18),
+                    Grain(0.16),
+                ], clean: true),
+                Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.03, amount: 1.0, seed: 5)], above: 0.5),
+            ]),
+            // The cut end: fine growth rings round a dark pith inside the ragged bark.
+            "block/{name}_log_top": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.62, shade: [
+                    Rings(spacing: 3.0, width: 0.3, amount: -0.24, wobble: 0.9, square: 0.4),
+                    Grain(0.08),
+                ]),
+                Paint(palette: "wood", base: 0.15, mask: [Circle(radius: 1.6)], above: 0.5),
+                Paint(palette: "bark", base: 0.45, shade: [Grain(0.4)], mask: [Border(width: 2, amount: 1.0), Border(width: 3, amount: 0.45), Noise(cells: (8, 8), amount: 0.4)], above: 0.62, light: 1),
+            ]),
+            // Smooth wood under the bark with fine wandering grain lines.
+            "block/stripped_{name}_log": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.6, shade: [Noise(cells: (8, 1), octaves: 2, amount: 0.28), Grain(0.08)], clean: true),
+                Paint(palette: "wood", base: 0.32, shade: [Grain(0.15)], mask: [Ridge(cells: (6, 1), octaves: 2, width: 0.06, amount: 1.0)], above: 0.5),
+            ]),
+            "block/stripped_{name}_log_top": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.66, shade: [
+                    Rings(spacing: 3.0, width: 0.3, amount: -0.22, wobble: 0.9, square: 0.4),
+                    Border(width: 1, amount: -0.25),
+                    Noise(cells: (16, 16), amount: 0.08),
+                ]),
+                Paint(palette: "wood", base: 0.2, mask: [Circle(radius: 1.6)], above: 0.5),
+            ]),
+            // Four boards a block, each its own tone with a lit top edge and a dark seam
+            // below, end joints at varied places, long grain and a nail or two.
+            "block/{name}_planks": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.56, shade: [
+                    Boards(height: 8, seam: -0.55, joint: -0.42, value: 0.2, bevel: 0.12, nails: -0.35),
+                    Noise(cells: (2, 16), octaves: 2, amount: 0.22),
+                    Grain(0.06),
+                ], clean: true),
+                Shift(by: [Flat(-1.0)], mask: [Ridge(cells: (3, 16), octaves: 1, width: 0.05, amount: 1.0), Noise(cells: (4, 8), amount: 0.4)], above: 0.85),
+            ]),
+            // Leaves as Minecraft draws them in spirit, our own drawing at 32×32: a dense
+            // mass of single leaves in three shapes, both ways round, each lit along its
+            // upper edge over a shadowed depth, with holes opening only in the depths
+            // between them, so the sky shows between leaves rather than through them.
+            "block/{name}_leaves": (size: (32, 32), palettes: {"leaves": "leaf_grey"}, layers: [
+                Paint(palette: "leaves", base: 0.16, shade: [Noise(cells: (4, 4), amount: 0.16), Grain(0.1)]),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["....hl", "..hllm", ".hlmmd", "hlmmd.", "lmmd..", "md...."], at: [(26, 17), (14, 21), (10, 26), (31, 9), (16, 10), (1, 26)], mirror: false, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hllm", "llmm", "lmmd", "lmmd", ".md."], at: [(4, 11), (22, 3), (10, 22), (4, 4), (14, 0), (5, 31)], mirror: false, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hlmm", "lmmd", ".md."], at: [(0, 31), (25, 9), (21, 9), (19, 0), (4, 16), (20, 16)], mirror: false, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["....hl", "..hllm", ".hlmmd", "hlmmd.", "lmmd..", "md...."], at: [(25, 27), (27, 21), (10, 0), (16, 5), (25, 31), (0, 20)], mirror: true, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hllm", "llmm", "lmmd", "lmmd", ".md."], at: [(16, 16), (10, 15), (17, 28), (0, 6), (27, 4), (0, 15)], mirror: true, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hlmm", "lmmd", ".md."], at: [(6, 20), (11, 6), (21, 27), (5, 26), (9, 10), (19, 21)], mirror: true, wrap: true),
+                Cut(mask: [Noise(cells: (8, 8), amount: 0.5), Grain(0.7)], above: -0.2, darker_than: 2),
+            ]),
+        },
+    },
+)
