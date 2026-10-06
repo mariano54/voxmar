@@ -316,6 +316,7 @@ pub(crate) fn offscreen(
     let mut image = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None);
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     let target = images.add(image);
+    commands.insert_resource(crate::screenshot::Offscreen(target.clone()));
     for entity in camera {
         commands.entity(entity).insert(RenderTarget::Image(bevy::camera::ImageRenderTarget { handle: target.clone(), scale_factor }));
     }

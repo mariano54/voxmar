@@ -73,7 +73,6 @@ impl Locale {
     /// How a block or item's name reads, when it holds kanji: kanji in hiragana, the rest as
     /// written (オークのげんぼく for オークの原木). None for a name with no kanji, and in a
     /// language that has none. The same for the others below.
-    #[allow(dead_code, reason = "the interface shows readings with names (Shift over one)")]
     pub fn block_reading(&self, def: &BlockDef) -> Option<String> {
         self.lang.block_reading(def)
     }
@@ -167,7 +166,8 @@ fn resolve(wanted: &str, languages: &[Language]) -> String {
 }
 
 /// The end of a condition's keys: `WellFed` is `well_fed`.
-fn effect_key(effect: Effect) -> String {
+/// An effect's name in keys and file names: `well_fed`.
+pub fn effect_key(effect: Effect) -> String {
     let mut key = String::new();
     for (i, c) in format!("{effect:?}").chars().enumerate() {
         if c.is_uppercase() && i > 0 {

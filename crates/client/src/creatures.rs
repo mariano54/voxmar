@@ -104,8 +104,6 @@ const SWING: f32 = 0.55;
 const SPAWNS: usize = 3;
 /// Creatures further than this are not drawn.
 const DRAWN_WITHIN: f32 = 96.0;
-/// The darkest a creature is drawn, so one in a cave is still a shape.
-const DARKEST: f32 = 0.12;
 /// Steps a creature's light is rounded to, so the slow change of daylight rewrites its
 /// material now and then rather than every frame.
 const LIGHT_STEPS: f32 = 128.0;
@@ -395,7 +393,7 @@ fn show(
     time: Res<Time>,
     launch: Res<Launch>,
     world: Res<ClientWorld>,
-    cycle: Res<crate::render::DayCycle>,
+    scene_light: Res<crate::render::SceneLight>,
     player: Res<LocalPlayer>,
     mut creatures: ResMut<Creatures>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -540,7 +538,6 @@ fn show(
         );
     }
 
-    let daylight = 0.25 + 0.75 * creature::daylight(cycle.ticks.max(0.0) as u64);
     let eye = player.eye();
     let me = creatures.me;
     let mut finished = Vec::new();
@@ -702,22 +699,22 @@ fn show(
                 *transform = Transform { translation: part.pivot, rotation, scale: stretch };
             }
         }
-        // Lit as the terrain around it is, a glowing creature by itself; red when struck.
+        // Lit exactly as the terrain around it is (`SceneLight`: at night as dark as the
+        // ground, which a separate daylight curve left far brighter), a glowing creature by
+        // itself; red when struck.
         let cell = (shown.position + Vec3::Y * 0.5).floor().as_ivec3();
         let light = if def.body.glows {
-            1.0
+            LinearRgba::WHITE
         } else {
-            let sky = sky_light(&world, cell) as f32 / 15.0 * daylight;
-            let block = block_light(&world, cell) as f32 / 15.0;
-            sky.max(block).max(DARKEST)
+            scene_light.at(sky_light(&world, cell), block_light(&world, cell))
         };
         // In steps too fine to see, and written only when it changes: a changed material
         // is uploaded again and every part drawn with it specialised again for the camera
         // and each shadow cascade: writing it every frame took a herd of 40 from 4 to 8 ms
         // a frame on an NVIDIA L4.
-        let light = (light * LIGHT_STEPS).round() / LIGHT_STEPS;
+        let step = |c: f32| (c * LIGHT_STEPS).round() / LIGHT_STEPS;
         let red = shown.flash / FLASH;
-        let lit = LinearRgba::rgb(light, light, light);
+        let lit = LinearRgba::rgb(step(light.red), step(light.green), step(light.blue));
         let colour = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
         if skins.get(&shown.material).is_some_and(|material| material.base.base_color != colour)
             && let Some(mut material) = skins.get_mut(&shown.material)

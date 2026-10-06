@@ -174,6 +174,9 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
+    /// player's folder and clipboard alone) and says so in the chat.
+    Screenshot,
     /// Every in-game screen and state, in English and Japanese: no text reaches past the
     /// element it sits in.
     Fit,
@@ -220,6 +223,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// Whether the loading cover was checked.
+    cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
     /// The interface font before the gate tried another, to go back to.
@@ -263,6 +268,7 @@ impl Gate {
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
+            cover_checked: false,
             spills: Vec::new(),
             font: None,
             food_moved: false,
@@ -658,6 +664,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
@@ -1035,6 +1042,18 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             look(world, 0.0, 5.0);
+            // The loading cover lifted only once the world's weather showed.
+            if !gate.cover_checked {
+                gate.cover_checked = true;
+                let covered = world.query_filtered::<(), With<crate::menu::loading::Cover>>().iter(world).count() > 0;
+                let weather = world.resource::<crate::weather::WeatherReady>().0;
+                let result = match (covered, weather) {
+                    (false, true) => Ok("lifted, with the world's weather showing".to_owned()),
+                    (true, _) => Err("still up a whole step into the game".to_owned()),
+                    (false, false) => Err("lifted before the weather was ready".to_owned()),
+                };
+                gate.check("loading cover", result);
+            }
             if gate.shot(world, "game").is_some() {
                 // The HUD reads health and hunger off the server's vitals.
                 let hunger = world.resource::<LocalPlayer>().vitals.hunger;
@@ -1205,7 +1224,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Fit, now);
+        gate.next(Step::Screenshot, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -1230,7 +1249,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Fit, now);
+                gate.next(Step::Screenshot, now);
             }
         }
         2 => {
@@ -1251,6 +1270,37 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Screenshot, now);
+        }
+    }
+}
+
+/// The screenshot key, as a player presses it: a PNG of the frame lands in the folder.
+fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::screenshot::{Elsewhere, Kept, LastShot};
+    let key_code = world.resource::<crate::settings::Settings>().screenshot_key.0;
+    match gate.phase {
+        0 => {
+            world.insert_resource(Elsewhere(gate.dir.join("screenshots")));
+            world.resource_mut::<LastShot>().0 = None;
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, key_code, false);
+            let kept = world.resource::<LastShot>().0.clone();
+            let result = match kept {
+                Some(Kept::Saved { path, .. }) if path.is_file() => {
+                    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                    Ok(format!("{} saved, {size} bytes", path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())))
+                }
+                Some(Kept::Saved { path, .. }) => Err(format!("said it saved {} but there is no such file", path.display())),
+                Some(Kept::Failed(why)) => Err(why),
+                None if in_phase < 10.0 => return,
+                None => Err("pressing the key saved nothing in 10 s".into()),
+            };
+            gate.check("screenshot", result);
+            world.remove_resource::<Elsewhere>();
             gate.next(Step::Fit, now);
         }
     }
@@ -1261,6 +1311,8 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 enum View {
     /// The HUD alone, with experience, a refusal and a level-up showing.
     Hud,
+    /// The HUD with the debug overlay on.
+    Debug,
     Inventory,
     Character,
     /// The character screen with one skill's guide open.
@@ -1271,8 +1323,8 @@ enum View {
     Dead,
     /// The chat and command line, open.
     Console,
-    /// The recipe viewer over the inventory: a campfire's recipes, or an oak log's uses.
-    Recipes(bool),
+    /// The recipe viewer over the inventory, on one of `FIT_LOOKUPS`.
+    Recipes(usize),
     /// The menus before a game: the title screen, the worlds, a new world, joining one,
     /// and the settings on one tab.
     Title,
@@ -1281,6 +1333,10 @@ enum View {
     Join,
     Settings(usize),
 }
+
+/// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
+/// item, an ingredient, and a creature's product with a range of amounts.
+const FIT_LOOKUPS: [(&str, bool); 3] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false)];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -1293,7 +1349,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let views: Vec<View> = if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Dead, View::Console, View::Inventory, View::Recipes(false), View::Recipes(true), View::Character]
+        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
             .chain((0..crate::settings::TABS).map(View::Menu))
@@ -1346,6 +1402,10 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<NextState<Screen>>().set(screen);
     }
     world.resource_mut::<LocalPlayer>().dead = matches!(view, Some(View::Dead));
+    let debug = matches!(view, Some(View::Debug));
+    if world.resource::<crate::settings::Settings>().debug_overlay != debug {
+        world.resource_mut::<crate::settings::Settings>().debug_overlay = debug;
+    }
     let mut ui = world.resource_mut::<UiState>();
     (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
     match view {
@@ -1360,9 +1420,10 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         ui.recipes_open = false;
     }
     let lookup = match view {
-        Some(View::Recipes(uses)) => {
+        Some(View::Recipes(index)) => {
+            let (name, uses) = FIT_LOOKUPS[index];
             let blocks = &world.resource::<Launch>().content.blocks;
-            blocks.id(if uses { "base:oak_log" } else { "base:campfire" }).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
+            blocks.id(name).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
         }
         _ => None,
     };
@@ -1416,7 +1477,9 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
         None if gate.step == Step::Load => {
             let target = weather.target().map(|t| t.fractions());
             let off = target.map_or(f32::INFINITY, |t| t.iter().zip(&shown).map(|(t, s)| (t.1 - s.1).abs()).fold(0.0, f32::max));
-            let result = if off < 0.02 {
+            // Exactly: until ready every report is shown at once, and easing leaves a value
+            // at its goal where it is.
+            let result = if off == 0.0 {
                 Ok(format!("ready at {now:.1}s, showing the server's weather at once: {}", weather.current.summary()))
             } else {
                 Err(format!("first shown {} away from the server's report: {}", off, weather.current.summary()))
@@ -2002,6 +2065,13 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         9 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
+            // Down at the land around, lit by the night sky alone.
+            world.resource_mut::<LocalPlayer>().pitch = -0.6;
+            gate.advance(now);
+        }
+        10 if in_phase > 0.3 => {
+            let Some(shot) = gate.shot(world, "night ground") else { return };
+            gate.check("sky: night ground", night_ground(&shot));
             gate.next(Step::Tree, now);
         }
         1 if in_phase > 15.0 => {
@@ -2289,6 +2359,30 @@ fn stars(shot: &Image) -> Result<String, String> {
         Ok(format!("{count} star pixels"))
     } else {
         Err(format!("only {count} star pixels"))
+    }
+}
+
+/// Open ground at midnight, in the lower half of a shot: dark, but not black. Before nights
+/// were lifted (2026-10-06) a moonless night's ground averaged 2 or 3 of 255 and Mariano
+/// could not see where he walked.
+fn night_ground(shot: &Image) -> Result<String, String> {
+    const DARKEST: f32 = 6.0;
+    const BRIGHTEST: f32 = 70.0;
+    let (w, h, data) = pixels(shot)?;
+    let (mut sum, mut count) = (0.0f32, 0.0f32);
+    // The lower half, above the hotbar.
+    for y in h / 2..h * 4 / 5 {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            sum += (data[i] as f32 * 54.0 + data[i + 1] as f32 * 183.0 + data[i + 2] as f32 * 19.0) / 256.0;
+            count += 1.0;
+        }
+    }
+    let mean = sum / count.max(1.0);
+    match mean {
+        m if m < DARKEST => Err(format!("the ground at night averages {m:.1} of 255: black")),
+        m if m > BRIGHTEST => Err(format!("the ground at night averages {m:.1} of 255: not night")),
+        m => Ok(format!("the ground at night averages {m:.1} of 255")),
     }
 }
 

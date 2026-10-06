@@ -32,6 +32,9 @@
 #   flight100  40 s flight at 3024x1964, full resolution
 #   flightfast 40 s flight at 2268x1473 four times as fast (his fly speed), the world
 #              streaming in faster than it is made: p99 and worst frame matter most
+#   flighthigh 40 s flight at 2268x1473 and his fly speed at y=260 (110 above spawn), looking
+#              down at 40°: the whole view of 36k chunks in sight, where his slow frames
+#              gathered (2026-10-06)
 #   sea        the sea at spawn, 2268x1473
 #   forest     dense forest, 2268x1473
 #   mountains  a mountain range with spruce forest, 2268x1473
@@ -39,7 +42,7 @@
 #   dig        digging a shaft for 15 s, holding the button: breaking, particles, drops,
 #              remeshing, 2268x1473
 #   creatures  a herd of 40 creatures of nine kinds moving on a meadow, 2268x1473
-# Scenes of the FPS benchmark: flight75 flightfast forest mountains night_rain dig creatures.
+# Scenes of the FPS benchmark: flight75 flightfast flighthigh forest mountains night_rain dig creatures.
 # On Linux they run on Vulkan on the NVIDIA GPU; a run on a software renderer fails.
 # The numbers, the power mode and the load go to target/bench/report.txt.
 
@@ -187,6 +190,7 @@ view_args() {
     flight75) view_args=(--size 2268x1473 --weather clear --time 0.2 --flight 40) ;;
     flight100) view_args=(--size 3024x1964 --weather clear --time 0.2 --flight 40) ;;
     flightfast) view_args=(--size 2268x1473 --weather clear --time 0.2 --flight 40) ;;
+    flighthigh) view_args=(--size 2268x1473 --weather clear --time 0.2 --command "/tp ~ 260 ~" --pose 0,0,0,0,-40 --flight 40) ;;
     sea) view_args=(--size 2268x1473 --pose 0,2,0,20,-5 --time 0.2 --wait 10) ;;
     forest) view_args=(--size 2268x1473 --weather clear --time 0.3 --command "/tp 384 1504" --pose 0,25,0,200,-30 --wait 10) ;;
     mountains) view_args=(--size 2268x1473 --weather clear --time 0.25 --command "/tp 352 -448" --pose 0,30,0,0,-15 --wait 10) ;;
@@ -204,7 +208,7 @@ view_args() {
   esac
 }
 views=(flight75 flight100 flightfast sea forest)
-[[ $mode == fps ]] && views=(flight75 flightfast forest mountains night_rain dig creatures)
+[[ $mode == fps ]] && views=(flight75 flightfast flighthigh forest mountains night_rain dig creatures)
 [[ -n $only ]] && IFS=, read -ra views <<<"$only"
 for view in "${views[@]}"; do view_args "$view" || { echo "bench: no view called $view" >&2; exit 2; }; done
 
@@ -297,7 +301,7 @@ run() {
   ((use_quiet)) && touch "$quiet"
   game_running && { echo "bench: FAILED: Mariano started playing; no numbers taken now are trustworthy" >&2; exit 1; }
   local settings=$config
-  [[ $view == flightfast ]] && settings=$fast
+  [[ $view == flightfast || $view == flighthigh ]] && settings=$fast
   log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
   # Numbers from a software renderer (llvmpipe, SwiftShader) or the wrong GPU are worthless.
   local adapter
