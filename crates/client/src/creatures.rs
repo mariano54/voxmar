@@ -596,19 +596,23 @@ pub fn aim(
     *cooldown -= time.delta_secs();
     // A right click tends it with what is in hand: food that tames it or readies a kept one
     // to breed, or a tool for its product (the server judges; this only asks when it may).
+    // With anything else, or nothing, in hand, it looks closely at it.
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
         && mouse.just_pressed(MouseButton::Right)
-        && let (Some(tend), Some(item), Some(view)) = (actions.0.id("base:tend"), player.inventory.get(player.selected).map(|s| s.item), creatures.shown.get(&id).map(|s| s.view))
+        && let Some(view) = creatures.shown.get(&id).map(|s| s.view)
     {
         let species = launch.content.creatures.get(view.species);
         let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
-        let tags = &launch.content.blocks.def(item).tags;
-        let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-        let accepts = (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool));
-        if accepts {
-            net.propose_from(&player, tend, ActionTarget::Creature(id));
+        let accepts = player.inventory.get(player.selected).map(|s| s.item).is_some_and(|item| {
+            let tags = &launch.content.blocks.def(item).tags;
+            let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
+            (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
+        });
+        let action = if accepts { "base:tend" } else { "base:inspect" };
+        if let Some(action) = actions.0.id(action) {
+            net.propose_from(&player, action, ActionTarget::Creature(id));
         }
     }
     if let Some(id) = target.creature

@@ -63,7 +63,7 @@ struct Emitter {
 }
 
 #[derive(Resource, Default)]
-struct Emitters {
+pub(crate) struct Emitters {
     /// The registry `emits` was made from.
     registry: Option<Arc<BlockRegistry>>,
     /// Per block id, whether it gives off particles.
@@ -76,6 +76,10 @@ struct Emitters {
     since: f32,
     searched_at: Option<IVec3>,
     dice: u64,
+    /// A block whose particles are counted into `watched` (the gate's campfire check):
+    /// a count is the same at any frame rate, where a picture of a few faint puffs is not.
+    pub(crate) watch: Option<IVec3>,
+    pub(crate) watched: u32,
 }
 
 impl Emitters {
@@ -184,6 +188,9 @@ fn emit(
                 for _ in 0..emission.count.max(1) {
                     let particle = particle(emission, &emitter, light, wind, &mut emitters);
                     particles.spawn(&particle);
+                    if emitters.watch == Some(emitter.pos) {
+                        emitters.watched += 1;
+                    }
                 }
             }
         }

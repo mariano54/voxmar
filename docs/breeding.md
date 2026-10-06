@@ -160,6 +160,11 @@ animals, at the cost of building where aether is high or bringing aether feed fr
 
 ## Inspecting
 
+**In the game now:** right-click a creature with nothing it wants in hand. Anyone sees its
+kind, level, keeper, health, age and temper; Farming 10 shows what its genes show,
+20 what it carries hidden, 30 the exact numbers, 40 the odds of a mutation where it
+stands (server `inspect.rs`).
+
 The inspect action shows more with Farming level: condition, age and personality in words
 at 1; visible genes in words ("long wool, calm") at 15; hidden alleles and carriers at 30;
 exact numbers and the inbreeding coefficient at 40; mutation odds at the pen at 50. This is the seed
