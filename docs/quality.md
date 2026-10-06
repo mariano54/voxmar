@@ -116,7 +116,9 @@ tools/bench history [SCENE]
 It builds this tree with `--release` and runs six fixed scenes, seed 1 at Mariano's
 settings (32 chunks, SMAA, VSync off, 2268×1473: 75% of his 3024×1964 screen), each N
 times (default 3), reporting the median of the runs: `flight75` (a 40 s flight), `flightfast` (the same at his 400% fly
-speed, the world streaming in faster than it is made), `forest`, `mountains`,
+speed, the world streaming in faster than it is made), `flighthigh` (the same at y=260 looking
+down at 40°, the whole view of about 36k chunks in sight, where his slow frames gathered),
+`forest`, `mountains`,
 `night_rain` (still views measured for 13 s), and `dig` (15 s digging a shaft, holding the
 button: breaking, particles, drops, remeshing). For each it prints the average FPS, the 1%
 low (the mean of the slowest 1% of frames, as FPS), the p99 and worst frame in ms (by the
