@@ -128,6 +128,44 @@ impl Default for Traits {
     }
 }
 
+/// A named breed: a species' animals that meet every condition, as breeders know them
+/// (docs/breeding.md, "Named breeds"). Mods add breeds as data.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BreedDef {
+    pub name: String,
+    /// What players call it; from the name unless given.
+    #[serde(default)]
+    pub title: String,
+    pub when: Vec<Condition>,
+}
+
+/// A condition on genes.
+#[derive(Clone, Debug, Deserialize)]
+pub enum Condition {
+    /// This allele shows for this gene.
+    Shows(String, String),
+    /// This number gene is at least this.
+    Above(String, f32),
+    /// This number gene is at most this.
+    Below(String, f32),
+}
+
+/// The first breed `genome` meets, if any.
+pub fn breed_of<'a>(defs: &[GeneDef], breeds: &'a [BreedDef], genome: &Genome) -> Option<&'a BreedDef> {
+    let gene = |name: &str| defs.iter().position(|d| d.name == name).and_then(|i| Some((&defs[i], genome.0.get(i)?)));
+    breeds.iter().find(|breed| {
+        breed.when.iter().all(|condition| match condition {
+            Condition::Shows(name, allele) => match gene(name) {
+                Some((GeneDef { kind: GeneKind::Alleles(alleles), .. }, Gene::Pair(a, b))) => alleles.get((*a).min(*b) as usize).is_some_and(|al| &al.name == allele),
+                _ => false,
+            },
+            Condition::Above(name, value) => matches!(gene(name), Some((_, Gene::Number(n))) if n >= value),
+            Condition::Below(name, value) => matches!(gene(name), Some((_, Gene::Number(n))) if n <= value),
+        })
+    })
+}
+
 /// The most genes a species may have (what the wire carries).
 pub const MOST: usize = 8;
 
@@ -389,6 +427,18 @@ mod tests {
         }
         // A quarter, as Mendel found.
         assert!((70..130).contains(&whites), "{whites} white of 400");
+    }
+
+    #[test]
+    fn breeds_are_known_by_their_genes() {
+        let defs = defs();
+        let breeds: Vec<BreedDef> = ron::from_str(r#"[(name: "giant_white", when: [Shows("coat", "white"), Above("size", 1.15)]), (name: "black", when: [Shows("coat", "black")])]"#).unwrap();
+        let giant = Genome(vec![Gene::Pair(2, 2), Gene::Number(1.2)]);
+        let small_white = Genome(vec![Gene::Pair(2, 2), Gene::Number(1.0)]);
+        let black = Genome(vec![Gene::Pair(1, 2), Gene::Number(1.0)]);
+        assert_eq!(breed_of(&defs, &breeds, &giant).map(|b| b.name.as_str()), Some("giant_white"));
+        assert!(breed_of(&defs, &breeds, &small_white).is_none());
+        assert_eq!(breed_of(&defs, &breeds, &black).map(|b| b.name.as_str()), Some("black"));
     }
 
     #[test]

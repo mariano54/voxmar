@@ -474,4 +474,5 @@
     "personality.lazy": "lazy",
     "personality.skittish": "skittish",
     "personality.calm": "calm",
+    "inspect.breed": "A {breed}.",
 }

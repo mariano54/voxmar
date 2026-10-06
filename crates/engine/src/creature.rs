@@ -19,11 +19,13 @@ pub mod husbandry;
 pub mod model;
 pub mod motion;
 pub mod skin;
+pub mod volume;
 
 pub use model::{HornShape, Model, Part, Role, Swing};
 
 use std::sync::Arc;
 
+use glam::Vec3;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -124,6 +126,14 @@ pub struct BodyDef {
     /// How its skin is painted: eyes, grain, belly, markings ([`skin`]).
     #[serde(default)]
     pub skin: skin::SkinDef,
+    /// Drawn this much larger than its plan's numbers (and its box with it): small animals
+    /// a little larger than life, so they read among the grass.
+    #[serde(default = "unscaled")]
+    pub scale: f32,
+}
+
+fn unscaled() -> f32 {
+    1.0
 }
 
 impl BodyDef {
@@ -414,6 +424,9 @@ pub struct CreatureDef {
     /// most [`crate::genes::MOST`].
     #[serde(default)]
     pub genes: Vec<crate::genes::GeneDef>,
+    /// Named breeds, by their genes.
+    #[serde(default)]
+    pub breeds: Vec<crate::genes::BreedDef>,
 }
 
 fn first() -> u8 {
@@ -440,6 +453,10 @@ pub struct Creature {
     pub modules: Vec<(Arc<dyn brain::Module>, f32)>,
     /// Its body's boxes at full size, and where each face lies in its skin.
     pub parts: Vec<Part>,
+    /// How far its body reaches ahead of its centre, and its head's height, at full size,
+    /// for collision ([`motion::Body::reach`]).
+    pub reach: f32,
+    pub head: f32,
     pub layout: skin::Layout,
     pub loot: Vec<loot::Resolved>,
     /// What it eats and what tempts it, as blocks.
@@ -508,7 +525,8 @@ impl CreatureRegistry {
     /// Resolves species against the blocks (items) and skills.
     pub fn new(defs: Vec<CreatureDef>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
         let mut registry = Self::default();
-        for def in defs {
+        for mut def in defs {
+            def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
@@ -555,8 +573,19 @@ impl CreatureRegistry {
                 None => None,
             };
             let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
-            let parts = def.body.model.parts(1.0);
+            let parts = def.body.model.parts(def.body.scale);
             let layout = skin::layout(&parts);
+            // Horns, ears and tails give way; the head, muzzle and neck do not.
+            let reach = parts
+                .iter()
+                .filter(|p| !matches!(p.role, Role::Horn | Role::Ear | Role::Tail | Role::Wing | Role::Mote | Role::Crest))
+                .map(|p| {
+                    let half = p.size * 0.5;
+                    let along = (p.rest * Vec3::new(half.x, 0.0, 0.0)).z.abs() + (p.rest * Vec3::new(0.0, half.y, 0.0)).z.abs() + (p.rest * Vec3::new(0.0, 0.0, half.z)).z.abs();
+                    along - p.centre.z
+                })
+                .fold(0.0f32, f32::max);
+            let head = parts.iter().find(|p| p.role == Role::Head).map_or(def.body.size.1, |p| p.centre.y);
             let modules = behaviours
                 .iter()
                 .map(|entry| (brain::modules::module(entry.behaviour), entry.weight))
@@ -566,7 +595,7 @@ impl CreatureRegistry {
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, modules, parts, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
         }
         Ok(registry)
     }

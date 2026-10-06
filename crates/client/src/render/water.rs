@@ -427,10 +427,10 @@ type WaterView = (
 );
 
 /// Draws the translucent terrain of a camera with the scene so far bound for reading. With
-/// MSAA it draws into the multisampled image, reading the resolved one, and resolves into
-/// the other main image; without, it copies the scene into the other main image and draws
-/// there. Either way that image becomes the main one, and Bevy's transparent pass carries
-/// on in it.
+/// MSAA it draws into the multisampled image, reading the resolved one, and leaves it to be
+/// resolved into the other main image at the end of the main passes (`resolve`); without,
+/// it copies the scene into the other main image and draws there. Either way that image
+/// becomes the main one, and Bevy's transparent pass carries on in it.
 fn water_pass(
     world: &World,
     view: ViewQuery<WaterView>,
@@ -475,11 +475,11 @@ fn water_pass(
     // other main image, which then becomes the main one.
     let write = target.post_process_write();
     let color = match target.sampled_main_texture_view().filter(|_| multisampled) {
-        // The multisampled image, resolved at the end of the pass.
+        // The multisampled image, resolved later into the new main image (`resolve`).
         Some(samples) => RenderPassColorAttachment {
             view: samples,
             depth_slice: None,
-            resolve_target: Some(write.destination),
+            resolve_target: None,
             ops: Operations { load: LoadOp::Load, store: StoreOp::Store },
         },
         // Without samples to draw into, the destination starts as a copy of the scene.

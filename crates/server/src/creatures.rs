@@ -321,8 +321,56 @@ impl Server {
             }
             self.move_creature(id, dt);
         }
+        self.push_apart();
         for (id, decision) in actions {
             self.carry_out(id, decision);
+        }
+    }
+
+    /// Creatures that touch push each other apart, as Minecraft's mobs do: they may brush
+    /// and bump, but they part again rather than stand inside each other. The push grows
+    /// with how far they overlap and goes into their walking speed, so walls still hold.
+    fn push_apart(&mut self) {
+        const PUSH: f32 = 6.0;
+        let mut cells: FxHashMap<(i32, i32), Vec<u32>> = FxHashMap::default();
+        for (&id, c) in &self.creatures.live {
+            let p = c.body.position;
+            cells.entry(((p.x / 2.0).floor() as i32, (p.z / 2.0).floor() as i32)).or_default().push(id);
+        }
+        let mut pushes: Vec<(u32, Vec3)> = Vec::new();
+        for (&(cx, cz), ids) in &cells {
+            for &a in ids {
+                let ca = &self.creatures.live[&a];
+                for dx in -1..=1 {
+                    for dz in -1..=1 {
+                        let Some(others) = cells.get(&(cx + dx, cz + dz)) else { continue };
+                        for &b in others.iter().filter(|&&b| b > a) {
+                            let cb = &self.creatures.live[&b];
+                            let apart = (cb.body.position - ca.body.position).with_y(0.0);
+                            // Their bodies' reach, a little inside it, so a touch is a touch.
+                            let room = (ca.body.size.0 + cb.body.size.0) * 0.5 * 0.9;
+                            let tall = (ca.body.position.y - cb.body.position.y).abs() < (ca.body.size.1 + cb.body.size.1) * 0.5;
+                            let d = apart.length();
+                            if d >= room || !tall {
+                                continue;
+                            }
+                            let dir = if d > 1e-3 { apart / d } else { Vec3::new((a as f32).sin(), 0.0, (a as f32).cos()) };
+                            let push = dir * (room - d) / room * PUSH;
+                            // The heavier one moves less.
+                            let (wa, wb) = (ca.body.size.0 * ca.body.size.1, cb.body.size.0 * cb.body.size.1);
+                            let total = (wa + wb).max(1e-3);
+                            pushes.push((a, -push * (wb / total)));
+                            pushes.push((b, push * (wa / total)));
+                        }
+                    }
+                }
+            }
+        }
+        for (id, push) in pushes {
+            if let Some(c) = self.creatures.live.get_mut(&id) {
+                c.body.velocity += push * 0.05;
+                c.changed = true;
+            }
         }
     }
 
@@ -361,6 +409,8 @@ impl Server {
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
         let before = body.position;
+        body.reach = species.reach * creature.scale;
+        body.head = species.head * creature.scale;
         motion::step(&mut body, &Ground(self), &species.def.movement, species.def.habitat.water, drive, dt);
         let creature = self.creatures.live.get_mut(&id).expect("still there");
         // Stuck against something for two seconds: give up the goal.

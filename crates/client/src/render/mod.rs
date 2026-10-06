@@ -45,6 +45,7 @@ pub mod particles;
 pub mod post;
 pub mod scale;
 pub mod precipitation;
+pub mod resolve;
 pub mod terrain;
 pub mod volumetric;
 pub mod warm;
@@ -87,8 +88,7 @@ impl Plugin for RenderPlugin {
             cloud_map::CloudMapPlugin,
             bolts::BoltPlugin,
         ))
-            .add_plugins(warm::WarmPlugin)
-            .add_plugins(frame_timing::FrameTimingPlugin)
+            .add_plugins((warm::WarmPlugin, resolve::ResolvePlugin, frame_timing::FrameTimingPlugin))
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
             .init_resource::<Quality>()

@@ -1,18 +1,25 @@
-//! Creatures on the client: what the server says lives nearby, drawn as box models from
-//! their species' body plan (`engine::creature::Model`) in a skin painted for each one
-//! (`engine::creature::skin`), carried on smoothly between the server's updates, and
-//! animated from how they move: legs swing with their stride (hoppers and bounding runners
-//! move their pairs together), the body bobs with each step and breathes at rest, heads dip
-//! to graze and turn to watch a player who comes near, ears twitch, tails sway (a kept
-//! creature's faster when its keeper is near), wings flap, a struck creature flashes red and
-//! a dead one topples and sinks away. Left click on one strikes it (`core:attack`).
+//! Creatures on the client: what the server says lives nearby, drawn as smooth low-poly
+//! bodies (engine `creature::volume`, Mariano's pick, 2026-10-06) built from their species'
+//! parts, one mesh a species, bending at one joint a part, in a pixel skin painted through
+//! the body for each one (`creature::skin::paint_volume`, `creature_skin.wgsl`). They are
+//! carried on smoothly between the server's updates and animated from how they move: legs
+//! swing with their stride (hoppers and bounding runners move their pairs together), the
+//! body bobs with each step and breathes at rest, heads dip to graze and turn to watch a
+//! player who comes near, ears twitch, tails sway (a kept creature's faster when its keeper
+//! is near), wings flap, a struck creature flashes red and a dead one topples and sinks
+//! away. Left click on one strikes it (`core:attack`).
 //!
-//! They are ordinary Bevy meshes outside the renderer (docs/rendering.md, "Keeping room for
-//! what comes next"), unlit, with their faces shaded by hand and their colours darkened by
-//! the light where they stand (sky and block light, as dropped items take theirs). A lit,
-//! instanced creature pass belongs to the graphics thread when it comes.
+//! The bodies are ordinary Bevy skinned meshes outside the renderer (docs/rendering.md,
+//! "Keeping room for what comes next"), unlit, shaded flat by face in their shader, their
+//! colour darkened by the light where they stand (sky and block light, as dropped items
+//! take theirs).
 
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{RenderAssetUsages, embedded_asset};
+use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
+use bevy::mesh::VertexAttributeValues;
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -21,7 +28,8 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionTarget, REACH_CREATURE};
 use voxmar_engine::creature::brain::Pose;
-use voxmar_engine::creature::skin::{self, FACES, Layout};
+use voxmar_engine::creature::skin::{self, FACES};
+use voxmar_engine::creature::volume::{self, BodyMesh, Shape};
 use voxmar_engine::creature::{self, CreatureId, Part, Style, Swing};
 use voxmar_engine::physics::Aabb;
 use voxmar_protocol::{CreatureGone, CreatureView};
@@ -97,7 +105,9 @@ pub struct CreaturesPlugin;
 
 impl Plugin for CreaturesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Creatures>()
+        embedded_asset!(app, "creature_skin.wgsl");
+        app.add_plugins(MaterialPlugin::<SkinMaterial>::default())
+            .init_resource::<Creatures>()
             .add_systems(Update, show.run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut commands: Commands, mut creatures: ResMut<Creatures>| {
                 for shown in creatures.shown.values() {
@@ -108,6 +118,44 @@ impl Plugin for CreaturesPlugin {
     }
 }
 
+/// A creature's material: unlit, its colour from its own skin, painted through its body's
+/// volume and snapped to the block pixel grid (`creature_skin.wgsl`).
+pub type SkinMaterial = ExtendedMaterial<StandardMaterial, CreatureSkin>;
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+pub struct CreatureSkin {
+    #[texture(100, dimension = "3d")]
+    #[sampler(101)]
+    pub skin: Handle<Image>,
+    #[uniform(102)]
+    pub frame: SkinFrame,
+}
+
+/// Where the skin's volume lies in model space.
+#[derive(Clone, Copy, Debug, Default, Reflect, ShaderType)]
+pub struct SkinFrame {
+    /// The volume's corner, and texels a block.
+    pub origin: Vec4,
+    /// Its size in blocks.
+    pub size: Vec4,
+}
+
+impl MaterialExtension for CreatureSkin {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://voxmar/creature_skin.wgsl".into()
+    }
+}
+
+/// A species' body: its mesh, weighted to one joint per part, and its shape for painting.
+struct SpeciesBody {
+    mesh: Handle<Mesh>,
+    binds: Handle<SkinnedMeshInverseBindposes>,
+    shape: Shape,
+    /// The skin's volume: its corner and size in texels.
+    origin: Vec3,
+    dims: [u32; 3],
+}
+
 /// A creature as the client shows it.
 struct Shown {
     view: CreatureView,
@@ -116,9 +164,11 @@ struct Shown {
     position: Vec3,
     yaw: f32,
     entity: Entity,
-    parts: Vec<(Entity, Part)>,
+    /// Its body's mesh, and one joint per part, which the animation turns.
+    body: Entity,
+    joints: Vec<(Entity, Part)>,
     /// Its skin, which is darkened by the light and flashed red.
-    material: Handle<StandardMaterial>,
+    material: Handle<SkinMaterial>,
     skin: Handle<Image>,
     /// Stride phase, in cycles.
     stride: f32,
@@ -136,8 +186,6 @@ struct Shown {
     hearts: Vec<Entity>,
 }
 
-/// A species' meshes: one per part, its texture coordinates in the species' layout.
-type Meshes = Vec<Handle<Mesh>>;
 
 /// Every creature the server has told us about.
 #[derive(Resource, Default)]
@@ -146,8 +194,8 @@ pub struct Creatures {
     /// Views and departures received since they were last applied.
     inbox: Vec<CreatureView>,
     left: Vec<CreatureGone>,
-    /// Each species' part meshes, made when the first of it is seen.
-    meshes: FxHashMap<CreatureId, Meshes>,
+    /// Each species' body, made when the first of it is seen.
+    bodies: FxHashMap<CreatureId, SpeciesBody>,
     /// A shaded cube for hearts, and their colours: full and empty.
     heart: Option<(Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>)>,
     /// Creatures seen to die since joining.
@@ -277,11 +325,38 @@ fn whole(size: (u32, u32)) -> [skin::Rect; 6] {
     [skin::Rect { x: 0, y: 0, w: size.0, h: size.1 }; 6]
 }
 
-/// An individual's skin as a texture.
-fn skin_image(def: &creature::BodyDef, parts: &[Part], layout: &Layout, seed: u32) -> Image {
-    let pixels = skin::paint(def, parts, layout, seed);
-    let extent = Extent3d { width: layout.width, height: layout.height, depth_or_array_layers: 1 };
-    let mut image = Image::new(extent, TextureDimension::D2, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+/// A species' body as a skinned mesh: rest positions (in the vertex colour, for the skin),
+/// normals, and each vertex's four joints and weights.
+fn body_mesh(body: &BodyMesh) -> Mesh {
+    let rest: Vec<[f32; 4]> = body.positions.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect();
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, body.positions.clone())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, body.normals.clone())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, rest)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(body.joints.clone()))
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, body.weights.clone())
+        .with_inserted_indices(Indices::U32(body.indices.clone()))
+}
+
+/// Builds a species' body from its parts.
+fn species_body(parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
+    let body = volume::build(parts);
+    let shape = Shape::new(parts);
+    // Each joint sits at its part's pivot; at rest it moves nothing.
+    let inverse: Vec<Mat4> = parts.iter().map(|p| Mat4::from_translation(-p.pivot)).collect();
+    let texel = 1.0 / skin::TEXELS;
+    let origin = ((body.min / texel).floor() - 1.0) * texel;
+    let dims = (((body.max - origin) / texel).ceil() + 1.0).as_uvec3().to_array();
+    SpeciesBody { mesh: meshes.add(body_mesh(&body)), binds: binds.add(SkinnedMeshInverseBindposes::from(inverse)), shape, origin, dims }
+}
+
+/// An individual's skin, painted through its species' body volume.
+fn skin_volume(def: &creature::BodyDef, parts: &[Part], body: &SpeciesBody, seed: u32) -> Image {
+    let shell = body.shape.cell * 0.75 + 1.5 / skin::TEXELS;
+    let pixels = skin::paint_volume(def, parts, seed, body.origin, body.dims, shell, |p| body.shape.nearest(p));
+    let [w, h, d] = body.dims;
+    let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
+    let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
     image.sampler = nearest();
     image
 }
@@ -300,8 +375,11 @@ fn show(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut skins: ResMut<Assets<SkinMaterial>>,
+    mut binds: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut transforms: Query<&mut Transform>,
     mut looks: Query<&mut MeshMaterial3d<StandardMaterial>>,
+    mut visible: Query<&mut Visibility>,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -312,8 +390,19 @@ fn show(
         .get_or_insert_with(|| {
             let image = images.add(heart_image());
             let mesh = meshes.add(part_mesh(&whole((1, 1)), (1, 1)));
-            let skinned = materials.add(StandardMaterial { base_color_texture: Some(image.clone()), unlit: true, ..default() });
-            crate::render::warm::warm(&mut commands, mesh.clone(), skinned, true, DespawnOnExit(Screen::InGame));
+            // A body's pipeline: a skinned box with a one-texel skin.
+            let cube = BodyMesh {
+                positions: FACES.iter().flat_map(|f| [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)].map(|(a, b)| (f.normal * 0.5 + f.u * a + f.v * b).to_array())).collect(),
+                normals: FACES.iter().flat_map(|f| [f.normal.to_array(); 4]).collect(),
+                joints: vec![[0; 4]; 24],
+                weights: vec![[1.0, 0.0, 0.0, 0.0]; 24],
+                indices: (0..6u32).flat_map(|f| [0, 2, 1, 0, 3, 2].map(|i| f * 4 + i)).collect(),
+                ..default()
+            };
+            let pixel = Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![255; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+            let body = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: images.add(pixel), frame: SkinFrame { origin: Vec4::new(-1.0, -1.0, -1.0, skin::TEXELS), size: Vec4::splat(2.0) } } });
+            let warm_binds = binds.add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY]));
+            crate::render::warm::warm_skinned(&mut commands, meshes.add(body_mesh(&cube)), body, warm_binds, DespawnOnExit(Screen::InGame));
             let heart = |colour: Color| StandardMaterial { base_color: colour, base_color_texture: Some(image.clone()), alpha_mode: AlphaMode::Mask(0.5), unlit: true, ..default() };
             let full = materials.add(heart(Color::srgb(0.95, 0.16, 0.24)));
             let empty = materials.add(heart(Color::srgb(0.3, 0.27, 0.3)));
@@ -336,7 +425,7 @@ fn show(
                 despawn(&mut commands, shown);
                 if let Some(shown) = creatures.shown.remove(&gone.id) {
                     images.remove(&shown.skin);
-                    materials.remove(&shown.material);
+                    skins.remove(&shown.material);
                 }
             }
             None => {}
@@ -355,26 +444,18 @@ fn show(
             continue;
         }
         let species = registry.get(view.species);
-        let layout = &species.layout;
-        let part_meshes = creatures
-            .meshes
-            .entry(view.species)
-            .or_insert_with(|| layout.faces.iter().map(|rects| meshes.add(part_mesh(rects, (layout.width, layout.height)))).collect());
+        let body = creatures.bodies.entry(view.species).or_insert_with(|| species_body(&species.parts, &mut meshes, &mut binds));
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
-        let skin = images.add(skin_image(&species.def.body.with(&traits), &species.parts, layout, view.seed));
-        let material = materials.add(StandardMaterial { base_color_texture: Some(skin.clone()), unlit: true, ..default() });
+        let skin = images.add(skin_volume(&species.def.body.with(&traits), &species.parts, body, view.seed));
+        let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
+        let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
+        let material = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: skin.clone(), frame } });
         let entity = commands.spawn((Transform::from_translation(view.position), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
-        let parts: Vec<(Entity, Part)> = species
-            .parts
-            .iter()
-            .zip(part_meshes.iter())
-            .map(|(&part, mesh)| {
-                let transform = Transform::from_translation(part.centre).with_rotation(part.rest).with_scale(part.size);
-                (commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform, ChildOf(entity))).id(), part)
-            })
-            .collect();
+        let joints: Vec<(Entity, Part)> = species.parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(entity))).id(), part)).collect();
+        let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
+        let body = commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material.clone()), skinned, Transform::default(), Visibility::default(), ChildOf(entity))).id();
         creatures.shown.insert(
             view.id,
             Shown {
@@ -383,7 +464,8 @@ fn show(
                 position: view.position,
                 yaw: view.yaw,
                 entity,
-                parts,
+                body,
+                joints,
                 material,
                 skin,
                 stride: 0.0,
@@ -504,7 +586,13 @@ fn show(
             let chance = creature::unit_from(creature::mix(id as u64 ^ slot as i64 as u64, side.to_bits() as u64));
             if chance < 0.18 { ((now * 0.8 + id as f32 * 0.37 + side * 0.21).fract() * std::f32::consts::TAU).sin().max(0.0) * 0.6 } else { 0.0 }
         };
-        for (child, part) in &shown.parts {
+        if let Ok(mut shows) = visible.get_mut(shown.body) {
+            let want = if far { Visibility::Hidden } else { Visibility::Inherited };
+            if *shows != want {
+                *shows = want;
+            }
+        }
+        for (child, part) in &shown.joints {
             let (rotation, stretch) = match part.swing {
                 Swing::Leg { phase, hind } => {
                     let phase = if paired { if hind { 0.0 } else { 0.5 } } else { phase };
@@ -526,10 +614,9 @@ fn show(
                 Swing::Still if part.role == creature::Role::Torso => (Quat::IDENTITY, Vec3::new(1.0, breath, 1.0)),
                 Swing::Still => (Quat::IDENTITY, Vec3::ONE),
             };
+            // The joint turns its part about the pivot (its rest is folded into the mesh).
             if let Ok(mut transform) = transforms.get_mut(*child) {
-                transform.translation = part.pivot + rotation * (part.centre - part.pivot);
-                transform.rotation = rotation * part.rest;
-                transform.scale = if far { Vec3::ZERO } else { part.size * stretch };
+                *transform = Transform { translation: part.pivot, rotation, scale: stretch };
             }
         }
         // Lit as the terrain around it is, a glowing creature by itself; red when struck.
@@ -549,17 +636,17 @@ fn show(
         let red = shown.flash / FLASH;
         let lit = LinearRgba::rgb(light, light, light);
         let colour = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
-        if materials.get(&shown.material).is_some_and(|material| material.base_color != colour)
-            && let Some(mut material) = materials.get_mut(&shown.material)
+        if skins.get(&shown.material).is_some_and(|material| material.base.base_color != colour)
+            && let Some(mut material) = skins.get_mut(&shown.material)
         {
-            material.base_color = colour;
+            material.base.base_color = colour;
         }
     }
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
             despawn(&mut commands, &shown);
             images.remove(&shown.skin);
-            materials.remove(&shown.material);
+            skins.remove(&shown.material);
         }
     }
 }
