@@ -23,9 +23,14 @@ Two gates share one script. Forced checks must be quick, or they slow every thre
 so the one every landing passes runs only what the change can reach; the full one, which
 every play build passes, runs everything.
 
-`tools/gate`, before every landing: run it from the root of your worktree, after merging
-main and committing, then `git -C ~/Projects/voxmar merge --ff-only <branch>`. On a typical
-change it takes well under a minute.
+`tools/gate`, before every landing. Land with `tools/land`, from the root of your worktree
+with everything committed: it fetches origin and merges origin/main and main into your
+branch (main moves on GitHub too: the GPU box pushes straight to origin, so the local main
+can be behind), runs `tools/gate` on the result, fast-forwards main to it, pushes main and
+fetches it back to check that origin has the commit. When main moved meanwhile, here or on origin, it merges
+again, up to three times; it never forces. Only its last line, `land: <commit> landed`,
+means landed; anything else, the push included, failed and says why. On a typical change
+it takes well under a minute.
 
 1. Hygiene: `git diff main --check` and no conflict markers.
 2. An incremental build of the workspace, tests included (`--profile iter`); any warning
@@ -44,7 +49,7 @@ change it takes well under a minute.
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
-A change that touches only docs or tools skips 3 and 4. A tree that already passed is not
+A change that touches only docs or tools skips 2, 3 and 4. A tree that already passed is not
 gated again, so merging or rebasing without changing anything costs nothing.
 
 `tools/gate --full`, before every play build: every test and the session at the normal

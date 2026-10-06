@@ -10,6 +10,8 @@
         (input: "carrot", output: "roast_carrot", level: 2, xp: 28.0, stop_burning: 14, burnt: "burnt_food"),
         (input: "egg", output: "fried_egg", level: 1, xp: 20.0, stop_burning: 12, burnt: "burnt_food"),
         (input: "duck_egg", output: "fried_egg", level: 3, xp: 25.0, stop_burning: 14, burnt: "burnt_food"),
+        (input: "raw_frog", output: "cooked_frog", level: 1, xp: 22.0, stop_burning: 12, burnt: "burnt_food"),
+        (input: "raw_crab", output: "cooked_crab", level: 6, xp: 55.0, stop_burning: 24, burnt: "burnt_food"),
         (input: "raw_duck", output: "cooked_duck", level: 3, xp: 40.0, stop_burning: 18, burnt: "burnt_food"),
         (input: "raw_mutton", output: "cooked_mutton", level: 5, xp: 50.0, stop_burning: 22, burnt: "burnt_food"),
         (input: "raw_pork", output: "cooked_pork", level: 8, xp: 60.0, stop_burning: 26, burnt: "burnt_food"),

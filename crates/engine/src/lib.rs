@@ -21,6 +21,7 @@ pub mod crop;
 pub mod dropped;
 pub mod field;
 pub mod fluid;
+pub mod genes;
 pub mod inventory;
 pub mod lang;
 pub mod light;

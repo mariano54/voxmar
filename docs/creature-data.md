@@ -190,8 +190,11 @@ Inputs match items by `kind` (tags) or name. A recipe never lists every vegetabl
 
 ## Genes and breeds
 
-Genes are declared per species (`genes:` above) as discrete alleles with dominance or as a
-normal number (mean, spread). Breeds live in `breeds.ron` as conditions over genes; a breed
+Genes are declared per species (`genes:`, at most eight) as alleles, earlier ones more
+dominant, each with a wild `frequency`, a `cold` or `aether` push and `effects`
+(`Colour(index, rgb)`, `Marking(..)`, `Plain`, `Scale`, `Yield`, `Temper`, `Hardiness`), or
+as a `Number(mean, spread, range, effect)`. Each region of the world has its own
+population of each species (docs/breeding.md, "Regional populations"). Breeds live in `breeds.ron` as conditions over genes; a breed
 is recognised whenever an animal meets them, whichever package defined its species.
 
 ## Validation
