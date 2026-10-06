@@ -37,8 +37,10 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use bevy::app::MainScheduleOrder;
+use bevy::ecs::schedule::ScheduleLabel;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
@@ -57,6 +59,7 @@ use crate::net::Net;
 use crate::player::{LocalPlayer, UiState};
 use crate::render::lod::Lod;
 use crate::session::Launch;
+use crate::settings::Settings;
 use crate::world::ClientWorld;
 
 pub struct GatePlugin {
@@ -116,7 +119,27 @@ impl Plugin for GatePlugin {
             .add_systems(PostStartup, render_offscreen)
             .add_systems(Update, crate::capture::target_ui)
             .add_systems(Last, run);
+        let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
+        order.insert_after(Update, BeforePostUpdate);
+        order.insert_after(PostUpdate, AfterPostUpdate);
+        app.init_resource::<PostUpdateTime>()
+            .add_systems(BeforePostUpdate, |mut time: ResMut<PostUpdateTime>| time.start = Some(Instant::now()))
+            .add_systems(AfterPostUpdate, |mut time: ResMut<PostUpdateTime>| {
+                time.ms = time.start.take().map_or(0.0, |start| start.elapsed().as_secs_f32() * 1000.0);
+            });
     }
+}
+
+/// How long this frame's PostUpdate took (UI layout, transforms, visibility), for the
+/// overlay step.
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct BeforePostUpdate;
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct AfterPostUpdate;
+#[derive(Resource, Default)]
+struct PostUpdateTime {
+    start: Option<Instant>,
+    ms: f32,
 }
 
 fn render_offscreen(
@@ -152,6 +175,9 @@ enum Step {
     Swim,
     /// Esc opens and closes the menu, E the inventory.
     Screens,
+    /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
+    /// it open than closed.
+    Overlay,
     /// A storm and a snowfall come, drawn with their particles, then clear again.
     Weather,
     /// The sun by day, the moon and stars by night.
@@ -237,6 +263,8 @@ struct Gate {
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
+    /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
+    overlay_ms: [Vec<f32>; 2],
 }
 
 impl Gate {
@@ -273,6 +301,7 @@ impl Gate {
             weather_jump: (0.0, "", 0.0),
             frame_ms: Vec::new(),
             longest: default(),
+            overlay_ms: default(),
         }
     }
 
@@ -649,6 +678,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Breaks => breaks(world, gate, now, in_phase),
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
+        Step::Overlay => overlay(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
@@ -1029,6 +1059,83 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// cores a shot alone can take seconds.
 const SCREEN_WAIT: f32 = 10.0;
 
+/// How long PostUpdate is timed with the debug overlay closed and then open, in seconds
+/// (after a moment to settle), and the least number of frames each.
+const OVERLAY_TIMED: f32 = 2.0;
+const OVERLAY_FRAMES: usize = 60;
+
+/// F3 opens the debug overlay and closes it again, and with it open PostUpdate takes no
+/// longer than with it closed: an overlay that rewrote its text every frame had UI layout
+/// redone every frame, 10 to 25 ms of Mariano's slow frames.
+fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let shown = world.resource::<Settings>().debug_overlay;
+    let ms = world.resource::<PostUpdateTime>().ms;
+    let timed = |gate: &Gate, i: usize| in_phase > OVERLAY_TIMED + 0.5 && gate.overlay_ms[i].len() >= OVERLAY_FRAMES;
+    match gate.phase {
+        0 => {
+            if shown {
+                key(world, KeyCode::F3, true);
+                key(world, KeyCode::F3, false);
+                return;
+            }
+            if in_phase > 0.5 {
+                gate.overlay_ms[0].push(ms);
+            }
+            if timed(gate, 0) {
+                key(world, KeyCode::F3, true);
+                gate.advance(now);
+            }
+        }
+        1 => {
+            key(world, KeyCode::F3, false);
+            if !shown {
+                if in_phase > SCREEN_WAIT {
+                    gate.check("overlay", Err("F3 did not open the debug overlay".into()));
+                    gate.next(Step::Weather, now);
+                }
+                return;
+            }
+            if in_phase > 0.5 {
+                gate.overlay_ms[1].push(ms);
+            }
+            if timed(gate, 1) {
+                key(world, KeyCode::F3, true);
+                gate.advance(now);
+            }
+        }
+        2 => {
+            key(world, KeyCode::F3, false);
+            if shown {
+                if in_phase > SCREEN_WAIT {
+                    gate.check("overlay", Err("F3 did not close the debug overlay".into()));
+                    gate.next(Step::Weather, now);
+                }
+                return;
+            }
+            let stats = |times: &[f32]| {
+                let mut sorted = times.to_vec();
+                sorted.sort_by(f32::total_cmp);
+                let at = |q: f32| sorted[((sorted.len() - 1) as f32 * q) as usize];
+                (at(0.5), at(0.9))
+            };
+            let ((closed, closed_p90), (open, open_p90)) = (stats(&gate.overlay_ms[0]), stats(&gate.overlay_ms[1]));
+            let detail = format!(
+                "PostUpdate median {open:.2} ms open against {closed:.2} ms closed, p90 {open_p90:.2} against {closed_p90:.2} ms ({} and {} frames)",
+                gate.overlay_ms[1].len(),
+                gate.overlay_ms[0].len()
+            );
+            let result = if open <= closed + OVERLAY_MARGIN_MS && open_p90 <= closed_p90 * 1.5 + OVERLAY_MARGIN_MS { Ok(detail) } else { Err(detail) };
+            gate.check("overlay: no layout every frame", result);
+            gate.next(Step::Weather, now);
+        }
+        _ => {}
+    }
+}
+
+/// How much longer PostUpdate may take with the overlay open: its text changing a few times
+/// a second costs a layout then, a fraction of a millisecond in the median.
+const OVERLAY_MARGIN_MS: f32 = 0.5;
+
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
     let (menu, inventory, character, locked) = (ui.menu_open, ui.inventory_open, ui.character_open, ui.cursor_locked);
@@ -1188,10 +1295,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
             if count >= 4 {
                 gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
-                gate.next(Step::Weather, now);
+                gate.next(Step::Overlay, now);
             } else if in_phase > 5.0 {
                 gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
-                gate.next(Step::Weather, now);
+                gate.next(Step::Overlay, now);
             }
         }
         _ => {}
