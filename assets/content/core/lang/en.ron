@@ -270,7 +270,7 @@
     "character.hunger": "Hunger",
     "character.feels_like": "Feels like {temperature}°C",
     "character.no_effects": "No effects on you.",
-    "effect.left": "{time} left",
+    "hud.effect_left": "{time} left",
     "inventory.craft": "Craft",
     "inventory.craft.take": "Click to craft one, Shift-click for all",
     "inventory.craft.nothing": "Nothing to make",

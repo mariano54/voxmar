@@ -505,8 +505,9 @@ mod tests {
             let family = format!("test {file}");
             let name = FontInfoOverride { family_name: Some(&family), ..Default::default() };
             cx.collection.register_fonts(Blob::from(font.to_ttf(&family)), Some(name));
-            // The check itself sees boxes: a private-use character no font draws makes one.
-            assert!(boxes(&mut cx, &family, "a\u{E000}") && !boxes(&mut cx, &family, "a 経験値"), "{file}: the box check is broken");
+            // The check itself sees boxes: a private-use character no font draws makes one
+            // (outside the Basic Multilingual Plane: Fusion Pixel draws some of its own).
+            assert!(boxes(&mut cx, &family, "a\u{10FFFD}") && !boxes(&mut cx, &family, "a 経験値"), "{file}: the box check is broken");
             // Each text with a box, then the characters in it that draw one on their own.
             let mut missing = BTreeSet::new();
             let boxed: Vec<&String> = texts.iter().filter(|text| boxes(&mut cx, &family, text)).collect();

@@ -108,7 +108,7 @@ fn show(
     }
     // A timed effect says how long it has left; one that lasts while its cause does, nothing.
     if let Ok((mut text, mut line)) = left.single_mut() {
-        let words = super::seconds_left(&player, id, time.elapsed_secs()).map(|s| locale.format("effect.left", &[("time", &super::clock(s))]));
+        let words = super::seconds_left(&player, id, time.elapsed_secs()).map(|s| locale.format("hud.effect_left", &[("time", &super::clock(s))]));
         let display = if words.is_some() { Display::Flex } else { Display::None };
         if line.display != display {
             line.display = display;
