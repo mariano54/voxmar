@@ -41,7 +41,42 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
 /// Every creature has these, whatever its data says: going home when it strays, and
 /// going to a mate when both are ready to breed.
 pub fn always() -> Vec<Arc<dyn Module>> {
-    vec![Arc::new(ReturnHome), Arc::new(Court)]
+    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam)]
+}
+
+/// Now and then a curious, lively individual sets off alone across its range, so groups
+/// split and drift instead of moving as one.
+#[derive(Debug)]
+struct Roam;
+
+impl Module for Roam {
+    fn name(&self) -> &'static str {
+        "roam"
+    }
+
+    fn band(&self) -> Band {
+        Band::Idle
+    }
+
+    fn want(&self, ctx: &Ctx) -> Option<Want> {
+        let p = &ctx.mind.personality;
+        let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
+        // Most decisions it does not cross its mind; once going, it keeps on.
+        if !going && ctx.random(92) > 0.12 {
+            return None;
+        }
+        Want::new(0.5 * p.curiosity * (0.4 + p.energy) * ctx.lively * (1.2 - p.sociability * 0.6))
+    }
+
+    fn act(&self, ctx: &Ctx, mind: &mut Mind, _: Option<Seen>, fresh: bool) -> Decision {
+        if fresh || mind.goal.is_none_or(|g| flat(g, ctx.at.position) < ARRIVED) {
+            let leash = if ctx.at.kept { super::super::husbandry::KEPT_ROAM } else { ctx.creature.def.leash };
+            let angle = ctx.random(93) * std::f32::consts::TAU;
+            let reach = leash * (0.35 + 0.45 * ctx.random(94));
+            mind.goal = Some(ctx.at.home + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach);
+        }
+        Decision { goal: mind.goal, speed: walk(ctx) * (0.9 + 0.3 * ctx.mind.personality.energy), ..Default::default() }
+    }
 }
 
 /// How a creature with nothing to do looks: resting outside its active hours.
@@ -95,7 +130,8 @@ impl Module for Wander {
             } else {
                 let angle = ctx.random(4) * std::f32::consts::TAU;
                 let radius = if at.kept { self.radius.min(super::super::husbandry::KEPT_ROAM) } else { self.radius };
-                let reach = radius * (0.3 + 0.7 * ctx.random(5));
+                // Each individual strays as far as its curiosity takes it.
+                let reach = radius * (0.6 + 0.9 * ctx.mind.personality.curiosity) * (0.3 + 0.7 * ctx.random(5));
                 // About home, drifting back toward it (a kept one more so).
                 let base = at.position.lerp(at.home, if at.kept { 0.6 } else { 0.3 });
                 mind.goal = Some(base + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach);
@@ -335,16 +371,28 @@ impl Module for Herd {
         if ctx.at.kin.is_empty() {
             return None;
         }
-        let centre = ctx.at.kin.iter().copied().sum::<Vec3>() / ctx.at.kin.len() as f32;
+        // Each keeps near one companion of its own choosing, not the herd's middle, and
+        // cares more or less from moment to moment, so a herd spreads, strings out and
+        // regroups instead of moving in lockstep.
+        let friend = herd_friend(ctx);
         let spacing = self.spacing * (1.5 - ctx.mind.personality.sociability);
-        let apart = ((flat(centre, ctx.at.position) - spacing) / (spacing * 2.0)).clamp(0.0, 1.5);
-        Want::new(0.8 * ctx.mind.personality.sociability * apart)
+        let apart = ((flat(friend, ctx.at.position) - spacing) / (spacing * 2.0)).clamp(0.0, 1.5);
+        Want::new(0.8 * ctx.mind.personality.sociability * apart * (0.5 + ctx.random(91)))
     }
 
     fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
-        let centre = ctx.at.kin.iter().copied().sum::<Vec3>() / ctx.at.kin.len().max(1) as f32;
-        Decision { goal: Some(centre), speed: walk(ctx), ..Default::default() }
+        let friend = herd_friend(ctx);
+        // To beside it, not onto it.
+        let side = (ctx.mind.seed % 360) as f32 * std::f32::consts::TAU / 360.0;
+        let beside = friend + Vec3::new(side.cos(), 0.0, side.sin()) * self.spacing * 0.6;
+        Decision { goal: Some(beside), speed: walk(ctx), ..Default::default() }
     }
+}
+
+/// The kin an individual keeps near: one of its own choosing among those about.
+fn herd_friend(ctx: &Ctx) -> Vec3 {
+    let kin = &ctx.at.kin;
+    kin[(ctx.mind.seed % kin.len().max(1) as u64) as usize % kin.len().max(1)]
 }
 
 /// Stands watch while kin graze, head up, facing the nearest player.
