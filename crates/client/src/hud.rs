@@ -99,6 +99,9 @@ const MAX_HEALTH: u8 = 20;
 struct StatusText;
 #[derive(Component)]
 struct DebugText;
+/// The plate the debug overlay sits in.
+#[derive(Component)]
+struct DebugPlate;
 #[derive(Component)]
 struct BreakBar;
 /// The name of the item in hand, shown above the hotbar for a moment after it changes.
@@ -182,7 +185,10 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             });
         });
 
-        root.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(space::INNER), top: Val::Px(space::INNER), ..default() }, shadowed(font, "", BODY, TEXT), DebugText));
+        // The debug overlay, in a dark plate so it reads over any sky and keeps clear of the
+        // window's edges.
+        let plate = Node { position_type: PositionType::Absolute, left: Val::Px(space::GAP), top: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
+        root.spawn((plate, Piece::Tooltip.image(), DebugPlate, Visibility::Hidden)).with_child((shadowed(font, "", BODY, TEXT), DebugText));
         root.spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -376,9 +382,10 @@ fn update_debug(
     target: Res<Target>,
     lod: Res<Lod>,
     weather: Res<ClientWeather>,
-    mut text: Query<(&mut Text, &mut Visibility), With<DebugText>>,
+    mut text: Query<&mut Text, With<DebugText>>,
+    mut plate: Query<&mut Visibility, With<DebugPlate>>,
 ) {
-    let Ok((mut text, mut visibility)) = text.single_mut() else { return };
+    let (Ok(mut text), Ok(mut visibility)) = (text.single_mut(), plate.single_mut()) else { return };
     visibility.set_if_neq(if settings.debug_overlay { Visibility::Inherited } else { Visibility::Hidden });
     if !settings.debug_overlay {
         return;

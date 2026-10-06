@@ -280,7 +280,7 @@ pub struct ScrollMore(Entity);
 /// The arrow for `list`, which must share `parent` with it.
 pub fn spawn_scroll_more(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, list: Entity) {
     let corner = Node { position_type: PositionType::Absolute, right: Val::Px(space::INNER), bottom: Val::Px(space::HAIR), ..default() };
-    parent.spawn((corner, shadowed(font, "▼", BODY, GOLD), ScrollMore(list), Visibility::Hidden, ZIndex(1)));
+    parent.spawn((corner, shadowed(font, "▾", BODY, GOLD), ScrollMore(list), Visibility::Hidden, ZIndex(1)));
 }
 
 fn show_scroll_more(lists: Query<(&ScrollPosition, &ComputedNode, &Node), With<ScrollList>>, mut arrows: Query<(&ScrollMore, &mut Visibility)>) {

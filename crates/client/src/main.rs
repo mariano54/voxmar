@@ -330,6 +330,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         silence(&mut app);
     }
     app
+    .add_plugins(screenshot::ScreenshotPlugin)
     .add_plugins((
         FrameTimeDiagnosticsPlugin::default(),
         render::RenderPlugin,
@@ -340,7 +341,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drops::DropsPlugin,
         net::NetPlugin,
         hud::HudPlugin,
-        screenshot::ScreenshotPlugin,
         sfx::SfxPlugin,
         settings::SettingsPlugin,
         menu::MenuPlugin,

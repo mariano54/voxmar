@@ -594,7 +594,7 @@ fn spawn_legend(card: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     card.spawn(legend).with_children(|legend| {
         for (key, hint) in LEGEND {
             legend.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|entry| {
-                let cap = Node { padding: UiRect::all(Val::Px(space::INNER)), ..default() };
+                let cap = Node { padding: UiRect::all(Val::Px(space::INNER)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
                 entry.spawn((cap, Piece::Button.image())).with_child((Localized(key), shadowed(font, "", BODY, SOFT), TightLine));
                 entry.spawn((Localized(hint), text(font, "", BODY, MUTED)));
             });

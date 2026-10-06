@@ -259,7 +259,7 @@
 
     "character.health": "Health",
     "character.hunger": "Hunger",
-    "character.feels_like": "Feels like {temperature} °C",
+    "character.feels_like": "Feels like {temperature}°C",
     "character.no_effects": "No effects on you.",
     "inventory.craft": "Craft",
     "skills.full": "You are full",
