@@ -135,6 +135,10 @@ const CLIP_RATE: u32 = 30;
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
+        // Drawing offscreen, with no swapchain to hold the CPU back (see `in_flight`).
+        if !self.windowed {
+            app.add_plugins(crate::render::in_flight::InFlightPlugin);
+        }
         app.insert_resource(UiState { menu_open: self.menu, inventory_open: self.inventory, character_open: self.character, ..default() }).insert_resource(Capture {
             path: self.path.clone(),
             pose: self.pose,
