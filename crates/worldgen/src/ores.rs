@@ -671,6 +671,13 @@ mod tests {
         let ore = |b: BlockId| registry.def(b).has_tag("ore");
         let sample = |b: BlockId| registry.def(b).has_tag("ore_sample");
         let colour = |b: BlockId| registry.def(b).color.map(|c| c as f32 / 255.0);
+        // Ore at full strength, so a vein stands out: coal black, the rest their colour at
+        // its brightest.
+        let vivid = |b: BlockId| {
+            let c = colour(b);
+            let top = c.into_iter().fold(0.0f32, f32::max);
+            if registry.def(b).has_tag("fuel") { [0.02; 3] } else { c.map(|v| v / top.max(0.01)) }
+        };
         let write = |name: &str, width: i32, height: i32, pixels: &[[f32; 3]]| {
             let path = format!("{}/../../target/{name}", env!("CARGO_MANIFEST_DIR"));
             let mut file = format!("P6 {width} {height} 255\n").into_bytes();
@@ -733,9 +740,11 @@ mod tests {
                 *pixel = match kinds.iter().max_by_key(|(_, n)| *n) {
                     Some(&(b, _)) => {
                         let n: u32 = kinds.iter().map(|(_, n)| n).sum();
-                        colour(b).map(|c| c * (0.45 + 0.55 * (n as f32 / 12.0).min(1.0)))
+                        let strength = 0.55 + 0.45 * (n as f32 / 12.0).min(1.0);
+                        let ground = 0.2 + 0.35 * ground as f32 / WORLD_HEIGHT as f32;
+                        vivid(b).map(|c| ground + (c - ground) * strength)
                     }
-                    None => [0.06 + 0.22 * ground as f32 / WORLD_HEIGHT as f32; 3],
+                    None => [0.2 + 0.35 * ground as f32 / WORLD_HEIGHT as f32; 3],
                 };
             }
         }
@@ -747,29 +756,52 @@ mod tests {
             println!("{name:<28} {:>8.1} per column, {:>5.1}% alone", *n as f64 / columns, 100.0 * *alone as f64 / *n as f64);
         }
 
-        // A west-east cut through the richest row: an x-ray of the slab around it over the
-        // blocks of the cut, sky at the top.
+        // The veins around, and how much of each kind's ore shows.
+        let veins = world.terrain.ores.veins_near(&world, origin.xz(), origin.xz() + size - 1);
+        let mut kinds: Vec<(&str, u32)> = Vec::new();
+        for vein in &veins {
+            let name = world.terrain.ores.kinds[vein.kind].name.as_str();
+            match kinds.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, n)) => *n += 1,
+                None => kinds.push((name, 1)),
+            }
+        }
+        kinds.sort();
+        println!("{} veins within reach: {kinds:?}", veins.len());
+
+        // A west-east cut through the richest row, 160 blocks wide around its richest part,
+        // three pixels a block: an x-ray of the slab eight blocks thick around it (ore
+        // anywhere in it shows) over the blocks of the cut, sky at the top.
         let (water, deepslate) = (registry.expect("base:water"), registry.expect("base:deepslate"));
         let row = (0..size).max_by_key(|&z| (z - 4..z + 4).filter(|z| (0..size).contains(z)).map(|z| rows[z as usize]).sum::<u64>()).unwrap();
         let wz = origin.z + row;
-        let mut section = Vec::with_capacity((size * WORLD_HEIGHT) as usize);
+        let slab = |x: i32, y: i32| (wz - 4..wz + 4).map(|z| block(x, y, z)).find(|&b| ore(b) || sample(b));
+        const WIDE: i32 = 160;
+        const SCALE: i32 = 3;
+        let rich = |x: i32| (0..WORLD_HEIGHT).filter(|&y| slab(x, y).is_some()).count();
+        let middle = (WIDE / 2..size - WIDE / 2).max_by_key(|&x| (x - 20..x + 20).map(|x| rich(origin.x + x)).sum::<usize>()).unwrap_or(size / 2);
+        let first_x = origin.x + middle - WIDE / 2;
+        let mut section = Vec::with_capacity((WIDE * SCALE * WORLD_HEIGHT * SCALE) as usize);
         for y in (0..WORLD_HEIGHT).rev() {
-            for x in 0..size {
-                let wx = origin.x + x;
-                let slab = (wz - 4..wz + 4).map(|z| block(wx, y, z)).find(|&b| ore(b) || sample(b));
-                let b = block(wx, y, wz);
-                section.push(match slab {
-                    Some(o) if sample(o) => [1.0; 3],
-                    Some(o) => colour(o).map(|c| (c * 1.3).min(1.0)),
-                    None if b == water => [0.1, 0.2, 0.5],
-                    None if b.is_air() => [0.55, 0.7, 0.9],
-                    None if b == deepslate => [0.16, 0.16, 0.19],
-                    None => colour(b).map(|c| 0.15 + c * 0.25),
-                });
+            let line: Vec<[f32; 3]> = (first_x..first_x + WIDE)
+                .map(|wx| {
+                    let b = block(wx, y, wz);
+                    match slab(wx, y) {
+                        Some(o) if sample(o) => [1.0, 0.25, 0.9],
+                        Some(o) => vivid(o),
+                        None if b == water => [0.12, 0.25, 0.6],
+                        None if b.is_air() => [0.6, 0.75, 0.92],
+                        None if b == deepslate => [0.3, 0.3, 0.34],
+                        None => colour(b).map(|c| 0.25 + c * 0.3),
+                    }
+                })
+                .collect();
+            for _ in 0..SCALE {
+                section.extend(line.iter().flat_map(|&p| std::iter::repeat_n(p, SCALE as usize)));
             }
         }
-        println!("section at z = {wz}, x from {} to {}", origin.x, origin.x + size - 1);
-        write("ores_section.ppm", size, WORLD_HEIGHT, &section);
+        println!("section at z = {wz}, x from {first_x} to {}", first_x + WIDE - 1);
+        write("ores_section.ppm", WIDE * SCALE, WORLD_HEIGHT * SCALE, &section);
     }
 
     /// The ore of the generated columns of a square `count` columns across from `first`,

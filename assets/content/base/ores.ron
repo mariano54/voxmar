@@ -20,7 +20,7 @@
         (
             name: "coal_seam",
             weight: 30,
-            height: (-30, 60),
+            height: (-45, 15),
             radius: (16, 26),
             thickness: (4, 7),
             density: 0.6,
@@ -33,7 +33,7 @@
         (
             name: "copper_tin",
             weight: 18,
-            height: (-50, 30),
+            height: (-60, 5),
             radius: (14, 22),
             thickness: (6, 9),
             ores: [
@@ -47,7 +47,7 @@
         (
             name: "banded_iron",
             weight: 24,
-            height: (-60, 30),
+            height: (-70, 0),
             radius: (18, 28),
             thickness: (5, 8),
             ores: [
@@ -61,7 +61,7 @@
         (
             name: "porphyry_copper",
             weight: 12,
-            height: (-70, 10),
+            height: (-80, -10),
             radius: (14, 20),
             thickness: (7, 10),
             density: 0.45,
@@ -78,7 +78,7 @@
             name: "silver_gold",
             weight: 20,
             rarity: Uncommon,
-            height: (-85, -25),
+            height: (-90, -35),
             radius: (12, 18),
             thickness: (4, 7),
             density: 0.45,
@@ -94,7 +94,7 @@
             name: "gold_reef",
             weight: 12,
             rarity: Uncommon,
-            height: (-100, -40),
+            height: (-100, -50),
             radius: (10, 16),
             thickness: (3, 6),
             density: 0.4,
@@ -110,7 +110,7 @@
             name: "cobalt_silver",
             weight: 15,
             rarity: Uncommon,
-            height: (-105, -55),
+            height: (-110, -60),
             radius: (10, 16),
             thickness: (4, 7),
             density: 0.45,
@@ -141,7 +141,7 @@
             name: "aetherite_lode",
             weight: 40,
             rarity: VeryRare,
-            height: (-115, -95),
+            height: (-118, -100),
             radius: (6, 9),
             thickness: (3, 5),
             density: 0.35,
