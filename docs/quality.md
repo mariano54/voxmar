@@ -45,7 +45,11 @@ it takes well under a minute.
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
    first break once compiled three pipelines on the spot); on a machine asked for more
    than all its cores (load average over the core count), a long frame says nothing about
-   the game, so that check is reported as SKIPPED instead. It fails on any failed
+   the game, so that check is reported as SKIPPED instead. A skipped check is not a pass:
+   the gate waits for the load to fall under the core count (up to 20 minutes), plays the
+   session again on its own and judges that run, and fails if a check is skipped again.
+   (The gorge, a fresh area to generate, waits up to four minutes on an overloaded machine
+   instead of one, and fails, saying what was missing, rather than being skipped.) It fails on any failed
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
