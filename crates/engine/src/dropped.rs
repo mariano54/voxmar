@@ -38,8 +38,9 @@ pub const PICKUP_DELAY: f32 = 0.5;
 /// Seconds after a player throws a stack before anyone can pick it up (Minecraft's two
 /// seconds), so it isn't caught again at once.
 pub const THROWN_PICKUP_DELAY: f32 = 2.0;
-/// Seconds a dropped item lasts before it vanishes (Minecraft's five minutes).
-pub const LIFETIME: f32 = 300.0;
+/// Seconds of world time a dropped item lasts before it vanishes: half an hour (Mariano,
+/// 2026-10-06), whether or not anyone is near to keep its ground loaded.
+pub const LIFETIME: f32 = 1800.0;
 /// Speed a thrown stack leaves the hand at, in blocks per second (Minecraft's 0.3 a tick).
 pub const THROW_SPEED: f32 = 6.0;
 
