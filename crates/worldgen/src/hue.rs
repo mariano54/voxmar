@@ -55,6 +55,41 @@ pub(crate) fn oklab(rgb: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Oklab to sRGB (0 ..= 255), clamped into gamut.
+pub(crate) fn from_oklab([l, a, b]: [f32; 3]) -> [f32; 3] {
+    let l_ = l + 0.396_337_78 * a + 0.215_803_76 * b;
+    let m_ = l - 0.105_561_346 * a - 0.063_854_17 * b;
+    let s_ = l - 0.089_484_18 * a - 1.291_485_5 * b;
+    let (l, m, s) = (l_ * l_ * l_, m_ * m_ * m_, s_ * s_ * s_);
+    [
+        4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s,
+        -1.268_438 * l + 2.609_757_4 * m - 0.341_319_38 * s,
+        -0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s,
+    ]
+    .map(|c| {
+        let c = c.clamp(0.0, 1.0);
+        255.0 * if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+    })
+}
+
+/// The grass as the eye should meet it: every grass colour, the climate's and a biome's
+/// own, a little less saturated, turned a few degrees towards yellow and a touch lighter,
+/// so a meadow reads soft and warm rather than a saturated green. Being the same change
+/// everywhere, it keeps every difference between places: forests stay deeper, dry land
+/// straw, jungles lusher.
+pub(crate) fn soften_grass(rgb: [f32; 3]) -> [f32; 3] {
+    const CHROMA: f32 = 0.72;
+    const WARM: f32 = 0.16; // radians towards yellow (Oklab hue about 1.9 rad)
+    const LIGHT: f32 = 0.025;
+    let [l, a, b] = oklab(rgb);
+    let chroma = a.hypot(b) * CHROMA;
+    let hue = b.atan2(a);
+    // Turn towards yellow, but never past it: straw stays straw.
+    let target = 1.75_f32;
+    let hue = hue + (target - hue).clamp(-WARM, WARM);
+    from_oklab([l + LIGHT, chroma * hue.cos(), chroma * hue.sin()])
+}
+
 /// How well colour `a` sits with `b`, 1 for the same hue and saturation, falling off as a
 /// bell over `spread` (Oklab distance, lightness counted at a third).
 pub(crate) fn harmony(a: [f32; 3], b: [f32; 3], spread: f32) -> f32 {
@@ -114,12 +149,29 @@ pub(crate) fn biome_tints(content: &WorldContent, biome: &BiomeDef) -> [[f32; 3]
     let (t, m) = centre(content, biome);
     let climate = climate_tints(((t.unwrap_or(12.0) + 5.0) / 25.0).clamp(0.0, 1.0), ((m.unwrap_or(1.0) - 0.1) / 1.1).clamp(0.0, 1.0));
     let own = |set: Option<(u8, u8, u8)>, climate: [f32; 3]| set.map_or(climate, |(r, g, b)| [r as f32, g as f32, b as f32]);
-    [own(biome.colors.grass, climate[0]), own(biome.colors.foliage, climate[1])]
+    [soften_grass(own(biome.colors.grass, climate[0])), own(biome.colors.foliage, climate[1])]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grass_softens_without_losing_its_differences() {
+        let back = from_oklab(oklab([120.0, 160.0, 70.0]));
+        assert!(back.iter().zip([120.0, 160.0, 70.0]).all(|(a, b)| (a - b).abs() < 1.0), "{back:?}");
+        let saturation = |c: [f32; 3]| { let [_, a, b] = oklab(c); a.hypot(b) };
+        let meadow = [96.0, 150.0, 64.0];
+        let soft = soften_grass(meadow);
+        assert!(saturation(soft) < saturation(meadow) * 0.8);
+        // Warmer: more red against green than before.
+        assert!(soft[0] / soft[1] > meadow[0] / meadow[1]);
+        // Forest grass stays darker than meadow grass, and straw stays yellower than green.
+        let forest = soften_grass([70.0, 120.0, 50.0]);
+        assert!(forest[1] < soft[1]);
+        let straw = soften_grass([190.0, 172.0, 90.0]);
+        assert!(straw[0] / straw[1] > soft[0] / soft[1]);
+    }
 
     #[test]
     fn greens_sit_together_and_strong_hues_stand_out() {

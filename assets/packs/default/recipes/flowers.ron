@@ -1645,7 +1645,7 @@
             ".......b.bdccccbbbbba.a.........",
             ".......aaaaabbabaaaaaaaaaa......",
         ])]),
-        "block/fine_grass": (size: (32, 32), palettes: {"leaf": (ramp: "#8c8c8c", shades: 6, light: 0.42), "petal": (ramp: "#8c8c8c", shades: 5, light: 0.42), "centre": (ramp: "#8c8c8c", shades: 3, light: 0.3), "second": (ramp: "#8c8c8c", shades: 5, light: 0.3), "tuft": (ramp: "#8c8c8c", shades: 3, light: 0.3), "fruit": (ramp: "#8c8c8c", shades: 4, light: 0.42), "wood": (ramp: "#8c8c8c", shades: 4, light: 0.3), "glow": (ramp: "#8c8c8c", shades: 3, light: 0.25)}, layers: [Grid(rows: [
+        "block/fine_grass": (size: (32, 32), palettes: {"leaf": (ramp: "#999486", shades: 6, light: 0.42), "petal": (ramp: "#999486", shades: 5, light: 0.42), "centre": (ramp: "#999486", shades: 3, light: 0.3), "second": (ramp: "#999486", shades: 5, light: 0.3), "tuft": (ramp: "#999486", shades: 3, light: 0.3), "fruit": (ramp: "#999486", shades: 4, light: 0.42), "wood": (ramp: "#999486", shades: 4, light: 0.3), "glow": (ramp: "#999486", shades: 3, light: 0.25)}, layers: [Grid(rows: [
             "................................",
             "................................",
             "................................",
@@ -1679,7 +1679,7 @@
             "......ccccaba..ac.c...acc...c...",
             "......ccccab.a.ac.c..a.cc...c...",
         ])]),
-        "block/tall_fine_grass_bottom": (size: (32, 32), palettes: {"leaf": (ramp: "#8c8c8c", shades: 6, light: 0.42), "petal": (ramp: "#8c8c8c", shades: 5, light: 0.42), "centre": (ramp: "#8c8c8c", shades: 3, light: 0.3), "second": (ramp: "#8c8c8c", shades: 5, light: 0.3), "tuft": (ramp: "#8c8c8c", shades: 3, light: 0.3), "fruit": (ramp: "#8c8c8c", shades: 4, light: 0.42), "wood": (ramp: "#8c8c8c", shades: 4, light: 0.3), "glow": (ramp: "#8c8c8c", shades: 3, light: 0.25)}, layers: [Grid(rows: [
+        "block/tall_fine_grass_bottom": (size: (32, 32), palettes: {"leaf": (ramp: "#999486", shades: 6, light: 0.42), "petal": (ramp: "#999486", shades: 5, light: 0.42), "centre": (ramp: "#999486", shades: 3, light: 0.3), "second": (ramp: "#999486", shades: 5, light: 0.3), "tuft": (ramp: "#999486", shades: 3, light: 0.3), "fruit": (ramp: "#999486", shades: 4, light: 0.42), "wood": (ramp: "#999486", shades: 4, light: 0.3), "glow": (ramp: "#999486", shades: 3, light: 0.25)}, layers: [Grid(rows: [
             "............................e...",
             "............................e...",
             "..............c....c........e...",
@@ -1713,7 +1713,7 @@
             "...cc.a.c.b..c.aa.bc.accbcc.cc..",
             "...ccab.c.b..c.aa.bc.accbcc..c..",
         ])]),
-        "block/tall_fine_grass_top": (size: (32, 32), palettes: {"leaf": (ramp: "#8c8c8c", shades: 6, light: 0.42), "petal": (ramp: "#8c8c8c", shades: 5, light: 0.42), "centre": (ramp: "#8c8c8c", shades: 3, light: 0.3), "second": (ramp: "#8c8c8c", shades: 5, light: 0.3), "tuft": (ramp: "#8c8c8c", shades: 3, light: 0.3), "fruit": (ramp: "#8c8c8c", shades: 4, light: 0.42), "wood": (ramp: "#8c8c8c", shades: 4, light: 0.3), "glow": (ramp: "#8c8c8c", shades: 3, light: 0.25)}, layers: [Grid(rows: [
+        "block/tall_fine_grass_top": (size: (32, 32), palettes: {"leaf": (ramp: "#999486", shades: 6, light: 0.42), "petal": (ramp: "#999486", shades: 5, light: 0.42), "centre": (ramp: "#999486", shades: 3, light: 0.3), "second": (ramp: "#999486", shades: 5, light: 0.3), "tuft": (ramp: "#999486", shades: 3, light: 0.3), "fruit": (ramp: "#999486", shades: 4, light: 0.42), "wood": (ramp: "#999486", shades: 4, light: 0.3), "glow": (ramp: "#999486", shades: 3, light: 0.25)}, layers: [Grid(rows: [
             "................................",
             "................................",
             "................................",
@@ -1748,18 +1748,18 @@
             "....d.....d.c..d.d.d...cd...d...",
         ])]),
         // The plain names, for recipes and stamps built on them.
-        "block/oxeye_daisy": (base: "block/oxeye_daisy_blooms"),
-        "block/lily_of_the_valley": (base: "block/lily_of_the_valley_blooms"),
-        "block/blue_orchid": (base: "block/blue_orchid_blooms"),
         "block/allium": (base: "block/allium_blooms"),
-        "block/red_tulip": (base: "block/red_tulip_blooms"),
-        "block/dandelion": (base: "block/dandelion_blooms"),
-        "block/cornflower": (base: "block/cornflower_blooms"),
-        "block/poppy": (base: "block/poppy_blooms"),
-        "block/pink_tulip": (base: "block/pink_tulip_blooms"),
         "block/white_tulip": (base: "block/white_tulip_blooms"),
-        "block/azure_bluet": (base: "block/azure_bluet_blooms"),
+        "block/poppy": (base: "block/poppy_blooms"),
+        "block/cornflower": (base: "block/cornflower_blooms"),
         "block/orange_tulip": (base: "block/orange_tulip_blooms"),
+        "block/pink_tulip": (base: "block/pink_tulip_blooms"),
+        "block/red_tulip": (base: "block/red_tulip_blooms"),
+        "block/lily_of_the_valley": (base: "block/lily_of_the_valley_blooms"),
+        "block/oxeye_daisy": (base: "block/oxeye_daisy_blooms"),
+        "block/dandelion": (base: "block/dandelion_blooms"),
+        "block/blue_orchid": (base: "block/blue_orchid_blooms"),
+        "block/azure_bluet": (base: "block/azure_bluet_blooms"),
         "block/short_grass": (base: "block/fine_grass"),
         "block/tall_grass_bottom": (base: "block/tall_fine_grass_bottom"),
         "block/tall_grass_top": (base: "block/tall_fine_grass_top"),

@@ -186,7 +186,7 @@ for name, (shape, petal, centre, leaf) in F.items():
     C[name] = (clump(shape, n, w, h, loose, seed=len(name) * 7 + 3), dict(petal=petal, centre=centre, leaf=leaf))
 
 GRASS = {
-    'short_grass': (grass(17, 7, 19, seed=5), dict(leaf='#8c8c8c')),
-    'tall_grass_bottom': (grass(22, 20, 32, tips=False, seed=6), dict(leaf='#8c8c8c')),
-    'tall_grass_top': (tall_top(16, seed=7), dict(leaf='#8c8c8c')),
+    'short_grass': (grass(17, 7, 19, seed=5), dict(leaf='#999486')),
+    'tall_grass_bottom': (grass(22, 20, 32, tips=False, seed=6), dict(leaf='#999486')),
+    'tall_grass_top': (tall_top(16, seed=7), dict(leaf='#999486')),
 }
