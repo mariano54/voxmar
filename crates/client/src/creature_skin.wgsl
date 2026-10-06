@@ -10,7 +10,9 @@
     pbr_bindings::material,
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::main_pass_post_lighting_processing,
+    mesh_view_bindings::{view, lights},
 }
+#import voxmar::atmosphere::{Atmosphere, fogged}
 
 struct SkinFrame {
     // xyz: the volume's corner in model space; w: texels a block.
@@ -22,6 +24,7 @@ struct SkinFrame {
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var skin_texture: texture_3d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var skin_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var<uniform> skin: SkinFrame;
+@group(#{MATERIAL_BIND_GROUP}) @binding(103) var<storage, read> atmosphere: Atmosphere;
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -38,10 +41,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Flat faces: the normal of the face itself, so the low-poly shape reads.
     let n = normalize(cross(dpdx(in.world_position.xyz), dpdy(in.world_position.xyz)));
     let shade = 0.5 + 0.5 * clamp(n.y * 0.5 + 0.5, 0.0, 1.0) + 0.06 * n.x - 0.04 * n.z;
-    let color = vec4<f32>(texel.rgb * material.base_color.rgb * shade, 1.0);
+    let lit = texel.rgb * material.base_color.rgb * shade;
+    // Through the same air as the terrain: far creatures fade into it as hills do.
+    let to_sun = lights.directional_lights[0].direction_to_light;
+    let color = vec4<f32>(fogged(atmosphere, view.world_position, in.world_position.xyz, to_sun, lit), 1.0);
     pbr_input.material.base_color = color;
     var out: FragmentOutput;
-    // TODO(graphics): the terrain's fog, `fogged(atmosphere, ...)`, once SharedAtmosphere lands.
     out.color = main_pass_post_lighting_processing(pbr_input, color);
     return out;
 }

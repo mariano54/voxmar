@@ -366,7 +366,6 @@ pub struct AtmosphereBuffer(pub Buffer);
 pub struct SharedAtmosphere(Arc<OnceLock<Buffer>>);
 
 impl SharedAtmosphere {
-    #[expect(dead_code, reason = "for the creature skin's fog, which systems is wiring up")]
     pub fn get(&self) -> Option<Buffer> {
         self.0.get().cloned()
     }
