@@ -166,10 +166,10 @@ Every heavy command goes through `memcap`, which gets out of the way:
   While it exists nothing new starts and whatever is running pauses, builds, tests and
   game runs alike, until it is removed when he is done. (Our builds on every core gave
   him 40–140 ms frames and under 60 fps while flying.) He wants work to go on otherwise,
-  game open or not, so his game alone holds nothing. So that a forgotten flag cannot stall
-  everything, memcap ignores it 30 minutes after his game (voxmar not as a capture or
-  gate, or Minecraft) was last seen running, or two hours after it was written if his
-  game never appeared.
+  game open or not, so his game alone holds nothing. memcap removes the flag a minute
+  after his game (voxmar not as a capture or gate, or Minecraft) exits, so everything
+  waiting starts as soon as he quits; if his game never appears, the flag holds two hours
+  after it was written.
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or
