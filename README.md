@@ -65,7 +65,7 @@ flight, Survival does not. Either way you are the world's admin, who can run com
 
 Controls: WASD move, Space jump, Ctrl (or W tapped twice) sprint, Shift descend, F toggle flight, left mouse break
 (hold), right mouse place, middle mouse pick the block looked at, 1-9 or wheel select hotbar slot, E
-inventory, C character screen, T chat, / command, F3 debug overlay, Esc menu, R respawn, Z (hold) zoom in
+inventory, C character screen, T chat, / command, F3 debug overlay (frame rate, and the worst frame, p99 and frames over 25 ms of the last 5 s), Esc menu, R respawn, Z (hold) zoom in
 creative: the wheel changes the magnification while zoomed, and mouse look slows to match.
 Movement feels like Minecraft's: a sprint lasts while forward is held, until you run head-on
 into a wall, and widens the view a little; sprint-jumping is fastest. Swimming up against a

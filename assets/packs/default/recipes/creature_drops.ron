@@ -37,6 +37,12 @@
         "sun_gold": ["#c46a10", "#f8b030", "#fff0a0"],
         "frost_blue": ["#7aa8d8", "#bcdcf8", "#f4fbff"],
         "bat_dark": ["#241c1c", "#3e3434", "#5e5050"],
+        "sand_pale": ["#a88a5c", "#e8cca0", "#fff4dc"],
+        "leopard_grey": ["#4a4848", "#bcb8b0", "#f2f0ea"],
+        "beaver_brown": ["#3c2a1a", "#6e4a2e", "#9a6e48"],
+        "scarlet": ["#8a1414", "#dc2824", "#ff7a5a"],
+        "spore_violet": ["#5a2a7a", "#a05ac8", "#e8c8ff"],
+        "crystal_cyan": ["#3a7a96", "#78d2e6", "#e6fbff"],
         "fat_rim": ["#d8c8a8", "#f0e4cc", "#fff8ea"],
         "rabbit_skin": ["#7a5e44", "#aa8a66", "#d0b694"],
         "leather": ["#4e3018", "#7a5030", "#a6784a"],
@@ -97,6 +103,9 @@
         "block/snow_fur": (base: "block/fox_fur", palettes: {"fruit": "snow_white", "wood": "fur_light"}),
         "block/lynx_pelt": (base: "block/fox_fur", palettes: {"fruit": "lynx_tawny", "wood": "fur_light"}),
         "block/badger_pelt": (base: "block/fox_fur", palettes: {"fruit": "badger_grey", "wood": "badger_grey"}),
+        "block/sand_fur": (base: "block/fox_fur", palettes: {"fruit": "sand_pale", "wood": "fur_light"}),
+        "block/leopard_pelt": (base: "block/fox_fur", palettes: {"fruit": "leopard_grey", "wood": "leopard_grey"}),
+        "block/beaver_pelt": (base: "block/hide", palettes: {"fruit": "beaver_brown"}),
         "block/moonhare_pelt": (base: "block/fox_fur", palettes: {"fruit": "moon_pale", "wood": "moon_dust"}),
         // A feather: a shaft with vanes.
         "block/feather": (base: "shape/plant", palettes: {"fruit": "feather_white", "wood": "bone_pale"}, layers: [Grid(rows: [
@@ -129,6 +138,9 @@
         "block/sunwing_feather": (base: "block/feather", palettes: {"fruit": "sun_gold", "wood": "sun_gold"}),
         "block/frost_antler": (base: "block/antler", palettes: {"fruit": "frost_blue"}),
         "block/bat_wing": (base: "block/hide", palettes: {"fruit": "bat_dark"}),
+        "block/bright_feather": (base: "block/feather", palettes: {"fruit": "scarlet", "wood": "bone_pale"}),
+        "block/spore_cap": (base: "block/lard", palettes: {"fruit": "spore_violet"}),
+        "block/beetle_crystal": (base: "block/fang", palettes: {"fruit": "crystal_cyan"}),
         "block/claw": (base: "block/fang", palettes: {"fruit": "claw_dark"}),
         // An antler: a beam with tines.
         "block/antler": (base: "shape/plant", palettes: {"fruit": "antler_tan"}, layers: [Grid(rows: [
