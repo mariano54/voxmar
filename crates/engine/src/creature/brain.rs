@@ -205,6 +205,9 @@ pub struct Mind {
     pub cooldown: f32,
     /// Zigzag side when fleeing, and other modules' small counters.
     pub zig: f32,
+    /// The individual's own hash, for choices that stay its own (which of its kin it keeps
+    /// near, how far it likes to stray).
+    pub seed: u64,
 }
 
 impl Mind {
@@ -221,6 +224,7 @@ impl Mind {
             goal: None,
             pause: 0.0,
             cooldown: 0.0,
+            seed,
             zig: 1.0,
         }
     }

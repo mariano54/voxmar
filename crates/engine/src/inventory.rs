@@ -237,6 +237,19 @@ impl Inventory {
     }
 
     /// Takes up to `count` items from `slot` (or [`CURSOR`]), returning what it took.
+    /// Takes out every stack of an item `which` picks, the pointer's and the crafting
+    /// grid's too, returning how many items went.
+    pub fn clear(&mut self, which: impl Fn(BlockId) -> bool) -> u32 {
+        let mut count = 0;
+        for slot in 0..=LAST {
+            if let Some(stack) = self.get(slot).filter(|s| which(s.item)) {
+                count += stack.count as u32;
+                self.set(slot, None);
+            }
+        }
+        count
+    }
+
     pub fn take(&mut self, slot: usize, count: u8) -> Option<ItemStack> {
         let stack = self.get(slot).filter(|_| slot <= CURSOR)?;
         let taken = count.min(stack.count);

@@ -34,6 +34,7 @@
 mod ambience;
 mod breaking;
 mod capture;
+mod creature_sounds;
 mod creatures;
 mod drops;
 mod emitters;
@@ -370,7 +371,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui::UiPlugin,
     ))
     .add_plugins(lang::LangPlugin);
-    app.add_plugins(creatures::CreaturesPlugin);
+    app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.

@@ -50,6 +50,8 @@ pub enum Run {
     Fill,
     /// Gives the player blocks.
     Give,
+    /// Empties the player's inventory, or takes an item out of it.
+    Clear,
     /// Drops a stack of items into the world.
     Drop,
     /// Grows the crops around the player.

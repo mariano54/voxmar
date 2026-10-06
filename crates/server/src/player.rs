@@ -1,6 +1,8 @@
 //! Players: agents whose controller is a remote input device. A player's session handles
 //! the handshake and validates movement; everything else they do goes through actions.
 
+use std::time::Instant;
+
 use rustc_hash::FxHashSet;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
@@ -137,14 +139,19 @@ impl Player {
 }
 
 impl Server {
-    pub(crate) fn handle_message(&mut self, id: PlayerId, message: ClientMessage) {
+    /// Handles a message that arrived `at`. The player's timed action due by then
+    /// completes first: the player saw it done before sending this.
+    pub(crate) fn handle_message(&mut self, id: PlayerId, message: ClientMessage, at: Instant) {
+        if self.players[&id].joined {
+            self.complete_actions_of(id, at);
+        }
         match message {
             ClientMessage::Hello { name, protocol, content } => self.hello(id, name, protocol, content),
             _ if !self.players[&id].joined => {}
             ClientMessage::Input(input) => self.input(id, input),
-            ClientMessage::Propose { action, target } => self.propose(id, action, target),
+            ClientMessage::Propose { action, target } => self.propose(id, action, target, at),
             ClientMessage::Cancel => self.cancel_action(id),
-            ClientMessage::Finished => self.finished_action(id),
+            ClientMessage::Finished { target } => self.finished_action(id, target, at),
             ClientMessage::Settings { view_distance, fly_speed } => self.settings(id, view_distance, fly_speed),
             ClientMessage::Command { line } => self.command(id, &line),
             ClientMessage::Chat { text } => self.chat(id, &text),
