@@ -251,8 +251,10 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
-    /// Where the player died in the workshop.
+    /// Where the player died in the workshop, the most items carried since waking, and when
+    /// (in server seconds) that last went up.
     fell: Vec3,
+    gathered: (u32, f32),
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -332,6 +334,7 @@ impl Gate {
             dug: Vec::new(),
             count_before: 0,
             fell: Vec3::ZERO,
+            gathered: (0, 0.0),
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -576,7 +579,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 100.0,
+        Step::Workshop => 160.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -1483,6 +1486,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 world.resource::<Net>().command(&line);
             }
             let back = carried(world);
+            // Picking up is the server's work: under load it gathers slowly, so the wait
+            // runs while the count keeps rising, by the server's clock.
+            if back > gate.gathered.0 || gate.gathered.1 == 0.0 {
+                gate.gathered = (back.max(gate.gathered.0), gate.server_now);
+            }
             if back >= gate.count_before {
                 gate.check("workshop: grave", Ok(format!("woke and picked all {back} items back up where the player fell")));
                 // The kit a new player starts with, for the steps after.
@@ -1491,8 +1499,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     net.command(line);
                 }
                 end_workshop(world, gate, now);
-            } else if in_phase > 15.0 {
-                fail(world, gate, "grave", format!("15 seconds back where the player fell, carrying {back} of {} items", gate.count_before));
+            } else if gate.server_now - gate.gathered.1 > 15.0 {
+                fail(world, gate, "grave", format!("back where the player fell, nothing more was picked up for 15 server seconds, carrying {back} of {} items", gate.count_before));
             }
         }
         _ => {}
