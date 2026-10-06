@@ -9,8 +9,9 @@ use crate::lang::Localized;
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
 use crate::settings::Settings;
-use crate::ui::skin::{PX, Piece};
+use crate::ui::skin::Piece;
 use crate::ui::widgets::{BODY, GOLD, MUTED, TEXT, UiFont, shadowed, text};
+use crate::ui::widgets::space;
 
 pub struct ScreensPlugin;
 
@@ -97,7 +98,7 @@ struct Hotkey(GameScreen);
 
 /// A bar of the in-game screens' keys, for the foot of `current`.
 pub fn spawn_hotkeys(parent: &mut ChildSpawnerCommands, current: GameScreen) -> Entity {
-    let bar = Node { margin: UiRect::top(Val::Px(6.0 * PX)), justify_content: JustifyContent::Center, column_gap: Val::Px(8.0 * PX), ..default() };
+    let bar = Node { margin: UiRect::top(Val::Px(space::GAP)), justify_content: JustifyContent::Center, column_gap: Val::Px(space::SECTION), ..default() };
     parent.spawn((HotkeyBar(current), bar)).id()
 }
 
@@ -124,9 +125,9 @@ fn label_hotkeys(
         commands.entity(entity).despawn_children().with_children(|row| {
             for screen in GameScreen::ALL {
                 let current = screen == bar.0;
-                let node = Node { align_items: AlignItems::Center, column_gap: Val::Px(3.0 * PX), ..default() };
+                let node = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
                 row.spawn((Button, Hotkey(screen), node)).with_children(|key| {
-                    let cap = Node { padding: UiRect::axes(Val::Px(3.0 * PX), Val::Px(2.0 * PX)), ..default() };
+                    let cap = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
                     let piece = if current { Piece::ButtonSelected } else { Piece::Button };
                     let label = shadowed(&font.0, screen.key_label(&settings), BODY, if current { GOLD } else { TEXT });
                     key.spawn((cap, piece.image())).with_child((label, crate::lang::TightLine));

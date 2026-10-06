@@ -3,6 +3,7 @@
     "language.name": "日本語",
     // Kanji fill their whole box, so lines of them need more room than letters.
     "language.line_height": "1.65",
+    "language.tight_line": "1.4",
     // Between items in a line: a middle dot never starts a line in Japanese.
     "language.dot": "・",
 
@@ -591,9 +592,9 @@
     "creature.doing.return_home": "巣へ帰る途中",
     "creature.doing.resting": "休憩中",
     "command.core.summon.help": "その種類の生き物(ウサギ、オオカミ、月ウサギなど)を目の前の地面か、指定したブロック(~ は今いる所)に呼び出す。数を言わなければ1匹、最大16匹。",
-    "command.core.creatures.help": "64ブロック以内の生き物を一覧にする: 種類ごとの数と、いちばん近い個体が何をしているか。管理者は8ブロック以内の生き物を手なずけたり、飼っている生き物を繁殖できる状態にしたり、急がせたり(産物がすぐに出て、子供がすぐに育つ)できる。",
-    "command.creatures.admins_only": "コマンドで生き物を手なずけたり急がせたりできるのは管理者だけです。",
-    "command.creatures.what": "tame、ready、hasten のどれですか?",
+    "command.core.creatures.help": "64ブロック以内の生き物を一覧にする: 種類ごとの数と、いちばん近い個体が何をしているか。管理者は8ブロック以内の生き物を手なずけたり、飼っている生き物を繁殖できる状態にしたり、急がせたり(産物がすぐに出て、子供がすぐに育つ)、1分間じっとさせたりできる。",
+    "command.creatures.admins_only": "コマンドで生き物を手なずけたり、急がせたり、止めたりできるのは管理者だけです。",
+    "command.creatures.what": "tame、ready、hasten、hold のどれですか?",
     "command.creatures.done": "8ブロック以内の{count}匹に行いました。",
     "command.skill.what": "どのスキルを、何レベルにしますか?",
     "command.skill.unknown": "「{name}」というスキルはありません。",

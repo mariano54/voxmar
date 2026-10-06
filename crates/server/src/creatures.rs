@@ -103,6 +103,8 @@ pub struct Live {
     pub trusting: Option<String>,
     /// Tick it stops being ready to breed, and the tick it may breed again.
     pub ready_until: u64,
+    /// The tick until which it stands still, for an admin's `/creatures hold`.
+    pub held_until: u64,
     pub breeds_again: u64,
     /// Tick it grows up, while young; its grown size.
     pub grows_up: Option<u64>,
@@ -298,11 +300,16 @@ impl Server {
                     kin: &kin,
                     food,
                     mate,
+                    kept: creature.owner.is_some(),
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
-                let decision = brain::think(species, &mut creature.mind, &situation);
+                let decision = if self.tick < creature.held_until {
+                    brain::Decision { pose: brain::Pose::Idle, ..Default::default() }
+                } else {
+                    brain::think(species, &mut creature.mind, &situation)
+                };
                 creature.decision = decision;
                 creature.changed = true;
                 actions.push((id, decision));
@@ -559,6 +566,7 @@ impl Server {
             trust: 0.0,
             trusting: None,
             ready_until: 0,
+            held_until: 0,
             breeds_again: 0,
             grows_up: None,
             adult_scale: scale,

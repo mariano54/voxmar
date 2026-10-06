@@ -194,6 +194,11 @@ pub struct BlockDef {
     /// How its textures vary from block to block, so a large motif does not repeat in a
     /// grid across a wall or a floor. Opaque blocks only.
     pub texture_variety: TextureVariety,
+    /// The shape a plant is drawn as (`render: Plant`).
+    pub model: PlantModel,
+    /// How tall a plant stands, as a share of its usual height (each plant also varies a
+    /// little by itself): 1.4 for a big flower. Up to about 3.9.
+    pub plant_height: f32,
     /// The block it is drawn over, by name: an ore over the rock it lies in. Each face's
     /// texture is drawn over the host's, from whichever pack draws the host, so the rock
     /// around the ore always matches the rock around it in the world; its own textures
@@ -243,6 +248,20 @@ pub enum ParticleStyle {
     Spark,
     /// Tiny tongues of flame licking up off a wick, shrinking away as they flicker.
     Flame,
+}
+
+/// The shape a plant is drawn as, all of quads of its texture that sway with the wind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PlantModel {
+    /// Two quads crossing on the cell's diagonals: grass and most flowers.
+    #[default]
+    Cross,
+    /// Four quads in a #, straight with the blocks: crops and reeds, as Minecraft's wheat.
+    Hash,
+    /// A crossed stem under a flat cap of the block's top texture: mushrooms.
+    Cap,
+    /// A cross with a second, straight one through it: fuller bushes and shrubs.
+    Bush,
 }
 
 /// How an opaque block's textures vary from block to block, as Minecraft's stone, sand and
@@ -298,6 +317,8 @@ impl Default for BlockDef {
             item: false,
             action: None,
             texture_variety: TextureVariety::default(),
+            model: PlantModel::Cross,
+            plant_height: 1.0,
             host: None,
             particles: Vec::new(),
         }
@@ -519,6 +540,9 @@ pub struct BlockInfo {
     /// Hunger points eating it fills, from its tags (see [`crate::vitals::food_value`]);
     /// 0 for what is not food.
     pub food: u8,
+    /// A plant's shape and height (see [`BlockDef::model`]).
+    pub model: PlantModel,
+    pub plant_height: f32,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -732,6 +756,8 @@ impl BlockRegistry {
                 fluid,
                 placeable: !def.item && def.action.is_none(),
                 food: crate::vitals::food_value(&def.tags),
+                model: def.model,
+                plant_height: def.plant_height,
             });
         }
         if textures.len() > 4096 {

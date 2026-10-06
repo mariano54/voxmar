@@ -37,6 +37,7 @@ use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::{Silent, UiSound};
 use crate::session::Launch;
 use crate::ui::widgets::{BODY, ERROR, GOLD, LARGE, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, spawn_heading, text};
+use crate::ui::widgets::space;
 use crate::world::ClientWorld;
 
 pub struct InventoryPlugin;
@@ -132,7 +133,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     .with_children(|cell| slot_contents(cell, font, slot));
             };
             // The crafting grid and what it makes, above the pack.
-            let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0 * PX), margin: UiRect::bottom(Val::Px(5.0 * PX)), ..default() };
+            let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
                 row.spawn((Localized("inventory.craft"), text(font, "", BODY, MUTED)));
                 let square = Node {
@@ -164,7 +165,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             position_type: PositionType::Absolute,
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(PX),
-            padding: UiRect::new(Val::Px(5.0 * PX), Val::Px(5.0 * PX), Val::Px(4.0 * PX), Val::Px(5.0 * PX)),
+            padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
             ..default()
         };
         root.spawn((Tooltip, TooltipLines, tip, Piece::Tooltip.image(), Visibility::Hidden, GlobalZIndex(4)));
@@ -584,15 +585,15 @@ fn spawn_legend(card: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     let legend = Node {
         display: Display::Grid,
         grid_template_columns: RepeatedGridTrack::auto(2),
-        column_gap: Val::Px(8.0 * PX),
-        row_gap: Val::Px(2.0 * PX),
-        margin: UiRect::top(Val::Px(6.0 * PX)),
+        column_gap: Val::Px(space::SECTION),
+        row_gap: Val::Px(space::HAIR),
+        margin: UiRect::top(Val::Px(space::SECTION)),
         ..default()
     };
     card.spawn(legend).with_children(|legend| {
         for (key, hint) in LEGEND {
-            legend.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(3.0 * PX), ..default() }).with_children(|entry| {
-                let cap = Node { padding: UiRect::axes(Val::Px(3.0 * PX), Val::Px(2.0 * PX)), ..default() };
+            legend.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|entry| {
+                let cap = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
                 entry.spawn((cap, Piece::Button.image())).with_child((Localized(key), shadowed(font, "", BODY, SOFT), TightLine));
                 entry.spawn((Localized(hint), text(font, "", BODY, MUTED)));
             });

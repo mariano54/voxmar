@@ -94,9 +94,10 @@ impl Module for Wander {
                 mind.pause = 0.5 + ctx.random(3) * longest * (1.4 - ctx.mind.personality.energy);
             } else {
                 let angle = ctx.random(4) * std::f32::consts::TAU;
-                let reach = self.radius * (0.3 + 0.7 * ctx.random(5));
-                // About home, drifting back toward it.
-                let base = at.position.lerp(at.home, 0.3);
+                let radius = if at.kept { self.radius.min(super::super::husbandry::KEPT_ROAM) } else { self.radius };
+                let reach = radius * (0.3 + 0.7 * ctx.random(5));
+                // About home, drifting back toward it (a kept one more so).
+                let base = at.position.lerp(at.home, if at.kept { 0.6 } else { 0.3 });
                 mind.goal = Some(base + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach);
             }
         }
@@ -541,7 +542,7 @@ impl Module for ReturnHome {
     }
 
     fn want(&self, ctx: &Ctx) -> Option<Want> {
-        let leash = ctx.creature.def.leash;
+        let leash = if ctx.at.kept { ctx.creature.def.leash.min(super::super::husbandry::KEPT_LEASH) } else { ctx.creature.def.leash };
         let from_home = flat(ctx.at.position, ctx.at.home);
         // Once going, it keeps on until well inside.
         let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());

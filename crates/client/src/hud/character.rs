@@ -15,7 +15,7 @@ use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, MUTED, Meter, SCRIM, SOFT, ScrollList, TEXT, UiFont, panel, screen, set_meter, shadowed,
-    spawn_button, spawn_heading, spawn_meter, spawn_rule, spawn_scroll_more, text,
+    space, spawn_button, spawn_heading, spawn_meter, spawn_rule, spawn_scroll_more, text,
 };
 
 pub struct CharacterPlugin;
@@ -34,7 +34,7 @@ impl Plugin for CharacterPlugin {
 
 /// The skill whose guide is open, if any.
 #[derive(Resource, Default)]
-struct Guide(Option<SkillId>);
+pub(crate) struct Guide(pub(crate) Option<SkillId>);
 
 /// A skill guide to open at startup, by the skill's name (`--guide`, for captures).
 #[derive(Resource)]
@@ -77,14 +77,14 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     commands.spawn((CharacterScreen, screen(SCRIM), Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
         root.spawn(panel(WIDTH)).with_children(|card| {
             spawn_heading(card, font, "screen.character");
-            card.spawn(Node { column_gap: Val::Px(8.0 * PX), ..default() }).with_children(|columns| {
+            card.spawn(Node { column_gap: Val::Px(space::SECTION), ..default() }).with_children(|columns| {
                 // How you are, in a recessed section of its own.
                 let left = Node {
                     width: Val::Px(LEFT),
                     flex_shrink: 0.0,
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(3.0 * PX),
-                    padding: UiRect::all(Val::Px(4.0 * PX)),
+                    row_gap: Val::Px(space::INNER),
+                    padding: UiRect::all(Val::Px(space::GAP)),
                     ..default()
                 };
                 columns.spawn((left, Piece::Well.image())).with_children(|left| {
@@ -99,8 +99,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     let list = Node {
                         display: Display::Grid,
                         grid_template_columns: RepeatedGridTrack::flex(2, 1.0),
-                        row_gap: Val::Px(3.0 * PX),
-                        column_gap: Val::Px(3.0 * PX),
+                        row_gap: Val::Px(space::GAP),
+                        column_gap: Val::Px(space::GAP),
                         align_content: AlignContent::Start,
                         ..default()
                     };
@@ -111,17 +111,19 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                         bottom: Val::ZERO,
                         left: Val::ZERO,
                         right: Val::ZERO,
+                        width: Val::Percent(100.0),
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(2.0 * PX),
+                        row_gap: Val::Px(space::INNER),
+                        padding: UiRect::all(Val::Px(space::GAP)),
                         overflow: Overflow::scroll_y(),
                         display: Display::None,
                         ..default()
                     };
-                    let page = right.spawn((GuidePage, ScrollList, page)).id();
+                    let page = right.spawn((GuidePage, ScrollList, page, Piece::Well.image())).id();
                     spawn_scroll_more(right, font, page);
                 });
             });
-            spawn_rule(card, 4.0 * PX);
+            spawn_rule(card, space::GAP);
             card.spawn((CharacterHint, text(font, "", BODY, MUTED)));
         });
         spawn_hotkeys(root, GameScreen::Character);
@@ -208,16 +210,16 @@ fn draw_skills(
             for id in skills.ids() {
                 let tile = Node {
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(2.0 * PX),
-                    padding: UiRect::new(Val::Px(4.0 * PX), Val::Px(4.0 * PX), Val::Px(3.0 * PX), Val::Px(4.0 * PX)),
+                    row_gap: Val::Px(space::INNER),
+                    padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
                     ..default()
                 };
                 let button = spawn_button(list, &font.0, "", ButtonStyle::Secondary, SkillRow(id));
                 list.commands().entity(button).insert(tile).despawn_children().with_children(|tile| {
-                    tile.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() }).with_children(|line| {
+                    tile.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|line| {
                         let icon = images.skills.get(id.0 as usize).cloned().unwrap_or_default();
                         line.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), flex_shrink: 0.0, ..default() }, ImageNode::new(icon)));
-                        line.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|words| {
+                        line.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() }).with_children(|words| {
                             words.spawn(shadowed(&font.0, locale.skill(skills.get(id)), BODY, TEXT));
                             words.spawn((text(&font.0, "", BODY, GOLD), SkillLevel(id)));
                         });
@@ -299,18 +301,24 @@ fn draw_guide(
             });
         });
         page.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, locale.skill_description(def), BODY, SOFT)));
-        page.spawn((Node { flex_shrink: 0.0, margin: UiRect::bottom(Val::Px(2.0 * PX)), ..default() }, text(font, progress, BODY, MUTED)));
+        page.spawn((Node { flex_shrink: 0.0, margin: UiRect::bottom(Val::Px(space::INNER)), ..default() }, text(font, progress, BODY, MUTED)));
         if steps.is_empty() {
             page.spawn((Node { flex_shrink: 0.0, ..default() }, Localized("character.untrained"), text(font, "", BODY, MUTED)));
         }
         for (at, line) in steps {
             let reached = level >= at;
-            let row = Node { column_gap: Val::Px(4.0 * PX), flex_shrink: 0.0, ..default() };
+            // A grid, so the step's words wrap to exactly the width their column gets.
+            let row = Node {
+                display: Display::Grid,
+                grid_template_columns: vec![GridTrack::auto(), GridTrack::px(22.0 * PX), GridTrack::flex(1.0)],
+                column_gap: Val::Px(space::INNER),
+                flex_shrink: 0.0,
+                ..default()
+            };
             page.spawn(row).with_children(|row| {
                 row.spawn(text(font, if reached { "◆" } else { "◇" }, BODY, if reached { ACCENT } else { MUTED }));
-                row.spawn((Node { width: Val::Px(22.0 * PX), flex_shrink: 0.0, ..default() }, text(font, format!("{at}"), BODY, if reached { GOLD } else { MUTED })));
-                let fill = Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() };
-                row.spawn((fill, text(font, line, BODY, if reached { TEXT } else { MUTED })));
+                row.spawn(text(font, format!("{at}"), BODY, if reached { GOLD } else { MUTED }));
+                row.spawn((Node { min_width: Val::ZERO, ..default() }, text(font, line, BODY, if reached { TEXT } else { MUTED })));
             });
         }
     });
@@ -346,9 +354,9 @@ const LABEL: f32 = 38.0 * PX;
 
 /// A condition panel, filling its parent's width.
 pub fn spawn_condition(parent: &mut ChildSpawnerCommands, font: &Handle<Font>) {
-    let column = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), width: Val::Percent(100.0), ..default() };
+    let column = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::INNER), width: Val::Percent(100.0), ..default() };
     parent.spawn((Condition, column)).with_children(|panel| {
-        let row = || Node { column_gap: Val::Px(3.0 * PX), align_items: AlignItems::Center, ..default() };
+        let row = || Node { column_gap: Val::Px(space::INNER), align_items: AlignItems::Center, ..default() };
         panel.spawn(row()).with_children(|row| {
             row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, Localized("character.health"), text(font, "", BODY, MUTED), TextLayout::no_wrap()));
             spawn_meter(row, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
@@ -358,7 +366,7 @@ pub fn spawn_condition(parent: &mut ChildSpawnerCommands, font: &Handle<Font>) {
             spawn_meter(row, font, Piece::BarHunger, Val::Percent(100.0), HungerMeter);
         });
         panel.spawn((FeltLine, text(font, "", BODY, SOFT)));
-        panel.spawn((EffectList, Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0 * PX), ..default() }));
+        panel.spawn((EffectList, Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), margin: UiRect::top(Val::Px(space::HAIR)), ..default() }));
     });
 }
 
