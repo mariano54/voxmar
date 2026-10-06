@@ -29,6 +29,10 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 memcap=~/Projects/voxmar-wt/memcap
 # Away from the Mac (a Linux machine, a fresh clone), the copy in this tree.
 [[ -x $memcap ]] || memcap=$PWD/tools/memcap
+# The gate's build and tests run at utility QoS rather than memcap's background one: they
+# may use a performance core his game leaves free (landings wait on them), and PLAYING
+# still pauses them while he plays.
+export VOXMAR_QOS=utility
 passed_dir="$(git rev-parse --git-common-dir)/gate-passed"
 
 # The run in progress in this worktree, for `tools/gate stop`.
