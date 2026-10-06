@@ -329,7 +329,7 @@ fn simplify(points: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
 /// The TrueType container: just the tables every text engine requires, with simple glyph
 /// outlines made only of on-curve points and no hinting.
 mod import;
-pub use import::import;
+pub use import::{characters, import};
 
 mod ttf {
     use super::*;

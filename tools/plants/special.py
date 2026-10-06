@@ -148,3 +148,53 @@ SUPER['honeydew_lily'] = (glints(lambda: __import__('flowers').F['red_tulip'][0]
 SUPER['lantern_gourd'] = (glints(vine_fruit('round', 48), 3, 48, (8, 18, 24, 30)), dict(leaf='#4a7a3a', fruit='#f09030', wood='#5a4a2a', glow='#ffe0a0'))
 SUPER['silvermint'] = (silver_herb(), dict(leaf='#a8bcc8', glow='#f0f8ff'))
 SUPER['cinder_moss'] = (moss_carpet(50, sparkle=True), dict(leaf='#4a3428', glow='#ff9a40'))
+
+
+# --- mushroom caps for the Cap model: a flat cap seen from above, and the stem with the
+# cap's edge seen from the side. The cap quad lies at 0.6 of the plant's height and spans
+# 0.76 of the cell, so the side sprite's cap edge sits at row 12 and is 24 texels wide.
+def cap_top(spots=0, ring=False, seed=0):
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        ellipse(c, 15.5, 15.5, 15, 15, 'P', 2)
+        if ring:
+            for a in range(0, 360, 12):
+                ra = math.radians(a); c.put(15.5 + math.cos(ra) * 9, 15.5 + math.sin(ra) * 9, 'P', 1)
+        for i in range(spots):
+            a = r.uniform(0, 6.28); d = r.uniform(3, 12)
+            x, y = 15.5 + math.cos(a) * d, 15.5 + math.sin(a) * d
+            ellipse(c, x, y, 1.4, 1.4, 'S', 3, shade=False) if False else [c.put(x + dx, y + dy, 'S', 4 - (dx + dy > 0)) for dx in (0, 1) for dy in (0, 1)]
+        disc(c, 15.5, 15.5, 2.5, 'P', 3, rim=False)
+        rim(c); return c
+    return f
+
+
+def cap_side(seed=0):
+    def f():
+        c = Canvas()
+        for y in range(13, 32):
+            c.put(15, y, 'C', 2); c.put(16, y, 'C', 1); c.put(17, y, 'C', 0)
+            if y > 27: c.put(14, y, 'C', 2); c.put(18, y, 'C', 0)
+        ellipse(c, 16, 12, 12, 2.2, 'P', 2)
+        for x in range(6, 27, 2): c.put(x, 14, 'C', 0)
+        for x in (3, 28): c.put(x, 31, 'L', 3); c.put(x, 30, 'L', 4)
+        rim(c); return c
+    return f
+
+
+CAPS = {
+    'brown_mushroom': (0, False, dict(petal='#9a6a48', centre='#e0d4b8', leaf='#4a7a2a')),
+    'red_mushroom': (9, False, dict(petal='#c82a1e', centre='#e0d4b8', second='#ffffff', leaf='#4a7a2a')),
+    'porcini': (0, False, dict(petal='#7a4a28', centre='#e0d4b0', leaf='#4a7a2a')),
+    'deathcap': (0, True, dict(petal='#c8d0a0', centre='#f0f0e0', leaf='#4a7a2a')),
+    'blewit': (0, True, dict(petal='#7a68b0', centre='#d0c8e0', leaf='#4a7a2a')),
+    'shiitake': (6, False, dict(petal='#5a3a26', centre='#e8dcc8', second='#d8c8b0', leaf='#4a7a2a')),
+    'fly_agaric': (11, False, dict(petal='#e0281a', centre='#f0eadc', second='#ffffff', leaf='#4a7a2a')),
+    'chanterelle': (0, True, dict(petal='#f0a828', centre='#e8b84a', leaf='#4a7a2a')),
+    'pale_cap': (0, True, dict(petal='#d8d4ca', centre='#efece4', leaf='#5a6a5a')),
+    'ember_cap': (8, False, dict(petal='#e0581a', centre='#6a4030', second='#ffd060', leaf='#3a2a22')),
+}
+CAP_ART = {}
+for name, (spots, ring, colours) in CAPS.items():
+    CAP_ART[f'{name}_cap'] = (cap_top(spots, ring, len(name)), colours)
+    CAP_ART[f'{name}_stem'] = (cap_side(len(name)), colours)

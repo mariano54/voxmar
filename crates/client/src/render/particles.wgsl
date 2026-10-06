@@ -14,7 +14,8 @@ struct Particle {
     life: f32,
     gravity: f32,
     drag: f32,
-    // layer:12 | free:12 | block light:4 | sky light:4
+    // layer:12 | grow:6 (eighths) | wander:6 (hundredths of a block) | block light:4 |
+    // sky light:4
     surface: u32,
     // corner u:8 | corner v:8 | span:8 (256ths of the texture) | motion:4 | flags:4
     sprite: u32,
@@ -32,8 +33,13 @@ struct Particle {
 // globals.time wraps every hour.
 const TIME_WRAP: f32 = 3600.0;
 const MOTION_BALLISTIC: u32 = 0u;
+const MOTION_RISE: u32 = 1u;
 const FLAG_TEXTURED: u32 = 1u;
 const FLAG_GLOW: u32 = 2u;
+const FLAG_COOLS: u32 = 4u;
+// What a cooling particle's colour is multiplied by at the end of its life: dimmer, and
+// redder, as blue and green go first.
+const COOLED: vec3<f32> = vec3(0.5, 0.2, 0.05);
 // Of the speed a particle hits the floor with, how much it hops back up.
 const BOUNCE: f32 = 0.35;
 // How quickly a particle that has touched the floor slows, per second.
@@ -99,6 +105,20 @@ fn ballistic(p: Particle, age: f32) -> vec3<f32> {
     return vec3(across.x, y, across.y);
 }
 
+// Carried up by warmth: the velocity slowed by drag, gravity (negative lifts), and slow
+// loops across that widen as it rises, at a pace and phase of its own.
+fn rise(p: Particle, age: f32) -> vec3<f32> {
+    let k = max(p.drag, 0.001);
+    var position = p.origin + p.velocity * (1.0 - exp(-k * age)) / k;
+    position.y -= 0.5 * p.gravity * age * age;
+    let wander = f32((p.surface >> 18u) & 63u) / 100.0;
+    let phase = f32(p.seed >> 22u) / 1024.0 * 6.2831853;
+    let pace = 0.5 + f32((p.seed >> 12u) & 1023u) / 1023.0;
+    let reach = wander * sqrt(min(age / max(p.life, 0.001), 1.0));
+    let turn = age * pace * 2.5 + phase;
+    return position + vec3(sin(turn), 0.0, cos(turn * 0.8 + 1.3 * phase)) * reach;
+}
+
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, c <= vec3(0.04045));
 }
@@ -115,13 +135,21 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     }
     var center = p.origin;
     let motion = (p.sprite >> 24u) & 15u;
+    var fade_time = min(FADE, 0.5 * p.life);
+    var fade_in = 1.0;
     if motion == MOTION_BALLISTIC {
         center = ballistic(p, age);
+    } else if motion == MOTION_RISE {
+        center = rise(p, age);
+        // Thinning out from the start (smoke is thickest over the fire), never popping in.
+        fade_time = 0.8 * p.life;
+        fade_in = smoothstep(0.0, min(0.4, 0.2 * p.life), age);
     }
-    let fade = 1.0 - smoothstep(p.life - min(FADE, 0.5 * p.life), p.life, age);
+    let fade = (1.0 - smoothstep(p.life - fade_time, p.life, age)) * fade_in;
     let corner = CORNERS[vertex_index];
-    // Facing the camera, and shrinking a little as it fades.
-    let half = 0.5 * p.size * mix(0.7, 1.0, fade);
+    // Facing the camera, growing or shrinking over its life, and a little as it fades.
+    let grow = f32((p.surface >> 12u) & 63u) / 8.0;
+    let half = 0.5 * p.size * mix(1.0, grow, age / p.life) * mix(0.7, 1.0, fade);
     let right = view.world_from_view[0].xyz;
     let up = view.world_from_view[1].xyz;
     out.world_position = center + (right * corner.x + up * corner.y) * half;
@@ -133,7 +161,11 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     out.surface = p.surface;
     out.flags = p.sprite >> 28u;
     let color = unpack4x8unorm(p.color);
-    out.color = vec4(srgb_to_linear(color.rgb), color.a * fade);
+    var linear = srgb_to_linear(color.rgb);
+    if (out.flags & FLAG_COOLS) != 0u {
+        linear *= mix(vec3(1.0), COOLED, smoothstep(0.0, 1.0, age / p.life));
+    }
+    out.color = vec4(linear, color.a * fade);
     return out;
 }
 
@@ -149,8 +181,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(block_textures, block_sampler, in.uv, layer);
     let uv_dx = dpdx(in.uv);
     let uv_dy = dpdy(in.uv);
-    // A texture piece is cut out where its texels are; a speck is a soft disc.
-    var coverage = 1.0 - smoothstep(0.55, 1.0, length(in.corner));
+    // A texture piece is cut out where its texels are. A glowing speck (a flame, an ember)
+    // is crisp, like the pixels of a fire; any other (smoke) is soft, densest in the
+    // middle.
+    let r2 = dot(in.corner, in.corner);
+    let glowing = (in.flags & FLAG_GLOW) != 0u;
+    let crisp = textured || glowing;
+    // A glowing speck narrows upwards into a tongue, as flames and embers do.
+    let taper = mix(1.0, 0.3, saturate(in.corner.y * 0.5 + 0.5));
+    let tongue = length(vec2(in.corner.x / taper, in.corner.y));
+    var coverage = select(saturate(1.0 - r2) * saturate(1.0 - r2), saturate(1.5 - 1.25 * tongue), glowing);
     var albedo = in.color.rgb;
     if textured {
         coverage = texel.a;
@@ -165,14 +205,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 #ifdef ALPHA_TO_COVERAGE
-    // Sharpened so texel edges stay crisp; the fade spreads over the samples.
-    let alpha = saturate((coverage - 0.5) / max(fwidth(coverage), 0.0001) + 0.5) * in.color.a;
+    // Sharpened so texel edges stay crisp; the fade spreads over the samples. Smoke
+    // stays soft: its edge thins out like its fade.
+    var alpha = saturate((coverage - 0.5) / max(fwidth(coverage), 0.0001) + 0.5) * in.color.a;
+    if !crisp {
+        alpha = coverage * in.color.a;
+    }
     if alpha <= 0.0 {
         discard;
     }
 #else
     let alpha = 1.0;
-    if coverage < 0.5 || in.color.a < dither(in.clip_position.xy) {
+    let soft = select(coverage, 1.0, crisp);
+    if coverage < select(0.02, 0.5, crisp) || in.color.a * soft < dither(in.clip_position.xy) {
         discard;
     }
 #endif

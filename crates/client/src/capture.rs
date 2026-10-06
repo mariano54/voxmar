@@ -96,6 +96,8 @@ pub struct CapturePlugin {
     pub grid: Option<Vec<String>>,
     /// Width and height of the shot, in pixels.
     pub size: UVec2,
+    /// Screen pixels per interface pixel, as a window on a Retina display has 2.
+    pub scale_factor: f32,
     /// Render to a real window and shoot that, rather than an offscreen image: slower to
     /// set up and in the way on screen, but it exercises what only a window has (the
     /// render scale, presenting frames).
@@ -156,6 +158,7 @@ impl Plugin for CapturePlugin {
             struck: false,
             level_up: self.level_up.clone(),
             size: self.size,
+            scale_factor: self.scale_factor,
             windowed: self.windowed,
         })
         .add_systems(PostStartup, render_offscreen.run_if(|state: Res<Capture>| !state.windowed))
@@ -215,13 +218,19 @@ struct Capture {
     struck: bool,
     level_up: Option<String>,
     size: UVec2,
+    scale_factor: f32,
     windowed: bool,
 }
 
 impl Capture {
-    /// A shot of what is drawn: the offscreen image, or the window.
+    /// A shot of what is drawn: the offscreen image, or the window. The image is named with
+    /// its scale factor, as the camera names it, or Bevy takes it for another target.
     fn screenshot(&self) -> Screenshot {
-        if self.windowed { Screenshot::primary_window() } else { Screenshot::image(self.target.clone()) }
+        if self.windowed {
+            Screenshot::primary_window()
+        } else {
+            Screenshot(RenderTarget::Image(bevy::camera::ImageRenderTarget { handle: self.target.clone(), scale_factor: self.scale_factor }))
+        }
     }
 }
 
@@ -261,22 +270,24 @@ fn render_offscreen(
     mut images: ResMut<Assets<Image>>,
     camera: Query<Entity, With<Camera3d>>,
 ) {
-    state.target = offscreen(&mut commands, &mut images, &camera, state.size);
+    state.target = offscreen(&mut commands, &mut images, &camera, state.size, state.scale_factor);
 }
 
 /// Points the world's camera at a new offscreen image `size` pixels across, which shots
-/// are then taken of, and returns the image.
+/// are then taken of, and returns the image. `scale_factor` is screen pixels per
+/// interface pixel, as on a window.
 pub(crate) fn offscreen(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     camera: &Query<Entity, With<Camera3d>>,
     size: UVec2,
+    scale_factor: f32,
 ) -> Handle<Image> {
     let mut image = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None);
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     let target = images.add(image);
     for entity in camera {
-        commands.entity(entity).insert(RenderTarget::Image(target.clone().into()));
+        commands.entity(entity).insert(RenderTarget::Image(bevy::camera::ImageRenderTarget { handle: target.clone(), scale_factor }));
     }
     target
 }
@@ -663,6 +674,20 @@ fn capture(
         stats.jobs_in_flight,
         stats.pending_columns,
     );
+    // Per-pass GPU and CPU times with VOXMAR_GPU_TIMES (`RenderDiagnosticsPlugin`).
+    let mut passes: Vec<(String, f64)> = diagnostics
+        .iter()
+        .filter(|d| d.path().as_str().starts_with("render/") && d.path().as_str().ends_with("/elapsed_gpu"))
+        .filter_map(|d| Some((d.path().as_str().to_owned(), d.average()?)))
+        .collect();
+    if !passes.is_empty() {
+        passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let total: f64 = passes.iter().filter(|(p, _)| p.matches('/').count() == 2).map(|(_, t)| t).sum();
+        info!("gpu passes: {total:.3} ms at the top level");
+        for (path, ms) in passes {
+            info!("gpu {ms:7.3} ms {path}");
+        }
+    }
     let shown = &weather.current;
     info!("weather: {}: {}; effects: {}", shown.describe(), shown.summary(), weather.effects.join(", "));
     let particles: Vec<String> = air.particles.iter().map(|p| format!("{} {:.0}%", p.name, p.density * 100.0)).collect();
@@ -694,7 +719,7 @@ fn measure_flicker(
     mut virtual_time: ResMut<Time<Virtual>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
-    let (target, path) = (state.target.clone(), state.path.clone());
+    let (target, path) = (RenderTarget::Image(bevy::camera::ImageRenderTarget { handle: state.target.clone(), scale_factor: state.scale_factor }), state.path.clone());
     let Some(flicker) = state.flicker.as_mut().filter(|f| f.started) else { return };
     let kind = flicker.kind;
     if flicker.kind == FlickerKind::Step {
@@ -708,7 +733,7 @@ fn measure_flicker(
     let shot = |name: PathBuf, commands: &mut Commands, shots: &Arc<Mutex<Vec<Image>>>| {
         let shots = shots.clone();
         commands
-            .spawn(Screenshot::image(target.clone()))
+            .spawn(Screenshot(target.clone()))
             .observe(save_to_disk(name))
             .observe(move |captured: On<ScreenshotCaptured>| shots.lock().expect("flicker shots").push(captured.image.clone()));
     };

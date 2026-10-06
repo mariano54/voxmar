@@ -89,6 +89,9 @@ const SWING: f32 = 0.55;
 const DRAWN_WITHIN: f32 = 96.0;
 /// The darkest a creature is drawn, so one in a cave is still a shape.
 const DARKEST: f32 = 0.12;
+/// Steps a creature's light is rounded to, so the slow change of daylight rewrites its
+/// material now and then rather than every frame.
+const LIGHT_STEPS: f32 = 128.0;
 
 pub struct CreaturesPlugin;
 
@@ -357,7 +360,10 @@ fn show(
             .meshes
             .entry(view.species)
             .or_insert_with(|| layout.faces.iter().map(|rects| meshes.add(part_mesh(rects, (layout.width, layout.height)))).collect());
-        let skin = images.add(skin_image(&species.def.body, &species.parts, layout, view.seed));
+        // Painted as its genes show: its coat colours and markings.
+        let genes = &species.def.genes;
+        let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
+        let skin = images.add(skin_image(&species.def.body.with(&traits), &species.parts, layout, view.seed));
         let material = materials.add(StandardMaterial { base_color_texture: Some(skin.clone()), unlit: true, ..default() });
         let entity = commands.spawn((Transform::from_translation(view.position), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
         let parts: Vec<(Entity, Part)> = species
@@ -535,10 +541,18 @@ fn show(
             let block = block_light(&world, cell) as f32 / 15.0;
             sky.max(block).max(DARKEST)
         };
+        // In steps too fine to see, and written only when it changes: a changed material
+        // is uploaded again and every part drawn with it specialised again for the camera
+        // and each shadow cascade: writing it every frame took a herd of 40 from 4 to 8 ms
+        // a frame on an NVIDIA L4.
+        let light = (light * LIGHT_STEPS).round() / LIGHT_STEPS;
         let red = shown.flash / FLASH;
-        if let Some(mut material) = materials.get_mut(&shown.material) {
-            let lit = LinearRgba::rgb(light, light, light);
-            material.base_color = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
+        let lit = LinearRgba::rgb(light, light, light);
+        let colour = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
+        if materials.get(&shown.material).is_some_and(|material| material.base_color != colour)
+            && let Some(mut material) = materials.get_mut(&shown.material)
+        {
+            material.base_color = colour;
         }
     }
     for id in finished {
@@ -582,19 +596,23 @@ pub fn aim(
     *cooldown -= time.delta_secs();
     // A right click tends it with what is in hand: food that tames it or readies a kept one
     // to breed, or a tool for its product (the server judges; this only asks when it may).
+    // With anything else, or nothing, in hand, it looks closely at it.
     if let Some(id) = target.creature
         && ui.cursor_locked
         && !player.dead
         && mouse.just_pressed(MouseButton::Right)
-        && let (Some(tend), Some(item), Some(view)) = (actions.0.id("base:tend"), player.inventory.get(player.selected).map(|s| s.item), creatures.shown.get(&id).map(|s| s.view))
+        && let Some(view) = creatures.shown.get(&id).map(|s| s.view)
     {
         let species = launch.content.creatures.get(view.species);
         let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
-        let tags = &launch.content.blocks.def(item).tags;
-        let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-        let accepts = (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool));
-        if accepts {
-            net.propose_from(&player, tend, ActionTarget::Creature(id));
+        let accepts = player.inventory.get(player.selected).map(|s| s.item).is_some_and(|item| {
+            let tags = &launch.content.blocks.def(item).tags;
+            let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
+            (!view.kept && species.tame_food.contains(&item)) || (mine && (species.breed_food.contains(&item) || tool))
+        });
+        let action = if accepts { "base:tend" } else { "base:inspect" };
+        if let Some(action) = actions.0.id(action) {
+            net.propose_from(&player, action, ActionTarget::Creature(id));
         }
     }
     if let Some(id) = target.creature

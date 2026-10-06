@@ -36,6 +36,9 @@ pub struct SkillDef {
 pub struct GuideStep {
     pub level: u8,
     pub text: String,
+    /// The item drawn beside it, by name; the skill's own icon when none is given.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 /// How much experience each level takes.

@@ -6,9 +6,11 @@
 use serde::{Deserialize, Serialize};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::creature::husbandry::{self, IN_LOVE_SECONDS, MATE_RANGE, YOUNG_SCALE};
+use voxmar_engine::creature::brain::Mind;
 use voxmar_engine::creature::{CreatureId, mix, unit_from};
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
+use voxmar_engine::genes;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::skill::SkillId;
@@ -39,6 +41,9 @@ pub struct SavedCreature {
     pub grows_in: Option<u64>,
     /// Ticks until each product is due.
     pub products_in: Vec<u64>,
+    /// Its genes; none in saves from before genes, which restore as wild ones of the place.
+    #[serde(default)]
+    pub genome: Option<genes::Genome>,
 }
 
 impl Server {
@@ -46,7 +51,7 @@ impl Server {
         self.players.get(&player).map(|p| p.name.clone())
     }
 
-    fn skill_level(&self, player: PlayerId, skill: &str) -> u8 {
+    pub(crate) fn skill_level(&self, player: PlayerId, skill: &str) -> u8 {
         let Some(id) = self.content.skills.id(skill) else { return 99 };
         self.players.get(&player).map_or(1, |p| self.content.skills.level(p.skills.xp(id)))
     }
@@ -92,7 +97,7 @@ impl Server {
             }
             let (item, (low, high), every, xp) = (species.products[index], product.count, product.every, product.xp);
             let [roll, ..] = random3(self.tick, creature.body.position.floor().as_ivec3(), id);
-            let count = low + ((roll * (high - low + 1) as f32) as u8).min(high - low);
+            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, roll);
             let seed = creature.seed;
             let creature = self.creatures.live.get_mut(&id).expect("checked");
             creature.products_due[index] = self.tick + product_ticks(every, seed, index);
@@ -208,14 +213,14 @@ impl Server {
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
                     creature.products_due[index] = tick + product_ticks(product.every, creature.seed ^ tick, index);
-                    laid.push((creature.body.position, species.products[index], product.count, id));
+                    laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id));
                 }
             }
         }
-        for (position, item, (low, high), id) in laid {
+        for (position, item, (low, high), yield_, id) in laid {
             let cell = position.floor().as_ivec3();
             let [a, b, c] = random3(tick, cell, id);
-            let count = low + ((a * (high - low + 1) as f32) as u8).min(high - low);
+            let count = yielded(low + ((a * (high - low + 1) as f32) as u8).min(high - low), yield_, c);
             self.items.spawn(ItemStack { item, count }, dropped::popped(cell, [b, c, a]), dropped::PICKUP_DELAY);
         }
         // Ready pairs that have met.
@@ -251,10 +256,21 @@ impl Server {
         let (low, high) = breeding.litter;
         let count = low + ((unit_from(mix(seed, self.tick)) * (high - low + 1) as f32) as u8).min(high - low);
         let grows = self.tick + (breeding.growth * 60.0 * TICKS_PER_SECOND as f32) as u64;
+        let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
+        // Mutations are likelier where aether is high (docs/breeding.md, "Mutation").
+        let aether = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32).aether;
+        let mutation = genes::MUTATION * (1.0 + 4.0 * aether.clamp(0.0, 1.0));
         for i in 0..count.max(1) {
             let Some(id) = self.spawn_creature(species, at + Vec3::new(0.3 * i as f32, 0.0, 0.3), seed ^ self.tick ^ i as u64) else { continue };
             let def = &self.content.creatures.get(species).def;
             let young = self.creatures.live.get_mut(&id).expect("just made");
+            young.genome = genes::inherit(&def.genes, &mother, &father, young.seed, mutation);
+            young.traits = genes::express(&def.genes, &young.genome);
+            young.mind = Mind::new(&def.temperament, young.seed);
+            young.mind.personality.aggression = (young.mind.personality.aggression + young.traits.temper).clamp(0.0, 1.0);
+            if !def.genes.is_empty() {
+                young.adult_scale = young.traits.scale.max(0.5);
+            }
             young.owner = owner.clone();
             young.grows_up = Some(grows);
             young.scale = young.adult_scale * YOUNG_SCALE;
@@ -290,6 +306,7 @@ impl Server {
                     scale: c.adult_scale,
                     grows_in: c.grows_up.map(|t| t.saturating_sub(tick)),
                     products_in: c.products_due.iter().map(|t| t.saturating_sub(tick)).collect(),
+                    genome: Some(c.genome.clone()),
                 })
             })
             .collect()
@@ -315,6 +332,17 @@ impl Server {
             for (due, left) in creature.products_due.iter_mut().zip(s.products_in) {
                 *due = tick + left;
             }
+            if let Some(genome) = s.genome {
+                creature.traits = genes::express(&def.genes, &genome);
+                creature.genome = genome;
+            }
         }
     }
+}
+
+/// A product's count, more or less by the animal's yield: a woolly sheep gives more wool,
+/// the fraction left over given by chance (`roll`, 0..1).
+fn yielded(count: u8, yield_: f32, roll: f32) -> u8 {
+    let exact = count as f32 * yield_.max(0.0);
+    (exact.floor() + if roll.fract() < exact.fract() { 1.0 } else { 0.0 }).clamp(1.0, 64.0) as u8
 }

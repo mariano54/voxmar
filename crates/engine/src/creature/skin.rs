@@ -116,7 +116,7 @@ pub enum Eyes {
 }
 
 /// A pattern painted over a species' colours. Colours are (r, g, b).
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub enum Marking {
     /// Round spots `size` blocks across, on about `density` of the places one could be.
     Spots { colour: [u8; 3], size: f32, density: f32 },
@@ -328,6 +328,19 @@ fn texel(body: &Body, index: usize, part: &Part, f: usize, face: &Face, rect: Re
                 colour *= 0.85;
             }
         }
+        Role::Carapace => {
+            // Plates in staggered rows, each with a dark seam and a lighter middle.
+            let plate = 0.12;
+            let row = (at.z / plate).floor();
+            let across = at.x / plate + if row as i64 % 2 == 0 { 0.0 } else { 0.5 };
+            let (fx, fz) = (across.rem_euclid(1.0), (at.z / plate).rem_euclid(1.0));
+            let seam = 1.0 / (plate * TEXELS);
+            if fx < seam || fz < seam || at.y > part.centre.y + part.size.y * 0.45 && normal.y > 0.5 && fx.min(fz) < seam * 1.5 {
+                colour *= 0.55;
+            } else if (fx - 0.5).abs() < 0.22 && (fz - 0.5).abs() < 0.22 {
+                colour = colour.lerp(body.colour(2), 0.35);
+            }
+        }
         Role::Shell => {
             let side = Vec3::new(0.0, local.y, local.z).length() / part.size.y.max(1e-3);
             let ring = (side * 5.0 + grain(seed, at, 4.0, 31) * 0.3).fract();
@@ -521,6 +534,7 @@ mod tests {
                 neck: None,
                 haunches: true,
                 hump: None,
+                shell: None,
                 tail_droop: -30.0,
                 ear_lean: 10.0,
             },

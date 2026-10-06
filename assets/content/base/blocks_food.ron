@@ -7,11 +7,35 @@
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
             light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire"],
+            // Flames licking a block and more above the logs, a white-hot core among them,
+            // smoke thick over the fire and thinning as it rises a few blocks, embers
+            // floating up as high, and now and then a crackle of sparks (`particles`:
+            // engine/src/block.rs, `Emission`).
+            particles: [
+                (style: Flame, rate: 70.0, at: (0.5, 0.1, 0.5), spread: 0.3, size: 2.8, height: 1.2),
+                (style: Flame, rate: 25.0, at: (0.5, 0.15, 0.5), spread: 0.12, size: 2.0, height: 0.7, color: Some((255, 220, 130))),
+                (style: Smoke, rate: 10.0, at: (0.5, 1.1, 0.5), spread: 0.2, size: 1.4, height: 4.0),
+                (style: Ember, rate: 6.0, at: (0.5, 0.4, 0.5), spread: 0.3, height: 3.0),
+                (style: Spark, rate: 0.6, count: 5, at: (0.5, 0.3, 0.5), spread: 0.15, height: 2.0),
+            ],
+        ),
+        // A torch: a stick with a burning tip, to light the night. Its flame flickers, and
+        // the odd ember and wisp of smoke rise from it.
+        (
+            name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch"),
+            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"],
+            particles: [
+                (style: Flame, rate: 20.0, at: (0.5, 0.6, 0.5), spread: 0.05, size: 1.2, height: 0.25),
+                (style: Ember, rate: 0.5, at: (0.5, 0.75, 0.5), spread: 0.04, size: 0.7, height: 2.0),
+                (style: Smoke, rate: 0.8, at: (0.5, 0.9, 0.5), spread: 0.02, size: 0.45),
+            ],
         ),
     ],
     families: [
         (template: "drop", name: "cooked_rabbit", tags: ["meat", "cooked", "edible", "food:5", "heal:4", "flavour:savoury"], all: (color: (160, 90, 50))),
         (template: "drop", name: "cooked_chicken", tags: ["meat", "cooked", "edible", "food:5", "heal:4", "flavour:savoury"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "cooked_frog", tags: ["meat", "cooked", "edible", "food:3", "heal:2", "flavour:savoury"], all: (color: (200, 150, 100))),
+        (template: "drop", name: "cooked_crab", tags: ["meat", "cooked", "edible", "food:5", "heal:4", "flavour:savoury", "seafood"], all: (color: (230, 110, 60))),
         (template: "drop", name: "cooked_duck", tags: ["meat", "cooked", "edible", "food:5", "heal:5", "flavour:savoury"], all: (color: (150, 80, 40))),
         (template: "drop", name: "cooked_mutton", tags: ["meat", "cooked", "edible", "food:6", "heal:5", "flavour:savoury"], all: (color: (140, 70, 40))),
         (template: "drop", name: "cooked_pork", tags: ["meat", "cooked", "edible", "food:7", "heal:6", "flavour:savoury"], all: (color: (190, 120, 70))),

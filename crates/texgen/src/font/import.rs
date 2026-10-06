@@ -82,6 +82,12 @@ pub fn import(data: &[u8], pixels_per_em: u32) -> Result<PixelFont, Error> {
     Ok(out)
 }
 
+/// Every character a TrueType or OpenType font maps to a glyph.
+pub fn characters(data: &[u8]) -> Result<std::collections::BTreeSet<char>, Error> {
+    let font = FontRef::new(data).map_err(|e| Error(format!("font: cannot read: {e}")))?;
+    Ok(font.charmap().mappings().filter_map(|(code, _)| char::from_u32(code)).collect())
+}
+
 impl PixelFont {
     /// Adds `other`'s glyphs for the characters this font doesn't draw.
     pub fn fill_from(&mut self, other: &PixelFont) {
