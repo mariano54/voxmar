@@ -66,22 +66,17 @@
                 Noise(cells: (16, 32), amount: 0.55),
             ], clean: true),
         ]),
-        // Ores, our own drawing at 32×32 rather than lumps: crystal ores are one big
-        // cluster of hexagonal shards (lit face, shaded face, bright tip) and two small
-        // ones; metal and coal ores are a few large rounded nuggets. Each casts a soft
-        // shadow on the rock it is drawn over (its block's `host`). The ores keep the
-        // default pack's four-shade palettes: outline, shade, face, highlight.
-        "block/hd_crystal_ore": (size: (32, 32), palettes: {"ore": ["#0f5452", "#2fb7b0", "#6ff0e6", "#d8fffb"]}, layers: [
-            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".......o.......", "......oho......", ".....ohhlo.....", ".....ohhlo.....", ".....ohlmo.....", ".....ohlmo.oo..", ".....ohlmoohlo.", ".....ohlmoohlo.", "..oo.ohlmoohmo.", ".ohloollmoohmo.", ".ohloollmoohmo.", ".ohmoollmoohmo.", ".ohmoollmoolmo.", ".olmoollmoolmo.", ".olmoollmoolmo.", ".ooooooooooooo.", "..sss.ssss.sss."], at: [(2, 2)], wrap: true),
-            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".oo......", "ohlo..o..", "ohlo.oho.", "ohmo.oho.", "ohmo.oho.", "olmo.olo.", "olmo.olo.", "oooo.ooo.", ".sss..ss."], at: [(19, 17)], mirror: true, wrap: true),
-            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".oo......", "ohlo..o..", "ohlo.oho.", "ohmo.oho.", "ohmo.oho.", "olmo.olo.", "olmo.olo.", "oooo.ooo.", ".sss..ss."], at: [(20, 3)], wrap: true),
-        ]),
+        // Ores in vanilla's design language, our own drawing: eight irregular clumps of
+        // mineral four to eight texels across in four speckled shades with dark edge
+        // texels, drawn over the rock they lie in (their block's `host`). The ores keep
+        // the default pack's four-shade palettes: dark, shade, face, highlight.
         "block/hd_nugget_ore": (size: (32, 32), palettes: {"ore": ["#5e4030", "#a77a5c", "#d2a888", "#f0d8c2"]}, layers: [
-            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: ["..oooo..", ".ohlllo.", "ohllllmo", "ollllmmo", "ollmmmmo", ".ommmmo.", "..oooo..", "...sss.."], at: [(3, 4), (19, 18)], wrap: true),
-            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".oooo.", "ohlllo", "olllmo", "olmmmo", ".oooo.", "..sss."], at: [(10, 9), (24, 12), (12, 24)], wrap: true),
-            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: ["..oooo..", ".ohlllo.", "ohllllmo", "ollllmmo", "ollmmmmo", ".ommmmo.", "..oooo..", "...sss.."], at: [(21, 4)], mirror: true, wrap: true),
-            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3", 's': "#1c140e60"}, rows: [".oooo.", "ohlllo", "olllmo", "olmmmo", ".oooo.", "..sss."], at: [(4, 19)], mirror: true, wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: ["..oo.o..", ".ohlmmo.", "ohllmhmo", "olmhllmo", ".omllmo.", "..ommo.o", "...oo..."], at: [(3, 4), (19, 17)], wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo.o.", "ohlmmo", "olhlmo", ".ommo.", "..o..."], at: [(20, 4), (6, 20)], wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: ["..oo.o..", ".ohlmmo.", "ohllmhmo", "olmhllmo", ".omllmo.", "..ommo.o", "...oo..."], at: [(11, 11)], mirror: true, wrap: true),
+            Grid(legend: {'o': "ore:0", 'm': "ore:1", 'l': "ore:2", 'h': "ore:3"}, rows: [".oo..", "ohlo.", "olmmo", ".omo."], at: [(27, 11), (14, 26), (2, 13)], wrap: true),
         ]),
+        "block/hd_crystal_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#0f5452", "#2fb7b0", "#6ff0e6", "#d8fffb"]}),
         "block/coal_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#121214", "#26262a", "#3a3a40", "#5a5a62"]}),
         "block/iron_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#5e4030", "#a77a5c", "#d2a888", "#f0d8c2"]}),
         "block/copper_ore": (base: "block/hd_nugget_ore", palettes: {"ore": ["#5a2a16", "#b05a32", "#de8a54", "#7fcaa6"]}),
