@@ -34,6 +34,7 @@ impl Server {
             level,
             rod_tier: rod.tier,
             rod_yield: rod.yield_,
+            luck: player.modifiers.fishing,
         };
         let [land, pick, kick] = random3(self.tick, at, agent ^ 0xf15);
         let Some(catch) = fishing.cast(&spot, land, pick).cloned() else {

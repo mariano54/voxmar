@@ -70,11 +70,13 @@ pub struct Modifiers {
     pub mining: f32,
     /// How much experience every skill earns.
     pub xp: f32,
+    /// How often a cast line lands something.
+    pub fishing: f32,
 }
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, speed: 1.0, mining: 1.0, xp: 1.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0 }
     }
 }
 
@@ -92,6 +94,7 @@ impl Modifiers {
             speed: sum.speed * m.speed,
             mining: sum.mining * m.mining,
             xp: sum.xp * m.xp,
+            fishing: sum.fishing * m.fishing,
         })
     }
 }
@@ -117,6 +120,8 @@ pub enum Condition {
     Dust(f32),
     /// Lightning about at least this often (1 about once a minute).
     Storm(f32),
+    /// Standing in a biome with this tag, or of this name (`forest`, `ocean`, `base:bog`).
+    InBiome(String),
     All(Vec<Condition>),
     Any(Vec<Condition>),
     Not(Box<Condition>),
@@ -132,6 +137,9 @@ pub struct Situation<'a> {
     /// Nothing solid overhead.
     pub outdoors: bool,
     pub weather: &'a Weather,
+    /// The biome where the player stands: its name and tags.
+    pub biome: &'a str,
+    pub biome_tags: &'a [String],
 }
 
 impl Condition {
@@ -148,6 +156,7 @@ impl Condition {
             Condition::Wind(x) => w.wind.length() * (1.0 + w.gusts) >= *x,
             Condition::Dust(x) => s.outdoors && w.dust >= *x,
             Condition::Storm(x) => s.outdoors && w.lightning >= *x,
+            Condition::InBiome(t) => s.biome_tags.contains(t) || s.biome == t || s.biome.rsplit(':').next() == Some(t.as_str()),
             Condition::All(all) => all.iter().all(|c| c.holds(s)),
             Condition::Any(any) => any.iter().any(|c| c.holds(s)),
             Condition::Not(c) => !c.holds(s),
@@ -342,7 +351,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[] }
     }
 
     #[test]
@@ -358,6 +367,17 @@ mod tests {
         assert!(effects.active(&situation(&rain, false, 15.0, false), &[]).is_empty(), "rain under a roof soaks no one");
         let snow = Weather { precipitation: 0.8, snow: 1.0, ..Weather::NONE };
         assert!(effects.active(&situation(&snow, false, 15.0, true), &[]).is_empty(), "snow is not rain");
+    }
+
+    #[test]
+    fn biomes_are_matched_by_tag_or_name() {
+        let calm = Weather::NONE;
+        let tags = ["wetland".to_owned(), "cold".to_owned()];
+        let bog = Situation { biome: "base:bog", biome_tags: &tags, ..situation(&calm, false, 15.0, true) };
+        assert!(Condition::InBiome("wetland".into()).holds(&bog));
+        assert!(Condition::InBiome("bog".into()).holds(&bog));
+        assert!(Condition::InBiome("base:bog".into()).holds(&bog));
+        assert!(!Condition::InBiome("forest".into()).holds(&bog));
     }
 
     #[test]
