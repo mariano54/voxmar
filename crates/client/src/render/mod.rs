@@ -91,6 +91,7 @@ impl Plugin for RenderPlugin {
             .add_plugins((warm::WarmPlugin, resolve::ResolvePlugin, frame_timing::FrameTimingPlugin))
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
+            .init_resource::<SceneLight>()
             .init_resource::<Quality>()
             .init_resource::<pack::ActivePack>()
             .add_systems(Startup, cluster_lights_on_the_cpu)
@@ -618,16 +619,20 @@ struct Environment {
 }
 
 // Noon and midnight. A sunlit top face gets about 1.0 in all, so textures keep their own
-// colours in daylight; shade is lit by the cooler sky alone. Night is a few dozen times
+// colours in daylight; shade is lit by the cooler sky alone. Night is a dozen or two times
 // darker than day: a faint blue full moon and sky, which torches and glowstone easily
-// outshine, and darker still as the moon wanes (`MOONLESS`).
+// outshine, and darker as the moon wanes (`MOONLESS`), but never so dark that the ground
+// turns black: on a moonless night under rain it was (Mariano's playtest, 2026-10-06).
 const SUN: Vec3 = Vec3::new(0.72, 0.68, 0.62);
 const LOW_SUN: Vec3 = Vec3::new(0.72, 0.45, 0.25);
 const MOON: Vec3 = Vec3::new(0.021, 0.028, 0.05);
 /// The night's sky and skylight without a moon, against a full moon's.
-const MOONLESS: f32 = 0.6;
+const MOONLESS: f32 = 0.7;
 const DAY_AMBIENT: Vec3 = Vec3::new(0.40, 0.45, 0.55);
-const NIGHT_AMBIENT: Vec3 = Vec3::new(0.008, 0.011, 0.02);
+/// Night's skylight, high for how dark it looks: the display's contrast and a pack's dimmer
+/// ambient (Verdant's half) crush it, and at a fifth of this a moonless night's open ground
+/// averaged 3 of 255, black.
+const NIGHT_AMBIENT: Vec3 = Vec3::new(0.16, 0.21, 0.36);
 const DAY_ZENITH: Vec3 = Vec3::new(0.22, 0.45, 0.95);
 const NIGHT_ZENITH: Vec3 = Vec3::new(0.0012, 0.0018, 0.0045);
 const DAY_HORIZON: Vec3 = Vec3::new(0.62, 0.78, 0.98);
@@ -706,13 +711,53 @@ impl Environment {
         self.dusk *= 1.0 - overcast;
         self.zenith = grey(self.zenith, 1.0) * gloom;
         self.horizon = grey(self.horizon, 0.9) * gloom;
-        // Cloud spreads the hidden sunlight over the whole sky, brightening the shade.
-        self.ambient = grey(self.ambient, 1.0 + 0.6 * self.daylight) * gloom;
+        // Cloud spreads the hidden sunlight over the whole sky, brightening the shade. At
+        // night rain darkens it less: the night is dark enough already.
+        let night_gloom = 1.0 - (1.0 - gloom) * (0.4 + 0.6 * self.daylight);
+        self.ambient = grey(self.ambient, 1.0 + 0.6 * self.daylight) * night_gloom;
         let lightning = Vec3::new(0.7, 0.75, 1.0) * flash;
         self.ambient += lightning * 1.5;
         self.zenith += lightning * 0.4;
         self.horizon += lightning * 0.6;
         self
+    }
+}
+
+/// The light on what is drawn outside the terrain's shaders (creatures, dropped items), as
+/// the terrain's `shade_normal` (lighting.wgsl) lights a surface open to the sky at the same
+/// sky and block light levels: the sky's ambient light, falling off steeply with the sky
+/// light level, a share of the sun or moon, torchlight and a faint floor. Multiply a colour
+/// by `at` to light it as the ground around it is lit.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct SceneLight {
+    /// What full sky light (15) gives.
+    sky: Vec3,
+    /// How steeply sky light falls off with its level (the pack's).
+    falloff: f32,
+}
+
+impl Default for SceneLight {
+    fn default() -> Self {
+        Self { sky: Vec3::ONE, falloff: 2.2 }
+    }
+}
+
+/// The share of the sun's or moon's direct light a creature gets, its faces turned every
+/// way, against a top face's.
+const DIRECT_SHARE: f32 = 0.75;
+/// lighting.wgsl's torchlight colour and brightness, and the light no place goes below.
+const BLOCK_LIGHT: Vec3 = Vec3::new(1.0, 0.72, 0.42);
+const BLOCK_LIGHT_GAIN: f32 = 1.4;
+const LIGHT_FLOOR: Vec3 = Vec3::new(0.010, 0.010, 0.014);
+
+impl SceneLight {
+    /// The light at sky light `sky` and block light `block` (each 0..=15).
+    pub fn at(&self, sky: u8, block: u8) -> LinearRgba {
+        let sky = self.sky * (sky.min(15) as f32 / 15.0).powf(self.falloff);
+        let level = block.min(15) as f32 / 15.0;
+        let torch = BLOCK_LIGHT * (level / (2.5 - 1.5 * level)) * BLOCK_LIGHT_GAIN;
+        let light = sky + torch + LIGHT_FLOOR;
+        LinearRgba::rgb(light.x, light.y, light.z)
     }
 }
 
@@ -744,7 +789,7 @@ pub(crate) fn update_environment(
     mut clear: ResMut<ClearColor>,
     (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
     (generator, mut water_column, mut hail_lying): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>, Local<f32>),
-    (player, mut sky_of): (Option<Res<crate::player::LocalPlayer>>, Local<Option<u64>>),
+    (player, mut sky_of, mut scene_light): (Option<Res<crate::player::LocalPlayer>>, Local<Option<u64>>, ResMut<SceneLight>),
 ) {
     let Some(sky_handle) = sky_handle else { return };
     // The camera's own transform (it has no parent), as this frame moved it: the global one
@@ -757,6 +802,7 @@ pub(crate) fn update_environment(
     let mut env = Environment::at(days).under(shown, flash);
     env.light_color *= pack.sun * pack.sun_tint;
     env.ambient *= pack.ambient * pack.shade_tint;
+    scene_light.set_if_neq(SceneLight { sky: env.ambient + env.light_color * env.light_direction.y.max(0.0) * DIRECT_SHARE, falloff: pack.sky_falloff });
     // The place's sky tint, as far as the pack lets it show.
     let tint = Vec3::ONE.lerp(air.sky, pack.local_air.clamp(0.0, 1.0));
     env.zenith *= tint;

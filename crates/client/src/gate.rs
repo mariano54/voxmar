@@ -2002,6 +2002,13 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         9 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
+            // Down at the land around, lit by the night sky alone.
+            world.resource_mut::<LocalPlayer>().pitch = -0.6;
+            gate.advance(now);
+        }
+        10 if in_phase > 0.3 => {
+            let Some(shot) = gate.shot(world, "night ground") else { return };
+            gate.check("sky: night ground", night_ground(&shot));
             gate.next(Step::Tree, now);
         }
         1 if in_phase > 15.0 => {
@@ -2289,6 +2296,30 @@ fn stars(shot: &Image) -> Result<String, String> {
         Ok(format!("{count} star pixels"))
     } else {
         Err(format!("only {count} star pixels"))
+    }
+}
+
+/// Open ground at midnight, in the lower half of a shot: dark, but not black. Before nights
+/// were lifted (2026-10-06) a moonless night's ground averaged 2 or 3 of 255 and Mariano
+/// could not see where he walked.
+fn night_ground(shot: &Image) -> Result<String, String> {
+    const DARKEST: f32 = 6.0;
+    const BRIGHTEST: f32 = 70.0;
+    let (w, h, data) = pixels(shot)?;
+    let (mut sum, mut count) = (0.0f32, 0.0f32);
+    // The lower half, above the hotbar.
+    for y in h / 2..h * 4 / 5 {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            sum += (data[i] as f32 * 54.0 + data[i + 1] as f32 * 183.0 + data[i + 2] as f32 * 19.0) / 256.0;
+            count += 1.0;
+        }
+    }
+    let mean = sum / count.max(1.0);
+    match mean {
+        m if m < DARKEST => Err(format!("the ground at night averages {m:.1} of 255: black")),
+        m if m > BRIGHTEST => Err(format!("the ground at night averages {m:.1} of 255: not night")),
+        m => Ok(format!("the ground at night averages {m:.1} of 255")),
     }
 }
 
