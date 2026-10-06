@@ -8,22 +8,22 @@
         "sand": (ramp: "#d9c79b", shades: 8, light: 0.24, hue: 16.0, chroma: -0.3),
         "red_sand": (ramp: "#c0703c", shades: 8, light: 0.26, hue: 14.0, chroma: -0.3),
         "gravel": (ramp: "#8a8682", shades: 8, light: 0.36, hue: 18.0, chroma: -0.25),
-        "pebble": (ramp: "#9a918a", shades: 5, light: 0.24, hue: 20.0, chroma: -0.3),
+        "pebble": (ramp: "#948a82", shades: 4, light: 0.3, hue: 20.0, chroma: -0.3),
         // Neutral, with a slight warm lift in the light: the tint gives the colour.
         "grass_grey": ["#6e6e6e", "#7a7a7a", "#868686", "#929292", "#9e9e9e", "#aaaaa9", "#b8b8b6", "#c8c8c4"],
     },
     textures: {
-        // Soft umber earth: broad damp and dry patches, fine crumb, a few pale grit
-        // grains and small pebbles half buried, each with its shadow.
+        // Soft umber earth in big crumbly clods, each shaded smoothly from a lit top
+        // left, with a few pebbles drawn as the ore nuggets are, casting a soft shadow.
         "block/dirt": (size: (32, 32), palettes: {"main": "dirt", "pebble": "pebble"}, layers: [
-            Paint(palette: "main", base: 0.5, shade: [
-                Noise(cells: (4, 4), octaves: 2, amount: 0.28),
-                Noise(cells: (16, 16), amount: 0.14),
-                Grain(0.26),
+            Paint(palette: "main", base: 0.52, shade: [
+                Cells(count: (5, 5), jitter: 1.0, value: 0.24, edge: -0.1, width: 1.0, bevel: 0.4, lip: 0.0, round: 0.22, warp: 2.6),
+                Noise(cells: (2, 2), octaves: 2, amount: 0.18),
+                Grain(0.08),
             ], clean: true),
-            Shift(by: [Flat(-2.0)], mask: [Speckle(chance: 0.05, amount: 1.0, seed: 1)], above: 0.5),
-            Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.04, amount: 1.0, seed: 2)], above: 0.5),
-            Clusters(palette: "pebble", count: 6, size: (2, 6), spacing: 9.0, shade: 2, shadow: -1, seed: 2),
+            Grid(legend: {'o': "pebble:0", 'm': "pebble:1", 'l': "pebble:2", 'h': "pebble:3", 's': "#2a1a1060"}, rows: ["..oooo..", ".ohlllo.", "ohllllmo", "ollllmmo", "ollmmmmo", ".ommmmo.", "..oooo..", "...sss.."], at: [(18, 9)], wrap: true),
+            Grid(legend: {'o': "pebble:0", 'm': "pebble:1", 'l': "pebble:2", 'h': "pebble:3", 's': "#2a1a1060"}, rows: [".oooo.", "ohlllo", "olllmo", "olmmmo", ".oooo.", "..sss."], at: [(5, 22), (26, 25)], wrap: true),
+            Grid(legend: {'o': "pebble:0", 'm': "pebble:1", 'l': "pebble:2", 'h': "pebble:3", 's': "#2a1a1060"}, rows: [".oooo.", "ohlllo", "olllmo", "olmmmo", ".oooo.", "..sss."], at: [(8, 3)], mirror: true, wrap: true),
         ]),
         // A ragged fringe of thin blades hanging over the dirt, darker where it meets it.
         "block/grass_block_side_overlay": (size: (32, 32), palettes: {"grass": "grass_grey"}, layers: [
@@ -36,27 +36,27 @@
         "block/grass_block_side": (base: "block/dirt", layers: [
             Stamp(texture: "block/grass_block_side_overlay", shadow: -1),
         ]),
-        // Pale straw sand: very soft variation, fine grains of a few colours, a sprinkle
-        // of darker mineral grains and a few bright quartz ones.
+        // Pale straw sand: broad soft drifts of light and shade, and grains drawn big
+        // enough to see, a few darker and a few bright quartz ones, each two texels.
         "block/sand": (size: (32, 32), palettes: {"main": "sand"}, layers: [
             Paint(palette: "main", base: 0.55, shade: [
-                Noise(cells: (4, 4), octaves: 2, amount: 0.2),
-                Grain(0.22),
+                Noise(cells: (2, 2), octaves: 2, amount: 0.26),
+                Cells(count: (6, 6), jitter: 1.0, value: 0.12, edge: 0.0, bevel: 0.16, lip: 0.0, warp: 1.5),
+                Grain(0.06),
             ], clean: true),
-            Shift(by: [Flat(-2.0)], mask: [Speckle(chance: 0.035, amount: 1.0, seed: 1)], above: 0.5),
-            Shift(by: [Flat(-1.0)], mask: [Speckle(chance: 0.06, amount: 1.0, seed: 2)], above: 0.5),
-            Shift(by: [Flat(2.0)], mask: [Speckle(chance: 0.025, amount: 1.0, seed: 3)], above: 0.5),
+            Clusters(palette: "main", count: 14, size: (2, 3), spacing: 5.0, shade: 2, seed: 1),
+            Clusters(palette: "main", count: 10, size: (2, 3), spacing: 6.0, shade: 7, seed: 2),
         ]),
         "block/red_sand": (base: "block/sand", palettes: {"main": "red_sand"}),
-        // Loose stones of many sizes, each rounded and lit, a few of warmer rock, over
-        // dark gaps.
+        // Big loose stones, each rounded and lit, one or two of warmer rock, over dark
+        // gaps.
         "block/gravel": (size: (32, 32), palettes: {"main": "gravel", "warm": (ramp: "#8f7c70", shades: 6, light: 0.3, hue: 18.0, chroma: -0.3)}, layers: [
             Paint(palette: "main", base: 0.56, shade: [
-                Cells(count: (7, 7), jitter: 1.0, value: 0.5, edge: -0.55, width: 1.0, bevel: 0.45, round: 0.35, warp: 1.2),
-                Grain(0.1),
+                Cells(count: (4, 4), jitter: 1.0, value: 0.5, edge: -0.7, width: 1.0, bevel: 0.55, round: 0.4, warp: 1.5),
+                Grain(0.04),
             ], clean: true),
-            Clusters(palette: "warm", count: 3, size: (6, 12), spacing: 11.0, shade: 3, shadow: -1),
-            Clusters(palette: "main", count: 8, size: (2, 5), spacing: 6.0, shade: 5, shadow: -1, seed: 1),
+            Clusters(palette: "warm", count: 2, size: (18, 26), spacing: 14.0, shade: 3, shadow: -1, round: 3.0),
+            Clusters(palette: "main", count: 4, size: (5, 9), spacing: 8.0, shade: 5, shadow: -1, seed: 1),
         ]),
     },
 )

@@ -20,12 +20,15 @@ apart still read as one hand.
   Nothing natural is pure grey: stone is a grey with a breath of violet in the
   shadows, dirt a soft umber, sand a pale straw. Saturation is kept for the things a player
   looks for: flowers, ores, fruit and magic.
-- **Soft, fine detail.** Detail is fine and low in contrast, so a surface reads as a
-  material, not as a pattern. The polish bar is how the world looks under Complementary
-  shaders: the shader adds the light, the texture must not fight it.
-- **Readable at a distance.** Each block keeps one clear silhouette of value (the big
-  shapes of its stones, boards or clumps) that survives mipmapping, with the fine detail
-  inside it.
+- **Big shapes, drawn finely.** Stylised, not noisy: each texture is a few large, clear
+  shapes (eight or nine cobbles, a handful of rock plates, a couple of dozen leaves, four
+  boards) that read from across a valley, and 32×32 is spent on drawing those shapes well,
+  with smooth shading inside each, crisp one-texel edges and a deliberate highlight, rather
+  than on fine noise. Mariano's verdict on the first fine-grained draft (2026-10-06): "too
+  uniform, the features are too tiny; features should be larger, but high res, more
+  stylised".
+- **Readable at a distance.** The big shapes are the block's silhouette of value, so they
+  survive mipmapping; the detail lives in their shading and edges.
 
 These goals come from Mariano's notes on the screenshots he liked (fine soft grass with
 light yellow-green speckle and gentle variation, thin pale grass blades, flowers as dense
@@ -74,28 +77,31 @@ straight above, so they get no directional rim on the block's own edges, only on
 shapes within. Never bake a cast shadow longer than one or two texels: the game draws real
 shadows.
 
-## Noise and detail
+## Shapes and detail
 
-Three scales, always in this order of strength:
+Shapes come first, shading second, grit last and least:
 
-1. **Macro** (2–4 lattice cells across, amount 0.15–0.3): gentle variation in value that
-   keeps a field of the same block from looking printed. Low amplitude: it must not make a
-   blotch that repeats every block.
-2. **Form** (cells, bricks, boards, strata, clumps): the shapes that say what the material
-   is. They carry the contrast.
-3. **Micro** (per-texel `Grain` 0.15–0.35, sparse `Speckle`): the fine soft grit. At 32×32
-   grain above 0.4 turns to sandpaper; prefer two or three speckle layers of single shades
-   (a few light flecks, fewer dark ones) to one loud grain.
+1. **Shapes** (cells, bricks, boards, strata, sprites) carry the texture. Few and large:
+   about two to four across a block for stone plates and bark, three for cobbles, four
+   boards, leaves seven to ten texels long, ore crystals half the block tall. Draw sprites
+   (leaves, crystals, nuggets, pebbles) as text grids with an outline, a lit face, a shaded
+   face and a highlight, as a pixel artist would.
+2. **Shading** within each shape: a smooth ramp of three or four shades from a lit top
+   left to a darker rim (`Cells` with `bevel` and `round`; `lip: 0` drops the bright line a
+   16×16 recipe puts on a cell's edge, which at 32×32 reads as scratches). Gentle macro
+   variation across the block (noise of two to four lattice cells, amount 0.15–0.25).
+3. **Grit**, if any: per-texel `Grain` at most 0.08 at 32×32, and sparse single-shade
+   flecks. Fine noise is what made the first draft look uniform.
 
 Rules of thumb:
 
-- Neighbouring texels differ by at most two shades except on a deliberate edge (a mortar
-  line, a seam, the rim of a stone).
+- Neighbouring texels differ by at most two shades except on a deliberate edge (an
+  outline, a mortar line, a seam, a crack).
 - `clean: true` on every paint of a form, so no lone texel floats in a flat area.
-- Highlights are sparse: a few texels of the lightest shade on lit edges and flecks, never
-  a field of it.
-- Dark accents (cracks, pores, mortar) are thin, one texel at 32×32, with a one-texel lit
-  lip on their lower-right side where they cut into a lit surface (`light: 1`).
+- Highlights are few and placed: the tip of a crystal, the crown of a pebble, the lit lip
+  of a crack.
+- Dark accents (cracks, mortar, furrows) are bold where they are part of the shape (two
+  texels of mortar between cobbles, deep bark furrows) and thin where they are detail.
 
 ## Edges
 
@@ -111,9 +117,10 @@ Rules of thumb:
 
 - Every pattern wraps (all texgen terms tile by construction); hand-written grids use
   `wrap: true` when they cross an edge.
-- No single feature may dominate a texture: one big blotch, crack or knot repeated on
-  every block is the first thing an eye finds in a wall. Spread interest evenly and keep
-  the largest feature under a third of the texture.
+- Big shapes, but no single one that catches the eye block after block: a lone dark crack
+  or knot repeated on every block is the first thing an eye finds in a wall. Make shapes
+  many-of-a-kind (nine cobbles, not one boulder), keep any one-off accent faint, and keep
+  every shape under half the texture.
 - Noise lattices divide 32 evenly (2, 4, 8 cells), so they tile seamlessly.
 - Blocks with no up or down (stone, dirt, sand, gravel, grass tops, ores) turn and mirror
   their texture from block to block (`texture_variety` in `blocks.ron`), which removes
@@ -125,8 +132,9 @@ Rules of thumb:
 
 ## Transparency
 
-- **Leaves** look like Minecraft's: a dense mass of small leaf clusters, each lit top left,
-  with gaps a texel or two wide opening between clusters, never through one. The game's
+- **Leaves** look like Minecraft's in spirit: a dense mass of single leaves, here big ones
+  (two dozen a block, each outlined, lit along its upper edge), with gaps opening only in
+  the dark depths between them, never through a leaf. The game's
   leaf cards make the crown's outline, so the texture stays a regular all-over pattern.
 - **Plants and flowers** are cut-outs: thin pale blades, and flowers as dense clumps of
   tiny blossoms. Few flowers in a clump, rather than many large ones. (The biome thread

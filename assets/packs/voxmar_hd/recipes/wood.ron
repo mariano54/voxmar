@@ -23,21 +23,20 @@
     },
     templates: {
         "wood": {
-            // Bark: tall, uneven plates parted by deep furrows, each plate lit on its left
-            // edge and streaked up and down, with fine grit.
+            // Bark: eight tall, uneven plates parted by deep furrows, each shaded from a lit
+            // left edge and streaked up and down.
             "block/{name}_log": (size: (32, 32), layers: [
                 Paint(palette: "bark", base: 0.56, shade: [
-                    Cells(count: (5, 3), jitter: 0.9, value: 0.3, edge: -0.85, width: 1.0, bevel: 0.4, round: 0.15, warp: 1.4, stretch: (1.0, 3.2)),
-                    Noise(cells: (16, 2), octaves: 2, amount: 0.18),
-                    Grain(0.16),
+                    Cells(count: (4, 2), jitter: 0.9, value: 0.3, edge: -0.9, width: 2.0, bevel: 0.5, lip: 0.15, round: 0.2, warp: 1.6, stretch: (1.0, 3.0)),
+                    Noise(cells: (8, 2), octaves: 2, amount: 0.14),
+                    Grain(0.05),
                 ], clean: true),
-                Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.03, amount: 1.0, seed: 5)], above: 0.5),
             ]),
             // The cut end: fine growth rings round a dark pith inside the ragged bark.
             "block/{name}_log_top": (size: (32, 32), layers: [
                 Paint(palette: "wood", base: 0.62, shade: [
-                    Rings(spacing: 3.0, width: 0.3, amount: -0.24, wobble: 0.9, square: 0.4),
-                    Grain(0.08),
+                    Rings(spacing: 4.0, width: 0.3, amount: -0.26, wobble: 1.2, square: 0.4),
+                    Grain(0.03),
                 ]),
                 Paint(palette: "wood", base: 0.15, mask: [Circle(radius: 1.6)], above: 0.5),
                 Paint(palette: "bark", base: 0.45, shade: [Grain(0.4)], mask: [Border(width: 2, amount: 1.0), Border(width: 3, amount: 0.45), Noise(cells: (8, 8), amount: 0.4)], above: 0.62, light: 1),
@@ -56,30 +55,30 @@
                 Paint(palette: "wood", base: 0.2, mask: [Circle(radius: 1.6)], above: 0.5),
             ]),
             // Four boards a block, each its own tone with a lit top edge and a dark seam
-            // below, end joints at varied places, long grain and a nail or two.
+            // below, end joints at varied places, bold wavy grain, a knot and a nail or two.
             "block/{name}_planks": (size: (32, 32), layers: [
                 Paint(palette: "wood", base: 0.56, shade: [
-                    Boards(height: 8, seam: -0.4, joint: -0.16, value: 0.14, bevel: 0.1, nails: -0.3),
-                    Noise(cells: (1, 16), octaves: 2, amount: 0.34),
-                    Grain(0.06),
+                    Boards(height: 8, seam: -0.45, joint: -0.2, value: 0.16, bevel: 0.12, nails: -0.3),
+                    Noise(cells: (1, 8), octaves: 2, amount: 0.24),
+                    Grain(0.03),
                 ], clean: true),
-                // Long grain lines and a few darker streaks running along the boards.
-                Shift(by: [Flat(-1.0)], mask: [Ridge(cells: (2, 16), octaves: 2, width: 0.1, amount: 1.0), Noise(cells: (4, 8), amount: 0.4)], above: 0.6),
-                Shift(by: [Flat(1.0)], mask: [Ridge(cells: (2, 16), octaves: 1, width: 0.08, amount: 1.0, seed: 4), Noise(cells: (4, 8), amount: 0.4, seed: 2)], above: 0.7),
+                // Bold, wavy grain: a few long darker streaks along each board.
+                Shift(by: [Flat(-1.0)], mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, warp: 1.6, seed: 3), Noise(cells: (4, 8), amount: 0.9)], above: 0.95),
+                // A knot in one board, ringed and lit on its lower lip.
+                Paint(palette: "wood", base: 0.34, shade: [Rings(centre: (21.0, 11.5), spacing: 1.6, width: 0.45, amount: 0.25, wobble: 0.3, square: 0.0)], mask: [Circle(centre: (21.0, 11.5), radius: 2.4)], above: 0.5, light: 1),
             ]),
-            // Leaves as Minecraft draws them in spirit, our own drawing at 32×32: a dense
-            // mass of single leaves in three shapes, both ways round, each lit along its
-            // upper edge over a shadowed depth, with holes opening only in the depths
-            // between them, so the sky shows between leaves rather than through them.
+            // Leaves as Minecraft draws them in spirit, our own drawing at 32×32: two dozen
+            // big single leaves in three shapes, both ways round, each outlined, lit along
+            // its upper edge and shaded below, over a shadowed depth, with holes opening only
+            // in the depths between them.
             "block/{name}_leaves": (size: (32, 32), palettes: {"leaves": "leaf_grey"}, layers: [
-                Paint(palette: "leaves", base: 0.16, shade: [Noise(cells: (4, 4), amount: 0.16), Grain(0.1)]),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["....hl", "..hllm", ".hlmmd", "hlmmd.", "lmmd..", "md...."], at: [(26, 17), (14, 21), (10, 26), (31, 9), (16, 10), (1, 26)], mirror: false, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hllm", "llmm", "lmmd", "lmmd", ".md."], at: [(4, 11), (22, 3), (10, 22), (4, 4), (14, 0), (5, 31)], mirror: false, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hlmm", "lmmd", ".md."], at: [(0, 31), (25, 9), (21, 9), (19, 0), (4, 16), (20, 16)], mirror: false, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["....hl", "..hllm", ".hlmmd", "hlmmd.", "lmmd..", "md...."], at: [(25, 27), (27, 21), (10, 0), (16, 5), (25, 31), (0, 20)], mirror: true, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hllm", "llmm", "lmmd", "lmmd", ".md."], at: [(16, 16), (10, 15), (17, 28), (0, 6), (27, 4), (0, 15)], mirror: true, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: [".hl.", "hlmm", "lmmd", ".md."], at: [(6, 20), (11, 6), (21, 27), (5, 26), (9, 10), (19, 21)], mirror: true, wrap: true),
-                Cut(mask: [Noise(cells: (8, 8), amount: 0.5), Grain(0.7)], above: -0.2, darker_than: 2),
+                Paint(palette: "leaves", base: 0.16, shade: [Noise(cells: (2, 2), amount: 0.16), Grain(0.06)]),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["......ddd", "....ddhhd", "...dhhlld", "..dhllmmd", ".dhlllmd.", ".dllmmmd.", "dlmmmd...", "dmmdd....", "dd......."], at: [(0, 24), (16, 5), (5, 24), (13, 25), (3, 19)], mirror: false, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["...d...", "..dhd..", ".dhlld.", ".dhllmd", "dhllmmd", "dllmmmd", ".dlmmd.", ".dmmd..", "..dd..."], at: [(23, 7), (18, 0), (1, 5), (12, 0), (7, 0)], mirror: false, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["..dddd..", ".dhhlldd", "dhllmmmd", "dllmmmd.", ".ddmmd..", "...dd..."], at: [(9, 19), (26, 26), (25, 0), (17, 12), (20, 25)], mirror: false, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["......ddd", "....ddhhd", "...dhhlld", "..dhllmmd", ".dhlllmd.", ".dllmmmd.", "dlmmmd...", "dmmdd....", "dd......."], at: [(29, 6), (6, 11), (31, 11), (29, 19), (8, 7)], mirror: true, wrap: true),
+                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["...d...", "..dhd..", ".dhlld.", ".dhllmd", "dhllmmd", "dllmmmd", ".dlmmd.", ".dmmd..", "..dd..."], at: [(15, 18), (25, 13), (23, 20), (11, 12), (0, 0)], mirror: true, wrap: true),
+                Cut(mask: [Noise(cells: (4, 4), amount: 0.6), Grain(0.4)], above: -0.1, darker_than: 2),
             ]),
         },
     },
