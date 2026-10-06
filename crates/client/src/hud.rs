@@ -3,6 +3,8 @@
 
 pub mod character;
 pub mod console;
+pub mod death;
+pub mod effects;
 pub mod inventory;
 pub mod screens;
 pub mod recipes;
@@ -14,19 +16,16 @@ use std::collections::VecDeque;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
-use voxmar_engine::action::ActionTarget;
 use voxmar_engine::vitals::{Effect, MAX_HUNGER, Vitals};
 
 use crate::lang::Locale;
-use crate::Actions;
 use crate::interact::Target;
 use crate::menu::Screen;
-use crate::net::Net;
-use crate::player::{LocalPlayer, UiState};
+use crate::player::LocalPlayer;
 use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{ACCENT, BODY, ERROR, LARGE, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
 use crate::ui::widgets::space;
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
@@ -35,12 +34,11 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin))
+        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
                 (
-                    respawn,
                     update_slots.after(inventory::InventorySystems),
                     update_vitals,
                     update_status,
@@ -63,6 +61,18 @@ pub struct HudImages {
     pub crosshair: Handle<Image>,
     /// Icon per skill id.
     pub skills: Vec<Handle<Image>>,
+    /// Icon per effect, by its key (`well_fed`), and the ones for an effect without its own.
+    pub effects: rustc_hash::FxHashMap<String, Handle<Image>>,
+    pub buff: Handle<Image>,
+    pub debuff: Handle<Image>,
+}
+
+impl HudImages {
+    /// An effect's icon: its own, or the plain one for a buff or a debuff.
+    pub fn effect(&self, effect: Effect) -> Handle<Image> {
+        let fallback = if effect.is_buff() { &self.buff } else { &self.debuff };
+        self.effects.get(&crate::lang::effect_key(effect)).unwrap_or(fallback).clone()
+    }
 }
 
 /// A slot's side: an item's 16 texels plus a 2-texel rim, in screen pixels.
@@ -98,9 +108,10 @@ struct EffectChips;
 /// The most health a player has, as the server keeps it.
 const MAX_HEALTH: u8 = 20;
 #[derive(Component)]
-struct StatusText;
-#[derive(Component)]
 struct DebugText;
+/// The plate the debug overlay sits in.
+#[derive(Component)]
+struct DebugPlate;
 #[derive(Component)]
 struct BreakBar;
 /// The name of the item in hand, shown above the hotbar for a moment after it changes.
@@ -184,31 +195,16 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             });
         });
 
-        root.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(space::INNER), top: Val::Px(space::INNER), ..default() }, shadowed(font, "", BODY, TEXT), DebugText));
-        root.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                top: Val::Percent(35.0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            shadowed(font, "", LARGE, TEXT),
-            StatusText,
-        ));
+        // The debug overlay, in a dark plate so it reads over any sky and keeps clear of the
+        // window's edges.
+        let plate = Node { position_type: PositionType::Absolute, left: Val::Px(space::GAP), top: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
+        root.spawn((plate, Piece::Tooltip.image(), DebugPlate, Visibility::Hidden)).with_child((shadowed(font, "", BODY, TEXT), DebugText));
     });
 }
 
 fn show_hud<const SHOWN: bool>(mut root: Query<&mut Visibility, With<HudRoot>>) {
     if let Ok(mut visibility) = root.single_mut() {
         *visibility = if SHOWN { Visibility::Inherited } else { Visibility::Hidden };
-    }
-}
-
-/// R respawns after dying.
-fn respawn(keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, player: Res<LocalPlayer>, net: Res<Net>, actions: Res<Actions>) {
-    if player.dead && keys.just_pressed(KeyCode::KeyR) && !ui.console_open {
-        net.propose(actions.0.expect("core:respawn"), ActionTarget::None);
     }
 }
 
@@ -285,7 +281,7 @@ fn update_vitals(
     children: Query<&Children>,
     mut texts: Query<&mut Text>,
     mut shown: Local<Option<(u8, Vitals)>>,
-    locale: Res<Locale>,
+    (locale, images): (Res<Locale>, Res<HudImages>),
 ) {
     let state = (player.health, player.vitals.clone());
     if shown.as_ref() == Some(&state) && !locale.is_changed() {
@@ -303,33 +299,27 @@ fn update_vitals(
     if effects_changed && let Ok(row) = chips.single() {
         commands.entity(row).despawn_children().with_children(|row| {
             for &effect in &player.vitals.effects {
-                spawn_effect_chip(row, &font.0, &locale, effect);
+                spawn_effect_chip(row, &font.0, &locale, &images, effect);
             }
         });
     }
 }
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
-pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, effect: Effect) {
-    let chip = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
+pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, images: &HudImages, effect: Effect) {
+    let chip = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::HAIR), padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
     let color = if effect.is_buff() { ACCENT } else { ERROR };
-    parent.spawn((chip, Piece::Tooltip.image())).with_child((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
+    parent.spawn((chip, Piece::Tooltip.image(), Button, effects::EffectHover(effect), bevy::ui::RelativeCursorPosition::default(), crate::ui::widgets::HoverLight)).with_children(|chip| {
+        chip.spawn((Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::new(images.effect(effect))));
+        chip.spawn((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
+    });
 }
 
 fn update_status(
-    player: Res<LocalPlayer>,
     target: Res<Target>,
-    mut status: Query<&mut Text, With<StatusText>>,
     mut bar: Query<(&mut Visibility, &Children), With<BreakBar>>,
     mut fill: Query<&mut Node>,
-    locale: Res<Locale>,
 ) {
-    let message = if player.dead { locale.get("hud.died") } else { "" };
-    if let Ok(mut text) = status.single_mut()
-        && text.0 != message
-    {
-        message.clone_into(&mut text.0);
-    }
     if let Ok((mut visibility, children)) = bar.single_mut() {
         let progress = target.breaking.map(|(_, p)| p);
         visibility.set_if_neq(if progress.is_some() { Visibility::Inherited } else { Visibility::Hidden });
@@ -415,11 +405,12 @@ fn update_debug(
     target: Res<Target>,
     lod: Res<Lod>,
     weather: Res<ClientWeather>,
-    mut text: Query<(&mut Text, &mut Visibility), With<DebugText>>,
+    mut text: Query<&mut Text, With<DebugText>>,
+    mut plate: Query<&mut Visibility, With<DebugPlate>>,
 ) {
     let now = time.elapsed_secs();
     recent.push(now, time.delta_secs() * 1000.0);
-    let Ok((mut text, mut visibility)) = text.single_mut() else { return };
+    let (Ok(mut text), Ok(mut visibility)) = (text.single_mut(), plate.single_mut()) else { return };
     let opened = visibility.set_if_neq(if settings.debug_overlay { Visibility::Inherited } else { Visibility::Hidden }) && settings.debug_overlay;
     if !settings.debug_overlay || (!opened && now < *next_refresh) {
         return;
