@@ -980,10 +980,15 @@ fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// How wide the visible texts are laid out, together: it changes with the font.
+/// How wide a letter is laid out on average, over the visible one-line texts: it changes
+/// with the font, whichever texts happen to show.
 fn text_width(world: &mut World) -> f32 {
-    let mut texts = world.query::<(&bevy::text::TextLayoutInfo, &InheritedVisibility)>();
-    texts.iter(world).filter(|(_, visible)| visible.get()).map(|(layout, _)| layout.size.x).sum()
+    let mut texts = world.query::<(&Text, &bevy::text::TextLayoutInfo, &InheritedVisibility)>();
+    let (width, letters) = texts
+        .iter(world)
+        .filter(|(text, layout, visible)| visible.get() && text.0.chars().count() >= 3 && !text.0.contains('\n') && layout.glyphs.iter().all(|g| g.line_index == 0))
+        .fold((0.0, 0usize), |(w, n), (text, layout, _)| (w + layout.size.x, n + text.0.chars().count()));
+    if letters == 0 { 0.0 } else { width / letters as f32 }
 }
 
 /// The font setting: the proportional Voxmar font lays the inventory's words out narrower
@@ -1001,15 +1006,15 @@ fn font(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 if in_phase > 0.5 => {
             let (before, after) = (gate.width_before, text_width(world));
-            let changed = (after - before).abs() > 1.0;
-            gate.check("font", if changed { Ok(format!("the words took {after:.0} px across in Voxmar, {before:.0} in Ledger")) } else { Err(format!("choosing Voxmar left the words {after:.0} px across, as in Ledger")) });
+            let changed = (after - before).abs() > 0.5;
+            gate.check("font", if changed { Ok(format!("a letter took {after:.1} px across in Voxmar, {before:.1} in Ledger")) } else { Err(format!("choosing Voxmar left a letter {after:.1} px across, as in Ledger")) });
             world.resource_mut::<crate::settings::Settings>().font = InterfaceFont::Ledger;
             gate.advance(now);
         }
         2 if in_phase > 0.5 => {
             let (before, back) = (gate.width_before, text_width(world));
-            let same = (back - before).abs() <= 1.0;
-            gate.check("font: back", if same { Ok("Ledger again lays them out as before".into()) } else { Err(format!("back in Ledger the words take {back:.0} px, not {before:.0}")) });
+            let same = (back - before).abs() <= 0.2;
+            gate.check("font: back", if same { Ok("Ledger again lays them out as before".into()) } else { Err(format!("back in Ledger a letter takes {back:.1} px, not {before:.1}")) });
             world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Fit, now);
         }
@@ -1022,6 +1027,8 @@ fn font(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 enum View {
     /// The HUD alone, with experience, a refusal and a level-up showing.
     Hud,
+    /// The HUD with the debug overlay on.
+    Debug,
     Inventory,
     Character,
     /// The character screen with one skill's guide open.
@@ -1058,7 +1065,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let views: Vec<View> = if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
+        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
             .chain((0..crate::settings::TABS).map(View::Menu))
@@ -1111,6 +1118,10 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<NextState<Screen>>().set(screen);
     }
     world.resource_mut::<LocalPlayer>().dead = matches!(view, Some(View::Dead));
+    let debug = matches!(view, Some(View::Debug));
+    if world.resource::<crate::settings::Settings>().debug_overlay != debug {
+        world.resource_mut::<crate::settings::Settings>().debug_overlay = debug;
+    }
     let mut ui = world.resource_mut::<UiState>();
     (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
     match view {

@@ -25,11 +25,11 @@ impl Plugin for UiPlugin {
 
 /// The smallest view the interface is laid out for at full size, in logical pixels: the
 /// tallest screen (the menu, with its keys under it) and the widest, with a margin.
-const FULL_SIZE: Vec2 = Vec2::new(1100.0, 720.0);
+const FULL_SIZE: Vec2 = Vec2::new(1200.0, 800.0);
 
-/// Halves the interface in a view smaller than [`FULL_SIZE`], so every screen fits on it;
-/// half keeps the pixel art whole, one screen pixel to each of its pixels.
-fn fit_scale(windows: Query<&Window, With<PrimaryWindow>>, cameras: Query<&Camera, With<Camera3d>>, mut scale: ResMut<UiScale>) {
+/// Draws the interface at the size the settings ask for, or at the largest smaller step
+/// that fits the view, so every screen fits on it.
+fn fit_scale(settings: Res<Settings>, windows: Query<&Window, With<PrimaryWindow>>, cameras: Query<&Camera, With<Camera3d>>, mut scale: ResMut<UiScale>) {
     // The window's own size: the world's camera may draw into a smaller image (the
     // resolution setting), which the interface is not. Without a window (captures, the
     // gate), the image drawn off screen.
@@ -38,8 +38,10 @@ fn fit_scale(windows: Query<&Window, With<PrimaryWindow>>, cameras: Query<&Camer
         Err(_) => cameras.iter().filter_map(Camera::logical_viewport_size).reduce(Vec2::max),
     };
     let Some(view) = view else { return };
-    let fits = view.x >= FULL_SIZE.x && view.y >= FULL_SIZE.y;
-    let wanted = if fits { 1.0 } else { 0.5 };
+    let wanted = settings.ui_scale.clamp(50, 150);
+    let fits = |percent: i32| view.cmpge(FULL_SIZE * percent as f32 / 100.0).all();
+    let percent = crate::settings::UI_SCALES.iter().rev().copied().find(|&step| step <= wanted && fits(step)).unwrap_or(50);
+    let wanted = percent as f32 / 100.0;
     if scale.0 != wanted {
         scale.0 = wanted;
     }

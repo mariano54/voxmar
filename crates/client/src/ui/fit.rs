@@ -8,7 +8,8 @@ use bevy::prelude::*;
 use bevy::text::TextLayoutInfo;
 use bevy::ui::UiGlobalTransform;
 
-/// Pixels (of the 1920-wide layout) text may reach past its box before it counts.
+/// Text may reach a pixel past its box (of the layout, or more at a fractional interface
+/// size, where positions round to the screen's pixels) before it counts.
 const SLACK: f32 = 1.0;
 /// The width of a drawn element's frame (one pixel of its art), and the room words keep
 /// inside it on every side (one more): words that touch a frame count as not fitting.
@@ -33,7 +34,7 @@ pub struct Spill {
 impl std::fmt::Display for Spill {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let sides = ["left", "right", "top", "bottom"];
-        let past: Vec<String> = self.past.iter().zip(sides).filter(|(by, _)| **by > SLACK).map(|(by, side)| format!("{by:.0} px {side}")).collect();
+        let past: Vec<String> = self.past.iter().zip(sides).filter(|(by, _)| **by > 0.5).map(|(by, side)| format!("{by:.0} px {side}")).collect();
         if let Some(other) = &self.over {
             return write!(f, "{:?} runs into {other:?}", self.text);
         }
@@ -50,8 +51,8 @@ pub fn past(inner: Rect, outer: Rect) -> [f32; 4] {
 
 /// Whether any side reaches past by more than the slack; `vertical` false ignores the
 /// top and bottom (a scrolling list may cut lines off there; that is what scrolling is).
-fn spills(past: &[f32; 4], vertical: bool) -> bool {
-    past[..2].iter().any(|&by| by > SLACK) || (vertical && past[2..].iter().any(|&by| by > SLACK))
+fn spills(past: &[f32; 4], vertical: bool, slack: f32) -> bool {
+    past[..2].iter().any(|&by| by > slack) || (vertical && past[2..].iter().any(|&by| by > slack))
 }
 
 /// A node's border box, in logical pixels.
@@ -80,6 +81,10 @@ fn clipped(world: &World, parents: &mut QueryState<&ChildOf>, boxes: &mut QueryS
 /// Every visible text that does not fit, each once (against the first box it spills from,
 /// its own node first).
 pub fn find(world: &mut World) -> Vec<Spill> {
+    // A layout unit is this many of the screen's pixels: below one, rounding to whole
+    // pixels can move an edge by more than a unit.
+    let units_per_pixel = world.query::<&ComputedNode>().iter(world).map(ComputedNode::inverse_scale_factor).fold(1.0f32, f32::max);
+    let slack = (SLACK * units_per_pixel).max(SLACK);
     let mut texts = world.query::<(Entity, &Text, &TextLayoutInfo, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>();
     let mut boxes = world.query::<Boxes>();
     let mut parents = world.query::<&ChildOf>();
@@ -114,9 +119,20 @@ pub fn find(world: &mut World) -> Vec<Spill> {
     for (a, &(i, first)) in shown.iter().enumerate() {
         for &(j, second) in &shown[a + 1..] {
             let both = first.intersect(second);
-            if both.width() > SLACK && both.height() > SLACK {
+            if both.width() > slack && both.height() > slack {
                 let text = candidates[i].1.clone();
                 found.push(Spill { text, past: [0.0; 4], own: false, size: second.size(), lines: first.size(), over: Some(candidates[j].1.clone()) });
+            }
+        }
+    }
+    // Nothing may reach the window's edges: the screen is the widest of the roots.
+    let mut roots = world.query_filtered::<(&ComputedNode, &UiGlobalTransform), (With<Node>, Without<ChildOf>)>();
+    let screen = roots.iter(world).map(|(node, transform)| rect(node, transform)).reduce(|a, b| a.union(b));
+    if let Some(screen) = screen {
+        for &(i, seen) in &shown {
+            let by = past(seen, screen.inflate(-ROOM));
+            if spills(&by, true, slack) {
+                found.push(Spill { text: candidates[i].1.clone(), past: by, own: false, size: screen.size(), lines: seen.size(), over: None });
             }
         }
     }
@@ -141,7 +157,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         }
         if let Some(icon) = icons.iter().find(|icon| {
             let both = seen.intersect(**icon);
-            both.width() > SLACK && both.height() > SLACK
+            both.width() > slack && both.height() > slack
         }) {
             found.push(Spill { text: text.clone(), past: [0.0; 4], own: false, size: icon.size(), lines: seen.size(), over: Some("an icon".into()) });
         }
@@ -151,7 +167,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         // Across, a text past its own box runs into its neighbours. Up and down, a glyph may
         // stand a little proud of a one-line box (`TightLine`): the element around it judges.
         let by = past(lines, own);
-        if spills(&by, false) {
+        if spills(&by, false, slack) {
             found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size(), over: None });
             continue;
         }
@@ -173,7 +189,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             let outer = rect(node, transform);
             let inner = if drawn { outer.inflate(-(FRAME + ROOM)) } else { outer };
             let by = past(lines, inner);
-            if node.size().min_element() > 0.0 && spills(&by, vertical) {
+            if node.size().min_element() > 0.0 && spills(&by, vertical, slack) {
                 found.push(Spill { text, past: by, own: false, size: outer.size(), lines: lines.size(), over: None });
                 break;
             }
@@ -191,8 +207,8 @@ mod tests {
         let outer = Rect::new(0.0, 0.0, 100.0, 20.0);
         assert_eq!(past(Rect::new(10.0, 2.0, 90.0, 18.0), outer), [0.0; 4]);
         assert_eq!(past(Rect::new(-4.0, 2.0, 108.0, 26.0), outer), [4.0, 8.0, 0.0, 6.0]);
-        assert!(!spills(&[0.5, 0.0, 0.0, 0.0], true));
-        assert!(spills(&[0.0, 0.0, 0.0, 6.0], true));
-        assert!(!spills(&[0.0, 0.0, 0.0, 6.0], false));
+        assert!(!spills(&[0.5, 0.0, 0.0, 0.0], true, SLACK));
+        assert!(spills(&[0.0, 0.0, 0.0, 6.0], true, SLACK));
+        assert!(!spills(&[0.0, 0.0, 0.0, 6.0], false, SLACK));
     }
 }

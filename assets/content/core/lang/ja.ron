@@ -176,6 +176,8 @@
     "settings.language": "言語",
     "settings.language.hint": "メニュー、HUD、アイテム名の言語。",
     "settings.font": "フォント",
+    "settings.ui_scale": "インターフェースの大きさ",
+    "settings.ui_scale.hint": "メニューや文字、HUDの大きさ。",
     "settings.font.hint": "メニュー、HUD、チャットに使うピクセルフォント。",
     "settings.ui_sounds": "操作音",
     "settings.ui_sounds.hint": "ボタンやインベントリの音。",

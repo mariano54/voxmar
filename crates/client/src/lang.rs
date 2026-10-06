@@ -132,7 +132,8 @@ fn resolve(wanted: &str, languages: &[Language]) -> String {
 }
 
 /// The end of a condition's keys: `WellFed` is `well_fed`.
-fn effect_key(effect: Effect) -> String {
+/// An effect's name in keys and file names: `well_fed`.
+pub fn effect_key(effect: Effect) -> String {
     let mut key = String::new();
     for (i, c) in format!("{effect:?}").chars().enumerate() {
         if c.is_uppercase() && i > 0 {

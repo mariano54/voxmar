@@ -188,6 +188,8 @@
     "settings.language": "Language",
     "settings.language.hint": "The language of menus, the HUD and item names.",
     "settings.font": "Font",
+    "settings.ui_scale": "Interface size",
+    "settings.ui_scale.hint": "How large menus, text and the HUD are drawn.",
     "settings.font.hint": "The pixel font menus, the HUD and chat are written in.",
     "settings.ui_sounds": "Interface sounds",
     "settings.ui_sounds.hint": "What buttons and the inventory sound like.",

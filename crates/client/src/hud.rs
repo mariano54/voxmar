@@ -4,6 +4,7 @@
 pub mod character;
 pub mod console;
 pub mod death;
+pub mod effects;
 pub mod inventory;
 pub mod screens;
 pub mod recipes;
@@ -33,7 +34,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin))
+        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
@@ -60,6 +61,18 @@ pub struct HudImages {
     pub crosshair: Handle<Image>,
     /// Icon per skill id.
     pub skills: Vec<Handle<Image>>,
+    /// Icon per effect, by its key (`well_fed`), and the ones for an effect without its own.
+    pub effects: rustc_hash::FxHashMap<String, Handle<Image>>,
+    pub buff: Handle<Image>,
+    pub debuff: Handle<Image>,
+}
+
+impl HudImages {
+    /// An effect's icon: its own, or the plain one for a buff or a debuff.
+    pub fn effect(&self, effect: Effect) -> Handle<Image> {
+        let fallback = if effect.is_buff() { &self.buff } else { &self.debuff };
+        self.effects.get(&crate::lang::effect_key(effect)).unwrap_or(fallback).clone()
+    }
 }
 
 /// A slot's side: an item's 16 texels plus a 2-texel rim, in screen pixels.
@@ -268,7 +281,7 @@ fn update_vitals(
     children: Query<&Children>,
     mut texts: Query<&mut Text>,
     mut shown: Local<Option<(u8, Vitals)>>,
-    locale: Res<Locale>,
+    (locale, images): (Res<Locale>, Res<HudImages>),
 ) {
     let state = (player.health, player.vitals.clone());
     if shown.as_ref() == Some(&state) && !locale.is_changed() {
@@ -286,17 +299,20 @@ fn update_vitals(
     if effects_changed && let Ok(row) = chips.single() {
         commands.entity(row).despawn_children().with_children(|row| {
             for &effect in &player.vitals.effects {
-                spawn_effect_chip(row, &font.0, &locale, effect);
+                spawn_effect_chip(row, &font.0, &locale, &images, effect);
             }
         });
     }
 }
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
-pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, effect: Effect) {
-    let chip = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
+pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, images: &HudImages, effect: Effect) {
+    let chip = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::HAIR), padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
     let color = if effect.is_buff() { ACCENT } else { ERROR };
-    parent.spawn((chip, Piece::Tooltip.image())).with_child((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
+    parent.spawn((chip, Piece::Tooltip.image(), Button, effects::EffectHover(effect), bevy::ui::RelativeCursorPosition::default(), crate::ui::widgets::HoverLight)).with_children(|chip| {
+        chip.spawn((Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::new(images.effect(effect))));
+        chip.spawn((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
+    });
 }
 
 fn update_status(

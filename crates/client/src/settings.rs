@@ -25,7 +25,7 @@ use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, LARGE, MUTED, Pressed, SCRIM, SOFT, Selected, TEXT, UiFont, button_row, panel, screen,
     shadowed, spawn_button, spawn_rule, text,
 };
-use crate::ui::widgets::space;
+use crate::ui::widgets::{HoverLight, space};
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::{DayCycle, Quality, ShadowQuality};
@@ -131,6 +131,8 @@ pub struct Settings {
     pub resolution: i32,
     /// The pixel font the interface writes with.
     pub font: InterfaceFont,
+    /// How large the interface is drawn, in percent: one of `UI_SCALES`.
+    pub ui_scale: i32,
     /// The sounds buttons and the inventory make.
     pub ui_sounds: UiSounds,
     /// Key that opens and closes the inventory.
@@ -144,6 +146,15 @@ pub struct Settings {
     pub screenshot_key: Key,
     /// The language's code (`en`, `ja`), or empty to follow the system's.
     pub language: String,
+}
+
+/// The sizes the interface can be drawn at, in percent. Steps of a quarter keep the pixel
+/// art whole on a Retina screen (each art pixel a whole number of the screen's).
+pub const UI_SCALES: [i32; 5] = [50, 75, 100, 125, 150];
+
+/// The step of `steps` nearest `value`.
+fn nearest(steps: &[i32], value: i32) -> i32 {
+    steps.iter().copied().min_by_key(|step| (step - value).abs()).unwrap_or(value)
 }
 
 /// The resolutions the world can be drawn at, in percent of the window's width and
@@ -302,6 +313,8 @@ impl Default for Settings {
             far_detail: FarDetail::default(),
             resolution: 50,
             font: InterfaceFont::default(),
+            // A little smaller than the art's own size: still whole pixels on a Retina screen.
+            ui_scale: 75,
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
@@ -598,6 +611,7 @@ enum Choice {
     Textures,
     Particles,
     Font,
+    UiScale,
     UiSounds,
     Language,
 }
@@ -607,6 +621,7 @@ impl Choice {
         match self {
             Choice::FarDetail => "settings.far_detail",
             Choice::Font => "settings.font",
+            Choice::UiScale => "settings.ui_scale",
             Choice::UiSounds => "settings.ui_sounds",
             Choice::AntiAliasing => "settings.anti_aliasing",
             Choice::ShaderPack => "settings.shader_pack",
@@ -624,6 +639,7 @@ impl Choice {
             Choice::FarDetail => words(settings.far_detail.key()),
             // Fonts and packs go by their names.
             Choice::Font => settings.font.label().into(),
+            Choice::UiScale => format!("{}%", settings.ui_scale),
             Choice::UiSounds => words(settings.ui_sounds.key()),
             Choice::AntiAliasing => words(settings.anti_aliasing.key()),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
@@ -645,6 +661,7 @@ impl Choice {
             }
             Choice::FarDetail => settings.far_detail = cycle(&FarDetail::ALL, settings.far_detail, forward),
             Choice::Font => settings.font = cycle(&InterfaceFont::ALL, settings.font, forward),
+            Choice::UiScale => settings.ui_scale = cycle(&UI_SCALES, nearest(&UI_SCALES, settings.ui_scale), forward),
             Choice::UiSounds => settings.ui_sounds = cycle(&UiSounds::ALL, settings.ui_sounds, forward),
             Choice::AntiAliasing => settings.anti_aliasing = cycle(&AntiAliasing::ALL, settings.anti_aliasing, forward),
             Choice::ShaderPack => {
@@ -868,6 +885,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         &[
             Control::Choice(Choice::Language),
             Control::Choice(Choice::Font),
+            Control::Choice(Choice::UiScale),
             Control::Choice(Choice::UiSounds),
             Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::DebugOverlay),
@@ -1069,7 +1087,7 @@ fn spawn_slider(row: &mut ChildSpawnerCommands, font: &Handle<Font>, slider: Sli
     row.spawn(Node { width: Val::Px(CONTROL_WIDTH), align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|control| {
         control.spawn((Button, SliderTrack(slider), RelativeCursorPosition::default(), area)).with_children(|area| {
             area.spawn((track, Piece::Well.image())).with_children(|track| {
-                track.spawn((SliderFill(slider), fill, Piece::Bar.image())).with_child((knob, Piece::Knob.image()));
+                track.spawn((SliderFill(slider), fill, Piece::Bar.image())).with_child((knob, Piece::Knob.image(), HoverLight));
             });
         });
         control.spawn(value).with_child((SliderValue(slider), text(font, "", BODY, SOFT)));
@@ -1089,7 +1107,7 @@ fn spawn_switch(row: &mut ChildSpawnerCommands, font: &Handle<Font>, toggle: Tog
     let knob = Node { width: Val::Px(size.x), height: Val::Px(size.y), ..default() };
     let cell = Node { width: Val::Px(CONTROL_WIDTH), align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
     row.spawn(cell).with_children(|cell| {
-        cell.spawn((Button, Switch(toggle), track, Piece::Well.image())).with_child((knob, Piece::KnobSmall.image()));
+        cell.spawn((Button, Switch(toggle), track, Piece::Well.image(), HoverLight)).with_child((knob, Piece::KnobSmall.image(), HoverLight));
         cell.spawn((SwitchLabel(toggle), text(font, "", BODY, SOFT)));
     });
 }

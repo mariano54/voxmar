@@ -18,7 +18,7 @@ pub struct WidgetsPlugin;
 impl Plugin for WidgetsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(UiFont(FONT))
-            .add_systems(Update, (style_buttons, scroll_lists, show_scroll_more, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
+            .add_systems(Update, (style_buttons, light_hovered, scroll_lists, show_scroll_more, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
     }
 }
 
@@ -241,6 +241,34 @@ fn style_buttons(
             if let Ok(mut text) = colors.get_mut(child) {
                 text.set_if_neq(TextColor(color));
             }
+        }
+    }
+}
+
+/// Something drawn that lights up under the pointer: itself clickable, or a picture on
+/// something that is (a key cap on its button).
+#[derive(Component)]
+pub struct HoverLight;
+
+/// How much brighter a [`HoverLight`] is drawn under the pointer.
+const LIT: Color = Color::srgb(1.3, 1.3, 1.35);
+
+fn light_hovered(mut lights: Query<(Entity, &mut ImageNode), With<HoverLight>>, interactions: Query<&Interaction>, parents: Query<&ChildOf>) {
+    for (entity, mut image) in &mut lights {
+        // The nearest clickable thing it is part of, up to a slider's knob in its track.
+        let mut at = Some(entity);
+        let mut hovered = false;
+        for _ in 0..4 {
+            let Some(e) = at else { break };
+            if let Ok(interaction) = interactions.get(e) {
+                hovered = *interaction != Interaction::None;
+                break;
+            }
+            at = parents.get(e).ok().map(ChildOf::parent);
+        }
+        let color = if hovered { LIT } else { Color::WHITE };
+        if image.color != color {
+            image.color = color;
         }
     }
 }

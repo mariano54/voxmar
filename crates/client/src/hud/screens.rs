@@ -130,7 +130,7 @@ fn label_hotkeys(
                     let cap = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
                     let piece = if current { Piece::ButtonSelected } else { Piece::Button };
                     let label = shadowed(&font.0, screen.key_label(&settings), BODY, if current { GOLD } else { TEXT });
-                    key.spawn((cap, piece.image())).with_child((label, crate::lang::TightLine));
+                    key.spawn((cap, piece.image(), crate::ui::widgets::HoverLight)).with_child((label, crate::lang::TightLine));
                     key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
                 });
             }

@@ -367,7 +367,7 @@ fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &Hu
     let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), flex_shrink: 0.0, ..default() };
     let mut cell = parent.spawn((node, Piece::Well.image()));
     let Some(item) = item else { return };
-    cell.insert((Button, Silent, ViewerItem(item), RelativeCursorPosition::default())).with_children(|cell| {
+    cell.insert((Button, Silent, ViewerItem(item), RelativeCursorPosition::default(), crate::ui::widgets::HoverLight)).with_children(|cell| {
         let inset = (SLOT - 16.0 * PX) / 2.0;
         let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
         cell.spawn((icon, ImageNode::new(images.icons.get(item.0 as usize).cloned().unwrap_or_default())));
