@@ -36,6 +36,7 @@ pub mod atmosphere;
 pub mod bolts;
 pub mod cloud_map;
 pub mod cracks;
+pub mod frame_timing;
 pub mod items;
 pub mod lod;
 pub mod night;
@@ -87,6 +88,7 @@ impl Plugin for RenderPlugin {
             bolts::BoltPlugin,
         ))
             .add_plugins(warm::WarmPlugin)
+            .add_plugins(frame_timing::FrameTimingPlugin)
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
             .init_resource::<Quality>()
