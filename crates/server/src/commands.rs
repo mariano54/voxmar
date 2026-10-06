@@ -28,6 +28,9 @@ const MAX_DAY_SPEED: f32 = 1000.0;
 /// How far `/locate` looks unless told, and at most, in blocks.
 const LOCATE_RADIUS: i32 = 4000;
 const MAX_LOCATE_RADIUS: i32 = 10_000;
+/// How far `/locate ore` looks unless told: samples lie over every vein, a hundred or so
+/// blocks apart.
+const ORE_RADIUS: i32 = 1000;
 /// Seconds forced weather lasts unless the command says otherwise, and at most.
 const WEATHER_SECONDS: u32 = 300;
 const MAX_WEATHER_SECONDS: u32 = 24 * 3600;
@@ -606,7 +609,8 @@ impl Server {
     }
 
     /// `/locate biome NAME [RADIUS]`: the nearest place of a biome. `/locate gorge [RADIUS]`:
-    /// the nearest river running deep in a slot gorge.
+    /// the nearest river running deep in a slot gorge. `/locate ore [NAME] [RADIUS]`: the
+    /// nearest sample of ore on the ground over a vein (of an ore or vein named so).
     fn locate(&self, id: Source, args: &[String]) -> Reply {
         let radius = |radius: &String| -> Result<i32, Words> {
             radius
@@ -618,6 +622,10 @@ impl Server {
         let (name, radius) = match args {
             [kind] if kind == "gorge" => return self.locate_gorge(id, LOCATE_RADIUS),
             [kind, r] if kind == "gorge" => return self.locate_gorge(id, radius(r)?),
+            [kind] if kind == "ore" => return self.locate_ore(id, None, ORE_RADIUS),
+            [kind, r] if kind == "ore" && r.parse::<i32>().is_ok() => return self.locate_ore(id, None, radius(r)?),
+            [kind, name] if kind == "ore" => return self.locate_ore(id, Some(name), ORE_RADIUS),
+            [kind, name, r] if kind == "ore" => return self.locate_ore(id, Some(name), radius(r)?),
             [kind, name] if kind == "biome" => (name, LOCATE_RADIUS),
             [kind, name, r] if kind == "biome" => (name, radius(r)?),
             _ => return Err(Words::key("command.error.locate_what")),
@@ -657,6 +665,23 @@ impl Server {
                     .with("tp", format!("/tp {} {} {}", at.x, at.y + 1, at.z)))
             }
             None => Err(Words::key("command.error.gorge_not_near").with("radius", Words::text(radius))),
+        }
+    }
+
+    fn locate_ore(&self, id: Source, name: Option<&str>, radius: i32) -> Reply {
+        let position = self.position_of(id);
+        let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
+        match self.overworld.locate_ore(name, from, radius) {
+            Some((at, block)) => {
+                let offset = (IVec2::new(at.x, at.z) - from).as_vec2();
+                Ok(Words::key("command.locate.ore")
+                    .with("block", Words::Block(self.content.blocks.def(block).name.clone()))
+                    .with("place", format!("{} {} {}", at.x, at.y, at.z))
+                    .with("distance", Words::text(format!("{:.0}", offset.length())))
+                    .with("way", compass(offset))
+                    .with("tp", format!("/tp {} {} {}", at.x, at.y, at.z)))
+            }
+            None => Err(Words::key("command.error.ore_not_near").with("radius", Words::text(radius))),
         }
     }
 

@@ -82,8 +82,9 @@ pub const SERVER_LAG: Lag = Lag {
 /// Size of the gate's shots: enough to judge, quick to read back.
 const SHOT: UVec2 = UVec2::new(960, 540);
 /// Longest the whole session may take, and the world to load, in seconds of game time.
-/// The whole session has room for the gorge's longest wait on an overloaded machine.
-const TIME_LIMIT: f32 = 300.0 + GORGE_OVERLOADED_LIMIT;
+/// The whole session has room for the gorge's longest wait on an overloaded machine, and
+/// the ore's on a quiet one.
+const TIME_LIMIT: f32 = 300.0 + GORGE_OVERLOADED_LIMIT + GORGE_LOAD_LIMIT;
 const LOAD_LIMIT: f32 = 180.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
@@ -197,6 +198,9 @@ enum Step {
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
+    /// `/locate ore` finds a sample of ore on the ground, and the server's world there has
+    /// it, with its vein's ore below it.
+    Ore,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
@@ -246,6 +250,8 @@ struct Gate {
     /// Whether the player has arrived there: the river's current may carry them off while
     /// the world around loads, which says nothing about the world.
     gorge_reached: bool,
+    /// Where `/locate ore` found a sample of ore.
+    ore: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -301,6 +307,7 @@ impl Gate {
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
+            ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
@@ -485,7 +492,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
-        Step::Gorge => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
+        Step::Gorge | Step::Ore => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
         Step::Strike => STRIKE_LIMIT,
         _ => STEP_LIMIT,
@@ -703,6 +710,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
+        Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
@@ -2280,7 +2288,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("gorge"))) else {
                 if in_phase > 20.0 {
                     gate.check("gorge", Err("no answer to /locate gorge".into()));
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Ore, now);
                 }
                 return;
             };
@@ -2291,7 +2299,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("gorge", Err(format!("/locate gorge: {reply}")));
-                gate.next(Step::Recipes, now);
+                gate.next(Step::Ore, now);
                 return;
             };
             gate.gorge = at;
@@ -2332,7 +2340,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                              and the player {reached} {away:.0} blocks away"
                         )),
                     );
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Ore, now);
                 }
                 return;
             }
@@ -2370,6 +2378,123 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the walls by the water at {} {} {} stand only {walls} blocks high", at.x, water, at.z)),
             };
             gate.check("gorge", result);
+            gate.next(Step::Ore, now);
+        }
+        _ => {}
+    }
+}
+
+/// How far from the gorge `/locate ore` looks for a sample of ore: samples lie over every
+/// vein, which lie a hundred or so blocks apart.
+const ORE_RADIUS: i32 = 600;
+
+/// `/locate ore` finds a sample of ore on the ground near the gorge. Going there, the
+/// server's world has it on solid ground with ore of the same kind below it, its vein,
+/// the client has it too, and the ore around lies in veins, not alone.
+fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    match gate.phase {
+        0 => {
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.replies.clear();
+                observer.connection.send(ClientMessage::Command { line: format!("locate ore {ORE_RADIUS}") });
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("vein") || r.contains("ore"))) else {
+                if in_phase > 20.0 {
+                    gate.check("ore", Err("no answer to /locate ore".into()));
+                    gate.next(Step::Recipes, now);
+                }
+                return;
+            };
+            // "… /tp X Y Z goes there."
+            let at = reply.split("/tp ").nth(1).and_then(|rest| {
+                let n: Vec<i32> = rest.split_whitespace().take(3).filter_map(|v| v.parse().ok()).collect();
+                (n.len() == 3).then(|| IVec3::new(n[0], n[1], n[2]))
+            });
+            let Some(at) = at else {
+                gate.check("ore", Err(format!("/locate ore: {reply}")));
+                gate.next(Step::Recipes, now);
+                return;
+            };
+            gate.ore = at;
+            let net = world.resource::<Net>();
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
+            }
+            gate.advance(now);
+        }
+        2 => {
+            let at = gate.ore;
+            let held = gate.observer.as_ref().is_some_and(|o| columns_around(at).into_iter().all(|c| o.world.contains(c)));
+            let there = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2() + 0.5) < 4.0;
+            let client = world.resource::<ClientWorld>();
+            let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
+            if !(held && there && shown && in_phase > 1.0) {
+                let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
+                let limit = if load > cores { GORGE_OVERLOADED_LIMIT } else { GORGE_LOAD_LIMIT };
+                if in_phase > limit {
+                    gate.check("ore", Err(format!("the world around the sample of ore at {at} did not load in {limit:.0}s (load {load:.0} on {cores} cores)")));
+                    gate.next(Step::Recipes, now);
+                }
+                return;
+            }
+            // Standing over it, looking down at it a little from the side.
+            look(world, 0.0, -70.0);
+            gate.advance(now);
+        }
+        3 if in_phase > 0.5 => {
+            if gate.shot(world, "ore").is_none() {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let registry = client.registry.clone();
+            let Some(observer) = gate.observer.as_ref() else { return };
+            let at = gate.ore;
+            let ore_of = |block: BlockId| {
+                let def = registry.def(block);
+                def.has_tag("ore").then(|| def.drops.clone().unwrap_or_else(|| def.name.clone()))
+            };
+            let sample = observer.world.block(at).filter(|&b| registry.def(b).has_tag("ore_sample"));
+            let result = match sample {
+                None => Err(format!("no sample of ore at {at}, where /locate ore said")),
+                Some(sample) => {
+                    let def = registry.def(sample);
+                    let wanted = def.drops.clone().unwrap_or_else(|| def.name.clone());
+                    let ground = observer.world.block(at - IVec3::Y).is_some_and(|b| registry.def(b).solid);
+                    // The ore around, from the bottom of the world up to the sample: its vein
+                    // below it, and none of it lying alone.
+                    let mut ores = Vec::new();
+                    for z in -AGREE_WITHIN..=AGREE_WITHIN {
+                        for x in -AGREE_WITHIN..=AGREE_WITHIN {
+                            for y in 1..at.y {
+                                let p = IVec3::new(at.x + x, y, at.z + z);
+                                if let Some(ore) = observer.world.block(p).and_then(ore_of) {
+                                    ores.push((p, ore));
+                                }
+                            }
+                        }
+                    }
+                    let below = ores.iter().filter(|(_, o)| *o == wanted).count();
+                    let alone = ores
+                        .iter()
+                        .filter(|(p, _)| !ores.iter().any(|(q, _)| q != p && (*q - *p).abs().max_element() <= 2))
+                        .count();
+                    let drawn = client.block(at) == Some(sample);
+                    match (ground, below > 0, alone * 30 <= ores.len(), drawn) {
+                        (false, ..) => Err(format!("the {} at {at} lies on no solid ground", def.name)),
+                        (_, false, ..) => Err(format!("no {wanted} below the {} at {at}: it points to no vein", def.name)),
+                        (.., false, _) => Err(format!("{alone} of the {} ore blocks around {at} lie alone, not in veins", ores.len())),
+                        (.., false) => Err(format!("the client does not have the {} at {at}", def.name)),
+                        _ => Ok(format!("a {} at {at} over {below} blocks of {wanted} ({alone} of {} ore blocks around alone)", def.name, ores.len())),
+                    }
+                }
+            };
+            gate.check("ore", result);
             gate.next(Step::Recipes, now);
         }
         _ => {}

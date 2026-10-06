@@ -267,6 +267,10 @@ pub enum PlantModel {
     Cap,
     /// A cross with a second, straight one through it: fuller bushes and shrubs.
     Bush,
+    /// A small rock with volume, lying still on the ground: a lump with a flat top and
+    /// four sloping sides, and a chip beside it, all of the block's texture, its size
+    /// `plant_height` times the usual. Samples of ore over a vein.
+    Rock,
 }
 
 /// How an opaque block's textures vary from block to block, as Minecraft's stone, sand and

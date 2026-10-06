@@ -242,6 +242,23 @@ copied.
   of our trees (ages, clumped crowns, tiered conifers, tapering trunks) is our own.
 - Where: `crates/worldgen/src/trees.rs` and `assets/content/base/trees.ron`.
 
+### GregTech's ore veins, and StaTech Industry
+
+- Authors: the GregTech CE and GregTech Modern teams (GregTechCEu), after GregoriusT's
+  GregTech; StaTech Industry by TheStaticVoid, whose large veins come from Gregic Oregen
+- Links: https://github.com/GregTechCEu/GregTech-Modern,
+  https://github.com/TheStaticVoid/StaTech-Industry
+- Licence: LGPL-3.0 (GregTech Modern), GPL-3.0 (StaTech Industry). Techniques only: no
+  code, vein tables or textures were copied; our veins, ores and numbers are our own.
+- What we took: ore only in large veins of a few ores that belong together, sited on a
+  coarse grid, each kind drawn by weight within a band of heights; a vein's ores layered
+  from top to bottom with some scattered through it; and small samples of a vein's main
+  ore lying on the surface over it, which point down to it and give a little of the ore
+  (`crates/worldgen/src/ores.rs`, `content/base/ores.ron`, the `*_ore_sample` blocks and
+  the `Rock` plant model in `crates/engine/src/block.rs` and `voxel.wgsl`). Our own
+  additions: veins that favour or shun rock provinces, lens and pipe shapes, and
+  `/locate ore`.
+
 ## Rendering
 
 ### Complementary Reimagined, Complementary Unbound and Euphoria Patches

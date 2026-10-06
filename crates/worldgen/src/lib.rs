@@ -5,7 +5,7 @@
 //! wind), geology (continents, ranges, plateaus and valleys, from the land's router and the
 //! splines of `land.ron`), climate (temperature and precipitation as continuous fields),
 //! terrain shapes that rise with the climate (dunes, mesas, karst, volcanoes), rivers and
-//! lakes, ecology (what grows where), resources (ore veins) and terrain (blocks, caves,
+//! lakes, ecology (what grows where), ore veins and terrain (blocks, caves,
 //! trees, plants). Biomes are data (`biomes.ron` in content packages) placed over the
 //! continuous climate: they decide surface materials and what
 //! grows, while temperature, moisture and the rest stay continuous underneath, and
@@ -33,7 +33,7 @@ pub use parallel::set_helper_limit;
 #[cfg(test)]
 mod perf;
 mod rarity;
-mod resources;
+mod ores;
 mod rng;
 mod rocks;
 mod router;
@@ -262,7 +262,7 @@ const LOCATE_DEPTH: f32 = 40.0;
 impl Overworld {
     pub const ID: &'static str = "base:overworld";
     /// Bump when generation output changes.
-    pub const VERSION: u32 = 23;
+    pub const VERSION: u32 = 24;
 
     /// A generator with the base package's biomes, rock provinces and climate bands
     /// alone, for tools and distant terrain; worlds are made `with_content`.

@@ -306,6 +306,16 @@
         (name: "tin_ore", texture_variety: (turn: true, mirror: true), textures: All("tin_ore"), host: "stone", hardness: 3.0, color: (170, 180, 185), tags: ["ore", "metal:tin", "natural"]),
         (name: "silver_ore", texture_variety: (turn: true, mirror: true), textures: All("silver_ore"), host: "stone", hardness: 3.0, color: (200, 205, 215), rarity: Uncommon, tags: ["ore", "metal:silver", "natural"]),
         (name: "aetherite_ore", texture_variety: (turn: true, mirror: true), textures: All("aetherite_ore"), host: "deepslate", light: 4, hardness: 4.0, color: (150, 90, 240), rarity: VeryRare, tags: ["ore", "gem", "natural", "deep", "wonder", "glowing", "alchemy:aether"]),
+        // Samples of ore on the ground over a vein (ores.ron): small rocks with ore in them that
+        // point down to it, and give a piece of its ore.
+        (name: "coal_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("coal_ore"), host: "stone", hardness: 0.5, drops: "coal_ore", color: (90, 90, 90), tags: ["ore_sample", "natural"]),
+        (name: "copper_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("copper_ore"), host: "stone", hardness: 0.5, drops: "copper_ore", color: (150, 110, 80), tags: ["ore_sample", "natural"]),
+        (name: "iron_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("iron_ore"), host: "stone", hardness: 0.5, drops: "iron_ore", color: (160, 140, 120), tags: ["ore_sample", "natural"]),
+        (name: "gold_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("gold_ore"), host: "stone", hardness: 0.5, drops: "gold_ore", color: (200, 180, 80), tags: ["ore_sample", "natural"]),
+        (name: "silver_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("silver_ore"), host: "stone", hardness: 0.5, drops: "silver_ore", color: (200, 205, 215), tags: ["ore_sample", "natural"]),
+        (name: "cobalt_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("cobalt_ore"), host: "stone", hardness: 0.5, drops: "cobalt_ore", color: (60, 90, 200), tags: ["ore_sample", "natural"]),
+        (name: "diamond_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("diamond_ore"), host: "stone", hardness: 0.5, drops: "diamond_ore", color: (100, 200, 200), tags: ["ore_sample", "natural"]),
+        (name: "aetherite_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("aetherite_ore"), host: "deepslate", light: 2, hardness: 0.5, drops: "aetherite_ore", color: (150, 90, 240), tags: ["ore_sample", "natural"]),
         // Building
         (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "building"]),
         (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),

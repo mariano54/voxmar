@@ -80,6 +80,7 @@ changes don't move it, and checks:
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
 | cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
 | gorge | `/locate gorge`, then goes there | the server's world has water there between walls standing six blocks over it on both sides, within eight blocks |
+| ore | `/locate ore`, then goes there and looks down | the server's world has a sample of ore there on solid ground, with ore of the same kind below it within seven blocks across (its vein), the client has the sample, and no more than one in thirty of the ore blocks around lies alone (no other ore within two blocks) |
 | pipelines | everything from the world loading to leaving it | no pipeline compiles meanwhile: on Metal each is a hitch in the frame it is first needed, a few hundred ms on a fresh build. What shows only now and then is warmed at load (`render::warm`: other players, creatures, breaking, the menu blur); something new drawn on first use fails this until it is warmed too |
 | leave | quits to the title screen | the world closes cleanly |
 
