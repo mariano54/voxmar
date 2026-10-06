@@ -9,7 +9,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid),
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid), `--recipes NAME` / `--uses NAME` (open the recipe viewer on an item),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
@@ -105,6 +105,8 @@ struct Options {
     level_up: Option<String>,
     /// `--tend CREATURE`: summon one and feed it until the shot.
     tend: Option<String>,
+    /// `--recipes NAME`, `--uses NAME`: open the recipe viewer on an item.
+    lookup: Option<(String, bool)>,
     /// `--grid A,B,C,D`: items to lay into the crafting grid.
     grid: Option<Vec<String>>,
     /// `--tab NAME`: the settings tab to open; `--guide SKILL`: the skill guide to open.
@@ -154,6 +156,7 @@ fn parse_options() -> Result<Options, String> {
         loading: false,
         strike: None,
         tend: None,
+        lookup: None,
         grid: None,
         level_up: None,
         tab: None,
@@ -203,6 +206,8 @@ fn parse_options() -> Result<Options, String> {
             "--strike" => options.strike = Some(value()?),
             "--level-up" => options.level_up = Some(value()?),
             "--tend" => options.tend = Some(value()?),
+            "--recipes" => options.lookup = Some((value()?, false)),
+            "--uses" => options.lookup = Some((value()?, true)),
             "--grid" => options.grid = Some(value()?.split(',').map(str::to_owned).collect()),
             "--tab" => options.tab = Some(value()?),
             "--guide" => options.guide = Some(value()?),
@@ -377,6 +382,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(skill) = options.guide {
         app.insert_resource(hud::character::StartGuide(skill));
+    }
+    if let Some((name, uses)) = options.lookup {
+        app.insert_resource(hud::recipes::StartLookup(name, uses));
     }
     // Slow frames of real play are recorded for later (see slow_frames.rs); captures and
     // gate runs, which run on a busy machine by design, are not.

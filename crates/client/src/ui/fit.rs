@@ -1,6 +1,6 @@
-//! Text that does not fit: every visible text whose glyphs reach past its own node
-//! or past an element it sits in (a panel, button, chip, meter, slot: anything drawn, or
-//! anything that clips), by more than a pixel. The gate walks every screen in every
+//! Text that does not fit: every visible text whose glyphs reach past its own node, or
+//! come within a pixel of the inside of an element it sits in (a panel, button, chip,
+//! meter, slot: anything drawn), or past anything that clips. The gate walks every screen in every
 //! language with it, so a longer translation or a taller font shows up as a failure
 //! rather than as words spilling out of a button.
 
@@ -10,8 +10,10 @@ use bevy::ui::UiGlobalTransform;
 
 /// Pixels (of the 1920-wide layout) text may reach past its box before it counts.
 const SLACK: f32 = 1.0;
-/// The width of a drawn element's frame: one pixel of its art.
+/// The width of a drawn element's frame (one pixel of its art), and the room words keep
+/// inside it on every side (one more): words that touch a frame count as not fitting.
 const FRAME: f32 = crate::ui::skin::PX;
+const ROOM: f32 = crate::ui::skin::PX;
 
 /// A text reaching past a box: what it says, and how far past it reaches on each side
 /// (left, right, top, bottom), in logical pixels.
@@ -24,12 +26,17 @@ pub struct Spill {
     pub size: Vec2,
     /// The text's lines' size.
     pub lines: Vec2,
+    /// Another text it runs into, if that is the trouble.
+    pub over: Option<String>,
 }
 
 impl std::fmt::Display for Spill {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let sides = ["left", "right", "top", "bottom"];
         let past: Vec<String> = self.past.iter().zip(sides).filter(|(by, _)| **by > SLACK).map(|(by, side)| format!("{by:.0} px {side}")).collect();
+        if let Some(other) = &self.over {
+            return write!(f, "{:?} runs into {other:?}", self.text);
+        }
         let what = if self.own { "its own box" } else { "the element it sits in" };
         let (size, lines) = (self.size, self.lines);
         write!(f, "{:?} ({:.0}×{:.0}) reaches past {what} ({:.0}×{:.0}) by {}", self.text, lines.x, lines.y, size.x, size.y, past.join(", "))
@@ -80,13 +87,40 @@ pub fn find(world: &mut World) -> Vec<Spill> {
             Some((entity, text.0.clone(), Rect { min: min + ink.min * scale, max: min + ink.max * scale }, own))
         })
         .collect();
+    // Texts running into one another, as far as each shows (a scrolling list hides what
+    // lies past its edges).
+    let shown: Vec<(usize, Rect)> = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (entity, _, lines, _))| {
+            let mut seen = *lines;
+            let mut at = *entity;
+            while let Ok(parent) = parents.get(world, at).map(ChildOf::parent) {
+                at = parent;
+                let Ok((node, transform, style, ..)) = boxes.get(world, at) else { break };
+                if style.overflow.x != OverflowAxis::Visible || style.overflow.y != OverflowAxis::Visible {
+                    seen = seen.intersect(rect(node, transform));
+                }
+            }
+            (seen.width() > 0.0 && seen.height() > 0.0).then_some((i, seen))
+        })
+        .collect();
+    for (a, &(i, first)) in shown.iter().enumerate() {
+        for &(j, second) in &shown[a + 1..] {
+            let both = first.intersect(second);
+            if both.width() > SLACK && both.height() > SLACK {
+                let text = candidates[i].1.clone();
+                found.push(Spill { text, past: [0.0; 4], own: false, size: second.size(), lines: first.size(), over: Some(candidates[j].1.clone()) });
+            }
+        }
+    }
     for (entity, text, lines, own) in candidates {
 
         // Across, a text past its own box runs into its neighbours. Up and down, a glyph may
         // stand a little proud of a one-line box (`TightLine`): the element around it judges.
         let by = past(lines, own);
         if spills(&by, false) {
-            found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size() });
+            found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size(), over: None });
             continue;
         }
         // Past a scrolling list, lines may be cut off above and below by every box out to
@@ -102,12 +136,13 @@ pub fn find(world: &mut World) -> Vec<Spill> {
                 continue;
             }
             vertical &= style.overflow.y != OverflowAxis::Scroll;
-            // A drawn element's frame is one of its pixels wide: words belong inside it.
+            // A drawn element's frame is one of its pixels wide: words belong inside it, with
+            // room to spare.
             let outer = rect(node, transform);
-            let inner = if image { outer.inflate(-FRAME) } else { outer };
+            let inner = if drawn { outer.inflate(-(FRAME + ROOM)) } else { outer };
             let by = past(lines, inner);
             if node.size().min_element() > 0.0 && spills(&by, vertical) {
-                found.push(Spill { text, past: by, own: false, size: outer.size(), lines: lines.size() });
+                found.push(Spill { text, past: by, own: false, size: outer.size(), lines: lines.size(), over: None });
                 break;
             }
         }

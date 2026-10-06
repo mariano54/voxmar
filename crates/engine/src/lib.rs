@@ -28,6 +28,7 @@ pub mod loot;
 pub mod mesh;
 pub mod movement;
 pub mod physics;
+pub mod recipe_book;
 pub mod schedule;
 pub mod skill;
 pub mod traits;
