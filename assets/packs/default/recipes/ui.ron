@@ -142,20 +142,6 @@
                 ".kkkkkk.",
             ]),
         ]),
-        // Hunger's sign beside its meter, as the heart is health's.
-        "ui/drumstick": (size: (9, 9), layers: [
-            Grid(legend: {'W': "#f6f2e8", 'l': "#c9ced8", 'O': "#f0a654", 'o': "#c96a26", 'a': "#7a3a14"}, rows: [
-                "......kk.",
-                ".....kWlk",
-                "....kWlk.",
-                "..kkkWk..",
-                ".kOOokk..",
-                "kOOoooak.",
-                "kOooooak.",
-                ".kooaak..",
-                "..kkkk...",
-            ]),
-        ]),
         // A slider's knob, drawn whole at two pixels per texel.
         "ui/knob": (size: (6, 9), palettes: {"frame": "ui_gold"}, layers: [
             Grid(rows: [
