@@ -67,6 +67,7 @@ changes don't move it, and checks:
 | weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
 | sky | looks at the morning sun, flies above the world's top, looks towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a lit sky from above the world, a sunset sky warmer towards the sun than away, stars |
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
+| cook | a campfire on the pad, raw rabbit used on it, then looks at the air above | cooked (or burnt) food comes back; the fire's smoke and embers move the view over it |
 | gorge | `/locate gorge`, then goes there | the server's world has water there between walls standing six blocks over it on both sides, within eight blocks |
 | pipelines | everything from the world loading to leaving it | no pipeline compiles meanwhile: on Metal each is a hitch in the frame it is first needed, a few hundred ms on a fresh build. What shows only now and then is warmed at load (`render::warm`: other players, creatures, breaking, the menu blur); something new drawn on first use fails this until it is warmed too |
 | leave | quits to the title screen | the world closes cleanly |

@@ -11,8 +11,9 @@
 //! and a dither otherwise.
 //!
 //! How a particle moves is its [`Motion`], evaluated in `particles.wgsl`. New kinds of
-//! motion (the drifting, hovering and rising of ambient particle sets) are a new variant
-//! and a new case in the shader; nothing else changes.
+//! motion are a new variant and a new case in the shader; nothing else changes. Breaking
+//! throws pieces (`Ballistic`); fires and torches give off smoke, embers and flames that
+//! `Rise` (crate::emitters).
 
 use bevy::core_pipeline::core_3d::AlphaMask3d;
 use bevy::core_pipeline::prepass::{OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey};
@@ -83,6 +84,10 @@ pub enum Motion {
     /// Thrown with its velocity: falls with gravity, slowed by drag, then hops a few times,
     /// lower each time, on the floor it was given and slides to rest.
     Ballistic = 0,
+    /// Carried up by its own warmth, as smoke, embers and flames are: moves with its
+    /// velocity slowed by drag (gravity, negative, lifts it on), wandering across in slow
+    /// loops that widen as it rises, fading in as it starts.
+    Rise = 1,
 }
 
 /// What a particle shows.
@@ -110,6 +115,11 @@ pub struct Particle {
     pub floor: f32,
     /// Width in blocks.
     pub size: f32,
+    /// Its width at the end of its life, as a multiple of `size` (0..8): smoke swells, a
+    /// flame shrinks away.
+    pub grow: f32,
+    /// How far it wanders across while it rises, in blocks (0..0.63; `Motion::Rise`).
+    pub wander: f32,
     /// Seconds; it fades out over the last part.
     pub life: f32,
     pub look: Look,
@@ -117,6 +127,9 @@ pub struct Particle {
     pub color: [u8; 4],
     /// Shines by its own light instead of being lit (fireflies, motes).
     pub glow: bool,
+    /// Glowing, it cools as it ages, dimming from yellow through orange to a dull red
+    /// (embers, sparks).
+    pub cools: bool,
     /// Sky and block light where it is, 0..=15, which light it like the terrain there.
     pub light: [u8; 2],
 }
@@ -131,10 +144,13 @@ impl Default for Particle {
             drag: 0.0,
             floor: f32::MIN,
             size: 0.1,
+            grow: 1.0,
+            wander: 0.0,
             life: 1.0,
             look: Look::Speck,
             color: [255; 4],
             glow: false,
+            cools: false,
             light: [15, 0],
         }
     }
@@ -153,7 +169,8 @@ struct GpuParticle {
     life: f32,
     gravity: f32,
     drag: f32,
-    /// layer:12 | free:12 | block light:4 | sky light:4.
+    /// layer:12 | grow:6 (eighths) | wander:6 (hundredths of a block) | block light:4 |
+    /// sky light:4.
     surface: u32,
     /// corner u:8 | corner v:8 | span:8 (in 256ths of the texture) | motion:4 | flags:4
     sprite: u32,
@@ -165,6 +182,7 @@ struct GpuParticle {
 
 const FLAG_TEXTURED: u32 = 1;
 const FLAG_GLOW: u32 = 2;
+const FLAG_COOLS: u32 = 4;
 
 impl GpuParticle {
     fn new(particle: &Particle, born: f32, seed: u32) -> Self {
@@ -177,7 +195,9 @@ impl GpuParticle {
             }
             Look::Speck => (0, 0, 0),
         };
-        let flags = flags | if particle.glow { FLAG_GLOW } else { 0 };
+        let flags = flags | if particle.glow { FLAG_GLOW } else { 0 } | if particle.cools { FLAG_COOLS } else { 0 };
+        let six_bits = |x: f32| (x.round().clamp(0.0, 63.0)) as u32;
+        let shape = six_bits(particle.grow * 8.0) << 12 | six_bits(particle.wander * 100.0) << 18;
         Self {
             origin: particle.position.to_array(),
             born,
@@ -187,7 +207,7 @@ impl GpuParticle {
             life: particle.life,
             gravity: particle.gravity,
             drag: particle.drag,
-            surface: surface | block << 24 | sky << 28,
+            surface: surface | shape | block << 24 | sky << 28,
             sprite: sprite | (particle.motion as u32) << 24 | flags << 28,
             color: u32::from_le_bytes(particle.color),
             seed,
@@ -297,8 +317,8 @@ struct ParticleInbox {
 fn extract(mut main: ResMut<MainWorld>, mut inbox: ResMut<ParticleInbox>) {
     let Some(mut particles) = main.get_resource_mut::<Particles>() else { return };
     inbox.alive = particles.elapsed < particles.alive_until;
-    let spawned = std::mem::take(&mut particles.spawned);
-    inbox.spawned.extend(spawned);
+    // Moved across, so both lists keep what they have grown to.
+    inbox.spawned.append(&mut particles.spawned);
 }
 
 /// The ring of particles and the pipeline that draws them.
@@ -513,15 +533,22 @@ mod tests {
             look: Look::Texture { layer: 300, corner: Vec2::new(0.25, 0.75), span: 0.25 },
             light: [14, 3],
             glow: true,
+            cools: true,
+            grow: 3.5,
+            wander: 0.25,
+            motion: Motion::Rise,
             color: [10, 20, 30, 40],
             ..default()
         };
         let gpu = GpuParticle::new(&particle, 5.0, 0);
         assert_eq!(gpu.surface & 0xFFF, 300);
+        assert_eq!((gpu.surface >> 12 & 63, gpu.surface >> 18 & 63), (28, 25));
         assert_eq!((gpu.surface >> 24 & 15, gpu.surface >> 28), (3, 14));
         assert_eq!((gpu.sprite & 255, gpu.sprite >> 8 & 255, gpu.sprite >> 16 & 255), (64, 192, 64));
-        assert_eq!(gpu.sprite >> 24 & 15, Motion::Ballistic as u32);
-        assert_eq!(gpu.sprite >> 28, FLAG_TEXTURED | FLAG_GLOW);
+        assert_eq!(gpu.sprite >> 24 & 15, Motion::Rise as u32);
+        assert_eq!(gpu.sprite >> 28, FLAG_TEXTURED | FLAG_GLOW | FLAG_COOLS);
+        // An unchanged size packs as eight eighths.
+        assert_eq!(GpuParticle::new(&Particle::default(), 0.0, 0).surface >> 12 & 63, 8);
         assert_eq!(gpu.color.to_le_bytes(), [10, 20, 30, 40]);
     }
 

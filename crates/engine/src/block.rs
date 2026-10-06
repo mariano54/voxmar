@@ -194,6 +194,50 @@ pub struct BlockDef {
     /// How its textures vary from block to block, so a large motif does not repeat in a
     /// grid across a wall or a floor. Opaque blocks only.
     pub texture_variety: TextureVariety,
+    /// Particles it gives off while near the player: a campfire's smoke, embers and sparks,
+    /// a torch's flame. Only the client draws them.
+    pub particles: Vec<Emission>,
+}
+
+/// A stream of particles a block gives off, as the client draws it near the player. The
+/// `style` decides how they look, move and how long they last; the rest says where they
+/// start, how often, and lets a mod recolour or resize them (a green alchemist's fire).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Emission {
+    pub style: ParticleStyle,
+    /// Times a second it gives off particles, on average: they come at random moments.
+    pub rate: f32,
+    /// Particles each time: more than one makes a burst (a fire's crackle of sparks).
+    pub count: u8,
+    /// Where they start, from the cell's lower corner, in blocks.
+    pub at: [f32; 3],
+    /// How far across from `at` they may start, in blocks.
+    pub spread: f32,
+    /// sRGB colour, instead of the style's own.
+    pub color: Option<[u8; 3]>,
+    /// Scales the style's size.
+    pub size: f32,
+}
+
+impl Default for Emission {
+    fn default() -> Self {
+        Self { style: ParticleStyle::Smoke, rate: 1.0, count: 1, at: [0.5, 0.5, 0.5], spread: 0.1, color: None, size: 1.0 }
+    }
+}
+
+/// How particles a block gives off look and move.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ParticleStyle {
+    /// Soft grey puffs that rise, slow, swell and drift on the wind.
+    #[default]
+    Smoke,
+    /// Glowing motes that float up a block or two and cool to nothing.
+    Ember,
+    /// Bright pinpricks thrown up that arc over and die on the ground.
+    Spark,
+    /// Tiny tongues of flame licking up off a wick, shrinking away as they flicker.
+    Flame,
 }
 
 /// How an opaque block's textures vary from block to block, as Minecraft's stone, sand and
@@ -249,6 +293,7 @@ impl Default for BlockDef {
             item: false,
             action: None,
             texture_variety: TextureVariety::default(),
+            particles: Vec::new(),
         }
     }
 }
@@ -802,6 +847,18 @@ mod tests {
             ),
         ],
     )"#;
+
+    #[test]
+    fn emissions_take_their_defaults() {
+        let def: BlockDef = ron::from_str(
+            "(name: \"torch\", particles: [(style: Flame, rate: 10.0, at: (0.5, 0.6, 0.5)), (style: Spark, count: 4, color: Some((1, 2, 3)))])",
+        )
+        .unwrap();
+        assert_eq!(def.particles.len(), 2);
+        assert_eq!(def.particles[0], Emission { style: ParticleStyle::Flame, rate: 10.0, at: [0.5, 0.6, 0.5], ..Emission::default() });
+        assert_eq!((def.particles[1].count, def.particles[1].rate, def.particles[1].color), (4, 1.0, Some([1, 2, 3])));
+        assert!(BlockDef::default().particles.is_empty());
+    }
 
     #[test]
     fn families_expand_in_order() {

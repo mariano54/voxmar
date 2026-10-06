@@ -7,6 +7,24 @@
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
             light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire"],
+            // Smoke rising from the flames, embers floating up, and now and then a crackle
+            // of sparks (`particles`: engine/src/block.rs, `Emission`).
+            particles: [
+                (style: Smoke, rate: 6.0, at: (0.5, 0.6, 0.5), spread: 0.15),
+                (style: Ember, rate: 2.5, at: (0.5, 0.3, 0.5), spread: 0.25),
+                (style: Spark, rate: 0.3, count: 5, at: (0.5, 0.3, 0.5), spread: 0.15),
+            ],
+        ),
+        // A torch: a stick with a burning tip, to light the night. Its flame flickers, and
+        // the odd ember and wisp of smoke rise from it.
+        (
+            name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch"),
+            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"],
+            particles: [
+                (style: Flame, rate: 14.0, at: (0.5, 0.62, 0.5), spread: 0.04),
+                (style: Ember, rate: 0.3, at: (0.5, 0.7, 0.5), spread: 0.04, size: 0.7),
+                (style: Smoke, rate: 0.7, at: (0.5, 0.8, 0.5), spread: 0.02, size: 0.45),
+            ],
         ),
     ],
     families: [

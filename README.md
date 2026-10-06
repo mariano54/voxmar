@@ -184,7 +184,8 @@ resolution (75%, 50% or Full: how many pixels the world is drawn at before it is
 the window; menus and text stay sharp), field of view, FOV effects (the view widening while
 sprinting), shader pack, anti-aliasing, shadows (off, low, medium or high), light shafts
 (volumetric light), water quality, particles (All, Fewer or Off: the pieces that fly from
-broken blocks and the chips while mining), how far the hotbar sits above the bottom edge (Raise
+broken blocks and the chips while mining, and the smoke, embers, sparks and flames fires
+and torches give off), how far the hotbar sits above the bottom edge (Raise
 HUD), VSync, debug overlay, music, sound and ambience volume, mouse sensitivity, the sprint key and double-tap sprint, the zoom key
 (click it, then press a key), zoom magnification, cinematic zoom (the view follows the mouse
 smoothly while zoomed), zoom in survival, and fly speed for admins, with Resume, Save and quit
@@ -608,6 +609,10 @@ and drifting near the eye, so they look like volumes from inside and above; rain
 and fills puddles; frost whitens it; clouds cast moving shadows. Rainbows, halos, aurora,
 shooting stars and heat haze are in the weather the client receives and wait on the renderer
 (docs/weather-effects.md). F3 shows the weather and the effects showing.
+Blocks give off particles near the player as their data says (`particles` in blocks.ron, each a
+`style` of Smoke, Ember, Spark or Flame with its rate, burst count, place, spread, colour and size;
+`engine::block::Emission`): a campfire smokes, floats embers and now and then crackles with
+sparks, and a torch's flame flickers. The nearest 32 within 24 blocks emit (client/src/emitters.rs).
 
 An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
 (kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`
