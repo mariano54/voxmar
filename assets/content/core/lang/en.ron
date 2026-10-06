@@ -214,6 +214,7 @@
 
     "hud.died.title": "You died",
     "hud.died": "Press R, or the button, to respawn.",
+    "hud.died.cost": "You keep your three most valuable items; the rest lies where you fell for 30 minutes.",
     "hud.respawn": "Respawn",
 
     "inventory.key.right_click": "Right-click",
@@ -267,6 +268,13 @@
     "skills.needs": "Needs {skill} {level}",
     "tools.needs": "Needs a {tool} or better",
     "fishing.nothing": "Nothing bites.",
+    "death.left": "What you did not keep lies where you fell, at {x} {y} {z}, for {minutes} minutes. Only you can pick it up.",
+    "farming.planter_needs": "Your {plant} will not grow back in a planter until Farming {level}.",
+    "hearth.claimed": "The hearth is lit: this is your home now, and you will wake here.",
+    "hearth.incomplete": "The hearth needs a ring of stone around the hearthstone and a chimney two blocks tall at one corner.",
+    "pouch.holds": "{count} × {item}",
+    "pouch.nothing": "Empty",
+    "pouch.hint": "Right click it in hand to empty it into your pack",
 
     "character.health": "Health",
     "character.feels_like": "Feels like {temperature}°C",
@@ -390,10 +398,11 @@
     "command.give": "Gave {count} {block}",
     "command.give.spilled": "{gave}; {left} did not fit and dropped at your feet.",
     "command.clear": "Took {count} items out of your inventory.",
+    "command.kill": "You died.",
     "command.effect": "{effect} for {seconds} seconds.",
     "command.effect.cleared": "Your timed effects are gone.",
-    "command.grow.one": "Grew {count} crop.",
-    "command.grow.other": "Grew {count} crops.",
+    "command.grow.one": "Grew {count} plant.",
+    "command.grow.other": "Grew {count} plants.",
     "command.drop": "Dropped {count} {block} at {place}.",
 
     "command.error.usage": "{why}\nUsage: {usage}",

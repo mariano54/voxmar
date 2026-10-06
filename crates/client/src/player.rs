@@ -78,6 +78,8 @@ pub struct LocalPlayer {
     pub joined: bool,
     /// The world's seed, as the server told us.
     pub seed: u64,
+    /// What the player has discovered, as the server tells it (the journal screen's data).
+    pub journal: voxmar_engine::journal::Journal,
 }
 
 impl Default for LocalPlayer {
@@ -108,6 +110,7 @@ impl Default for LocalPlayer {
             dead: false,
             joined: false,
             seed: 0,
+            journal: Default::default(),
         }
     }
 }
