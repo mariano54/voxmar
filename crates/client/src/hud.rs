@@ -6,6 +6,7 @@ pub mod console;
 pub mod creative;
 pub mod death;
 pub mod effects;
+pub mod guide;
 pub mod inventory;
 pub mod screens;
 pub mod recipes;
@@ -27,7 +28,7 @@ use crate::player::LocalPlayer;
 use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{ACCENT, BODY, ERROR, SOFT, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, SOFT, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_signed_meter};
 use crate::ui::widgets::space;
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
@@ -178,12 +179,11 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             bottom.spawn(name).with_child((HeldName, shadowed(font, "", BODY, TEXT)));
             let width = HOTBAR_SLOTS as f32 * (SLOT + GAP) - GAP + 2.0 * FRAME;
             // The effects on you, then health across the hotbar's width.
-            let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), flex_wrap: FlexWrap::Wrap, ..default() };
+            let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), row_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::INNER)), flex_wrap: FlexWrap::Wrap, ..default() };
             bottom.spawn((chips, EffectChips));
-            let meters = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
-            bottom.spawn(meters).with_children(|meters| {
-                spawn_meter(meters, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
-            });
+            // Health, the one meter: food heals rather than fills a stomach.
+            let meters = Node { width: Val::Px(width), margin: UiRect::bottom(Val::Px(space::INNER)), ..default() };
+            bottom.spawn(meters).with_children(|meters| spawn_signed_meter(meters, font, Piece::Heart, Piece::BarHealth, Val::Percent(100.0), HealthMeter));
             let frame = Node { width: Val::Px(width), height: Val::Px(SLOT + 2.0 * FRAME), padding: UiRect::all(Val::Px(FRAME)), column_gap: Val::Px(GAP), ..default() };
             bottom.spawn((frame, Piece::Frame.image())).with_children(|bar| {
                 for slot in 0..HOTBAR_SLOTS {
