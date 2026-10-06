@@ -689,11 +689,11 @@ pub fn unit_from(hash: u64) -> f32 {
 
 /// How much daylight there is at `day` ticks after the first sunrise (24,000 a day): 1
 /// through the middle of the day, 0 through the night, with ramps around sunrise and
-/// sunset (a quarter of the way up at either).
+/// sunset (a quarter of the way up at either). The sun is up two thirds of the day
+/// (`calendar::sun_height`).
 pub fn daylight(day: u64) -> f32 {
-    let t = (day % 24_000) as f32 / 24_000.0;
-    // The sun's height: up at sunrise (t = 0), highest at noon, down at sunset (t = ½).
-    let elevation = (t * std::f32::consts::TAU).sin();
+    let t = (day % 24_000) as f64 / 24_000.0;
+    let elevation = crate::calendar::sun_height(t) as f32;
     ((elevation + 0.1) / 0.35).clamp(0.0, 1.0)
 }
 
@@ -772,10 +772,10 @@ mod tests {
 
     #[test]
     fn daylight_follows_the_sun() {
-        assert_eq!(daylight(6000), 1.0);
-        assert_eq!(daylight(18_000), 0.0);
+        assert_eq!(daylight(8000), 1.0);
+        assert_eq!(daylight(20_000), 0.0);
         assert!(daylight(0) > 0.0 && daylight(0) < 1.0);
-        assert!(daylight(12_000) > 0.0 && daylight(12_000) < 1.0);
+        assert!(daylight(16_000) > 0.0 && daylight(16_000) < 1.0);
         assert_eq!(daylight(30_000), 1.0);
     }
 
