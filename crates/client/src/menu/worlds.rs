@@ -12,6 +12,7 @@ use crate::ui::widgets::{
     BODY, ButtonStyle, Disabled, ERROR, GOLD, MUTED, Pressed, SCRIM, SOFT, ScrollList, TEXT, UiFont, button_row, panel, screen,
     shadowed, spawn_button, spawn_heading, text,
 };
+use crate::ui::widgets::space;
 use super::{Notice, Screen};
 use crate::session::{self, Launch};
 use crate::settings::config_dir;
@@ -73,15 +74,15 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, locale: Res<Locale>, mut not
             spawn_heading(panel, font, "menu.singleplayer");
             let list = Node {
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(3.0 * PX),
+                row_gap: Val::Px(space::INNER),
                 max_height: Val::Px(160.0 * PX),
-                margin: UiRect::bottom(Val::Px(6.0 * PX)),
+                margin: UiRect::bottom(Val::Px(space::GAP)),
                 overflow: Overflow::scroll_y(),
                 ..default()
             };
             panel.spawn((Rows, ScrollList, list)).with_children(|list| spawn_rows(list, font, &locale, &worlds));
             let error = notice.0.take().unwrap_or_default();
-            panel.spawn((ErrorText, Node { margin: UiRect::bottom(Val::Px(3.0 * PX)), ..default() }, text(font, error, BODY, ERROR)));
+            panel.spawn((ErrorText, Node { margin: UiRect::bottom(Val::Px(space::INNER)), ..default() }, text(font, error, BODY, ERROR)));
 
             let normal = Node { flex_direction: FlexDirection::Column, ..default() };
             panel.spawn((Confirmation(false), normal)).with_children(|column| {
@@ -109,7 +110,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, locale: Res<Locale>, mut not
 
 fn spawn_rows(list: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, worlds: &[(WorldSave, WorldMeta)]) {
     if worlds.is_empty() {
-        let node = Node { padding: UiRect::vertical(Val::Px(14.0 * PX)), justify_content: JustifyContent::Center, ..default() };
+        let node = Node { padding: UiRect::vertical(Val::Px(space::OUTER)), justify_content: JustifyContent::Center, ..default() };
         list.spawn(node).with_child((Localized("worlds.none"), text(font, "", BODY, MUTED)));
         return;
     }
@@ -118,8 +119,8 @@ fn spawn_rows(list: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Loc
         let node = Node {
             flex_direction: FlexDirection::Column,
             flex_shrink: 0.0,
-            row_gap: Val::Px(2.0 * PX),
-            padding: UiRect::new(Val::Px(6.0 * PX), Val::Px(6.0 * PX), Val::Px(5.0 * PX), Val::Px(6.0 * PX)),
+            row_gap: Val::Px(space::HAIR),
+            padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
             ..default()
         };
         let mode = locale.get(match meta.mode {

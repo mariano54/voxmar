@@ -14,6 +14,7 @@ use crate::ui::widgets::{
     BODY, ButtonStyle, Disabled, ERROR, MUTED, Pressed, SCRIM, SOFT, TextField, UiFont, button_row, spawn_heading,
     label, panel, screen, spawn_button, spawn_text_field, text,
 };
+use crate::ui::widgets::space;
 use super::{Notice, Screen};
 use crate::session::{self, Launch};
 use crate::settings::config_dir;
@@ -109,12 +110,12 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, connecting: Option<Res<Conne
             spawn_text_field(panel, font, &address, "join.address.placeholder", 80, 0, true, AddressField);
             if !recent.is_empty() {
                 panel.spawn(label(font, "join.recent"));
-                let list = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0 * PX), ..default() };
+                let list = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::INNER), ..default() };
                 panel.spawn(list).with_children(|list| {
                     for address in &recent {
                         let node = Node {
                             height: Val::Px(18.0 * PX),
-                            padding: UiRect::horizontal(Val::Px(6.0 * PX)),
+                            padding: UiRect::horizontal(Val::Px(space::GAP)),
                             align_items: AlignItems::Center,
                             ..default()
                         };
@@ -124,7 +125,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, connecting: Option<Res<Conne
                 });
             }
             let message = notice.0.take().unwrap_or_default();
-            panel.spawn((Status, Node { margin: UiRect::top(Val::Px(6.0 * PX)), ..default() }, text(font, message, BODY, ERROR)));
+            panel.spawn((Status, Node { margin: UiRect::top(Val::Px(space::GAP)), ..default() }, text(font, message, BODY, ERROR)));
             panel.spawn(button_row(6.0 * PX)).with_children(|row| {
                 spawn_button(row, font, "join.join", ButtonStyle::Primary, Action::Join);
                 spawn_button(row, font, "menu.back", ButtonStyle::Secondary, Action::Back);

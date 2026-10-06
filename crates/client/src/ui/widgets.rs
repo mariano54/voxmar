@@ -37,6 +37,22 @@ pub const ERROR: Color = Color::srgb(1.0, 0.52, 0.48);
 /// The dark under pixel text.
 pub const SHADOW: Color = Color::srgba(0.0, 0.0, 0.02, 0.85);
 
+/// The interface's spacing scale, in screen pixels: every margin, padding and gap is one
+/// of these steps, so screens line up with one another and nothing sits on a border.
+pub mod space {
+    use crate::ui::skin::PX;
+    /// Between lines of one block, and a mark and its words.
+    pub const HAIR: f32 = 2.0 * PX;
+    /// Inside small elements (chips, caps, tiles), and between rows of a list.
+    pub const INNER: f32 = 4.0 * PX;
+    /// Between tiles, controls and the elements of a section.
+    pub const GAP: f32 = 6.0 * PX;
+    /// Between the sections of a panel.
+    pub const SECTION: f32 = 8.0 * PX;
+    /// A panel's margin inside its frame.
+    pub const OUTER: f32 = 12.0 * PX;
+}
+
 /// Text sizes: two screen pixels per font pixel for body text, three for headings.
 pub const BODY: f32 = font_size(2);
 pub const LARGE: f32 = font_size(3);
@@ -64,7 +80,7 @@ pub fn shadowed(font: &Handle<Font>, value: impl Into<String>, size: f32, color:
 /// A panel's title, in gold between two teal diamonds, over a gold rule. `key` names its
 /// words in the player's language (see `lang`), as for every widget with a label.
 pub fn spawn_heading(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, key: &'static str) {
-    let row = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(4.0 * PX), ..default() };
+    let row = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
     parent.spawn(row).with_children(|row| {
         row.spawn(shadowed(font, "◆", BODY, ACCENT));
         row.spawn((Localized(key), shadowed(font, "", LARGE, GOLD)));
@@ -84,7 +100,7 @@ pub fn spawn_rule(parent: &mut ChildSpawnerCommands, margin: f32) {
 
 /// A small label above a group of controls.
 pub fn label(font: &Handle<Font>, key: &'static str) -> (Node, Localized, Text, TextFont, TextColor) {
-    let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(7.0 * PX), Val::Px(3.0 * PX));
+    let margin = UiRect::new(Val::ZERO, Val::ZERO, Val::Px(space::SECTION), Val::Px(space::INNER));
     let (text, font, color) = text(font, "", BODY, MUTED);
     (Node { margin, ..default() }, Localized(key), text, font, color)
 }
@@ -108,7 +124,7 @@ pub fn panel(width: f32) -> (Node, ImageNode) {
     let node = Node {
         width: Val::Px(width),
         flex_direction: FlexDirection::Column,
-        padding: UiRect::new(Val::Px(14.0 * PX), Val::Px(14.0 * PX), Val::Px(10.0 * PX), Val::Px(12.0 * PX)),
+        padding: UiRect::all(Val::Px(space::OUTER)),
         ..default()
     };
     (node, Piece::Panel.image())
@@ -116,7 +132,7 @@ pub fn panel(width: f32) -> (Node, ImageNode) {
 
 /// A row of equally wide buttons.
 pub fn button_row(top: f32) -> Node {
-    Node { margin: UiRect::top(Val::Px(top)), column_gap: Val::Px(4.0 * PX), ..default() }
+    Node { margin: UiRect::top(Val::Px(top)), column_gap: Val::Px(space::INNER), ..default() }
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -253,7 +269,7 @@ pub struct ScrollMore(Entity);
 
 /// The arrow for `list`, which must share `parent` with it.
 pub fn spawn_scroll_more(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, list: Entity) {
-    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(PX), bottom: Val::ZERO, ..default() };
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(space::INNER), bottom: Val::Px(space::HAIR), ..default() };
     parent.spawn((corner, shadowed(font, "▼", BODY, GOLD), ScrollMore(list), Visibility::Hidden, ZIndex(1)));
 }
 
@@ -297,7 +313,7 @@ pub fn spawn_text_field(
 ) -> Entity {
     let node = Node {
         height: Val::Px(BUTTON),
-        padding: UiRect::horizontal(Val::Px(5.0 * PX)),
+        padding: UiRect::horizontal(Val::Px(space::INNER)),
         align_items: AlignItems::Center,
         overflow: Overflow::clip(),
         ..default()
