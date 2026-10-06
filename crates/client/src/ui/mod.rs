@@ -3,6 +3,7 @@
 //! input method.
 
 pub mod blur;
+pub mod fit;
 pub mod ime;
 pub mod skin;
 pub mod sound;
@@ -17,7 +18,22 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((widgets::WidgetsPlugin, blur::BlurPlugin, sound::UiSoundPlugin, ime::ImePlugin))
-            .add_systems(Update, change_font.run_if(resource_changed::<Settings>));
+            .add_systems(Update, (change_font.run_if(resource_changed::<Settings>), fit_scale));
+    }
+}
+
+/// The smallest view the interface is laid out for at full size, in logical pixels: the
+/// tallest screen (the menu, with its keys under it) and the widest, with a margin.
+const FULL_SIZE: Vec2 = Vec2::new(1100.0, 720.0);
+
+/// Halves the interface in a view smaller than [`FULL_SIZE`], so every screen fits on it;
+/// half keeps the pixel art whole, one screen pixel to each of its pixels.
+fn fit_scale(cameras: Query<&Camera, With<Camera3d>>, mut scale: ResMut<UiScale>) {
+    let Some(view) = cameras.iter().filter_map(Camera::logical_viewport_size).reduce(Vec2::max) else { return };
+    let fits = view.x >= FULL_SIZE.x && view.y >= FULL_SIZE.y;
+    let wanted = if fits { 1.0 } else { 0.5 };
+    if scale.0 != wanted {
+        scale.0 = wanted;
     }
 }
 

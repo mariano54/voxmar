@@ -24,6 +24,7 @@ use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::widgets::{ACCENT, BODY, ERROR, LARGE, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
+use crate::ui::widgets::space;
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
 
@@ -141,7 +142,7 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
         })
         .with_children(|center| {
             center.spawn((Node { width: Val::Px(15.0 * PX), height: Val::Px(15.0 * PX), ..default() }, ImageNode::new(images.crosshair.clone())));
-            let track = Node { width: Val::Px(22.0 * PX), height: Val::Px(4.0 * PX), margin: UiRect::top(Val::Px(4.0 * PX)), padding: UiRect::all(Val::Px(PX)), ..default() };
+            let track = Node { width: Val::Px(22.0 * PX), height: Val::Px(4.0 * PX), margin: UiRect::top(Val::Px(space::INNER)), padding: UiRect::all(Val::Px(PX)), ..default() };
             center.spawn((track, Piece::Well.image(), Visibility::Hidden, BreakBar)).with_child((
                 Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() },
                 Piece::Bar.image(),
@@ -158,13 +159,13 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             ..default()
         };
         root.spawn((Bottom, bottom)).with_children(|bottom| {
-            let name = Node { height: Val::Px(12.0 * PX), margin: UiRect::bottom(Val::Px(2.0 * PX)), ..default() };
+            let name = Node { height: Val::Px(12.0 * PX), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
             bottom.spawn(name).with_child((HeldName, shadowed(font, "", BODY, TEXT)));
             let width = HOTBAR_SLOTS as f32 * (SLOT + GAP) - GAP + 2.0 * FRAME;
             // The effects on you, then health and hunger side by side.
-            let chips = Node { width: Val::Px(width), column_gap: Val::Px(2.0 * PX), margin: UiRect::bottom(Val::Px(2.0 * PX)), flex_wrap: FlexWrap::Wrap, ..default() };
+            let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), flex_wrap: FlexWrap::Wrap, ..default() };
             bottom.spawn((chips, EffectChips));
-            let meters = Node { width: Val::Px(width), column_gap: Val::Px(2.0 * PX), margin: UiRect::bottom(Val::Px(2.0 * PX)), ..default() };
+            let meters = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
             bottom.spawn(meters).with_children(|meters| {
                 spawn_meter(meters, font, Piece::BarHealth, Val::Percent(50.0), HealthMeter);
                 spawn_meter(meters, font, Piece::BarHunger, Val::Percent(50.0), HungerMeter);
@@ -180,7 +181,7 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             });
         });
 
-        root.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(4.0 * PX), top: Val::Px(4.0 * PX), ..default() }, shadowed(font, "", BODY, TEXT), DebugText));
+        root.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(space::INNER), top: Val::Px(space::INNER), ..default() }, shadowed(font, "", BODY, TEXT), DebugText));
         root.spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -307,7 +308,7 @@ fn update_vitals(
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
 pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, effect: Effect) {
-    let chip = Node { padding: UiRect::axes(Val::Px(4.0 * PX), Val::Px(3.0 * PX)), ..default() };
+    let chip = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
     let color = if effect.is_buff() { ACCENT } else { ERROR };
     parent.spawn((chip, Piece::Tooltip.image())).with_child((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
 }

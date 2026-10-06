@@ -19,6 +19,8 @@
 //! `--strike CREATURE` summons one beside the player and strikes it once, a moment before
 //! the shot, to show the target readout with its health; `--level-up SKILL` notes that skill's
 //! next level as reached just before the shot, to show how a new level is announced.
+//! `--grid A,B,C,D` lays one of each named item (or nothing, for an empty name) into the
+//! inventory's crafting grid once the world settles, to show what it makes.
 //! `--tend CREATURE` summons one as soon as the world settles and keeps feeding it from the
 //! hotbar until the shot, which tames it and then readies it to breed (give the food with
 //! `--command`, and time with `--wait`).
@@ -90,6 +92,8 @@ pub struct CapturePlugin {
     pub level_up: Option<String>,
     /// The creature to summon and keep feeding until the shot (see the module docs).
     pub tend: Option<String>,
+    /// Items to lay into the crafting grid (see the module docs).
+    pub grid: Option<Vec<String>>,
     /// Width and height of the shot, in pixels.
     pub size: UVec2,
     /// Screen pixels per interface pixel, as a window on a Retina display has 2.
@@ -147,6 +151,8 @@ impl Plugin for CapturePlugin {
             face_creature: self.face_creature,
             strike: self.strike.clone(),
             tend: self.tend.clone(),
+            grid: self.grid.clone(),
+            fit_listed: false,
             fed_at: 0.0,
             summoned: false,
             struck: false,
@@ -158,13 +164,13 @@ impl Plugin for CapturePlugin {
         .add_systems(PostStartup, render_offscreen.run_if(|state: Res<Capture>| !state.windowed))
         .add_systems(
             Update,
-            (target_ui.run_if(|state: Res<Capture>| !state.windowed), capture, measure_flicker.after(capture), record_clip.after(capture)),
+            (target_ui.run_if(|state: Res<Capture>| !state.windowed), capture, measure_flicker.after(capture), record_clip.after(capture), list_spills.after(capture)),
         )
         .add_systems(
             Update,
             mine.after(crate::interact::InteractSystems).before(crate::breaking::EffectSystems).run_if(in_state(Screen::InGame)),
         )
-        .add_systems(Update, (hold, press, dig, showcase).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
+        .add_systems(Update, (hold, press, dig, showcase, fill_grid).before(crate::interact::InteractSystems).run_if(in_state(Screen::InGame)))
         .add_systems(
             PostUpdate,
             (apply_pose.run_if(in_state(Screen::InGame)), hold_time)
@@ -203,6 +209,9 @@ struct Capture {
     face_creature: bool,
     strike: Option<String>,
     tend: Option<String>,
+    grid: Option<Vec<String>>,
+    /// Whether the texts that do not fit were listed for the shot.
+    fit_listed: bool,
     /// When `--tend` last fed its creature.
     fed_at: f32,
     summoned: bool,
@@ -456,6 +465,49 @@ fn showcase(
         player.pitch = to.y.atan2(to.xz().length());
         ui.cursor_locked = true;
         mouse.press(MouseButton::Left);
+    }
+}
+
+/// Lays `--grid`'s items into the crafting grid as the inventory's clicks would, once
+/// the world has settled; the server does the moving.
+fn fill_grid(
+    mut state: ResMut<Capture>,
+    player: Res<LocalPlayer>,
+    world: Res<ClientWorld>,
+    actions: Res<crate::Actions>,
+    net: Res<crate::net::Net>,
+) {
+    if state.settled_at.is_none() {
+        return;
+    }
+    let Some(names) = state.grid.take() else { return };
+    let mut taken = vec![0u8; voxmar_engine::inventory::SLOTS];
+    for (i, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
+        let item = world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")));
+        let from = (0..voxmar_engine::inventory::SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| Some(stack.item) == item && stack.count > taken[s]));
+        let Some(from) = from else {
+            warn!("--grid: no {name} in the inventory");
+            continue;
+        };
+        taken[from] += 1;
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + i) as u8, count: 1 };
+        net.propose(actions.0.expect("core:transfer"), target);
+    }
+}
+
+/// Lists every text in the shot that does not fit its element (see `ui::fit`).
+fn list_spills(world: &mut World) {
+    let state = world.resource::<Capture>();
+    if state.taken_at.is_none() || state.fit_listed {
+        return;
+    }
+    world.resource_mut::<Capture>().fit_listed = true;
+    let spills = crate::ui::fit::find(world);
+    if spills.is_empty() {
+        info!("fit: every text fits");
+    }
+    for spill in spills {
+        warn!("fit: {spill}");
     }
 }
 

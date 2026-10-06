@@ -86,6 +86,12 @@ impl Locale {
         self.find("language.line_height").and_then(|value| value.parse().ok()).filter(|&h: &f32| (1.0..3.0).contains(&h)).unwrap_or(1.2)
     }
 
+    /// How tall the one line of a [`TightLine`] text is, in font sizes: the letters' own
+    /// height in the language's font (`language.tight_line`), 1 unless given.
+    pub fn tight_line_height(&self) -> f32 {
+        self.find("language.tight_line").and_then(|value| value.parse().ok()).filter(|&h: &f32| (1.0..2.0).contains(&h)).unwrap_or(1.0)
+    }
+
     /// What a condition (well fed, chilly) is called.
     pub fn effect(&self, effect: Effect) -> String {
         self.get_or(&format!("effect.{}", effect_key(effect)), effect.title()).to_owned()
@@ -159,9 +165,10 @@ pub struct TightLine;
 fn localize(locale: Res<Locale>, mut texts: Query<(Option<Ref<Localized>>, Mut<Text>, &mut LineHeight, Has<TightLine>)>) {
     let all = locale.is_changed();
     let height = LineHeight::RelativeToFont(locale.line_height());
+    let tight_height = LineHeight::RelativeToFont(locale.tight_line_height());
     for (localized, mut text, mut line, tight) in &mut texts {
         if all || text.is_added() {
-            line.set_if_neq(if tight { LineHeight::RelativeToFont(1.0) } else { height });
+            line.set_if_neq(if tight { tight_height } else { height });
         }
         if let Some(localized) = localized
             && (all || localized.is_added() || localized.is_changed())
