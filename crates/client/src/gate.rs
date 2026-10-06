@@ -212,6 +212,8 @@ struct Gate {
     readout_seen: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// The interface font before the gate tried another, to go back to.
+    font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
     failures: Vec<String>,
@@ -246,6 +248,7 @@ impl Gate {
             blows_seen: 0,
             readout_seen: false,
             spills: Vec::new(),
+            font: None,
             food_moved: false,
             failures: Vec::new(),
             passes: 0,
@@ -781,6 +784,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     },
                 );
                 set_language(world, "en");
+                // And another interface font, as the setting changes it.
+                let mut settings = world.resource_mut::<crate::settings::Settings>();
+                gate.font = Some(settings.font);
+                settings.font = crate::ui::skin::InterfaceFont::ALL.into_iter().find(|f| *f != settings.font).unwrap_or_default();
                 gate.advance(now);
             }
         }
@@ -789,6 +796,17 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let words = localized_text(world, "menu.quit_game");
                 let back = if words.as_deref() == Some("Quit game") { Ok("back in English".into()) } else { Err(format!("reads {words:?} after switching back")) };
                 gate.check("language: English", back);
+                let font = world.resource::<crate::settings::Settings>().font;
+                gate.check(
+                    "font change",
+                    match crate::lang::texts_without_a_font(world) {
+                        None => Ok(format!("every text has {}", font.label())),
+                        Some(lost) => Err(format!("in {}, {lost} have no font: every letter a box", font.label())),
+                    },
+                );
+                if let Some(font) = gate.font.take() {
+                    world.resource_mut::<crate::settings::Settings>().font = font;
+                }
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
             }
