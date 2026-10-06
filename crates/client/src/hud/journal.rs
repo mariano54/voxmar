@@ -179,7 +179,14 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 let side = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(PAGES), flex_shrink: 0.0, ..default() };
                 columns.spawn(side).with_children(|side| {
                     for (i, page) in Page::ALL.into_iter().enumerate() {
-                        let node = Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
+                        let node = Node {
+                            min_height: Val::Px(14.0 * PX),
+                            flex_shrink: 0.0,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)),
+                            ..default()
+                        };
                         let style = ButtonStyle::Secondary;
                         side.spawn((Button, style, node, style.pieces()[0].image(), PageButton(i))).with_children(|button| {
                             button.spawn((Localized(page_key(page)), shadowed(font, "", BODY, TEXT), TightLine));

@@ -50,7 +50,7 @@ fn label(
 ) {
     let Ok((camera, eye)) = camera.single() else { return };
     // Out of the way of a screen.
-    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open;
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
     let ours = player.skills_known.then(|| launch.content.skills.combat_level(&player.skills));
     let species = &launch.content.creatures;
     let mut wanted: FxHashMap<u32, (Vec2, u8)> = FxHashMap::default();
