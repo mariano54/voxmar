@@ -13,7 +13,7 @@
 //! The skin is painted through the volume ([`super::skin::paint_volume`]) and snapped to
 //! the game's pixel grid when drawn, so the surface matches the blocks.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 use super::model::{Part, Role, Swing};
 
@@ -32,7 +32,7 @@ pub struct BodyMesh {
 }
 
 /// Cells across the body's longest side.
-const CELLS: f32 = 26.0;
+const CELLS: f32 = 30.0;
 /// The smallest and largest cell, in blocks: tiny animals keep their detail, big ones stay
 /// cheap.
 const SMALLEST: f32 = 0.018;
@@ -57,6 +57,31 @@ struct Solid {
     inverse: glam::Quat,
     half: Vec3,
     round: f32,
+    form: Form,
+}
+
+/// The shape a part takes: bodies and heads swell into ellipsoids, limbs, necks and tails
+/// taper like real ones, the rest (muzzles, ears, horns, beaks) stay rounded boxes, which
+/// keeps their character.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Form {
+    Ellipsoid,
+    /// Tapering along its length (local Y) from `top` at the upper end to `bottom` at the
+    /// lower, as fractions of its half width.
+    Taper { top: f32, bottom: f32 },
+    Box,
+}
+
+fn form(role: Role) -> Form {
+    match role {
+        Role::Torso | Role::Hump | Role::Thigh | Role::Shell | Role::Carapace | Role::Mote | Role::Eye => Form::Ellipsoid,
+        Role::Head => Form::Ellipsoid,
+        Role::Leg | Role::Arm => Form::Taper { top: 1.15, bottom: 0.7 },
+        Role::Neck => Form::Taper { top: 1.0, bottom: 1.25 },
+        Role::Tail => Form::Taper { top: 1.0, bottom: 0.75 },
+        Role::Horn | Role::Stalk => Form::Taper { top: 0.6, bottom: 1.0 },
+        _ => Form::Box,
+    }
 }
 
 impl Solid {
@@ -64,12 +89,38 @@ impl Solid {
         // Nothing thinner than most of a cell, or the coarse grid loses it.
         let half = (part.size * 0.5).max(Vec3::splat(cell * 0.62));
         let round = half.min_element() * rounding(part.role);
-        Self { centre: part.centre, inverse: part.rest.inverse(), half, round }
+        // A head as an ellipsoid loses its box's corners: swell it a little to keep its
+        // volume, as an ellipsoid inside a box holds about half of it.
+        let form = form(part.role);
+        let half = if form == Form::Ellipsoid { half * 1.12 } else { half };
+        Self { centre: part.centre, inverse: part.rest.inverse(), half, round, form }
     }
 
     fn distance(&self, p: Vec3) -> f32 {
-        let q = (self.inverse * (p - self.centre)).abs() - (self.half - Vec3::splat(self.round));
-        q.max(Vec3::ZERO).length() + q.max_element().min(0.0) - self.round
+        let local = self.inverse * (p - self.centre);
+        match self.form {
+            Form::Ellipsoid => {
+                // A good approximation of an ellipsoid's distance (Inigo Quilez).
+                let k0 = (local / self.half).length();
+                let k1 = (local / (self.half * self.half)).length();
+                if k1 < 1e-6 { -self.half.min_element() } else { k0 * (k0 - 1.0) / k1 }
+            }
+            Form::Taper { top, bottom } => {
+                // A capsule along Y whose radius runs from `bottom` to `top`, its ends
+                // reaching the box's ends.
+                let r = self.half.x.min(self.half.z);
+                let (rb, rt) = (r * bottom, r * top);
+                let (y0, y1) = (-self.half.y + rb, (self.half.y - rt).max(-self.half.y + rb));
+                let t = ((local.y - y0) / (y1 - y0).max(1e-4)).clamp(0.0, 1.0);
+                let across = Vec3::new(local.x / self.half.x, 0.0, local.z / self.half.z).length() * r;
+                let along = local.y - local.y.clamp(y0, y1);
+                Vec2::new(across, along).length() - (rb + (rt - rb) * t)
+            }
+            Form::Box => {
+                let q = local.abs() - (self.half - Vec3::splat(self.round));
+                q.max(Vec3::ZERO).length() + q.max_element().min(0.0) - self.round
+            }
+        }
     }
 }
 
