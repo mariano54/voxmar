@@ -44,6 +44,10 @@ impl Server {
         let genome = &creature.genome;
         if !defs.is_empty() {
             if level >= SHOWS {
+                if let Some(breed) = genes::breed_of(defs, &def.breeds, genome) {
+                    let title = if breed.title.is_empty() { voxmar_engine::lang::title_from_id(&breed.name) } else { breed.title.clone() };
+                    lines.push(Words::key("inspect.breed").with("breed", Words::Own(def_key("breed", &format!("{}.{}", def.name, breed.name)), title)));
+                }
                 lines.push(Words::key("inspect.shows").with("traits", Words::List(shown(&def.name, defs, genome))));
             }
             if level >= CARRIES {

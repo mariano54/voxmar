@@ -124,6 +124,14 @@ pub struct BodyDef {
     /// How its skin is painted: eyes, grain, belly, markings ([`skin`]).
     #[serde(default)]
     pub skin: skin::SkinDef,
+    /// Drawn this much larger than its plan's numbers (and its box with it): small animals
+    /// a little larger than life, so they read among the grass.
+    #[serde(default = "unscaled")]
+    pub scale: f32,
+}
+
+fn unscaled() -> f32 {
+    1.0
 }
 
 impl BodyDef {
@@ -414,6 +422,9 @@ pub struct CreatureDef {
     /// most [`crate::genes::MOST`].
     #[serde(default)]
     pub genes: Vec<crate::genes::GeneDef>,
+    /// Named breeds, by their genes.
+    #[serde(default)]
+    pub breeds: Vec<crate::genes::BreedDef>,
 }
 
 fn first() -> u8 {
@@ -508,7 +519,8 @@ impl CreatureRegistry {
     /// Resolves species against the blocks (items) and skills.
     pub fn new(defs: Vec<CreatureDef>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
         let mut registry = Self::default();
-        for def in defs {
+        for mut def in defs {
+            def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
@@ -555,7 +567,7 @@ impl CreatureRegistry {
                 None => None,
             };
             let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
-            let parts = def.body.model.parts(1.0);
+            let parts = def.body.model.parts(def.body.scale);
             let layout = skin::layout(&parts);
             let modules = behaviours
                 .iter()
