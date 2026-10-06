@@ -298,6 +298,7 @@ impl Server {
                     kin: &kin,
                     food,
                     mate,
+                    kept: creature.owner.is_some(),
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };

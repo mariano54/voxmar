@@ -55,10 +55,15 @@ Every file is optional in a package; any package can add to any of them.
             body: (
                 size: (0.5, 0.45),                 // width, height of the collision box
                 model: Quadruped(                  // a part plan from the part library
-                    body: (0.36, 0.3, 0.5), head: (0.28, 0.26, 0.28), legs: 0.12,
-                    ears: Some((0.08, 0.24)), tail: Some(Puff),
+                    body: (0.3, 0.26, 0.42), head: (0.22, 0.21, 0.24), legs: 0.1, snout: (0.12, 0.08, 0.04),
+                    ears: (0.07, 0.22), ear_lean: 8.0, tail: (0.1, 0.1, 0.08), tail_droop: -40.0, haunches: true,
                 ),
-                colours: [(150, 120, 90), (230, 220, 200)],   // coat, belly
+                colours: [(150, 118, 86), (226, 216, 196), (70, 52, 40)],   // coat, belly, features
+                skin: (                            // how each individual's skin is painted
+                    eyes: Side,                    // Side (prey) | Front (hunters) | Cluster | Hidden
+                    fur: 0.12, belly: 0.32, feet: (196, 184, 164),
+                    markings: [EarTips(colour: (82, 62, 46)), Muzzle(colour: (196, 176, 150))],
+                ),
             ),
             movement: (style: Hopper, walk: 2.2, run: 7.0, turn: 360.0, jump: 1.2),
             habitat: (
@@ -90,6 +95,26 @@ Every file is optional in a package; any package can add to any of them.
     ],
 )
 ```
+
+### Bodies and skins
+
+A body is boxes (engine `creature::model`), from a plan or listed one by one with
+`Boxes([(role: Head, size: .., at: .., pivot: .., turn: (pitch, yaw, roll), colour: 0,
+swing: Head), ..])`. The plans: `Quadruped` (optional `neck: (length, lift°)`, `hump`,
+`haunches`, `snout`, `ears` with `ear_lean`, `tail` with `tail_droop`, `horns` shaped
+`Straight | Curved | Curl | Antlers | Tusks`), `Biped` (`tilt`, folded `wings`, `beak`,
+`crest` and `wattle` in the fourth colour, `tail` with `tail_lift`, or `arms` for walkers),
+`Crawler` (jointed legs) and `Blob` (`shell`, eye `stalks`, circling `motes`). Each box
+has a role (torso, head, ear, leg, horn, wing...) and a swing (leg, head, tail, ear, wing,
+scuttle, orbit), which is all the animation needs.
+
+Every individual gets its own skin, painted at 32 texels a block from the species'
+colours and `skin` (engine `creature::skin`): eyes with a pupil and catchlight, hooves or
+paws, pale ear insides, a ragged belly line, grain, feather rows, shell rings, and the
+markings (`Spots`, `Stripes`, `Socks`, `TailTip`, `Mask`, `Saddle`, `Muzzle`, `Blaze`,
+`EarTips`, `Dorsal`, `Hood`, `Collar`). The painter works in model space, so patterns run
+across boxes, and the seed moves spots and grain so no two animals match. Genes will feed
+the same painter.
 
 Every field after `name` has a sensible default from its `kind`, so a minimal mod creature
 is a name, a body, a habitat and a loot list; the behaviour generator fills the rest (see
