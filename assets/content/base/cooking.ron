@@ -33,5 +33,7 @@
         (input: "raw_tuna", output: "cooked_tuna", level: 50, xp: 125.0, stop_burning: 70, burnt: "burnt_food"),
         (input: "raw_swordfish", output: "cooked_swordfish", level: 65, xp: 165.0, stop_burning: 80, burnt: "burnt_food"),
         (input: "raw_glimmer_koi", output: "cooked_glimmer_koi", level: 75, xp: 230.0, stop_burning: 80, burnt: "burnt_food"),
+        // A log left in the fire burns down to charcoal, for torches; it never fails.
+        (input: "tag:log", output: "charcoal", level: 1, xp: 5.0, stop_burning: 1),
     ],
 )
