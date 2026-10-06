@@ -15,7 +15,7 @@ use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{PlayerId, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::creatures::product_ticks;
@@ -57,14 +57,9 @@ impl Server {
     }
 
     fn grant(&mut self, player: PlayerId, skill: Option<SkillId>, xp: f32) {
-        let (Some(skill), Some(p)) = (skill, self.players.get_mut(&player)) else { return };
-        let tenths = (xp * 10.0) as u32;
-        if tenths == 0 {
-            return;
+        if let Some(skill) = skill {
+            self.grant_xp(player, skill, xp);
         }
-        p.skills.grant(skill, tenths);
-        p.changed(traits::SKILLS);
-        p.connection.send(ServerMessage::Xp { skill, tenths });
     }
 
     /// Whether creature `id` takes `item` from `player`: food that tames it (if wild), food

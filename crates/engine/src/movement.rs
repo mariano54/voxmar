@@ -63,6 +63,17 @@ impl Tuning {
         ron::from_str(source).map_err(|e| RegistryError(format!("movement.ron: {e}")))
     }
 
+    /// The tuning for a player whose effects make them `factor` times as quick on foot
+    /// (flying is untouched).
+    pub fn on_foot(&self, factor: f32) -> Tuning {
+        Tuning {
+            walk_speed: self.walk_speed * factor,
+            sprint_speed: self.sprint_speed * factor,
+            sprint_jump_boost: self.sprint_jump_boost * factor,
+            ..self.clone()
+        }
+    }
+
     /// The fastest a player moves across the ground, sprint-jumping.
     pub fn top_ground_speed(&self) -> f32 {
         self.sprint_speed + self.sprint_jump_boost

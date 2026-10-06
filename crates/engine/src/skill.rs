@@ -28,6 +28,13 @@ pub struct SkillDef {
     /// crop's level is listed from crops.ron): shown in the skill's guide.
     #[serde(default)]
     pub guide: Vec<GuideStep>,
+    /// The level every player starts at (Hitpoints starts at 10, as in RuneScape).
+    #[serde(default = "first_level")]
+    pub start: u8,
+}
+
+fn first_level() -> u8 {
+    1
 }
 
 /// A line of a skill's guide: something open from `level` on.
@@ -139,6 +146,22 @@ impl SkillRegistry {
     /// Tenths of experience `level` starts at.
     pub fn xp_for(&self, level: u8) -> u32 {
         self.levels.get((level.max(1) - 1) as usize).copied().unwrap_or(u32::MAX)
+    }
+
+    /// Raises any skill below its starting level to it: for new players, and players saved
+    /// before a skill started higher.
+    pub fn start(&self, skills: &mut Skills) {
+        for id in self.ids() {
+            let start = self.xp_for(self.get(id).start);
+            if skills.xp(id) < start {
+                skills.grant(id, start - skills.xp(id));
+            }
+        }
+    }
+
+    /// The level of a skill by name, 1 if there is no such skill.
+    pub fn level_of(&self, skills: &Skills, name: &str) -> u8 {
+        self.id(name).map_or(1, |id| self.level(skills.xp(id)))
     }
 
     /// A player's combat level, RuneScape-style (docs/skills.md), from Attack, Defence and
@@ -256,6 +279,17 @@ mod tests {
         assert_eq!(skills.combat_level(&player), 3);
         player.grant(skills.id("core:attack").unwrap(), 10_000);
         assert_eq!(skills.combat_level(&player), 5);
+    }
+
+    #[test]
+    fn skills_start_at_their_level() {
+        let skills = registry(r#"(curve: RuneScape(max: 99), skills: [(name: "farming", title: "", description: ""), (name: "hitpoints", title: "", description: "", start: 10)])"#);
+        let mut player = Skills::default();
+        skills.start(&mut player);
+        assert_eq!((skills.level_of(&player, "core:farming"), skills.level_of(&player, "core:hitpoints")), (1, 10));
+        let had = player.xp(SkillId(1));
+        skills.start(&mut player);
+        assert_eq!(player.xp(SkillId(1)), had, "starting again changes nothing");
     }
 
     #[test]

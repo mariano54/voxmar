@@ -34,7 +34,6 @@ use voxmar_engine::traits;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::player::MAX_HEALTH;
 
 /// A timed action waiting for its time to be up.
 struct Timed {
@@ -111,6 +110,10 @@ impl ActionContext for Context<'_> {
 
     fn actor_hunger(&self) -> u8 {
         self.server.players[&self.agent].vitals.hunger
+    }
+
+    fn actor_mining_speed(&self) -> f32 {
+        self.server.players[&self.agent].modifiers.mining
     }
 
     fn occupied(&self, cell: IVec3) -> bool {
@@ -289,7 +292,7 @@ impl Server {
                 (Effect::Respawn, _) => {
                     let spawn = self.spawn;
                     let player = self.players.get_mut(&agent).unwrap();
-                    player.health.heal(MAX_HEALTH);
+                    player.health.heal(u8::MAX);
                     player.vitals.hunger = voxmar_engine::vitals::MAX_HUNGER;
                     player.position = spawn;
                     player.fall_start = None;
@@ -306,14 +309,17 @@ impl Server {
                     }
                 }
                 (Effect::EatHeld, _) => {
-                    let blocks = self.content.blocks.clone();
+                    let (blocks, effects) = (self.content.blocks.clone(), self.content.effects.clone());
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     let food = blocks.info(item).food;
                     player.vitals.hunger = (player.vitals.hunger + food).min(voxmar_engine::vitals::MAX_HUNGER);
                     // Cooked food also heals at once (docs/food-and-cooking.md, decision 2).
-                    let heal = blocks.def(item).tags.iter().find_map(|tag| tag.strip_prefix("heal:")?.parse::<u8>().ok()).unwrap_or(0);
+                    let tags = &blocks.def(item).tags;
+                    let heal = tags.iter().find_map(|tag| tag.strip_prefix("heal:")?.parse::<u8>().ok()).unwrap_or(0);
+                    // What it does besides (content's effects.ron): hearty, queasy and so on.
+                    player.give_effects(&effects.given_by(tags));
                     if heal > 0 && player.health.alive() {
                         player.health.heal(heal);
                         player.changed(traits::HEALTH);
