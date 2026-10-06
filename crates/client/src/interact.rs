@@ -172,8 +172,8 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.get(self.player.selected).map(|s| s.item)
     }
 
-    fn actor_hunger(&self) -> u8 {
-        self.player.vitals.hunger
+    fn actor_hurt(&self) -> bool {
+        self.player.health < self.player.max_health
     }
 
     fn actor_mining_speed(&self) -> f32 {
@@ -332,7 +332,7 @@ fn break_and_place(
                     target.mine_cooldown = 1.2;
                     target.place_cooldown = 1.2;
                 }
-                Some(Err(Rejection::Unmet(Requirement::Hungry))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
+                Some(Err(Rejection::Unmet(Requirement::Hurt))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
                 _ => {}
             }
             return;

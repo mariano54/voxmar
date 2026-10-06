@@ -108,13 +108,14 @@ pages, clicking an item looks up its recipes (right-click, its uses) and Back re
 steps. Both keys can be changed in Settings, Keys. It reads the same content the game plays
 by, so a package's recipes show up in it on their own.
 
-The character screen (C) shows health, hunger, how warm you feel and the effects on you,
-and every skill with its icon, level and progress; click a skill for its guide, what each
-level opens up. Hunger empties slowly, faster while cold, and food fills it: right-click
-food in hand to eat it. How warm you feel follows the air, water and any fire or torch
-nearby, and gives effects (Chilly, Freezing, Hot, Overheated, By the fire, Well fed, Hungry,
-Starving) that change how fast you heal and hunger, or hurt you. The HUD shows health and
-hunger as bars and the effects as chips above them. Every in-game screen lists the keys to
+The character screen (C) shows health, how warm you feel and the effects on you, and
+every skill with its icon, level and progress; click a skill for its guide, what each level
+opens up. There is no hunger: health comes back slowly by itself, and food heals (right-click
+food in hand to eat it when hurt), a tenth less each time you eat the same thing in a row,
+down to half, so a varied pack is worth carrying. How warm you feel follows the air, water
+and any fire or torch nearby, and gives effects (Chilly, Freezing, Hot, Overheated, By the
+fire) that change how fast you heal and move, or hurt you. The HUD shows health as a bar
+and the effects as chips above it. Every in-game screen lists the keys to
 the others under it. A creature under the crosshair is named at the top of the screen with
 its level, coloured RuneScape-style against your combat level (green below, gold even, red
 above), and once you strike at it, a thin bar of its health; the one you are fighting stays

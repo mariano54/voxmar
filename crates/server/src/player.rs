@@ -53,11 +53,13 @@ pub struct Player {
     /// the last second (`process::Survival`).
     pub timed_effects: Vec<(EffectId, f32)>,
     pub modifiers: Modifiers,
-    /// Hunger used up but not yet a whole point, healing and hurting under way, in points
-    /// and seconds (`process::Survival`).
-    pub exhaustion: f32,
+    /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
     pub hurt_clock: f32,
+    /// What the player ate lately, for how much the same food heals again, and the
+    /// seconds toward its next recovery.
+    pub recent_food: voxmar_engine::vitals::Recent,
+    pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
     pub last_input_tick: u64,
@@ -91,7 +93,8 @@ impl Player {
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
             modifiers: Modifiers::default(),
-            exhaustion: 0.0,
+            recent_food: Default::default(),
+            food_clock: 0.0,
             heal_clock: 0.0,
             hurt_clock: 0.0,
             fall_start: None,
@@ -152,7 +155,6 @@ impl Player {
             mode: Some(self.mode()),
             flying: self.flying,
             health: self.health,
-            hunger: self.vitals.hunger,
             inventory: self.inventory.clone(),
             skills: skills.ids().map(|id| (skills.get(id).name.clone(), self.skills.xp(id))).filter(|(_, xp)| *xp > 0).collect(),
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
@@ -230,7 +232,6 @@ impl Server {
                 player.yaw = saved.yaw;
                 player.flying = saved.flying && player.allow_flight;
                 player.health = saved.health;
-                player.vitals.hunger = saved.hunger;
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();

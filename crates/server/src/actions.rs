@@ -108,8 +108,9 @@ impl ActionContext for Context<'_> {
         self.server.players[&self.agent].held()
     }
 
-    fn actor_hunger(&self) -> u8 {
-        self.server.players[&self.agent].vitals.hunger
+    fn actor_hurt(&self) -> bool {
+        let health = self.server.players[&self.agent].health;
+        health.current < health.max
     }
 
     fn actor_mining_speed(&self) -> f32 {
@@ -301,7 +302,6 @@ impl Server {
                     let spawn = self.spawn;
                     let player = self.players.get_mut(&agent).unwrap();
                     player.health.heal(u8::MAX);
-                    player.vitals.hunger = voxmar_engine::vitals::MAX_HUNGER;
                     player.position = spawn;
                     player.fall_start = None;
                     player.changed(traits::HEALTH);
@@ -323,13 +323,12 @@ impl Server {
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
-                    let food = blocks.info(item).food;
-                    player.vitals.hunger = (player.vitals.hunger + food).min(voxmar_engine::vitals::MAX_HUNGER);
-                    // Cooked food also heals at once (docs/food-and-cooking.md, decision 2).
-                    let tags = &blocks.def(item).tags;
-                    let heal = tags.iter().find_map(|tag| tag.strip_prefix("heal:")?.parse::<u8>().ok()).unwrap_or(0);
+                    // Food heals, the same food a little less each time in a row.
+                    let share = player.recent_food.share(item);
+                    player.recent_food.eat(item);
+                    let heal = (blocks.info(item).food as f32 * share).round() as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
-                    player.give_effects(&effects.given_by(tags));
+                    player.give_effects(&effects.given_by(&blocks.def(item).tags));
                     if heal > 0 && player.health.alive() {
                         player.health.heal(heal);
                         player.changed(traits::HEALTH);

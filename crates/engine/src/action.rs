@@ -87,8 +87,8 @@ pub enum Requirement {
     CookingLevel,
     /// The actor holds something it can eat.
     HoldingFood,
-    /// The actor has room for food.
-    Hungry,
+    /// The actor has health to heal.
+    Hurt,
     /// The actor holds the kind and tier of tool the target block asks for, if any
     /// (`tools.ron`).
     ToolGood,
@@ -140,7 +140,8 @@ pub enum Effect {
     /// Pick a ripe crop's harvest, leaving the plant to fruit again, and grant the crop's
     /// harvest experience.
     Pick,
-    /// Eat one held item, filling the actor's hunger by its food value.
+    /// Eat one held item, healing the actor by its food value (less for the same food again
+    /// and again, see `vitals::Recent`).
     EatHeld,
     /// Craft what the actor's crafting grid holds: once onto the pointer
     /// (`ActionTarget::Slot(1)`), or as many times as it can into the inventory (`Slot(0)`).
@@ -233,9 +234,9 @@ pub trait ActionContext {
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
-    /// The actor's hunger points (see [`crate::vitals`]); full unless a context keeps it.
-    fn actor_hunger(&self) -> u8 {
-        crate::vitals::MAX_HUNGER
+    /// Whether the actor has health to heal; true unless a context knows otherwise.
+    fn actor_hurt(&self) -> bool {
+        true
     }
     /// How fast the actor mines, from its effects (1 normally).
     fn actor_mining_speed(&self) -> f32 {
@@ -322,7 +323,7 @@ impl ActionDef {
                 face == Face::PosY && fits && room
             }
             Requirement::HoldingFood => ctx.actor_held().is_some_and(|b| ctx.info(b).food > 0),
-            Requirement::Hungry => ctx.actor_hunger() < crate::vitals::MAX_HUNGER,
+            Requirement::Hurt => ctx.actor_hurt(),
             Requirement::SkillLevel => match ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)) {
                 Some(crop) => {
                     let crop = ctx.crops().get(crop);
