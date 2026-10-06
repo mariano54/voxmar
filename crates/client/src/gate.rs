@@ -214,6 +214,9 @@ struct Gate {
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
     gorge: IVec3,
+    /// Whether the player has arrived there: the river's current may carry them off while
+    /// the world around loads, which says nothing about the world.
+    gorge_reached: bool,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -260,6 +263,7 @@ impl Gate {
             count_before: 0,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
+            gorge_reached: false,
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
@@ -2081,7 +2085,8 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // The columns around it on the server's side and the player's, meshed (the
             // distance may still be loading; the check needs only these).
             let held = gate.observer.as_ref().is_some_and(|o| columns_around(at).into_iter().all(|c| o.world.contains(c)));
-            let there = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2()) < 4.0;
+            gate.gorge_reached |= world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2()) < 4.0;
+            let there = gate.gorge_reached;
             let client = world.resource::<ClientWorld>();
             let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
             if !(held && there && shown && in_phase > 1.0) {
@@ -2095,12 +2100,13 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let meshing = columns.iter().filter(|&&c| client.meshing(c)).count();
                     let away = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2());
                     let n = columns.len();
+                    let reached = if gate.gorge_reached { "got there and is now" } else { "never got within 4 blocks and is" };
                     gate.check(
                         "gorge",
                         Err(format!(
                             "the world around the gorge at {at} did not load in {limit:.0}s (load {load:.0} on {cores} cores): \
                              the server has {on_server} of its {n} columns, the client {on_client} with {meshing} still meshing, \
-                             and the player is {away:.0} blocks away"
+                             and the player {reached} {away:.0} blocks away"
                         )),
                     );
                     gate.next(Step::Recipes, now);
