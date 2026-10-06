@@ -1763,6 +1763,9 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::effects::{PinnedTip, ShowEffects};
     match gate.phase {
         0 => {
+            // Food eaten earlier in the run (eating heals the hurt) may have given a real
+            // one; clear it so the chip shows the effect set here.
+            world.resource::<Net>().command("effect clear");
             world.insert_resource(ShowEffects(vec![("hearty".into(), 90)]));
             world.insert_resource(PinnedTip("hearty".into()));
             gate.advance(now);
@@ -2237,8 +2240,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
-                    // A click every third of a second, as a player swings.
-                    let swing = ((now - gate.since) * 3.0).fract() < 0.15;
+                    // A well-timed click, a full charge apart, as a player swings (spamming
+                    // lands lighter blows: `combat`).
+                    let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
                     mouse(world, MouseButton::Left, swing);
                 }
                 Some(view) => {
