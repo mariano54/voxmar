@@ -174,6 +174,10 @@ impl ActionContext for ClientContext<'_> {
         self.player.vitals.hunger
     }
 
+    fn actor_mining_speed(&self) -> f32 {
+        self.content.effects.modifiers(&self.player.vitals.effects).mining
+    }
+
     fn occupied(&self, cell: IVec3) -> bool {
         Aabb::standing(self.player.position, dims::WIDTH, dims::HEIGHT).intersects(|c| c == cell)
     }
