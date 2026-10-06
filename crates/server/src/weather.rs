@@ -517,25 +517,44 @@ impl Process for Weather {
         Tier::Low
     }
 
+    /// A player who has joined is told the weather at once, so their game starts in it
+    /// rather than in a fair sky that changes a moment later.
+    fn urgent(&self, server: &Server) -> bool {
+        server.players.values().any(|p| p.joined && !self.sent.contains_key(&p.id))
+    }
+
     fn run(&mut self, server: &mut Server) {
-        self.runs += 1;
         let (tick, day) = (server.tick, server.day);
+        // Run early for a player who just joined (see `urgent`): the cells are brought up to
+        // the tick as usual, but only the newcomers are told, and what runs on a fixed
+        // second (gusts, hazards, effects' lightning, lying snow) waits for the next run.
+        let scheduled = Tier::Low.due(tick);
+        if scheduled {
+            self.runs += 1;
+        }
         let positions: Vec<(PlayerId, Vec2)> =
             server.players.values().filter(|p| p.joined).map(|p| (p.id, Vec2::new(p.position.x, p.position.z))).collect();
         let around: Vec<IVec2> = positions.iter().map(|(_, at)| at.floor().as_ivec2()).collect();
         let mut strikes = server.weather.update(&mut server.temperature, &around, tick, day);
         let dt = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
-        server.weather.update_hazards(&mut server.temperature, tick, day, dt);
+        if scheduled {
+            server.weather.update_hazards(&mut server.temperature, tick, day, dt);
+        }
 
         self.sent.retain(|id, _| server.players.contains_key(id));
         self.gusts.retain(|id, _| server.players.contains_key(id));
         for &(id, at) in &positions {
+            if !scheduled && self.sent.contains_key(&id) {
+                continue;
+            }
             let mut report = server.weather.local(&mut server.temperature, at, tick, day);
             let offset = self.gusts.entry(id).or_default();
-            *offset = advance_gusts(*offset, report.weather.wind, dt);
+            if scheduled {
+                *offset = advance_gusts(*offset, report.weather.wind, dt);
+                let dry = report.weather.precipitation < 0.05;
+                strikes.extend(server.weather.sky.effect_lightning(id, at, report.weather.lightning, dry, tick));
+            }
             report.weather.gust_offset = *offset;
-            let dry = report.weather.precipitation < 0.05;
-            strikes.extend(server.weather.sky.effect_lightning(id, at, report.weather.lightning, dry, tick));
             let quick = server.weather.recently_changed(at);
             let due = quick
                 || self.sent.get(&id).is_none_or(|(last, sent_at)| {
@@ -563,7 +582,9 @@ impl Process for Weather {
                 }
             }
         }
-        self.settle_snow(server, &around);
+        if scheduled {
+            self.settle_snow(server, &around);
+        }
     }
 }
 

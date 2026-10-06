@@ -19,7 +19,7 @@ use voxmar_engine::weather::pcg;
 use voxmar_protocol::TICKS_PER_DAY;
 use voxmar_worldgen::{DayTime, Motion, Overworld, ParticleDef, WeatherWhen, WorldContent};
 
-use super::ClientWeather;
+use super::{ClientWeather, WeatherReady};
 use crate::ambience::Surroundings;
 use crate::menu::Screen;
 use crate::player::LocalPlayer;
@@ -31,14 +31,19 @@ pub struct AtmospherePlugin;
 impl Plugin for AtmospherePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ClientAtmosphere>()
-            .add_systems(Update, (prepare, sample, combine).chain())
+            .add_systems(Update, (prepare, sample, combine).chain().in_set(AtmosphereSystems))
             .add_systems(OnExit(Screen::InGame), |mut air: ResMut<ClientAtmosphere>| *air = ClientAtmosphere::default());
     }
 }
 
-/// Seconds between samples of the land's air, and to ease most of the way to each.
+/// Where the air is worked out, for systems that read it the same frame.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AtmosphereSystems;
+
+/// Seconds between samples of the land's air, and to ease most of the way to each: long
+/// enough that walking out of a hazy swamp thins the haze gradually rather than at once.
 const SAMPLE_EVERY: f32 = 0.5;
-const EASE: f32 = 4.0;
+const EASE: f32 = 10.0;
 /// Share of nights each night-time particle set (fireflies) comes out on, and of days
 /// each daytime one (pollen, dust) does.
 const NIGHTS_OUT: f32 = 0.6;
@@ -70,6 +75,8 @@ pub struct ClientAtmosphere {
     since_sample: f32,
     /// A sample being taken off the main thread.
     sampling: Option<Receiver<Air>>,
+    /// Whether the land's air has been sampled in this game (or cannot be).
+    sampled: bool,
 }
 
 /// One set of ambient particles: how many, and how they look and move.
@@ -120,6 +127,7 @@ impl Default for ClientAtmosphere {
             building: None,
             since_sample: SAMPLE_EVERY,
             sampling: None,
+            sampled: false,
         }
     }
 }
@@ -133,15 +141,26 @@ impl ClientAtmosphere {
             self.building = None;
         }
     }
+
+    /// Whether the land's air where the player is has been sampled (or cannot be), so the
+    /// haze shown is the place's own.
+    pub fn sampled(&self) -> bool {
+        self.sampled
+    }
 }
 
 /// Builds the world's generator off the main thread once the server has said which world
 /// it is.
 fn prepare(mut air: ResMut<ClientAtmosphere>, launch: Res<Launch>) {
     if let Some(building) = &air.building {
-        if let Ok(generator) = building.try_recv() {
-            air.generator = Some(generator);
-            air.building = None;
+        match building.try_recv() {
+            Ok(generator) => {
+                air.generator = Some(generator);
+                air.building = None;
+            }
+            // It failed (and said why): the air stays the default, and nothing waits for it.
+            Err(crossbeam_channel::TryRecvError::Disconnected) => air.sampled = true,
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
         }
         return;
     }
@@ -160,12 +179,19 @@ fn prepare(mut air: ResMut<ClientAtmosphere>, launch: Res<Launch>) {
 /// Samples the land's air where the player is now and then, and eases towards it. The
 /// sample is taken off the main thread: it looks up the land's climate, which took 20-36 ms
 /// at times while the world streamed in around a flight, a frame each time.
-fn sample(time: Res<Time>, mut air: ResMut<ClientAtmosphere>, player: Res<LocalPlayer>) {
+///
+/// The first sample of a game is shown at once if the weather is not yet showing (see
+/// `WeatherReady`), so joining never fades in from the menus' air.
+fn sample(time: Res<Time>, mut air: ResMut<ClientAtmosphere>, player: Res<LocalPlayer>, ready: Res<WeatherReady>) {
     let air = &mut *air;
     air.since_sample += time.delta_secs();
     if let Some(sampling) = &air.sampling
         && let Ok(target) = sampling.try_recv()
     {
+        if !air.sampled && !ready.0 {
+            air.land = target.clone();
+        }
+        air.sampled = true;
         air.target = target;
         air.sampling = None;
     }
@@ -192,7 +218,8 @@ fn sample(time: Res<Time>, mut air: ResMut<ClientAtmosphere>, player: Res<LocalP
         });
         air.sampling = Some(receiver);
     }
-    let t = (time.delta_secs() / EASE).min(1.0);
+    // The same at any frame rate.
+    let t = 1.0 - (-time.delta_secs() / EASE).exp();
     let (land, target) = (&mut air.land, &air.target);
     land.haze = land.haze.lerp(target.haze, t);
     land.haze_density += (target.haze_density - land.haze_density) * t;
