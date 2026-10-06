@@ -20,7 +20,9 @@
 //! face covered by a block (water under ice). On plant vertices flag 1 marks the top edge,
 //! the one that sways in the wind. Plants carry no ambient occlusion: their `ao` bits hold the
 //! vertex's corner (0..=3, in the order the quad is built), and bits 25..27 how many plant
-//! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`).
+//! cells the plant stands on, so the shader can place each plant as a whole (`voxel.wgsl`);
+//! bits 28..29 its model (`PlantModel`) and 30..31 with the face's low bit which quad of the
+//! model it is, which the shader shapes; word 1 bits 14..18 its height in eighths.
 //! Bit 27 marks the same quads used as leaf cards (`ChunkMesh::fringe`), with flag 2 for a
 //! flat card, bit 28 for a conifer's needles and bits 29..31 for the face of the crown it is
 //! shaded as; their top edge is flag 1, as on a plant.
@@ -48,7 +50,7 @@ use std::cell::RefCell;
 
 use glam::{IVec2, IVec3, UVec3, Vec2};
 
-use crate::block::{BlockId, BlockRegistry, RenderKind, Tint};
+use crate::block::{BlockId, BlockRegistry, PlantModel, RenderKind, Tint};
 use crate::coords::{CHUNK_SIZE, Face, WORLD_HEIGHT};
 use crate::fluid::{self, FluidState};
 use crate::light::{LIGHT_PAD, LitRegion, MAX_LIGHT};
@@ -88,6 +90,11 @@ const OPEN_WATER_SHIFT: u32 = 14;
 const OPEN_WATER_REACH: i32 = 12;
 /// On plant vertices, bits 25..27 hold how many plant cells lie below in the same stack.
 const PLANT_STACK_SHIFT: u32 = 25;
+/// On plant vertices, bits 28..29 the model and 30..31 the quad of it (with the face's low
+/// bit); word 1 bits 14..18 the plant's height in eighths.
+const PLANT_MODEL_SHIFT: u32 = 28;
+const PLANT_PIECE_SHIFT: u32 = 30;
+const PLANT_HEIGHT_SHIFT: u32 = 14;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
 const INNER_LEAF_AO: u64 = 1;
 
@@ -1022,10 +1029,25 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
     let is_plant = |y: i32| y >= 0 && registry.info(column.block(IVec3::new(pos.x, y, pos.z))).render == RenderKind::Plant;
     let stack = (1..=3).take_while(|&d| is_plant(chunk_y + pos.y - d)).count() as u32;
     let tint = info.tints[Face::PosX as usize];
-    let w1 = info.layers[Face::PosX as usize] as u32 | (tint as u32) << 12 | (cell.light as u32) << 24;
-    for (face, (x0, z0), (x1, z1)) in [(PLANT_DIAGONAL, (0, 0), (1, 1)), (PLANT_ANTIDIAGONAL, (1, 0), (0, 1))] {
+    let height = ((info.plant_height * 8.0).round() as u32).clamp(1, 31) << PLANT_HEIGHT_SHIFT;
+    let w1 = |face: Face| info.layers[face as usize] as u32 | (tint as u32) << 12 | height | (cell.light as u32) << 24;
+    // The model's quads: two crossing for every model, then its own (see voxel.wgsl
+    // `model_across`). Each is packed as a diagonal quad, the even ones along one diagonal and
+    // the odd along the other, which gives the shader the cell and the texture's run.
+    let pieces = match info.model {
+        PlantModel::Cross => 2,
+        PlantModel::Cap => 3,
+        PlantModel::Hash | PlantModel::Bush => 4,
+    };
+    for piece in 0..pieces {
+        let (face, (x0, z0), (x1, z1)) =
+            if piece % 2 == 0 { (PLANT_DIAGONAL, (0, 0), (1, 1)) } else { (PLANT_ANTIDIAGONAL, (1, 0), (0, 1)) };
+        // A mushroom's cap lies flat at the top of its stem, of the block's top texture.
+        let cap = info.model == PlantModel::Cap && piece == 2;
+        let w1 = w1(if cap { Face::PosY } else { Face::PosX });
         let base = out.vertices.len() as u32;
         for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
+            let top = if cap { 1 } else { top };
             let p = pos + IVec3::new(dx, top, dz);
             let w0 = p.x as u32
                 | (p.y as u32) << 6
@@ -1033,7 +1055,9 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
                 | face << 18
                 | (corner as u32) << 21
                 | (top as u32) << 23
-                | stack << PLANT_STACK_SHIFT;
+                | stack << PLANT_STACK_SHIFT
+                | (info.model as u32) << PLANT_MODEL_SHIFT
+                | (piece as u32 / 2) << PLANT_PIECE_SHIFT;
             out.vertices.push([w0, w1]);
         }
         // Both windings, so back-face culling keeps one of them from either side.

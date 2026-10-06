@@ -33,6 +33,7 @@ mod breaking;
 mod capture;
 mod creatures;
 mod drops;
+mod emitters;
 mod gate;
 mod hud;
 mod interact;
@@ -334,6 +335,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins(lang::LangPlugin);
     app.add_plugins(creatures::CreaturesPlugin);
+    app.add_plugins(emitters::EmittersPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
     if std::env::var_os("VOXMAR_GPU_TIMES").is_some() {
