@@ -38,5 +38,9 @@ impl Server {
             let xp = recipe.def.xp;
             self.grant_xp(agent, skill, xp);
         }
+        if !burnt {
+            let name = self.content.blocks.def(recipe.output).name.clone();
+            self.tally(agent, "cooked", &name, 1);
+        }
     }
 }

@@ -186,6 +186,7 @@ pub(crate) fn receive(
                 player.seed = seed;
                 player.joined = true;
                 player.journal = Default::default();
+                player.quests.clear();
             }
             ServerMessage::Rejected { reason } => {
                 notice.0 = Some(locale.format("net.rejected", &[("reason", &locale.render(&reason, &world.registry))]));
@@ -281,6 +282,7 @@ pub(crate) fn receive(
             ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
             ServerMessage::Journal { entries } => player.journal.merge(entries),
+            ServerMessage::Quests { states } => player.quests = states,
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed } => creatures.struck(creature, damage, killed, time.elapsed_secs()),

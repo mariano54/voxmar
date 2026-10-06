@@ -272,6 +272,7 @@
     "farming.planter_needs": "Your {plant} will not grow back in a planter until Farming {level}.",
     "hearth.claimed": "The hearth is lit: this is your home now, and you will wake here.",
     "hearth.incomplete": "The hearth needs a ring of stone around the hearthstone and a chimney two blocks tall at one corner.",
+    "quest.done": "Quest done: {quest}.",
     "pouch.holds": "{count} × {item}",
     "pouch.nothing": "Empty",
     "pouch.hint": "Right click it in hand to empty it into your pack",
