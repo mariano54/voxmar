@@ -73,7 +73,8 @@ pub const SERVER_LAG: Lag = Lag {
 /// Size of the gate's shots: enough to judge, quick to read back.
 const SHOT: UVec2 = UVec2::new(960, 540);
 /// Longest the whole session may take, and the world to load, in seconds of game time.
-const TIME_LIMIT: f32 = 300.0;
+/// The whole session has room for the gorge's longest wait on an overloaded machine.
+const TIME_LIMIT: f32 = 300.0 + GORGE_OVERLOADED_LIMIT;
 const LOAD_LIMIT: f32 = 180.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
@@ -421,7 +422,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
-        Step::Gorge => GORGE_LOAD_LIMIT + STEP_LIMIT,
+        Step::Gorge => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
         Step::Strike => STRIKE_LIMIT,
         _ => STEP_LIMIT,
@@ -1748,8 +1749,13 @@ const GORGE_WALLS: i32 = 6;
 /// running deep in a slot gorge; the player goes there by day, and the server's world has
 /// water there with ground standing at least `GORGE_WALLS` over it on both sides, 3 to 8
 /// blocks off across it, straight or diagonally.
-/// How long the world around the gorge, a fresh area far away, is given to load.
+/// How long the world around the gorge, a fresh area far away, is given to load: it
+/// takes 2 to 5 s, so a minute on a machine with cores to spare is plenty.
 const GORGE_LOAD_LIMIT: f32 = 60.0;
+/// The same on a machine asked for more than all its cores (other threads' builds), where
+/// generating a fresh area can take ten times as long or more. The step waits rather than
+/// being skipped: a skipped check would let a landing in untested.
+const GORGE_OVERLOADED_LIMIT: f32 = 240.0;
 
 fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
@@ -1798,17 +1804,24 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
             if !(held && there && shown && in_phase > 1.0) {
-                if in_phase > GORGE_LOAD_LIMIT {
-                    // Generating a fresh area takes the cores; on a machine asked for more
-                    // than all of them (other threads' builds) it can take minutes, which
-                    // says nothing about the game. On any other it fails.
-                    let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
-                    let problem = format!("the world around the gorge at {at} did not load in {GORGE_LOAD_LIMIT:.0}s");
-                    if load > cores {
-                        info!("gate: SKIPPED gorge: {problem} (the machine was overloaded, load {load:.0} on {cores} cores)");
-                    } else {
-                        gate.check("gorge", Err(problem));
-                    }
+                let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
+                let limit = if load > cores { GORGE_OVERLOADED_LIMIT } else { GORGE_LOAD_LIMIT };
+                if in_phase > limit {
+                    // What was missing, so a slow load can be told from one that never comes.
+                    let columns = columns_around(at);
+                    let on_server = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+                    let on_client = columns.iter().filter(|&&c| client.voxels.contains(c)).count();
+                    let meshing = columns.iter().filter(|&&c| client.meshing(c)).count();
+                    let away = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2());
+                    let n = columns.len();
+                    gate.check(
+                        "gorge",
+                        Err(format!(
+                            "the world around the gorge at {at} did not load in {limit:.0}s (load {load:.0} on {cores} cores): \
+                             the server has {on_server} of its {n} columns, the client {on_client} with {meshing} still meshing, \
+                             and the player is {away:.0} blocks away"
+                        )),
+                    );
                     gate.next(Step::Recipes, now);
                 }
                 return;

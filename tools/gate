@@ -193,6 +193,31 @@ his_before=$(fingerprint)
 mkdir -p "$out/config"
 VOXMAR_CONFIG=$out/config GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+
+# A check the session skipped (a hitch, on a machine too loaded for a long frame to say
+# anything about the game) is not a pass, or a landing could go in untested: once the
+# machine has cores to spare, the session plays again on its own and that run is judged.
+skipped() { [[ -e $out/game.txt ]] && sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt" | grep -E 'gate: SKIPPED' | sed -E 's/.*gate: //'; }
+load_now() { if [[ $(uname -s) == Darwin ]]; then sysctl -n vm.loadavg | awk '{ print $2 }'; else cut -d' ' -f1 /proc/loadavg; fi; }
+if ((session)) && [[ -n $(skipped) ]]; then
+  skipped
+  cores=$(getconf _NPROCESSORS_ONLN)
+  step "checks skipped on an overloaded machine; playing again once the load is under $cores"
+  for _ in $(seq 80); do
+    awk -v l="$(load_now)" -v c="$cores" 'BEGIN { exit !(l < c) }' && break
+    sleep 15
+  done
+  mv "$out/game.txt" "$out/game-skipped.txt"
+  rm -f "$out/game.status"
+  mv "$out/tests.list" "$out/tests.list.ran" && : >"$out/tests.list"
+  VOXMAR_CONFIG=$out/config GATE_ARGS=$( ((full)) || echo --view-distance 4) \
+    $memcap 24 -- bash -c "$run" --gate "$out" 1 >"$out/rerun.txt" 2>&1
+  mv "$out/tests.list.ran" "$out/tests.list"
+  if [[ -n $(skipped) ]]; then
+    skipped
+    fail "checks were skipped twice on an overloaded machine (load $(load_now) on $cores cores); run tools/gate again when it is calmer"
+  fi
+fi
 if [[ $(fingerprint) != "$his_before" ]]; then
   # His own game saves its settings too; only a change made without it counts.
   ps -A -o args= | awk '{ n = split($1, p, "/") } p[n] == "voxmar" && !/--capture|--gate/ { found = 1 } END { exit !found }' ||
