@@ -60,11 +60,28 @@ fn rect(node: &ComputedNode, transform: &UiGlobalTransform) -> Rect {
     Rect::from_center_size(transform.translation * scale, node.size() * scale)
 }
 
+type Boxes<'a> = (&'a ComputedNode, &'a UiGlobalTransform, &'a Node, Has<ImageNode>, Option<&'a BackgroundColor>, &'a InheritedVisibility);
+
+/// As much of `area` (of `entity`) as shows past every clipping element around it (a
+/// scrolling list hides what lies beyond its edges), if any.
+fn clipped(world: &World, parents: &mut QueryState<&ChildOf>, boxes: &mut QueryState<Boxes>, entity: Entity, area: Rect) -> Option<Rect> {
+    let mut seen = area;
+    let mut at = entity;
+    while let Ok(parent) = parents.get(world, at).map(ChildOf::parent) {
+        at = parent;
+        let Ok((node, transform, style, ..)) = boxes.get(world, at) else { break };
+        if style.overflow.x != OverflowAxis::Visible || style.overflow.y != OverflowAxis::Visible {
+            seen = seen.intersect(rect(node, transform));
+        }
+    }
+    (seen.width() > 0.0 && seen.height() > 0.0).then_some(seen)
+}
+
 /// Every visible text that does not fit, each once (against the first box it spills from,
 /// its own node first).
 pub fn find(world: &mut World) -> Vec<Spill> {
     let mut texts = world.query::<(Entity, &Text, &TextLayoutInfo, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>();
-    let mut boxes = world.query::<(&ComputedNode, &UiGlobalTransform, &Node, Has<ImageNode>, Option<&BackgroundColor>, &InheritedVisibility)>();
+    let mut boxes = world.query::<Boxes>();
     let mut parents = world.query::<&ChildOf>();
     let mut found = Vec::new();
     let candidates: Vec<(Entity, String, Rect, Rect)> = texts
@@ -92,18 +109,7 @@ pub fn find(world: &mut World) -> Vec<Spill> {
     let shown: Vec<(usize, Rect)> = candidates
         .iter()
         .enumerate()
-        .filter_map(|(i, (entity, _, lines, _))| {
-            let mut seen = *lines;
-            let mut at = *entity;
-            while let Ok(parent) = parents.get(world, at).map(ChildOf::parent) {
-                at = parent;
-                let Ok((node, transform, style, ..)) = boxes.get(world, at) else { break };
-                if style.overflow.x != OverflowAxis::Visible || style.overflow.y != OverflowAxis::Visible {
-                    seen = seen.intersect(rect(node, transform));
-                }
-            }
-            (seen.width() > 0.0 && seen.height() > 0.0).then_some((i, seen))
-        })
+        .filter_map(|(i, (entity, _, lines, _))| Some((i, clipped(world, &mut parents, &mut boxes, *entity, *lines)?)))
         .collect();
     for (a, &(i, first)) in shown.iter().enumerate() {
         for &(j, second) in &shown[a + 1..] {
@@ -112,6 +118,32 @@ pub fn find(world: &mut World) -> Vec<Spill> {
                 let text = candidates[i].1.clone();
                 found.push(Spill { text, past: [0.0; 4], own: false, size: second.size(), lines: first.size(), over: Some(candidates[j].1.clone()) });
             }
+        }
+    }
+    // Up to two characters (a stack's count) may sit on an icon's corner, as on every
+    // slot; anything longer, such as a range of amounts, must not cover one.
+    // Icons are the items' and skills' pictures (not frames, bars, covers or logos).
+    let pictures: std::collections::HashSet<AssetId<Image>> = world
+        .get_resource::<crate::hud::HudImages>()
+        .map(|images| images.icons.iter().chain(&images.skills).map(Handle::id).collect())
+        .unwrap_or_default();
+    let mut images = world.query::<(Entity, &ImageNode, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>();
+    let drawn: Vec<(Entity, Rect)> = images
+        .iter(world)
+        .filter(|(_, image, node, _, visible)| visible.get() && pictures.contains(&image.image.id()) && node.size().min_element() > 0.0)
+        .map(|(entity, _, node, transform, _)| (entity, rect(node, transform)))
+        .collect();
+    let icons: Vec<Rect> = drawn.into_iter().filter_map(|(entity, icon)| clipped(world, &mut parents, &mut boxes, entity, icon)).collect();
+    for &(i, seen) in &shown {
+        let text = &candidates[i].1;
+        if text.chars().filter(|c| !c.is_whitespace()).count() <= 2 {
+            continue;
+        }
+        if let Some(icon) = icons.iter().find(|icon| {
+            let both = seen.intersect(**icon);
+            both.width() > SLACK && both.height() > SLACK
+        }) {
+            found.push(Spill { text: text.clone(), past: [0.0; 4], own: false, size: icon.size(), lines: seen.size(), over: Some("an icon".into()) });
         }
     }
     for (entity, text, lines, own) in candidates {

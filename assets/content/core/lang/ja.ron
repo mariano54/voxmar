@@ -86,6 +86,8 @@
     "settings.press_a_key": "キーを押す",
 
     "settings.value.off": "オフ",
+    "settings.value.on": "オン",
+    "settings.hint.none": "設定にポインターを合わせると説明が出ます。",
     "settings.value.low": "低",
     "settings.value.medium": "中",
     "settings.value.high": "高",
@@ -194,7 +196,9 @@
     "screen.character": "キャラクター",
     "screen.menu": "メニュー",
 
-    "hud.died": "死んでしまった。Rでリスポーン。",
+    "hud.died.title": "死んでしまった",
+    "hud.died": "Rかボタンでリスポーン。",
+    "hud.respawn": "リスポーン",
 
     "inventory.key.right_click": "右クリック",
     "inventory.hint.half": "半分",
@@ -225,6 +229,7 @@
     "recipes.title.recipes": "レシピ:{item}",
     "recipes.title.uses": "用途:{item}",
     "recipes.page": "{page} / {pages}",
+    "recipes.amount": "{item} ×{low}〜{high}",
     "recipes.previous": "◂",
     "recipes.next": "▸",
     "recipes.back": "戻る",
@@ -250,6 +255,9 @@
     "character.feels_like": "体感 {temperature}°C",
     "character.no_effects": "状態異常はありません。",
     "inventory.craft": "クラフト",
+    "inventory.craft.take": "クリックで1つ、Shift+クリックで全部作る",
+    "inventory.craft.nothing": "作れるものがない",
+    "inventory.craft.lookup": "アイテムの上で{key}を押すとレシピが見られる",
     "skills.full": "お腹がいっぱい",
     "effect.well_fed": "満腹",
     "effect.well_fed.description": "回復が2倍速くなる。",

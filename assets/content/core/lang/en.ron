@@ -98,6 +98,8 @@
     "settings.press_a_key": "Press a key",
 
     "settings.value.off": "Off",
+    "settings.value.on": "On",
+    "settings.hint.none": "Point at a setting to read what it does.",
     "settings.value.low": "Low",
     "settings.value.medium": "Medium",
     "settings.value.high": "High",
@@ -206,7 +208,9 @@
     "screen.character": "Character",
     "screen.menu": "Menu",
 
-    "hud.died": "You died. Press R to respawn.",
+    "hud.died.title": "You died",
+    "hud.died": "Press R, or the button, to respawn.",
+    "hud.respawn": "Respawn",
 
     "inventory.key.right_click": "Right-click",
     "inventory.hint.half": "half",
@@ -237,6 +241,7 @@
     "recipes.title.recipes": "Recipes: {item}",
     "recipes.title.uses": "Uses: {item}",
     "recipes.page": "{page} / {pages}",
+    "recipes.amount": "{item} × {low}–{high}",
     "recipes.previous": "◂",
     "recipes.next": "▸",
     "recipes.back": "Back",
@@ -262,6 +267,9 @@
     "character.feels_like": "Feels like {temperature}°C",
     "character.no_effects": "No effects on you.",
     "inventory.craft": "Craft",
+    "inventory.craft.take": "Click to craft one, Shift-click for all",
+    "inventory.craft.nothing": "Nothing to make",
+    "inventory.craft.lookup": "Press {key} over an item for its recipes",
     "skills.full": "You are full",
     "effect.well_fed": "Well fed",
     "effect.well_fed.description": "Heal twice as fast.",
