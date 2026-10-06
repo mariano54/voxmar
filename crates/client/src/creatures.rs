@@ -212,6 +212,8 @@ pub struct Creatures {
     left: Vec<CreatureGone>,
     /// Creatures that came into view but wait for a later frame to be built (`SPAWNS`).
     waiting: Vec<CreatureView>,
+    /// Creatures our blows landed on since the last frame, to cry out.
+    cries: Vec<u32>,
     /// Each species' body, made when the first of it is seen.
     bodies: FxHashMap<CreatureId, SpeciesBody>,
     /// The skin a body wears until its own is painted (it is hidden meanwhile).
@@ -271,6 +273,9 @@ impl Creatures {
             if let Some(shown) = self.shown.get_mut(&id) {
                 shown.flash = FLASH;
             }
+            // Every blow that lands is a cry, the killing one too: a full charge can kill
+            // a small creature outright, with no health drop seen before it died.
+            self.cries.push(id);
         }
     }
 
@@ -477,11 +482,18 @@ fn show(
             None => {}
         }
     }
+    let cried = std::mem::take(&mut creatures.cries);
+    for &id in &cried {
+        if let Some(shown) = creatures.shown.get(&id) {
+            sounds.push(sound(Sound::Hurt, id, &shown.view, shown.position, 0.0));
+        }
+    }
     let mut built = 0;
     let views: Vec<CreatureView> = std::mem::take(&mut creatures.waiting).into_iter().chain(std::mem::take(&mut creatures.inbox)).collect();
     for view in views {
         if let Some(shown) = creatures.shown.get_mut(&view.id) {
-            if view.health < shown.view.health {
+            // Hurt by someone else's blow (ours cry as the server answers them, below).
+            if view.health < shown.view.health && !cried.contains(&view.id) {
                 shown.flash = FLASH;
                 sounds.push(sound(Sound::Hurt, view.id, &view, shown.position, 0.0));
             }

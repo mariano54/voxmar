@@ -91,7 +91,10 @@ than two by two. Each recipe trains a skill (Crafting, Engineering for tools and
 Cooking for food) and may need a level in it. Tools mine what they are made for faster and
 find more there; ores ask for a Mining level and a pickaxe tier (`tools.ron`). A hoe tills
 soil into farmland, where crops are sown. See docs/tools-and-crafting.md. Cooked food, drinks and potions take a slot each, as in
-RuneScape, so what you carry is a choice (`stacking.ron`).
+RuneScape, so what you carry is a choice (`stacking.ron`). A seed pouch or herb pouch (a hide and
+twine, Crafting 3) carries up to a thousand of each kind of seed or herb in one slot: what
+you pick up goes into it while you carry it, hovering it lists what it holds, a seed pouch
+in hand sows its seeds (the first your Farming level allows), and right click empties it.
 
 Fishing: twine (three wheat) and sticks make a fishing rod at a crafting table. Hold right
 click with it over water to cast, again each time the line comes up: after a few seconds a
@@ -200,6 +203,7 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   empties it). Both load the columns they touch first. `/give BLOCK [COUNT]` hands you blocks
   (64 unless you say; what does not fit drops at your feet), so `/give water` lets you pour
   water. `/clear [ITEM]` empties your inventory, or takes every one of an item out of it.
+  `/kill` kills you, to try what dying costs.
   `/drop ITEM [COUNT] [X Y Z]` drops a stack into the world, at your feet unless you
   say where. Block names may leave out the
   package (`water` for `base:water`).
