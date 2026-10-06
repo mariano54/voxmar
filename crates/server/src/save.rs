@@ -139,6 +139,8 @@ pub struct SavedPlayer {
     pub effects: Vec<(String, f32)>,
     /// Where the player wakes after dying, if a bed or hearth set it.
     pub home: Option<[f32; 3]>,
+    /// Everything they have discovered.
+    pub journal: Vec<voxmar_engine::journal::Entry>,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -160,6 +162,8 @@ struct PlayerFile {
     /// What pouches hold, by item name.
     #[serde(default)]
     pouched: Vec<(String, u16)>,
+    #[serde(default)]
+    journal: Vec<voxmar_engine::journal::Entry>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -296,7 +300,7 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, journal: file.journal }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -320,6 +324,7 @@ impl WorldSave {
             effects: player.effects.clone(),
             home: player.home,
             pouched: held.pouched.iter().map(|&(item, count)| (registry.def(item).name.clone(), count)).collect(),
+            journal: player.journal.clone(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -551,6 +556,7 @@ mod tests {
             skills: vec![("core:farming".into(), 1234)],
             effects: vec![("base:hearty".into(), 120.5)],
             home: Some([3.5, 70.0, -2.5]),
+            journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();

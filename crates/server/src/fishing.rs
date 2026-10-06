@@ -53,5 +53,6 @@ impl Server {
         if let Some(skill) = fishing.skill {
             self.grant_xp(agent, skill, catch.def.xp);
         }
+        self.discover(agent, voxmar_engine::journal::Page::Fish, &catch.def.item, 1);
     }
 }

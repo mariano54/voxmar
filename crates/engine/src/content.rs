@@ -46,6 +46,8 @@ pub struct Content {
     pub tools: Arc<ToolRegistry>,
     /// What bites where.
     pub fishing: Arc<FishingRegistry>,
+    /// What it takes to study and master the journal's entries.
+    pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
     /// Every other definition file, by package then file name.
@@ -91,6 +93,7 @@ impl Content {
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
+        let mut journal = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -132,6 +135,10 @@ impl Content {
                     }
                     "fishing.ron" => {
                         fishing.push(FishingRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "journal.ron" => {
+                        journal.push(crate::journal::JournalRules::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "regrowth.ron" => {
@@ -191,6 +198,7 @@ impl Content {
             tools: Arc::new(tools),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
         })

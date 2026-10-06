@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 21;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -125,6 +125,8 @@ pub enum ServerMessage {
     /// so every client draws the same one.
     Lightning { at: Vec3, seed: u32, cloud: bool },
     Died,
+    /// Journal entries found or changed: all of them on joining, then those that change.
+    Journal { entries: Vec<voxmar_engine::journal::Entry> },
     /// Dropped items near the player that appeared or changed, and those that went: picked
     /// up (by `collector`), merged into another, despawned, or out of range.
     Items { changed: Vec<ItemView>, gone: Vec<ItemGone> },

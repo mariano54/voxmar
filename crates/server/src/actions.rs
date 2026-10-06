@@ -260,6 +260,9 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
+                    if let Some(broken) = self.block(block) {
+                        self.discover_broken(agent, broken);
+                    }
                     self.picked(agent, block);
                     self.reward_break(agent, block);
                     let plants = supported_by(&Context { server: self, agent }, block);

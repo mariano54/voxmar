@@ -580,6 +580,9 @@ impl Server {
             unit_from(mix(creature.seed, draws as u64 ^ self.tick << 8))
         });
         let cell = creature.body.position.floor().as_ivec3();
+        // The killer's journal: one more of the species, and each drop for the collection log.
+        let mut journal = vec![(Self::page_of(species.def.kind), species.def.name.clone(), 1)];
+        journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
         for (i, (item, count)) in found.into_iter().enumerate() {
             let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
             self.items.spawn(ItemStack { item, count }, body, dropped::PICKUP_DELAY);
@@ -590,6 +593,11 @@ impl Server {
                 p.skills.grant(skill, tenths);
                 p.changed(traits::SKILLS);
                 p.connection.send(ServerMessage::Xp { skill, tenths });
+            }
+        }
+        if let Some(player) = creature.hurt_by {
+            for (page, name, times) in journal {
+                self.discover(player, page, &name, times);
             }
         }
     }

@@ -46,6 +46,7 @@ struct Client {
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
+    journal: voxmar_engine::journal::Journal,
     /// The server, for the first player to join it (dropping it stops the server).
     _server: Option<ServerHandle>,
 }
@@ -113,6 +114,7 @@ impl Client {
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
+            journal: Default::default(),
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -194,6 +196,7 @@ impl Client {
                 }
             }
             ServerMessage::Struck { .. } => self.blows += 1,
+            ServerMessage::Journal { entries } => self.journal.merge(entries),
             ServerMessage::Items { changed, gone } => {
                 for view in changed {
                     self.items.insert(view.id, view);
@@ -1042,6 +1045,9 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
         client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
         client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
     }
+    // Both went into the journal, as did the biome stood in.
+    use voxmar_engine::journal::Page;
+    client.pump_until(|c| c.journal.get(Page::Plants, "base:poppy").is_some_and(|e| e.count == 2) && c.journal.found(Page::Biomes) > 0);
     // The far one's ground is dug out and put back: a different block, so it is gone.
     client.ok("/setblock ~-2 ~-1 ~ dirt");
     client.ok("/grow");

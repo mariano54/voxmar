@@ -7,6 +7,7 @@ mod cooking;
 mod creatures;
 mod fishing;
 mod death;
+mod journal;
 mod regrow;
 mod farm;
 mod husbandry;
@@ -502,6 +503,7 @@ impl Server {
         self.run_processes();
         self.bury_the_dead();
         self.regrow();
+        self.look_around();
         self.tick_items();
         self.tick_creatures();
         self.flow();
