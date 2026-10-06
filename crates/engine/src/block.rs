@@ -228,11 +228,15 @@ pub struct Emission {
     pub color: Option<[u8; 3]>,
     /// Scales the style's size.
     pub size: f32,
+    /// About how high they rise, in blocks, instead of the style's own: a campfire's
+    /// flames lick a block up, a candle's a hand's breadth. They rise faster and last
+    /// longer to get there.
+    pub height: Option<f32>,
 }
 
 impl Default for Emission {
     fn default() -> Self {
-        Self { style: ParticleStyle::Smoke, rate: 1.0, count: 1, at: [0.5, 0.5, 0.5], spread: 0.1, color: None, size: 1.0 }
+        Self { style: ParticleStyle::Smoke, rate: 1.0, count: 1, at: [0.5, 0.5, 0.5], spread: 0.1, color: None, size: 1.0, height: None }
     }
 }
 

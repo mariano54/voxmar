@@ -39,7 +39,7 @@ const FLAG_GLOW: u32 = 2u;
 const FLAG_COOLS: u32 = 4u;
 // What a cooling particle's colour is multiplied by at the end of its life: dimmer, and
 // redder, as blue and green go first.
-const COOLED: vec3<f32> = vec3(0.45, 0.12, 0.04);
+const COOLED: vec3<f32> = vec3(0.5, 0.2, 0.05);
 // Of the speed a particle hits the floor with, how much it hops back up.
 const BOUNCE: f32 = 0.35;
 // How quickly a particle that has touched the floor slows, per second.
@@ -141,8 +141,8 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
         center = ballistic(p, age);
     } else if motion == MOTION_RISE {
         center = rise(p, age);
-        // Thinning out slowly as it goes, and never popping in.
-        fade_time = 0.4 * p.life;
+        // Thinning out from the start (smoke is thickest over the fire), never popping in.
+        fade_time = 0.8 * p.life;
         fade_in = smoothstep(0.0, min(0.4, 0.2 * p.life), age);
     }
     let fade = (1.0 - smoothstep(p.life - fade_time, p.life, age)) * fade_in;
@@ -181,8 +181,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(block_textures, block_sampler, in.uv, layer);
     let uv_dx = dpdx(in.uv);
     let uv_dy = dpdy(in.uv);
-    // A texture piece is cut out where its texels are; a speck is a soft disc.
-    var coverage = 1.0 - smoothstep(0.55, 1.0, length(in.corner));
+    // A texture piece is cut out where its texels are. A glowing speck (a flame, an ember)
+    // is crisp, like the pixels of a fire; any other (smoke) is soft, densest in the
+    // middle.
+    let r2 = dot(in.corner, in.corner);
+    let glowing = (in.flags & FLAG_GLOW) != 0u;
+    let crisp = textured || glowing;
+    // A glowing speck narrows upwards into a tongue, as flames and embers do.
+    let taper = mix(1.0, 0.3, saturate(in.corner.y * 0.5 + 0.5));
+    let tongue = length(vec2(in.corner.x / taper, in.corner.y));
+    var coverage = select(saturate(1.0 - r2) * saturate(1.0 - r2), saturate(1.5 - 1.25 * tongue), glowing);
     var albedo = in.color.rgb;
     if textured {
         coverage = texel.a;
@@ -197,10 +205,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 #ifdef ALPHA_TO_COVERAGE
-    // Sharpened so texel edges stay crisp; the fade spreads over the samples. A speck
+    // Sharpened so texel edges stay crisp; the fade spreads over the samples. Smoke
     // stays soft: its edge thins out like its fade.
     var alpha = saturate((coverage - 0.5) / max(fwidth(coverage), 0.0001) + 0.5) * in.color.a;
-    if !textured {
+    if !crisp {
         alpha = coverage * in.color.a;
     }
     if alpha <= 0.0 {
@@ -208,8 +216,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 #else
     let alpha = 1.0;
-    let soft = select(1.0, coverage, !textured);
-    if coverage < select(0.5, 0.02, !textured) || in.color.a * soft < dither(in.clip_position.xy) {
+    let soft = select(coverage, 1.0, crisp);
+    if coverage < select(0.02, 0.5, crisp) || in.color.a * soft < dither(in.clip_position.xy) {
         discard;
     }
 #endif
