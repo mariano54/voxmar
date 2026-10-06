@@ -225,8 +225,12 @@ def tuft_grass(blades=11, h=24, plume=None, seed=0, curl=1.0):
             for x, y in tops[:5]: ellipse(c, x, y - 1, 1.8, 1.8, 'P', 3, jag=0.5, seed=int(x))
         elif plume == 'cattail':
             for x, y in tops[:3]:
-                for k in range(6): c.put(x, y - k, 'F', 1 + (k % 2)); c.put(x + 1, y - k, 'F', 0 + (k % 2))
-                c.put(x, y - 7, 'L', 2)
+                # A plump brown head, rounded at both ends, lit on its left, on a spike.
+                for k in range(9):
+                    w = 1 if k in (0, 8) else 2
+                    for dx in range(-w, w + 1):
+                        c.put(x + dx, y - k, 'F', (2 if dx < 0 else 1 if dx == 0 else 0) + (1 if (k + dx) % 3 == 0 else 0))
+                line(c, x, y - 9, x, y - 12, 'L', 3)
         elif plume == 'papyrus':
             for x, y in tops[:4]:
                 for k in range(9):

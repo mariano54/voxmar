@@ -1036,15 +1036,21 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
     // the odd along the other, which gives the shader the cell and the texture's run.
     let pieces = match info.model {
         PlantModel::Cross => 2,
-        PlantModel::Cap => 3,
+        // A stem of two quads and a cap of six: crown, four sides, gills.
+        PlantModel::Cap => 8,
         PlantModel::Hash | PlantModel::Bush => 4,
     };
     for piece in 0..pieces {
         let (face, (x0, z0), (x1, z1)) =
             if piece % 2 == 0 { (PLANT_DIAGONAL, (0, 0), (1, 1)) } else { (PLANT_ANTIDIAGONAL, (1, 0), (0, 1)) };
-        // A mushroom's cap lies flat at the top of its stem, of the block's top texture.
-        let cap = info.model == PlantModel::Cap && piece == 2;
-        let w1 = w1(if cap { Face::PosY } else { Face::PosX });
+        // A mushroom's stem is drawn with the block's side texture, its crown and sides with
+        // the top texture and its gills with the bottom one (voxel.wgsl `cap_vertex`).
+        let cap = info.model == PlantModel::Cap && piece >= 2;
+        let w1 = w1(match (cap, piece) {
+            (false, _) => Face::PosX,
+            (true, 7) => Face::NegY,
+            (true, _) => Face::PosY,
+        });
         let base = out.vertices.len() as u32;
         for (corner, (dx, dz, top)) in [(x0, z0, 0), (x1, z1, 0), (x1, z1, 1), (x0, z0, 1)].into_iter().enumerate() {
             let top = if cap { 1 } else { top };
