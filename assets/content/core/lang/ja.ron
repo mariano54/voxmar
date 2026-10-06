@@ -2,7 +2,7 @@
 {
     "language.name": "日本語",
     // Kanji fill their whole box, so lines of them need more room than letters.
-    "language.line_height": "1.45",
+    "language.line_height": "1.65",
     // Between items in a line: a middle dot never starts a line in Japanese.
     "language.dot": "・",
 
@@ -77,7 +77,7 @@
     "settings.title": "設定",
     "settings.paused": "ポーズ中",
     "settings.tab.video": "映像",
-    "settings.tab.graphics": "グラフィック",
+    "settings.tab.graphics": "画質",
     "settings.tab.audio": "サウンド",
     "settings.tab.controls": "操作",
     "settings.tab.keys": "キー",
@@ -190,8 +190,8 @@
     "inventory.hint.half": "半分",
     "inventory.key.drag": "ドラッグ",
     "inventory.hint.spread": "分配",
-    "inventory.key.double_click": "ダブルクリック",
-    "inventory.hint.gather": "まとめる",
+    "inventory.key.double_click": "Wクリック",
+    "inventory.hint.gather": "集める",
     "inventory.key.shift_click": "Shift+クリック",
     "inventory.hint.move": "移動",
     "inventory.key.numbers": "1-9",
@@ -240,7 +240,7 @@
     "effect.hot.description": "回復が遅く、お腹が少し減りやすい。",
     "effect.overheated": "熱中症",
     "effect.overheated.description": "回復せず、体力が減る。日陰か水辺へ。",
-    "character.hint": "スキルをクリックするとガイドが開きます: レベルごとにできること。",
+    "character.hint": "スキルをクリックでガイド: レベルごとにできること。",
     "character.guide_hint": "スクロールで続きへ・戻るでスキル一覧へ",
     "character.combat_level": "戦闘レベル {level}",
     "character.level": "Lv {level}",
@@ -366,7 +366,7 @@
     "skill.core.defence.guide.8": "火を防ぐ炎鱗の鎧",
     "skill.core.defence.guide.9": "水晶の甲羅の鎧",
     "skill.core.defence.guide.10": "エーテライトの鎧",
-    "skill.core.hitpoints": "ヒットポイント",
+    "skill.core.hitpoints": "HP",
     "skill.core.hitpoints.description": "どれだけの痛手に耐えられるか。体力はレベルの2倍。",
     "skill.core.hitpoints.guide.0": "体力20。攻撃を当てるたびに鍛えられる",
     "skill.core.hitpoints.guide.1": "体力40",
