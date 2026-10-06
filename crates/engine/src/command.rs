@@ -54,6 +54,8 @@ pub enum Run {
     Clear,
     /// Gives the player a timed effect, or clears them.
     Effect,
+    /// Kills the player.
+    Kill,
     /// Drops a stack of items into the world.
     Drop,
     /// Grows the crops around the player.

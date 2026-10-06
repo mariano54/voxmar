@@ -6,7 +6,7 @@
 //! - `columns/<x>.<z>.bin`: each column players have edited, as zlib-compressed postcard
 //!   together with the names of the blocks it uses, so saves survive content changes that
 //!   renumber blocks. Untouched columns are not stored: generation recreates them exactly.
-//! - `players/<name>.ron`: each player's position, game mode, health, hunger and inventory.
+//! - `players/<name>.ron`: each player's position, game mode, health, inventory, skills and effects.
 //! - `items.ron`: the dropped items lying about, by item name.
 //! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
 //!   their next is due.
@@ -80,6 +80,18 @@ pub struct WorldMeta {
     /// nothing: experience comes from what the world holds, not from placing and breaking.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
+    /// Picked wild plants waiting to grow back.
+    #[serde(default)]
+    pub regrowing: Vec<SavedRegrowing>,
+}
+
+/// How a regrowing plant is saved, by block names.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedRegrowing {
+    pub pos: [i32; 3],
+    pub plant: String,
+    pub ground: String,
+    pub due: u64,
 }
 
 fn normal_speed() -> f32 {
@@ -101,6 +113,7 @@ impl WorldMeta {
             day: None,
             day_speed: 1.0,
             placed: Vec::new(),
+            regrowing: Vec::new(),
         }
     }
 }
@@ -119,18 +132,15 @@ pub struct SavedPlayer {
     pub mode: Option<GameMode>,
     pub flying: bool,
     pub health: Health,
-    /// Hunger points (see `voxmar_engine::vitals`).
-    pub hunger: u8,
     pub inventory: Inventory,
     /// Experience in tenths, by skill name.
     pub skills: Vec<(String, u32)>,
     /// Effects food gave, by name, with seconds left.
     pub effects: Vec<(String, f32)>,
-}
-
-/// Players saved before hunger existed come back full.
-fn full() -> u8 {
-    voxmar_engine::vitals::MAX_HUNGER
+    /// Where the player wakes after dying, if a bed or hearth set it.
+    pub home: Option<[f32; 3]>,
+    /// Everything they have discovered.
+    pub journal: Vec<voxmar_engine::journal::Entry>,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -142,13 +152,18 @@ struct PlayerFile {
     mode: Option<GameMode>,
     flying: bool,
     health: Health,
-    #[serde(default = "full")]
-    hunger: u8,
     inventory: Vec<Option<(String, u8)>>,
     #[serde(default)]
     skills: Vec<(String, u32)>,
     #[serde(default)]
     effects: Vec<(String, f32)>,
+    #[serde(default)]
+    home: Option<[f32; 3]>,
+    /// What pouches hold, by item name.
+    #[serde(default)]
+    pouched: Vec<(String, u16)>,
+    #[serde(default)]
+    journal: Vec<voxmar_engine::journal::Entry>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -279,13 +294,13 @@ impl WorldSave {
                 .filter(|&(_, count)| count > 0)
                 .and_then(|(item, count)| Some(ItemStack { item: registry.id(&item)?, count: count.min(MAX_STACK) }));
         }
+        inventory.pouched = file.pouched.iter().filter_map(|(item, count)| Some((registry.id(item)?, *count))).filter(|&(_, n)| n > 0).collect();
         let position = Vec3::from(file.position);
         if !position.is_finite() {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        let hunger = file.hunger.min(voxmar_engine::vitals::MAX_HUNGER);
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, hunger, inventory, skills: file.skills, effects: file.effects }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, journal: file.journal }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -304,10 +319,12 @@ impl WorldSave {
             mode: player.mode,
             flying: player.flying,
             health: player.health,
-            hunger: player.hunger,
             inventory,
             skills: player.skills.clone(),
             effects: player.effects.clone(),
+            home: player.home,
+            pouched: held.pouched.iter().map(|&(item, count)| (registry.def(item).name.clone(), count)).collect(),
+            journal: player.journal.clone(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -324,6 +341,12 @@ pub struct SavedItem {
     pub position: [f32; 3],
     /// Seconds it has lain.
     pub age: f32,
+    /// Whose alone it is (a hash of their name), for what a player left where they died.
+    #[serde(default)]
+    pub owner: Option<u64>,
+    /// Seconds it lasts, if not the usual.
+    #[serde(default)]
+    pub lifetime: Option<f32>,
 }
 
 /// A planted crop as a save keeps it.
@@ -522,16 +545,18 @@ mod tests {
         let registry = registry(false);
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
+        inventory.pouched.push((registry.expect("base:cobblestone"), 300));
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,
             mode: Some(GameMode::Creative),
             flying: true,
             health: Health { current: 13, max: 20 },
-            hunger: 7,
             inventory,
             skills: vec![("core:farming".into(), 1234)],
             effects: vec![("base:hearty".into(), 120.5)],
+            home: Some([3.5, 70.0, -2.5]),
+            journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();

@@ -69,6 +69,11 @@ pub struct Executor {
     proposals: u64,
 }
 
+/// The validation view of the world from `agent`'s point of view.
+pub(crate) fn context(server: &Server, agent: PlayerId) -> impl ActionContext + '_ {
+    Context { server, agent }
+}
+
 /// Validation view of the world from one agent's point of view.
 struct Context<'a> {
     server: &'a Server,
@@ -93,7 +98,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn actor_level(&self, skill: SkillId) -> u8 {
-        self.server.content.skills.level(self.server.players[&self.agent].skills.xp(skill))
+        self.server.check_level(self.agent, skill)
     }
 
     fn actor_eye(&self) -> Vec3 {
@@ -108,8 +113,13 @@ impl ActionContext for Context<'_> {
         self.server.players[&self.agent].held()
     }
 
-    fn actor_hunger(&self) -> u8 {
-        self.server.players[&self.agent].vitals.hunger
+    fn actor_pouched(&self) -> Vec<BlockId> {
+        self.server.players[&self.agent].inventory.pouched.iter().map(|&(item, _)| item).collect()
+    }
+
+    fn actor_hurt(&self) -> bool {
+        let health = self.server.players[&self.agent].health;
+        health.current < health.max
     }
 
     fn actor_mining_speed(&self) -> f32 {
@@ -250,6 +260,10 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
+                    if let Some(broken) = self.block(block) {
+                        self.discover_broken(agent, broken);
+                    }
+                    self.picked(agent, block);
                     self.reward_break(agent, block);
                     let plants = supported_by(&Context { server: self, agent }, block);
                     let cells: Vec<IVec3> = std::iter::once(block).chain(plants).collect();
@@ -278,6 +292,7 @@ impl Server {
                     if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) {
                         self.placed.insert(cell);
                     }
+                    self.placed_plant(item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
@@ -298,10 +313,11 @@ impl Server {
                     }
                 }
                 (Effect::Respawn, _) => {
-                    let spawn = self.spawn;
+                    // Home, if the player has one, else world spawn.
                     let player = self.players.get_mut(&agent).unwrap();
+                    let spawn = player.home.unwrap_or(self.spawn);
+                    player.buried = false;
                     player.health.heal(u8::MAX);
-                    player.vitals.hunger = voxmar_engine::vitals::MAX_HUNGER;
                     player.position = spawn;
                     player.fall_start = None;
                     player.changed(traits::HEALTH);
@@ -309,11 +325,20 @@ impl Server {
                     player.connection.send(ServerMessage::Teleport { position: spawn });
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
+                (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
                     }
                 }
+                (Effect::EmptyPouch, _) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    if let Some(pouch) = player.held().filter(|&p| self.content.blocks.def(p).has_tag("pouch")) {
+                        player.inventory.empty_pouch(pouch);
+                        player.changed(traits::INVENTORY);
+                    }
+                }
+                (Effect::ClaimHome, ActionTarget::Block { block, .. }) => self.claim_home(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
@@ -322,13 +347,12 @@ impl Server {
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
-                    let food = blocks.info(item).food;
-                    player.vitals.hunger = (player.vitals.hunger + food).min(voxmar_engine::vitals::MAX_HUNGER);
-                    // Cooked food also heals at once (docs/food-and-cooking.md, decision 2).
-                    let tags = &blocks.def(item).tags;
-                    let heal = tags.iter().find_map(|tag| tag.strip_prefix("heal:")?.parse::<u8>().ok()).unwrap_or(0);
+                    // Food heals, the same food a little less each time in a row.
+                    let share = player.recent_food.share(item);
+                    player.recent_food.eat(item);
+                    let heal = (blocks.info(item).food as f32 * share).round() as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
-                    player.give_effects(&effects.given_by(tags));
+                    player.give_effects(&effects.given_by(&blocks.def(item).tags));
                     if heal > 0 && player.health.alive() {
                         player.health.heal(heal);
                         player.changed(traits::HEALTH);
@@ -347,9 +371,18 @@ impl Server {
     fn craft(&mut self, agent: PlayerId, all: bool) {
         let (recipes, skills) = (self.content.recipes.clone(), self.content.skills.clone());
         let at_table = self.at_table(agent);
+        let (effects, blocks) = (self.content.effects.clone(), self.content.blocks.clone());
         let player = self.players.get_mut(&agent).unwrap();
-        let level = |skill: SkillId| skills.level(player.skills.xp(skill));
-        let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && r.skill.is_none_or(|s| level(s) >= r.level);
+        // Each skill's level, own and boosted, taken before the grid changes.
+        let levels: rustc_hash::FxHashMap<SkillId, (u8, u8)> = skills
+            .ids()
+            .map(|skill| (skill, (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, &effects, &player.skills, &player.vitals.effects, skill))))
+            .collect();
+        let inventory = player.inventory.clone();
+        let allowed = |r: &voxmar_engine::craft::Recipe| {
+            (at_table || !r.needs_table())
+                && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
+        };
         let found = recipes.find(&player.inventory.grid()).filter(|r| allowed(r)).map(|r| (r.skill, r.xp));
         let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
         let made = player.inventory.craft(recipe, all);
@@ -384,6 +417,13 @@ impl Server {
         if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
             self.grant_xp(agent, skill, rule.xp);
         }
+    }
+
+    /// `agent`'s level in `skill` for a check: their own, with what their effects boost
+    /// (see `voxmar_engine::level`).
+    pub(crate) fn check_level(&self, agent: PlayerId, skill: SkillId) -> u8 {
+        let Some(player) = self.players.get(&agent) else { return 1 };
+        voxmar_engine::level::check_level(&self.content.skills, &self.content.effects, &player.skills, &player.vitals.effects, skill)
     }
 
     /// Whether `agent` is at the crafting table they last opened, still within reach.

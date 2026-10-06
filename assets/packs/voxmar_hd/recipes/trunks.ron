@@ -1,0 +1,38 @@
+// Voxmar HD trunks (docs/voxmar-hd.md), batch two of the queue: each species' bark in
+// vanilla's design language, drawn by us from one streaked bark pattern in the species'
+// own palette, with the accents a few species are known by (birch's dark marks, jungle's
+// moss, silverwood's glints), each with its own seed so no two trunks share a pattern. Pine and emberwood keep the default pack's bark for now.
+(
+    textures: {
+        // Long vertical streaks of clear shades, furrows wandering up between lit ridges.
+        "block/hd_bark": (size: (32, 32), palettes: {"bark": "oak_bark"}, layers: [
+            Paint(palette: "bark", base: 0.55, shade: [
+                Noise(cells: (8, 2), octaves: 2, gain: 0.6, amount: 0.5),
+                Noise(cells: (32, 8), amount: 0.55),
+            ], clean: true),
+        ]),
+        "block/spruce_log": (base: "block/hd_bark", palettes: {"bark": "spruce_bark"}, seed: 101),
+        "block/dark_oak_log": (base: "block/hd_bark", palettes: {"bark": "dark_oak_bark"}, seed: 102),
+        "block/acacia_log": (base: "block/hd_bark", palettes: {"bark": "acacia_bark"}, seed: 103),
+        "block/mangrove_log": (base: "block/hd_bark", palettes: {"bark": "mangrove_bark"}, seed: 104),
+        "block/redwood_log": (base: "block/hd_bark", palettes: {"bark": "redwood_bark"}, seed: 105),
+        "block/cypress_log": (base: "block/hd_bark", palettes: {"bark": "cypress_bark"}, seed: 106),
+        "block/willow_log": (base: "block/hd_bark", palettes: {"bark": "willow_bark"}, seed: 107),
+        "block/palm_log": (base: "block/hd_bark", palettes: {"bark": "palm_bark"}, seed: 108),
+        "block/maple_log": (base: "block/hd_bark", palettes: {"bark": "maple_bark"}, seed: 109),
+        "block/cherry_log": (base: "block/hd_bark", palettes: {"bark": "cherry_bark"}, seed: 110),
+        "block/baobab_log": (base: "block/hd_bark", palettes: {"bark": "baobab_bark"}, seed: 111),
+        // Pale bark with a few long dark marks lying across the trunk.
+        "block/birch_log": (size: (32, 32), palettes: {"bark": "birch_bark", "mark": ["#1c1814", "#2d2822", "#3e3830", "#57504a"]}, layers: [
+            Paint(palette: "bark", base: 0.6, shade: [Noise(cells: (8, 4), octaves: 2, amount: 0.35), Noise(cells: (32, 16), amount: 0.4)], clean: true),
+            Clusters(palette: "mark", count: 7, size: (6, 16), spread: (3.0, 0.3), spacing: 7.0, shade: 1, seed: 3),
+            Clusters(palette: "mark", count: 6, size: (2, 4), spread: (2.0, 0.5), spacing: 6.0, shade: 2, seed: 4),
+        ]),
+        "block/jungle_log": (base: "block/hd_bark", seed: 131, palettes: {"bark": "jungle_bark", "moss": ["#2f4a1c", "#3e5f22", "#4f752a", "#628a33"]}, layers: [
+            Clusters(palette: "moss", count: 6, size: (4, 12), spread: (0.6, 1.6), spacing: 8.0, shade: 2, seed: 5),
+        ]),
+        "block/silverwood_log": (base: "block/hd_bark", seed: 132, palettes: {"bark": "silverwood_bark", "glint": ["#b7e6ff", "#e8f8ff"]}, layers: [
+            Clusters(palette: "glint", count: 6, size: (1, 2), spacing: 8.0, shade: 1, seed: 6),
+        ]),
+    },
+)

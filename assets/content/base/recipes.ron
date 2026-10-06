@@ -2,7 +2,7 @@
 // crafting table's three by three (right click one) for anything bigger.
 //
 // A recipe is a `pattern` (up to three rows of three item names, "" for an empty cell; it
-// matches wherever it fits in the grid) or `ingredients` (in any arrangement), and makes
+// matches wherever it fits in the grid; `tag:TAG` takes anything with the tag, `a|b` either) or `ingredients` (in any arrangement), and makes
 // `count` of `output`. A name with {name} in it makes one recipe for every name that fits
 // all of the recipe's blocks, so one line serves every wood. Each trains a `skill`
 // (Crafting unless it says; Engineering for tools, stations and machines), may need a
@@ -14,6 +14,12 @@
         (pattern: [["{name}_planks"], ["{name}_planks"]], output: "stick", count: 4, xp: 1.0),
         // Four planks make a crafting table, for the bigger recipes.
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "crafting_table", skill: "core:engineering", xp: 8.0),
+        // The Homestead Hearth's pieces: eight cobbles dressed into a hearthstone (Mining 5,
+        // as the plan has it), and cobbles and clay for each block of chimney.
+        (pattern: [["tag:cobbled", "tag:cobbled", "tag:cobbled"], ["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "hearthstone", skill: "core:mining", level: 5, xp: 20.0),
+        (pattern: [["tag:cobbled", "clay", "tag:cobbled"], ["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "clay", "tag:cobbled"]], output: "chimney", level: 3, xp: 10.0),
+        // A herb planter: a box of soil herbs grow back in.
+        (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:engineering", level: 5, xp: 10.0),
         // Ore smelted with coal, by hand for now (a furnace comes later).
         (pattern: [["copper_ore"], ["coal_ore"]], output: "copper_ingot", skill: "core:engineering", level: 5, xp: 6.0),
         (pattern: [["iron_ore"], ["coal_ore"]], output: "iron_ingot", skill: "core:engineering", level: 15, xp: 12.0),
@@ -41,6 +47,15 @@
         (pattern: [["iron_ingot"], ["stick"], ["stick"]], output: "iron_shovel", skill: "core:engineering", level: 15, xp: 32),
         (pattern: [["iron_ingot", "iron_ingot"], ["", "stick"], ["", "stick"]], output: "iron_hoe", skill: "core:engineering", level: 15, xp: 32),
         (pattern: [["iron_ingot"], ["stick"]], output: "iron_knife", skill: "core:engineering", level: 15, xp: 32),
+        // Twine from three stalks of wheat; a rod from sticks and twine, at a table.
+        (ingredients: ["wheat", "wheat", "wheat"], output: "twine", count: 2, xp: 2.0),
+        (pattern: [["", "", "stick"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fishing_rod", xp: 6.0),
+        (pattern: [["", "", "iron_ingot"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fine_rod", level: 20, xp: 40.0),
+        // Pouches from a hide and twine (Crafting 3): seeds stood up, herbs laid flat.
+        (pattern: [["twine"], ["hide"]], output: "seed_pouch", level: 3, xp: 12.0),
+        (pattern: [["twine"], ["rabbit_hide"]], output: "seed_pouch", level: 3, xp: 12.0),
+        (pattern: [["hide", "twine"]], output: "herb_pouch", level: 3, xp: 12.0),
+        (pattern: [["rabbit_hide", "twine"]], output: "herb_pouch", level: 3, xp: 12.0),
         // For taming and breeding: a treat any tameable animal takes, twice as gladly as its
         // own food; seed mix that readies any kept animal to breed.
         (ingredients: ["wheat", "wheat", "apple", "egg"], output: "taming_treat", count: 2, skill: "core:cooking", level: 27, xp: 30.0),
@@ -54,8 +69,9 @@
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone", xp: 3.0),
         // Two logs over two cobblestones make a campfire, which cooks (cooking.ron).
         (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire", skill: "core:engineering", xp: 10.0),
-        // Coal on a plank makes four torches.
-        (pattern: [["coal_ore"], ["{name}_planks"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
+        // Coal or charcoal on a stick makes four torches, in the hand's grid: light for the
+        // first night.
+        (pattern: [["coal_ore|charcoal"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
         // Two stones crossed make shears, for wool; two planks a pail, for milk.
         (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears", skill: "core:engineering", xp: 10.0),
         (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail", skill: "core:engineering", xp: 10.0),

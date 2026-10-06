@@ -46,7 +46,9 @@ struct Client {
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
-    _server: ServerHandle,
+    journal: voxmar_engine::journal::Journal,
+    /// The server, for the first player to join it (dropping it stops the server).
+    _server: Option<ServerHandle>,
 }
 
 fn content() -> Content {
@@ -75,6 +77,17 @@ impl Client {
     }
 
     fn hello(connection: ClientConnection, name: &str, server: ServerHandle) -> Self {
+        Self::greet(connection, name, Some(server))
+    }
+
+    /// Joins this player's server too, as `name`.
+    fn another(&self, name: &str) -> Self {
+        let (connection, server_side) = local_pair();
+        self._server.as_ref().expect("the first player holds the server").connections().send(server_side).unwrap();
+        Self::greet(connection, name, None)
+    }
+
+    fn greet(connection: ClientConnection, name: &str, server: Option<ServerHandle>) -> Self {
         let content = content();
         connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint() });
         let mut client = Self {
@@ -101,6 +114,7 @@ impl Client {
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
+            journal: Default::default(),
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -182,6 +196,7 @@ impl Client {
                 }
             }
             ServerMessage::Struck { .. } => self.blows += 1,
+            ServerMessage::Journal { entries } => self.journal.merge(entries),
             ServerMessage::Items { changed, gone } => {
                 for view in changed {
                     self.items.insert(view.id, view);
@@ -333,7 +348,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
 
     // Grown ripe, then broken: its harvest pops out and its experience is earned.
-    assert_eq!(client.ok("/grow ripe"), "Grew 1 crop.");
+    assert_eq!(client.ok("/grow ripe"), "Grew 1 plant.");
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
@@ -650,11 +665,11 @@ fn the_server_console_runs_commands_as_an_admin() {
     let mut guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
     guest.pump_until(|c| c.day.is_some());
     // The console speaks for the server, and needs no admin rights.
-    guest._server.console("/time set midnight");
+    guest._server.as_ref().unwrap().console("/time set midnight");
     guest.pump_until(|c| c.day.is_some_and(|(day, _)| day % TICKS_PER_DAY == 20_000));
-    guest._server.console("say hello");
+    guest._server.as_ref().unwrap().console("say hello");
     guest.pump_until(|c| c.chat.iter().any(|(_, text)| text == "[Server] hello"));
-    guest._server.console("gamemode creative guest");
+    guest._server.as_ref().unwrap().console("gamemode creative guest");
     guest.pump_until(|c| c.allow_flight);
 }
 
@@ -937,4 +952,138 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     client.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
     client.propose("core:craft", ActionTarget::Slot(0));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == pickaxe) && c.earned.contains(&60));
+}
+
+#[test]
+fn cooked_food_takes_a_slot_each_and_ingredients_stack() {
+    let mut client = Client::join();
+    for line in ["/clear", "/give bread 3", "/give wheat 3"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (bread, wheat) = (blocks.expect("base:bread"), blocks.expect("base:wheat"));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().filter(|s| s.item == bread).count() == 3 && c.inventory.slots.iter().flatten().any(|s| s.item == wheat));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != bread || s.count == 1), "bread stacked");
+    assert_eq!(client.inventory.slots.iter().flatten().filter(|s| s.item == wheat).map(|s| s.count).collect::<Vec<_>>(), [3], "wheat should stack");
+}
+
+#[test]
+fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
+    let mut client = Client::join();
+    let water = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/give fishing_rod 1", "/skill fishing 80"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(4).is_some());
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 4, flying: false }));
+    let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
+    // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
+    for _ in 0..6 {
+        client.propose("base:fish", ActionTarget::Block { block: water, face: Face::PosY });
+        let up = Instant::now() + Duration::from_millis(5600);
+        client.pump_until(|c| fish(c) || Instant::now() > up);
+        if fish(&client) {
+            break;
+        }
+    }
+    assert!(fish(&client), "six casts at Fishing 80 caught nothing");
+    client.pump_until(|c| !c.earned.is_empty());
+}
+
+#[test]
+fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/clear", "/give seed_pouch 1", "/give wheat_seeds 100", "/fill ~ ~-1 ~2 ~ ~-1 ~2 farmland", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let seeds = client.content.blocks.expect("base:wheat_seeds");
+    let sprout = client.content.blocks.expect("base:wheat_crop_0");
+    client.pump_until(|c| c.inventory.pouched(seeds) == 100 && c.world.block(ground) == c.content.blocks.id("base:farmland"));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != seeds), "seeds took slots with a pouch carried");
+    // The pouch in hand sows its seeds.
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && c.inventory.pouched(seeds) == 99);
+    // Right click empties it into the pack.
+    client.propose("base:empty_pouch", ActionTarget::None);
+    client.pump_until(|c| c.inventory.pouched(seeds) == 0 && c.inventory.slots.iter().flatten().filter(|s| s.item == seeds).map(|s| s.count as u32).sum::<u32>() == 99);
+}
+
+#[test]
+fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
+    let mut owner = Client::join_remote("owner", &["owner"]);
+    let mut thief = owner.another("thief");
+    for line in ["/clear", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30", "/give stick 10", "/give bread 1"] {
+        owner.ok(line);
+    }
+    let carried = |c: &Client| c.inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>();
+    owner.pump_until(|c| carried(c) == 47);
+    let said = owner.ok("/kill");
+    owner.pump_until(|c| c.health == 0 && carried(c) == 3 && c.items.values().map(|i| i.stack.count as u32).sum::<u32>() == 44);
+    let pickaxe = owner.content.blocks.expect("base:iron_pickaxe");
+    assert!(owner.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "the pickaxe is the most valuable: {:?}", owner.inventory);
+    assert!(said.contains("for 30 minutes") || owner.chat.iter().any(|(_, text)| text.contains("for 30 minutes")), "{said} {:?}", owner.chat);
+    // The thief stands where the owner fell (both joined at spawn) and picks up nothing.
+    let watch = Instant::now() + Duration::from_secs(3);
+    thief.pump_until(|c| c.items.values().map(|i| i.stack.count as u32).sum::<u32>() == 44 && Instant::now() > watch);
+    assert!(thief.collected.is_empty(), "someone else picked up a dead player's things");
+    // The owner wakes at spawn, by their things, and gathers them all.
+    owner.propose("core:respawn", ActionTarget::None);
+    owner.pump_until(|c| c.health > 0 && carried(c) == 47);
+}
+
+#[test]
+fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
+    let mut client = Client::join();
+    let (near, far) = (client.position.floor().as_ivec3() + IVec3::new(2, 0, 0), client.position.floor().as_ivec3() + IVec3::new(-2, 0, 0));
+    for line in ["/fill ~-2 ~-1 ~ ~2 ~-1 ~ grass_block", "/fill ~-2 ~ ~ ~2 ~ ~ air", "/setblock ~2 ~ ~ poppy", "/setblock ~-2 ~ ~ poppy"] {
+        client.ok(line);
+    }
+    let poppy = client.content.blocks.expect("base:poppy");
+    client.pump_until(|c| c.world.block(near) == Some(poppy) && c.world.block(far) == Some(poppy));
+    for at in [near, far] {
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    }
+    // Both went into the journal, as did the biome stood in.
+    use voxmar_engine::journal::Page;
+    client.pump_until(|c| c.journal.get(Page::Plants, "base:poppy").is_some_and(|e| e.count == 2) && c.journal.found(Page::Biomes) > 0);
+    // The far one's ground is dug out and put back: a different block, so it is gone.
+    client.ok("/setblock ~-2 ~-1 ~ dirt");
+    client.ok("/grow");
+    client.pump_until(|c| c.world.block(near) == Some(poppy));
+    std::thread::sleep(Duration::from_millis(1500));
+    client.pump_until(|_| true);
+    assert_eq!(client.world.block(far), Some(BlockId::AIR), "a flower came back on ground that was replaced");
+}
+
+#[test]
+fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
+    let mut client = Client::join_remote("owner", &["owner"]);
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in [
+        "/fill ~3 ~ ~-1 ~5 ~3 ~1 air",
+        "/fill ~3 ~ ~-1 ~5 ~ ~1 cobblestone",
+        "/setblock ~4 ~ ~ hearthstone",
+    ] {
+        client.ok(line);
+    }
+    let hearthstone = client.content.blocks.expect("base:hearthstone");
+    client.pump_until(|c| c.world.block(core) == Some(hearthstone));
+    let light = |client: &mut Client| {
+        client.chat.clear();
+        client.propose("base:light_hearth", ActionTarget::Block { block: core, face: Face::PosY });
+        client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("hearth")));
+        std::mem::take(&mut client.chat).into_iter().map(|(_, t)| t).collect::<String>()
+    };
+    assert!(light(&mut client).contains("needs"), "no chimney yet");
+    client.ok("/fill ~5 ~1 ~1 ~5 ~2 ~1 chimney");
+    assert!(light(&mut client).contains("your home"));
+    // Dying far off, they wake on the hearthstone.
+    client.ok("/tp ~-20 ~ ~");
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
 }

@@ -13,7 +13,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::dropped::{self, LIFETIME, Loose};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
-use voxmar_engine::inventory::{ItemStack, MAX_STACK};
+use voxmar_engine::inventory::{ItemStack, MAX_STACK, max_stack};
 use voxmar_engine::movement::{self, Surroundings};
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::traits;
@@ -49,6 +49,20 @@ pub struct Dropped {
     pub age: u32,
     /// Ticks until it can be picked up.
     pub pickup_in: u32,
+    /// Whose it is, by a hash of their name, if only they may pick it up (what a player
+    /// left where they died), and the ticks it lasts.
+    pub owner: Option<u64>,
+    pub lifetime: u32,
+}
+
+/// The owner hash of a player name (see `Dropped::owner`).
+pub(crate) fn owner_of(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+}
+
+/// Ticks a dropped item lasts unless it says otherwise.
+fn lifetime() -> u32 {
+    (LIFETIME * TICKS_PER_SECOND as f32) as u32
 }
 
 impl Dropped {
@@ -70,15 +84,22 @@ pub struct Items {
 
 impl Items {
     pub fn spawn(&mut self, stack: ItemStack, body: Loose, pickup_delay: f32) -> u32 {
+        self.spawn_for(stack, body, pickup_delay, None, lifetime())
+    }
+
+    /// Spawns a stack only `owner` may pick up (see `Dropped::owner`), lasting `lifetime`
+    /// ticks.
+    pub fn spawn_for(&mut self, stack: ItemStack, body: Loose, pickup_delay: f32, owner: Option<u64>, lifetime: u32) -> u32 {
+        // Over the limit, the oldest goes first, a player's own things last.
         if self.all.len() >= MAX_ITEMS
-            && let Some((&oldest, _)) = self.all.iter().max_by_key(|(_, item)| item.age)
+            && let Some((&oldest, _)) = self.all.iter().max_by_key(|(_, item)| (item.owner.is_none(), item.age))
         {
             self.remove(oldest, None);
         }
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         let pickup_in = (pickup_delay * TICKS_PER_SECOND as f32).round() as u32;
-        self.all.insert(id, Dropped { stack, body, age: 0, pickup_in });
+        self.all.insert(id, Dropped { stack, body, age: 0, pickup_in, owner, lifetime });
         self.changed.insert(id);
         id
     }
@@ -163,15 +184,16 @@ impl Server {
         let ids: Vec<u32> = items.all.keys().copied().collect();
         for &id in &ids {
             let item = items.all.get_mut(&id).expect("listed above");
-            if !self.world.contains(ColumnPos::of_block(item.body.position.floor().as_ivec3())) {
-                continue;
-            }
+            // Items age by the world's clock, loaded or not.
             item.age += 1;
-            item.pickup_in = item.pickup_in.saturating_sub(1);
-            if item.age as f32 >= LIFETIME * TICKS_PER_SECOND as f32 || item.body.position.y < -64.0 {
+            if item.age >= item.lifetime || item.body.position.y < -64.0 {
                 items.remove(id, None);
                 continue;
             }
+            if !self.world.contains(ColumnPos::of_block(item.body.position.floor().as_ivec3())) {
+                continue;
+            }
+            item.pickup_in = item.pickup_in.saturating_sub(1);
             if item.body.step(&Around(self), dt) {
                 items.changed.insert(id);
             }
@@ -184,7 +206,7 @@ impl Server {
 
     /// Draws items towards players near them who have room, and picks up those in reach.
     fn collect_items(&mut self, items: &mut Items, dt: f32) {
-        let collectors: Vec<(PlayerId, Vec3, Aabb)> = self
+        let collectors: Vec<(PlayerId, Vec3, Aabb, u64)> = self
             .players
             .values()
             .filter(|p| p.joined && p.health.alive())
@@ -192,7 +214,7 @@ impl Server {
                 let mut reach = p.aabb();
                 reach.min -= REACH;
                 reach.max += REACH;
-                (p.id, p.position + Vec3::Y * dims::HEIGHT * 0.5, reach)
+                (p.id, p.position + Vec3::Y * dims::HEIGHT * 0.5, reach, owner_of(&p.name))
             })
             .collect();
         if collectors.is_empty() {
@@ -207,11 +229,14 @@ impl Server {
             let centre = item.body.position + Vec3::Y * dropped::SIZE / 2.0;
             let nearest = collectors
                 .iter()
-                .filter(|(pid, middle, _)| {
-                    middle.distance(centre) < MAGNET + 1.0 && self.players[pid].inventory.room_for(item.stack.item, 1) > 0
+                .filter(|(pid, middle, _, name)| {
+                    // What a player left where they died is theirs alone.
+                    item.owner.is_none_or(|owner| owner == *name)
+                        && middle.distance(centre) < MAGNET + 1.0
+                        && self.players[pid].inventory.room_for(item.stack.item, 1) > 0
                 })
                 .min_by(|a, b| a.1.distance(centre).total_cmp(&b.1.distance(centre)));
-            let Some(&(collector, middle, reach)) = nearest else { continue };
+            let Some(&(collector, middle, reach, _)) = nearest else { continue };
             let inside = item.body.aabb().min.cmple(reach.max).all() && item.body.aabb().max.cmpge(reach.min).all();
             if inside {
                 let player = self.players.get_mut(&collector).expect("a collector");
@@ -275,7 +300,7 @@ fn merge(items: &mut Items, tick: u64) {
     // Bucketed by block, so each item only meets its neighbours.
     let mut cells: FxHashMap<IVec3, Vec<u32>> = FxHashMap::default();
     for (&id, item) in &items.all {
-        if item.stack.count < MAX_STACK {
+        if item.stack.count < max_stack(item.stack.item) {
             cells.entry(item.body.position.floor().as_ivec3()).or_default().push(id);
         }
     }
@@ -295,7 +320,8 @@ fn merge(items: &mut Items, tick: u64) {
                         let Some(o) = items.all.get(&other) else { continue };
                         if other != id
                             && o.stack.item == item.stack.item
-                            && o.stack.count < MAX_STACK
+                            && o.stack.count < max_stack(o.stack.item)
+                            && o.owner == item.owner
                             && o.body.position.distance(item.body.position) < MERGE_WITHIN
                         {
                             partner = Some(other);
@@ -310,7 +336,7 @@ fn merge(items: &mut Items, tick: u64) {
         // The smaller stack goes into the larger; ties keep the older item.
         let (into, from) = if (o.stack.count, o.age) >= (item.stack.count, item.age) { (other, id) } else { (id, other) };
         let (into_item, from_item) = (items.all[&into], items.all[&from]);
-        let moved = from_item.stack.count.min(MAX_STACK - into_item.stack.count);
+        let moved = from_item.stack.count.min(max_stack(into_item.stack.item).saturating_sub(into_item.stack.count));
         let target = items.all.get_mut(&into).expect("listed");
         target.stack.count += moved;
         // The merged stack lasts as long as the younger of the two would have, and can be
@@ -334,7 +360,8 @@ impl Items {
             .iter()
             .map(|(&id, item)| {
                 let age = item.age as f32 / TICKS_PER_SECOND as f32;
-                (id, SavedItem { item: name(item.stack.item), count: item.stack.count, position: item.body.position.to_array(), age })
+                let lifetime = (item.lifetime != self::lifetime()).then(|| item.lifetime as f32 / TICKS_PER_SECOND as f32);
+                (id, SavedItem { item: name(item.stack.item), count: item.stack.count, position: item.body.position.to_array(), age, owner: item.owner, lifetime })
             })
             .collect();
         saved.sort_by_key(|(id, _)| *id);
@@ -350,7 +377,8 @@ impl Items {
                 continue;
             }
             let stack = ItemStack { item: block, count: item.count.min(MAX_STACK) };
-            let new = items.spawn(stack, Loose::new(position, Vec3::ZERO), 0.0);
+            let life = item.lifetime.map_or(lifetime(), |seconds| (seconds * TICKS_PER_SECOND as f32) as u32);
+            let new = items.spawn_for(stack, Loose::new(position, Vec3::ZERO), 0.0, item.owner, life);
             items.all.get_mut(&new).expect("just spawned").age = (item.age * TICKS_PER_SECOND as f32) as u32;
         }
         items
@@ -363,7 +391,7 @@ mod tests {
 
     fn item(count: u8, x: f32, age: u32) -> Dropped {
         let body = Loose { position: Vec3::new(x, 0.0, 0.5), velocity: Vec3::ZERO, on_ground: true };
-        Dropped { stack: ItemStack { item: BlockId(5), count }, body, age, pickup_in: 0 }
+        Dropped { stack: ItemStack { item: BlockId(5), count }, body, age, pickup_in: 0, owner: None, lifetime: lifetime() }
     }
 
     #[test]

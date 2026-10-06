@@ -24,7 +24,7 @@ use bevy::window::PrimaryWindow;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::block::{BlockDef, Rarity};
 use voxmar_engine::craft::GRID;
-use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK, SLOTS};
+use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS};
 
 use super::{SLOT, slot_contents};
 use crate::lang::{Locale, Localized, TightLine};
@@ -90,9 +90,10 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
-/// The panel; clicks outside it throw the held stack.
+/// The panel (and creative mode's catalogue beside it); clicks outside them throw the held
+/// stack.
 #[derive(Component)]
-struct InventoryCard;
+pub(crate) struct InventoryCard;
 /// The held stack, drawn at the pointer.
 #[derive(Component)]
 struct PointerStack;
@@ -244,7 +245,13 @@ fn craft(
     // As the server allows it: bigger than two by two only at a table, and with the
     // recipe's skill level.
     let at_table = player.station.is_some();
-    let short = |r: &voxmar_engine::craft::Recipe| r.skill.filter(|&s| skills.level(player.skills.xp(s)) < r.level);
+    let (effects, blocks) = (&launch.content.effects, &launch.content.blocks);
+    let short = |r: &voxmar_engine::craft::Recipe| {
+        r.skill.filter(|&s| {
+            let boosted = voxmar_engine::level::check_level(&skills, effects, &player.skills, &player.vitals.effects, s);
+            !voxmar_engine::level::meets_recipe(r, skills.level(player.skills.xp(s)), boosted, &player.inventory, blocks)
+        })
+    };
     let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
     let found = recipes.find(&player.inventory.grid());
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
@@ -360,7 +367,7 @@ fn hovered(slots: &Query<(&InventorySlot, &RelativeCursorPosition)>) -> Option<u
 
 /// Whether a drag could drop some of `held` into `slot`.
 fn accepts(inventory: &Inventory, slot: usize, held: ItemStack) -> bool {
-    inventory.get(slot).is_none_or(|s| s.item == held.item && s.count < MAX_STACK)
+    inventory.get(slot).is_none_or(|s| s.item == held.item && s.count < voxmar_engine::inventory::max_stack(held.item))
 }
 
 /// The moves that finish a drag over `slots`: an even share (left button) or one item
@@ -391,7 +398,7 @@ fn click(
     mut player: ResMut<LocalPlayer>,
     mut gesture: ResMut<Gesture>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
-    card: Query<&RelativeCursorPosition, With<InventoryCard>>,
+    card: Query<(&RelativeCursorPosition, &InheritedVisibility), With<InventoryCard>>,
 ) {
     if !ui.inventory_open {
         return;
@@ -437,7 +444,7 @@ fn click(
     let right = mouse.just_pressed(MouseButton::Right) || (left && control);
     let left = left && !control;
     // Outside the panel, a click throws the held stack, a right click one item of it.
-    let outside = card.single().is_ok_and(|card| !card.cursor_over());
+    let outside = !card.is_empty() && !card.iter().any(|(card, visible)| visible.get() && card.cursor_over());
     if outside
         && (left || right)
         && let Some(held) = inventory.cursor
@@ -650,6 +657,22 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
+/// What a pouch carries, a line a kind, and how to empty it.
+fn pouch_lines(locale: &Locale, registry: &voxmar_engine::block::BlockRegistry, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
+    if !registry.def(item).has_tag("pouch") {
+        return Vec::new();
+    }
+    let carried: Vec<(String, Color)> = player
+        .inventory
+        .pouched
+        .iter()
+        .filter(|&&(held, _)| voxmar_engine::inventory::pouch_for(held) == Some(item))
+        .map(|&(held, count)| (locale.format("pouch.holds", &[("count", &count), ("item", &locale.block(registry.def(held)))]), SOFT))
+        .collect();
+    let empty = carried.is_empty().then(|| (locale.get("pouch.nothing").to_owned(), MUTED));
+    carried.into_iter().chain(empty).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
+}
+
 /// The mouse and key moves the inventory takes, as key caps with what each does, two to a
 /// row under the slots.
 const LEGEND: [(&str, &str); 6] = [
@@ -691,13 +714,14 @@ fn hover_item(
     output: Query<&RelativeCursorPosition, With<OutputSlot>>,
     mut over: ResMut<super::recipes::HoveredItem>,
     window: Query<&Window, With<PrimaryWindow>>,
+    catalogue: Res<super::creative::Catalogue>,
 ) {
     // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
     if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
         return;
     }
     let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find(&player.inventory.grid()).map(|r| r.output)).flatten();
-    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made) } else { None };
+    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or(catalogue.hovered) } else { None };
     if over.0 != item {
         over.0 = item;
     }
@@ -716,17 +740,18 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
-    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool)>>,
+    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
-    (keys, scale): (Res<ButtonInput<KeyCode>>, Res<UiScale>),
+    (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
         .filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none())
         .and_then(|slot| player.inventory.get(slot))
-        .map(|stack| stack.item);
+        .map(|stack| stack.item)
+        .or(catalogue.hovered.filter(|_| ui.inventory_open && player.inventory.cursor.is_none()));
     let Some(item) = item else {
         visibility.set_if_neq(Visibility::Hidden);
         *shown = None;
@@ -735,7 +760,9 @@ fn tooltip(
     // Shift shows how the name reads: in Japanese, the kana over the name; in another
     // language, the Japanese name with its kana under it.
     let reading = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let key = (item, settings.debug_overlay, reading);
+    // What a pouch carries changes its lines.
+    let carried: u32 = player.inventory.pouched.iter().map(|&(_, n)| n as u32 * 31 + 1).sum();
+    let key = (item, settings.debug_overlay, reading, carried);
     if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
@@ -760,7 +787,10 @@ fn tooltip(
                     lines.spawn(text(&font.0, line, BODY, SOFT));
                 }
             }
-            let lines_after = seed_line(&locale, &launch.content, &player, item).into_iter().chain(details(&locale, def, settings.debug_overlay));
+            let lines_after = seed_line(&locale, &launch.content, &player, item)
+                .into_iter()
+                .chain(pouch_lines(&locale, &world.registry, &player, item))
+                .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
                 lines.spawn(text(&font.0, line, BODY, color));
             }
