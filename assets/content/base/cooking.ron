@@ -18,5 +18,22 @@
         (input: "raw_beef", output: "cooked_beef", level: 12, xp: 75.0, stop_burning: 30, burnt: "burnt_food"),
         (input: "raw_venison", output: "cooked_venison", level: 15, xp: 90.0, stop_burning: 34, burnt: "burnt_food"),
         (input: "raw_bear", output: "cooked_bear", level: 25, xp: 140.0, stop_burning: 45, burnt: "burnt_food"),
+        // Fish (fishing.ron).
+        (input: "raw_shrimp", output: "cooked_shrimp", level: 1, xp: 20.0, stop_burning: 21, burnt: "burnt_food"),
+        (input: "raw_minnow", output: "cooked_minnow", level: 1, xp: 18.0, stop_burning: 21, burnt: "burnt_food"),
+        (input: "raw_sardine", output: "cooked_sardine", level: 5, xp: 30.0, stop_burning: 25, burnt: "burnt_food"),
+        (input: "raw_perch", output: "cooked_perch", level: 10, xp: 40.0, stop_burning: 30, burnt: "burnt_food"),
+        (input: "raw_trout", output: "cooked_trout", level: 15, xp: 55.0, stop_burning: 35, burnt: "burnt_food"),
+        (input: "raw_cod", output: "cooked_cod", level: 20, xp: 60.0, stop_burning: 40, burnt: "burnt_food"),
+        (input: "raw_salmon", output: "cooked_salmon", level: 25, xp: 75.0, stop_burning: 45, burnt: "burnt_food"),
+        (input: "raw_carp", output: "cooked_carp", level: 30, xp: 80.0, stop_burning: 50, burnt: "burnt_food"),
+        (input: "raw_bass", output: "cooked_bass", level: 35, xp: 95.0, stop_burning: 55, burnt: "burnt_food"),
+        (input: "raw_pike", output: "cooked_pike", level: 40, xp: 105.0, stop_burning: 60, burnt: "burnt_food"),
+        (input: "raw_eel", output: "cooked_eel", level: 45, xp: 115.0, stop_burning: 65, burnt: "burnt_food"),
+        (input: "raw_tuna", output: "cooked_tuna", level: 50, xp: 125.0, stop_burning: 70, burnt: "burnt_food"),
+        (input: "raw_swordfish", output: "cooked_swordfish", level: 65, xp: 165.0, stop_burning: 80, burnt: "burnt_food"),
+        (input: "raw_glimmer_koi", output: "cooked_glimmer_koi", level: 75, xp: 230.0, stop_burning: 80, burnt: "burnt_food"),
+        // A log left in the fire burns down to charcoal, for torches; it never fails.
+        (input: "tag:log", output: "charcoal", level: 1, xp: 5.0, stop_burning: 1),
     ],
 )

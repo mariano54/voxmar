@@ -15,6 +15,9 @@
         (name: "cook", duration: Instant, requires: [Alive, InReach, Cookable, CookingLevel], effects: [Cook]),
         // Tilling soil into farmland with a hoe (right click), where crops are sown.
         (name: "till", duration: Instant, requires: [Alive, InReach, Tillable], effects: [Till]),
+        // Casting a rod into water (right click with it): a few seconds, then a fish or
+        // nothing (fishing.ron).
+        (name: "fish", duration: Seconds(5.0), requires: [Alive, Fishable], effects: [Fish]),
         // Working at a crafting table (right click): its three-by-three grid.
         (name: "use_table", duration: Instant, requires: [Alive, InReach, CraftingTable], effects: [UseTable]),
     ],

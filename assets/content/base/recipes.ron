@@ -41,6 +41,10 @@
         (pattern: [["iron_ingot"], ["stick"], ["stick"]], output: "iron_shovel", skill: "core:engineering", level: 15, xp: 32),
         (pattern: [["iron_ingot", "iron_ingot"], ["", "stick"], ["", "stick"]], output: "iron_hoe", skill: "core:engineering", level: 15, xp: 32),
         (pattern: [["iron_ingot"], ["stick"]], output: "iron_knife", skill: "core:engineering", level: 15, xp: 32),
+        // Twine from three stalks of wheat; a rod from sticks and twine, at a table.
+        (ingredients: ["wheat", "wheat", "wheat"], output: "twine", count: 2, xp: 2.0),
+        (pattern: [["", "", "stick"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fishing_rod", xp: 6.0),
+        (pattern: [["", "", "iron_ingot"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fine_rod", level: 20, xp: 40.0),
         // For taming and breeding: a treat any tameable animal takes, twice as gladly as its
         // own food; seed mix that readies any kept animal to breed.
         (ingredients: ["wheat", "wheat", "apple", "egg"], output: "taming_treat", count: 2, skill: "core:cooking", level: 27, xp: 30.0),
@@ -54,8 +58,10 @@
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone", xp: 3.0),
         // Two logs over two cobblestones make a campfire, which cooks (cooking.ron).
         (pattern: [["{name}_log", "{name}_log"], ["cobblestone", "cobblestone"]], output: "campfire", skill: "core:engineering", xp: 10.0),
-        // Coal on a plank makes four torches.
-        (pattern: [["coal_ore"], ["{name}_planks"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
+        // Coal or charcoal on a stick makes four torches, in the hand's grid: light for the
+        // first night.
+        (pattern: [["coal_ore"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
+        (pattern: [["charcoal"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
         // Two stones crossed make shears, for wool; two planks a pail, for milk.
         (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears", skill: "core:engineering", xp: 10.0),
         (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail", skill: "core:engineering", xp: 10.0),

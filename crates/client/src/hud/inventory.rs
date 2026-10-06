@@ -24,7 +24,7 @@ use bevy::window::PrimaryWindow;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::block::{BlockDef, Rarity};
 use voxmar_engine::craft::GRID;
-use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK, SLOTS};
+use voxmar_engine::inventory::{CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS};
 
 use super::{SLOT, slot_contents};
 use crate::lang::{Locale, Localized, TightLine};
@@ -360,7 +360,7 @@ fn hovered(slots: &Query<(&InventorySlot, &RelativeCursorPosition)>) -> Option<u
 
 /// Whether a drag could drop some of `held` into `slot`.
 fn accepts(inventory: &Inventory, slot: usize, held: ItemStack) -> bool {
-    inventory.get(slot).is_none_or(|s| s.item == held.item && s.count < MAX_STACK)
+    inventory.get(slot).is_none_or(|s| s.item == held.item && s.count < voxmar_engine::inventory::max_stack(held.item))
 }
 
 /// The moves that finish a drag over `slots`: an even share (left button) or one item

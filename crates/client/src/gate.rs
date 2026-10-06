@@ -174,7 +174,8 @@ enum Step {
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
-    /// teaching Mining; a hoe tills dirt into farmland.
+    /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
+    /// cast into the pool catches a fish.
     Workshop,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
@@ -274,6 +275,8 @@ struct Gate {
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
+    /// The lowest and highest the struck creature stood while struck: no knockback lifts it.
+    struck_heights: (f32, f32),
     failures: Vec<String>,
     passes: usize,
     /// The weather's fractions as shown last frame, and the biggest change from one frame
@@ -325,6 +328,7 @@ impl Gate {
             tame_nearest: f32::MAX,
             breaks: Breaks::default(),
             mining_before: None,
+            struck_heights: (f32::MAX, f32::MIN),
             failures: Vec::new(),
             passes: 0,
             weather_last: None,
@@ -505,6 +509,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Striking judges itself by the blows the server answers (see `strike`).
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
+        // Crafting, mining, tilling and fishing until something bites.
+        Step::Workshop => 75.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -1307,10 +1313,50 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     return;
                 }
                 gate.check("workshop: till", Ok("a right click with a hoe tilled the dirt into farmland on both sides".into()));
-                end_workshop(world, gate, now);
+                world.resource::<Net>().command("give bread 3");
+                gate.advance(now);
             } else if in_phase > WORKSHOP_WAIT {
                 mouse(world, MouseButton::Right, false);
                 fail(world, gate, "till", "right clicking dirt with a hoe made no farmland".into());
+            }
+        }
+        // Cooked food takes a slot each, as in RuneScape.
+        9 => {
+            let player = world.resource::<LocalPlayer>();
+            let bread = world.resource::<ClientWorld>().registry.id("base:bread");
+            let stacks: Vec<u8> = player.inventory.slots.iter().flatten().filter(|s| Some(s.item) == bread).map(|s| s.count).collect();
+            if stacks.len() >= 3 {
+                let result = if stacks.iter().all(|&n| n == 1) { Ok("three loaves took three slots".to_owned()) } else { Err(format!("bread stacked: {stacks:?}")) };
+                gate.check("workshop: food takes a slot each", result);
+                let net = world.resource::<Net>();
+                net.command("give fishing_rod 1");
+                net.command("skill fishing 80");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "food takes a slot each", format!("three loaves given, the inventory shows {stacks:?}"));
+            }
+        }
+        // A rod held over the pool, right button down, casts until something bites.
+        10 => {
+            let fish = |world: &World| {
+                let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+                player.inventory.slots.iter().flatten().find(|s| client.registry.def(s.item).has_tag("fish")).map(|s| client.registry.def(s.item).name.clone())
+            };
+            if !select(world, "base:fishing_rod") {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "fishing", "the rod never came".into());
+                }
+                return;
+            }
+            aim(world, feet + IVec3::new(4, -1, 0));
+            mouse(world, MouseButton::Right, true);
+            if let Some(caught) = fish(world) {
+                mouse(world, MouseButton::Right, false);
+                gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
+                end_workshop(world, gate, now);
+            } else if in_phase > 40.0 {
+                mouse(world, MouseButton::Right, false);
+                fail(world, gate, "fishing", "40 seconds of casting into the pool at Fishing 80 caught nothing".into());
             }
         }
         _ => {}
@@ -1323,7 +1369,7 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     world.resource_mut::<UiState>().inventory_open = false;
     let net = world.resource::<Net>();
-    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick"] {
+    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fishing_rod"] {
         net.command(&format!("clear {tool}"));
     }
     let feet = gate.feet;
@@ -1494,17 +1540,14 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("loading cover", result);
             }
             if gate.shot(world, "game").is_some() {
-                // The HUD reads health and hunger off the server's vitals.
-                let hunger = world.resource::<LocalPlayer>().vitals.hunger;
+                // The HUD reads health off the server; there is no hunger to show.
+                let player = world.resource::<LocalPlayer>();
+                let reading = format!("{}/{}", player.health, player.max_health);
                 let mut texts = world.query::<&Text>();
-                let meters = texts.iter(world).filter(|text| text.0 == "20/20").count();
+                let meters = texts.iter(world).filter(|text| text.0 == reading).count();
                 gate.check(
                     "vitals",
-                    if hunger == voxmar_engine::vitals::MAX_HUNGER && meters >= 2 {
-                        Ok(format!("full health and hunger, shown on {meters} meters"))
-                    } else {
-                        Err(format!("hunger {hunger} and {meters} meters reading 20/20"))
-                    },
+                    if meters >= 1 { Ok(format!("health {reading}, shown on {meters} meters")) } else { Err(format!("no meter reads the health {reading}")) },
                 );
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
@@ -1720,6 +1763,9 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::effects::{PinnedTip, ShowEffects};
     match gate.phase {
         0 => {
+            // Food eaten earlier in the run (eating heals the hurt) may have given a real
+            // one; clear it so the chip shows the effect set here.
+            world.resource::<Net>().command("effect clear");
             world.insert_resource(ShowEffects(vec![("hearty".into(), 90)]));
             world.insert_resource(PinnedTip("hearty".into()));
             gate.advance(now);
@@ -2187,12 +2233,16 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match snail(world) {
                 Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
+                    if landed > 0 {
+                        gate.struck_heights = (gate.struck_heights.0.min(view.position.y), gate.struck_heights.1.max(view.position.y));
+                    }
                     // Close in to striking reach, then strike.
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
-                    // A click every third of a second, as a player swings.
-                    let swing = ((now - gate.since) * 3.0).fract() < 0.15;
+                    // A well-timed click, a full charge apart, as a player swings (spamming
+                    // lands lighter blows: `combat`).
+                    let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
                     mouse(world, MouseButton::Left, swing);
                 }
                 Some(view) => {
@@ -2213,6 +2263,11 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    // Blows land without knockback: the snail never left the pad's floor.
+                    let (low, high) = gate.struck_heights;
+                    let rise = (high - low).max(0.0);
+                    let result = if rise < 0.2 { Ok(format!("struck, it rose at most {rise:.2} blocks")) } else { Err(format!("struck, it was thrown {rise:.2} blocks up")) };
+                    gate.check("creature struck: no knockback", result);
                     // Its cries reached the sound system (a silent run plays none).
                     let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
                     let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
