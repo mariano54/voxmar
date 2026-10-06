@@ -55,7 +55,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
     let tip = Node {
         position_type: PositionType::Absolute,
-        max_width: Val::Px(WIDTH),
+        // A set width: wrapped words under a mere maximum leave the plate too short for them.
+        width: Val::Px(WIDTH),
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(space::HAIR),
         padding: UiRect::all(Val::Px(space::GAP)),
