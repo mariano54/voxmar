@@ -1,0 +1,40 @@
+// What food does besides filling you (engine/src/effect.rs; the vocabulary is explained in
+// core/effects.ron). Each rule in `foods` gives its effect for so many seconds to anything
+// eaten that has all of its tags; eating it again tops the time back up. A food may also
+// name its own with an `effect:NAME:SECONDS` tag. Good food is worth cooking: raw meat
+// turns your stomach, and the best buffs come from what is hardest to get.
+(
+    effects: [
+        (name: "hearty", kind: Buff, icon: "hearty", title: "Hearty", description: "Cooked meat: 4 more health while it lasts.",
+            modifiers: (max_health: 4)),
+        (name: "hunters_vigour", kind: Buff, title: "Hunter's vigour", description: "Game cooked over a fire: quicker on your feet.",
+            modifiers: (speed: 1.1)),
+        (name: "sustained", kind: Buff, title: "Sustained", description: "Bread and roots: hunger empties far slower.",
+            modifiers: (hunger: 0.6)),
+        (name: "refreshed", kind: Buff, title: "Refreshed", description: "Fresh fruit: a spring in your step.",
+            modifiers: (speed: 1.06)),
+        (name: "focused", kind: Buff, title: "Focused", description: "A good breakfast: every skill learns a tenth more.",
+            modifiers: (xp: 1.1)),
+        (name: "soothed", kind: Buff, title: "Soothed", description: "Milk: heal half as fast again.",
+            modifiers: (heal: 1.5)),
+        (name: "ember_warmed", kind: Buff, title: "Ember-warmed", description: "Emberfruit glows inside you: 10° warmer.",
+            modifiers: (warmth: 10.0)),
+        (name: "cooled", kind: Buff, title: "Cooled", description: "Something cooling: 8° cooler in the heat.",
+            modifiers: (warmth: -8.0)),
+        (name: "queasy", kind: Debuff, title: "Queasy", description: "Raw meat: slower to heal, and hungry again soon. Cook it.",
+            modifiers: (heal: 0.5, hunger: 1.5)),
+    ],
+    foods: [
+        (tags: ["meat", "cooked"], effect: "hearty", seconds: 300),
+        (tags: ["meat", "cooked", "game"], effect: "hunters_vigour", seconds: 240),
+        (tags: ["baked"], effect: "sustained", seconds: 600),
+        (tags: ["root", "cooked"], effect: "sustained", seconds: 420),
+        (tags: ["fruit"], effect: "refreshed", seconds: 180),
+        (tags: ["berry", "edible"], effect: "refreshed", seconds: 120),
+        (tags: ["egg", "cooked"], effect: "focused", seconds: 300),
+        (tags: ["dairy"], effect: "soothed", seconds: 120),
+        (tags: ["alchemy:warming", "edible"], effect: "ember_warmed", seconds: 300),
+        (tags: ["alchemy:cooling", "edible"], effect: "cooled", seconds: 300),
+        (tags: ["meat", "raw"], effect: "queasy", seconds: 60),
+    ],
+)

@@ -129,6 +129,7 @@
         ),
         (
             name: "hitpoints", title: "Hitpoints", description: "How much harm you can take: twice your level in health.",
+            start: 10,
             guide: [
                 (level: 10, text: "20 health; it trains with every blow you land"),
                 (level: 20, text: "40 health"),

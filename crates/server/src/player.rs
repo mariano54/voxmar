@@ -6,6 +6,7 @@ use std::time::Instant;
 use rustc_hash::FxHashSet;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::lang::Words;
@@ -45,6 +46,10 @@ pub struct Player {
     pub skills: Skills,
     /// Hunger, warmth and their effects.
     pub vitals: Vitals,
+    /// Effects food gave, with seconds left, and every effect's modifiers together, as of
+    /// the last second (`process::Survival`).
+    pub timed_effects: Vec<(EffectId, f32)>,
+    pub modifiers: Modifiers,
     /// Hunger used up but not yet a whole point, healing and hurting under way, in points
     /// and seconds (`process::Survival`).
     pub exhaustion: f32,
@@ -80,6 +85,8 @@ impl Player {
             inventory: Inventory::default(),
             skills: Skills::default(),
             vitals: Vitals::default(),
+            timed_effects: Vec::new(),
+            modifiers: Modifiers::default(),
             exhaustion: 0.0,
             heal_clock: 0.0,
             hurt_clock: 0.0,
@@ -123,8 +130,18 @@ impl Player {
         if self.allow_flight { GameMode::Creative } else { GameMode::Survival }
     }
 
+    /// Gives timed effects (eaten food's), topping up any it has to the longer time.
+    pub fn give_effects(&mut self, given: &[(EffectId, f32)]) {
+        for &(effect, seconds) in given {
+            match self.timed_effects.iter_mut().find(|(e, _)| *e == effect) {
+                Some((_, left)) => *left = left.max(seconds),
+                None => self.timed_effects.push((effect, seconds)),
+            }
+        }
+    }
+
     /// The persistent traits, for saving.
-    pub fn saved(&self, skills: &SkillRegistry) -> SavedPlayer {
+    pub fn saved(&self, skills: &SkillRegistry, effects: &EffectRegistry) -> SavedPlayer {
         SavedPlayer {
             position: self.position,
             yaw: self.yaw,
@@ -134,6 +151,7 @@ impl Player {
             hunger: self.vitals.hunger,
             inventory: self.inventory.clone(),
             skills: skills.ids().map(|id| (skills.get(id).name.clone(), self.skills.xp(id))).filter(|(_, xp)| *xp > 0).collect(),
+            effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
         }
     }
 }
@@ -177,6 +195,7 @@ impl Server {
         });
         let local_admin = self.config.local_admin;
         let skill_ids = self.content.skills.clone();
+        let effect_ids = self.content.effects.clone();
         let weather_seed = self.weather.seed();
         let player = self.players.get_mut(&id).expect("message from unknown player");
         if player.joined {
@@ -209,6 +228,7 @@ impl Server {
                 player.vitals.hunger = saved.hunger;
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
+                player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
             }
             // Players who left dead come back to life at the spawn point.
             Some(saved) => {
@@ -221,6 +241,7 @@ impl Server {
                 }
             }
         }
+        skill_ids.start(&mut player.skills);
         player.changed(traits::INVENTORY);
         player.changed(traits::HEALTH);
         player.changed(traits::SKILLS);
