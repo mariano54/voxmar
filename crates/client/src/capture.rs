@@ -79,6 +79,8 @@ pub struct CapturePlugin {
     pub hold: Option<String>,
     /// Click `press` over and over through the clip (`--repeat`).
     pub repeat: bool,
+    /// Keep looking at the nearest creature (`--face-creature`).
+    pub face_creature: bool,
     /// The creature to summon and strike before the shot (see the module docs).
     pub strike: Option<String>,
     /// The skill whose next level to note before the shot (see the module docs).
@@ -135,6 +137,7 @@ impl Plugin for CapturePlugin {
             press: self.press,
             hold: self.hold.clone(),
             repeat: self.repeat,
+            face_creature: self.face_creature,
             strike: self.strike.clone(),
             summoned: false,
             struck: false,
@@ -187,6 +190,7 @@ struct Capture {
     press: Option<MouseButton>,
     hold: Option<String>,
     repeat: bool,
+    face_creature: bool,
     strike: Option<String>,
     summoned: bool,
     struck: bool,
@@ -276,7 +280,9 @@ fn apply_pose(state: Res<Capture>, player: Res<LocalPlayer>, mut camera: Query<&
     let (Some([x, y, z, yaw, pitch]), Ok(mut transform)) = (state.pose, camera.single_mut()) else { return };
     let step = state.flicker.as_ref().map_or(Vec3::ZERO, |f| f.step);
     transform.translation = player.eye() + Vec3::new(x, y, z) + step;
-    transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
+    // `--face-creature` turns the player toward the creature; the camera looks as they do.
+    let (yaw, pitch) = if state.face_creature { (player.yaw, player.pitch) } else { (yaw.to_radians(), pitch.to_radians()) };
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
 }
 
 /// Selects the hotbar slot holding `--hold`'s item, as a player picks it with a number key.
@@ -292,9 +298,26 @@ const PRESS_FRAMES: u32 = CLIP_RATE;
 
 /// Holds `--press`'s button at the start of the clip, with the player looking where the
 /// pose does, so the interaction systems break or place exactly as for a player.
-fn press(state: Res<Capture>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut ui: ResMut<UiState>, mut player: ResMut<LocalPlayer>) {
+fn press(
+    state: Res<Capture>,
+    creatures: Res<crate::creatures::Creatures>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut ui: ResMut<UiState>,
+    mut player: ResMut<LocalPlayer>,
+) {
+    // `--face-creature`: the eye follows the nearest creature, as a player tracks one.
+    if state.face_creature {
+        let eye = player.eye();
+        if let Some(view) = creatures.views().min_by(|a, b| a.position.distance(eye).total_cmp(&b.position.distance(eye))) {
+            let to = view.position + Vec3::Y * 0.25 - eye;
+            player.yaw = (-to.x).atan2(-to.z);
+            player.pitch = to.y.atan2(to.xz().length());
+        }
+    }
     let Some(button) = state.press else { return };
-    if let Some([_, _, _, yaw, pitch]) = state.pose {
+    if let Some([_, _, _, yaw, pitch]) = state.pose
+        && !state.face_creature
+    {
         player.yaw = yaw.to_radians();
         player.pitch = pitch.to_radians();
     }

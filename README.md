@@ -31,10 +31,10 @@ Client flags: `--seed N` (for worlds `--world` creates, and captures), `--name N
 frame rate), `--language CODE` (`en` or `ja`; captures are in English without it), `--weather KIND[:INTENSITY]` (show a kind of weather from `weather.ron`, such as
 `cumulus`, `storm`, `rain:0.3` or `snow:heavy`, instead of the server's), `--command LINE` (run a console line once in game, such as
 `--command "/time set noon"`; repeatable, and handy with captures), and
-`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS | --dig SECONDS] [--hold ITEM] [--repeat] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --inventory | --character | --loading | --screen title|worlds|create|join|settings]`,
+`--capture out.png [--pose dx,dy,dz,yaw,pitch | --flight SECONDS | --dig SECONDS] [--hold ITEM] [--repeat] [--face-creature] [--time FRACTION] [--mine PROGRESS] [--flicker | --flicker-still] [--menu | --inventory | --character | --loading | --screen title|worlds|create|join|settings]`,
 which runs headless, waits for the world (an unsaved one unless `--world` or `--connect` is
 given) or the menu backdrop to load, logs frame time and saves a screenshot; `--time` holds the
-time of day (a fraction of the day, 0 at sunrise), `--hold` selects the hotbar slot holding an item once it is there (after a `/give`), `--repeat` clicks `--press`'s button every 0.4 s through the clip instead of holding it, `--dig` digs straight down for that many seconds
+time of day (a fraction of the day, 0 at sunrise), `--hold` selects the hotbar slot holding an item once it is there (after a `/give`), `--repeat` clicks `--press`'s button every 0.4 s through the clip instead of holding it, `--face-creature` keeps the eye on the nearest creature, `--dig` digs straight down for that many seconds
 holding the button (reporting frame times, as `--flight` does), and `--mine` mines the block in the middle of
 the view that far (0..1, cracks and chips showing; 1 breaks it just before the screenshot).
 `--flicker` measures shimmer: with the clock stopped it also takes `OUT-moved.png` after

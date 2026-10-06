@@ -488,6 +488,9 @@ impl Server {
         for i in 0..count {
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
+            // Commands may run before the land around a player has loaded (a capture's,
+            // just after joining): load the column first, as /drop does.
+            self.load_area(cell, cell);
             let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
             if self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), self.tick ^ i as u64).is_some() {
                 placed += 1;
