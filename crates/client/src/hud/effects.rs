@@ -154,3 +154,10 @@ fn show_effects(shown: Res<ShowEffects>, launch: Res<crate::session::Launch>, ti
         effects.sort_by_key(|a| (launch.content.effects.get(a.effect).kind == Kind::Debuff, a.effect));
     }
 }
+
+/// The time left the hover plate shows, if it is up and says one (for the gate).
+pub fn shown_left(world: &mut World) -> Option<String> {
+    let up = world.query_filtered::<&Visibility, With<EffectTip>>().iter(world).any(|v| *v != Visibility::Hidden);
+    let left = world.query_filtered::<(&Text, &Node), With<EffectTipLeft>>().iter(world).find(|(_, n)| n.display != Display::None).map(|(t, _)| t.0.clone());
+    left.filter(|_| up)
+}
