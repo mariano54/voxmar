@@ -46,6 +46,21 @@ impl Rgba {
 
     /// The top square of an image (first frame of an animation strip), nearest-resampled
     /// to `size`.
+    /// This drawn over `under` (both the same size) by its alpha: an ore over its rock.
+    fn over(&self, under: &Rgba) -> Rgba {
+        let pixels = self
+            .pixels
+            .chunks(4)
+            .zip(under.pixels.chunks(4))
+            .flat_map(|(over, under)| {
+                let a = over[3] as u32;
+                let mix = |o: u8, u: u8| ((o as u32 * a + u as u32 * (255 - a) + 127) / 255) as u8;
+                [mix(over[0], under[0]), mix(over[1], under[1]), mix(over[2], under[2]), under[3].max(over[3])]
+            })
+            .collect();
+        Rgba { width: self.width, height: self.height, pixels }
+    }
+
     fn square(&self, size: u32) -> Rgba {
         let side = self.width.min(self.height);
         let mut pixels = Vec::with_capacity((size * size * 4) as usize);
@@ -223,6 +238,9 @@ impl Source {
     /// each pack provided.
     pub fn block_textures(&mut self, refs: &[TextureRef]) -> (u32, Vec<Rgba>) {
         let loaded: Vec<Option<Rgba>> = refs.iter().map(|r| self.read(&format!("block/{}", r.name))).collect();
+        // What a texture is drawn over (an ore's host rock), from whichever pack has it.
+        let unders: Vec<Option<Rgba>> =
+            refs.iter().map(|r| r.under.as_ref().and_then(|under| self.read(&format!("block/{under}")))).collect();
         let served: Vec<String> = self
             .packs
             .iter_mut()
@@ -230,14 +248,16 @@ impl Source {
             .chain(Some(format!("{} placeholders", loaded.iter().filter(|t| t.is_none()).count())))
             .collect();
         bevy::log::info!("block textures: {}", served.join(", "));
-        let size = loaded.iter().flatten().map(|t| t.width.min(t.height)).max().unwrap_or(16).next_power_of_two();
+        let size = loaded.iter().chain(&unders).flatten().map(|t| t.width.min(t.height)).max().unwrap_or(16).next_power_of_two();
         let textures = loaded
             .into_iter()
+            .zip(unders)
             .zip(refs)
-            .map(|(texture, r)| match texture {
-                Some(t) => t.square(size),
-                None if r.render == RenderKind::Plant => plant_placeholder(size, r.color, &r.name),
-                None => placeholder(size, r.color, &r.name),
+            .map(|((texture, under), r)| match (texture, under) {
+                (Some(t), Some(under)) => t.square(size).over(&under.square(size)),
+                (Some(t), None) => t.square(size),
+                (None, _) if r.render == RenderKind::Plant => plant_placeholder(size, r.color, &r.name),
+                (None, _) => placeholder(size, r.color, &r.name),
             })
             .collect();
         (size, textures)
