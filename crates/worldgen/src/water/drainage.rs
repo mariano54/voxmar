@@ -520,6 +520,59 @@ pub struct Drainage {
 
 /// How often the guard against loops had to end one, in tests: never, now that circles of
 /// crossings are cut where they close.
+/// Breaks every loop in `next`, a way per cell of a `core`-wide square (`k < 8` a
+/// direction, anything else an end), at the cell on the loop whose way was set by the
+/// lowest `writer` (raw routing, `usize::MAX`, counts as the highest), giving it `fallback`
+/// instead; a loop that still closes ends there. Deterministic: cells are visited in order.
+fn break_loops(next: &mut [u8], tunnel: &mut [bool], writer: &[usize], core: i32, fallback: impl Fn(usize) -> u8) {
+    let n = (core * core) as usize;
+    let step = |next: &[u8], i: usize| -> Option<usize> {
+        let k = next[i];
+        if k >= 8 {
+            return None;
+        }
+        let d = DIRS[k as usize];
+        let (x, z) = (i as i32 % core + d.x, i as i32 / core + d.y);
+        ((0..core).contains(&x) && (0..core).contains(&z)).then(|| (z * core + x) as usize)
+    };
+    // 0 unseen, 1 on the current walk, 2 done.
+    let mut state = vec![0u8; n];
+    let mut tried = vec![false; n];
+    for start in 0..n {
+        let mut walk = Vec::new();
+        let mut at = Some(start);
+        while let Some(i) = at {
+            match state[i] {
+                2 => break,
+                1 => {
+                    // A loop: the cells of the walk from `i` on.
+                    let from = walk.iter().position(|&c| c == i).unwrap();
+                    let cut = *walk[from..].iter().min_by_key(|&&c| (writer[c], c)).unwrap();
+                    let way = fallback(cut);
+                    next[cut] = if tried[cut] || way == next[cut] { END } else { way };
+                    tried[cut] = true;
+                    tunnel[cut] = false;
+                    // Walk again from the start with the loop broken.
+                    for &c in &walk {
+                        state[c] = 0;
+                    }
+                    walk.clear();
+                    at = Some(start);
+                    continue;
+                }
+                _ => {
+                    state[i] = 1;
+                    walk.push(i);
+                    at = step(next, i);
+                }
+            }
+        }
+        for &c in &walk {
+            state[c] = 2;
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) static LOOPS_ENDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -984,11 +1037,14 @@ impl Drainage {
                 k => k,
             };
         }
-        for lake in &lakes {
+        // Which lake last set each cell's way (lakes are sorted smallest first).
+        let mut writer = vec![usize::MAX; (core * core) as usize];
+        for (l, lake) in lakes.iter().enumerate() {
             for pair in lake.path.windows(2) {
                 if let Some(i) = core_index(pair[0]) {
                     next[i] = direction(pair[1] - pair[0]);
                     tunnel[i] |= lake.kind == Kind::Tunnel;
+                    writer[i] = l;
                 }
             }
             for &cell in &lake.clamp {
@@ -1004,6 +1060,13 @@ impl Drainage {
                 }
             }
         }
+        // A bigger lake's way out can end on a cell whose way, set by a smaller lake,
+        // leads back into it, closing a loop. Each loop gives way at the cell set by the
+        // smallest lake on it, which returns to its own steepest descent (or ends there).
+        break_loops(&mut next, &mut tunnel, &writer, core, |i| match raw_at(core_origin + IVec2::new(i as i32 % core, i as i32 / core)) {
+            SINK => END,
+            k => k,
+        });
         let submerged: Vec<bool> = (0..core * core)
             .map(|i| {
                 let height = at(core_origin + IVec2::new(i % core, i / core)).0;
@@ -1134,6 +1197,25 @@ mod tests {
     use super::*;
 
     /// The steepest descent read straight from a window is the rule's, ties included.
+    #[test]
+    fn loops_break_at_the_smallest_lakes_cell() {
+        // A 3-wide square: cell 0 (set by lake 1) points east into cell 1, which (set by
+        // lake 0) points back west. Lake 0's cell gives way to its fallback, south.
+        let mut next = vec![END; 9];
+        next[0] = 0;
+        next[1] = 4;
+        let mut tunnel = vec![false; 9];
+        let writer = [1, 0, usize::MAX, usize::MAX, usize::MAX, usize::MAX, usize::MAX, usize::MAX, usize::MAX];
+        break_loops(&mut next, &mut tunnel, &writer, 3, |_| 2);
+        assert_eq!((next[0], next[1]), (0, 2));
+        // A fallback that loops again ends the cell instead.
+        let mut next = vec![END; 9];
+        next[0] = 0;
+        next[1] = 4;
+        break_loops(&mut next, &mut tunnel, &writer, 3, |_| 4);
+        assert_eq!((next[0], next[1]), (0, END));
+    }
+
     #[test]
     fn steepest_inside_matches_steepest() {
         let mut rng = crate::rng::Rng::new(5, 6, 7, 8);
