@@ -1000,9 +1000,15 @@ fn boulder(world: &Overworld, site: &Site, geology: &GeoGrid, x: i32, z: i32) ->
         return None;
     }
     let fast = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dz)| geology.get(x + dx, z + dz).current.is_some_and(|c| c.speed >= 3));
+    // In clumps: a few 3-block cells along a stream hold stones, most of their columns
+    // filled, so stones gather in small rocky runs rather than dotting the creek with lone
+    // cubes. More of them where the water runs fast.
+    let cell = hash3(world.seed ^ 0xb0a2, x.div_euclid(3), 0, z.div_euclid(3));
+    if cell % 100 >= if fast { 22 } else { 5 } {
+        return None;
+    }
     let hash = hash3(world.seed ^ 0xb0a1, x, 0, z);
-    let chance = if fast { 18 } else { 3 };
-    if hash % 100 >= chance {
+    if hash % 100 >= 65 {
         return None;
     }
     // Of the local stone, a tall one mossy on top where it is damp.

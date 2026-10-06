@@ -643,6 +643,53 @@ fn details(locale: &Locale, def: &BlockDef, ids: bool) -> Vec<(String, Color)> {
     lines
 }
 
+/// Names joined as the language lists them, at most `most` of them and how many more.
+fn listed(locale: &Locale, names: Vec<String>, most: usize) -> String {
+    let comma = locale.get("language.comma");
+    if names.len() <= most {
+        return names.join(comma);
+    }
+    let (shown, rest) = names.split_at(most);
+    locale.format("tooltip.more", &[("list", &shown.join(comma)), ("count", &rest.len())])
+}
+
+/// Where an item comes from and what it goes into, for its tooltip: "Comes from: crafting,
+/// a junglefowl" and "Used in: Oak Planks, Campfire and 4 more".
+pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Content, book: &voxmar_engine::recipe_book::RecipeBook, item: voxmar_engine::block::BlockId) -> Vec<String> {
+    use voxmar_engine::recipe_book::Method;
+    let mut from: Vec<String> = Vec::new();
+    let mut add = |name: String| {
+        if !from.contains(&name) {
+            from.push(name);
+        }
+    };
+    for entry in book.making(item) {
+        match &entry.method {
+            Method::Craft { .. } => add(locale.get("tooltip.from.craft").to_owned()),
+            Method::Cook { .. } => add(locale.get("tooltip.from.cook").to_owned()),
+            Method::Product { creature, .. } | Method::Drop { creature, .. } => add(locale.creature(&content.creatures.get(*creature).def)),
+        }
+    }
+    if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
+        add(locale.get("tooltip.from.harvest").to_owned());
+    }
+    let mut into: Vec<String> = Vec::new();
+    for entry in book.using(item) {
+        let name = locale.block(content.blocks.def(entry.output));
+        if entry.output != item && !into.contains(&name) {
+            into.push(name);
+        }
+    }
+    let mut lines = Vec::new();
+    if !from.is_empty() {
+        lines.push(locale.format("tooltip.comes_from", &[("list", &listed(locale, from, 3))]));
+    }
+    if !into.is_empty() {
+        lines.push(locale.format("tooltip.used_in", &[("list", &listed(locale, into, 3))]));
+    }
+    lines
+}
+
 /// For a seed, what it plants and the level that takes, red while the player is below it.
 fn seed_line(
     locale: &Locale,
@@ -745,6 +792,7 @@ fn tooltip(
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
+    viewer: Res<super::recipes::RecipeViewer>,
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
@@ -787,9 +835,12 @@ fn tooltip(
                     lines.spawn(text(&font.0, line, BODY, SOFT));
                 }
             }
+            // Where it comes from and what it goes into, before the rest.
+            let book = viewer.book().map(|book| origins_and_uses(&locale, &launch.content, book, item)).unwrap_or_default();
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
+                .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
                 lines.spawn(text(&font.0, line, BODY, color));
