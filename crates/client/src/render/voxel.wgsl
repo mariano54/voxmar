@@ -197,9 +197,9 @@ fn cap_vertex(w0: u32) -> CapVertex {
 // proportions, the tilt of its top and where its chip lies. Every face shows the whole
 // texture, so a sample of ore shows its ore from every side. It lies still: no wind moves
 // it. Its sides are shaded darker than its top, which gives it its volume (`shade`).
-const ROCK_TOP: f32 = 0.13;
-const ROCK_FOOT: f32 = 0.24;
-const ROCK_HEIGHT: f32 = 0.22;
+const ROCK_TOP: f32 = 0.16;
+const ROCK_FOOT: f32 = 0.3;
+const ROCK_HEIGHT: f32 = 0.27;
 const ROCK_SUNK: f32 = 0.06;
 const ROCK_SIDE_SHADE = array<f32, 4>(0.72, 0.84, 0.66, 0.78);
 
@@ -238,10 +238,10 @@ fn rock_vertex(w0: u32, a: vec3<f32>, b: vec3<f32>) -> RockVertex {
     // The chip, of three faces, each from two feet up to its point.
     let k = f32(piece - 5u);
     let towards = vec2(cos(b.y * 6.2831853), sin(b.y * 6.2831853));
-    let centre = towards * (ROCK_FOOT * max(stretch.x, stretch.y) + 0.06);
+    let centre = towards * (ROCK_FOOT * max(stretch.x, stretch.y) + 0.04);
     let turn = a.x * 6.2831853 + select(k, k + 1.0, far) * 2.0943951;
-    let foot = centre + vec2(cos(turn), sin(turn)) * 0.09;
-    let point = vec3(centre.x, 0.11 * mix(0.8, 1.3, b.z), centre.y);
+    let foot = centre + vec2(cos(turn), sin(turn)) * 0.11;
+    let point = vec3(centre.x, 0.14 * mix(0.8, 1.3, b.z), centre.y);
     out.at = select(point, vec3(foot.x, -ROCK_SUNK, foot.y), lower);
     out.uv = select(vec2(0.5, 0.25), vec2(select(0.25, 0.75, far), 0.75), lower);
     out.brightness = 0.86 - 0.08 * k;
