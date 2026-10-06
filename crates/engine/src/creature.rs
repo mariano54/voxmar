@@ -14,6 +14,7 @@
 //! for each individual from its species' colours and markings ([`skin`]) and animated from
 //! how the creature moves, so the client needs no model files.
 
+pub mod anatomy;
 pub mod brain;
 pub mod husbandry;
 pub mod model;

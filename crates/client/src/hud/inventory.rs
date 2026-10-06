@@ -163,7 +163,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
                     let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
                     cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
-                    cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(2.0 * PX), bottom: Val::Px(PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
+                    cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
                 });
                 // What the grid makes and how to take it, or how to find a recipe.
                 let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };

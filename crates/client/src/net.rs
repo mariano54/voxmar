@@ -139,7 +139,7 @@ impl RemotePlayers {
 /// Applies what the server sent. If it refuses us or goes away, returns to the menus with
 /// the reason.
 #[allow(clippy::too_many_arguments)]
-fn receive(
+pub(crate) fn receive(
     mut commands: Commands,
     net: Res<Net>,
     mut world: ResMut<ClientWorld>,
@@ -217,6 +217,7 @@ fn receive(
                 player.health = health.current;
                 player.max_health = health.max;
                 player.vitals = vitals;
+                player.vitals_at = time.elapsed_secs();
                 player.inventory = inventory;
                 // A level reached since the last word is announced (not on joining).
                 let registry = &launch.content.skills;

@@ -1,0 +1,7 @@
+// Voxmar HD: our own 32×32 look (docs/voxmar-hd.md). It builds on the default pack:
+// every texture it does not redraw is the default pack's recipe drawn twice as fine.
+(
+    name: "Voxmar HD",
+    extends: ["default"],
+    resolution: 32,
+)

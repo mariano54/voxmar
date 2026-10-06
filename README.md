@@ -166,9 +166,10 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
 the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
-way. Kanji and kana come from BIZ UDGothic, a smooth Japanese font (listed in
-`assets/ui/fonts/fallback.ron`) that text falls back to for those scripts at its own size,
-while letters and digits stay in the crisp pixel font. Every Japanese name with kanji has a
+way. Kanji and kana come from Fusion Pixel 12px, a Japanese pixel font (listed in
+`assets/ui/fonts/fallback.ron`) whose glyphs are read at startup and merged under the chosen
+interface font, its pixels drawn at three quarters of ours; BIZ UDGothic, a smooth font,
+covers any character it lacks. Every Japanese name with kanji has a
 reading in `lang/readings/ja.ron` (オークのげんぼく for オークの原木) that the interface can show with it. Tests in `crates/client/src/lang.rs` hold every
 language complete, every key the code names defined, and every character drawn.
 
@@ -268,8 +269,13 @@ first pack that has it:
 4. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
    never replacing ours.
 
-Settings → Textures switches to "Voxmar", which puts our pack first (the Minecraft jar then only
-fills names ours lacks); it takes effect the next time the game starts.
+Settings → Video → Textures switches to "Voxmar", which puts our pack first (the Minecraft jar
+then only fills names ours lacks), or to "Voxmar HD", our own 32×32 look
+(`assets/packs/voxmar_hd`, style guide in [docs/voxmar-hd.md](docs/voxmar-hd.md)); it takes
+effect the next time the game starts. A pack folder with a `pack.ron` is such a whole look: it
+names the packs it builds on (`extends`), whose images and recipes it takes for everything it
+does not draw itself, and the resolution its block and item textures are drawn at (recipes
+written smaller are drawn finer, keeping their shapes), and it is used only when picked.
 Anything still missing gets a generated placeholder. The startup log says how many textures
 each pack provided. A pack keeps images at `textures/<path>.png` (`textures/block/stone.png`),
 or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No
@@ -289,6 +295,9 @@ cargo run --release -p voxmar_texgen -- sheet --only stone,ore --compare PACK_OR
 cargo run --release -p voxmar_texgen -- export --out DIR       # write every recipe as a PNG
 ```
 
+A pack's books can replace the books of the pack it extends by name: a palette (recolouring
+everything drawn with it), a texture, or single members of a template (redrawing them for
+every family). `--pack assets/packs/voxmar_hd` renders Voxmar HD as the game does.
 `sheet` writes `target/texgen/sheet.png`: each texture large, tiled 3×3 and at one pixel per
 texel, optionally beside the same name from another pack (`--pack DIR` picks the pack,
 `--columns`, `--zoom` and `--out` the layout).

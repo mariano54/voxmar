@@ -335,6 +335,7 @@ impl Server {
             let p = c.body.position;
             cells.entry(((p.x / 2.0).floor() as i32, (p.z / 2.0).floor() as i32)).or_default().push(id);
         }
+        let tick = self.tick;
         let mut pushes: Vec<(u32, Vec3)> = Vec::new();
         for (&(cx, cz), ids) in &cells {
             for &a in ids {
@@ -365,7 +366,7 @@ impl Server {
             }
         }
         for (id, push) in pushes {
-            if let Some(c) = self.creatures.live.get_mut(&id) {
+            if let Some(c) = self.creatures.live.get_mut(&id).filter(|c| tick >= c.held_until) {
                 c.body.velocity += push * 0.05;
                 c.changed = true;
             }
@@ -399,13 +400,20 @@ impl Server {
         let species = self.content.creatures.get(creature.species);
         let mut body = creature.body;
         let decision = creature.decision;
+        let held = self.tick < creature.held_until;
         let drive = match decision.goal {
+            _ if held => Drive::default(),
             Some(goal) if goal.with_y(0.0).distance(body.position.with_y(0.0)) > 0.4 => {
                 let wish = (goal - body.position).with_y(if species.def.habitat.water == Water::Swim { goal.y - body.position.y } else { 0.0 });
                 Drive { wish: wish.normalize_or_zero(), speed: decision.speed, face: decision.face.map(|f| f - body.position) }
             }
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
+        if held {
+            // Held still: nothing carries it along, neither its legs nor a neighbour's push.
+            body.velocity.x = 0.0;
+            body.velocity.z = 0.0;
+        }
         let before = body.position;
         body.reach = species.reach * creature.scale;
         body.head = species.head * creature.scale;
