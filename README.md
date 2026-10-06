@@ -112,6 +112,10 @@ its level, coloured RuneScape-style against your combat level (green below, gold
 above), and once you strike at it, a thin bar of its health; the one you are fighting stays
 there a few seconds after you look away.
 
+Combat is Minecraft's without the knockback: a blow lands at full strength 0.6 s after the
+last, and quicker ones (down to 0.3 s) land lighter, so well-timed blows deal about a tenth
+more damage a second than clicking as fast as you can (`engine/src/combat.rs`).
+
 Farming, with RuneScape-style skills: right-click soil with seeds to sow them (carrots and
 potatoes are sown from themselves). Each crop needs a farming level, from wheat at 1 to
 saffron at 60 and the night-growing moonbloom at 75, and planting and harvesting earn

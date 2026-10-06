@@ -164,6 +164,7 @@ impl Server {
     /// Handles a message that arrived `at`. The player's timed action due by then
     /// completes first: the player saw it done before sending this.
     pub(crate) fn handle_message(&mut self, id: PlayerId, message: ClientMessage, at: Instant) {
+        self.arrival = at;
         if self.players[&id].joined {
             self.complete_actions_of(id, at);
         }

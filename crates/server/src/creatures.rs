@@ -65,9 +65,6 @@ const MAX_CREATURES: usize = 512;
 const KIN_RANGE: f32 = 14.0;
 /// How far creatures look for food.
 const FOOD_RANGE: i32 = 6;
-/// Ticks between a player's strikes: a little under the client's swing, so a server
-/// running behind (fewer ticks a second) still takes every swing a player makes.
-const STRIKE_COOLDOWN: u64 = 6;
 /// How far, in blocks, a blow may reach past a creature's box on the server: the client
 /// aims at where it last drew the creature, which a server running behind has moved on
 /// from. Plus how far the creature moves in this many seconds.
@@ -167,7 +164,7 @@ pub struct Creatures {
     /// Those that died or went since players were last told.
     gone: Vec<CreatureGone>,
     /// Each player's last strike tick.
-    struck: FxHashMap<PlayerId, u64>,
+    struck: FxHashMap<PlayerId, std::time::Instant>,
     /// Where each player settled and since when (RuneScape's tolerance).
     settled: FxHashMap<PlayerId, (Vec3, u64)>,
 }
@@ -513,17 +510,20 @@ impl Server {
     /// A player strikes a creature (`core:attack`): a hit rolled from Attack against its
     /// defence, damage from the Attack level, experience in Attack and Hitpoints.
     pub(crate) fn player_strikes(&mut self, player: PlayerId, id: u32) {
-        let last = self.creatures.struck.get(&player).copied().unwrap_or(0);
-        if self.tick < last + STRIKE_COOLDOWN && last != 0 {
+        // Timed by when the player's click arrived (see `actions`), so a busy server does
+        // not shorten the wait between blows.
+        let at = self.arrival;
+        let since = self.creatures.struck.get(&player).map(|&last| at.saturating_duration_since(last).as_secs_f32());
+        if since.is_some_and(|s| s < voxmar_engine::combat::QUICKEST - 0.02) {
             return;
         }
-        self.creatures.struck.insert(player, self.tick);
+        self.creatures.struck.insert(player, at);
+        let strength = voxmar_engine::combat::strength(since.filter(|&s| s < 5.0));
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let attack_skill = self.skill("core:attack");
         let attack = self.level(player, attack_skill);
         let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
-        let feet = self.players[&player].position;
         let creature = self.creatures.live.get_mut(&id).expect("checked above");
         if hit >= creature::hit_chance(attack, species.def.defence) {
             creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
@@ -532,12 +532,12 @@ impl Server {
             }
             return;
         }
-        // A blow that lands knocks it back a little.
-        let away = (creature.body.position - feet).with_y(0.0).normalize_or_zero();
-        creature.body.velocity += away * 2.5 + Vec3::Y * 2.5;
+        // No knockback: the creature stays where the blow found it.
         creature.changed = true;
         let max_hit = 1 + attack / 8;
-        let damage = (1 + (amount * max_hit as f32) as u16).min(max_hit as u16 + 1).min(creature.health);
+        let full = (1 + (amount * max_hit as f32) as u16).min(max_hit as u16 + 1);
+        // A blow struck too soon after the last lands lighter (`combat`).
+        let damage = voxmar_engine::combat::scaled(full, strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f))).min(creature.health);
         creature.health -= damage;
         creature.hurt_by = Some(player);
         creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);

@@ -272,6 +272,8 @@ struct Gate {
     breaks: Breaks,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
+    /// The lowest and highest the struck creature stood while struck: no knockback lifts it.
+    struck_heights: (f32, f32),
     failures: Vec<String>,
     passes: usize,
     /// The weather's fractions as shown last frame, and the biggest change from one frame
@@ -323,6 +325,7 @@ impl Gate {
             tame_nearest: f32::MAX,
             breaks: Breaks::default(),
             mining_before: None,
+            struck_heights: (f32::MAX, f32::MIN),
             failures: Vec::new(),
             passes: 0,
             weather_last: None,
@@ -2173,6 +2176,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match snail(world) {
                 Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
+                    if landed > 0 {
+                        gate.struck_heights = (gate.struck_heights.0.min(view.position.y), gate.struck_heights.1.max(view.position.y));
+                    }
                     // Close in to striking reach, then strike.
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.2;
                     key(world, KeyCode::KeyW, far);
@@ -2199,6 +2205,11 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    // Blows land without knockback: the snail never left the pad's floor.
+                    let (low, high) = gate.struck_heights;
+                    let rise = (high - low).max(0.0);
+                    let result = if rise < 0.2 { Ok(format!("struck, it rose at most {rise:.2} blocks")) } else { Err(format!("struck, it was thrown {rise:.2} blocks up")) };
+                    gate.check("creature struck: no knockback", result);
                     // Its cries reached the sound system (a silent run plays none).
                     let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
                     let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
