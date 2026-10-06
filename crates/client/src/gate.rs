@@ -1396,7 +1396,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
                     let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
                     let result = if cries.iter().all(|&n| n > 0) { Ok(format!("{} hurt and {} death sounds asked for", cries[0], cries[1])) } else { Err(format!("hurt and death sounds asked for: {cries:?}")) };
-                    gate.known("creature cries", result, "the creatures thread adds the sound hooks");
+                    gate.check("creature cries", result);
                     if !gate.readout_seen {
                         gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
                     }
