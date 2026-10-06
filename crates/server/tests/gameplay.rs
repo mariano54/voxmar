@@ -514,7 +514,8 @@ fn commands_set_the_time_and_the_weather() {
     let (before, _) = client.day.unwrap();
     assert!(client.ok("/time set noon").contains("12:00"));
     let (day, speed) = client.day.unwrap();
-    assert_eq!((day % TICKS_PER_DAY, speed), (8000, 1.0));
+    // A day at normal speed takes the content's 25 minutes, so its ticks run at 0.8.
+    assert_eq!((day % TICKS_PER_DAY, speed), (8000, 0.8));
     assert!(day >= before && day < before + TICKS_PER_DAY);
     client.ok("/night");
     assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 17_000);
@@ -523,7 +524,7 @@ fn commands_set_the_time_and_the_weather() {
     assert!((client.day.unwrap().0 % TICKS_PER_DAY).abs_diff(19_000) < 40, "{:?}", client.day);
     assert!(client.ok("/time freeze").contains("frozen"));
     assert_eq!(client.day.unwrap().1, 0.0);
-    assert!(client.ok("/time speed 10").contains("2.0 minutes per day"));
+    assert!(client.ok("/time speed 10").contains("2.5 minutes per day"));
     assert_eq!(client.command("/time speed -1")[0].0, ChatKind::Error);
 
     // Forced weather arrives quickly, and stays.
@@ -936,4 +937,40 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     client.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
     client.propose("core:craft", ActionTarget::Slot(0));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == pickaxe) && c.earned.contains(&60));
+}
+
+#[test]
+fn cooked_food_takes_a_slot_each_and_ingredients_stack() {
+    let mut client = Client::join();
+    for line in ["/clear", "/give bread 3", "/give wheat 3"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (bread, wheat) = (blocks.expect("base:bread"), blocks.expect("base:wheat"));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().filter(|s| s.item == bread).count() == 3 && c.inventory.slots.iter().flatten().any(|s| s.item == wheat));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != bread || s.count == 1), "bread stacked");
+    assert_eq!(client.inventory.slots.iter().flatten().filter(|s| s.item == wheat).map(|s| s.count).collect::<Vec<_>>(), [3], "wheat should stack");
+}
+
+#[test]
+fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
+    let mut client = Client::join();
+    let water = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/give fishing_rod 1", "/skill fishing 80"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(4).is_some());
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 4, flying: false }));
+    let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
+    // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
+    for _ in 0..6 {
+        client.propose("base:fish", ActionTarget::Block { block: water, face: Face::PosY });
+        let up = Instant::now() + Duration::from_millis(5600);
+        client.pump_until(|c| fish(c) || Instant::now() > up);
+        if fish(&client) {
+            break;
+        }
+    }
+    assert!(fish(&client), "six casts at Fishing 80 caught nothing");
+    client.pump_until(|c| !c.earned.is_empty());
 }

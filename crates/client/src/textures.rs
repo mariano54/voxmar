@@ -8,7 +8,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use voxmar_engine::block::{RenderKind, TextureRef};
-use voxmar_texgen::{Image, Library};
+use voxmar_texgen::{Image, Library, Manifest};
 
 use crate::settings::TextureOrder;
 
@@ -136,10 +136,18 @@ impl Files {
 /// layout) or `assets/minecraft/textures/<path>.png` (Minecraft's, so its client jar and
 /// resource packs work unchanged), and texture recipes in `recipes/*.ron`, rendered here
 /// as the game loads (see the texgen crate). A PNG beats a recipe of the same name.
+///
+/// A folder with a `pack.ron` (a [`Manifest`]) is a whole look the player picks, such as
+/// Voxmar HD: it builds on the packs it extends, taking their images and recipes for
+/// everything it does not draw itself, and draws block and item textures at its
+/// resolution.
 struct Pack {
     name: String,
-    files: Files,
+    /// Its own files first, then those of the packs it builds on.
+    files: Vec<Files>,
     recipes: Library,
+    /// Texels across that block and item textures are drawn at, at least.
+    resolution: u32,
     /// Textures this pack provided since the last log.
     served: usize,
 }
@@ -147,27 +155,36 @@ struct Pack {
 impl Pack {
     fn open(path: &Path) -> Result<Self, String> {
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-        let mut files = Files::open(path)?;
-        let books = files.recipe_books();
-        let (recipes, errors) = Library::from_books_lenient(books.iter().map(|(n, s)| (n.as_str(), s.as_str())));
+        let manifest = if path.is_dir() { Manifest::read(path).map_err(|e| e.to_string())? } else { None };
+        let folders = if manifest.is_some() { Manifest::chain(path).map_err(|e| e.to_string())? } else { vec![path.to_owned()] };
+        let mut files = folders.iter().map(|folder| Files::open(folder)).collect::<Result<Vec<_>, _>>()?;
+        let books: Vec<Vec<(String, String)>> = files.iter_mut().map(Files::recipe_books).collect();
+        let (recipes, errors) =
+            Library::from_layers_lenient(books.iter().map(|layer| layer.iter().map(|(n, s)| (n.as_str(), s.as_str())).collect()));
         for e in errors {
             bevy::log::warn!("texture pack {name}: {e}; leaving that book out");
         }
-        Ok(Self { name, files, recipes, served: 0 })
+        files.reverse();
+        let resolution = manifest.as_ref().map_or(0, |m| m.resolution);
+        Ok(Self { name: manifest.map_or(name, |m| m.name), files, recipes, resolution, served: 0 })
     }
 
     /// Whether the pack has `<path>.png`, as an image or a recipe.
     fn contains(&self, path: &str) -> bool {
-        ["textures", "assets/minecraft/textures"].iter().any(|root| self.files.contains(&format!("{root}/{path}.png")))
+        ["textures", "assets/minecraft/textures"]
+            .iter()
+            .any(|root| self.files.iter().any(|files| files.contains(&format!("{root}/{path}.png"))))
             || self.recipes.contains(path)
     }
 
     fn read(&mut self, path: &str) -> Option<Rgba> {
+        // Blocks and items only: interface sprites are laid out texel for texel.
+        let resolution = if path.starts_with("block/") || path.starts_with("item/") { self.resolution } else { 0 };
         let image = ["textures", "assets/minecraft/textures"]
             .iter()
-            .find_map(|root| self.files.read(&format!("{root}/{path}.png")))
+            .find_map(|root| self.files.iter_mut().find_map(|files| files.read(&format!("{root}/{path}.png"))))
             .and_then(|bytes| Image::decode_png(&bytes))
-            .or_else(|| match self.recipes.render(path)? {
+            .or_else(|| match self.recipes.render_at_least(path, resolution)? {
                 Ok(image) => Some(image),
                 Err(e) => {
                     bevy::log::warn!("texture pack {}: {e}", self.name);
@@ -184,27 +201,39 @@ impl Pack {
 ///
 /// 1. the pack the player chose with `$VOXMAR_TEXTURES` (a folder, zip or jar), which
 ///    overrides everything below;
-/// 2. by default, the newest Minecraft client jar found in a standard launcher location,
-///    for the familiar look while our pack matures (the `textures` setting puts it last);
-/// 3. our default pack, `assets/packs/default`, which draws everything: what Minecraft
+/// 2. with the `textures` setting at Voxmar HD, that pack (`assets/packs/voxmar_hd`);
+/// 3. by default, the newest Minecraft client jar found in a standard launcher location,
+///    for the familiar look while our pack matures (the other settings put it last);
+/// 4. our default pack, `assets/packs/default`, which draws everything: what Minecraft
 ///    has not got (our stones, woods, plants, wonders) and, with the setting, the rest;
-/// 4. any other pack in `assets/packs`, in name order (how mods ship art: they add
-///    textures, but cannot replace ours).
+/// 5. any other pack in `assets/packs` without a `pack.ron`, in name order (how mods ship
+///    art: they add textures, but cannot replace ours). Packs with one are looks the
+///    player picks, such as Voxmar HD, and come first only when picked.
 ///
 /// A chosen pack replaces the Minecraft jar.
 pub struct Source {
     packs: Vec<Pack>,
 }
 
+/// The Voxmar HD pack's folder in `assets/packs`.
+pub const HD_PACK: &str = "voxmar_hd";
+
 impl Source {
     pub fn discover(order: TextureOrder) -> Self {
         let assets = voxmar_server::assets_dir();
+        let root = assets.join("packs");
         let mut packs = Vec::new();
         let chosen = std::env::var_os("VOXMAR_TEXTURES").map(PathBuf::from);
         if let Some(path) = &chosen {
             match Pack::open(path) {
                 Ok(pack) => packs.push(pack),
                 Err(e) => bevy::log::warn!("cannot open texture pack {}: {e}", path.display()),
+            }
+        }
+        if order == TextureOrder::VoxmarHd {
+            match Pack::open(&root.join(HD_PACK)) {
+                Ok(pack) => packs.push(pack),
+                Err(e) => bevy::log::warn!("cannot open texture pack {HD_PACK}: {e}"),
             }
         }
         let minecraft = match (&chosen, find_minecraft_jar()) {
@@ -215,13 +244,12 @@ impl Source {
         if order == TextureOrder::Minecraft {
             packs.extend(minecraft.by_ref());
         }
-        let root = assets.join("packs");
         let mut bundled: Vec<PathBuf> = std::fs::read_dir(&root)
             .into_iter()
             .flatten()
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
+            .filter(|path| path.is_dir() && !path.join(Manifest::FILE).exists())
             .collect();
         bundled.sort_by_key(|path| (path.file_name() != Some("default".as_ref()), path.clone()));
         packs.extend(bundled.iter().filter_map(|path| Pack::open(path).ok()));
@@ -397,4 +425,60 @@ fn gradient_colormap(base: [u8; 3]) -> Rgba {
         }
     }
     Rgba { width: 256, height: 256, pixels }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every block texture and item icon the content uses resolves to art in the Voxmar HD
+    /// look: the pack's own 32×32 art, or the default pack's (or a mod pack's) drawn as the
+    /// game draws it. Only a name that no pack draws, which would show a placeholder in
+    /// every look, fails here; a block landed with default art alone passes and joins the
+    /// pack's queue: the names still on the fallback are written, one per line, to
+    /// `target/voxmar-hd-pending.txt`, so Voxmar HD never holds up anyone's landing.
+    #[test]
+    fn voxmar_hd_resolves_every_texture() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("repository root");
+        let assets = root.join("assets");
+        let content = voxmar_server::load_content(&assets).expect("content");
+        let packs = assets.join("packs");
+        let mut hd = Pack::open(&packs.join(HD_PACK)).expect("Voxmar HD opens");
+        assert_eq!(hd.name, "Voxmar HD");
+        // What the default pack alone would draw at the pack's resolution: textures that
+        // come out the same are fallbacks, not yet redrawn for Voxmar HD.
+        let default = Library::load(&packs.join("default")).expect("default pack");
+        let mut addons: Vec<Pack> = std::fs::read_dir(&packs)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir() && !path.join(Manifest::FILE).exists() && path.file_name() != Some("default".as_ref()))
+            .filter_map(|path| Pack::open(&path).ok())
+            .collect();
+        let blocks = &content.blocks;
+        let icons = (0..blocks.len()).filter_map(|i| blocks.def(voxmar_engine::block::BlockId(i as u16)).icon.clone()).map(|name| format!("item/{name}"));
+        let mut names: Vec<String> = blocks.textures().iter().map(|r| format!("block/{}", r.name)).chain(icons).collect();
+        names.sort();
+        names.dedup();
+        let (mut missing, mut pending) = (Vec::new(), Vec::new());
+        for name in &names {
+            match hd.read(name) {
+                Some(texture) => {
+                    let fallback = default.render_at_least(name, hd.resolution).and_then(Result::ok);
+                    if fallback.is_some_and(|f| f.pixels == texture.pixels) {
+                        pending.push(name.clone());
+                    }
+                }
+                None if addons.iter_mut().any(|pack| pack.read(name).is_some()) => pending.push(name.clone()),
+                None => missing.push(name.clone()),
+            }
+        }
+        let list = root.join("target/voxmar-hd-pending.txt");
+        if std::fs::create_dir_all(root.join("target")).is_ok() {
+            let _ = std::fs::write(&list, pending.iter().map(|n| format!("{n}\n")).collect::<String>());
+        }
+        println!("Voxmar HD: {} of {} textures drawn for it, {} on the default fallback (listed in {})", names.len() - pending.len() - missing.len(), names.len(), pending.len(), list.display());
+        assert!(missing.is_empty(), "no pack draws {} texture names, so they show placeholders in every look: {missing:?}", missing.len());
+    }
 }

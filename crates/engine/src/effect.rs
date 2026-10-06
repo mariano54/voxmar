@@ -1,10 +1,10 @@
-//! Status effects: buffs and debuffs that change how a player heals, hungers, feels the
-//! cold, moves, mines and learns.
+//! Status effects: buffs and debuffs that change how a player heals, feels the cold,
+//! moves, mines and learns.
 //!
 //! Effects are content: each package's `effects.ron` lists its own, so a mod adds a buff
 //! the way it adds a block. What an effect may do is a small, fixed vocabulary of
 //! [`Modifiers`] owned by the engine, and what brings one on is either a [`Condition`] the
-//! server checks every second (hunger, warmth, the weather where the player stands) or
+//! server checks every second (warmth, the weather where the player stands) or
 //! something the player did: food gives the effects its package's `foods` rules name for
 //! the tags it has (cooked meat makes you hearty), and any with an `effect:NAME:SECONDS`
 //! tag of its own, for that long. An effect may `replace` milder ones (freezing hides chilly), and while
@@ -56,10 +56,8 @@ pub struct EffectDef {
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Modifiers {
-    /// How fast health comes back; 0 stops it.
+    /// How fast health comes back by itself; 0 stops it.
     pub heal: f32,
-    /// How fast hunger empties.
-    pub hunger: f32,
     /// Seconds between losing a point of health, if it hurts.
     pub hurt_every: Option<f32>,
     /// Degrees (°C) added to how warm the player feels.
@@ -76,7 +74,7 @@ pub struct Modifiers {
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hunger: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, speed: 1.0, mining: 1.0, xp: 1.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, speed: 1.0, mining: 1.0, xp: 1.0 }
     }
 }
 
@@ -85,7 +83,6 @@ impl Modifiers {
     pub fn combine<'a>(all: impl IntoIterator<Item = &'a Modifiers>) -> Modifiers {
         all.into_iter().fold(Modifiers::default(), |sum, m| Modifiers {
             heal: sum.heal * m.heal,
-            hunger: sum.hunger * m.hunger,
             hurt_every: match (sum.hurt_every, m.hurt_every) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
@@ -103,9 +100,6 @@ impl Modifiers {
 /// overhead), except wind, which reaches in under any roof that is not walled.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub enum Condition {
-    /// Hunger points at least, or at most, this many (20 is full).
-    HungerAtLeast(u8),
-    HungerAtMost(u8),
     /// Feeling colder, or warmer, than this many °C.
     FeltBelow(f32),
     FeltAbove(f32),
@@ -132,7 +126,6 @@ pub enum Condition {
 /// stand.
 #[derive(Clone, Copy, Debug)]
 pub struct Situation<'a> {
-    pub hunger: u8,
     /// How warm the player feels, °C.
     pub felt: f32,
     pub warmed: bool,
@@ -146,8 +139,6 @@ impl Condition {
         let w = s.weather;
         let falling = |share: f32| w.precipitation * share;
         match self {
-            Condition::HungerAtLeast(n) => s.hunger >= *n,
-            Condition::HungerAtMost(n) => s.hunger <= *n,
             Condition::FeltBelow(t) => s.felt < *t,
             Condition::FeltAbove(t) => s.felt > *t,
             Condition::Warmed => s.warmed,
@@ -339,8 +330,8 @@ mod tests {
     use super::*;
 
     const EFFECTS: &str = r#"(effects: [
-        (name: "well_fed", kind: Buff, title: "Well fed", description: "", when: Some(HungerAtLeast(18)), modifiers: (heal: 2.0)),
-        (name: "chilly", kind: Debuff, title: "Chilly", description: "", when: Some(FeltBelow(6.0)), modifiers: (heal: 0.5, hunger: 1.5)),
+        (name: "by_the_fire", kind: Buff, title: "By the fire", description: "", when: Some(Warmed), modifiers: (heal: 2.0)),
+        (name: "chilly", kind: Debuff, title: "Chilly", description: "", when: Some(FeltBelow(6.0)), modifiers: (heal: 0.5, speed: 0.9)),
         (name: "freezing", kind: Debuff, title: "Freezing", description: "", when: Some(FeltBelow(-6.0)), replaces: ["chilly"], modifiers: (heal: 0.0, hurt_every: Some(10.0))),
         (name: "soaked", kind: Debuff, title: "Soaked", description: "", when: Some(Rain(0.3)), modifiers: (warmth: -4.0)),
         (name: "hearty", kind: Buff, icon: "meat", title: "Hearty", description: "", modifiers: (max_health: 4)),
@@ -350,8 +341,8 @@ mod tests {
         EffectRegistry::new(vec![EffectRegistry::read("core", EFFECTS).unwrap()]).unwrap()
     }
 
-    fn situation(weather: &Weather, hunger: u8, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { hunger, felt, warmed: false, outdoors, weather }
+    fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
+        Situation { felt, warmed, outdoors, weather }
     }
 
     #[test]
@@ -359,14 +350,14 @@ mod tests {
         let effects = registry();
         let calm = Weather::NONE;
         let names = |active: Vec<ActiveEffect>| active.iter().map(|a| effects.get(a.effect).name.clone()).collect::<Vec<_>>();
-        assert_eq!(names(effects.active(&situation(&calm, 20, 15.0, true), &[])), ["core:well_fed"]);
-        assert_eq!(names(effects.active(&situation(&calm, 10, 2.0, true), &[])), ["core:chilly"]);
-        assert_eq!(names(effects.active(&situation(&calm, 10, -10.0, true), &[])), ["core:freezing"]);
+        assert!(effects.active(&situation(&calm, false, 15.0, true), &[]).is_empty());
+        assert_eq!(names(effects.active(&situation(&calm, true, 2.0, true), &[])), ["core:by_the_fire", "core:chilly"]);
+        assert_eq!(names(effects.active(&situation(&calm, false, -10.0, true), &[])), ["core:freezing"]);
         let rain = Weather { precipitation: 0.8, ..Weather::NONE };
-        assert_eq!(names(effects.active(&situation(&rain, 10, 15.0, true), &[])), ["core:soaked"]);
-        assert!(effects.active(&situation(&rain, 10, 15.0, false), &[]).is_empty(), "rain under a roof soaks no one");
+        assert_eq!(names(effects.active(&situation(&rain, false, 15.0, true), &[])), ["core:soaked"]);
+        assert!(effects.active(&situation(&rain, false, 15.0, false), &[]).is_empty(), "rain under a roof soaks no one");
         let snow = Weather { precipitation: 0.8, snow: 1.0, ..Weather::NONE };
-        assert!(effects.active(&situation(&snow, 10, 15.0, true), &[]).is_empty(), "snow is not rain");
+        assert!(effects.active(&situation(&snow, false, 15.0, true), &[]).is_empty(), "snow is not rain");
     }
 
     #[test]
@@ -379,7 +370,7 @@ mod tests {
         let given = effects.given_by(&tags(&["meat", "cooked", "effect:hearty:300"]));
         assert_eq!(given, [(hearty, 300.0)], "the longest of a rule and its own tag");
         let calm = Weather::NONE;
-        let active = effects.active(&situation(&calm, 10, 2.0, true), &given);
+        let active = effects.active(&situation(&calm, false, 2.0, true), &given);
         assert_eq!(active[0], ActiveEffect { effect: effects.id("core:hearty").unwrap(), seconds_left: Some(300) });
         assert_eq!(active[1].effect, effects.id("core:chilly").unwrap());
         assert_eq!(effects.get(active[0].effect).icon, "meat");
@@ -391,9 +382,9 @@ mod tests {
         let effects = registry();
         let calm = Weather::NONE;
         let given = [(effects.id("core:hearty").unwrap(), 10.0)];
-        let m = effects.modifiers(&effects.active(&situation(&calm, 20, -10.0, true), &given));
+        let m = effects.modifiers(&effects.active(&situation(&calm, false, -10.0, true), &given));
         assert_eq!((m.heal, m.hurt_every, m.max_health), (0.0, Some(10.0), 4));
-        let m = effects.modifiers(&effects.active(&situation(&calm, 20, 2.0, true), &[]));
-        assert_eq!((m.heal, m.hunger), (1.0, 1.5));
+        let m = effects.modifiers(&effects.active(&situation(&calm, true, 2.0, true), &[]));
+        assert_eq!((m.heal, m.speed), (1.0, 0.9));
     }
 }

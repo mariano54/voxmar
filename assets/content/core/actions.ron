@@ -27,8 +27,8 @@
         (name: "drop", duration: Instant, requires: [Alive], effects: [Throw]),
         // Striking a creature with what is in hand (left click on it).
         (name: "attack", duration: Instant, requires: [Alive, CreatureInReach], effects: [Strike]),
-        // Eating what you hold, if you have room for it.
-        (name: "eat", duration: Seconds(1.2), requires: [Alive, HoldingFood, Hungry], effects: [EatHeld]),
+        // Eating what you hold, which heals you, if you are hurt.
+        (name: "eat", duration: Seconds(1.2), requires: [Alive, HoldingFood, Hurt], effects: [EatHeld]),
         (name: "respawn", duration: Instant, requires: [Dead], effects: [Respawn]),
     ],
 )

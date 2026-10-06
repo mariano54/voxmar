@@ -99,7 +99,7 @@ pub struct SlotIcon(pub usize);
 pub struct SlotCount(pub usize);
 #[derive(Component)]
 struct HotbarSelection;
-/// What sits along the bottom edge: the hotbar, health, hunger and effects.
+/// What sits along the bottom edge: the hotbar, health and effects.
 #[derive(Component)]
 struct Bottom;
 #[derive(Component)]
@@ -177,7 +177,7 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             let name = Node { height: Val::Px(12.0 * PX), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
             bottom.spawn(name).with_child((HeldName, shadowed(font, "", BODY, TEXT)));
             let width = HOTBAR_SLOTS as f32 * (SLOT + GAP) - GAP + 2.0 * FRAME;
-            // The effects on you, then health and hunger side by side.
+            // The effects on you, then health across the hotbar's width.
             let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), row_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::INNER)), flex_wrap: FlexWrap::Wrap, ..default() };
             bottom.spawn((chips, EffectChips));
             // Health, the one meter: food heals rather than fills a stomach.
@@ -266,7 +266,7 @@ fn update_slots(
     }
 }
 
-/// Health and hunger as meters reading "15/20", and a chip for each effect on you: teal
+/// Health as a meter reading "15/20", and a chip for each effect on you: teal
 /// for a buff, red for a debuff.
 #[allow(clippy::too_many_arguments)]
 fn update_vitals(

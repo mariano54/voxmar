@@ -627,15 +627,15 @@ struct Environment {
 // turns black: on a moonless night under rain it was (Mariano's playtest, 2026-10-06).
 const SUN: Vec3 = Vec3::new(0.72, 0.68, 0.62);
 const LOW_SUN: Vec3 = Vec3::new(0.72, 0.45, 0.25);
-const MOON: Vec3 = Vec3::new(0.0193, 0.0258, 0.046);
-/// The night's sky and skylight without a moon, against a full moon's: not far below, as a
-/// moonless night was too dark to play in (Mariano, 2026-10-06).
-const MOONLESS: f32 = 0.92;
+const MOON: Vec3 = Vec3::new(0.0145, 0.0194, 0.0345);
+/// The night's sky and skylight without a moon, against a full moon's.
+const MOONLESS: f32 = 0.65;
 const DAY_AMBIENT: Vec3 = Vec3::new(0.40, 0.45, 0.55);
-/// Night's skylight, high for how dark it looks: the display's contrast and a pack's dimmer
-/// ambient (Verdant's half) crush it, and at a fifth of this a moonless night's open ground
-/// averaged 3 of 255, black.
-const NIGHT_AMBIENT: Vec3 = Vec3::new(0.147, 0.193, 0.331);
+/// Night's skylight under a full moon, high for how dark it looks: the display's contrast
+/// and a pack's dimmer ambient (Verdant's half) crush it. Mariano's bounds (2026-10-06): at
+/// a seventh of this a moonless night's ground averaged 3 of 255, black; at 1.45 times it,
+/// both moonlit and moonless nights were too bright.
+const NIGHT_AMBIENT: Vec3 = Vec3::new(0.11, 0.145, 0.25);
 const DAY_ZENITH: Vec3 = Vec3::new(0.22, 0.45, 0.95);
 const NIGHT_ZENITH: Vec3 = Vec3::new(0.0012, 0.0018, 0.0045);
 const DAY_HORIZON: Vec3 = Vec3::new(0.62, 0.78, 0.98);

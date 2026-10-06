@@ -1,0 +1,60 @@
+// Voxmar HD soils (docs/voxmar-hd.md): dirt, the grass block's side, sand and gravel at
+// 32×32. The grass top is the default pack's meadow turf (`block/meadow_grass_top`), already
+// drawn at 32×32, as are its grass and flowers; the fringe of grass on the side stays grey
+// like it, as the game tints both.
+(
+    palettes: {
+        "dirt": ["#4c3222", "#64432d", "#7a5438", "#8f6443", "#a3744f", "#b5865d"],
+        "sand": (ramp: "#d9c79b", shades: 5, light: 0.2, hue: 16.0, chroma: -0.3),
+        "red_sand": (ramp: "#c0703c", shades: 8, light: 0.26, hue: 14.0, chroma: -0.3),
+        "gravel": (ramp: "#86827e", shades: 6, light: 0.36, hue: 14.0, chroma: -0.25),
+        "pebble": (ramp: "#8a8078", shades: 4, light: 0.26, hue: 20.0, chroma: -0.3),
+        // Neutral, with a slight warm lift in the light: the tint gives the colour.
+        "grass_grey": ["#6e6e6e", "#7a7a7a", "#868686", "#929292", "#9e9e9e", "#aaaaa9", "#b8b8b6", "#c8c8c4"],
+    },
+    textures: {
+        // Vanilla's design language, our own drawing: umber earth in four or five clear
+        // shades, blotched in clumps two to four texels across with crisp edges, darker
+        // pits, and a few small pale pebbles.
+        "block/dirt": (size: (32, 32), palettes: {"main": "dirt", "pebble": "pebble"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Noise(cells: (8, 8), octaves: 2, gain: 0.5, amount: 0.4),
+                Noise(cells: (32, 32), amount: 0.6),
+            ], clean: true),
+            Clusters(palette: "main", count: 18, size: (2, 4), spacing: 5.0, shade: 0, seed: 7),
+            Clusters(palette: "pebble", count: 6, size: (2, 4), spacing: 8.0, shade: 2, shadow: -1, seed: 5),
+        ]),
+        // A ragged fringe of thin blades hanging over the dirt, darker where it meets it.
+        "block/grass_block_side_overlay": (size: (32, 32), palettes: {"grass": "grass_grey"}, layers: [
+            Paint(palette: "grass", base: 0.6, shade: [Noise(cells: (16, 16), amount: 0.35), Gradient(from: 0.15, to: -0.5)], mask: [Fringe(depth: (4, 8), smooth: 0.2)], above: 0.5, clean: true),
+            // Single blades hanging lower, a texel wide, darkening down: the shorter of two
+            // random reaches, so a few are long and most short.
+            Paint(palette: "grass", base: 0.5, shade: [Gradient(from: 0.3, to: -0.9), Grain(0.15)], mask: [Fringe(depth: (0, 13), smooth: 0.0, seed: 3), Fringe(depth: (0, 13), smooth: 0.0, seed: 6)], above: 1.5),
+            Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.07, amount: 1.0, seed: 5)], above: 0.5),
+        ]),
+        "block/grass_block_side": (base: "block/dirt", layers: [
+            Stamp(texture: "block/grass_block_side_overlay", shadow: -1),
+        ]),
+        // Vanilla's design language, our own drawing: pale straw sand in five clear
+        // shades, a soft broad blotch pattern broken at texel scale, a sprinkle of darker
+        // grains two texels across.
+        "block/sand": (size: (32, 32), palettes: {"main": "sand"}, layers: [
+            Paint(palette: "main", base: 0.56, shade: [
+                Noise(cells: (8, 8), octaves: 2, amount: 0.3),
+                Noise(cells: (32, 32), amount: 0.45),
+            ], clean: true),
+            Clusters(palette: "main", count: 12, size: (2, 3), spacing: 6.0, shade: 0, seed: 1),
+        ]),
+        "block/red_sand": (base: "block/sand", palettes: {"main": "red_sand"}),
+        // Vanilla's design language, our own drawing: loose stones two to five texels
+        // across in grey and a few warm browns, each its own shade with a darker rim,
+        // packed tight.
+        "block/gravel": (size: (32, 32), palettes: {"main": "gravel", "warm": (ramp: "#8f7c70", shades: 5, light: 0.3, hue: 18.0, chroma: -0.3)}, layers: [
+            Paint(palette: "main", base: 0.52, shade: [
+                Cells(count: (9, 9), jitter: 1.0, value: 0.75, edge: -0.3, width: 1.0, bevel: 0.25, lip: 0.15, round: 0.2, warp: 0.8),
+                Noise(cells: (32, 32), amount: 0.25),
+            ], clean: true),
+            Clusters(palette: "warm", count: 6, size: (4, 9), spacing: 7.0, shade: 2, shadow: -1, round: 2.0),
+        ]),
+    },
+)

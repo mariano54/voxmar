@@ -1,4 +1,4 @@
-//! The character screen (C): how you are on the left (health, hunger, how warm you feel
+//! The character screen (C): how you are on the left (health, how warm you feel
 //! and the effects on you, also shown in the inventory), every skill on the right with its level and how far to the next.
 //! Clicking a skill opens its guide: what it opens up at each level, from the skill's own
 //! guide in skills.ron and every crop that needs it, marked as reached or not.
@@ -481,7 +481,7 @@ fn draw_guide(
 const CATEGORIES: f32 = 56.0 * PX;
 const BUTTON_SMALL: f32 = 16.0 * PX;
 
-/// How you are, as the character and inventory screens show it: health and hunger
+/// How you are, as the character and inventory screens show it: health
 /// meters, how warm you feel, and every effect on you with what it does.
 #[derive(Component)]
 pub struct Condition;

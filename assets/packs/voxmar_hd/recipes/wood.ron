@@ -1,0 +1,78 @@
+// Voxmar HD woods (docs/voxmar-hd.md). These members replace the default pack's `wood`
+// template members of the same pattern, so every wood's log, log end, stripped log,
+// planks and leaves are drawn at 32×32 from its own palettes; the oak palettes are warmer
+// and finer ramps of the default ones.
+(
+    palettes: {
+        "leaf_grey": ["#4c4c4c", "#5c5c5c", "#6e6e6e", "#808080", "#929292", "#a4a4a4", "#b6b6b6", "#c8c8c8"],
+        // Each wood's leaves, in eight shades from the default pack's, the light end pulled
+        // down so lit leaf edges are never white.
+        "birch_leaves": ["#575757", "#656565", "#737373", "#818181", "#8d8d8d", "#999999", "#a5a5a5", "#b0b0b0"],
+        "spruce_leaves": ["#4d4d4d", "#5b5b5b", "#686868", "#767676", "#828282", "#8d8d8d", "#989898", "#a3a3a3"],
+        "dark_oak_leaves": ["#515151", "#606060", "#6d6d6d", "#7a7a7a", "#878787", "#929292", "#9c9c9c", "#a7a7a7"],
+        "cherry_leaves": ["#b0577f", "#bf648c", "#cc7299", "#d682a6", "#df93b3", "#e5a4be", "#e9b3c9", "#ecc3d3"],
+        "maple_leaves": ["#7a2416", "#8d2f1b", "#9f3c20", "#ae4926", "#bb592d", "#c46b36", "#cc7e42", "#d39150"],
+        "redwood_leaves": ["#373737", "#424242", "#4e4e4e", "#5a5a5a", "#666666", "#707070", "#7b7b7b", "#868686"],
+        "pine_leaves": ["#545b62", "#656d74", "#777e86", "#888f98", "#9aa0aa", "#abb1bb", "#bcc2cc", "#cdd4dd"],
+        "cypress_leaves": ["#393939", "#454545", "#515151", "#5c5c5c", "#676767", "#727272", "#7d7d7d", "#878787"],
+        "willow_leaves": ["#5c5c5c", "#6a6a6a", "#787878", "#858585", "#929292", "#9e9e9e", "#aaaaaa", "#b5b5b5"],
+        "silverwood_leaves": ["#4d7a8e", "#5d8a9d", "#6e9aac", "#7faaba", "#93bbc9", "#a7cad5", "#bcd7df", "#d2e3e8"],
+        "emberwood_leaves": ["#741a0b", "#8b240e", "#a33011", "#ba3e14", "#ce5119", "#dd6a20", "#e88429", "#eea137"],
+        "oak_bark": (ramp: "#6b5234", shades: 6, light: 0.36, hue: 18.0, chroma: -0.1),
+        "oak_wood": (ramp: "#a27b52", shades: 6, light: 0.3, hue: 16.0, chroma: -0.2),
+    },
+    templates: {
+        "wood": {
+            // Vanilla's design language, our own drawing: bark as long vertical streaks
+            // of four or five clear shades, darker furrows wandering up the log between
+            // lit ridges, crisp edges and no grain.
+            "block/{name}_log": (size: (32, 32), layers: [
+                Paint(palette: "bark", base: 0.55, shade: [
+                    Noise(cells: (8, 2), octaves: 2, gain: 0.6, amount: 0.5),
+                    Noise(cells: (32, 8), amount: 0.55),
+                ], clean: true),
+            ]),
+            // The cut end: fine growth rings round a dark pith inside the ragged bark.
+            "block/{name}_log_top": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.62, shade: [
+                    Rings(spacing: 4.0, width: 0.3, amount: -0.26, wobble: 1.2, square: 0.4),
+                    Grain(0.03),
+                ]),
+                Paint(palette: "wood", base: 0.15, mask: [Circle(radius: 1.6)], above: 0.5),
+                Paint(palette: "bark", base: 0.45, shade: [Grain(0.4)], mask: [Border(width: 2, amount: 1.0), Border(width: 3, amount: 0.45), Noise(cells: (8, 8), amount: 0.4)], above: 0.62, light: 1),
+            ]),
+            // Smooth wood under the bark with fine wandering grain lines.
+            "block/stripped_{name}_log": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.6, shade: [Noise(cells: (8, 1), octaves: 2, amount: 0.28), Grain(0.08)], clean: true),
+                Paint(palette: "wood", base: 0.32, shade: [Grain(0.15)], mask: [Ridge(cells: (6, 1), octaves: 2, width: 0.06, amount: 1.0)], above: 0.5),
+            ]),
+            "block/stripped_{name}_log_top": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.66, shade: [
+                    Rings(spacing: 3.0, width: 0.3, amount: -0.22, wobble: 0.9, square: 0.4),
+                    Border(width: 1, amount: -0.25),
+                    Noise(cells: (16, 16), amount: 0.08),
+                ]),
+                Paint(palette: "wood", base: 0.2, mask: [Circle(radius: 1.6)], above: 0.5),
+            ]),
+            // Vanilla's design language, our own drawing: four boards a block, each its
+            // own tone, a dark seam under each and end joints at varied places, grain as
+            // long horizontal streaks of clear shades broken at texel scale.
+            "block/{name}_planks": (size: (32, 32), layers: [
+                Paint(palette: "wood", base: 0.56, shade: [
+                    Boards(height: 8, seam: -0.5, joint: -0.35, value: 0.2, bevel: 0.1),
+                    Noise(cells: (2, 16), octaves: 2, amount: 0.3),
+                    Noise(cells: (8, 32), amount: 0.3),
+                ], clean: true),
+            ]),
+            // Vanilla's design language, our own drawing: a dense mass of leaf clumps two
+            // to four texels across in five clear shades, lit from the top left, with holes
+            // opening where the mass is darkest.
+            "block/{name}_leaves": (size: (32, 32), palettes: {"leaves": "leaf_grey"}, layers: [
+                Paint(palette: "leaves", base: 0.2, shade: [Noise(cells: (16, 16), amount: 0.25), Noise(cells: (32, 32), amount: 0.2)], clean: true),
+                Clusters(palette: "leaves", count: 56, size: (4, 9), spread: (1.2, 1.0), spacing: 3.6, shade: 4, shadow: -1),
+                Clusters(palette: "leaves", count: 24, size: (2, 4), spacing: 5.0, shade: 6, seed: 1),
+                Cut(mask: [Noise(cells: (16, 16), amount: 0.8), Noise(cells: (32, 32), amount: 0.6)], above: 0.0, darker_than: 2),
+            ]),
+        },
+    },
+)

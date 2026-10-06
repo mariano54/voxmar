@@ -5,6 +5,7 @@ mod actions;
 mod commands;
 mod cooking;
 mod creatures;
+mod fishing;
 mod farm;
 mod husbandry;
 mod inspect;
@@ -277,6 +278,8 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// When the player message being handled arrived (see `actions`).
+    arrival: Instant,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     processes: Vec<Box<dyn Process>>,
@@ -377,6 +380,7 @@ impl Server {
             items,
             farm,
             placed,
+            arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
             processes,
             temperature,
@@ -488,7 +492,8 @@ impl Server {
         let _span = tracing::info_span!("server_tick").entered();
         let started = Instant::now();
         self.tick += 1;
-        self.day += self.day_speed as f64;
+        // At normal speed a day takes the content's `day_minutes`.
+        self.day += (self.day_speed * self.content.commands.day_pace()) as f64;
         self.run_processes();
         self.tick_items();
         self.tick_creatures();
@@ -561,7 +566,7 @@ impl Server {
 
     /// The clocks, as players are told them.
     pub(crate) fn time_message(&self) -> ServerMessage {
-        ServerMessage::Time { tick: self.tick, day: self.day as u64, day_speed: self.day_speed }
+        ServerMessage::Time { tick: self.tick, day: self.day as u64, day_speed: self.day_speed * self.content.commands.day_pace() }
     }
 
     pub(crate) fn broadcast(&self, message: ServerMessage) {
