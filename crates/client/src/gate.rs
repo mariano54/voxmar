@@ -213,10 +213,17 @@ struct Gate {
     readout_seen: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// The interface font before the gate tried another, to go back to.
+    font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
     failures: Vec<String>,
     passes: usize,
+    /// The weather's fractions as shown last frame, and the biggest change from one frame
+    /// to the next relative to the most it may change in a frame (over 1 is a jump), with
+    /// which and when.
+    weather_last: Option<[f32; 24]>,
+    weather_jump: (f32, &'static str, f32),
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
@@ -247,9 +254,12 @@ impl Gate {
             blows_seen: 0,
             readout_seen: false,
             spills: Vec::new(),
+            font: None,
             food_moved: false,
             failures: Vec::new(),
             passes: 0,
+            weather_last: None,
+            weather_jump: (0.0, "", 0.0),
             frame_ms: Vec::new(),
             longest: default(),
         }
@@ -385,6 +395,11 @@ fn run(world: &mut World) {
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
     *longest = longest.max(frame_ms);
+    if screen == Screen::InGame && world.resource::<crate::weather::WeatherReady>().0 {
+        watch_weather(world, &mut gate, now);
+    } else {
+        gate.weather_last = None;
+    }
     if gate.step != Step::Done {
         match guard(world, &mut gate, now, screen) {
             Ok(()) => step(world, &mut gate, now),
@@ -435,7 +450,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     let feet = gate.feet;
     match gate.step {
         Step::Load => {
-            if loaded(world) {
+            // As a loading screen would, waiting for the weather to show too.
+            if loaded(world) && world.resource::<crate::weather::WeatherReady>().0 {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
                 land(world, gate);
                 // From here on, anything first drawn compiles its pipeline in that frame
@@ -782,6 +798,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     },
                 );
                 set_language(world, "en");
+                // And another interface font, as the setting changes it.
+                let mut settings = world.resource_mut::<crate::settings::Settings>();
+                gate.font = Some(settings.font);
+                settings.font = crate::ui::skin::InterfaceFont::ALL.into_iter().find(|f| *f != settings.font).unwrap_or_default();
                 gate.advance(now);
             }
         }
@@ -790,6 +810,17 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let words = localized_text(world, "menu.quit_game");
                 let back = if words.as_deref() == Some("Quit game") { Ok("back in English".into()) } else { Err(format!("reads {words:?} after switching back")) };
                 gate.check("language: English", back);
+                let font = world.resource::<crate::settings::Settings>().font;
+                gate.check(
+                    "font change",
+                    match crate::lang::texts_without_a_font(world) {
+                        None => Ok(format!("every text has {}", font.label())),
+                        Some(lost) => Err(format!("in {}, {lost} have no font: every letter a box", font.label())),
+                    },
+                );
+                if let Some(font) = gate.font.take() {
+                    world.resource_mut::<crate::settings::Settings>().font = font;
+                }
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
             }
@@ -1087,6 +1118,39 @@ fn localized_text(world: &mut World, key: &str) -> Option<String> {
     texts.iter(world).find(|(localized, _)| localized.0 == key).map(|(_, text)| text.0.clone())
 }
 
+/// Follows the weather shown from frame to frame once it is ready. On the first frame it
+/// must already be the server's (joining shows the real weather, not a change from the
+/// menus' sky into it); after that no fraction may change faster than easing lets it
+/// (`weather::fastest`), so fog, rain and the rest come and go gradually.
+fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
+    let weather = world.resource::<crate::weather::ClientWeather>();
+    let shown = weather.current.fractions();
+    let values = shown.map(|(_, v)| v);
+    match gate.weather_last {
+        None if gate.step == Step::Load => {
+            let target = weather.target().map(|t| t.fractions());
+            let off = target.map_or(f32::INFINITY, |t| t.iter().zip(&shown).map(|(t, s)| (t.1 - s.1).abs()).fold(0.0, f32::max));
+            let result = if off < 0.02 {
+                Ok(format!("ready at {now:.1}s, showing the server's weather at once: {}", weather.current.summary()))
+            } else {
+                Err(format!("first shown {} away from the server's report: {}", off, weather.current.summary()))
+            };
+            gate.check("weather: joined", result);
+        }
+        None => {}
+        Some(last) => {
+            let dt = world.resource::<Time>().delta_secs();
+            for (i, (&(name, value), was)) in shown.iter().zip(last).enumerate() {
+                let ratio = (value - was).abs() / (crate::weather::fastest(i) * dt + 1e-4);
+                if ratio > gate.weather_jump.0 {
+                    gate.weather_jump = (ratio, name, now);
+                }
+            }
+        }
+    }
+    gate.weather_last = Some(values);
+}
+
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
 /// clear skies again.
 fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -1109,7 +1173,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         phase @ (1 | 2) => {
             let (kind, name, arrived) = kinds[phase as usize - 1];
             if !arrived(&shown) {
-                if in_phase > 8.0 {
+                if in_phase > 12.0 {
                     gate.check(&format!("weather: {kind}"), Err(format!("it did not come: {}", shown.summary())));
                     world.resource::<Net>().command("weather clear 600");
                     gate.phase = 3;
@@ -1132,13 +1196,29 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource::<Net>().command(&next);
             gate.advance(now);
         }
-        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => gate.next(Step::Sky, now),
-        3 if in_phase > 8.0 => {
+        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
+            eased(gate);
+            gate.next(Step::Sky, now);
+        }
+        3 if in_phase > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
+            eased(gate);
             gate.next(Step::Sky, now);
         }
         _ => {}
     }
+}
+
+/// Whether every change of weather so far (the commands' storm, snow and clearing among
+/// them) eased in without a jump.
+fn eased(gate: &mut Gate) {
+    let (ratio, name, at) = gate.weather_jump;
+    let result = if ratio <= 1.01 {
+        Ok(format!("no jumps, at most {:.0}% of the fastest easing allows ({name})", ratio * 100.0))
+    } else {
+        Err(format!("{name} jumped at {at:.1}s, {ratio:.1} times what easing allows in a frame"))
+    };
+    gate.check("weather: eases", result);
 }
 
 /// A small tree grows on the test ground: a trunk under a crown of leaves with an apple
@@ -1244,6 +1324,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.shot(world, "creatures").is_some() {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                gate.check("creature voices", crate::creature_sounds::loaded(world));
                 gate.next(Step::Strike, now);
             }
         }
@@ -1311,6 +1392,11 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    // Its cries reached the sound system (a silent run plays none).
+                    let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
+                    let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
+                    let result = if cries.iter().all(|&n| n > 0) { Ok(format!("{} hurt and {} death sounds asked for", cries[0], cries[1])) } else { Err(format!("hurt and death sounds asked for: {cries:?}")) };
+                    gate.known("creature cries", result, "the creatures thread adds the sound hooks");
                     if !gate.readout_seen {
                         gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
                     }

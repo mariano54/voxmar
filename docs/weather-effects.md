@@ -12,7 +12,8 @@ Every frame on the client (all in `client/src/weather.rs` and `weather/atmospher
 
 | Resource | What | Notes |
 | --- | --- | --- |
-| `ClientWeather::current` | `voxmar_engine::weather::Weather`: every channel below, eased | `wind` already includes the gusts at the camera |
+| `ClientWeather::current` | `voxmar_engine::weather::Weather`: every channel below, eased | `wind` already includes the gusts at the camera. Read only this: every channel gathers speed, changes at most a full swing over its own tens of seconds (six seconds after a command) and settles, so nothing drawn or heard from it ever jumps |
+| `WeatherReady` | true once the real weather (and the land's air) shows in this game | the first report is shown at once, never eased into from the menus' sky; a loading screen waits for it |
 | `ClientWeather::flash()` | lightning brightness 0..1 | already lights sky, land and ambient (render/mod.rs) |
 | `ClientWeather::bolts()` | `Bolt { channel, branches, brightness }` per visible bolt | world-space polylines; see Lightning bolts |
 | `ClientWeather::effects` | names of the effects showing (`valley_fog`, `hail`) | for debugging (F3 shows them) |
