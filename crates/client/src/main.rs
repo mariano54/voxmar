@@ -116,6 +116,10 @@ struct Options {
     press: Option<MouseButton>,
     /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
     hold: Option<String>,
+    /// `--repeat`: click `--press`'s button over and over through the clip.
+    repeat: bool,
+    /// `--face-creature`: keep looking at the nearest creature.
+    face_creature: bool,
     size: UVec2,
     windowed: bool,
     screen: Option<Screen>,
@@ -158,6 +162,8 @@ fn parse_options() -> Result<Options, String> {
         clip: None,
         press: None,
         hold: None,
+        repeat: false,
+        face_creature: false,
         size: UVec2::new(1920, 1080),
         windowed: false,
         screen: None,
@@ -203,6 +209,8 @@ fn parse_options() -> Result<Options, String> {
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--hold" => options.hold = Some(value()?),
+            "--repeat" => options.repeat = true,
+            "--face-creature" => options.face_creature = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
             "--press" => {
                 options.press = Some(match value()?.as_str() {
@@ -400,6 +408,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clip: options.clip,
             press: options.press,
             hold: options.hold,
+            repeat: options.repeat,
+            face_creature: options.face_creature,
             strike: options.strike,
             level_up: options.level_up,
             tend: options.tend,
