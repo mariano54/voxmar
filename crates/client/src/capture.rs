@@ -14,7 +14,13 @@
 //! flicker as time passes.
 //!
 //! `--clip SECONDS` records motion instead: every frame of that much game time at 30 fps,
-//! as `OUT-000.png` on, for checking how things move (wind, water, weather).
+//! as `OUT-000.png` on, for checking how things move (wind, water, weather). It starts once
+//! the world has settled, or with `--clip-join` the moment the player joins (to see what
+//! joining shows); `--clip-command LINE` runs a console command as it starts (`/weather
+//! clear`, to watch the weather change).
+//!
+//! Still shots wait for the weather to be ready (`weather::WeatherReady`) as well as the
+//! world, so they show the place's own weather and air.
 //!
 //! `--strike CREATURE` summons one beside the player and strikes it once, a moment before
 //! the shot, to show the target readout with its health; `--level-up SKILL` notes that skill's
@@ -78,6 +84,9 @@ pub struct CapturePlugin {
     pub flicker: Option<FlickerKind>,
     /// Seconds of game time to record frame by frame (see the module docs).
     pub clip: Option<f32>,
+    /// Start the clip on joining, and run these console lines as it starts.
+    pub clip_join: bool,
+    pub clip_commands: Vec<String>,
     /// A mouse button to hold at the start of the clip (see the module docs).
     pub press: Option<MouseButton>,
     /// An item whose hotbar slot to select once the inventory has it (`--hold`).
@@ -144,7 +153,12 @@ impl Plugin for CapturePlugin {
             frame_times: Vec::new(),
             steady_times: Vec::new(),
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
-            clip: self.clip.map(|seconds| Clip { frames: (seconds * CLIP_RATE as f32).ceil() as u32, ..default() }),
+            clip: self.clip.map(|seconds| Clip {
+                frames: (seconds * CLIP_RATE as f32).ceil() as u32,
+                join: self.clip_join,
+                commands: self.clip_commands.clone(),
+                ..default()
+            }),
             press: self.press,
             hold: self.hold.clone(),
             repeat: self.repeat,
@@ -238,10 +252,22 @@ impl Capture {
 #[derive(Default)]
 struct Clip {
     frames: u32,
+    /// Starts on joining rather than once settled, and runs these lines as it starts.
+    join: bool,
+    commands: Vec<String>,
     started: bool,
     /// Shots asked for, and shots written.
     taken: u32,
     saved: Arc<AtomicU32>,
+}
+
+impl Clip {
+    /// `record_clip` takes over, and every frame from now on advances the game alike.
+    fn start(&mut self, commands: &mut Commands, console: &mut crate::hud::console::Console) {
+        self.started = true;
+        console.run_when_joined(std::mem::take(&mut self.commands));
+        commands.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1) / CLIP_RATE));
+    }
 }
 
 /// Progress of a `--flicker` measurement, which starts once the world has settled.
@@ -597,6 +623,7 @@ fn capture(
     lod: Res<Lod>,
     screen: Res<State<Screen>>,
     (weather, air, launch): (Res<crate::weather::ClientWeather>, Res<crate::weather::atmosphere::ClientAtmosphere>, Res<crate::session::Launch>),
+    (ready, mut console): (Res<crate::weather::WeatherReady>, ResMut<crate::hud::console::Console>),
 ) {
     // Real time while `--flicker` stops the game's clock.
     let now = if state.flicker.is_some() { real.elapsed_secs() } else { time.elapsed_secs() };
@@ -617,7 +644,16 @@ fn capture(
         Screen::InGame => !player.joined,
         _ => false,
     };
+    if let Some(clip) = &mut state.clip
+        && clip.join
+        && *screen.get() == Screen::InGame
+        && player.joined
+    {
+        clip.start(&mut commands, &mut console);
+        return;
+    }
     let busy = joining
+        || (*screen.get() == Screen::InGame && !ready.0)
         || stats.jobs_in_flight > 0
         || stats.pending_columns > 0
         || world.voxels.len() < 9
@@ -699,9 +735,7 @@ fn capture(
         return;
     }
     if let Some(clip) = &mut state.clip {
-        // `record_clip` takes over, and every frame from now on advances the game alike.
-        clip.started = true;
-        commands.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1) / CLIP_RATE));
+        clip.start(&mut commands, &mut console);
         return;
     }
     commands
