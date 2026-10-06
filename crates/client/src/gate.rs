@@ -219,6 +219,11 @@ struct Gate {
     food_moved: bool,
     failures: Vec<String>,
     passes: usize,
+    /// The weather's fractions as shown last frame, and the biggest change from one frame
+    /// to the next relative to the most it may change in a frame (over 1 is a jump), with
+    /// which and when.
+    weather_last: Option<[f32; 24]>,
+    weather_jump: (f32, &'static str, f32),
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
@@ -253,6 +258,8 @@ impl Gate {
             food_moved: false,
             failures: Vec::new(),
             passes: 0,
+            weather_last: None,
+            weather_jump: (0.0, "", 0.0),
             frame_ms: Vec::new(),
             longest: default(),
         }
@@ -388,6 +395,11 @@ fn run(world: &mut World) {
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
     *longest = longest.max(frame_ms);
+    if screen == Screen::InGame && world.resource::<crate::weather::WeatherReady>().0 {
+        watch_weather(world, &mut gate, now);
+    } else {
+        gate.weather_last = None;
+    }
     if gate.step != Step::Done {
         match guard(world, &mut gate, now, screen) {
             Ok(()) => step(world, &mut gate, now),
@@ -438,7 +450,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     let feet = gate.feet;
     match gate.step {
         Step::Load => {
-            if loaded(world) {
+            // As a loading screen would, waiting for the weather to show too.
+            if loaded(world) && world.resource::<crate::weather::WeatherReady>().0 {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
                 land(world, gate);
                 // From here on, anything first drawn compiles its pipeline in that frame
@@ -1105,6 +1118,39 @@ fn localized_text(world: &mut World, key: &str) -> Option<String> {
     texts.iter(world).find(|(localized, _)| localized.0 == key).map(|(_, text)| text.0.clone())
 }
 
+/// Follows the weather shown from frame to frame once it is ready. On the first frame it
+/// must already be the server's (joining shows the real weather, not a change from the
+/// menus' sky into it); after that no fraction may change faster than easing lets it
+/// (`weather::fastest`), so fog, rain and the rest come and go gradually.
+fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
+    let weather = world.resource::<crate::weather::ClientWeather>();
+    let shown = weather.current.fractions();
+    let values = shown.map(|(_, v)| v);
+    match gate.weather_last {
+        None if gate.step == Step::Load => {
+            let target = weather.target().map(|t| t.fractions());
+            let off = target.map_or(f32::INFINITY, |t| t.iter().zip(&shown).map(|(t, s)| (t.1 - s.1).abs()).fold(0.0, f32::max));
+            let result = if off < 0.02 {
+                Ok(format!("ready at {now:.1}s, showing the server's weather at once: {}", weather.current.summary()))
+            } else {
+                Err(format!("first shown {} away from the server's report: {}", off, weather.current.summary()))
+            };
+            gate.check("weather: joined", result);
+        }
+        None => {}
+        Some(last) => {
+            let dt = world.resource::<Time>().delta_secs();
+            for (i, (&(name, value), was)) in shown.iter().zip(last).enumerate() {
+                let ratio = (value - was).abs() / (crate::weather::fastest(i) * dt + 1e-4);
+                if ratio > gate.weather_jump.0 {
+                    gate.weather_jump = (ratio, name, now);
+                }
+            }
+        }
+    }
+    gate.weather_last = Some(values);
+}
+
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
 /// clear skies again.
 fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -1127,7 +1173,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         phase @ (1 | 2) => {
             let (kind, name, arrived) = kinds[phase as usize - 1];
             if !arrived(&shown) {
-                if in_phase > 8.0 {
+                if in_phase > 12.0 {
                     gate.check(&format!("weather: {kind}"), Err(format!("it did not come: {}", shown.summary())));
                     world.resource::<Net>().command("weather clear 600");
                     gate.phase = 3;
@@ -1150,13 +1196,29 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource::<Net>().command(&next);
             gate.advance(now);
         }
-        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => gate.next(Step::Sky, now),
-        3 if in_phase > 8.0 => {
+        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
+            eased(gate);
+            gate.next(Step::Sky, now);
+        }
+        3 if in_phase > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
+            eased(gate);
             gate.next(Step::Sky, now);
         }
         _ => {}
     }
+}
+
+/// Whether every change of weather so far (the commands' storm, snow and clearing among
+/// them) eased in without a jump.
+fn eased(gate: &mut Gate) {
+    let (ratio, name, at) = gate.weather_jump;
+    let result = if ratio <= 1.01 {
+        Ok(format!("no jumps, at most {:.0}% of the fastest easing allows ({name})", ratio * 100.0))
+    } else {
+        Err(format!("{name} jumped at {at:.1}s, {ratio:.1} times what easing allows in a frame"))
+    };
+    gate.check("weather: eases", result);
 }
 
 /// A small tree grows on the test ground: a trunk under a crown of leaves with an apple
