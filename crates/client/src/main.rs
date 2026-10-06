@@ -48,6 +48,7 @@ mod music;
 mod net;
 mod player;
 mod render;
+mod screenshot;
 mod session;
 mod settings;
 mod sfx;
@@ -353,6 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         silence(&mut app);
     }
     app
+    .add_plugins(screenshot::ScreenshotPlugin)
     .add_plugins((
         FrameTimeDiagnosticsPlugin::default(),
         render::RenderPlugin,
@@ -678,7 +680,16 @@ fn setup(
             source.read(&format!("ui/skill/{name}")).or_else(|| unknown.clone()).map(|art| images.add(ui_image(&art))).unwrap_or_default()
         })
         .collect();
-    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons });
+    // Each effect's icon, `ui/effect/<key>`, and the plain ones for a buff or a debuff.
+    let mut picture = |name: &str| source.read(name).map(|art| images.add(ui_image(&art))).unwrap_or_default();
+    let (buff, debuff) = (picture("ui/effect/buff"), picture("ui/effect/debuff"));
+    use voxmar_engine::vitals::Effect;
+    let effects = [Effect::WellFed, Effect::Hungry, Effect::Starving, Effect::ByTheFire, Effect::Chilly, Effect::Freezing, Effect::Hot, Effect::Overheated]
+        .into_iter()
+        .map(crate::lang::effect_key)
+        .filter_map(|key| Some((key.clone(), source.read(&format!("ui/effect/{key}")).map(|art| images.add(ui_image(&art)))?)))
+        .collect();
+    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects, buff, debuff });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

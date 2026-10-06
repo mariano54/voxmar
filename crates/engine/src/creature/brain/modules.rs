@@ -60,6 +60,13 @@ impl Module for Roam {
 
     fn want(&self, ctx: &Ctx) -> Option<Want> {
         let p = &ctx.mind.personality;
+        // Not while someone is with it: a player close by, one offering food, or one who
+        // hurt it. An animal being fed, tamed or fought stays in the moment.
+        let engaged = ctx.attacker().is_some()
+            || ctx.at.players.iter().any(|p| ctx.distance(p.position) < 6.0 || (p.tempting && ctx.distance(p.position) < ctx.sight));
+        if engaged {
+            return None;
+        }
         let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
         // Most decisions it does not cross its mind; once going, it keeps on.
         if !going && ctx.random(92) > 0.12 {

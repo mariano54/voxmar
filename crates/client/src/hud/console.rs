@@ -266,7 +266,10 @@ fn draw(
     for (slot, children, mut visibility, mut background) in &mut lines {
         // Slots fill from the bottom: the last slot holds the newest line.
         let line = (slot.0 + shown).checked_sub(SHOWN).map(|i| &console.lines[first + i]);
-        let alpha = line.map_or(0.0, |line| if open { 1.0 } else { ((line.at + LINGER - now) / FADE).clamp(0.0, 1.0) });
+        // Over an open screen (inventory, character, menu) the chat would run into its words:
+        // it waits until the screen closes, or the chat is opened.
+        let screen = ui.inventory_open || ui.character_open || ui.menu_open || ui.recipes_open;
+        let alpha = line.map_or(0.0, |line| if open { 1.0 } else if screen { 0.0 } else { ((line.at + LINGER - now) / FADE).clamp(0.0, 1.0) });
         visibility.set_if_neq(if alpha > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
         let (Some(line), Some(&child)) = (line.filter(|_| alpha > 0.0), children.first()) else { continue };
         background.set_if_neq(BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45 * alpha)));

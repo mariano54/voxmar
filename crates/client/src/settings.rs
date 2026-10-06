@@ -25,7 +25,7 @@ use crate::ui::widgets::{
     ACCENT, BODY, ButtonStyle, GOLD, LARGE, MUTED, Pressed, SCRIM, SOFT, Selected, TEXT, UiFont, button_row, panel, screen,
     shadowed, spawn_button, spawn_rule, text,
 };
-use crate::ui::widgets::space;
+use crate::ui::widgets::{HoverLight, space};
 use crate::net::Net;
 use crate::player::{LocalPlayer, UiState, Zoom};
 use crate::render::{DayCycle, Quality, ShadowQuality};
@@ -131,6 +131,8 @@ pub struct Settings {
     pub resolution: i32,
     /// The pixel font the interface writes with.
     pub font: InterfaceFont,
+    /// How large the interface is drawn, in percent: one of `UI_SCALES`.
+    pub ui_scale: i32,
     /// The sounds buttons and the inventory make.
     pub ui_sounds: UiSounds,
     /// Key that opens and closes the inventory.
@@ -140,8 +142,19 @@ pub struct Settings {
     /// Keys that show, over an item, the recipes that make it and the ones it goes into.
     pub recipes_key: Key,
     pub uses_key: Key,
+    /// Key that copies the frame to the clipboard and saves it (`screenshot`).
+    pub screenshot_key: Key,
     /// The language's code (`en`, `ja`), or empty to follow the system's.
     pub language: String,
+}
+
+/// The sizes the interface can be drawn at, in percent. Steps of a quarter keep the pixel
+/// art whole on a Retina screen (each art pixel a whole number of the screen's).
+pub const UI_SCALES: [i32; 5] = [50, 75, 100, 125, 150];
+
+/// The step of `steps` nearest `value`.
+fn nearest(steps: &[i32], value: i32) -> i32 {
+    steps.iter().copied().min_by_key(|step| (step - value).abs()).unwrap_or(value)
 }
 
 /// The resolutions the world can be drawn at, in percent of the window's width and
@@ -300,11 +313,14 @@ impl Default for Settings {
             far_detail: FarDetail::default(),
             resolution: 50,
             font: InterfaceFont::default(),
+            // A little smaller than the art's own size: still whole pixels on a Retina screen.
+            ui_scale: 75,
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
+            screenshot_key: Key(KeyCode::F2),
             language: String::new(),
         }
     }
@@ -595,6 +611,7 @@ enum Choice {
     Textures,
     Particles,
     Font,
+    UiScale,
     UiSounds,
     Language,
 }
@@ -604,6 +621,7 @@ impl Choice {
         match self {
             Choice::FarDetail => "settings.far_detail",
             Choice::Font => "settings.font",
+            Choice::UiScale => "settings.ui_scale",
             Choice::UiSounds => "settings.ui_sounds",
             Choice::AntiAliasing => "settings.anti_aliasing",
             Choice::ShaderPack => "settings.shader_pack",
@@ -621,6 +639,7 @@ impl Choice {
             Choice::FarDetail => words(settings.far_detail.key()),
             // Fonts and packs go by their names.
             Choice::Font => settings.font.label().into(),
+            Choice::UiScale => format!("{}%", settings.ui_scale),
             Choice::UiSounds => words(settings.ui_sounds.key()),
             Choice::AntiAliasing => words(settings.anti_aliasing.key()),
             Choice::ShaderPack => packs.get(&settings.shader_pack).name.clone(),
@@ -642,6 +661,7 @@ impl Choice {
             }
             Choice::FarDetail => settings.far_detail = cycle(&FarDetail::ALL, settings.far_detail, forward),
             Choice::Font => settings.font = cycle(&InterfaceFont::ALL, settings.font, forward),
+            Choice::UiScale => settings.ui_scale = cycle(&UI_SCALES, nearest(&UI_SCALES, settings.ui_scale), forward),
             Choice::UiSounds => settings.ui_sounds = cycle(&UiSounds::ALL, settings.ui_sounds, forward),
             Choice::AntiAliasing => settings.anti_aliasing = cycle(&AntiAliasing::ALL, settings.anti_aliasing, forward),
             Choice::ShaderPack => {
@@ -688,6 +708,7 @@ enum Binding {
     Character,
     Recipes,
     Uses,
+    Screenshot,
 }
 
 impl Binding {
@@ -700,6 +721,7 @@ impl Binding {
             Binding::Character => "settings.key.character",
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
+            Binding::Screenshot => "settings.key.screenshot",
         }
     }
 
@@ -712,6 +734,7 @@ impl Binding {
             Binding::Character => settings.character_key,
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
+            Binding::Screenshot => settings.screenshot_key,
         }
     }
 
@@ -724,6 +747,7 @@ impl Binding {
             Binding::Character => &mut settings.character_key,
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
+            Binding::Screenshot => &mut settings.screenshot_key,
         } = key;
     }
 }
@@ -850,6 +874,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Character),
             Control::Key(Binding::Recipes),
             Control::Key(Binding::Uses),
+            Control::Key(Binding::Screenshot),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Sprint),
             Control::Key(Binding::Zoom),
@@ -860,6 +885,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         &[
             Control::Choice(Choice::Language),
             Control::Choice(Choice::Font),
+            Control::Choice(Choice::UiScale),
             Control::Choice(Choice::UiSounds),
             Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::DebugOverlay),
@@ -965,9 +991,13 @@ const ROW: f32 = 18.0 * PX;
 const CONTROL: f32 = 16.0 * PX;
 const SLIDER_WIDTH: f32 = 96.0 * PX;
 const VALUE_WIDTH: f32 = 62.0 * PX;
-const CONTROL_WIDTH: f32 = 124.0 * PX;
+/// Every control takes the same width at the right of its row, so their edges line up: a
+/// slider and its value, or a button.
+const CONTROL_WIDTH: f32 = SLIDER_WIDTH + space::GAP + VALUE_WIDTH;
 /// Lines kept for the hint at the foot of the panel: the longest hint wraps to two.
 const HINT_LINES: usize = 2;
+/// The faint light on the row under the pointer.
+const ROW_LIT: Color = Color::srgba(0.37, 0.88, 0.82, 0.06);
 
 fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -1023,7 +1053,7 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>) {
 /// A label on the left and its control on the right.
 fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Control) {
     let node = Node { height: Val::Px(ROW), justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() };
-    let mut row = panel.spawn((Button, Silent, SettingRow(control), node));
+    let mut row = panel.spawn((Button, Silent, SettingRow(control), node, BackgroundColor(Color::NONE)));
     if control == Control::Slider(Slider::FlySpeed) {
         row.insert(ShownWhen::Admin);
     }
@@ -1031,7 +1061,7 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, font: &Handle<Font>, control: Con
         row.spawn((Localized(control.key()), text(font, "", BODY, TEXT)));
         match control {
             Control::Slider(slider) => spawn_slider(row, font, slider),
-            Control::Switch(toggle) => spawn_switch(row, toggle),
+            Control::Switch(toggle) => spawn_switch(row, font, toggle),
             Control::Choice(choice) => spawn_choice(row, font, choice),
             Control::Key(binding) => spawn_key(row, font, binding),
             Control::Dropdown(dropdown) => spawn_dropdown(row, font, dropdown),
@@ -1054,18 +1084,19 @@ fn spawn_slider(row: &mut ChildSpawnerCommands, font: &Handle<Font>, slider: Sli
         ..default()
     };
     let value = Node { width: Val::Px(VALUE_WIDTH), justify_content: JustifyContent::FlexEnd, ..default() };
-    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|control| {
+    row.spawn(Node { width: Val::Px(CONTROL_WIDTH), align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|control| {
         control.spawn((Button, SliderTrack(slider), RelativeCursorPosition::default(), area)).with_children(|area| {
             area.spawn((track, Piece::Well.image())).with_children(|track| {
-                track.spawn((SliderFill(slider), fill, Piece::Bar.image())).with_child((knob, Piece::Knob.image()));
+                track.spawn((SliderFill(slider), fill, Piece::Bar.image())).with_child((knob, Piece::Knob.image(), HoverLight));
             });
         });
         control.spawn(value).with_child((SliderValue(slider), text(font, "", BODY, SOFT)));
     });
 }
 
-/// A recess with a gold knob that slides right, and lights teal, when on.
-fn spawn_switch(row: &mut ChildSpawnerCommands, toggle: Toggle) {
+/// A recess with a gold knob that slides right, and lights teal, when on; and beside it,
+/// in words, whether it is.
+fn spawn_switch(row: &mut ChildSpawnerCommands, font: &Handle<Font>, toggle: Toggle) {
     let size = Piece::KnobSmall.size();
     let track = Node {
         width: Val::Px(2.5 * size.x + 4.0 * PX),
@@ -1074,8 +1105,16 @@ fn spawn_switch(row: &mut ChildSpawnerCommands, toggle: Toggle) {
         ..default()
     };
     let knob = Node { width: Val::Px(size.x), height: Val::Px(size.y), ..default() };
-    row.spawn((Button, Switch(toggle), track, Piece::Well.image())).with_child((knob, Piece::KnobSmall.image()));
+    let cell = Node { width: Val::Px(CONTROL_WIDTH), align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
+    row.spawn(cell).with_children(|cell| {
+        cell.spawn((Button, Switch(toggle), track, Piece::Well.image(), HoverLight)).with_child((knob, Piece::KnobSmall.image(), HoverLight));
+        cell.spawn((SwitchLabel(toggle), text(font, "", BODY, SOFT)));
+    });
 }
+
+/// The words beside a switch: on or off.
+#[derive(Component)]
+struct SwitchLabel(Toggle);
 
 /// A button showing the current option between arrows: a click steps forward, a right
 /// click back.
@@ -1306,7 +1345,7 @@ fn show_section(
     open: Res<OpenSection>,
     tabs: Query<(Entity, &SectionTab, Has<Selected>)>,
     mut pages: Query<(&SectionPage, &mut Node)>,
-    rows: Query<(&SettingRow, &Interaction)>,
+    mut rows: Query<(&SettingRow, &Interaction, &mut BackgroundColor)>,
     mut hint: Query<&mut Text, With<HintText>>,
     mut hint_box: Query<&mut Node, (With<HintBox>, Without<SectionPage>)>,
     locale: Res<Locale>,
@@ -1333,8 +1372,13 @@ fn show_section(
             node.display = display;
         }
     }
-    let hovered = rows.iter().find(|(_, interaction)| **interaction != Interaction::None).map(|(row, _)| row.0.hint());
-    let hovered = hovered.as_deref().map_or("", |key| locale.get(key));
+    // The row under the pointer lights faintly, and its hint shows; with none, how to get one.
+    for (_, interaction, mut background) in &mut rows {
+        let lit = if *interaction == Interaction::None { Color::NONE } else { ROW_LIT };
+        background.set_if_neq(BackgroundColor(lit));
+    }
+    let hovered = rows.iter().find(|(_, interaction, _)| **interaction != Interaction::None).map(|(row, _, _)| row.0.hint());
+    let hovered = hovered.as_deref().map_or_else(|| locale.get("settings.hint.none"), |key| locale.get(key));
     if let Ok(mut text) = hint.single_mut()
         && text.0 != hovered
     {
@@ -1373,7 +1417,8 @@ fn sync_controls(
     font: Res<UiFont>,
     settings: Res<Settings>,
     mut fills: Query<(&SliderFill, &mut Node), Without<Switch>>,
-    mut values: Query<(&SliderValue, &mut Text)>,
+    mut values: Query<(&SliderValue, &mut Text), Without<SwitchLabel>>,
+    mut switch_labels: Query<(&SwitchLabel, &mut Text, &mut TextColor), Without<SliderValue>>,
     mut switches: Query<(&Switch, &mut Node, &mut ImageNode)>,
     choices: Query<(Entity, &ChoiceValue)>,
     keys: Query<(Entity, &KeyValue)>,
@@ -1412,6 +1457,14 @@ fn sync_controls(
     }
     for (value, mut text) in &mut values {
         text.0 = value.0.text(value.0.get(&settings), &locale);
+    }
+    for (label, mut text, mut color) in &mut switch_labels {
+        let on = label.0.get(&settings);
+        let words = locale.get(if on { "settings.value.on" } else { "settings.value.off" });
+        if text.0 != words {
+            words.clone_into(&mut text.0);
+        }
+        color.set_if_neq(TextColor(if on { TEXT } else { MUTED }));
     }
     for (switch, mut node, mut image) in &mut switches {
         let on = switch.0.get(&settings);
