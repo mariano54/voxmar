@@ -226,6 +226,10 @@ struct Gate {
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    /// While taming, frames the junglefowl was under the crosshair, another creature was,
+    /// or none was, and the nearest the player came to it.
+    tame_aim: [u32; 3],
+    tame_nearest: f32,
     breaks: Breaks,
     failures: Vec<String>,
     passes: usize,
@@ -266,6 +270,8 @@ impl Gate {
             spills: Vec::new(),
             font: None,
             food_moved: false,
+            tame_aim: [0; 3],
+            tame_nearest: f32::MAX,
             breaks: Breaks::default(),
             failures: Vec::new(),
             passes: 0,
@@ -1873,7 +1879,11 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
                 let (wheat, trust) = (item_count(world, "base:wheat"), view.trust);
-                gate.check("tame", Err(format!("25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left")));
+                let [on, other, none] = gate.tame_aim;
+                gate.check("tame", Err(format!(
+                    "25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left; the crosshair was on it {on} frames, on another creature {other}, on none {none}; nearest {:.1} blocks",
+                    gate.tame_nearest
+                )));
                 gate.next(Step::Gorge, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
@@ -1881,7 +1891,10 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 aim_at(world, view.position + Vec3::Y * 0.3);
                 // Only with the junglefowl itself under the crosshair: a mouflon wandering in
                 // front would be offered the wheat instead (they love it too).
-                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                let under = world.resource::<crate::interact::Target>().creature;
+                let aimed = under == Some(view.id);
+                gate.tame_aim[if aimed { 0 } else if under.is_some() { 1 } else { 2 }] += 1;
+                gate.tame_nearest = gate.tame_nearest.min(world.resource::<LocalPlayer>().eye().distance(view.position));
                 mouse(world, MouseButton::Right, aimed && ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
