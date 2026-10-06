@@ -15,6 +15,7 @@
 
 use glam::{Vec2, Vec3};
 
+use super::anatomy::{Anatomy, Cone};
 use super::model::{Part, Role, Swing};
 
 /// A body's mesh at rest, in model space (feet at the origin, facing −Z).
@@ -133,25 +134,53 @@ fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
 /// The parts as solids, with what the body's surface is made of.
 pub struct Shape {
     solids: Vec<Solid>,
+    /// The anatomy's cones, if the plan has one, and the parts drawn over it as themselves.
+    cones: Vec<Cone>,
+    keep: Vec<usize>,
     pub cell: f32,
     blend: f32,
 }
 
 impl Shape {
-    pub fn new(parts: &[Part]) -> Self {
+    pub fn new(parts: &[Part], anatomy: Option<&Anatomy>) -> Self {
         let (min, max) = bounds(parts);
         let cell = ((max - min).max_element() / CELLS).clamp(SMALLEST, LARGEST);
-        Self { solids: parts.iter().map(|p| Solid::new(p, cell)).collect(), cell, blend: cell * 1.1 }
+        let solids = parts.iter().map(|p| Solid::new(p, cell)).collect();
+        match anatomy {
+            Some(anatomy) => {
+                // Nothing thinner than most of a cell, or the coarse grid loses it.
+                let floor = cell * 0.6;
+                let cones = anatomy.cones.iter().map(|c| Cone { ra: c.ra.max(floor), rb: c.rb.max(floor), ..*c }).collect();
+                Self { solids, cones, keep: anatomy.keep.clone(), cell, blend: cell * 1.1 }
+            }
+            None => Self { solids, cones: Vec::new(), keep: (0..parts.len()).collect(), cell, blend: cell * 1.1 },
+        }
     }
 
-    /// The body's signed distance at `p`.
+    /// The body's signed distance at `p`: the anatomy's cones blended generously, as
+    /// muscle runs into muscle, then the kept parts blended in more tightly.
     pub fn distance(&self, p: Vec3) -> f32 {
         let mut d = f32::MAX;
-        for solid in &self.solids {
-            let s = solid.distance(p);
+        for cone in &self.cones {
+            let s = cone.distance(p);
+            d = if d == f32::MAX { s } else { smooth_min(d, s, self.blend * 1.8) };
+        }
+        for &i in &self.keep {
+            let s = self.solids[i].distance(p);
             d = if d == f32::MAX { s } else { smooth_min(d, s, self.blend) };
         }
         d
+    }
+
+    /// The space the body takes, a cell around.
+    fn extent(&self, parts: &[Part]) -> (Vec3, Vec3) {
+        let (mut lo, mut hi) = bounds(parts);
+        for c in &self.cones {
+            let r = c.ra.max(c.rb);
+            lo = lo.min(c.a.min(c.b) - Vec3::splat(r));
+            hi = hi.max(c.a.max(c.b) + Vec3::splat(r));
+        }
+        (lo, hi)
     }
 
     /// The part nearest `p`, and how far its surface is.
@@ -179,10 +208,11 @@ fn bounds(parts: &[Part]) -> (Vec3, Vec3) {
 
 /// Meshes the body: surface nets over the blended solids, every vertex weighted to its
 /// nearest parts.
-pub fn build(parts: &[Part]) -> BodyMesh {
-    let shape = Shape::new(parts);
+pub fn build(parts: &[Part], anatomy: Option<&Anatomy>) -> BodyMesh {
+    let shape = Shape::new(parts, anatomy);
     let cell = shape.cell;
-    let (lo, hi) = bounds(parts);
+    let (lo, hi) = shape.extent(parts);
+    let lo = lo.max(Vec3::new(f32::MIN, 0.0, f32::MIN));
     let origin = lo - Vec3::splat(cell * 2.0);
     let size = ((hi - lo) / cell).ceil().as_ivec3() + glam::IVec3::splat(5);
     let (nx, ny, nz) = (size.x as usize, size.y as usize, size.z as usize);
@@ -339,7 +369,7 @@ mod tests {
     #[test]
     fn bodies_are_closed_low_poly_and_stand_on_the_ground() {
         let parts = deer();
-        let mesh = build(&parts);
+        let mesh = build(&parts, None);
         let triangles = mesh.indices.len() / 3;
         assert!((500..8000).contains(&triangles), "{triangles} triangles");
         assert!(mesh.min.y > -0.08 && mesh.min.y < 0.06, "feet at {}", mesh.min.y);
@@ -369,7 +399,7 @@ mod tests {
     #[test]
     fn legs_follow_their_own_part() {
         let parts = deer();
-        let mesh = build(&parts);
+        let mesh = build(&parts, None);
         let leg = parts.iter().position(|p| p.role == Role::Leg).unwrap();
         // The lowest vertex under that leg is weighted to it.
         let foot = parts[leg].pivot.with_y(0.0);
