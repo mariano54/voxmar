@@ -1,0 +1,29 @@
+// Voxmar HD water and glass (docs/voxmar-hd.md).
+(
+    textures: {
+        // Grey and see-through, as the game tints water by climate: soft swells crossed
+        // by long, gently wavering ripples, the alpha nearly even so the colour carries it.
+        "block/water_still": (size: (32, 32), palettes: {"main": ["#8a9099b0", "#959ba3b0", "#a0a5adb2", "#abb0b7b4", "#b7bbc1b6", "#c3c6cbb8", "#cfd2d6ba", "#dcdee1bc"]}, layers: [
+            Paint(palette: "main", base: 0.45, shade: [
+                Noise(cells: (4, 4), octaves: 2, amount: 0.3),
+                Stripes(period: 8.0, width: 0.18, amount: 0.18, slope: 0.25, warp: 2.5),
+                Stripes(period: 8.0, width: 0.1, amount: -0.16, slope: 0.25, warp: 2.5, phase: 4.0),
+                Grain(0.05),
+            ], clean: true),
+        ]),
+        // A thin bevelled frame, lit top left, round a clear pane with two soft streaks of
+        // reflected sky, broken where they fade.
+        "block/glass": (size: (32, 32), palettes: {
+            "frame": (ramp: "#b4ccd2", shades: 5, light: 0.3, hue: 14.0, chroma: -0.3),
+            "streak": ["#ffffff38", "#ffffff60", "#ffffff90"],
+        }, layers: [
+            Paint(palette: "frame", base: 0.45, shade: [
+                Border(width: 1, amount: 0.45, sides: (1.0, 0.0, 0.0, 1.0)),
+                Border(width: 1, amount: -0.4, sides: (0.0, 1.0, 1.0, 0.0)),
+            ], mask: [Border(width: 2, amount: 1.0)], above: 0.5),
+            Paint(palette: "frame", base: 0.2, mask: [Border(width: 2, amount: 1.0), Border(width: 1, amount: -1.0)], above: 0.5),
+            Paint(palette: "streak", base: 0.5, shade: [Noise(cells: (4, 4), amount: 0.6)], mask: [Stripes(period: 32.0, width: 0.05, amount: 1.0, slope: 1.0, phase: 10.0), Noise(cells: (2, 2), amount: 0.6), Border(width: 3, amount: -2.0)], above: 0.75),
+            Paint(palette: "streak", base: 0.2, mask: [Stripes(period: 32.0, width: 0.03, amount: 1.0, slope: 1.0, phase: 17.0), Noise(cells: (2, 2), amount: 0.6, seed: 3), Border(width: 3, amount: -2.0)], above: 0.8),
+        ]),
+    },
+)

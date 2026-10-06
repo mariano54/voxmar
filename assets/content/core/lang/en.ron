@@ -132,6 +132,7 @@
     "settings.textures.hint": "Which texture pack comes first. Takes effect when the game next starts.",
     "settings.textures.minecraft": "Minecraft first",
     "settings.textures.voxmar": "Voxmar",
+    "settings.textures.voxmar_hd": "Voxmar HD",
 
     "settings.shader_pack": "Shader pack",
     "settings.shader_pack.hint": "The look of light, sky, water and colour.",
