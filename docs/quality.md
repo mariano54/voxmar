@@ -72,6 +72,7 @@ changes don't move it, and checks:
 | dig | holds the left button over the ground | a hole three blocks deep, with the same four checks |
 | drops | walks into the hole | every dug block's drop is picked up |
 | breaks | holds the left button along a row of glass, dirt, stone, snow, gravel and cobblestone, with the bare hand, the starting planks (throwing one with Q halfway) and every item tagged `tool`, while busy threads contend for the cores and the game's own frames stall 80 to 320 ms every fifth frame or so | every block ends broken on the client and the server, none comes back, the two agree on every block around. The server judges breaks by when the player's messages arrived, so a server held up decides as one that kept up (crates/server/src/actions.rs) |
+| workshop | crafts sticks and a crafting table in the two-by-two grid, places the table and right clicks it, crafts a stone pickaxe in its three-by-three grid, clicks an iron ore at Mining 1, then at 15 holds the button on it, right clicks dirt with a hoe | sticks and a table come back with Engineering experience; the table is on both sides and its grid shows nine cells; the ore refuses with "Needs Mining 15", then breaks on both sides with Mining experience; the dirt turns to farmland on both sides |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
 | overlay | F3, then F3 again | the debug overlay opens and closes, and PostUpdate (UI layout among it) takes no longer with it open than closed: within 0.5 ms in the median |
@@ -180,6 +181,12 @@ running: on 2026-10-06 that turned the play binary and a thread's build into six
   after his game (voxmar not as a capture or gate, or Minecraft) exits, so everything
   waiting starts as soon as he quits; if his game never appears, the flag holds two hours
   after it was written.
+- Everything memcap runs is at background priority: on a Mac, background QoS, which keeps
+  it to the efficiency cores (6 of the 18 are performance cores); elsewhere `nice 19`. At
+  his look-down pose, a full build alongside gave a 326 ms worst frame at normal priority
+  and 57 ms at background QoS (p99 43 against 27 ms), and the build still went at about
+  nine tenths of its speed. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
+  (`VOXMAR_FOREGROUND=1`) run as his game does, and a timing run takes no slot.
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or

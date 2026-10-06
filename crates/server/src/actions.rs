@@ -124,6 +124,10 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.cooking)
     }
 
+    fn tools(&self) -> Option<&voxmar_engine::tool::ToolRegistry> {
+        Some(&self.server.content.tools)
+    }
+
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
     }
@@ -246,6 +250,7 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
+                    self.reward_break(agent, block);
                     let plants = supported_by(&Context { server: self, agent }, block);
                     let cells: Vec<IVec3> = std::iter::once(block).chain(plants).collect();
                     self.drop_loot(agent, &cells);
@@ -270,6 +275,9 @@ impl Server {
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
                     self.set_block(cell, item);
+                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) {
+                        self.placed.insert(cell);
+                    }
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     let player = self.players.get_mut(&agent).unwrap();
@@ -300,13 +308,14 @@ impl Server {
                     player.changed(traits::VITALS);
                     player.connection.send(ServerMessage::Teleport { position: spawn });
                 }
-                (Effect::Craft, ActionTarget::Slot(times)) => {
-                    let recipes = self.content.recipes.clone();
-                    let player = self.players.get_mut(&agent).unwrap();
-                    let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| recipes.find(grid).map(|r| (r.output, r.count));
-                    if player.inventory.craft(recipe, times == 0) > 0 {
-                        player.changed(traits::INVENTORY);
+                (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
+                (Effect::Till, ActionTarget::Block { block, .. }) => {
+                    if let Some(farmland) = self.content.blocks.id("base:farmland") {
+                        self.set_block(block, farmland);
                     }
+                }
+                (Effect::UseTable, ActionTarget::Block { block, .. }) => {
+                    self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
                 (Effect::EatHeld, _) => {
                     let (blocks, effects) = (self.content.blocks.clone(), self.content.effects.clone());
@@ -330,6 +339,60 @@ impl Server {
                 (effect, target) => tracing::warn!("{} cannot apply {effect:?} to {target:?}", def.name),
             }
         }
+    }
+
+    /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the
+    /// recipe's skill level is met, and for a recipe bigger than two by two, at a crafting
+    /// table within reach. Experience comes for every one made.
+    fn craft(&mut self, agent: PlayerId, all: bool) {
+        let (recipes, skills) = (self.content.recipes.clone(), self.content.skills.clone());
+        let at_table = self.at_table(agent);
+        let player = self.players.get_mut(&agent).unwrap();
+        let level = |skill: SkillId| skills.level(player.skills.xp(skill));
+        let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && r.skill.is_none_or(|s| level(s) >= r.level);
+        let found = recipes.find(&player.inventory.grid()).filter(|r| allowed(r)).map(|r| (r.skill, r.xp));
+        let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
+        let made = player.inventory.craft(recipe, all);
+        // Always: a refused craft the client predicted is undone.
+        player.changed(traits::INVENTORY);
+        if let Some((Some(skill), xp)) = found.filter(|_| made > 0) {
+            self.grant_xp(agent, skill, xp * made as f32);
+        }
+    }
+
+    /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
+    /// more often with the skill's level above what the block asks and a better tool. A
+    /// block a player placed teaches nothing and gives nothing extra.
+    fn reward_break(&mut self, agent: PlayerId, pos: IVec3) {
+        let Some(block) = self.block(pos) else { return };
+        let tools = self.content.tools.clone();
+        let Some(rule) = tools.rule(block) else { return };
+        if self.placed.remove(&pos) {
+            return;
+        }
+        let Some(player) = self.players.get(&agent) else { return };
+        let held = player.held();
+        let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
+        let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block);
+        let info = self.content.blocks.info(block);
+        let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
+        if roll < bonus && !info.drops.is_air() && info.drop_count > 0 {
+            let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
+            let body = voxmar_engine::dropped::popped(pos, [kick, roll, kick * roll]);
+            self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
+        }
+        if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
+            self.grant_xp(agent, skill, rule.xp);
+        }
+    }
+
+    /// Whether `agent` is at the crafting table they last opened, still within reach.
+    pub(crate) fn at_table(&self, agent: PlayerId) -> bool {
+        let Some(player) = self.players.get(&agent) else { return false };
+        player.station.is_some_and(|at| {
+            let table = self.block(at).is_some_and(|b| self.content.blocks.def(b).has_tag("crafting_table"));
+            table && player.eye().distance(at.as_vec3() + 0.5) <= voxmar_engine::physics::player::REACH + 1.5
+        })
     }
 
     /// Tells the client the truth about anything it may have predicted.

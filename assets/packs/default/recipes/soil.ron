@@ -75,6 +75,14 @@
         "block/grass_block_top": (palettes: {"main": "grass_grey"}, layers: [
             Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.3), Grain(0.75)]),
         ]),
+        // A meadow's turf from above at 32×32: fine, soft speckle with gentle patches, light
+        // flecks of blades catching the sun and a few darker hollows, no harsh texels. Its own
+        // name, so a Minecraft jar on the texture stack never stands in for it.
+        "block/meadow_grass_top": (size: (32, 32), palettes: {"main": ["#7a7a7a", "#868686", "#929292", "#9e9e9e", "#aaaaaa", "#b8b8b8", "#c8c8c8"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.22), Grain(0.32)]),
+            Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.09, amount: 1.0)], above: 0.5),
+            Shift(by: [Flat(-1.0)], mask: [Speckle(chance: 0.05, amount: 1.0, seed: 3)], above: 0.5),
+        ]),
         "block/grass_block_side_overlay": (palettes: {"grass": "grass_grey"}, layers: [
             Paint(palette: "grass", base: 0.5, shade: [Grain(0.7), Gradient(from: 0.2, to: -0.35)], mask: [Fringe(depth: (2, 5), smooth: 0.1)], above: 0.5),
         ]),

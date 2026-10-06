@@ -71,11 +71,14 @@ impl Server {
         let mine = creature.owner.is_some() && creature.owner == self.player_name(player);
         // One too wild for the player yet turns the food down rather than eat it for nothing.
         let can_tame = species.def.taming.as_ref().is_some_and(|t| self.skill_level(player, "core:hunter") >= t.level);
-        let tames = creature.owner.is_none() && can_tame && species.tame_food.contains(&item);
+        // A taming treat any tameable creature takes, and feed any kept one breeds on.
+        let treat = tags.iter().any(|t| t == "taming_treat");
+        let feed = tags.iter().any(|t| t == "breeding_feed");
+        let tames = creature.owner.is_none() && can_tame && (treat || species.tame_food.contains(&item));
         // Nor does a kept one take breeding food it cannot use yet (the player's Farming too
         // low, or it bred too recently).
         let can_breed = species.def.breeding.as_ref().is_some_and(|b| self.skill_level(player, "core:farming") >= b.level) && self.tick >= creature.breeds_again;
-        let breeds = mine && creature.grows_up.is_none() && can_breed && species.breed_food.contains(&item);
+        let breeds = mine && creature.grows_up.is_none() && can_breed && (feed || species.breed_food.contains(&item));
         let tool = mine && species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
         tames || breeds || tool
     }
@@ -131,7 +134,9 @@ impl Server {
                 creature.trusting = name.clone();
                 creature.trust = 0.0;
             }
-            creature.trust += husbandry::trust_gain(&taming, u);
+            // A treat (`trust:2`) wins trust faster than plain food.
+            let gladly = tags.iter().find_map(|t| t.strip_prefix("trust:")?.parse::<f32>().ok()).unwrap_or(1.0);
+            creature.trust += husbandry::trust_gain(&taming, u) * gladly;
             creature.mind.fear = 0.0;
             creature.changed = true;
             if creature.trust >= 1.0 {

@@ -7,7 +7,8 @@
 //   each level's crops train about as fast as the curve rises (research/farming.md 12.8).
 // - `minutes` is real time from sowing to ripe where everything suits it: inside its
 //   `comfort` (temperature °C and moisture, as plants.ron's), in at least `light` (sky
-//   or lamp, 0..=15), on fertile ground with water within four blocks. Outside its
+//   or lamp, 0..=15), on fertile ground with water within four blocks. Crops are sown on
+//   farmland (soil a hoe has tilled) unless `ground` names other tags. Outside its
 //   comfort it slows, to a stop 5 °C or 0.3 moisture beyond; dry or plain ground slows
 //   it too (engine/src/crop.rs).
 // - `harvest` is what a ripe one gives, broken or (for those with `regrow`) picked by hand,
