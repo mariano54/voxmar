@@ -1580,19 +1580,23 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 for line in ["clear", "give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
                     net.command(line);
                 }
-                // A Crucible Kiln set into the ground ahead, to light.
+                // A Crucible Kiln built in the air over the player's head, clear of the
+                // test ground and the pool, to light.
+                let kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 3, 0);
+                let at = |dx: i32, dy: i32, dz: i32| format!("{} {} {}", kiln.x + dx, kiln.y + dy, kiln.z + dz);
+                let net = world.resource::<Net>();
                 for line in [
-                    "fill ~-1 ~ ~2 ~1 ~2 ~4 air",
-                    "fill ~-1 ~-1 ~2 ~1 ~-1 ~4 kiln_bricks",
-                    "setblock ~ ~-1 ~3 crucible",
-                    "setblock ~-1 ~ ~2 kiln_bricks",
-                    "setblock ~1 ~ ~2 kiln_bricks",
-                    "setblock ~-1 ~ ~4 kiln_bricks",
-                    "setblock ~1 ~ ~4 kiln_bricks",
+                    format!("fill {} {} air", at(-1, 0, -1), at(1, 1, 1)),
+                    format!("fill {} {} kiln_bricks", at(-1, 0, -1), at(1, 0, 1)),
+                    format!("setblock {} crucible", at(0, 0, 0)),
+                    format!("setblock {} kiln_bricks", at(-1, 1, -1)),
+                    format!("setblock {} kiln_bricks", at(1, 1, -1)),
+                    format!("setblock {} kiln_bricks", at(-1, 1, 1)),
+                    format!("setblock {} kiln_bricks", at(1, 1, 1)),
                 ] {
-                    net.command(line);
+                    net.command(&line);
                 }
-                gate.kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, -1, 3);
+                gate.kiln = kiln;
                 gate.advance(now);
             } else if gate.server_now - gate.gathered.1 > 15.0 {
                 let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
@@ -1612,15 +1616,17 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            aim(world, kiln);
-            mouse(world, MouseButton::Right, gate.frames % 2 == 0 && !lit(world));
+            if gate.frames % 30 == 0 {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+            }
             if lit(world) {
-                mouse(world, MouseButton::Right, false);
-                gate.check("workshop: kiln", Ok("right clicking the crucible lit the Crucible Kiln round it".into()));
+                gate.check("workshop: kiln", Ok("lighting the crucible lit the Crucible Kiln round it".into()));
+                let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
                 end_workshop(world, gate, now);
             } else if in_phase > WORKSHOP_WAIT + 4.0 {
-                mouse(world, MouseButton::Right, false);
-                fail(world, gate, "kiln", "right clicking the crucible in its kiln never lit it".into());
+                fail(world, gate, "kiln", "lighting the crucible in its kiln never lit it".into());
             }
         }
         _ => {}
