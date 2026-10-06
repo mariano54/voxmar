@@ -1,7 +1,7 @@
-// Voxmar HD soils (docs/voxmar-hd.md): dirt, grass, sand and gravel at 32×32. Grass tops
-// and the grass fringe stay grey, as the game tints them; their style follows the biome
-// thread's meadow turf (`block/meadow_grass_top` in the default pack): fine, soft speckle
-// with gentle patches, light flecks of blades catching the sun and a few darker hollows.
+// Voxmar HD soils (docs/voxmar-hd.md): dirt, the grass block's side, sand and gravel at
+// 32×32. The grass top is the default pack's meadow turf (`block/meadow_grass_top`), already
+// drawn at 32×32, as are its grass and flowers; the fringe of grass on the side stays grey
+// like it, as the game tints both.
 (
     palettes: {
         "dirt": (ramp: "#7a5c46", shades: 8, light: 0.3, hue: 18.0, chroma: -0.3),
@@ -24,17 +24,6 @@
             Shift(by: [Flat(-2.0)], mask: [Speckle(chance: 0.05, amount: 1.0, seed: 1)], above: 0.5),
             Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.04, amount: 1.0, seed: 2)], above: 0.5),
             Clusters(palette: "pebble", count: 6, size: (2, 6), spacing: 9.0, shade: 2, shadow: -1, seed: 2),
-        ]),
-        "block/grass_block_top": (size: (32, 32), palettes: {"main": "grass_grey"}, layers: [
-            Paint(palette: "main", base: 0.5, shade: [
-                Noise(cells: (4, 4), octaves: 2, amount: 0.22),
-                Noise(cells: (16, 16), amount: 0.1),
-                Grain(0.3),
-            ]),
-            // Blade tips catching the light, short upright strokes, and darker hollows.
-            Clusters(palette: "main", count: 40, size: (1, 2), spread: (0.2, 2.0), spacing: 3.0, shade: 6),
-            Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.08, amount: 1.0, seed: 4)], above: 0.5),
-            Shift(by: [Flat(-1.0)], mask: [Speckle(chance: 0.05, amount: 1.0, seed: 3)], above: 0.5),
         ]),
         // A ragged fringe of thin blades hanging over the dirt, darker where it meets it.
         "block/grass_block_side_overlay": (size: (32, 32), palettes: {"grass": "grass_grey"}, layers: [
