@@ -681,16 +681,20 @@ fn setup(
             source.read(&format!("ui/skill/{name}")).or_else(|| unknown.clone()).map(|art| images.add(ui_image(&art))).unwrap_or_default()
         })
         .collect();
-    // Each effect's icon, `ui/effect/<key>`, and the plain ones for a buff or a debuff.
-    let mut picture = |name: &str| source.read(name).map(|art| images.add(ui_image(&art))).unwrap_or_default();
-    let (buff, debuff) = (picture("ui/effect/buff"), picture("ui/effect/debuff"));
-    use voxmar_engine::vitals::Effect;
-    let effects = [Effect::WellFed, Effect::Hungry, Effect::Starving, Effect::ByTheFire, Effect::Chilly, Effect::Freezing, Effect::Hot, Effect::Overheated]
-        .into_iter()
-        .map(crate::lang::effect_key)
-        .filter_map(|key| Some((key.clone(), source.read(&format!("ui/effect/{key}")).map(|art| images.add(ui_image(&art)))?)))
+    // Each effect's icon, `ui/effect/<icon>` (content's effects.ron names it), or the plain
+    // one for a buff or a debuff.
+    let mut picture = |name: &str| source.read(name).map(|art| images.add(ui_image(&art)));
+    let (buff, debuff) = (picture("ui/effect/buff").unwrap_or_default(), picture("ui/effect/debuff").unwrap_or_default());
+    let effects = &launch.content.effects;
+    let effects = effects
+        .ids()
+        .map(|id| {
+            let def = effects.get(id);
+            let plain = if def.kind == voxmar_engine::effect::Kind::Buff { &buff } else { &debuff };
+            picture(&format!("ui/effect/{}", def.icon)).unwrap_or_else(|| plain.clone())
+        })
         .collect();
-    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects, buff, debuff });
+    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

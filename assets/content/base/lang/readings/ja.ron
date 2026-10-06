@@ -3,6 +3,15 @@
 // template's reading fills `{name}` with its family's reading, or the family's name when
 // that has no kanji. A mod adds its own `lang/readings/ja.ron` beside its `lang/ja.ron`.
 {
+    "effect.base.hearty": "じよう",
+    "effect.base.hunters_vigour": "かりゅうどのかつりょく",
+    "effect.base.sustained": "はらもち",
+    "effect.base.refreshed": "そうかい",
+    "effect.base.focused": "しゅうちゅう",
+    "effect.base.soothed": "やすらぎ",
+    "effect.base.ember_warmed": "おきびのぬくもり",
+    "effect.base.cooled": "すずしさ",
+    "effect.base.queasy": "はきけ",
     "block.base.bedrock": "がんばん",
     "block.base.stone": "いし",
     "block.base.cobblestone": "まるいし",

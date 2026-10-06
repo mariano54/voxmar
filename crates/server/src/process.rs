@@ -2,6 +2,7 @@
 //! Processes never decide; they change values and raise events (here: death).
 
 use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::effect::Situation;
 use voxmar_engine::fluid::FluidId;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::schedule::Tier;
@@ -99,9 +100,11 @@ impl Process for Falling {
     }
 }
 
-/// Survival: hunger empties, warmth follows the air, fires and water, and together they
-/// decide each player's effects (see `voxmar_engine::vitals`), which heal or hurt them
-/// over time. Once a second; creative players neither hunger nor hurt.
+/// Survival: hunger empties, warmth follows the air, fires, water and the weather, and
+/// together with what the player ate they decide each player's effects (content in
+/// `effects.ron`, see `voxmar_engine::effect`), whose modifiers heal or hurt them over time,
+/// set their most health and how fast they mine and learn. Once a second; creative players
+/// neither hunger nor hurt.
 #[derive(Default)]
 struct Survival;
 
@@ -110,6 +113,8 @@ const HEAT_REACH: i32 = 4;
 const HEAT: f32 = 14.0;
 /// How much colder water feels (°C).
 const WATER_CHILL: f32 = 8.0;
+/// How far up a roof is looked for, to tell whether a player is out in the weather.
+const ROOF_SCAN: i32 = 48;
 
 impl Process for Survival {
     fn tier(&self) -> Tier {
@@ -118,6 +123,8 @@ impl Process for Survival {
 
     fn run(&mut self, server: &mut Server) {
         let seconds = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
+        let effects = server.content.effects.clone();
+        let hitpoints = server.content.skills.id("core:hitpoints");
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
@@ -128,20 +135,43 @@ impl Process for Survival {
             let air = server.temperature.sample(feet.x, feet.z);
             let heat = server.heat_near(feet);
             let wet = server.block(feet).and_then(|b| server.content.blocks.fluid(b)).is_some();
+            let outdoors = server.open_sky(feet + voxmar_engine::glam::IVec3::Y * 2);
+            let at = voxmar_engine::glam::Vec2::new(player.position.x, player.position.z);
+            let (tick, day) = (server.tick, server.day);
+            let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
             let cold_air = air - if wet { WATER_CHILL } else { 0.0 };
-            let felt = cold_air + heat;
             let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
+            let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
 
             let player = server.players.get_mut(&id).unwrap();
             let creative = player.allow_flight;
-            let before = player.vitals.clone();
+            let before = (player.vitals.clone(), player.health);
             if creative {
                 player.vitals.hunger = vitals::MAX_HUNGER;
             }
-            let effects = vitals::effects(player.vitals.hunger, felt, warmed);
-            let rates = vitals::rates(&effects, false);
+            player.timed_effects.retain_mut(|(_, left)| {
+                *left -= seconds;
+                *left > 0.0
+            });
+            // Warmth from what was eaten and the weather counts before the bands of warmth
+            // are judged: soaked through, a mild day feels chilly.
+            let mut situation = Situation { hunger: player.vitals.hunger, felt: cold_air + heat, warmed, outdoors, weather: &weather };
+            let first = effects.active(&situation, &player.timed_effects);
+            situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
+            let active = effects.active(&situation, &player.timed_effects);
+            let modifiers = effects.modifiers(&active);
+            player.modifiers = modifiers;
+            let rates = vitals::rates(&modifiers, false);
             if !creative {
                 player.exhaustion += rates.hunger_per_minute * seconds / 60.0;
+            }
+            // Twice the Hitpoints level, and what effects add: what a raised most brings is
+            // health to fill it, what a lowered one takes goes.
+            let max = (max_level.map_or(MAX_HEALTH as i32, |level| 2 * level as i32) + modifiers.max_health as i32).clamp(1, u8::MAX as i32) as u8;
+            if max != player.health.max {
+                let gained = max.saturating_sub(player.health.max);
+                player.health.max = max;
+                player.health.current = player.health.current.saturating_add(gained).min(max);
             }
             // Healing, while anything is left to heal.
             match rates.heal_every.filter(|_| player.health.current < player.health.max) {
@@ -151,7 +181,6 @@ impl Process for Survival {
                         player.heal_clock -= every;
                         player.health.heal(1);
                         player.exhaustion += vitals::HEAL_COST;
-                        player.changed(traits::HEALTH);
                     }
                 }
                 None => player.heal_clock = 0.0,
@@ -161,9 +190,7 @@ impl Process for Survival {
                     player.hurt_clock += seconds;
                     if player.hurt_clock >= every {
                         player.hurt_clock -= every;
-                        let died = player.health.damage(1);
-                        player.changed(traits::HEALTH);
-                        if died {
+                        if player.health.damage(1) {
                             player.connection.send(ServerMessage::Died);
                         }
                     }
@@ -175,16 +202,25 @@ impl Process for Survival {
                 player.vitals.hunger = player.vitals.hunger.saturating_sub(1);
             }
             // The felt temperature is sent to the degree, so it does not resend every tick.
-            player.vitals.felt = felt.round();
-            player.vitals.effects = vitals::effects(player.vitals.hunger, felt, warmed);
-            if player.vitals != before {
+            player.vitals.felt = situation.felt.round();
+            situation.hunger = player.vitals.hunger;
+            player.vitals.effects = effects.active(&situation, &player.timed_effects);
+            if player.vitals != before.0 {
                 player.changed(traits::VITALS);
+            }
+            if player.health != before.1 {
+                player.changed(traits::HEALTH);
             }
         }
     }
 }
 
 impl Server {
+    /// Whether nothing solid hangs over `at` (within `ROOF_SCAN` blocks): out in the rain.
+    fn open_sky(&self, at: voxmar_engine::glam::IVec3) -> bool {
+        (0..ROOF_SCAN).map(|dy| at + voxmar_engine::glam::IVec3::Y * dy).all(|p| !self.is_solid(p))
+    }
+
     /// How much fires, torches and other glowing blocks near `at` warm it (°C): the
     /// brightest within reach, fading with distance.
     fn heat_near(&self, at: voxmar_engine::glam::IVec3) -> f32 {
