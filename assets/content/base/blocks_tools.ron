@@ -1,0 +1,53 @@
+// Tools and what makes them (tools.ron says what each kind is for; recipes.ron how they are
+// made). A tool is tagged `tool`, its kind, `tier:N` (what it can mine), `speed:X` (how
+// much faster than a hand on what it suits) and `yield:Y` (more and rarer finds there). A
+// hoe tills soil into farmland (`base:till`), which is what crops are sown on.
+(
+    blocks: [
+        // The crafting table: a three-by-three grid for what the inventory's two-by-two
+        // cannot make (tools, stations). Right click it to work at it.
+        (
+            name: "crafting_table", sound: Wood, textures: Sides(top: "crafting_table_top", bottom: "oak_planks", side: "crafting_table_side"),
+            hardness: 2.5, color: (150, 110, 70), tags: ["station", "crafting_table", "wood", "fuel", "building"],
+        ),
+        // Farmland: soil a hoe has turned, where crops are sown.
+        (
+            name: "farmland", sound: Soil, textures: Sides(top: "farmland", bottom: "dirt", side: "dirt"),
+            hardness: 0.6, drops: "dirt", color: (100, 70, 45), tags: ["soil", "fertile", "tilled"],
+        ),
+    ],
+    families: [
+        // Wooden: tier 1.
+        (template: "drop", name: "wooden_pickaxe", tags: ["pickaxe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
+        (template: "drop", name: "wooden_axe", tags: ["axe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
+        (template: "drop", name: "wooden_shovel", tags: ["shovel", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
+        (template: "drop", name: "wooden_hoe", tags: ["hoe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70), action: Some("base:till"))),
+        (template: "drop", name: "wooden_knife", tags: ["knife", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
+        // Stone: tier 2.
+        (template: "drop", name: "stone_pickaxe", tags: ["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_axe", tags: ["axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_shovel", tags: ["shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_hoe", tags: ["hoe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125), action: Some("base:till"))),
+        (template: "drop", name: "stone_knife", tags: ["knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        // Copper: tier 3.
+        (template: "drop", name: "copper_pickaxe", tags: ["pickaxe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_axe", tags: ["axe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_shovel", tags: ["shovel", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_hoe", tags: ["hoe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70), action: Some("base:till"))),
+        (template: "drop", name: "copper_knife", tags: ["knife", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
+        // Iron: tier 4.
+        (template: "drop", name: "iron_pickaxe", tags: ["pickaxe", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_axe", tags: ["axe", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_shovel", tags: ["shovel", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_hoe", tags: ["hoe", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:till"))),
+        (template: "drop", name: "iron_knife", tags: ["knife", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
+        // Materials.
+        (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
+        (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "iron_ingot", tags: ["ingot", "metal:iron"], all: (color: (200, 205, 215))),
+        // For taming and breeding: a treat no wild animal you can tame refuses, and taken
+        // twice as gladly as its own food; feed that readies any kept animal to breed.
+        (template: "drop", name: "taming_treat", tags: ["taming_treat", "trust:2"], all: (color: (200, 140, 80))),
+        (template: "drop", name: "seed_mix", tags: ["breeding_feed"], all: (color: (170, 140, 70))),
+    ],
+)

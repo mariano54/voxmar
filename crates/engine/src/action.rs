@@ -87,6 +87,15 @@ pub enum Requirement {
     HoldingFood,
     /// The actor has room for food.
     Hungry,
+    /// The actor holds the kind and tier of tool the target block asks for, if any
+    /// (`tools.ron`).
+    ToolGood,
+    /// The actor's level in the skill the target block asks for is at least what it asks.
+    BlockLevel,
+    /// The target is soil a hoe can till, with nothing standing on it.
+    Tillable,
+    /// The target is a crafting table.
+    CraftingTable,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -131,6 +140,10 @@ pub enum Effect {
     /// Craft what the actor's crafting grid holds: once onto the pointer
     /// (`ActionTarget::Slot(1)`), or as many times as it can into the inventory (`Slot(0)`).
     Craft,
+    /// Till the target soil into farmland.
+    Till,
+    /// Work at the target crafting table: its three-by-three grid, until the actor walks away.
+    UseTable,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -220,6 +233,10 @@ pub trait ActionContext {
     /// How fast the actor mines, from its effects (1 normally).
     fn actor_mining_speed(&self) -> f32 {
         1.0
+    }
+    /// What tools do, where the context knows.
+    fn tools(&self) -> Option<&crate::tool::ToolRegistry> {
+        None
     }
     /// Whether any agent's body overlaps the cell.
     fn occupied(&self, cell: IVec3) -> bool;
@@ -327,6 +344,28 @@ impl ActionDef {
                     (_, None) => true,
                 }
             }
+            Requirement::ToolGood => {
+                let (block, _) = block_target()?;
+                match (ctx.block(block), ctx.tools()) {
+                    (Some(b), Some(tools)) => tools.good_enough(ctx.actor_held(), b),
+                    _ => true,
+                }
+            }
+            Requirement::BlockLevel => {
+                let (block, _) = block_target()?;
+                let rule = ctx.block(block).zip(ctx.tools()).and_then(|(b, tools)| tools.rule(b));
+                rule.is_none_or(|rule| rule.skill.is_none_or(|skill| ctx.actor_level(skill) >= rule.level))
+            }
+            Requirement::Tillable => {
+                let (block, _) = block_target()?;
+                let tilled = ctx.block(block).map(|b| ctx.blocks().def(b));
+                let soil = tilled.is_some_and(|def| def.has_tag("soil") && !def.has_tag("tilled"));
+                soil && ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()))
+            }
+            Requirement::CraftingTable => {
+                let (block, _) = block_target()?;
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("crafting_table"))
+            }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
                 ctx.creature_box(id).is_some_and(|aabb| {
@@ -362,7 +401,10 @@ impl ActionDef {
             Duration::Instant => 0.0,
             Duration::Seconds(s) => s,
             Duration::TargetHardness => match target {
-                ActionTarget::Block { block, .. } => ctx.block(block).map_or(0.0, |b| ctx.info(b).hardness.max(0.0)) / ctx.actor_mining_speed().max(0.05),
+                ActionTarget::Block { block, .. } => ctx.block(block).map_or(0.0, |b| {
+                    let tool = ctx.tools().map_or(1.0, |tools| tools.speed(ctx.actor_held(), b));
+                    ctx.info(b).hardness.max(0.0) / (ctx.actor_mining_speed() * tool).max(0.05)
+                }),
                 _ => 0.0,
             },
         }

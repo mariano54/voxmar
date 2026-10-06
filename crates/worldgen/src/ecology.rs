@@ -55,8 +55,8 @@ const CLEARING: (f32, f32) = (0.85, 0.95);
 /// Flowers where the bloom field (evenly spread over 0 ..= 1) is low: a stray one here and
 /// there, as a share of the biome's `flowers`.
 const STRAY_FLOWERS: f32 = 0.015;
-/// Where the bloom field grows drifts of flowers: about a tenth of the land.
-const DRIFTS: (f32, f32) = (0.87, 0.97);
+/// Where the bloom field grows drifts of flowers: about a fifteenth of the land.
+const DRIFTS: (f32, f32) = (0.9, 0.98);
 /// The bloom field's rare peaks, where flowers grow densely, and how much denser.
 const FLOWER_PATCHES: (f32, f32) = (0.985, 0.998);
 const PATCH_BOOST: f32 = 4.0;

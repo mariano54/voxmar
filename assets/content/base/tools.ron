@@ -1,0 +1,36 @@
+// Tools (engine/src/tool.rs). A tool is an item tagged `tool` and with its kind's name
+// (`pickaxe`), a `tier:N` and a `speed:X`, and maybe a `yield:Y` (blocks_tools.ron).
+//
+// `kinds`: what each kind of tool is for. Held over a block with one of its `mines` tags, a
+// tool mines it `speed` times as fast as a bare hand, and its `yield` adds to the chance of
+// an extra drop there (and of rarer harvests from crops, with a hoe). Better tools make
+// better finds; they never make the world grow faster.
+//
+// `blocks`: what breaking a block takes and teaches, the first rule whose tags the block
+// all has: a level in a skill (`level`, RuneScape-style), a tool of a kind and tier
+// (`tool`, `tier`), and the experience it gives. Only natural blocks teach, so breaking
+// what you placed teaches nothing.
+(
+    kinds: [
+        (name: "pickaxe", mines: ["stone", "ore", "cobbled", "bricks", "crystal", "ice"]),
+        (name: "axe", mines: ["log", "wood", "planks", "bush"]),
+        (name: "shovel", mines: ["soil", "sand", "gravel", "clay", "snow", "silt"]),
+        (name: "hoe", mines: ["crop", "leaves", "moss", "hay"]),
+        (name: "shears", mines: ["leaves", "wool", "vine"]),
+        (name: "knife", mines: ["plant", "vine", "flower"]),
+    ],
+    blocks: [
+        (tags: ["ore", "alchemy:aether"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 125.0),
+        (tags: ["ore", "gem"], skill: "core:mining", level: 45, tool: "pickaxe", tier: 4, xp: 100.0),
+        (tags: ["ore", "metal:gold"], skill: "core:mining", level: 35, tool: "pickaxe", tier: 3, xp: 65.0),
+        (tags: ["ore", "metal:silver"], skill: "core:mining", level: 30, tool: "pickaxe", tier: 3, xp: 40.0),
+        (tags: ["ore", "metal:cobalt"], skill: "core:mining", level: 25, tool: "pickaxe", tier: 3, xp: 80.0),
+        (tags: ["ore", "metal:iron"], skill: "core:mining", level: 15, tool: "pickaxe", tier: 2, xp: 35.0),
+        (tags: ["ore", "metal:tin"], skill: "core:mining", level: 10, tool: "pickaxe", tier: 1, xp: 17.5),
+        (tags: ["ore", "metal:copper"], skill: "core:mining", level: 5, tool: "pickaxe", tier: 1, xp: 17.5),
+        (tags: ["ore", "fuel"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 25.0),
+        (tags: ["ore"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 10.0),
+        (tags: ["stone", "natural"], skill: "core:mining", xp: 3.0),
+        (tags: ["clay", "natural"], skill: "core:mining", xp: 2.0),
+    ],
+)

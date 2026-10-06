@@ -66,6 +66,13 @@
             run: Give,
         ),
         (
+            name: "effect",
+            usage: "<effect> [seconds] | clear",
+            help: "Gives you an effect for a while (60 seconds unless you say), as food would; clear takes them all away.",
+            permission: Admin,
+            run: Effect,
+        ),
+        (
             name: "clear",
             usage: "[item]",
             help: "Empties your inventory, or takes every one of an item out of it.",
