@@ -13,8 +13,8 @@
 # - Gets out of Mariano's way completely when he plays: while ~/Projects/voxmar-wt/PLAYING
 #   exists (written when he says he will play), nothing new starts and whatever is running
 #   pauses, until it goes. Once his game (voxmar not as a capture or gate, or Minecraft)
-#   has been seen, the flag is ignored 30 minutes after it last ran; until then, two hours
-#   after it was written.
+#   has been seen, memcap removes the flag a minute after that game exits, so the work
+#   waiting starts at once; until it is seen, the flag holds two hours after it was written.
 # - Runs everything muted (VOXMAR_MUTE=1): no run of ours ever plays a sound; and with a
 #   configuration directory of its own (VOXMAR_CONFIG) unless one is given, so no run of
 #   ours ever writes Mariano's settings or worlds.
@@ -60,8 +60,8 @@ game_running() {
 
 # Whether to hold for Mariano's playing: only while PLAYING exists, which the coordinator
 # writes when he says he will play (he wants work to go on otherwise, game open or not).
-# The flag is kept fresh while his game runs; once none has run for 30 minutes it is
-# stale and ignored, so a forgotten flag cannot stall everything.
+# The flag is kept fresh while his game runs, and removed as soon as it has gone, so
+# everything waiting starts at once.
 playing() {
   [[ -e $play_flag ]] || return 1
   if game_running; then
@@ -69,13 +69,16 @@ playing() {
     touch "$play_flag"
     return 0
   fi
-  # Once his game has been seen and has gone for 30 minutes, he has stopped; until it is
-  # first seen, he may take a while to start, so the flag holds for two hours.
+  # Once his game has been seen and is gone, he has stopped (after a minute's grace, for
+  # a restart); until it is first seen, he may take a while to start, so the flag holds
+  # for two hours.
   if grep -q '^seen' "$play_flag"; then
-    [[ -n $(find "$play_flag" -mmin -30 2>/dev/null) ]]
+    [[ -n $(find "$play_flag" -mmin -1 2>/dev/null) ]] && return 0
   else
-    [[ -n $(find "$play_flag" -mmin -120 2>/dev/null) ]]
+    [[ -n $(find "$play_flag" -mmin -120 2>/dev/null) ]] && return 0
   fi
+  rm -f "$play_flag"
+  return 1
 }
 
 # Whether the command runs the game (a capture, a gate, `cargo run` of the client), which
