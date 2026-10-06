@@ -30,7 +30,8 @@ use voxmar_engine::creature::motion::{self, Body, Drive};
 use voxmar_engine::creature::{self, CreatureId, Kind, Water, mix, unit_from};
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
-use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::genes;
+use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::loot::{self, Moment};
 use voxmar_engine::physics::Aabb;
@@ -105,6 +106,9 @@ pub struct Live {
     pub ready_until: u64,
     /// The tick until which it stands still, for an admin's `/creatures hold`.
     pub held_until: u64,
+    /// Its genes, and what shows of them.
+    pub genome: genes::Genome,
+    pub traits: genes::Traits,
     pub breeds_again: u64,
     /// Tick it grows up, while young; its grown size.
     pub grows_up: Option<u64>,
@@ -133,6 +137,7 @@ impl Live {
             young: self.grows_up.is_some(),
             ready: self.ready_until > 0,
             trust: if self.owner.is_some() { 0 } else { (self.trust * 100.0).clamp(0.0, 100.0) as u8 },
+            genes: genes::pack(&self.genome),
         }
     }
 
@@ -545,15 +550,25 @@ impl Server {
         }
         let id = self.creatures.next;
         self.creatures.next += 1;
-        let def = &self.content.creatures.get(species).def;
         let seed = mix(mix(self.meta.seed, id as u64), salt);
-        let scale = 0.88 + 0.24 * unit_from(mix(seed, 0x5ca1e));
+        let genome = self.wild_genome(species, at, seed);
+        let def = &self.content.creatures.get(species).def;
+        let traits = genes::express(&def.genes, &genome);
+        // Size from its genes where it has a size gene; a little either way otherwise.
+        let scale = if def.genes.iter().any(|g| matches!(g.kind, genes::GeneKind::Number { effect: genes::NumberEffect::Scale, .. })) {
+            traits.scale
+        } else {
+            (0.88 + 0.24 * unit_from(mix(seed, 0x5ca1e))) * traits.scale
+        };
         let size = (def.body.size.0 * scale, def.body.size.1 * scale);
         let yaw = unit_from(mix(seed, 3)) * std::f32::consts::TAU;
+        // Its genes' temper moves its own personality toward fierce or calm.
+        let mut mind = Mind::new(&def.temperament, seed);
+        mind.personality.aggression = (mind.personality.aggression + traits.temper).clamp(0.0, 1.0);
         let creature = Live {
             species,
             body: Body::new(at, yaw, size),
-            mind: Mind::new(&def.temperament, seed),
+            mind,
             health: def.health,
             home: at,
             decision: Decision::default(),
@@ -567,6 +582,8 @@ impl Server {
             trusting: None,
             ready_until: 0,
             held_until: 0,
+            genome,
+            traits,
             breeds_again: 0,
             grows_up: None,
             adult_scale: scale,
@@ -576,6 +593,21 @@ impl Server {
         };
         self.creatures.live.insert(id, creature);
         Some(id)
+    }
+
+    /// A wild animal's genes, drawn from the population of the region `at` is in: each
+    /// region has its own mix, pushed by its climate (docs/breeding.md, "Genes").
+    pub(crate) fn wild_genome(&self, species: CreatureId, at: Vec3, seed: u64) -> genes::Genome {
+        let defs = &self.content.creatures.get(species).def.genes;
+        if defs.is_empty() {
+            return genes::Genome::default();
+        }
+        let region = genes::region_of(at.x, at.z);
+        let centre = (Vec2::new(region.0 as f32, region.1 as f32) + 0.5) * genes::REGION;
+        let site = self.overworld.site(centre.x as i32, centre.y as i32);
+        let name = &self.content.creatures.get(species).def.name;
+        let key = name.bytes().fold(0u64, |h, b| mix(h, b as u64));
+        genes::Population::of(defs, self.meta.seed, key, region, site.temperature, site.aether).individual(defs, seed)
     }
 
     /// Tries a spot around a player, and puts there a group of whatever suits it best,

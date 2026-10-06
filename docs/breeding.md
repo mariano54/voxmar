@@ -103,6 +103,23 @@ equation's heritability in data). Examples: size, yield (wool length, milk, eggs
 week), speed, stamina, temperament (calm to fierce), hardiness (shifts comfort toward heat
 or cold), fertility, longevity, aether affinity.
 
+**Regional populations.** Wild animals are not all alike. The world is cut into regions
+384 blocks across, and each region holds its own population of each species: its own mix
+of alleles and its own means, drawn from the world seed, then pushed by the region's
+climate (an allele may be commoner in the cold, `cold: 2.5`, or where aether is high).
+So wolves in the snowy north run paler and larger than wolves in southern woods, and one
+valley's rabbits are mostly black. A breeder after a trait travels for it, and wild stock
+tamed far away is new blood.
+
+**In the game now** (engine `genes.rs`): allele and number genes in `creatures.ron`
+(`genes: [(name: "coat", kind: Alleles([(name: "white", frequency: 0.3, cold: 2.5,
+effects: [Colour(0, (238, 236, 230)), Plain])])), (name: "size", kind: Number(mean: 1.0,
+spread: 0.06, range: (0.78, 1.3), effect: Scale))]`), regional populations, inheritance
+(one allele from each parent, numbers at the parents' middle plus a third of the wild
+spread), mutation more likely with aether, and effects on coat colours and markings, size,
+product yield and temper. Kept animals' genes are saved. Breeds, domestic forms,
+inbreeding, inspecting and hybrids come next.
+
 What players do with it:
 
 - **Selective breeding.** Keep the woolliest, breed them together, and wool rises a little

@@ -46,6 +46,9 @@ pub enum Model {
         /// A rise over the shoulders, as a fraction of the body's height: bears, bison.
         #[serde(default)]
         hump: Option<f32>,
+        /// A shell over the back (width, height, length): tortoises, armadillos.
+        #[serde(default)]
+        shell: Option<(f32, f32, f32)>,
         /// Degrees the tail hangs below level (negative: carried up).
         #[serde(default)]
         tail_droop: f32,
@@ -161,6 +164,8 @@ pub enum Role {
     Wing,
     Tail,
     Shell,
+    /// A plated shell over a back: a tortoise's.
+    Carapace,
     Crest,
     Stalk,
     /// A box that is an eye (a stalk's tip): drawn dark, or bright on a glowing body.
@@ -264,7 +269,7 @@ impl Model {
         let v = |(x, y, z): (f32, f32, f32)| Vec3::new(x, y, z) * scale;
         let mut b = Builder { parts: Vec::new() };
         match self {
-            Model::Quadruped { body, head, legs, ears, tail, horns, horn_shape, snout, neck, haunches, hump, tail_droop, ear_lean } => {
+            Model::Quadruped { body, head, legs, ears, tail, horns, horn_shape, snout, neck, haunches, hump, shell, tail_droop, ear_lean } => {
                 let (body, head, legs) = (v(*body), v(*head), *legs * scale);
                 let torso = Vec3::new(0.0, legs + body.y / 2.0, 0.0);
                 b.put(Role::Torso, body, torso, torso, 0, Swing::Still);
@@ -272,6 +277,13 @@ impl Model {
                     let size = Vec3::new(body.x * 0.86, body.y * hump, body.z * 0.42);
                     let at = Vec3::new(0.0, legs + body.y + size.y / 2.0 - body.y * 0.04, -body.z * 0.22);
                     b.put(Role::Hump, size, at, at, 0, Swing::Still);
+                }
+                if let Some(shell) = shell.map(v) {
+                    // Over the back and a little past it, domed by a smaller box on top.
+                    let at = Vec3::new(0.0, legs + body.y * 0.55 + shell.y / 2.0, 0.0);
+                    b.put(Role::Carapace, shell, at, at, 1, Swing::Still);
+                    let dome = shell * Vec3::new(0.7, 0.45, 0.72);
+                    b.put(Role::Carapace, dome, at + Vec3::Y * (shell.y / 2.0 + dome.y / 2.0 - 0.01), at, 1, Swing::Still);
                 }
                 let leg = Vec3::new((body.x * 0.28).max(0.06), legs, (body.z * 0.16).max(0.06));
                 for (i, (sx, sz)) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)].into_iter().enumerate() {
@@ -522,6 +534,7 @@ mod tests {
                 neck: Some((0.3, 40.0)),
                 haunches: true,
                 hump: Some(0.3),
+                shell: None,
                 tail_droop: 70.0,
                 ear_lean: 20.0,
             },
