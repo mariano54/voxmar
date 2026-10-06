@@ -348,7 +348,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
 
     // Grown ripe, then broken: its harvest pops out and its experience is earned.
-    assert_eq!(client.ok("/grow ripe"), "Grew 1 crop.");
+    assert_eq!(client.ok("/grow ripe"), "Grew 1 plant.");
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
@@ -1025,7 +1025,7 @@ fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
     assert!(said.contains("for 30 minutes") || owner.chat.iter().any(|(_, text)| text.contains("for 30 minutes")), "{said} {:?}", owner.chat);
     // The thief stands where the owner fell (both joined at spawn) and picks up nothing.
     let watch = Instant::now() + Duration::from_secs(3);
-    thief.pump_until(|c| c.items.len() >= 4 && Instant::now() > watch);
+    thief.pump_until(|c| c.items.values().map(|i| i.stack.count as u32).sum::<u32>() == 44 && Instant::now() > watch);
     assert!(thief.collected.is_empty(), "someone else picked up a dead player's things");
     // The owner wakes at spawn, by their things, and gathers them all.
     owner.propose("core:respawn", ActionTarget::None);
