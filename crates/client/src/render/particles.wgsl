@@ -78,7 +78,12 @@ const FADE: f32 = 0.35;
 const GLOW: f32 = 2.5;
 // Fire is less bright, so its oranges and reds hold rather than washing out to white: as
 // bright as the fire's own sprite.
+#ifdef BLEND_ADD
+// Added, a flame is a share of light that builds up where tongues overlap.
+const FIRE_GLOW: f32 = 2.2;
+#else
 const FIRE_GLOW: f32 = 1.25;
+#endif
 
 const CORNERS = array<vec2<f32>, 6>(
     vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
@@ -237,11 +242,21 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     if glowing && (in.flags & FLAG_COOLS) != 0u {
+        let heat = 1.0 - tongue;
+#ifdef BLENDED
+        // Added light: a soft tongue whose colour runs smoothly from a deep red edge
+        // through the particle's own to a white-yellow heart, so overlapping tongues merge
+        // into one fire, brightest where they crowd.
+        let glow = saturate(heat * 1.6);
+        coverage = glow * glow * (3.0 - 2.0 * glow);
+        albedo = mix(albedo * EDGE, albedo, smoothstep(0.0, 0.5, heat));
+        albedo = mix(albedo, CORE, 0.7 * smoothstep(0.55, 1.0, heat));
+#else
         // Fire is drawn in bands, as pixel art is: a white-yellow core, the particle's own
         // colour, and an edge turned towards deep red, cooling with it as it ages.
-        let heat = 1.0 - tongue;
         albedo = select(albedo * EDGE, albedo, heat > 0.3);
         albedo = select(albedo, mix(albedo, CORE, 0.7), heat > 0.7);
+#endif
     } else if !crisp {
         // Smoke is a little darker at its thin edge than in its body.
         albedo *= mix(0.8, 1.0, coverage);
