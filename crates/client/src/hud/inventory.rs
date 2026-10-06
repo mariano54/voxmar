@@ -90,9 +90,10 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
-/// The panel; clicks outside it throw the held stack.
+/// The panel (and creative mode's catalogue beside it); clicks outside them throw the held
+/// stack.
 #[derive(Component)]
-struct InventoryCard;
+pub(crate) struct InventoryCard;
 /// The held stack, drawn at the pointer.
 #[derive(Component)]
 struct PointerStack;
@@ -397,7 +398,7 @@ fn click(
     mut player: ResMut<LocalPlayer>,
     mut gesture: ResMut<Gesture>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
-    card: Query<&RelativeCursorPosition, With<InventoryCard>>,
+    card: Query<(&RelativeCursorPosition, &InheritedVisibility), With<InventoryCard>>,
 ) {
     if !ui.inventory_open {
         return;
@@ -443,7 +444,7 @@ fn click(
     let right = mouse.just_pressed(MouseButton::Right) || (left && control);
     let left = left && !control;
     // Outside the panel, a click throws the held stack, a right click one item of it.
-    let outside = card.single().is_ok_and(|card| !card.cursor_over());
+    let outside = !card.is_empty() && !card.iter().any(|(card, visible)| visible.get() && card.cursor_over());
     if outside
         && (left || right)
         && let Some(held) = inventory.cursor
@@ -713,13 +714,14 @@ fn hover_item(
     output: Query<&RelativeCursorPosition, With<OutputSlot>>,
     mut over: ResMut<super::recipes::HoveredItem>,
     window: Query<&Window, With<PrimaryWindow>>,
+    catalogue: Res<super::creative::Catalogue>,
 ) {
     // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
     if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
         return;
     }
     let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find(&player.inventory.grid()).map(|r| r.output)).flatten();
-    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made) } else { None };
+    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or(catalogue.hovered) } else { None };
     if over.0 != item {
         over.0 = item;
     }
@@ -741,14 +743,15 @@ fn tooltip(
     mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
-    (keys, scale): (Res<ButtonInput<KeyCode>>, Res<UiScale>),
+    (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
         .filter(|_| ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none())
         .and_then(|slot| player.inventory.get(slot))
-        .map(|stack| stack.item);
+        .map(|stack| stack.item)
+        .or(catalogue.hovered.filter(|_| ui.inventory_open && player.inventory.cursor.is_none()));
     let Some(item) = item else {
         visibility.set_if_neq(Visibility::Hidden);
         *shown = None;

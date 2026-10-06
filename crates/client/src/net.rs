@@ -96,6 +96,12 @@ impl Net {
         self.connection.send(ClientMessage::Command { line: line.into() });
     }
 
+    /// Takes `count` of `item` from creative mode's catalogue, onto the pointer (`held`) or
+    /// into the inventory (see `ClientMessage::Take`).
+    pub fn take(&self, item: voxmar_engine::block::BlockId, count: u8, held: bool) {
+        self.connection.send(ClientMessage::Take { item, count, held });
+    }
+
     /// Says something to everyone.
     pub fn chat(&self, text: &str) {
         self.connection.send(ClientMessage::Chat { text: text.into() });

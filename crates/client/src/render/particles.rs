@@ -5,17 +5,40 @@
 //! the CPU per frame.
 //!
 //! Effects spawn particles through [`Particles`]. They live in a ring of [`CAPACITY`]
-//! 64-byte records on the GPU, the oldest overwritten when it is full, and are drawn with
-//! the alpha-tested terrain (depth-tested and depth-writing like any block, so they need no
-//! sorting). They fade out at the end of their life through alpha to coverage under MSAA
-//! and a dither otherwise.
+//! 64-byte records on the GPU, the oldest overwritten when it is full. Each is drawn one of
+//! three ways (its [`ParticleBlend`]):
+//!
+//! - cut out, with the alpha-tested terrain (depth-tested and depth-writing like any block,
+//!   so they need no sorting), fading at the end of their life through alpha to coverage
+//!   under MSAA and a dither otherwise: pieces of broken blocks;
+//! - adding their light to what is behind them: flames, embers and sparks, so overlapping
+//!   tongues merge into one flame instead of a stack of cut-out teardrops;
+//! - as a soft veil (premultiplied alpha): smoke.
+//!
+//! The last two are drawn in a pass of their own after the water and the volumetric air,
+//! before Bevy's transparent pass, against the scene's depth without writing it: they fade
+//! out where they come near anything solid, so smoke never shows a hard line where it
+//! meets a wall. Each draw goes oldest first (the ring in age order), so overlapping veils
+//! keep their order from frame to frame and never pop. Every draw covers the whole ring;
+//! a particle drawn another way collapses to nothing in the vertex shader.
 //!
 //! How a particle moves is its [`Motion`], evaluated in `particles.wgsl`. New kinds of
 //! motion are a new variant and a new case in the shader; nothing else changes. Breaking
 //! throws pieces (`Ballistic`); fires and torches give off smoke, embers and flames that
 //! `Rise` (crate::emitters).
 
-use bevy::core_pipeline::core_3d::AlphaMask3d;
+
+use bevy::core_pipeline::core_3d::{AlphaMask3d, main_transparent_pass_3d};
+use bevy::core_pipeline::{Core3d, Core3dSystems};
+use bevy::render::camera::ExtractedCamera;
+use bevy::render::render_phase::{CachedRenderPipelinePhaseItem, DrawFunctionId, PhaseItemExtraIndex};
+use bevy::render::render_resource::{
+    BlendComponent, BlendFactor, BlendOperation, BlendState, LoadOp, Operations, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
+    binding_types::{texture_depth_2d, texture_depth_2d_multisampled},
+};
+use bevy::render::renderer::{RenderContext, ViewQuery};
+use bevy::render::view::{RetainedViewEntity, ViewDepthTexture, ViewTarget};
 use bevy::core_pipeline::prepass::{OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey};
 use bevy::ecs::system::SystemParamItem;
 use bevy::ecs::system::lifetimeless::SRes;
@@ -46,7 +69,7 @@ use super::LayerInfo;
 use super::cloud_map::{self, CloudMap};
 use super::terrain::{TerrainTextures, mesh_like};
 use crate::textures::Rgba;
-use voxmar_engine::block::Tint;
+use voxmar_engine::block::{ParticleBlend, Tint};
 
 /// Particles alive at once at most.
 pub const CAPACITY: u32 = 8192;
@@ -64,6 +87,8 @@ impl Plugin for ParticlePlugin {
             .insert_resource(ParticleKey(key))
             .init_resource::<ParticleInbox>()
             .add_render_command::<AlphaMask3d, DrawParticleQuads>()
+            .init_resource::<DrawFunctions<BlendedItem>>()
+            .add_render_command::<BlendedItem, DrawBlended>()
             .add_systems(RenderStartup, init_gpu)
             .add_systems(ExtractSchedule, extract)
             .add_systems(
@@ -73,6 +98,14 @@ impl Plugin for ParticlePlugin {
                     prepare_bind_group.in_set(RenderSystems::PrepareBindGroups),
                     queue.in_set(RenderSystems::Queue),
                 ),
+            )
+            .add_systems(
+                Core3d,
+                blended_pass
+                    .after(super::water::WaterPass)
+                    .after(super::volumetric::VolumetricPass)
+                    .before(main_transparent_pass_3d)
+                    .in_set(Core3dSystems::MainPass),
             );
     }
 }
@@ -132,6 +165,8 @@ pub struct Particle {
     pub cools: bool,
     /// Sky and block light where it is, 0..=15, which light it like the terrain there.
     pub light: [u8; 2],
+    /// How it is drawn over what is behind it.
+    pub blend: ParticleBlend,
 }
 
 impl Default for Particle {
@@ -152,6 +187,7 @@ impl Default for Particle {
             glow: false,
             cools: false,
             light: [15, 0],
+            blend: ParticleBlend::Cutout,
         }
     }
 }
@@ -172,7 +208,8 @@ struct GpuParticle {
     /// layer:12 | grow:6 (eighths) | wander:6 (hundredths of a block) | block light:4 |
     /// sky light:4.
     surface: u32,
-    /// corner u:8 | corner v:8 | span:8 (in 256ths of the texture) | motion:4 | flags:4
+    /// corner u:8 | corner v:8 | span:8 (in 256ths of the texture) | motion:2 | blend:2 |
+    /// flags:4
     sprite: u32,
     /// sRGB colour and opacity, 8 bits each.
     color: u32,
@@ -183,6 +220,15 @@ struct GpuParticle {
 const FLAG_TEXTURED: u32 = 1;
 const FLAG_GLOW: u32 = 2;
 const FLAG_COOLS: u32 = 4;
+
+/// A blend as the shader reads it (`BLEND_*` in particles.wgsl).
+fn blend_bits(blend: ParticleBlend) -> u32 {
+    match blend {
+        ParticleBlend::Cutout => 0,
+        ParticleBlend::Add => 1,
+        ParticleBlend::Veil => 2,
+    }
+}
 
 impl GpuParticle {
     fn new(particle: &Particle, born: f32, seed: u32) -> Self {
@@ -208,7 +254,7 @@ impl GpuParticle {
             gravity: particle.gravity,
             drag: particle.drag,
             surface: surface | shape | block << 24 | sky << 28,
-            sprite: sprite | (particle.motion as u32) << 24 | flags << 28,
+            sprite: sprite | (particle.motion as u32) << 24 | blend_bits(particle.blend) << 26 | flags << 28,
             color: u32::from_le_bytes(particle.color),
             seed,
         }
@@ -334,6 +380,12 @@ struct ParticleGpu {
     shader: Handle<Shader>,
     vertex_layout: MeshVertexBufferLayout,
     pipelines: FxHashMap<MeshPipelineKey, CachedRenderPipelineId>,
+    /// The blended pass's group 3, the scene's depth, without and with MSAA.
+    depth_layouts: [BindGroupLayoutDescriptor; 2],
+    /// Per view key, the pipelines that add light and that lay a veil.
+    blended_pipelines: FxHashMap<MeshPipelineKey, [CachedRenderPipelineId; 2]>,
+    /// The blended pipelines of each camera, for the blended pass.
+    blended: FxHashMap<RetainedViewEntity, [CachedRenderPipelineId; 2]>,
     /// Render entity standing for the particles in the phases.
     item: Entity,
 }
@@ -368,6 +420,8 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
         Vec::new(),
         VertexBufferLayout { array_stride: 0, step_mode: VertexStepMode::Vertex, attributes: Vec::new() },
     );
+    let depth_layout = |depth| BindGroupLayoutDescriptor::new("particle_depth_layout", &BindGroupLayoutEntries::single(ShaderStages::FRAGMENT, depth));
+    let depth_layouts = [depth_layout(texture_depth_2d()), depth_layout(texture_depth_2d_multisampled())];
     let item = commands.spawn_empty().id();
     commands.insert_resource(ParticleGpu {
         buffer,
@@ -378,6 +432,9 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, asset_server: Res
         shader: asset_server.load(SHADER),
         vertex_layout,
         pipelines: FxHashMap::default(),
+        depth_layouts,
+        blended_pipelines: FxHashMap::default(),
+        blended: FxHashMap::default(),
         item,
     });
 }
@@ -462,6 +519,50 @@ impl ParticleGpu {
         self.pipelines.insert(view_key, id);
         Some(id)
     }
+
+    /// The blended pipelines for a view, adding light and laying a veil: the mesh pipeline
+    /// with our shader, testing depth without writing it, reading the scene's depth.
+    fn blended_pipelines(
+        &mut self,
+        view_key: MeshPipelineKey,
+        mesh_pipeline: &MeshPipeline,
+        layouts: &mut MeshVertexBufferLayouts,
+        cache: &PipelineCache,
+    ) -> Option<[CachedRenderPipelineId; 2]> {
+        if let Some(&ids) = self.blended_pipelines.get(&view_key) {
+            return Some(ids);
+        }
+        let multisampled = view_key.msaa_samples() > 1;
+        let mut make = |name: &str, def: &str, blend: BlendState| {
+            let mut descriptor =
+                mesh_like(mesh_pipeline, layouts, view_key, &self.vertex_layout, &self.layout, &self.shader, format!("particles_{name}"))?;
+            descriptor.vertex.buffers.clear();
+            descriptor.primitive.cull_mode = None;
+            descriptor.layout.push(self.depth_layouts[multisampled as usize].clone());
+            if let Some(depth) = descriptor.depth_stencil.as_mut() {
+                depth.depth_write_enabled = Some(false);
+            }
+            let mut defs = vec!["BLENDED".into(), def.into()];
+            if multisampled {
+                defs.push("DEPTH_MULTISAMPLED".into());
+            }
+            descriptor.vertex.shader_defs.extend(defs.clone());
+            let fragment = descriptor.fragment.as_mut()?;
+            fragment.shader_defs.extend(defs);
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = Some(blend);
+            }
+            Some(cache.queue_render_pipeline(descriptor))
+        };
+        let add = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
+        let keep = BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
+        let ids = [
+            make("add", "BLEND_ADD", BlendState { color: add, alpha: keep })?,
+            make("veil", "BLEND_VEIL", BlendState::PREMULTIPLIED_ALPHA_BLENDING)?,
+        ];
+        self.blended_pipelines.insert(view_key, ids);
+        Some(ids)
+    }
 }
 
 /// Puts the particles into every camera's alpha-tested phase while any may be alive.
@@ -488,6 +589,10 @@ fn queue(
         // Metal, Bevy compiles on the render thread, which held the frame of the first
         // block broken.
         let Some(pipeline) = gpu.pipeline(view_key, &mesh_pipeline, &mut layouts, &cache) else { continue };
+        // The blended pass's too, for the same reason.
+        if let Some(ids) = gpu.blended_pipelines(view_key, &mesh_pipeline, &mut layouts, &cache) {
+            gpu.blended.insert(retained.clone(), ids);
+        }
         if !drawing {
             continue;
         }
@@ -517,8 +622,131 @@ impl<P: PhaseItem> RenderCommand<P> for DrawParticles {
         let gpu = gpu.into_inner();
         let Some(bind_group) = &gpu.bind_group else { return RenderCommandResult::Skip };
         render_pass.set_bind_group(2, bind_group, &[]);
-        render_pass.draw(0..6, 0..gpu.filled);
+        // Oldest first: from the slot after the newest to the end, then from the start.
+        let head = gpu.head.min(gpu.filled);
+        if head < gpu.filled {
+            render_pass.draw(0..6, head..gpu.filled);
+        }
+        if head > 0 {
+            render_pass.draw(0..6, 0..head);
+        }
         RenderCommandResult::Success
+    }
+}
+
+/// Stands for the particles in the blended pass, to run their draw commands.
+struct BlendedItem {
+    pipeline: CachedRenderPipelineId,
+    entity: (Entity, MainEntity),
+    draw_function: DrawFunctionId,
+    batch_range: std::ops::Range<u32>,
+    extra_index: PhaseItemExtraIndex,
+}
+
+impl PhaseItem for BlendedItem {
+    const AUTOMATIC_BATCHING: bool = false;
+
+    fn entity(&self) -> Entity {
+        self.entity.0
+    }
+
+    fn main_entity(&self) -> MainEntity {
+        self.entity.1
+    }
+
+    fn draw_function(&self) -> DrawFunctionId {
+        self.draw_function
+    }
+
+    fn batch_range(&self) -> &std::ops::Range<u32> {
+        &self.batch_range
+    }
+
+    fn batch_range_mut(&mut self) -> &mut std::ops::Range<u32> {
+        &mut self.batch_range
+    }
+
+    fn extra_index(&self) -> PhaseItemExtraIndex {
+        self.extra_index.clone()
+    }
+
+    fn batch_range_and_extra_index_mut(&mut self) -> (&mut std::ops::Range<u32>, &mut PhaseItemExtraIndex) {
+        (&mut self.batch_range, &mut self.extra_index)
+    }
+}
+
+impl CachedRenderPipelinePhaseItem for BlendedItem {
+    fn cached_pipeline(&self) -> CachedRenderPipelineId {
+        self.pipeline
+    }
+}
+
+/// The blended particles' draw commands; `blended_pass` binds group 3, the depth, itself.
+type DrawBlended = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>, DrawParticles);
+
+/// What the blended pass needs of a camera.
+type BlendedView =
+    (&'static ExtractedCamera, &'static ExtractedView, &'static ViewTarget, &'static ViewDepthTexture, &'static Msaa);
+
+/// Draws the particles that add light or lay a veil, into the scene as it is after the
+/// water and the air (the multisampled image under MSAA, resolved later with the rest),
+/// testing against its depth through a read-only attachment and reading the same depth to
+/// fade where they meet anything solid. Veils first, then the light added over them.
+fn blended_pass(
+    world: &World,
+    view: ViewQuery<BlendedView>,
+    gpu: Option<Res<ParticleGpu>>,
+    inbox: Res<ParticleInbox>,
+    key: Res<ParticleKey>,
+    pipeline_cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
+    let view_entity = view.entity();
+    let (camera, extracted, target, depth, msaa) = view.into_inner();
+    let Some(gpu) = gpu else { return };
+    if !inbox.alive || gpu.filled == 0 || gpu.bind_group.is_none() {
+        return;
+    }
+    let Some(&[add, veil]) = gpu.blended.get(&extracted.retained_view_entity) else { return };
+    let multisampled = *msaa != Msaa::Off;
+    let color = match target.sampled_main_texture_view().filter(|_| multisampled) {
+        Some(samples) => samples,
+        None => target.main_texture_view(),
+    };
+    let depth_group = ctx.render_device().create_bind_group(
+        "particle_depth_bind_group",
+        &pipeline_cache.get_bind_group_layout(&gpu.depth_layouts[multisampled as usize]),
+        &BindGroupEntries::single(depth.view()),
+    );
+    let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("blended_particles"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: color,
+            depth_slice: None,
+            resolve_target: None,
+            ops: Operations { load: LoadOp::Load, store: StoreOp::Store },
+        })],
+        // Read-only, so the same depth can be sampled while it is tested against.
+        depth_stencil_attachment: Some(RenderPassDepthStencilAttachment { view: depth.view(), depth_ops: None, stencil_ops: None }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    if let Some(viewport) = camera.viewport.as_ref() {
+        pass.set_camera_viewport(viewport);
+    }
+    pass.set_bind_group(3, &depth_group, &[]);
+    let functions = world.resource::<DrawFunctions<BlendedItem>>();
+    let mut functions = functions.write();
+    functions.prepare(world);
+    let Some(id) = functions.get_id::<DrawBlended>() else { return };
+    for pipeline in [veil, add] {
+        let item = BlendedItem { pipeline, entity: (gpu.item, key.0), draw_function: id, batch_range: 0..1, extra_index: PhaseItemExtraIndex::None };
+        if let Some(draw) = functions.get_mut(id)
+            && let Err(e) = draw.draw(world, &mut pass, view_entity, &item)
+        {
+            error!("blended particles: {e:?}");
+        }
     }
 }
 
@@ -545,7 +773,12 @@ mod tests {
         assert_eq!((gpu.surface >> 12 & 63, gpu.surface >> 18 & 63), (28, 25));
         assert_eq!((gpu.surface >> 24 & 15, gpu.surface >> 28), (3, 14));
         assert_eq!((gpu.sprite & 255, gpu.sprite >> 8 & 255, gpu.sprite >> 16 & 255), (64, 192, 64));
-        assert_eq!(gpu.sprite >> 24 & 15, Motion::Rise as u32);
+        assert_eq!(gpu.sprite >> 24 & 3, Motion::Rise as u32);
+        assert_eq!(gpu.sprite >> 26 & 3, 0);
+        let added = GpuParticle::new(&Particle { blend: ParticleBlend::Add, ..particle }, 5.0, 0);
+        assert_eq!((added.sprite >> 24 & 3, added.sprite >> 26 & 3), (Motion::Rise as u32, 1));
+        let veiled = GpuParticle::new(&Particle { blend: ParticleBlend::Veil, ..particle }, 5.0, 0);
+        assert_eq!(veiled.sprite >> 26 & 3, 2);
         assert_eq!(gpu.sprite >> 28, FLAG_TEXTURED | FLAG_GLOW | FLAG_COOLS);
         // An unchanged size packs as eight eighths.
         assert_eq!(GpuParticle::new(&Particle::default(), 0.0, 0).surface >> 12 & 63, 8);

@@ -64,6 +64,9 @@ pub enum ClientMessage {
     Command { line: String },
     /// Something said to everyone in the console.
     Chat { text: String },
+    /// Creative mode's catalogue of every item (the inventory's item panel): `count` of
+    /// `item`, onto the pointer (`held`) or into the inventory. Refused in survival.
+    Take { item: BlockId, count: u8, held: bool },
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
