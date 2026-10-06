@@ -9,7 +9,7 @@ and [creature-data.md](creature-data.md) for the data formats.
 | # | Question | Decision |
 | --- | --- | --- |
 | 1 | Curve | RuneScape's, levels 1 to 99 (13,034,431 experience at 99, level 92 is half way), shared by every skill. Already in `core/skills.ron`. |
-| 2 | Skills | Attack, Defence, Hitpoints, Mining, Farming, Cooking (Mariano's list), plus **Hunter**, which Mariano chose on 2026-10-05. |
+| 2 | Skills | Attack, Defence, Hitpoints, Mining, Farming, Cooking (Mariano's list), plus **Hunter**, which Mariano chose on 2026-10-05; Engineering and Crafting (2026-10-06), Fishing, and Ranged, Magic, Alchemy and Construction (the progression plan, P25), whose guides list what is to come. Content peaks at 80; only Engineering runs to 90. |
 | 3 | Breeding | Part of Farming, never its own skill (Mariano). Farming covers crops, trees, beekeeping, animal husbandry and breeding. |
 | 4 | What levels do | Gate what you may do, raise yields, rare finds and quality, lower failure (burning, misses). Levels never make the world run faster: crops and animals grow at the world's pace. |
 | 5 | Where experience comes from | Actions only, whoever performs them. Machines and tamed animals working for you earn nothing; building and configuring them is gated by level. |
