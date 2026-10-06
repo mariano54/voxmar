@@ -1859,6 +1859,12 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("changed the screen from the inventory's by only {change:.1} levels"))
                 };
                 gate.check("character", shown);
+                // Every skill has its tile, all of them on screen, three across.
+                let (skills, tiles, inside) = crate::hud::character::skill_tiles(world);
+                gate.check(
+                    "character: skills",
+                    if skills > 0 && tiles == skills && inside == skills { Ok(format!("all {skills} skills on screen")) } else { Err(format!("{skills} skills, {tiles} tiles shown, {inside} on screen")) },
+                );
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
             } else if in_phase > SCREEN_WAIT {
