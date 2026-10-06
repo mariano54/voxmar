@@ -307,8 +307,10 @@ impl Server {
     /// Adds experience to a player's skill and tells them.
     pub(crate) fn grant_xp(&mut self, agent: PlayerId, skill: SkillId, xp: f32) {
         let Some(player) = self.players.get_mut(&agent) else { return };
-        // Effects that sharpen (or dull) learning: a good breakfast, a storm overhead.
-        let tenths = (xp * player.modifiers.xp * 10.0).round().max(0.0) as u32;
+        // Effects that sharpen (or dull) learning: a good breakfast, a storm overhead. All
+        // boosts together stop at a quarter more (the plan's xp integrity, P26).
+        let rate = player.modifiers.xp.min(voxmar_engine::skill::MAX_XP_BOOST);
+        let tenths = (xp * rate * 10.0).round().max(0.0) as u32;
         if tenths == 0 {
             return;
         }

@@ -238,3 +238,6 @@ schematic you carry gives (an item tagged `schematic:<item>:<levels>`, 5 to 10).
 marked `firm` takes neither (the Singularity's Engineering 90). Boosts and schematics help
 with making and gathering, never with wielding or wearing. Server and client use the same
 functions, so the client predicts what the server allows.
+
+Experience boosts from effects (a good breakfast, Rested, house rooms, feats) multiply
+together but stop at a quarter more (`skill::MAX_XP_BOOST`); debuffs still lower it.
