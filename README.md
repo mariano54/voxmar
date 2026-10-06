@@ -37,6 +37,10 @@ given) or the menu backdrop to load, logs frame time and saves a screenshot; `--
 time of day (a fraction of the day, 0 at sunrise), `--hold` selects the hotbar slot holding an item once it is there (after a `/give`), `--repeat` clicks `--press`'s button every 0.4 s through the clip instead of holding it, `--face-creature` keeps the eye on the nearest creature, `--dig` digs straight down for that many seconds
 holding the button (reporting frame times, as `--flight` does), and `--mine` mines the block in the middle of
 the view that far (0..1, cracks and chips showing; 1 breaks it just before the screenshot).
+`--clip SECONDS` saves every frame of that much game time at 30 fps instead; `--clip-join` starts
+it the moment the player joins (to see what joining shows) rather than once the world settled, and
+`--clip-command LINE` runs a console line as it starts (`--clip-command "/weather clear"` to watch
+the weather change). Still shots also wait for the weather and the place's air to show.
 `--flicker` measures shimmer: with the clock stopped it also takes `OUT-moved.png` after
 stepping the camera 4 cm sideways, logs the share of pixels that changed by more than 60
 levels, and marks them in red in `OUT-flicker.png`.
@@ -142,7 +146,8 @@ line per language; anything a language leaves out shows in English, then as a na
 the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
 way. Kanji and kana come from BIZ UDGothic, a smooth Japanese font (listed in
 `assets/ui/fonts/fallback.ron`) that text falls back to for those scripts at its own size,
-while letters and digits stay in the crisp pixel font. Tests in `crates/client/src/lang.rs` hold every
+while letters and digits stay in the crisp pixel font. Every Japanese name with kanji has a
+reading in `lang/readings/ja.ron` (オークのげんぼく for オークの原木) that the interface can show with it. Tests in `crates/client/src/lang.rs` hold every
 language complete, every key the code names defined, and every character drawn.
 
 ### Console and commands
@@ -162,7 +167,8 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   that kind (`/weather list`) to the land within about a kilometre of you, as intense as you say
   (`light`, `moderate`, `heavy`, `max` or 0 to 1; each kind has its usual intensity, and 1 is its
   fiercest), for five minutes unless you say; then the natural weather takes over again, slowly.
-  `/weather natural` ends it at once.
+  `/weather natural` ends it at once. What you see and hear changes over within several seconds
+  after a command, and over tens of seconds otherwise; it never jumps.
 - `/wind` describes the wind; `/wind calm|breeze|strong|gale [FROM] [SECONDS]` brings that
   wind (from a compass point, `n` to `nw`, or degrees from north) on top of any forced
   weather.

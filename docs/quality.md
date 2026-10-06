@@ -66,14 +66,14 @@ changes don't move it, and checks:
 
 | step | what the player does | what must follow |
 | --- | --- | --- |
-| load | | the world around spawn loads and is meshed |
+| load | | the world around spawn loads and is meshed, and the weather is ready (`weather::WeatherReady`), showing the server's report from its first frame (no change from the menus' sky into it) |
 | arrive | clicks into the game | the mouse is grabbed |
 | place | three right clicks on the ground | the planks are on the client and the server, the two agree on every block around, the renderer has every column as it now is, the middle of the screen changed, the hand holds three fewer |
 | dig | holds the left button over the ground | a hole three blocks deep, with the same four checks |
 | drops | walks into the hole | every dug block's drop is picked up |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
-| weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
+| weather | `/weather storm`, `/weather snow`, `/weather clear` | each arrives and changes the view (rain, snow, their particles); from joining to here, no weather fraction shown changed in a frame by more than easing allows (`weather::fastest`: a full swing over six seconds at the quickest, after a command) |
 | sky | looks at the morning sun, flies above the world's top, looks towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a lit sky from above the world, a sunset sky warmer towards the sun than away, stars |
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
 | cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |

@@ -12,7 +12,9 @@
 //! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid), `--recipes NAME` / `--uses NAME` (open the recipe viewer on an item),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--scale-factor N` (screen
 //! pixels per interface pixel, 2 to shoot as a Retina display draws: use twice the size), `--clip SECONDS` (save
-//! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
+//! every frame of that much game time at 30 fps instead, to check motion; `--clip-join` starts
+//! it the moment the player joins rather than once the world has settled, `--clip-command LINE`
+//! runs a console command as it starts), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
 //! scale; with the saved settings when `VOXMAR_CONFIG` is set), `--flicker` or
 //! `--flicker-still` (measure shimmer; see capture.rs) or
@@ -117,6 +119,10 @@ struct Options {
     guide: Option<String>,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
+    /// `--clip-join`: start the clip on joining; `--clip-command LINE`: run it as the clip
+    /// starts.
+    clip_join: bool,
+    clip_commands: Vec<String>,
     /// `--press left|right`: hold a mouse button at the start of the clip.
     press: Option<MouseButton>,
     /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
@@ -167,6 +173,8 @@ fn parse_options() -> Result<Options, String> {
         guide: None,
         flicker: None,
         clip: None,
+        clip_join: false,
+        clip_commands: Vec::new(),
         press: None,
         hold: None,
         repeat: false,
@@ -222,6 +230,8 @@ fn parse_options() -> Result<Options, String> {
             "--repeat" => options.repeat = true,
             "--face-creature" => options.face_creature = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
+            "--clip-join" => options.clip_join = true,
+            "--clip-command" => options.clip_commands.push(value()?),
             "--press" => {
                 options.press = Some(match value()?.as_str() {
                     "left" => MouseButton::Left,
@@ -430,6 +440,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             character: options.character,
             flicker: options.flicker,
             clip: options.clip,
+            clip_join: options.clip_join,
+            clip_commands: options.clip_commands,
             press: options.press,
             hold: options.hold,
             repeat: options.repeat,
