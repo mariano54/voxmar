@@ -27,7 +27,7 @@ every play build passes, runs everything.
 with everything committed: it fetches origin and merges origin/main and main into your
 branch (main moves on GitHub too: the GPU box pushes straight to origin, so the local main
 can be behind), runs `tools/gate` on the result, fast-forwards main to it, pushes main and
-fetches it back to check that origin has the commit. When origin moved meanwhile it merges
+fetches it back to check that origin has the commit. When main moved meanwhile, here or on origin, it merges
 again, up to three times; it never forces. Only its last line, `land: <commit> landed`,
 means landed; anything else, the push included, failed and says why. On a typical change
 it takes well under a minute.
