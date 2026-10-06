@@ -907,6 +907,19 @@ the zenith and a top face take neither side) and `d` how strongly dusk shows (fr
 height, none under thick cloud). The sky's horizon, the haze the land fades into, the sky
 water mirrors and the sky light on walls all take it, so they agree.
 
+## Texture variety
+
+Block textures used to repeat identically on every block, so a large motif (a crystal, a
+pebble pattern) showed its grid across a wall or a floor. A block's data can now ask for
+variety (`texture_variety: (turn: true, mirror: true)` in its definition, opaque blocks
+only): each block picks, by a hash of its position, a quarter turn of its top and bottom
+and whether its faces are mirrored left to right, as Minecraft's stone, sand and dirt do.
+The flags travel per texture layer in the layer table's tint byte (64 turn, 128 mirror)
+and the terrain shader lays the texture by them (`laid` in voxel.wgsl), mapping the
+texture coordinates' per-pixel changes the same way so mip levels stay right across block
+edges. It costs a hash and a 2×2 matrix per pixel on the blocks that ask for it. Stone,
+dirt, gravel, sand and grass blocks ask for both.
+
 ## Night, dawn and dusk
 
 Mariano's playtest of 2026-10-05: nights too bright, stars too shiny, comets and aurora too

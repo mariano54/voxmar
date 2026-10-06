@@ -186,7 +186,18 @@
 
     "hud.died": "死んでしまった。Rでリスポーン。",
 
-    "inventory.help": "右クリック: 半分・ドラッグ: 分配\nShift+クリック: 移動・1-9: 入替・Q: 投げる",
+    "inventory.key.right_click": "右クリック",
+    "inventory.hint.half": "半分",
+    "inventory.key.drag": "ドラッグ",
+    "inventory.hint.spread": "分配",
+    "inventory.key.double_click": "ダブルクリック",
+    "inventory.hint.gather": "まとめる",
+    "inventory.key.shift_click": "Shift+クリック",
+    "inventory.hint.move": "移動",
+    "inventory.key.numbers": "1-9",
+    "inventory.hint.swap": "入替",
+    "inventory.key.throw": "Q",
+    "inventory.hint.throw": "投げる",
 
     "rarity.uncommon": "アンコモン",
     "rarity.rare": "レア",
@@ -226,6 +237,8 @@
     "effect.overheated": "熱中症",
     "effect.overheated.description": "回復せず、体力が減る。日陰か水辺へ。",
     "character.hint": "スキルをクリックするとガイドが開きます: レベルごとにできること。",
+    "character.guide_hint": "スクロールで続きへ・戻るでスキル一覧へ",
+    "character.combat_level": "戦闘レベル {level}",
     "character.level": "Lv {level}",
     "character.xp": "{xp} xp",
     "character.xp_of": "{xp} / {next} xp",
