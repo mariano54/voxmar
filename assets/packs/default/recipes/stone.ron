@@ -217,6 +217,39 @@
         "block/silver_ore": (palettes: {"ore": ["#70737c", "#b0b5c0", "#dfe3ec", "#ffffff"]}, layers: [
             Clusters(palette: "ore", count: 5, size: (5, 9), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
         ]),
+        // The later ages' ores: sphalerite, galena's cubes, magnetite, graphite flakes,
+        // bauxite's pisoliths, and three gems in small bright clusters.
+        "block/zinc_ore": (palettes: {"ore": ["#4a3418", "#8a6526", "#c49a45", "#ead08a"]}, layers: [
+            Clusters(palette: "ore", count: 5, size: (6, 10), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/lead_ore": (palettes: {"ore": ["#2c3038", "#4d5563", "#7d8798", "#c3cad6"]}, layers: [
+            Clusters(palette: "ore", count: 4, size: (8, 12), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/lodestone": (palettes: {"ore": ["#141518", "#2a2c33", "#4a4e5a", "#8c93a6"]}, layers: [
+            Clusters(palette: "ore", count: 6, size: (9, 14), spacing: 4.5, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/graphite_ore": (palettes: {"ore": ["#1c1c1f", "#33343a", "#56585f", "#9aa0aa"]}, layers: [
+            Clusters(palette: "ore", count: 6, size: (4, 8), spacing: 4.5, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/bauxite": (palettes: {"ore": ["#5e2a14", "#9a4a24", "#c87a46", "#e8b083"]}, layers: [
+            Clusters(palette: "ore", count: 7, size: (5, 9), spacing: 4.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/ruby_ore": (palettes: {"ore": ["#5e0a17", "#a8162c", "#e64a5e", "#ffc2cb"]}, layers: [
+            Clusters(palette: "ore", count: 3, size: (5, 8), spacing: 6.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/sapphire_ore": (palettes: {"ore": ["#0b1f5c", "#1d43a8", "#4f7fe8", "#c6d8ff"]}, layers: [
+            Clusters(palette: "ore", count: 3, size: (5, 8), spacing: 6.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/emerald_ore": (palettes: {"ore": ["#0b4a2a", "#168a4d", "#3fd486", "#c8ffe0"]}, layers: [
+            Clusters(palette: "ore", count: 3, size: (5, 8), spacing: 6.0, shade: 1, shadow: -1, margin: 1),
+        ]),
+        "block/deepslate_zinc_ore": (base: "block/zinc_ore"),
+        "block/deepslate_lead_ore": (base: "block/lead_ore"),
+        "block/deepslate_lodestone": (base: "block/lodestone"),
+        "block/deepslate_graphite_ore": (base: "block/graphite_ore"),
+        "block/deepslate_ruby_ore": (base: "block/ruby_ore"),
+        "block/deepslate_sapphire_ore": (base: "block/sapphire_ore"),
+        "block/deepslate_emerald_ore": (base: "block/emerald_ore"),
         "block/aetherite_ore": (palettes: {"ore": ["#4a1f8c", "#8a4cf0", "#c39bff", "#f2e6ff"], "glint": ["#7af5ff"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (7, 11), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
             Paint(palette: "glint", mask: [Speckle(chance: 0.03, amount: 1.0, seed: 9)]),
