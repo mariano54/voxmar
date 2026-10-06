@@ -290,6 +290,13 @@ struct Gate {
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
+    /// The server's clock (its ticks, in seconds) this frame, and when the phase began by it.
+    server_now: f32,
+    phase_server: f32,
+    /// The step last frame, and the failures by then: a step that fails lets go of every key
+    /// and button (a step that passes may hand one on, as digging hands walking on).
+    last_step: Step,
+    failures_then: usize,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
     /// Frames on which the open overlay's text changed (each one lays the UI out again),
@@ -340,6 +347,10 @@ impl Gate {
             frame_ms: Vec::new(),
             longest: default(),
             overlay_ms: default(),
+            server_now: 0.0,
+            phase_server: 0.0,
+            last_step: Step::Load,
+            failures_then: 0,
             overlay_changes: 0,
             overlay_counted: (0.0, 0.0),
         }
@@ -374,12 +385,22 @@ impl Gate {
         self.frames = 0;
         self.phase = 0;
         self.phase_since = now;
+        self.phase_server = self.server_now;
+        self.food_moved = false;
     }
 
     /// On to the next stage of a step.
     fn advance(&mut self, now: f32) {
         self.phase += 1;
         self.phase_since = now;
+        self.phase_server = self.server_now;
+    }
+
+    /// Seconds of the server's own clock since the phase began: what a wait on the server
+    /// (an effect it gives, a blow it answers) is measured in, for a server running behind
+    /// on a busy machine takes longer by the wall clock and the game's.
+    fn server_in_phase(&self) -> f32 {
+        self.server_now - self.phase_server
     }
 
     /// The shot called `name` of what is drawn now, asking for it the first time; it
@@ -472,6 +493,24 @@ fn run(world: &mut World) {
     let mut gate = world.remove_resource::<Gate>().expect("gate state");
     gate.frames += 1;
     gate.breaks.hitch(gate.frames);
+    stall_under_test(gate.frames);
+    // (No server once the world is left: the clock stands still then.)
+    if let Some(net) = world.get_resource::<Net>() {
+        gate.server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
+    }
+    // A step that failed lets go of everything it held: one once left the player walking
+    // off the test ground, failing every step after it.
+    if gate.step != gate.last_step && gate.failures.len() > gate.failures_then {
+        for code in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD, KeyCode::Space, KeyCode::ShiftLeft, KeyCode::ControlLeft] {
+            key(world, code, false);
+        }
+        for button in [MouseButton::Left, MouseButton::Right] {
+            mouse(world, button, false);
+        }
+    }
+    if gate.step != gate.last_step {
+        (gate.last_step, gate.failures_then) = (gate.step, gate.failures.len());
+    }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
@@ -494,6 +533,20 @@ fn run(world: &mut World) {
         finish(world, &gate, now);
     }
     world.insert_resource(gate);
+}
+
+/// With `VOXMAR_GATE_STALL` set, every frame of the session stalls as a machine loaded far
+/// past its cores makes it: 80 to 320 ms every fifth frame or so. Steps that pass only on an
+/// idle machine (a fixed number of frames, a wait in seconds of game time that a stall
+/// stretches) fail this way every time rather than now and then.
+fn stall_under_test(frame: u32) {
+    static STALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *STALL.get_or_init(|| std::env::var_os("VOXMAR_GATE_STALL").is_some()) {
+        let roll = crate::sfx::mix(frame as u64 ^ 0x5eed);
+        if roll % 5 == 0 {
+            std::thread::sleep(Duration::from_millis(80 + (roll >> 8) % 240));
+        }
+    }
 }
 
 /// What ends the session early: leaving the game, the observer cut off, or time running
@@ -1837,9 +1890,22 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// A timed effect on the player (as eating would give, the server not told): its chip
-/// counts down from 1:30 and its plate, as if the pointer were over the chip, says so too.
+/// counts down and its plate, as if the pointer were over the chip, says the same. Judged
+/// by two readings a moment apart rather than by where the count starts: the session's own
+/// cooking gives the same effect earlier, and on a loaded machine that one is further along.
 fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::effects::{PinnedTip, ShowEffects};
+    let reading = |world: &mut World| {
+        let chip = world.query_filtered::<&Text, With<crate::hud::EffectTimer>>().iter(world).map(|t| t.0.clone()).find(|t| !t.is_empty());
+        let left = crate::hud::effects::shown_left(world);
+        (chip, left)
+    };
+    // Seconds a reading such as "1:28" or "1:28 left" stands for.
+    let seconds = |text: &str| {
+        let clock = text.split_whitespace().next()?;
+        let (m, s) = clock.split_once(':')?;
+        Some(m.parse::<u32>().ok()? * 60 + s.parse::<u32>().ok()?)
+    };
     match gate.phase {
         0 => {
             // Food eaten earlier in the run (eating heals the hurt) may have given a real
@@ -1849,14 +1915,37 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.insert_resource(PinnedTip("hearty".into()));
             gate.advance(now);
         }
+        1 => {
+            let (chip, left) = reading(world);
+            let agree = chip.as_deref().and_then(seconds).filter(|&c| left.as_deref().and_then(seconds) == Some(c));
+            match agree {
+                Some(first) if in_phase > 0.2 => {
+                    gate.count_before = first;
+                    gate.advance(now);
+                }
+                _ if in_phase > 3.0 => {
+                    gate.check("effects: countdown", Err(format!("chip {chip:?}, plate {left:?}")));
+                    world.remove_resource::<ShowEffects>();
+                    world.remove_resource::<PinnedTip>();
+                    gate.next(Step::Screenshot, now);
+                }
+                _ => {}
+            }
+        }
         _ => {
-            let chip = world.query_filtered::<&Text, With<crate::hud::EffectTimer>>().iter(world).map(|t| t.0.clone()).find(|t| !t.is_empty());
-            let left = crate::hud::effects::shown_left(world);
-            let counting = chip.as_deref().is_some_and(|t| t.starts_with("1:")) && left.as_deref().is_some_and(|t| t.contains("1:"));
-            if !counting && in_phase < 3.0 {
+            let (chip, left) = reading(world);
+            let (chip_s, left_s) = (chip.as_deref().and_then(seconds), left.as_deref().and_then(seconds));
+            let counted = chip_s.is_some_and(|c| c < gate.count_before) && chip_s == left_s;
+            if !counted && in_phase < 3.0 {
                 return;
             }
-            gate.check("effects: countdown", if counting { Ok(format!("the chip reads {}, the plate {}", chip.unwrap_or_default(), left.unwrap_or_default())) } else { Err(format!("chip {chip:?}, plate {left:?}")) });
+            let first = gate.count_before;
+            let result = if counted {
+                Ok(format!("the chip went from {}:{:02} to {}, the plate with it ({})", first / 60, first % 60, chip.unwrap_or_default(), left.unwrap_or_default()))
+            } else {
+                Err(format!("from {}:{:02}, chip {chip:?}, plate {left:?}", first / 60, first % 60))
+            };
+            gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
             gate.next(Step::Screenshot, now);
@@ -2121,7 +2210,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Let it fill the air before the shot, and the server tell the player they are
             // out in it (effects are judged once a second).
             let weathered = weather_effects(world);
-            if in_phase < 1.0 || (weathered.is_empty() && in_phase < 5.0) {
+            if in_phase < 1.0 || (weathered.is_empty() && gate.server_in_phase() < 5.0) {
                 return;
             }
             let Some(shot) = gate.shot(world, name) else { return };
@@ -2307,8 +2396,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if blows > gate.blows_seen {
                 gate.blows_seen = blows;
                 gate.phase_since = now;
+                gate.phase_server = gate.server_now;
             }
-            let stalled = now - gate.phase_since > UNANSWERED;
+            let stalled = gate.server_in_phase() > UNANSWERED;
             match snail(world) {
                 Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
@@ -2402,10 +2492,9 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             let lit = client.block(fire) == Some(campfire);
-            let slot = {
-                let player = world.resource::<LocalPlayer>();
-                (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == raw))
-            };
+            // Earlier steps fill the hotbar with what they pick up, more of it on some runs
+            // than others: the rabbit then lands in the pack, and is moved down, once.
+            let slot = in_hotbar(world, &mut gate.food_moved, raw);
             match (lit, slot) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
@@ -3111,20 +3200,21 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     sorted.sort_by(f32::total_cmp);
     let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
     let longest = gate.longest.get(&step).copied().unwrap_or(0.0);
-    let limit = HITCH_MS.max(HITCH_FACTOR * median);
-    let result = if longest <= limit {
-        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms)"))
-    } else {
-        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms)"))
-    };
-    // A machine asked for more than all its cores (other threads' builds) starves the game
-    // for whole seconds: a long frame then says nothing about the game. A real hitch shows
-    // again on any run with the machine less loaded, as every build's first run is.
+    // A machine asked for more than all its cores (other threads' builds) stretches every
+    // frame's waits by about how far over it is: the bar rises with it rather than the
+    // check being skipped, for the machine is rarely calm enough to wait for. Pipelines
+    // compiled on the spot, what this check first caught, the pipelines check catches at
+    // any load.
     let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
-    if result.is_err() && load > cores {
-        info!("gate: SKIPPED {name}: smooth: {} (the machine was overloaded, load {load:.0} on {cores} cores)", result.unwrap_err());
-        return;
-    }
+    let crowded = (load / cores).max(1.0) as f32;
+    let limit = HITCH_MS.max(HITCH_FACTOR * median) * crowded;
+    let on = if crowded > 1.0 { format!(", the bar {crowded:.1}× higher at load {load:.0} on {cores} cores") } else { String::new() };
+    let result = if longest <= limit {
+        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms{on})"))
+    } else {
+        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms{on})"))
+    };
+    let known = if std::env::var_os("VOXMAR_GATE_STALL").is_some() { Some("frames stalled on purpose (VOXMAR_GATE_STALL)") } else { known };
     match known {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
@@ -3266,6 +3356,25 @@ fn key(world: &mut World, key_code: KeyCode, down: bool) {
     let state = if down { ButtonState::Pressed } else { ButtonState::Released };
     let logical_key = Key::Unidentified(NativeKey::Unidentified);
     world.write_message(KeyboardInput { key_code, logical_key, state, text: None, repeat: false, window: Entity::PLACEHOLDER });
+}
+
+/// The hotbar slot holding `item`; if it is only in the pack, asks once (`moved`) for it to
+/// be moved into the last hotbar slot, as dragging it there would.
+fn in_hotbar(world: &mut World, moved: &mut bool, item: BlockId) -> Option<usize> {
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, SLOTS};
+    let player = world.resource::<LocalPlayer>();
+    let holds = |s: &usize| player.inventory.get(*s).is_some_and(|stack| stack.item == item);
+    let (slot, packed) = ((0..HOTBAR_SLOTS).find(holds), (HOTBAR_SLOTS..SLOTS).find(holds));
+    if slot.is_none()
+        && !*moved
+        && let Some(from) = packed
+    {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (HOTBAR_SLOTS - 1) as u8, count: u8::MAX };
+        world.resource::<Net>().propose(actions.expect("core:transfer"), target);
+        *moved = true;
+    }
+    slot
 }
 
 /// How many items the selected hotbar slot holds.
