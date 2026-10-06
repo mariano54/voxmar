@@ -24,7 +24,7 @@ impl Plugin for LoadingPlugin {
 }
 
 #[derive(Component)]
-struct Cover;
+pub struct Cover;
 
 /// Keeps the cover up once the world has loaded (`--loading`, to capture it).
 #[derive(Resource)]
@@ -112,6 +112,11 @@ fn play_reel(time: Res<Time>, mut layers: Query<(&ReelLayer, &mut ImageNode)>) {
     }
 }
 
+/// Columns on each side of the player's that must be built before the cover lifts, and
+/// seconds everything must have been ready before it does.
+const NEAR: i32 = 2;
+const SETTLE: f32 = 0.4;
+
 #[allow(clippy::too_many_arguments)]
 fn update(
     mut commands: Commands,
@@ -125,17 +130,30 @@ fn update(
     mut pulse: Query<&mut Node, With<Pulse>>,
     locale: Res<Locale>,
     hold: Option<Res<HoldCover>>,
+    weather_ready: Res<crate::weather::WeatherReady>,
+    mut ready_since: Local<Option<f32>>,
 ) {
     let Ok(cover) = cover.single() else { return };
+    // Ready when the ground around the player is built (every column within NEAR of theirs)
+    // and the sky shows the world's real weather, then a moment more for what draws first
+    // to settle behind the cover; so the game never opens on a half-built ground or a fair
+    // sky that turns into the weather a second later.
     let ground = ColumnPos::of_block(player.position.floor().as_ivec3());
-    if player.joined && world.voxels.contains(ground) && world.stats.chunk_entities > 0 && hold.is_none() {
+    let near = (-NEAR..=NEAR).flat_map(|dx| (-NEAR..=NEAR).map(move |dz| ColumnPos(ground.0 + IVec2::new(dx, dz))));
+    let built = player.joined && near.into_iter().all(|column| world.voxels.contains(column)) && world.stats.chunk_entities > 0;
+    let weather = weather_ready.0;
+    let now = time.elapsed_secs();
+    if !(built && weather) {
+        *ready_since = None;
+    } else if hold.is_none() && now - *ready_since.get_or_insert(now) > SETTLE {
         commands.entity(cover).despawn();
         return;
     }
-    let (heading, message) = match (player.joined, net.is_remote()) {
-        (false, true) => ("loading.joining", "loading.joining.detail"),
-        (false, false) => ("loading.opening", "loading.opening.detail"),
-        (true, _) => ("loading.building", "loading.building.detail"),
+    let (heading, message) = match (player.joined, net.is_remote(), built) {
+        (false, true, _) => ("loading.joining", "loading.joining.detail"),
+        (false, false, _) => ("loading.opening", "loading.opening.detail"),
+        (true, _, false) => ("loading.building", "loading.building.detail"),
+        (true, _, true) => ("loading.building", "loading.weather.detail"),
     };
     let (heading, message) = (locale.get(heading), locale.get(message));
     if let Ok(mut text) = title.single_mut()

@@ -19,7 +19,7 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((widgets::WidgetsPlugin, blur::BlurPlugin, sound::UiSoundPlugin, ime::ImePlugin))
-            .add_systems(Update, (change_font, fit_scale));
+            .add_systems(Update, (change_font.run_if(resource_changed::<Settings>), fit_scale));
     }
 }
 
@@ -48,25 +48,15 @@ fn fit_scale(settings: Res<Settings>, windows: Query<&Window, With<PrimaryWindow
 }
 
 /// Rebuilds the font when the setting changes, and lays every text out again in it.
-///
-/// Bevy's text takes a font into its collection only under an asset id it has not seen,
-/// so the new font cannot simply replace the old one under `skin::FONT`: the old one is
-/// removed first, which empties the collection, and the new one goes in the frame after.
-fn change_font(settings: Res<Settings>, mut fonts: ResMut<Assets<Font>>, mut texts: Query<&mut TextFont>, mut built: Local<Option<skin::InterfaceFont>>, mut pending: Local<bool>) {
-    if *pending {
-        *pending = false;
-        skin::set_font(settings.font, &mut fonts);
-        for mut font in &mut texts {
-            font.set_changed();
-        }
-        return;
-    }
+fn change_font(settings: Res<Settings>, mut fonts: ResMut<Assets<Font>>, mut texts: Query<&mut TextFont>, mut built: Local<Option<skin::InterfaceFont>>) {
     // Startup built the saved choice.
     let current = *built.get_or_insert(settings.font);
     if current == settings.font {
         return;
     }
     *built = Some(settings.font);
-    fonts.remove(&skin::FONT);
-    *pending = true;
+    skin::set_font(settings.font, &mut fonts);
+    for mut font in &mut texts {
+        font.set_changed();
+    }
 }

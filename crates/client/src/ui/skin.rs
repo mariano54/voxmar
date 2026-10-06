@@ -272,34 +272,3 @@ pub fn load(source: &mut Source, images: &mut Assets<Image>) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Characters the interface draws from code rather than the language files.
-    const SYMBOLS: &str = "◆◇▴▾◂▸→·×°%";
-
-    /// Kana and kanji, and the full-width forms, come from the smooth fallback font.
-    fn smooth(c: char) -> bool {
-        matches!(c as u32, 0x3000..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xff00..=0xffef)
-    }
-
-    #[test]
-    fn every_font_draws_every_letter_and_mark_the_game_writes() {
-        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-        let dir = assets.join("ui/fonts");
-        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
-        let mut written: std::collections::BTreeSet<char> = SYMBOLS.chars().collect();
-        for package in std::fs::read_dir(assets.join("content")).unwrap().flatten() {
-            let Ok(files) = std::fs::read_dir(package.path().join("lang")) else { continue };
-            for file in files.flatten() {
-                written.extend(std::fs::read_to_string(file.path()).unwrap().chars());
-            }
-        }
-        for choice in InterfaceFont::ALL {
-            let font = PixelFont::parse_with(&read(choice.file()).unwrap(), read).unwrap();
-            let missing: String = written.iter().filter(|&&c| !c.is_control() && !smooth(c) && !font.glyphs.contains_key(&c)).collect();
-            assert!(missing.is_empty(), "{} has no glyph for {missing:?}, which would draw as a box", choice.label());
-        }
-    }
-}

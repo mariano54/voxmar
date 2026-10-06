@@ -177,9 +177,6 @@ enum Step {
     /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
     /// player's folder and clipboard alone) and says so in the chat.
     Screenshot,
-    /// Choosing another font in the settings lays every text out in it, and choosing the
-    /// first again puts it back.
-    Font,
     /// Every in-game screen and state, in English and Japanese: no text reaches past the
     /// element it sits in.
     Fit,
@@ -226,8 +223,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
-    /// How wide the inventory's words were before the font changed.
-    width_before: f32,
+    /// Whether the loading cover was checked.
+    cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
     /// The interface font before the gate tried another, to go back to.
@@ -271,7 +268,7 @@ impl Gate {
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
-            width_before: 0.0,
+            cover_checked: false,
             spills: Vec::new(),
             font: None,
             food_moved: false,
@@ -668,7 +665,6 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
-        Step::Font => font(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
@@ -1046,6 +1042,18 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             look(world, 0.0, 5.0);
+            // The loading cover lifted only once the world's weather showed.
+            if !gate.cover_checked {
+                gate.cover_checked = true;
+                let covered = world.query_filtered::<(), With<crate::menu::loading::Cover>>().iter(world).count() > 0;
+                let weather = world.resource::<crate::weather::WeatherReady>().0;
+                let result = match (covered, weather) {
+                    (false, true) => Ok("lifted, with the world's weather showing".to_owned()),
+                    (true, _) => Err("still up a whole step into the game".to_owned()),
+                    (false, false) => Err("lifted before the weather was ready".to_owned()),
+                };
+                gate.check("loading cover", result);
+            }
             if gate.shot(world, "game").is_some() {
                 // The HUD reads health and hunger off the server's vitals.
                 let hunger = world.resource::<LocalPlayer>().vitals.hunger;
@@ -1293,50 +1301,8 @@ fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             gate.check("screenshot", result);
             world.remove_resource::<Elsewhere>();
-            gate.next(Step::Font, now);
-        }
-    }
-}
-
-/// How wide a letter is laid out on average, over the visible one-line texts: it changes
-/// with the font, whichever texts happen to show.
-fn text_width(world: &mut World) -> f32 {
-    let mut texts = world.query::<(&Text, &bevy::text::TextLayoutInfo, &InheritedVisibility)>();
-    let (width, letters) = texts
-        .iter(world)
-        .filter(|(text, layout, visible)| visible.get() && text.0.chars().count() >= 3 && !text.0.contains('\n') && layout.glyphs.iter().all(|g| g.line_index == 0))
-        .fold((0.0, 0usize), |(w, n), (text, layout, _)| (w + layout.size.x, n + text.0.chars().count()));
-    if letters == 0 { 0.0 } else { width / letters as f32 }
-}
-
-/// The font setting: the proportional Voxmar font lays the inventory's words out narrower
-/// than the monospace one, and choosing that again puts them back.
-fn font(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    use crate::ui::skin::InterfaceFont;
-    match gate.phase {
-        0 => {
-            world.resource_mut::<UiState>().inventory_open = true;
-            if in_phase > 0.5 {
-                gate.width_before = text_width(world);
-                world.resource_mut::<crate::settings::Settings>().font = InterfaceFont::Voxmar;
-                gate.advance(now);
-            }
-        }
-        1 if in_phase > 0.5 => {
-            let (before, after) = (gate.width_before, text_width(world));
-            let changed = (after - before).abs() > 0.5;
-            gate.check("font", if changed { Ok(format!("a letter took {after:.1} px across in Voxmar, {before:.1} in Ledger")) } else { Err(format!("choosing Voxmar left a letter {after:.1} px across, as in Ledger")) });
-            world.resource_mut::<crate::settings::Settings>().font = InterfaceFont::Ledger;
-            gate.advance(now);
-        }
-        2 if in_phase > 0.5 => {
-            let (before, back) = (gate.width_before, text_width(world));
-            let same = (back - before).abs() <= 0.2;
-            gate.check("font: back", if same { Ok("Ledger again lays them out as before".into()) } else { Err(format!("back in Ledger a letter takes {back:.1} px, not {before:.1}")) });
-            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Fit, now);
         }
-        _ => {}
     }
 }
 

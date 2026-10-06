@@ -81,6 +81,7 @@
     "loading.opening.detail": "Starting the world",
     "loading.building": "Loading world",
     "loading.building.detail": "Building the terrain around you",
+    "loading.weather.detail": "Bringing in the weather",
 
     "net.lost": "Lost the connection to the server.",
     "net.world_stopped": "The world stopped unexpectedly.",

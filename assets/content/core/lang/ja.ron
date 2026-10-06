@@ -69,6 +69,7 @@
     "loading.opening.detail": "ワールドを起動しています",
     "loading.building": "ワールドを読み込み中",
     "loading.building.detail": "周りの地形を作っています",
+    "loading.weather.detail": "天気を整えています",
 
     "net.lost": "サーバーとの接続が切れました。",
     "net.world_stopped": "ワールドが予期せず停止しました。",

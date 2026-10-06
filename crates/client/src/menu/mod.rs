@@ -5,7 +5,7 @@
 mod background;
 mod create;
 mod join;
-mod loading;
+pub mod loading;
 mod title;
 mod worlds;
 
