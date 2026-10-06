@@ -174,7 +174,12 @@ impl Server {
             Run::Biome => Ok(self.biome(id)),
             Run::Locate => self.locate(id, args),
             Run::Summon => self.summon(id, args),
-            Run::Creatures => Ok(self.creatures_about(id)),
+            Run::Creatures => match args.first().map(String::as_str) {
+                None => Ok(self.creatures_about(id)),
+                Some(_) if !self.is_admin(id) => Err(Words::key("command.creatures.admins_only")),
+                Some(what) => self.creatures_command(id, what),
+            },
+            Run::Skill => self.skill_command(id, args),
         };
         let (Ok(text) | Err(text)) = &reply;
         tracing::debug!("/{}: {}", def.short_name(), self.english(text));
@@ -483,6 +488,9 @@ impl Server {
         for i in 0..count {
             let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
+            // Commands may run before the land around a player has loaded (a capture's,
+            // just after joining): load the column first, as /drop does.
+            self.load_area(cell, cell);
             let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
             if self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), self.tick ^ i as u64).is_some() {
                 placed += 1;
@@ -493,6 +501,59 @@ impl Server {
             0 => Err(Words::key("command.summon.no_room").with("creature", creature)),
             n => Ok(Words::key("command.summon.done").with("creature", creature).with("count", Words::text(n))),
         }
+    }
+
+    /// `/creatures tame|ready|hasten`: for admins, the creatures within 8 blocks are tamed
+    /// by them, readied to breed, or hastened (products due and young grown now).
+    fn creatures_command(&mut self, id: Source, what: &str) -> Reply {
+        let player = Self::me(id)?;
+        let at = self.position_of(id);
+        let name = self.players[&player].name.clone();
+        let tick = self.tick;
+        let mut count = 0;
+        for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
+            match what {
+                "tame" if creature.owner.is_none() => {
+                    creature.owner = Some(name.clone());
+                    creature.owner_id = Some(player);
+                    creature.home = creature.body.position;
+                }
+                "ready" if creature.owner.is_some() && creature.grows_up.is_none() => {
+                    creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
+                    creature.breeds_again = 0;
+                }
+                "hasten" => {
+                    creature.products_due.iter_mut().for_each(|due| *due = tick);
+                    if creature.grows_up.is_some() {
+                        creature.grows_up = Some(tick);
+                    }
+                }
+                "tame" | "ready" => continue,
+                _ => return Err(Words::key("command.creatures.what")),
+            }
+            creature.changed = true;
+            count += 1;
+        }
+        Ok(Words::key("command.creatures.done").with("count", Words::text(count)))
+    }
+
+    /// `/skill <skill> <level>`: sets the player's level in a skill.
+    fn skill_command(&mut self, id: Source, args: &[String]) -> Reply {
+        let player = Self::me(id)?;
+        let [skill, level] = args else { return Err(Words::key("command.skill.what")) };
+        let skills = self.content.skills.clone();
+        let found = skills.id(skill).or_else(|| skills.id(&format!("core:{skill}"))).ok_or_else(|| Words::key("command.skill.unknown").with("name", skill.as_str()))?;
+        let level: u8 = level.parse().ok().filter(|l| (1..=skills.max_level()).contains(l)).ok_or_else(|| Words::key("command.skill.level"))?;
+        let target = skills.xp_for(level);
+        let p = self.players.get_mut(&player).expect("a player");
+        let have = p.skills.xp(found);
+        if have < target {
+            p.skills.grant(found, target - have);
+        } else {
+            p.skills.0[found.0 as usize] = target;
+        }
+        p.changed(voxmar_engine::traits::SKILLS);
+        Ok(Words::key("command.skill.done").with("level", Words::text(level)))
     }
 
     /// `/creatures`: the creatures within 64 blocks.

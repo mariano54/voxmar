@@ -932,6 +932,13 @@ texture coordinates' per-pixel changes the same way so mip levels stay right acr
 edges. It costs a hash and a 2×2 matrix per pixel on the blocks that ask for it. Stone,
 dirt, gravel, sand and grass blocks ask for both.
 
+An ore names the block it lies in (`host: "stone"`): each of its faces is the host's
+texture with its own drawn over it by alpha, composed as the textures load, from
+whichever pack draws the host (`TextureRef::under`, `Rgba::over` in textures.rs). So the
+rock around the ore always matches the rock around the block, Minecraft's stone or ours,
+and any ore can lie in any rock with one ore texture: an ore's texture is the ore alone,
+on clear texels (our recipes draw cobalt, tin, silver and aetherite that way).
+
 ## Night, dawn and dusk
 
 Mariano's playtest of 2026-10-05: nights too bright, stars too shiny, comets and aurora too
