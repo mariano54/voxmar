@@ -1540,6 +1540,82 @@ mod tests {
         }
     }
 
+    /// The surface of each biome, block by block, for judging whether it reads as one
+    /// palette: `BIOMES=plains,forest SEEDS=7,1 cargo test --profile iter -p
+    /// voxmar_worldgen surface_census -- --ignored --nocapture`. In 9 columns (3×3 chunks)
+    /// well inside the biome it counts the ground's top blocks, the solid blocks standing on
+    /// the ground that are not trees (boulders, rocks, stones), and of those the lone cubes:
+    /// one block with nothing solid beside or on it.
+    #[test]
+    #[ignore]
+    fn surface_census() {
+        use voxmar_engine::block::RenderKind;
+        let registry = registry();
+        let names = std::env::var("BIOMES").unwrap_or_else(|_| "plains,forest,meadow,taiga,savanna,desert,moonlit_meadow".into());
+        let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "7,1".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let worlds: Vec<Overworld> = seeds.iter().map(|&s| Overworld::new(s, registry.clone())).collect();
+        let tree = |b: BlockId| {
+            let d = registry.def(b);
+            ["_log", "_wood", "_stem", "_leaves", "_cap", "cactus", "_roots"].iter().any(|s| d.name.ends_with(s)) || registry.info(b).render == RenderKind::Leaves
+        };
+        let solid = |b: BlockId| !b.is_air() && registry.info(b).solid && registry.info(b).render != RenderKind::Plant && registry.fluid(b).is_none();
+        let top = |m: &std::collections::BTreeMap<String, i32>, n: usize| {
+            let mut v: Vec<_> = m.iter().map(|(k, c)| (k.trim_start_matches("base:").to_owned(), *c)).collect();
+            v.sort_by_key(|k| -k.1);
+            v.truncate(n);
+            v
+        };
+        for name in names.split(',') {
+            let mut ground = std::collections::BTreeMap::<String, i32>::new();
+            let mut above = std::collections::BTreeMap::<String, i32>::new();
+            let mut lone = std::collections::BTreeMap::<String, i32>::new();
+            let mut areas = 0;
+            for world in &worlds {
+                let Some(id) = world.biomes.id(&format!("base:{name}")) else { continue };
+                let Some(at) = world.locate_biome(name, IVec2::ZERO, 8000) else { continue };
+                let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+                let columns = generate_area(world, first, 3);
+                let origin = first.origin();
+                let span = 3 * voxmar_engine::coords::CHUNK_SIZE;
+                let block = |p: IVec3| {
+                    if !(0..span).contains(&(p.x - origin.x)) || !(0..span).contains(&(p.z - origin.z)) || !(0..WORLD_HEIGHT_FOR_TESTS).contains(&p.y) {
+                        return BlockId::AIR;
+                    }
+                    columns[(((p.z - origin.z) >> 5) * 3 + ((p.x - origin.x) >> 5)) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31))
+                };
+                for z in origin.z..origin.z + span {
+                    for x in origin.x..origin.x + span {
+                        let site = world.site(x, z);
+                        if site.home != id {
+                            continue;
+                        }
+                        let h = site.height;
+                        *ground.entry(registry.def(block(IVec3::new(x, h, z))).name.clone()).or_default() += 1;
+                        for y in h + 1..h + 6 {
+                            let p = IVec3::new(x, y, z);
+                            let b = block(p);
+                            if !solid(b) || tree(b) {
+                                continue;
+                            }
+                            *above.entry(registry.def(b).name.clone()).or_default() += 1;
+                            let beside = [IVec3::X, -IVec3::X, IVec3::Z, -IVec3::Z, IVec3::Y].iter().any(|&d| { let n = block(p + d); solid(n) && !tree(n) });
+                            if !beside && y == h + 1 {
+                                // Where: by a stream, on a slope or on open ground.
+                                let place = if site.river >= 0.5 { "stream" } else if site.slope >= 2 { "slope" } else { "open" };
+                                *lone.entry(format!("{}@{place}", registry.def(b).name)).or_default() += 1;
+                            }
+                        }
+                    }
+                }
+                areas += 1;
+            }
+            let per = |m: &std::collections::BTreeMap<String, i32>| m.values().sum::<i32>() as f32 / areas.max(1) as f32;
+            println!("{name} ({areas} areas): ground {:?}", top(&ground, 6));
+            println!("  on the ground {:.0}/area: {:?}", per(&above), top(&above, 8));
+            println!("  lone cubes {:.0}/area: {:?}", per(&lone), top(&lone, 8));
+        }
+    }
+
     /// Most open grass in a meadow carries a plant, but few of them are flowers.
     #[test]
     fn meadows_are_carpeted_and_flowers_stay_sparse() {
