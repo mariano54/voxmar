@@ -100,10 +100,6 @@ pub struct PixelFont {
     /// The cell width of a monospace font: every glyph advances as far, and narrower ones
     /// sit in its middle.
     pub monospace: Option<i32>,
-    /// Font units per pixel of glyphs drawn on a finer grid than the font's own (imported
-    /// kanji shown smaller than our letters, see `import`); every other glyph has
-    /// [`UNITS_PER_PIXEL`].
-    pub units: BTreeMap<char, i32>,
 }
 
 impl PixelFont {
@@ -333,7 +329,7 @@ fn simplify(points: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
 /// The TrueType container: just the tables every text engine requires, with simple glyph
 /// outlines made only of on-curve points and no hinting.
 mod import;
-pub use import::import;
+pub use import::{characters, import};
 
 mod ttf {
     use super::*;
@@ -409,11 +405,10 @@ mod ttf {
                 .collect(),
         };
         let chars: Vec<char> = font.glyphs.keys().copied().collect();
-        let glyphs: Vec<Glyph> = std::iter::once((&notdef, unit))
-            .chain(chars.iter().map(|c| (&font.glyphs[c], font.units.get(c).copied().unwrap_or(unit))))
-            .map(|(bitmap, unit)| Glyph {
-                // A finer grid's glyphs keep to their own width: the monospace cell is ours.
-                advance: ((if unit == UNITS_PER_PIXEL { bitmap.width.max(font.monospace.unwrap_or(0)) } else { bitmap.width } + SPACING) * unit) as u16,
+        let glyphs: Vec<Glyph> = std::iter::once(&notdef)
+            .chain(chars.iter().map(|c| &font.glyphs[c]))
+            .map(|bitmap| Glyph {
+                advance: ((bitmap.width.max(font.monospace.unwrap_or(0)) + SPACING) * unit) as u16,
                 contours: outlines(bitmap).into_iter().map(|c| c.into_iter().map(|(x, y)| (x * unit, y * unit)).collect()).collect(),
             })
             .collect();

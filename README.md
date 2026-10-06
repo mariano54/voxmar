@@ -131,9 +131,9 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
 the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
-way. Kanji and kana come from a Japanese pixel font (listed in `assets/ui/fonts/fallback.ron`)
-whose glyphs are read at startup and merged under the chosen interface font, on its
-baseline, so every font speaks Japanese. Tests in `crates/client/src/lang.rs` hold every
+way. Kanji and kana come from BIZ UDGothic, a smooth Japanese font (listed in
+`assets/ui/fonts/fallback.ron`) that text falls back to for those scripts at its own size,
+while letters and digits stay in the crisp pixel font. Tests in `crates/client/src/lang.rs` hold every
 language complete, every key the code names defined, and every character drawn.
 
 ### Console and commands

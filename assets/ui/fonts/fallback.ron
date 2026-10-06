@@ -1,8 +1,11 @@
 // Fonts for the characters our own fonts don't draw, Japanese above all, tried in order.
-// Each is a pixel-outline TrueType or OpenType file shipped unmodified with its licence
-// beside it. The game reads its glyphs once at startup and merges them under the chosen
-// font, on the same baseline (see `voxmar_texgen::font::import`), so only what that font
-// lacks comes from here. `pixels_per_em` is the pixel grid the font is drawn on.
+// Each is a TrueType or OpenType file shipped unmodified with its licence beside it.
+//
+// A smooth font (just a `file`) is what text falls back to for the CJK scripts, drawn as it
+// is at the text's size and smoothed; text with none of those characters stays crisp.
+// A pixel-outline font (with `pixels_per_em`, the pixel grid it is drawn on) is instead read
+// once at startup and merged under the chosen font on the same baseline (see
+// `voxmar_texgen::font::import`), so only what that font lacks comes from it.
 [
-    (file: "japanese/fusion-pixel-12px-monospaced-ja.ttf", pixels_per_em: 12),
+    (file: "japanese/BIZUDGothic-Regular.ttf"),
 ]

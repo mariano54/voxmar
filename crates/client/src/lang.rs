@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use bevy::text::LineHeight;
+use bevy::text::{FontCx, FontSmoothing, LineHeight};
 use voxmar_engine::block::{BlockDef, BlockRegistry};
 use voxmar_engine::creature::CreatureDef;
 use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, languages, title_from_id};
@@ -27,8 +27,10 @@ pub struct LangPlugin;
 
 impl Plugin for LangPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, switch.run_if(resource_changed::<Settings>))
-            .add_systems(PostUpdate, localize.before(bevy::ui::UiSystems::Prepare));
+        app.init_resource::<SmoothFonts>()
+            .add_systems(Startup, load_smooth_fonts)
+            .add_systems(Update, switch.run_if(resource_changed::<Settings>))
+            .add_systems(PostUpdate, (localize.before(bevy::ui::UiSystems::Prepare), fall_back_to_smooth_fonts.after(bevy::text::load_font_assets_into_font_collection).before(bevy::ui::UiSystems::Prepare)));
     }
 }
 
@@ -162,11 +164,15 @@ pub struct TightLine;
 /// Writes each new [`Localized`] text, and every one when the language changes, before
 /// text is laid out so no frame shows a key; and spaces the lines of every text as the
 /// language wants.
-fn localize(locale: Res<Locale>, mut texts: Query<(Option<Ref<Localized>>, Mut<Text>, &mut LineHeight, Has<TightLine>)>) {
+fn localize(
+    locale: Res<Locale>,
+    smooth: Res<SmoothFonts>,
+    mut texts: Query<(Option<Ref<Localized>>, Mut<Text>, &mut LineHeight, &mut TextFont, Has<TightLine>)>,
+) {
     let all = locale.is_changed();
     let height = LineHeight::RelativeToFont(locale.line_height());
     let tight_height = LineHeight::RelativeToFont(locale.tight_line_height());
-    for (localized, mut text, mut line, tight) in &mut texts {
+    for (localized, mut text, mut line, mut font, tight) in &mut texts {
         if all || text.is_added() {
             line.set_if_neq(if tight { tight_height } else { height });
         }
@@ -177,6 +183,59 @@ fn localize(locale: Res<Locale>, mut texts: Query<(Option<Ref<Localized>>, Mut<T
             if text.0 != words {
                 words.clone_into(&mut text.0);
             }
+        }
+        if text.is_changed() && !smooth.0.is_empty() {
+            // A smooth font's glyphs drawn without smoothing come out ragged.
+            let smoothing = if text.0.chars().any(drawn_smooth) { FontSmoothing::AntiAliased } else { FontSmoothing::None };
+            if font.font_smoothing != smoothing {
+                font.font_smoothing = smoothing;
+            }
+        }
+    }
+}
+
+/// Whether a character comes from a smooth fallback font rather than our pixel fonts: the
+/// CJK scripts, from radicals and punctuation on.
+fn drawn_smooth(c: char) -> bool {
+    c as u32 >= 0x2E80 && !(0xE000..0xF900).contains(&(c as u32))
+}
+
+/// The smooth fallback fonts (see `assets/ui/fonts/fallback.ron`), in order.
+#[derive(Resource, Default)]
+struct SmoothFonts(Vec<Handle<Font>>);
+
+fn load_smooth_fonts(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+    let dir = voxmar_server::assets_dir().join("ui/fonts");
+    let handles = crate::ui::skin::smooth_fallbacks(&dir).into_iter().map(|data| fonts.add(Font::from_bytes(data))).collect();
+    commands.insert_resource(SmoothFonts(handles));
+}
+
+/// The scripts the smooth fallback fonts are for: Japanese.
+const SMOOTH_SCRIPTS: [[u8; 4]; 4] = [*b"Hira", *b"Kana", *b"Hani", *b"Zyyy"];
+
+/// Makes the smooth fonts what Japanese text falls back to, once Bevy has them in its
+/// font collection, and again whenever it rebuilds that (when a font is removed).
+fn fall_back_to_smooth_fonts(smooth: Res<SmoothFonts>, mut font_cx: ResMut<FontCx>, mut texts: Query<&mut TextFont>) {
+    if smooth.0.is_empty() {
+        return;
+    }
+    let collection = &mut font_cx.bypass_change_detection().collection;
+    let families: Vec<_> = smooth.0.iter().filter_map(|font| collection.family_id(&format!("asset_id:{:?}", font.id()))).collect();
+    if families.is_empty() {
+        return;
+    }
+    let mut changed = false;
+    for script in SMOOTH_SCRIPTS {
+        let key = parley::fontique::FallbackKey::new(parley::fontique::Script::from_bytes(script), None);
+        if !collection.fallback_families(key).eq(families.iter().copied()) {
+            collection.set_fallbacks(key, families.iter().copied());
+            changed = true;
+        }
+    }
+    // Text laid out before could not fall back.
+    if changed {
+        for mut font in &mut texts {
+            font.set_changed();
         }
     }
 }
@@ -304,13 +363,17 @@ mod tests {
         assert!(unknown.is_empty(), "keys missing from en.ron:\n{}", unknown.into_iter().collect::<Vec<_>>().join("\n"));
     }
 
-    /// Every character any language writes is in the interface's fonts, with the
-    /// fallback fonts merged in: no tofu boxes.
+    /// Every character any language writes is in the interface's fonts, with the pixel
+    /// fallback fonts merged in, or else in a smooth fallback font: no tofu boxes.
     #[test]
     fn every_character_is_drawn() {
         let fonts = assets().join("ui/fonts");
         let read = |name: &str| std::fs::read_to_string(fonts.join(name)).ok();
         let fallback = &crate::ui::skin::read_fallback(&fonts);
+        let smooth: BTreeSet<char> = crate::ui::skin::smooth_fallbacks(&fonts)
+            .iter()
+            .flat_map(|data| voxmar_texgen::font::characters(data).unwrap())
+            .collect();
         let loaded = voxmar_server::load_content(&assets()).unwrap();
         let mut texts: Vec<String> = Vec::new();
         for language in languages(&content()) {
@@ -321,8 +384,8 @@ mod tests {
         for file in ["ledger.txt", "block.txt", "voxmar.txt"] {
             let mut font = voxmar_texgen::font::PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
             font.fill_from(fallback);
-            let missing: BTreeSet<char> =
-                texts.iter().flat_map(|text| text.chars()).filter(|c| !c.is_whitespace() && !font.glyphs.contains_key(c)).collect();
+            let drawn = |c: &char| c.is_whitespace() || font.glyphs.contains_key(c) || (drawn_smooth(*c) && smooth.contains(c));
+            let missing: BTreeSet<char> = texts.iter().flat_map(|text| text.chars()).filter(|c| !drawn(c)).collect();
             assert!(missing.is_empty(), "{file} lacks {}", missing.into_iter().collect::<String>());
         }
     }

@@ -244,26 +244,21 @@ Kenney anyway. Licence checked in the pack's License.txt on 5 October 2026. Unch
 | `assets/ui/sounds/micro_switch_click.ogg` | `switch13.ogg` |
 | `assets/ui/sounds/micro_switch_item.ogg` | `switch14.ogg` |
 
-## Fusion Pixel Font (Japanese text)
+## BIZ UDGothic (Japanese text)
 
-- Source: https://github.com/TakWolf/fusion-pixel-font (release 2026.09.25, 12 px monospaced, `ja` variant)
-- Author: TakWolf, built from Ark Pixel Font (TakWolf), Galmuri (Lee Minseo) and Cubic 11
-  (itself built on JF Dot M+H 12, M+ FONTS PROJECT, and the M+ bitmap fonts, COZ)
-- Licence: SIL Open Font License 1.1; Galmuri OFL 1.1; Cubic 11 OFL 1.1 with the M+ fonts'
-  licence (free use, copying and distribution, with or without changes) for the glyphs it
-  takes from them. Licence checked in the release's
-  `OFL.txt` and `LICENSES/` on 5 October 2026.
-- What we use: the font file, unmodified, for every kana and kanji the interface writes. The
-  game reads its glyphs at startup and merges them under the chosen interface font
-  (`voxmar_texgen::font::import`); the file itself ships as released.
-- Where: `assets/ui/fonts/japanese/fusion-pixel-12px-monospaced-ja.ttf`, with the font's
-  `OFL.txt` and its sources' licences in `assets/ui/fonts/japanese/LICENSES/` beside it,
+- Source: https://github.com/googlefonts/morisawa-biz-ud-gothic (the Regular weight as
+  published in Google Fonts, `ofl/bizudgothic/BIZUDGothic-Regular.ttf`)
+- Author: Morisawa Inc., The BIZ UDGothic Project Authors
+- Licence: SIL Open Font License 1.1 (checked in the font's `OFL.txt` on 6 October 2026)
+- What we use: the font file, unmodified, for every kana and kanji the interface writes.
+  Text falls back to it for those scripts at the text's own size (`crates/client/src/lang.rs`).
+- Where: `assets/ui/fonts/japanese/BIZUDGothic-Regular.ttf`, with its `OFL.txt` beside it,
   listed in `assets/ui/fonts/fallback.ron`.
 
 The full licence text is in `assets/ui/fonts/japanese/OFL.txt`. Its notice:
 
 ```
-Copyright (c) 2022, TakWolf (https://takwolf.com).
+Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-mincho)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

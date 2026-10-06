@@ -223,9 +223,14 @@ struct Capture {
 }
 
 impl Capture {
-    /// A shot of what is drawn: the offscreen image, or the window.
+    /// A shot of what is drawn: the offscreen image, or the window. The image is named with
+    /// its scale factor, as the camera names it, or Bevy takes it for another target.
     fn screenshot(&self) -> Screenshot {
-        if self.windowed { Screenshot::primary_window() } else { Screenshot::image(self.target.clone()) }
+        if self.windowed {
+            Screenshot::primary_window()
+        } else {
+            Screenshot(RenderTarget::Image(bevy::camera::ImageRenderTarget { handle: self.target.clone(), scale_factor: self.scale_factor }))
+        }
     }
 }
 
@@ -700,7 +705,7 @@ fn measure_flicker(
     mut virtual_time: ResMut<Time<Virtual>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
-    let (target, path) = (state.target.clone(), state.path.clone());
+    let (target, path) = (RenderTarget::Image(bevy::camera::ImageRenderTarget { handle: state.target.clone(), scale_factor: state.scale_factor }), state.path.clone());
     let Some(flicker) = state.flicker.as_mut().filter(|f| f.started) else { return };
     let kind = flicker.kind;
     if flicker.kind == FlickerKind::Step {
@@ -714,7 +719,7 @@ fn measure_flicker(
     let shot = |name: PathBuf, commands: &mut Commands, shots: &Arc<Mutex<Vec<Image>>>| {
         let shots = shots.clone();
         commands
-            .spawn(Screenshot::image(target.clone()))
+            .spawn(Screenshot(target.clone()))
             .observe(save_to_disk(name))
             .observe(move |captured: On<ScreenshotCaptured>| shots.lock().expect("flicker shots").push(captured.image.clone()));
     };

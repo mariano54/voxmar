@@ -18,19 +18,12 @@ use skrifa::{FontRef, MetadataProvider};
 const REFERENCE: [char; 6] = ['漢', '国', '語', 'あ', 'ア', 'H'];
 
 /// The row a font's reference glyph is centred on: the middle of a capital letter.
-const CENTRE: f32 = (CAP_HEIGHT - 1) as f32 / 2.0;
+const CENTRE: i32 = (CAP_HEIGHT - 1) / 2;
 
 /// Reads every glyph of a pixel-outline TrueType or OpenType font drawn `pixels_per_em`
-/// pixels to the em, each of its pixels `scale` of ours (1 for the same size; ¾ draws a
-/// 12-pixel font about as tall as a 9-pixel one, with all its detail, crisp wherever a
-/// screen has pixels to spare). `scale` must make a whole number of font units per pixel.
-/// Characters outside the Basic Multilingual Plane and empty glyphs other than spaces are
-/// left out.
-pub fn import(data: &[u8], pixels_per_em: u32, scale: f32) -> Result<PixelFont, Error> {
-    let units_per_pixel = (UNITS_PER_PIXEL as f32 * scale).round() as i32;
-    if !(1..=UNITS_PER_PIXEL).contains(&units_per_pixel) || (units_per_pixel as f32 - UNITS_PER_PIXEL as f32 * scale).abs() > 1e-3 {
-        return Err(Error(format!("font: a scale of {scale} is not a whole number of font units")));
-    }
+/// pixels to the em. Characters outside the Basic Multilingual Plane and empty glyphs
+/// other than spaces are left out.
+pub fn import(data: &[u8], pixels_per_em: u32) -> Result<PixelFont, Error> {
     let font = FontRef::new(data).map_err(|e| Error(format!("font: cannot read: {e}")))?;
     let units_per_em = font.metrics(Size::unscaled(), LocationRef::default()).units_per_em;
     if units_per_em == 0 || pixels_per_em == 0 {
@@ -65,13 +58,11 @@ pub fn import(data: &[u8], pixels_per_em: u32, scale: f32) -> Result<PixelFont, 
     // Centre the reference glyph on a capital letter's middle, keeping it inside the
     // lines our fonts reserve where it fits.
     let reference = REFERENCE.iter().find_map(|c| drawn.get(c).filter(|d| !d.ink.is_empty()));
-    // On a finer grid, our rows are 1 / scale of its rows.
-    let ours = |rows: f32| (rows / scale).floor() as i32;
     let shift = reference.map_or(0, |d| {
         let bottom = d.ink.iter().map(|p| p.1).min().unwrap_or(0);
         let top = d.ink.iter().map(|p| p.1).max().unwrap_or(0);
-        let shift = (CENTRE / scale).round() as i32 - (bottom + top).div_euclid(2);
-        shift.min(ours(ASCENT as f32) - 1 - top).max(-ours(DESCENT as f32) - bottom)
+        let shift = CENTRE - (bottom + top).div_euclid(2);
+        shift.min(ASCENT - 1 - top).max(-DESCENT - bottom)
     });
 
     let mut out = PixelFont::default();
@@ -87,23 +78,21 @@ pub fn import(data: &[u8], pixels_per_em: u32, scale: f32) -> Result<PixelFont, 
             rows[(row(y) - top) as usize][(x - left) as usize] = true;
         }
         out.glyphs.insert(c, Bitmap { width, top, rows });
-        if units_per_pixel != UNITS_PER_PIXEL {
-            out.units.insert(c, units_per_pixel);
-        }
     }
     Ok(out)
+}
+
+/// Every character a TrueType or OpenType font maps to a glyph.
+pub fn characters(data: &[u8]) -> Result<std::collections::BTreeSet<char>, Error> {
+    let font = FontRef::new(data).map_err(|e| Error(format!("font: cannot read: {e}")))?;
+    Ok(font.charmap().mappings().filter_map(|(code, _)| char::from_u32(code)).collect())
 }
 
 impl PixelFont {
     /// Adds `other`'s glyphs for the characters this font doesn't draw.
     pub fn fill_from(&mut self, other: &PixelFont) {
         for (c, glyph) in &other.glyphs {
-            if !self.glyphs.contains_key(c) {
-                self.glyphs.insert(*c, glyph.clone());
-                if let Some(&units) = other.units.get(c) {
-                    self.units.insert(*c, units);
-                }
-            }
+            self.glyphs.entry(*c).or_insert_with(|| glyph.clone());
         }
     }
 }
