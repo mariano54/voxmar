@@ -628,8 +628,9 @@ struct Environment {
 const SUN: Vec3 = Vec3::new(0.72, 0.68, 0.62);
 const LOW_SUN: Vec3 = Vec3::new(0.72, 0.45, 0.25);
 const MOON: Vec3 = Vec3::new(0.021, 0.028, 0.05);
-/// The night's sky and skylight without a moon, against a full moon's.
-const MOONLESS: f32 = 0.7;
+/// The night's sky and skylight without a moon, against a full moon's: not far below, as a
+/// moonless night was too dark to play in (Mariano, 2026-10-06).
+const MOONLESS: f32 = 0.85;
 const DAY_AMBIENT: Vec3 = Vec3::new(0.40, 0.45, 0.55);
 /// Night's skylight, high for how dark it looks: the display's contrast and a pack's dimmer
 /// ambient (Verdant's half) crush it, and at a fifth of this a moonless night's open ground
