@@ -14,6 +14,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -313,7 +314,9 @@ fn show(
             let heart = |colour: Color| StandardMaterial { base_color: colour, base_color_texture: Some(image.clone()), alpha_mode: AlphaMode::Mask(0.5), unlit: true, ..default() };
             let full = materials.add(heart(Color::srgb(0.95, 0.16, 0.24)));
             let empty = materials.add(heart(Color::srgb(0.3, 0.27, 0.3)));
-            crate::render::warm::warm(&mut commands, mesh.clone(), full.clone(), false, DespawnOnExit(Screen::InGame));
+            // Hearts cast no shadow, but a clipped material's depth pipeline is warmed too, in
+            // case any pass draws them.
+            crate::render::warm::warm(&mut commands, mesh.clone(), full.clone(), true, DespawnOnExit(Screen::InGame));
             (mesh, full, empty)
         })
         .clone();
@@ -465,7 +468,7 @@ fn show(
         let showing = (shown.view.ready || (!shown.view.kept && shown.view.trust > 0)) && shown.dying.is_none() && !far;
         if showing && shown.hearts.is_empty() {
             shown.hearts = (0..HEARTS)
-                .map(|_| commands.spawn((Mesh3d(heart_mesh.clone()), MeshMaterial3d(heart_empty.clone()), Transform::default(), DespawnOnExit(Screen::InGame))).id())
+                .map(|_| commands.spawn((Mesh3d(heart_mesh.clone()), MeshMaterial3d(heart_empty.clone()), Transform::default(), NotShadowCaster, DespawnOnExit(Screen::InGame))).id())
                 .collect();
         }
         let above = shown.position + Vec3::Y * (height + 0.3 + (now * 3.0 + id as f32).sin() * 0.04);
