@@ -18,18 +18,18 @@
         "willow_leaves": ["#5c5c5c", "#6a6a6a", "#787878", "#858585", "#929292", "#9e9e9e", "#aaaaaa", "#b5b5b5"],
         "silverwood_leaves": ["#4d7a8e", "#5d8a9d", "#6e9aac", "#7faaba", "#93bbc9", "#a7cad5", "#bcd7df", "#d2e3e8"],
         "emberwood_leaves": ["#741a0b", "#8b240e", "#a33011", "#ba3e14", "#ce5119", "#dd6a20", "#e88429", "#eea137"],
-        "oak_bark": (ramp: "#6e5a44", shades: 8, light: 0.3, hue: 18.0, chroma: -0.3),
-        "oak_wood": (ramp: "#a27b52", shades: 8, light: 0.3, hue: 16.0, chroma: -0.3),
+        "oak_bark": (ramp: "#6b5234", shades: 6, light: 0.36, hue: 18.0, chroma: -0.1),
+        "oak_wood": (ramp: "#a27b52", shades: 6, light: 0.3, hue: 16.0, chroma: -0.2),
     },
     templates: {
         "wood": {
-            // Bark: eight tall, uneven plates parted by deep furrows, each shaded from a lit
-            // left edge and streaked up and down.
+            // Vanilla's design language, our own drawing: bark as long vertical streaks
+            // of four or five clear shades, darker furrows wandering up the log between
+            // lit ridges, crisp edges and no grain.
             "block/{name}_log": (size: (32, 32), layers: [
-                Paint(palette: "bark", base: 0.56, shade: [
-                    Cells(count: (4, 2), jitter: 0.9, value: 0.3, edge: -0.9, width: 2.0, bevel: 0.5, lip: 0.15, round: 0.2, warp: 1.6, stretch: (1.0, 3.0)),
-                    Noise(cells: (8, 2), octaves: 2, amount: 0.14),
-                    Grain(0.05),
+                Paint(palette: "bark", base: 0.55, shade: [
+                    Noise(cells: (8, 2), octaves: 2, gain: 0.6, amount: 0.5),
+                    Noise(cells: (32, 8), amount: 0.55),
                 ], clean: true),
             ]),
             // The cut end: fine growth rings round a dark pith inside the ragged bark.
@@ -54,31 +54,24 @@
                 ]),
                 Paint(palette: "wood", base: 0.2, mask: [Circle(radius: 1.6)], above: 0.5),
             ]),
-            // Four boards a block, each its own tone with a lit top edge and a dark seam
-            // below, end joints at varied places, bold wavy grain, a knot and a nail or two.
+            // Vanilla's design language, our own drawing: four boards a block, each its
+            // own tone, a dark seam under each and end joints at varied places, grain as
+            // long horizontal streaks of clear shades broken at texel scale.
             "block/{name}_planks": (size: (32, 32), layers: [
                 Paint(palette: "wood", base: 0.56, shade: [
-                    Boards(height: 8, seam: -0.45, joint: -0.2, value: 0.16, bevel: 0.12, nails: -0.3),
-                    Noise(cells: (1, 8), octaves: 2, amount: 0.24),
-                    Grain(0.03),
+                    Boards(height: 8, seam: -0.5, joint: -0.35, value: 0.2, bevel: 0.1),
+                    Noise(cells: (2, 16), octaves: 2, amount: 0.3),
+                    Noise(cells: (8, 32), amount: 0.3),
                 ], clean: true),
-                // Bold, wavy grain: a few long darker streaks along each board.
-                Shift(by: [Flat(-1.0)], mask: [Stripes(period: 4.0, width: 0.25, amount: 1.0, warp: 1.6, seed: 3), Noise(cells: (4, 8), amount: 0.9)], above: 0.95),
-                // A knot in one board, ringed and lit on its lower lip.
-                Paint(palette: "wood", base: 0.34, shade: [Rings(centre: (21.0, 11.5), spacing: 1.6, width: 0.45, amount: 0.25, wobble: 0.3, square: 0.0)], mask: [Circle(centre: (21.0, 11.5), radius: 2.4)], above: 0.5, light: 1),
             ]),
-            // Leaves as Minecraft draws them in spirit, our own drawing at 32×32: two dozen
-            // big single leaves in three shapes, both ways round, each outlined, lit along
-            // its upper edge and shaded below, over a shadowed depth, with holes opening only
-            // in the depths between them.
+            // Vanilla's design language, our own drawing: a dense mass of leaf clumps two
+            // to four texels across in five clear shades, lit from the top left, with holes
+            // opening where the mass is darkest.
             "block/{name}_leaves": (size: (32, 32), palettes: {"leaves": "leaf_grey"}, layers: [
-                Paint(palette: "leaves", base: 0.16, shade: [Noise(cells: (2, 2), amount: 0.16), Grain(0.06)]),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["......ddd", "....ddhhd", "...dhhlld", "..dhllmmd", ".dhlllmd.", ".dllmmmd.", "dlmmmd...", "dmmdd....", "dd......."], at: [(0, 24), (16, 5), (5, 24), (13, 25), (3, 19)], mirror: false, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["...d...", "..dhd..", ".dhlld.", ".dhllmd", "dhllmmd", "dllmmmd", ".dlmmd.", ".dmmd..", "..dd..."], at: [(23, 7), (18, 0), (1, 5), (12, 0), (7, 0)], mirror: false, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["..dddd..", ".dhhlldd", "dhllmmmd", "dllmmmd.", ".ddmmd..", "...dd..."], at: [(9, 19), (26, 26), (25, 0), (17, 12), (20, 25)], mirror: false, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["......ddd", "....ddhhd", "...dhhlld", "..dhllmmd", ".dhlllmd.", ".dllmmmd.", "dlmmmd...", "dmmdd....", "dd......."], at: [(29, 6), (6, 11), (31, 11), (29, 19), (8, 7)], mirror: true, wrap: true),
-                Grid(legend: {'h': "leaves:7", 'l': "leaves:6", 'm': "leaves:4", 'd': "leaves:1"}, rows: ["...d...", "..dhd..", ".dhlld.", ".dhllmd", "dhllmmd", "dllmmmd", ".dlmmd.", ".dmmd..", "..dd..."], at: [(15, 18), (25, 13), (23, 20), (11, 12), (0, 0)], mirror: true, wrap: true),
-                Cut(mask: [Noise(cells: (4, 4), amount: 0.6), Grain(0.4)], above: -0.1, darker_than: 2),
+                Paint(palette: "leaves", base: 0.2, shade: [Noise(cells: (16, 16), amount: 0.25), Noise(cells: (32, 32), amount: 0.2)], clean: true),
+                Clusters(palette: "leaves", count: 56, size: (4, 9), spread: (1.2, 1.0), spacing: 3.6, shade: 4, shadow: -1),
+                Clusters(palette: "leaves", count: 24, size: (2, 4), spacing: 5.0, shade: 6, seed: 1),
+                Cut(mask: [Noise(cells: (16, 16), amount: 0.8), Noise(cells: (32, 32), amount: 0.6)], above: 0.0, darker_than: 2),
             ]),
         },
     },
