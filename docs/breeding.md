@@ -128,7 +128,7 @@ What players do with it:
   pass a species' thresholds for a few generations, the line becomes its domestic form
   (mouflon to sheep, wild boar to pig, aurochs to cattle, junglefowl to hen). Domestic
   forms have their own looks, products and drops.
-- **Named breeds.** A breed is a data definition: a set of gene conditions (a highland
+- **Named breeds** (in the game now: `breeds: [(name, title, when: [Shows(gene, allele), Above(gene, n), Below(gene, n)])]` per species, named when inspecting at Farming 10). A breed is a data definition: a set of gene conditions (a highland
   aurochs: cold coat, long hair, hardy to −10 °C). When an animal meets one, it is that
   breed, named in the studbook, with experience the first time. Mods add breeds as data.
 - **Hybrids.** Species in the same family may cross where data says so: horse × donkey =
