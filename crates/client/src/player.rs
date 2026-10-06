@@ -68,6 +68,9 @@ pub struct LocalPlayer {
     /// Hunger, warmth and their effects, as the server last said.
     pub vitals: Vitals,
     pub selected: usize,
+    /// The crafting table the player is working at (its three-by-three grid shows in the
+    /// inventory), until the inventory closes.
+    pub station: Option<IVec3>,
     pub dead: bool,
     /// Set once the server has welcomed us.
     pub joined: bool,
@@ -92,6 +95,7 @@ impl Default for LocalPlayer {
             admin: false,
             fly_speed: 1.0,
             health: 20,
+            station: None,
             max_health: 20,
             inventory: Inventory::default(),
             skills: Skills::default(),

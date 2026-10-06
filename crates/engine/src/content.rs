@@ -21,6 +21,7 @@ use crate::effect::EffectRegistry;
 use crate::lang::{ENGLISH, Lang};
 use crate::movement::Tuning;
 use crate::skill::SkillRegistry;
+use crate::tool::ToolRegistry;
 use crate::weather::WeatherTable;
 
 #[derive(Clone)]
@@ -40,6 +41,8 @@ pub struct Content {
     pub recipes: Arc<RecipeRegistry>,
     /// Buffs and debuffs.
     pub effects: Arc<EffectRegistry>,
+    /// What tools do to breaking blocks, and what breaking them takes and teaches.
+    pub tools: Arc<ToolRegistry>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -79,6 +82,7 @@ impl Content {
         let mut cooking = Vec::new();
         let mut recipes = Vec::new();
         let mut effects = Vec::new();
+        let mut tools = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -118,6 +122,10 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "tools.ron" => {
+                        tools.push(ToolRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "effects.ron" => {
                         effects.push(EffectRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -141,8 +149,9 @@ impl Content {
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
-        let recipes = RecipeRegistry::new(recipes, &blocks)?;
+        let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
+        let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -155,6 +164,7 @@ impl Content {
             cooking: Arc::new(cooking),
             recipes: Arc::new(recipes),
             effects: Arc::new(effects),
+            tools: Arc::new(tools),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
         })

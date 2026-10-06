@@ -33,6 +33,7 @@ pub mod physics;
 pub mod recipe_book;
 pub mod schedule;
 pub mod skill;
+pub mod tool;
 pub mod traits;
 pub mod vitals;
 pub mod visibility;

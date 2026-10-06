@@ -170,6 +170,7 @@ impl Server {
             Run::Fill => self.fill(id, args),
             Run::Give => self.give(id, args),
             Run::Clear => self.clear(id, args),
+            Run::Effect => self.effect_command(id, args),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -751,6 +752,23 @@ impl Server {
         let count = player.inventory.clear(|held| item.is_none_or(|item| held == item));
         player.changed(voxmar_engine::traits::INVENTORY);
         Ok(Words::key("command.clear").with("count", Words::text(count)))
+    }
+
+    fn effect_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let effects = self.content.effects.clone();
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        let (name, seconds) = match args {
+            [word] if word == "clear" => {
+                player.timed_effects.clear();
+                return Ok(Words::key("command.effect.cleared"));
+            }
+            [name] => (name, 60.0),
+            [name, seconds] => (name, seconds.parse::<f32>().ok().filter(|s| (1.0..=86_400.0).contains(s)).ok_or_else(|| Words::key("command.error.not_seconds").with("word", seconds.as_str()).with("max", Words::text(86_400)))?),
+            _ => return Err(Words::key("command.error.effect_what")),
+        };
+        let id = effects.find(name).ok_or_else(|| Words::key("command.error.no_such_effect").with("effect", name.as_str()))?;
+        player.give_effects(&[(id, seconds)]);
+        Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
     }
 
     fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {
