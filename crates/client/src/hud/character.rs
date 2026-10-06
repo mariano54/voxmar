@@ -34,7 +34,7 @@ impl Plugin for CharacterPlugin {
 
 /// The skill whose guide is open, if any.
 #[derive(Resource, Default)]
-struct Guide(Option<SkillId>);
+pub(crate) struct Guide(pub(crate) Option<SkillId>);
 
 /// A skill guide to open at startup, by the skill's name (`--guide`, for captures).
 #[derive(Resource)]
@@ -111,6 +111,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                         bottom: Val::ZERO,
                         left: Val::ZERO,
                         right: Val::ZERO,
+                        width: Val::Percent(100.0),
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(2.0 * PX),
                         overflow: Overflow::scroll_y(),
@@ -305,12 +306,18 @@ fn draw_guide(
         }
         for (at, line) in steps {
             let reached = level >= at;
-            let row = Node { column_gap: Val::Px(4.0 * PX), flex_shrink: 0.0, ..default() };
+            // A grid, so the step's words wrap to exactly the width their column gets.
+            let row = Node {
+                display: Display::Grid,
+                grid_template_columns: vec![GridTrack::auto(), GridTrack::px(22.0 * PX), GridTrack::flex(1.0)],
+                column_gap: Val::Px(4.0 * PX),
+                flex_shrink: 0.0,
+                ..default()
+            };
             page.spawn(row).with_children(|row| {
                 row.spawn(text(font, if reached { "◆" } else { "◇" }, BODY, if reached { ACCENT } else { MUTED }));
-                row.spawn((Node { width: Val::Px(22.0 * PX), flex_shrink: 0.0, ..default() }, text(font, format!("{at}"), BODY, if reached { GOLD } else { MUTED })));
-                let fill = Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() };
-                row.spawn((fill, text(font, line, BODY, if reached { TEXT } else { MUTED })));
+                row.spawn(text(font, format!("{at}"), BODY, if reached { GOLD } else { MUTED }));
+                row.spawn((Node { min_width: Val::ZERO, ..default() }, text(font, line, BODY, if reached { TEXT } else { MUTED })));
             });
         }
     });

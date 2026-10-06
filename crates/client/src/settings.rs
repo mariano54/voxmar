@@ -790,6 +790,9 @@ impl Control {
 
 /// The panel's tabs (by the keys of their names), each a page of settings. A new setting
 /// goes into the page where players would look for it.
+/// How many tabs the settings have.
+pub(crate) const TABS: usize = SECTIONS.len();
+
 const SECTIONS: [(&str, &[Control]); 6] = [
     (
         "settings.tab.video",
@@ -925,14 +928,14 @@ struct Rebinding(Option<Binding>);
 
 /// The tab showing; kept while the panel is closed, so it opens where it was left.
 #[derive(Resource, Default)]
-struct OpenSection(usize);
+pub(crate) struct OpenSection(pub(crate) usize);
 
 /// A settings tab to open at startup, by name (`--tab`, for captures).
 #[derive(Resource)]
 pub struct StartTab(pub String);
 
 fn open_start_tab(start: Option<Res<StartTab>>, mut open: ResMut<OpenSection>) {
-    if let Some(index) = start.and_then(|start| SECTIONS.iter().position(|(name, _)| name.eq_ignore_ascii_case(&start.0))) {
+    if let Some(index) = start.and_then(|start| SECTIONS.iter().position(|(name, _)| name.rsplit('.').next().is_some_and(|tab| tab.eq_ignore_ascii_case(&start.0)))) {
         open.0 = index;
     }
 }
