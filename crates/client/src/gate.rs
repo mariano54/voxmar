@@ -308,6 +308,8 @@ struct Gate {
     /// never kill its player, and a dead one fails every step after.
     health_last: u8,
     death_seen: bool,
+    /// Set while a step kills the player on purpose (the workshop's /kill), until the step ends.
+    killed_on_purpose: bool,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
     /// Frames on which the open overlay's text changed (each one lays the UI out again),
@@ -366,6 +368,7 @@ impl Gate {
             failures_then: 0,
             health_last: 0,
             death_seen: false,
+            killed_on_purpose: false,
             overlay_changes: 0,
             overlay_counted: (0.0, 0.0),
         }
@@ -525,6 +528,7 @@ fn run(world: &mut World) {
     }
     if gate.step != gate.last_step {
         (gate.last_step, gate.failures_then) = (gate.step, gate.failures.len());
+        gate.killed_on_purpose = false;
     }
     // (The text-fit steps put the player through the death screen on purpose.)
     if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitMenus | Step::Leave | Step::Done) {
@@ -593,7 +597,7 @@ fn watch_health(world: &mut World, gate: &mut Gate) {
         );
     }
     gate.health_last = health;
-    if dead && !gate.death_seen {
+    if dead && !gate.death_seen && !gate.killed_on_purpose {
         gate.death_seen = true;
         gate.check("alive", Err(format!("the player died during {:?} at {position:.1} (the health losses before are logged)", gate.step)));
         key(world, KeyCode::KeyR, true);
@@ -1494,6 +1498,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if carried(world) == 44 {
                 gate.count_before = 44;
                 gate.fell = world.resource::<LocalPlayer>().position;
+                gate.killed_on_purpose = true;
                 world.resource::<Net>().command("kill");
                 gate.advance(now);
             } else if in_phase > WORKSHOP_WAIT {

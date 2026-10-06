@@ -59,7 +59,7 @@ it takes well under a minute.
    did, and nine checks failed together. A step that fails lets go of every key and
    button, so it cannot fail the steps after it. The session must never kill its player:
 every loss of health is logged with where and among what, and a death fails `alive` at
-once, naming the step (the text-fit steps show the death screen on purpose), and the
+once, naming the step (the workshop kills the player on purpose, and the text-fit steps show the death screen), and the
 player respawns, for a dead player fails every step after (nine checks at a time). `VOXMAR_GATE_STALL=1` (with
    `--server-lag 150`) stalls every frame and slows the server as a machine loaded far
    past its cores does, to show a step passes only on an idle one. It fails on any failed
