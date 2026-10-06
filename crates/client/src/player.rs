@@ -67,6 +67,8 @@ pub struct LocalPlayer {
     pub skills_known: bool,
     /// Hunger, warmth and their effects, as the server last said.
     pub vitals: Vitals,
+    /// When the vitals last came, in seconds since startup: timed effects count down from it.
+    pub vitals_at: f32,
     pub selected: usize,
     pub dead: bool,
     /// Set once the server has welcomed us.
@@ -97,6 +99,7 @@ impl Default for LocalPlayer {
             skills: Skills::default(),
             skills_known: false,
             vitals: Vitals::default(),
+            vitals_at: 0.0,
             selected: 0,
             dead: false,
             joined: false,

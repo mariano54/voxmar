@@ -257,6 +257,7 @@
     "character.hunger": "空腹度",
     "character.feels_like": "体感 {temperature}°C",
     "character.no_effects": "状態異常はありません。",
+    "effect.left": "残り{time}",
     "inventory.craft": "クラフト",
     "inventory.craft.take": "クリックで1つ、Shift+クリックで全部作る",
     "inventory.craft.nothing": "作れるものがない",
