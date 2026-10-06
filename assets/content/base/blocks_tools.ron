@@ -47,6 +47,9 @@
         // Materials.
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
         // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
+        // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
+        (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "fuel"], all: (color: (40, 36, 34))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),

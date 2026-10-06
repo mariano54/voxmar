@@ -254,6 +254,9 @@
     "skills.needs": "{skill} {level} が必要",
     "tools.needs": "{tool}以上が必要",
     "fishing.nothing": "何もかからない。",
+    "pouch.holds": "{item} × {count}",
+    "pouch.nothing": "空",
+    "pouch.hint": "手に持って右クリックで中身を取り出す",
 
     "character.health": "体力",
     "character.feels_like": "体感 {temperature}°C",

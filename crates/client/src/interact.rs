@@ -172,6 +172,10 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.get(self.player.selected).map(|s| s.item)
     }
 
+    fn actor_pouched(&self) -> Vec<BlockId> {
+        self.player.inventory.pouched.iter().map(|&(item, _)| item).collect()
+    }
+
     fn actor_hurt(&self) -> bool {
         self.player.health < self.player.max_health
     }
@@ -371,8 +375,10 @@ fn break_and_place(
         // action of its own (a seed plants) does that; anything else is placed.
         let held = context.actor_held();
         let pick = actions.0.id("base:pick").filter(|&id| valid(id).is_some_and(|v| v.is_ok()));
+        // A seed pouch in hand sows on ground that takes its seeds, and empties elsewhere.
+        let sow = actions.0.id("base:plant").filter(|&id| held.is_some_and(|h| world.registry.def(h).has_tag("pouch")) && valid(id).is_some_and(|v| v.is_ok()));
         let own = held.and_then(|item| world.registry.def(item).action.as_deref()).and_then(|name| actions.0.id(name));
-        if let Some(action) = pick.or(own) {
+        if let Some(action) = pick.or(sow).or(own) {
             match valid(action) {
                 Some(Ok(())) => {
                     net.propose_from(&player, action, action_target);
@@ -411,10 +417,14 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
         match effect {
             Effect::Plant => {
                 let selected = player.selected;
-                let Some(seed) = player.inventory.get(selected).map(|s| s.item) else { continue };
+                let Some(seed) = (ClientContext { world, player, content }).actor_seed() else { continue };
                 let Some(crop) = content.crops.planted_by(seed) else { continue };
                 let sprout = content.crops.get(crop).stages[0];
-                player.inventory.take_one(selected);
+                if player.inventory.get(selected).is_some_and(|s| s.item == seed) {
+                    player.inventory.take_one(selected);
+                } else {
+                    player.inventory.take_pouched(seed);
+                }
                 world.set_block(target + IVec3::Y, sprout);
                 cues.write(SoundCue::for_block(world, sprout, Cue::Place));
             }

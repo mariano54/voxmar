@@ -266,6 +266,9 @@
     "skills.needs": "Needs {skill} {level}",
     "tools.needs": "Needs a {tool} or better",
     "fishing.nothing": "Nothing bites.",
+    "pouch.holds": "{count} × {item}",
+    "pouch.nothing": "Empty",
+    "pouch.hint": "Right click it in hand to empty it into your pack",
 
     "character.health": "Health",
     "character.feels_like": "Feels like {temperature}°C",

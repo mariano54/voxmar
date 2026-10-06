@@ -973,3 +973,23 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     assert!(fish(&client), "six casts at Fishing 80 caught nothing");
     client.pump_until(|c| !c.earned.is_empty());
 }
+
+#[test]
+fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
+    let mut client = Client::join();
+    let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    for line in ["/clear", "/give seed_pouch 1", "/give wheat_seeds 100", "/fill ~ ~-1 ~2 ~ ~-1 ~2 farmland", "/fill ~ ~ ~2 ~ ~1 ~2 air"] {
+        client.ok(line);
+    }
+    let seeds = client.content.blocks.expect("base:wheat_seeds");
+    let sprout = client.content.blocks.expect("base:wheat_crop_0");
+    client.pump_until(|c| c.inventory.pouched(seeds) == 100 && c.world.block(ground) == c.content.blocks.id("base:farmland"));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != seeds), "seeds took slots with a pouch carried");
+    // The pouch in hand sows its seeds.
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && c.inventory.pouched(seeds) == 99);
+    // Right click empties it into the pack.
+    client.propose("base:empty_pouch", ActionTarget::None);
+    client.pump_until(|c| c.inventory.pouched(seeds) == 0 && c.inventory.slots.iter().flatten().filter(|s| s.item == seeds).map(|s| s.count as u32).sum::<u32>() == 99);
+}

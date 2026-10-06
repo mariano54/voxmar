@@ -150,6 +150,8 @@ pub enum Effect {
     Till,
     /// Work at the target crafting table: its three-by-three grid, until the actor walks away.
     UseTable,
+    /// Empty the pouch in hand into the actor's inventory.
+    EmptyPouch,
     /// Bring up what bites in the target water, if anything (`fishing.ron`).
     Fish,
 }
@@ -234,6 +236,23 @@ pub trait ActionContext {
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
+    /// What the actor's pouches carry (see [`crate::inventory::Inventory::pouched`]).
+    fn actor_pouched(&self) -> Vec<BlockId> {
+        Vec::new()
+    }
+    /// The seed the actor would sow: the one in hand, or with a seed pouch in hand, the
+    /// first seed in it the actor's level allows.
+    fn actor_seed(&self) -> Option<BlockId> {
+        let crops = self.crops();
+        let held = self.actor_held()?;
+        if crops.planted_by(held).is_some() {
+            return Some(held);
+        }
+        self.actor_pouched().into_iter().find(|&seed| {
+            crate::inventory::pouch_for(seed) == Some(held)
+                && crops.planted_by(seed).is_some_and(|crop| self.actor_level(crops.get(crop).skill) >= crops.get(crop).def.level)
+        })
+    }
     /// Whether the actor has health to heal; true unless a context knows otherwise.
     fn actor_hurt(&self) -> bool {
         true
@@ -313,10 +332,10 @@ impl ActionDef {
                 ctx.block(block).is_some_and(|b| !b.is_air() && ctx.info(b).hardness >= 0.0)
             }
             Requirement::HoldingBlock => ctx.actor_held().is_some_and(|b| ctx.info(b).placeable),
-            Requirement::HoldingSeed => ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)).is_some(),
+            Requirement::HoldingSeed => ctx.actor_seed().is_some(),
             Requirement::Plantable => {
                 let (block, face) = block_target()?;
-                let Some(crop) = ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)) else { return Ok(false) };
+                let Some(crop) = ctx.actor_seed().and_then(|b| ctx.crops().planted_by(b)) else { return Ok(false) };
                 let ground = ctx.block(block).map(|b| ctx.blocks().def(b));
                 let fits = ground.is_some_and(|def| ctx.crops().get(crop).def.ground.iter().any(|tag| def.has_tag(tag)));
                 let room = ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()));
@@ -324,7 +343,7 @@ impl ActionDef {
             }
             Requirement::HoldingFood => ctx.actor_held().is_some_and(|b| ctx.info(b).food > 0),
             Requirement::Hurt => ctx.actor_hurt(),
-            Requirement::SkillLevel => match ctx.actor_held().and_then(|b| ctx.crops().planted_by(b)) {
+            Requirement::SkillLevel => match ctx.actor_seed().and_then(|b| ctx.crops().planted_by(b)) {
                 Some(crop) => {
                     let crop = ctx.crops().get(crop);
                     ctx.actor_level(crop.skill) >= crop.def.level

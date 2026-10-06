@@ -233,9 +233,14 @@ impl Server {
     /// Sows the seed `agent` holds on top of `ground`.
     pub(crate) fn plant(&mut self, agent: PlayerId, ground: IVec3) {
         let pos = ground + IVec3::Y;
+        // The seed in hand, or the one a seed pouch in hand gives (see `actor_seed`).
+        let Some(seed) = voxmar_engine::action::ActionContext::actor_seed(&crate::actions::context(self, agent)) else { return };
         let player = self.players.get_mut(&agent).expect("an actor");
         let selected = player.selected;
-        let Some(seed) = player.inventory.take_one(selected) else { return };
+        let taken = if player.held() == Some(seed) { player.inventory.take_one(selected).is_some() } else { player.inventory.take_pouched(seed) };
+        if !taken {
+            return;
+        }
         player.changed(traits::INVENTORY);
         let Some(id) = self.content.crops.planted_by(seed) else { return };
         let crop = self.content.crops.get(id);

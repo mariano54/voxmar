@@ -45,6 +45,11 @@
         (ingredients: ["wheat", "wheat", "wheat"], output: "twine", count: 2, xp: 2.0),
         (pattern: [["", "", "stick"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fishing_rod", xp: 6.0),
         (pattern: [["", "", "iron_ingot"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fine_rod", level: 20, xp: 40.0),
+        // Pouches from a hide and twine (Crafting 3): seeds stood up, herbs laid flat.
+        (pattern: [["twine"], ["hide"]], output: "seed_pouch", level: 3, xp: 12.0),
+        (pattern: [["twine"], ["rabbit_hide"]], output: "seed_pouch", level: 3, xp: 12.0),
+        (pattern: [["hide", "twine"]], output: "herb_pouch", level: 3, xp: 12.0),
+        (pattern: [["rabbit_hide", "twine"]], output: "herb_pouch", level: 3, xp: 12.0),
         // For taming and breeding: a treat any tameable animal takes, twice as gladly as its
         // own food; seed mix that readies any kept animal to breed.
         (ingredients: ["wheat", "wheat", "apple", "egg"], output: "taming_treat", count: 2, skill: "core:cooking", level: 27, xp: 30.0),

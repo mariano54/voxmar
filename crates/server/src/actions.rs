@@ -69,6 +69,11 @@ pub struct Executor {
     proposals: u64,
 }
 
+/// The validation view of the world from `agent`'s point of view.
+pub(crate) fn context(server: &Server, agent: PlayerId) -> impl ActionContext + '_ {
+    Context { server, agent }
+}
+
 /// Validation view of the world from one agent's point of view.
 struct Context<'a> {
     server: &'a Server,
@@ -106,6 +111,10 @@ impl ActionContext for Context<'_> {
 
     fn actor_held(&self) -> Option<BlockId> {
         self.server.players[&self.agent].held()
+    }
+
+    fn actor_pouched(&self) -> Vec<BlockId> {
+        self.server.players[&self.agent].inventory.pouched.iter().map(|&(item, _)| item).collect()
     }
 
     fn actor_hurt(&self) -> bool {
@@ -313,6 +322,13 @@ impl Server {
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
+                    }
+                }
+                (Effect::EmptyPouch, _) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    if let Some(pouch) = player.held().filter(|&p| self.content.blocks.def(p).has_tag("pouch")) {
+                        player.inventory.empty_pouch(pouch);
+                        player.changed(traits::INVENTORY);
                     }
                 }
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {

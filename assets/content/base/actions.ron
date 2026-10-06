@@ -18,6 +18,8 @@
         // Casting a rod into water (right click with it): a few seconds, then a fish or
         // nothing (fishing.ron).
         (name: "fish", duration: Seconds(5.0), requires: [Alive, Fishable], effects: [Fish]),
+        // Emptying a pouch in hand into the inventory (right click with it).
+        (name: "empty_pouch", duration: Instant, requires: [Alive], effects: [EmptyPouch]),
         // Working at a crafting table (right click): its three-by-three grid.
         (name: "use_table", duration: Instant, requires: [Alive, InReach, CraftingTable], effects: [UseTable]),
     ],

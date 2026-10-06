@@ -1326,15 +1326,30 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let result = if stacks.iter().all(|&n| n == 1) { Ok("three loaves took three slots".to_owned()) } else { Err(format!("bread stacked: {stacks:?}")) };
                 gate.check("workshop: food takes a slot each", result);
                 let net = world.resource::<Net>();
-                net.command("give fishing_rod 1");
-                net.command("skill fishing 80");
+                net.command("give seed_pouch 1");
+                net.command("give wheat_seeds 50");
                 gate.advance(now);
             } else if in_phase > WORKSHOP_WAIT {
                 fail(world, gate, "food takes a slot each", format!("three loaves given, the inventory shows {stacks:?}"));
             }
         }
-        // A rod held over the pool, right button down, casts until something bites.
+        // With a seed pouch carried, seeds go into it rather than taking slots.
         10 => {
+            let seeds = world.resource::<ClientWorld>().registry.id("base:wheat_seeds");
+            let pouched = seeds.map_or(0, |s| world.resource::<LocalPlayer>().inventory.pouched(s));
+            if pouched >= 50 {
+                gate.check("workshop: seed pouch", Ok(format!("50 seeds given went into the pouch ({pouched} there)")));
+                let net = world.resource::<Net>();
+                net.command("clear seed_pouch");
+                net.command("give fishing_rod 1");
+                net.command("skill fishing 80");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "seed pouch", format!("50 seeds given with a seed pouch carried, the pouch holds {pouched}"));
+            }
+        }
+        // A rod held over the pool, right button down, casts until something bites.
+        11 => {
             let fish = |world: &World| {
                 let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
                 player.inventory.slots.iter().flatten().find(|s| client.registry.def(s.item).has_tag("fish")).map(|s| client.registry.def(s.item).name.clone())

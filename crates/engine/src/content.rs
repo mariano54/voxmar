@@ -167,6 +167,7 @@ impl Content {
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
+        crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -221,4 +222,14 @@ fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, Reg
             own.unwrap_or(if tags.iter().any(|t| single.contains(t)) { 1 } else { crate::inventory::MAX_STACK }).min(crate::inventory::MAX_STACK)
         })
         .collect())
+}
+
+/// Each item's pouch: the first item tagged `pouch` and `holds:TAG` for a tag it has.
+fn pouches(blocks: &BlockRegistry) -> Vec<Option<crate::block::BlockId>> {
+    let holders: Vec<(crate::block::BlockId, String)> = blocks
+        .ids()
+        .filter(|&id| blocks.def(id).has_tag("pouch"))
+        .flat_map(|id| blocks.def(id).tags.iter().filter_map(move |t| Some((id, t.strip_prefix("holds:")?.to_owned()))))
+        .collect();
+    blocks.ids().map(|id| holders.iter().find(|(_, tag)| blocks.def(id).has_tag(tag)).map(|&(pouch, _)| pouch)).collect()
 }

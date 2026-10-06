@@ -68,3 +68,12 @@ and with the rod's tier, up to nine in ten; which fish is a weighted draw among 
 can bite, rarer ones a little more often with a better rod's yield. Fish cook at a
 campfire (cooking.ron). Fishing tops out at level 75 for now (glimmer koi), with the cape
 perk at 80.
+
+## Pouches
+
+An item tagged `pouch` and `holds:TAG` (blocks_tools.ron: the seed pouch holds `seed`, the
+herb pouch `herb`) carries what has that tag: while the player has the pouch in a slot,
+those items go into `Inventory::pouched` instead of the slots, up to 1,000 of a kind and 40
+kinds in all. A seed pouch in hand sows (`actor_seed`: the first seed in it the player's
+Farming level allows) and right click empties it (`base:empty_pouch`). What a pouch holds
+stays with the player if the pouch is dropped; a pouch is needed to put more in.
