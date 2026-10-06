@@ -267,7 +267,7 @@
     "creative.shown": "{tab}：{count}件",
     "creative.none": "見つかりません",
     "creative.page": "{page}/{pages}",
-    "creative.hint": "クリック：1個持つ　右クリック：1スタック持つ　Shift＋クリック：1スタックをインベントリへ",
+    "creative.hint": "クリック：1個持つ\n右クリック：1スタック持つ\nShift＋クリック：1スタックをインベントリへ",
     "hud.effect_left": "残り{time}",
     "inventory.craft": "クラフト",
     "inventory.craft.take": "クリックで1つ、Shift+クリックで全部作る",

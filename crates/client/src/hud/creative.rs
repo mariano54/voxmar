@@ -46,6 +46,17 @@ pub enum Tab {
 const TABS: [Tab; 5] = [Tab::All, Tab::Blocks, Tab::Plants, Tab::Food, Tab::Items];
 
 impl Tab {
+    /// The item a tab's button shows, if the content has it.
+    fn icon(self) -> &'static str {
+        match self {
+            Tab::All => "base:grass_block",
+            Tab::Blocks => "base:oak_planks",
+            Tab::Plants => "base:poppy",
+            Tab::Food => "base:bread",
+            Tab::Items => "base:stick",
+        }
+    }
+
     fn key(self) -> &'static str {
         match self {
             Tab::All => "creative.tab.all",
@@ -228,7 +239,9 @@ fn index(launch: Res<Launch>, mut catalogue: ResMut<Catalogue>) {
     let blocks = &launch.content.blocks;
     catalogue.entries = blocks
         .ids()
-        .filter(|&id| !id.is_air() && blocks.def(id).render != RenderKind::Invisible)
+        // Not a variant's other looks, nor a fluid's other states: what a player would hold.
+        .filter(|&id| !id.is_air() && blocks.def(id).render != RenderKind::Invisible && blocks.def(id).variant_of.is_none())
+        .filter(|&id| blocks.fluid(id).is_none_or(|state| blocks.fluids()[state.fluid.0 as usize].source == id))
         .map(|item| {
             let def = blocks.def(item);
             let mut words = vec![def.name.rsplit(':').next().unwrap_or(&def.name).replace('_', " ")];
@@ -243,12 +256,22 @@ fn index(launch: Res<Launch>, mut catalogue: ResMut<Catalogue>) {
 }
 
 /// `--catalogue`'s search, once the player is in creative mode.
-fn start_search(mut commands: Commands, start: Option<Res<StartSearch>>, player: Res<LocalPlayer>, mut catalogue: ResMut<Catalogue>, mut ui: ResMut<UiState>) {
+fn start_search(
+    mut commands: Commands,
+    start: Option<Res<StartSearch>>,
+    player: Res<LocalPlayer>,
+    mut catalogue: ResMut<Catalogue>,
+    mut ui: ResMut<UiState>,
+    mut field: Query<&mut TextField, With<SearchField>>,
+) {
     let Some(start) = start else { return };
     if !player.allow_flight {
         return;
     }
     catalogue.query.clone_from(&start.0);
+    if let Ok(mut field) = field.single_mut() {
+        field.value.clone_from(&start.0);
+    }
     ui.inventory_open = true;
     commands.remove_resource::<StartSearch>();
 }
@@ -386,6 +409,7 @@ fn read_input(
 /// Fills the cells with the page's items, and says what the tab holds.
 #[allow(clippy::too_many_arguments)]
 fn draw(
+    launch: Res<Launch>,
     catalogue: Res<Catalogue>,
     locale: Res<Locale>,
     images: Res<HudImages>,
@@ -411,7 +435,8 @@ fn draw(
         }
     }
     for (tab, mut image) in &mut tab_icons {
-        let first = catalogue.entries.iter().find(|entry| tab.0 == Tab::All || entry.tab == tab.0).map(|entry| entry.item);
+        let named = launch.content.blocks.id(tab.0.icon());
+        let first = named.or_else(|| catalogue.entries.iter().find(|entry| tab.0 == Tab::All || entry.tab == tab.0).map(|entry| entry.item));
         if let Some(wanted) = first.map(icon)
             && image.image != wanted
         {
