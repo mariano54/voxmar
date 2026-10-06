@@ -176,6 +176,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// In creative mode the inventory's catalogue finds an item by its English name and by
+    /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
+    Catalogue,
     /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
     /// player's folder and clipboard alone) and says so in the chat.
     Screenshot,
@@ -241,6 +244,10 @@ struct Gate {
     /// which and when.
     weather_last: Option<[f32; 24]>,
     weather_jump: (f32, &'static str, f32),
+    /// The catalogue step: whether the player was in creative before it, and how many oak
+    /// logs they had before a click.
+    was_creative: bool,
+    counted: u32,
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
@@ -279,6 +286,8 @@ impl Gate {
             passes: 0,
             weather_last: None,
             weather_jump: (0.0, "", 0.0),
+            was_creative: false,
+            counted: 0,
             frame_ms: Vec::new(),
             longest: default(),
         }
@@ -667,6 +676,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
@@ -1319,6 +1329,82 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", if counting { Ok(format!("the chip reads {}, the plate {}", chip.unwrap_or_default(), left.unwrap_or_default())) } else { Err(format!("chip {chip:?}, plate {left:?}")) });
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Catalogue, now);
+        }
+    }
+}
+
+/// How many of `item` the player has, held or in the inventory.
+fn count_of(world: &World, item: BlockId) -> u32 {
+    let inventory = &world.resource::<LocalPlayer>().inventory;
+    inventory.slots.iter().chain(std::iter::once(&inventory.cursor)).flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum()
+}
+
+fn catalogue(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::creative::Catalogue;
+    let Some(log) = world.resource::<Launch>().content.blocks.id("base:oak_log") else {
+        gate.check("catalogue", Err("no oak log in the content".into()));
+        gate.next(Step::Screenshot, now);
+        return;
+    };
+    // The search, as typed: one of every item it finds, or why not.
+    let search = |world: &mut World, query: &str| {
+        let mut catalogue = world.resource_mut::<Catalogue>();
+        catalogue.query = query.to_owned();
+        catalogue.refresh();
+        catalogue.found.contains(&log)
+    };
+    match gate.phase {
+        0 => {
+            gate.was_creative = world.resource::<LocalPlayer>().allow_flight;
+            world.resource::<Net>().command("gamemode creative");
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        1 => {
+            if !world.resource::<LocalPlayer>().allow_flight && in_phase < 3.0 {
+                return;
+            }
+            let english = search(world, "oak log");
+            let japanese = search(world, "げんぼく");
+            let katakana = search(world, "オーク");
+            gate.check(
+                "catalogue: search",
+                if english && japanese && katakana { Ok("\"oak log\", \"げんぼく\" and \"オーク\" all find the oak log".into()) } else { Err(format!("finds the oak log: by \"oak log\" {english}, \"げんぼく\" {japanese}, \"オーク\" {katakana}")) },
+            );
+            gate.counted = count_of(world, log);
+            crate::hud::creative::take(world.resource::<Net>(), log, false, true);
+            gate.advance(now);
+        }
+        2 => {
+            let gained = count_of(world, log).saturating_sub(gate.counted);
+            if gained == 0 && in_phase < 3.0 {
+                return;
+            }
+            gate.check("catalogue: creative", if gained > 0 { Ok(format!("Shift-click gave {gained} oak logs")) } else { Err("a Shift-click gave nothing in creative".into()) });
+            world.resource::<Net>().command("gamemode survival");
+            gate.advance(now);
+        }
+        3 => {
+            if world.resource::<LocalPlayer>().allow_flight && in_phase < 3.0 {
+                return;
+            }
+            gate.counted = count_of(world, log);
+            crate::hud::creative::take(world.resource::<Net>(), log, false, true);
+            gate.advance(now);
+        }
+        _ => {
+            // Long enough for a stack to arrive, were it given.
+            if in_phase < 1.0 {
+                return;
+            }
+            let gained = count_of(world, log).saturating_sub(gate.counted);
+            gate.check("catalogue: survival", if gained == 0 { Ok("a click in survival gives nothing".into()) } else { Err(format!("survival was given {gained} oak logs")) });
+            if gate.was_creative {
+                world.resource::<Net>().command("gamemode creative");
+            }
+            world.resource_mut::<Catalogue>().query.clear();
+            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Screenshot, now);
         }
     }
