@@ -74,6 +74,11 @@ pub struct RecipeViewer {
 }
 
 impl RecipeViewer {
+    /// Every way to get and to use each item, once the game's content is read.
+    pub fn book(&self) -> Option<&RecipeBook> {
+        self.book.as_deref()
+    }
+
     /// Looks `item` up, on top of what is showing.
     pub fn open(&mut self, item: BlockId, uses: bool) {
         if self.trail.last().is_some_and(|last| last.item == item && last.uses == uses) {
