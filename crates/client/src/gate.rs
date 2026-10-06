@@ -953,8 +953,8 @@ enum View {
     Dead,
     /// The chat and command line, open.
     Console,
-    /// The recipe viewer over the inventory: a campfire's recipes, or an oak log's uses.
-    Recipes(bool),
+    /// The recipe viewer over the inventory, on one of `FIT_LOOKUPS`.
+    Recipes(usize),
     /// The menus before a game: the title screen, the worlds, a new world, joining one,
     /// and the settings on one tab.
     Title,
@@ -963,6 +963,10 @@ enum View {
     Join,
     Settings(usize),
 }
+
+/// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
+/// item, an ingredient, and a creature's product with a range of amounts.
+const FIT_LOOKUPS: [(&str, bool); 3] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false)];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -975,7 +979,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let views: Vec<View> = if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Dead, View::Console, View::Inventory, View::Recipes(false), View::Recipes(true), View::Character]
+        [View::Hud, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
             .chain((0..crate::settings::TABS).map(View::Menu))
@@ -1042,9 +1046,10 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         ui.recipes_open = false;
     }
     let lookup = match view {
-        Some(View::Recipes(uses)) => {
+        Some(View::Recipes(index)) => {
+            let (name, uses) = FIT_LOOKUPS[index];
             let blocks = &world.resource::<Launch>().content.blocks;
-            blocks.id(if uses { "base:oak_log" } else { "base:campfire" }).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
+            blocks.id(name).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
         }
         _ => None,
     };

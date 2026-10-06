@@ -106,6 +106,13 @@ struct TooltipLines;
 struct OutputSlot;
 #[derive(Component)]
 struct OutputIcon;
+/// The words beside the crafting grid's result: its name, then how to take it.
+#[derive(Component)]
+struct CraftName;
+#[derive(Component)]
+struct CraftHint;
+/// Room for those words, wrapped.
+const CRAFT_WORDS: f32 = 120.0 * PX;
 #[derive(Component)]
 struct OutputCount;
 
@@ -135,7 +142,6 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
-                row.spawn((Localized("inventory.craft"), text(font, "", BODY, MUTED)));
                 let square = Node {
                     display: Display::Grid,
                     grid_template_columns: RepeatedGridTrack::px(2, SLOT),
@@ -151,6 +157,12 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
                     cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
                     cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(2.0 * PX), bottom: Val::Px(PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
+                });
+                // What the grid makes and how to take it, or how to find a recipe.
+                let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
+                row.spawn(words).with_children(|words| {
+                    words.spawn((shadowed(font, "", BODY, TEXT), CraftName));
+                    words.spawn((text(font, "", BODY, MUTED), CraftHint));
                 });
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
@@ -212,7 +224,10 @@ fn craft(
     mut player: ResMut<LocalPlayer>,
     output: Query<&RelativeCursorPosition, With<OutputSlot>>,
     mut icon: Query<(&mut ImageNode, &mut Visibility), With<OutputIcon>>,
-    mut count: Query<&mut Text, With<OutputCount>>,
+    mut count: Query<&mut Text, (With<OutputCount>, Without<CraftName>, Without<CraftHint>)>,
+    mut name: Query<&mut Text, (With<CraftName>, Without<OutputCount>, Without<CraftHint>)>,
+    mut hint: Query<&mut Text, (With<CraftHint>, Without<OutputCount>, Without<CraftName>)>,
+    (locale, settings): (Res<Locale>, Res<Settings>),
     mut sounds: MessageWriter<UiSound>,
 ) {
     if !ui.inventory_open {
@@ -220,6 +235,19 @@ fn craft(
     }
     let recipes = launch.content.recipes.clone();
     let made = recipes.find(&player.inventory.grid()).map(|r| (r.output, r.count));
+    let filled = player.inventory.grid().iter().any(Option::is_some);
+    let (title, how) = match made {
+        Some((item, _)) => (locale.block(launch.content.blocks.def(item)), locale.get("inventory.craft.take").to_owned()),
+        None if filled => (locale.get("inventory.craft.nothing").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
+        None => (locale.get("inventory.craft").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
+    };
+    for (query, words) in [(name.single_mut().ok(), title), (hint.single_mut().ok(), how)] {
+        if let Some(mut text) = query
+            && text.0 != words
+        {
+            text.0 = words;
+        }
+    }
     if let Ok((mut image, mut visibility)) = icon.single_mut() {
         match made {
             Some((item, _)) => {

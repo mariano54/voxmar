@@ -3,6 +3,7 @@
 
 pub mod character;
 pub mod console;
+pub mod death;
 pub mod inventory;
 pub mod screens;
 pub mod recipes;
@@ -12,19 +13,16 @@ pub mod target;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
-use voxmar_engine::action::ActionTarget;
 use voxmar_engine::vitals::{Effect, MAX_HUNGER, Vitals};
 
 use crate::lang::Locale;
-use crate::Actions;
 use crate::interact::Target;
 use crate::menu::Screen;
-use crate::net::Net;
-use crate::player::{LocalPlayer, UiState};
+use crate::player::LocalPlayer;
 use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{ACCENT, BODY, ERROR, LARGE, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
 use crate::ui::widgets::space;
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
@@ -33,12 +31,11 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin))
+        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
                 (
-                    respawn,
                     update_slots.after(inventory::InventorySystems),
                     update_vitals,
                     update_status,
@@ -95,8 +92,6 @@ struct EffectChips;
 
 /// The most health a player has, as the server keeps it.
 const MAX_HEALTH: u8 = 20;
-#[derive(Component)]
-struct StatusText;
 #[derive(Component)]
 struct DebugText;
 #[derive(Component)]
@@ -183,30 +178,12 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
         });
 
         root.spawn((Node { position_type: PositionType::Absolute, left: Val::Px(space::INNER), top: Val::Px(space::INNER), ..default() }, shadowed(font, "", BODY, TEXT), DebugText));
-        root.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                top: Val::Percent(35.0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            shadowed(font, "", LARGE, TEXT),
-            StatusText,
-        ));
     });
 }
 
 fn show_hud<const SHOWN: bool>(mut root: Query<&mut Visibility, With<HudRoot>>) {
     if let Ok(mut visibility) = root.single_mut() {
         *visibility = if SHOWN { Visibility::Inherited } else { Visibility::Hidden };
-    }
-}
-
-/// R respawns after dying.
-fn respawn(keys: Res<ButtonInput<KeyCode>>, ui: Res<UiState>, player: Res<LocalPlayer>, net: Res<Net>, actions: Res<Actions>) {
-    if player.dead && keys.just_pressed(KeyCode::KeyR) && !ui.console_open {
-        net.propose(actions.0.expect("core:respawn"), ActionTarget::None);
     }
 }
 
@@ -315,19 +292,10 @@ pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>,
 }
 
 fn update_status(
-    player: Res<LocalPlayer>,
     target: Res<Target>,
-    mut status: Query<&mut Text, With<StatusText>>,
     mut bar: Query<(&mut Visibility, &Children), With<BreakBar>>,
     mut fill: Query<&mut Node>,
-    locale: Res<Locale>,
 ) {
-    let message = if player.dead { locale.get("hud.died") } else { "" };
-    if let Ok(mut text) = status.single_mut()
-        && text.0 != message
-    {
-        message.clone_into(&mut text.0);
-    }
     if let Ok((mut visibility, children)) = bar.single_mut() {
         let progress = target.breaking.map(|(_, p)| p);
         visibility.set_if_neq(if progress.is_some() { Visibility::Inherited } else { Visibility::Hidden });
