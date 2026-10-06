@@ -138,6 +138,20 @@ impl Emitters {
         }
     }
 
+    /// Starts counting `pos`'s particles into `watched`, finding emitters again at once so
+    /// a block placed moments ago is among them.
+    pub(crate) fn watch(&mut self, pos: IVec3) {
+        self.watch = Some(pos);
+        self.watched = 0;
+        self.searched_at = None;
+    }
+
+    /// Why a watched block might give off nothing, for the gate's message.
+    pub(crate) fn why_quiet(&self, pos: IVec3, amount: f32) -> String {
+        let found = self.near.iter().any(|e| e.pos == pos);
+        format!("found among {} nearby emitters: {found}; particle amount {amount:.2}", self.near.len())
+    }
+
     fn roll(&mut self) -> f32 {
         self.dice = crate::sfx::mix(self.dice.wrapping_add(1));
         (self.dice >> 40) as f32 / (1u64 << 24) as f32
