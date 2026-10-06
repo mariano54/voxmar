@@ -262,7 +262,8 @@ pub enum PlantModel {
     Cross,
     /// Four quads in a #, straight with the blocks: crops and reeds, as Minecraft's wheat.
     Hash,
-    /// A crossed stem under a flat cap of the block's top texture: mushrooms.
+    /// A mushroom with volume: a stem of the side texture, a domed cap of the top texture
+    /// (a crown and four sloping sides) and gills of the bottom texture under it.
     Cap,
     /// A cross with a second, straight one through it: fuller bushes and shrubs.
     Bush,
