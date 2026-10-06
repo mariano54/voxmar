@@ -193,6 +193,10 @@ pub struct Clusters {
     pub shadow: i32,
     /// Keep blobs this far from the texture's edges (0 lets them wrap around).
     pub margin: u32,
+    /// How strongly a blob keeps to a round outline as it grows (0 packs texels anywhere
+    /// they touch most, which makes big blobs square). Blobs of more than 16 texels get
+    /// 2.5 when absent, so 16×16 recipes drawn finer keep round pebbles.
+    pub round: Option<f32>,
     pub seed: u32,
 }
 
@@ -207,6 +211,7 @@ impl Default for Clusters {
             shade: None,
             shadow: 0,
             margin: 0,
+            round: None,
             seed: 0,
         }
     }
@@ -342,6 +347,9 @@ pub struct Cells {
     pub width: f32,
     /// Lighting from the top left across each cell.
     pub bevel: f32,
+    /// The lit texel row and column along each cell's top and left boundary; `bevel` when
+    /// absent. 0 shades each cell smoothly with no lit line, for large stylised shapes.
+    pub lip: Option<f32>,
     /// Darkening towards each cell's rim, which makes cells read as rounded stones.
     pub round: f32,
     /// How far boundaries wander, in texels, so cells are not straight-edged polygons.
@@ -354,7 +362,7 @@ pub struct Cells {
 
 impl Default for Cells {
     fn default() -> Self {
-        Self { count: (3, 3), jitter: 0.8, value: 0.3, edge: -0.4, width: 1.0, bevel: 0.3, round: 0.0, warp: 0.0, stretch: (1.0, 1.0), seed: 0 }
+        Self { count: (3, 3), jitter: 0.8, value: 0.3, edge: -0.4, width: 1.0, bevel: 0.3, lip: None, round: 0.0, warp: 0.0, stretch: (1.0, 1.0), seed: 0 }
     }
 }
 

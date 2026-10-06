@@ -14,7 +14,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use voxmar_texgen::sheet::{self, Entry};
-use voxmar_texgen::{Image, Library};
+use voxmar_texgen::{Image, Library, Manifest};
 
 struct Args {
     command: String,
@@ -55,13 +55,15 @@ fn main() {
 fn run() -> Result<(), String> {
     let args = parse()?;
     let library = Library::load(&args.pack).map_err(|e| e.to_string())?;
+    let resolution = Manifest::read(&args.pack).map_err(|e| e.to_string())?.map_or(0, |m| m.resolution);
+    let render = |name: &str| library.render_at_least(name, if drawn_at_resolution(name) { resolution } else { 0 });
     match args.command.as_str() {
         "check" => {
             let mut failed = 0;
             let mut count = 0;
             for name in library.names() {
                 count += 1;
-                if let Some(Err(e)) = library.render(name) {
+                if let Some(Err(e)) = render(name) {
                     eprintln!("{e}");
                     failed += 1;
                 }
@@ -74,7 +76,7 @@ fn run() -> Result<(), String> {
         "sheet" => {
             let mut reference = args.compare.as_deref().map(Reference::open).transpose()?;
             let mut entries = Vec::new();
-            for (name, image) in textures(&library, &args.pack)? {
+            for (name, image) in textures(&library, &args.pack, &render)? {
                 if !args.only.is_empty() && !args.only.iter().any(|w| name.contains(w.as_str())) {
                     continue;
                 }
@@ -92,7 +94,7 @@ fn run() -> Result<(), String> {
             let out = args.out.ok_or("export needs --out DIR")?;
             let mut count = 0;
             for name in library.names() {
-                let image = library.render(name).unwrap().map_err(|e| e.to_string())?;
+                let image = render(name).unwrap().map_err(|e| e.to_string())?;
                 write(&out.join(format!("{name}.png")), &image)?;
                 count += 1;
             }
@@ -103,28 +105,43 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// Every texture in the pack by name: rendered recipes and PNGs (a PNG wins).
-fn textures(library: &Library, pack: &Path) -> Result<Vec<(String, Image)>, String> {
+/// Whether a pack's resolution applies to a texture: blocks and items, not the interface,
+/// whose sprites are laid out texel for texel.
+fn drawn_at_resolution(name: &str) -> bool {
+    name.starts_with("block/") || name.starts_with("item/")
+}
+
+type Render<'a> = dyn Fn(&str) -> Option<Result<Image, voxmar_texgen::Error>> + 'a;
+
+/// Every texture in the pack by name: rendered recipes and PNGs (a PNG wins), its own
+/// and those of the packs it builds on.
+fn textures(library: &Library, pack: &Path, render: &Render) -> Result<Vec<(String, Image)>, String> {
     let mut all = std::collections::BTreeMap::new();
     for name in library.names() {
-        all.insert(name.to_owned(), library.render(name).unwrap().map_err(|e| e.to_string())?);
+        all.insert(name.to_owned(), render(name).unwrap().map_err(|e| e.to_string())?);
     }
-    let root = pack.join("textures");
-    let mut stack = vec![root.clone()];
+    for folder in Manifest::chain(pack).map_err(|e| e.to_string())? {
+        pngs(&folder.join("textures"), &mut all)?;
+    }
+    Ok(all.into_iter().collect())
+}
+
+fn pngs(root: &Path, all: &mut std::collections::BTreeMap<String, Image>) -> Result<(), String> {
+    let mut stack = vec![root.to_owned()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "png") {
-                let name = path.strip_prefix(&root).unwrap().with_extension("").to_string_lossy().replace('\\', "/");
+                let name = path.strip_prefix(root).unwrap().with_extension("").to_string_lossy().replace('\\', "/");
                 let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
                 let image = Image::decode_png(&bytes).ok_or_else(|| format!("{}: not a PNG", path.display()))?;
                 all.insert(name, image);
             }
         }
     }
-    Ok(all.into_iter().collect())
+    Ok(())
 }
 
 fn write(path: &Path, image: &Image) -> Result<(), String> {
