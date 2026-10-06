@@ -467,6 +467,41 @@ fn vertex(in: Vertex) -> VertexOutput {
     return out;
 }
 
+// A block's own number, from where it is, for picking how its texture varies.
+fn block_hash(cell: vec3<i32>) -> u32 {
+    var h = (u32(cell.x) * 73856093u) ^ (u32(cell.y) * 19349663u) ^ (u32(cell.z) * 83492791u);
+    h ^= h >> 13u;
+    h *= 0x5bd1e995u;
+    return h ^ (h >> 15u);
+}
+
+// How the texture of the block at `cell` is laid on its `face`: as `uv` runs over the block,
+// mirrored left to right (`mirror`) and its top or bottom turned a quarter turn at a time
+// (`turn`), each picked by the block's position. The texture coordinates within the block
+// go through the same map as their changes per pixel, so mip levels stay right across the
+// block's edges.
+struct Laid {
+    uv: vec2<f32>,
+    dx: vec2<f32>,
+    dy: vec2<f32>,
+};
+
+fn laid(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, face: u32, cell: vec3<i32>, turn: bool, mirror: bool) -> Laid {
+    let h = block_hash(cell);
+    var m = mat2x2(1.0, 0.0, 0.0, 1.0);
+    if mirror && (h & 4u) != 0u {
+        m = mat2x2(-1.0, 0.0, 0.0, 1.0);
+    }
+    if turn && (face == 2u || face == 3u) {
+        let quarter = mat2x2(0.0, 1.0, -1.0, 0.0);
+        for (var k = 0u; k < (h & 3u); k++) {
+            m = quarter * m;
+        }
+    }
+    let base = floor(uv);
+    return Laid(base + 0.5 + m * (uv - base - 0.5), m * dx, m * dy);
+}
+
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), c > vec3(0.04045));
 }
@@ -518,12 +553,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let tilt = cross(dpdx(in.world_position), dpdy(in.world_position));
 #endif
     let layer = i32(in.surface & 0xFFFu);
-    var albedo = textureSample(block_textures, block_sampler, in.uv, layer);
-#ifndef TRANSLUCENT
-    // For an overlay, sampled only where there is one.
-    let uv_dx = dpdx(in.uv);
-    let uv_dy = dpdy(in.uv);
-#endif
+    // The layer's overlay, tint, variety and glow (render/mod.rs, `layer_table`).
+    let entry = textureLoad(block_layers, vec2(layer, 0), 0);
+    let tint_byte = u32(entry.b * 255.0 + 0.5);
+    var look = Laid(in.uv, dpdx(in.uv), dpdy(in.uv));
+    if tint_byte >= 64u {
+        let cell = vec3<i32>(floor(in.world_position - NORMALS[in.face] * 0.5));
+        look = laid(in.uv, look.dx, look.dy, in.face, cell, (tint_byte & 64u) != 0u, (tint_byte & 128u) != 0u);
+    }
+    var albedo = textureSampleGrad(block_textures, block_sampler, look.uv, layer, look.dx, look.dy);
     let kind = tint_kind(in.surface);
 #ifdef FRINGE
     // Fruit is cut by its own texture's alpha alone.
@@ -549,6 +587,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #endif
 #endif
     var base = albedo.rgb * biome_tint(in.surface, in.colours, in.world_position, in.face);
+<<<<<<< HEAD
 #ifdef FRINGE
     if in.card == FRUIT_UNRIPE {
         let grey = dot(base, vec3(0.3, 0.55, 0.15));
@@ -556,6 +595,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     }
 #endif
     let entry = textureLoad(block_layers, vec2(layer, 0), 0);
+=======
+>>>>>>> main
 #ifndef TRANSLUCENT
     // A tinted overlay, as the fringe of grass on a grass block's side has, takes the
     // biome colour the top has.
@@ -568,8 +609,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     }
 #endif
     if overlay != 0u {
-        let over = textureSampleGrad(block_textures, block_sampler, in.uv, i32(overlay - 1u), uv_dx, uv_dy);
-        let tint = biome_colour(u32(entry.b * 255.0 + 0.5), in.colours, in.world_position, in.face);
+        let over = textureSampleGrad(block_textures, block_sampler, look.uv, i32(overlay - 1u), look.dx, look.dy);
+        let tint = biome_colour(tint_byte & 63u, in.colours, in.world_position, in.face);
         base = mix(base, over.rgb * tint, over.a);
     }
 #endif
