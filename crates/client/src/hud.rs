@@ -5,6 +5,7 @@ pub mod character;
 pub mod console;
 pub mod death;
 pub mod effects;
+pub mod guide;
 pub mod inventory;
 pub mod screens;
 pub mod recipes;

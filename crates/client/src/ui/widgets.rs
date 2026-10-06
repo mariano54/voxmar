@@ -146,7 +146,7 @@ pub enum ButtonStyle {
 
 impl ButtonStyle {
     /// The pieces drawn at rest, under the pointer and pressed.
-    fn pieces(self) -> [Piece; 3] {
+    pub fn pieces(self) -> [Piece; 3] {
         match self {
             ButtonStyle::Primary => [Piece::Primary, Piece::PrimaryHover, Piece::PrimaryDown],
             ButtonStyle::Secondary => [Piece::Button, Piece::ButtonHover, Piece::ButtonDown],
