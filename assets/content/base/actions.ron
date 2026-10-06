@@ -8,6 +8,9 @@
         // Tending a creature with what is in hand (right click on it): food that tames it or
         // readies a kept one to breed, or a tool that takes its product (creatures.ron).
         (name: "tend", duration: Instant, requires: [Alive, CreatureInReach, CreatureAccepts], effects: [Tend]),
+        // Looking closely at a creature (right click with nothing it wants in hand): more
+        // with Farming level (server inspect.rs).
+        (name: "inspect", duration: Instant, requires: [Alive, CreatureInReach], effects: [Inspect]),
         // Cooking what is in hand on a station that cooks it (cooking.ron).
         (name: "cook", duration: Instant, requires: [Alive, InReach, Cookable, CookingLevel], effects: [Cook]),
     ],

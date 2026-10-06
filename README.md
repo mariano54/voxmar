@@ -140,9 +140,9 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
 the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
-way. Kanji and kana come from a Japanese pixel font (listed in `assets/ui/fonts/fallback.ron`)
-whose glyphs are read at startup and merged under the chosen interface font, on its
-baseline, so every font speaks Japanese. Tests in `crates/client/src/lang.rs` hold every
+way. Kanji and kana come from BIZ UDGothic, a smooth Japanese font (listed in
+`assets/ui/fonts/fallback.ron`) that text falls back to for those scripts at its own size,
+while letters and digits stay in the crisp pixel font. Tests in `crates/client/src/lang.rs` hold every
 language complete, every key the code names defined, and every character drawn.
 
 ### Console and commands
@@ -620,9 +620,11 @@ shooting stars and heat haze are in the weather the client receives and wait on 
 (docs/weather-effects.md). F3 shows the weather and the effects showing.
 
 Blocks give off particles near the player as their data says (`particles` in blocks.ron, each a
-`style` of Smoke, Ember, Spark or Flame with its rate, burst count, place, spread, colour and size;
-`engine::block::Emission`): a campfire smokes, floats embers and now and then crackles with
-sparks, and a torch's flame flickers. The nearest 32 within 24 blocks emit (client/src/emitters.rs).
+`style` of Smoke, Ember, Spark or Flame with its rate, burst count, place, spread, colour, size
+and how high it rises; `engine::block::Emission`): a campfire's flames lick a block and more
+above it, its smoke rises a few blocks, thinning, embers float as high, and now and then it
+crackles with sparks; a torch's flame flickers. The nearest 32 within 24 blocks emit, those
+beyond 10 blocks fewer (client/src/emitters.rs).
 
 An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
 (kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`

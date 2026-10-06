@@ -118,7 +118,7 @@ fn render_offscreen(
     mut images: ResMut<Assets<Image>>,
     camera: Query<Entity, With<Camera3d>>,
 ) {
-    gate.target = crate::capture::offscreen(&mut commands, &mut images, &camera, SHOT);
+    gate.target = crate::capture::offscreen(&mut commands, &mut images, &camera, SHOT, 1.0);
 }
 
 /// The steps, in order.
@@ -772,6 +772,8 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     "language",
                     if words.as_deref() != Some(japanese.as_str()) || japanese == "Quit game" {
                         Err(format!("the menu still reads {words:?} in Japanese"))
+                    } else if !crate::lang::smooth_fonts_ready(world) {
+                        Err("kana and kanji have no font to fall back to".into())
                     } else if change < 1.0 {
                         Err(format!("Japanese changed the screen by only {change:.1} levels"))
                     } else {
@@ -1390,20 +1392,28 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
-        // The air over the fire, twice a little apart: its smoke and embers move it.
+        // The fire's particles, counted for a while: smoke, embers and sparks rising from
+        // it. Counting is the same at any frame rate; a picture of the air over it, taken
+        // twice, is kept for the record (a few faint puffs sit near any threshold).
         3 => {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 1.6, 0.5));
             if in_phase > 0.5 && gate.shot(world, "fire").is_some() {
+                let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
+                emitters.watch = Some(fire);
+                emitters.watched = 0;
                 gate.advance(now);
             }
         }
-        4 if in_phase > 0.6 => {
+        4 if in_phase > FIRE_WATCH => {
             let Some(later) = gate.shot(world, "fire_later") else { return };
             let change = gate.earlier_shot("fire").map_or(0.0, |earlier| change(&earlier, &later, 0.4));
-            let result = if change >= FIRE_CHANGE {
-                Ok(format!("smoke and embers rise, changing the view over it by {change:.2} levels"))
+            let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
+            let count = emitters.watched;
+            emitters.watch = None;
+            let result = if count >= FIRE_PARTICLES {
+                Ok(format!("{count} particles rose from it in {FIRE_WATCH} s (the view over it changed by {change:.2} levels)"))
             } else {
-                Err(format!("nothing rises from it: the view over it changed by {change:.2} levels"))
+                Err(format!("only {count} particles rose from it in {FIRE_WATCH} s, under {FIRE_PARTICLES}"))
             };
             gate.check("campfire smoke", result);
             gate.next(Step::Tame, now);
@@ -1412,10 +1422,13 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// How much the middle of the view over a campfire must change in a little over half a
-/// second, in levels (of 255) on average: its smoke and embers drifting up. Nothing else
-/// there moves but the odd leaf.
-const FIRE_CHANGE: f32 = 0.3;
+/// Seconds the gate watches a campfire's particles for.
+const FIRE_WATCH: f32 = 1.5;
+
+/// Particles a campfire must give off in `FIRE_WATCH` seconds: its smoke, embers and
+/// sparks come at about ten a second, about fifteen in that time at any frame rate, so
+/// fewer than this means the fire gives off (almost) nothing.
+const FIRE_PARTICLES: u32 = 4;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).
