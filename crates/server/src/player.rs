@@ -8,7 +8,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
-use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
+use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
@@ -180,7 +180,30 @@ impl Server {
             ClientMessage::Settings { view_distance, fly_speed } => self.settings(id, view_distance, fly_speed),
             ClientMessage::Command { line } => self.command(id, &line),
             ClientMessage::Chat { text } => self.chat(id, &text),
+            ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
         }
+    }
+
+    /// Creative mode's catalogue: `count` of any item onto the pointer (topping up a stack
+    /// of it there) or into the inventory, where what does not fit is not given. A survival
+    /// player gets nothing.
+    fn take_from_catalogue(&mut self, id: PlayerId, item: BlockId, count: u8, held: bool) {
+        let known = (item.0 as usize) < self.content.blocks.len() && !item.is_air();
+        let Some(player) = self.players.get_mut(&id) else { return };
+        if !known || count == 0 || player.mode() != GameMode::Creative {
+            return;
+        }
+        let count = count.min(MAX_STACK);
+        if held {
+            match &mut player.inventory.cursor {
+                None => player.inventory.cursor = Some(ItemStack { item, count }),
+                Some(stack) if stack.item == item => stack.count = stack.count.saturating_add(count).min(MAX_STACK),
+                Some(_) => return,
+            }
+        } else {
+            player.inventory.add(item, count);
+        }
+        player.changed(traits::INVENTORY);
     }
 
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64) {
