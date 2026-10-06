@@ -245,7 +245,13 @@ fn craft(
     // As the server allows it: bigger than two by two only at a table, and with the
     // recipe's skill level.
     let at_table = player.station.is_some();
-    let short = |r: &voxmar_engine::craft::Recipe| r.skill.filter(|&s| skills.level(player.skills.xp(s)) < r.level);
+    let (effects, blocks) = (&launch.content.effects, &launch.content.blocks);
+    let short = |r: &voxmar_engine::craft::Recipe| {
+        r.skill.filter(|&s| {
+            let boosted = voxmar_engine::level::check_level(&skills, effects, &player.skills, &player.vitals.effects, s);
+            !voxmar_engine::level::meets_recipe(r, skills.level(player.skills.xp(s)), boosted, &player.inventory, blocks)
+        })
+    };
     let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
     let found = recipes.find(&player.inventory.grid());
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
@@ -651,6 +657,22 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
+/// What a pouch carries, a line a kind, and how to empty it.
+fn pouch_lines(locale: &Locale, registry: &voxmar_engine::block::BlockRegistry, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
+    if !registry.def(item).has_tag("pouch") {
+        return Vec::new();
+    }
+    let carried: Vec<(String, Color)> = player
+        .inventory
+        .pouched
+        .iter()
+        .filter(|&&(held, _)| voxmar_engine::inventory::pouch_for(held) == Some(item))
+        .map(|&(held, count)| (locale.format("pouch.holds", &[("count", &count), ("item", &locale.block(registry.def(held)))]), SOFT))
+        .collect();
+    let empty = carried.is_empty().then(|| (locale.get("pouch.nothing").to_owned(), MUTED));
+    carried.into_iter().chain(empty).chain([(locale.get("pouch.hint").to_owned(), MUTED)]).collect()
+}
+
 /// The mouse and key moves the inventory takes, as key caps with what each does, two to a
 /// row under the slots.
 const LEGEND: [(&str, &str); 6] = [
@@ -718,7 +740,7 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
-    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool)>>,
+    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
@@ -738,7 +760,9 @@ fn tooltip(
     // Shift shows how the name reads: in Japanese, the kana over the name; in another
     // language, the Japanese name with its kana under it.
     let reading = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let key = (item, settings.debug_overlay, reading);
+    // What a pouch carries changes its lines.
+    let carried: u32 = player.inventory.pouched.iter().map(|&(_, n)| n as u32 * 31 + 1).sum();
+    let key = (item, settings.debug_overlay, reading, carried);
     if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
@@ -763,7 +787,10 @@ fn tooltip(
                     lines.spawn(text(&font.0, line, BODY, SOFT));
                 }
             }
-            let lines_after = seed_line(&locale, &launch.content, &player, item).into_iter().chain(details(&locale, def, settings.debug_overlay));
+            let lines_after = seed_line(&locale, &launch.content, &player, item)
+                .into_iter()
+                .chain(pouch_lines(&locale, &world.registry, &player, item))
+                .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
                 lines.spawn(text(&font.0, line, BODY, color));
             }

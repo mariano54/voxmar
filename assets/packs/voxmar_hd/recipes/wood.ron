@@ -23,15 +23,9 @@
     },
     templates: {
         "wood": {
-            // Vanilla's design language, our own drawing: bark as long vertical streaks
-            // of four or five clear shades, darker furrows wandering up the log between
-            // lit ridges, crisp edges and no grain.
-            "block/{name}_log": (size: (32, 32), layers: [
-                Paint(palette: "bark", base: 0.55, shade: [
-                    Noise(cells: (8, 2), octaves: 2, gain: 0.6, amount: 0.5),
-                    Noise(cells: (32, 8), amount: 0.55),
-                ], clean: true),
-            ]),
+            // Bark in vanilla's design language, our own drawing (trunks.ron): long
+            // vertical streaks of clear shades, furrows wandering up between lit ridges.
+            "block/{name}_log": (base: "block/hd_bark"),
             // The cut end: fine growth rings round a dark pith inside the ragged bark.
             "block/{name}_log_top": (size: (32, 32), layers: [
                 Paint(palette: "wood", base: 0.62, shade: [

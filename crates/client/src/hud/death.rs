@@ -34,6 +34,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         root.spawn(panel(WIDTH)).with_children(|card| {
             spawn_heading(card, font, "hud.died.title");
             let hint = Node { justify_content: JustifyContent::Center, margin: UiRect::vertical(Val::Px(space::INNER)), ..default() };
+            // What dying cost: the three kept items, the rest where you fell for 30 minutes.
+            let cost = Node { justify_content: JustifyContent::Center, margin: UiRect::top(Val::Px(space::INNER)), ..default() };
+            card.spawn(cost).with_child((Localized("hud.died.cost"), text(font, "", BODY, MUTED)));
             card.spawn(hint).with_child((Localized("hud.died"), text(font, "", BODY, MUTED)));
             card.spawn(button_row(space::GAP)).with_children(|row| {
                 spawn_button(row, font, "hud.respawn", ButtonStyle::Primary, RespawnButton);

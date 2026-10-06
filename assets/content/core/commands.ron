@@ -73,6 +73,13 @@
             run: Effect,
         ),
         (
+            name: "kill",
+            usage: "",
+            help: "Kills you, as a fall or a wolf would: you keep your three most valuable items and the rest lies where you fell.",
+            permission: Admin,
+            run: Kill,
+        ),
+        (
             name: "clear",
             usage: "[item]",
             help: "Empties your inventory, or takes every one of an item out of it.",
@@ -89,7 +96,7 @@
         (
             name: "grow",
             usage: "[STAGES]",
-            help: "Grows the crops within 8 blocks of you by a stage, or as many as you say (all the way to ripe with `ripe`).",
+            help: "Grows the crops within 8 blocks of you by a stage, or as many as you say (all the way to ripe with `ripe`), and brings back the wild plants picked there.",
             permission: Admin,
             run: Grow,
         ),
