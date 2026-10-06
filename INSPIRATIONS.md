@@ -338,6 +338,33 @@ copied.
   wall streaks and drips are listed as next steps in docs/weather-effects.md.
 - Where: `crates/client/src/render/precipitation.rs` and `precipitation.wgsl`.
 
+## Textures
+
+### Alacrity
+
+- Author: Satellence
+- Links: https://www.curseforge.com/minecraft/texture-packs/alacrity and
+  https://satellence.gumroad.com/l/alacrity
+- Licence: all rights reserved; its terms forbid using its assets in other projects or in
+  AI-generated work. Ideas from its public text descriptions only: no image of it was
+  downloaded, opened, traced or sampled.
+- What we took: the direction for Voxmar HD, our 32×32 pack. A 32×32 look that stays
+  recognisable while leaning a little fantasy; warmer building materials; soft, hand-made
+  vegetation; atmosphere without losing readability. Mariano's notes on a screenshot of its
+  grass (a fine, soft grass top with light yellow-green speckle, thin pale blades, flowers
+  as dense clumps of tiny blossoms, muted warm tones) became the pack's style guide.
+- Where: `docs/voxmar-hd.md` and `assets/packs/voxmar_hd/`.
+
+### Hue-shifted ramps (pixel-art practice)
+
+- Source: common pixel-art teaching, for example Slynyrd's "Pixelblog 1: Color Palettes"
+  (https://www.slynyrd.com/blog/2018/1/10/pixelblog-1-color-palettes)
+- Licence: an article; the idea only.
+- What we took: ramps whose shadows turn towards blue and highlights towards yellow, with
+  chroma highest in the middle shades, which is how Voxmar HD warms its stone, earth and wood.
+- Where: the `Ramp` palettes in `assets/packs/voxmar_hd/recipes/` (the ramp builder itself is
+  `crates/texgen/src/colour.rs`).
+
 ## Sound and ambience
 
 ### AmbientSounds

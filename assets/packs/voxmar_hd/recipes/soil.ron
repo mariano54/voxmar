@@ -4,10 +4,10 @@
 // with gentle patches, light flecks of blades catching the sun and a few darker hollows.
 (
     palettes: {
-        "dirt": (ramp: "#7e5c42", shades: 8, light: 0.3, hue: 18.0, chroma: -0.3),
+        "dirt": (ramp: "#7a5c46", shades: 8, light: 0.3, hue: 18.0, chroma: -0.3),
         "sand": (ramp: "#d9c79b", shades: 8, light: 0.24, hue: 16.0, chroma: -0.3),
         "red_sand": (ramp: "#c0703c", shades: 8, light: 0.26, hue: 14.0, chroma: -0.3),
-        "gravel": (ramp: "#8b847e", shades: 8, light: 0.36, hue: 22.0, chroma: -0.25),
+        "gravel": (ramp: "#8a8682", shades: 8, light: 0.36, hue: 18.0, chroma: -0.25),
         "pebble": (ramp: "#9a918a", shades: 5, light: 0.24, hue: 20.0, chroma: -0.3),
         // Neutral, with a slight warm lift in the light: the tint gives the colour.
         "grass_grey": ["#6e6e6e", "#7a7a7a", "#868686", "#929292", "#9e9e9e", "#aaaaa9", "#b8b8b6", "#c8c8c4"],
@@ -61,12 +61,12 @@
         "block/red_sand": (base: "block/sand", palettes: {"main": "red_sand"}),
         // Loose stones of many sizes, each rounded and lit, a few of warmer rock, over
         // dark gaps.
-        "block/gravel": (size: (32, 32), palettes: {"main": "gravel", "warm": "granite"}, layers: [
+        "block/gravel": (size: (32, 32), palettes: {"main": "gravel", "warm": (ramp: "#8f7c70", shades: 6, light: 0.3, hue: 18.0, chroma: -0.3)}, layers: [
             Paint(palette: "main", base: 0.56, shade: [
                 Cells(count: (7, 7), jitter: 1.0, value: 0.5, edge: -0.55, width: 1.0, bevel: 0.45, round: 0.35, warp: 1.2),
                 Grain(0.1),
             ], clean: true),
-            Clusters(palette: "warm", count: 5, size: (6, 12), spacing: 9.0, shade: 4, shadow: -1),
+            Clusters(palette: "warm", count: 3, size: (6, 12), spacing: 11.0, shade: 3, shadow: -1),
             Clusters(palette: "main", count: 8, size: (2, 5), spacing: 6.0, shade: 5, shadow: -1, seed: 1),
         ]),
     },

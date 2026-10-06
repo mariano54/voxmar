@@ -245,8 +245,13 @@ first pack that has it:
 4. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
    never replacing ours.
 
-Settings → Textures switches to "Voxmar", which puts our pack first (the Minecraft jar then only
-fills names ours lacks); it takes effect the next time the game starts.
+Settings → Video → Textures switches to "Voxmar", which puts our pack first (the Minecraft jar
+then only fills names ours lacks), or to "Voxmar HD", our own 32×32 look
+(`assets/packs/voxmar_hd`, style guide in [docs/voxmar-hd.md](docs/voxmar-hd.md)); it takes
+effect the next time the game starts. A pack folder with a `pack.ron` is such a whole look: it
+names the packs it builds on (`extends`), whose images and recipes it takes for everything it
+does not draw itself, and the resolution its block and item textures are drawn at (recipes
+written smaller are drawn finer, keeping their shapes), and it is used only when picked.
 Anything still missing gets a generated placeholder. The startup log says how many textures
 each pack provided. A pack keeps images at `textures/<path>.png` (`textures/block/stone.png`),
 or at `assets/minecraft/textures/<path>.png` as Minecraft and its resource packs do. No
@@ -266,6 +271,9 @@ cargo run --release -p voxmar_texgen -- sheet --only stone,ore --compare PACK_OR
 cargo run --release -p voxmar_texgen -- export --out DIR       # write every recipe as a PNG
 ```
 
+A pack's books can replace the books of the pack it extends by name: a palette (recolouring
+everything drawn with it), a texture, or single members of a template (redrawing them for
+every family). `--pack assets/packs/voxmar_hd` renders Voxmar HD as the game does.
 `sheet` writes `target/texgen/sheet.png`: each texture large, tiled 3×3 and at one pixel per
 texel, optionally beside the same name from another pack (`--pack DIR` picks the pack,
 `--columns`, `--zoom` and `--out` the layout).

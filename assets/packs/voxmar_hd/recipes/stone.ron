@@ -4,9 +4,9 @@
 // `stone` template's members are redrawn at 32×32 for every rock at once.
 (
     palettes: {
-        // Warm grey, violet in the shadows, a little straw in the light.
-        "stone": (ramp: "#878079", shades: 8, light: 0.34, hue: 22.0, chroma: -0.3),
-        "andesite": (ramp: "#7f7c79", shades: 8, light: 0.34, hue: 20.0, chroma: -0.3),
+        // Grey with the barest warmth, violet in the shadows, a little straw in the light.
+        "stone": (ramp: "#82827f", shades: 8, light: 0.32, hue: 14.0, chroma: -0.3),
+        "andesite": (ramp: "#7e7d7b", shades: 8, light: 0.34, hue: 20.0, chroma: -0.3),
         "granite": (ramp: "#93695a", shades: 8, light: 0.34, hue: 18.0, chroma: -0.35),
         "diorite": (ramp: "#c4c0b8", shades: 8, light: 0.3, hue: 20.0, chroma: -0.3),
         "tuff": (ramp: "#77776a", shades: 8, light: 0.32, hue: 20.0, chroma: -0.3),
@@ -64,11 +64,12 @@
         // mineral flecks; nothing directional, as stone turns from block to block.
         "block/stone": (size: (32, 32), palettes: {"main": "stone"}, layers: [
             Paint(palette: "main", base: 0.52, shade: [
-                Noise(cells: (3, 3), octaves: 3, gain: 0.55, amount: 0.42),
+                Noise(cells: (4, 4), octaves: 3, gain: 0.55, amount: 0.34),
                 Noise(cells: (8, 8), octaves: 2, amount: 0.14),
                 Grain(0.16),
             ], clean: true),
-            Paint(palette: "main", base: 0.2, mask: [Ridge(cells: (3, 3), octaves: 2, width: 0.045, amount: 1.0), Noise(cells: (4, 4), amount: 0.9)], above: 0.9, light: 1),
+            // Few, faint and short, so no crack repeats block after block in a wall.
+            Paint(palette: "main", base: 0.3, mask: [Ridge(cells: (4, 4), octaves: 1, width: 0.035, amount: 1.0), Noise(cells: (4, 4), amount: 1.0)], above: 1.12, light: 1),
             Shift(by: [Flat(1.0)], mask: [Speckle(chance: 0.035, amount: 1.0, seed: 6)], above: 0.5),
             Shift(by: [Flat(-1.0)], mask: [Speckle(chance: 0.025, amount: 1.0, seed: 7)], above: 0.5),
         ]),

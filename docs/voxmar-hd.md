@@ -17,7 +17,7 @@ apart still read as one hand.
   never see Minecraft's drawing of it: our cobbles have our stones, our ores our crystals,
   our planks our grain.
 - **Muted and warm.** Colours sit a little below full saturation and lean warm in the light.
-  Nothing natural is pure grey: stone is a warm grey with a breath of violet in the
+  Nothing natural is pure grey: stone is a grey with a breath of violet in the
   shadows, dirt a soft umber, sand a pale straw. Saturation is kept for the things a player
   looks for: flowers, ores, fruit and magic.
 - **Soft, fine detail.** Detail is fine and low in contrast, so a surface reads as a
@@ -54,11 +54,11 @@ Every material is one ramp of **7 to 9 shades**, darkest first (the default pack
 
   | family | key | notes |
   | --- | --- | --- |
-  | stone | `#878079` | warm grey, violet shadows |
+  | stone | `#82827f` | grey with the barest warmth, violet shadows |
   | deepslate | `#4b4a54` | cool, the one cold rock |
-  | dirt | `#7e5c42` | umber, never orange |
+  | dirt | `#7a5c46` | umber, never orange |
   | sand | `#d9c79b` | straw |
-  | gravel | `#8b847e` | mixed stones, a few warm |
+  | gravel | `#8a8682` | mixed stones, a few warm |
   | oak | `#a27b52` | honey planks, grey-brown bark |
   | spruce | `#6e4f36` | dark warm |
   | birch | `#d6c9a6` | cream |

@@ -62,6 +62,7 @@
         "spool_wood": ["#5a3c1c", "#7a5a30", "#9a7a48"],
         "venom_green": ["#2e5a14", "#5a9a28", "#9ad04a"],
         "moon_dust": ["#8aa0d8", "#c4d4ff", "#ffffff"],
+        "glimmer_dust": ["#9c98d6", "#d4d2ff", "#ffffff"],
         "lumen_glow": ["#2aa088", "#5ce6c6", "#c4fff0"],
         "aether_violet": ["#8a6ad0", "#c4a8ff", "#f4ecff"],
     },
@@ -185,6 +186,8 @@
             "......ffff......", "................", "................", "................",
         ])]),
         // A pile of dust that glints.
+        // What glimmer moths shed: the moon dust's pile, paler and lilac.
+        "block/glimmer_dust": (base: "block/moon_dust", palettes: {"fruit": "glimmer_dust"}),
         "block/moon_dust": (base: "shape/plant", palettes: {"fruit": "moon_dust"}, layers: [Grid(rows: [
             "................", "................", "........W.......", "...W............",
             "..........W.....", "......j.........", "....jjhj........", "...jhhhhjj..W...",
