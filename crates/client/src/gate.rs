@@ -209,6 +209,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// An effect that comes on pops up with its name, and the first look at the inventory
+    /// brings its tip.
+    Tips,
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
@@ -849,6 +852,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -1490,6 +1494,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
+                // The crafting table made earlier finished the quest that asks for one.
+                let quests = &world.resource::<LocalPlayer>().quests;
+                let table = quests.iter().find(|q| q.name == "base:crafting_table").map(|q| q.done);
+                gate.check("workshop: quests", match table {
+                    Some(true) => Ok(format!("the crafting table quest is done ({} of {} quests)", quests.iter().filter(|q| q.done).count(), quests.len())),
+                    Some(false) => Err("a crafting table was made, but its quest is not done".into()),
+                    None => Err("the server sent no quests".into()),
+                });
                 // A small pack to die with, so what is left lies in a few stacks by the feet.
                 let net = world.resource::<Net>();
                 for line in ["clear", "give stone_pickaxe 1", "give bread 1", "give stick 10", "give dirt 20", "give oak_planks 12"] {
@@ -2058,6 +2070,37 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Tips, now);
+        }
+    }
+}
+
+fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::effects::ShowEffects;
+    use crate::hud::tips::{Popup, Tips};
+    let Some(warmed) = world.resource::<Launch>().content.effects.find("ember_warmed") else {
+        gate.check("tips", Err("no ember_warmed effect in the content".into()));
+        gate.next(Step::Guides, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            // As for a player who has seen none.
+            world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
+            world.insert_resource(ShowEffects(vec![("ember_warmed".into(), 60)]));
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        _ => {
+            let popped = world.query::<&Popup>().iter(world).any(|popup| popup.0 == warmed);
+            let tip = world.resource::<Tips>().showing.map(|(name, _)| name);
+            if !(popped && tip.is_some()) && in_phase < 3.0 {
+                return;
+            }
+            gate.check("tips: effect", if popped { Ok("Ember-warmed popped up as it came on".into()) } else { Err("an effect came on with no pop-up".into()) });
+            gate.check("tips: first look", match tip { Some(name) => Ok(format!("the {name} tip showed")), None => Err("opening the inventory brought no tip".into()) });
+            world.remove_resource::<ShowEffects>();
+            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }
     }

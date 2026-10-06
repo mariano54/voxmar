@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::RegistryError;
 
+/// The most effects together multiply experience by: a quarter more (Rested, Focused,
+/// house rooms and feats all count toward it).
+pub const MAX_XP_BOOST: f32 = 1.25;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SkillId(pub u8);
 

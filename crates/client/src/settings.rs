@@ -132,6 +132,8 @@ pub struct Settings {
     /// The pixel font the interface writes with.
     pub font: InterfaceFont,
     /// How large the interface is drawn, in percent: one of `UI_SCALES`.
+    /// The tips shown already (`hud::tips`), each once.
+    pub tips_seen: Vec<String>,
     pub ui_scale: i32,
     /// The sounds buttons and the inventory make.
     pub ui_sounds: UiSounds,
@@ -320,6 +322,7 @@ impl Default for Settings {
             font: InterfaceFont::default(),
             // A little smaller than the art's own size: still whole pixels on a Retina screen.
             ui_scale: 75,
+            tips_seen: Vec::new(),
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),

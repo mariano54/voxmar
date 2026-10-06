@@ -9,6 +9,7 @@ mod fishing;
 mod death;
 mod hearth;
 mod journal;
+mod quests;
 mod regrow;
 mod farm;
 mod husbandry;
@@ -515,6 +516,7 @@ impl Server {
         self.bury_the_dead();
         self.regrow();
         self.look_around();
+        self.check_quests();
         self.tick_items();
         self.tick_creatures();
         self.flow();
