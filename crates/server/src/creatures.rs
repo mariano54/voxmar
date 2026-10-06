@@ -283,7 +283,8 @@ impl Server {
                 continue;
             }
             let nearest = self.players.values().filter(|p| p.joined).map(|p| p.position.distance(position)).fold(f32::MAX, f32::min);
-            let every = if nearest < NEAR { NEAR_THINK } else { FAR_THINK };
+            // Each thinks at its own beat, so neighbours do not all decide at once.
+            let every = if nearest < NEAR { NEAR_THINK } else { FAR_THINK } + creature.seed % 3;
             if (self.tick + id as u64).is_multiple_of(every) {
                 let range = species.def.senses.sight.max(species.def.senses.hearing).max(16.0) * 1.5;
                 let players = self.seen_from(position, range, &species.favourite, creature.owner.as_deref());
@@ -491,7 +492,7 @@ impl Server {
         }
         let defence_skill = self.skill("core:defence");
         let defence = self.level(player, defence_skill);
-        let [hit, amount, _] = random3(self.tick, target.position.floor().as_ivec3(), player);
+        let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
         let (low, high) = attack.damage;
         let target = self.players.get_mut(&player).expect("checked above");
         if hit < creature::hit_chance(def.level, defence) {
@@ -521,7 +522,7 @@ impl Server {
         let species = self.content.creatures.get(creature.species);
         let attack_skill = self.skill("core:attack");
         let attack = self.level(player, attack_skill);
-        let [hit, amount, _] = random3(self.tick, creature.body.position.floor().as_ivec3(), id ^ 0x5717);
+        let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
         let feet = self.players[&player].position;
         let creature = self.creatures.live.get_mut(&id).expect("checked above");
         if hit >= creature::hit_chance(attack, species.def.defence) {
@@ -719,8 +720,16 @@ impl Server {
         }) else {
             return;
         };
+        // Groups vary: even herd animals turn up alone or in pairs now and then.
         let group = self.content.creatures.get(species).def.group.size;
-        let count = group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8;
+        let roll = unit_from(mix(seed, 4));
+        let count = if roll < 0.18 {
+            1
+        } else if roll < 0.32 {
+            group.1.min(2)
+        } else {
+            group.0 + (unit_from(mix(seed, 3)) * (group.1 - group.0 + 1) as f32) as u8
+        };
         for i in 0..count.max(1) {
             let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
             let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
@@ -839,6 +848,16 @@ fn ring(r: i32, i: i32) -> (i32, i32) {
     }
 }
 
+
+/// A blow's two rolls (whether it lands, and how hard), from the tick and who strikes whom.
+/// A strong mix of all three: blows come at a steady beat, so a weak one (the tick folded in
+/// once, against a creature standing in one cell) gave long runs of misses or of hits, a
+/// level-1 snail taking anywhere from 4 to 40 swings.
+pub(crate) fn combat_roll(tick: u64, creature: u32, striker: u64) -> [f32; 2] {
+    let h = mix(mix(mix(tick, creature as u64), striker), 0xc0b);
+    [unit_from(h), unit_from(mix(h, 1))]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,5 +873,32 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), 49);
+    }
+}
+
+#[cfg(test)]
+mod combat_tests {
+    use super::*;
+
+    #[test]
+    fn blows_at_a_steady_beat_land_as_often_as_the_odds_say() {
+        // A player swinging every seven ticks at a level-1 creature that stands still.
+        let chance = creature::hit_chance(1, 1);
+        for creature in 0..20u32 {
+            let (mut landed, mut misses, mut longest) = (0, 0, 0);
+            for blow in 0..400u64 {
+                let [hit, _] = combat_roll(1000 + blow * 7, creature, 1 ^ 0x5717);
+                if hit < chance {
+                    landed += 1;
+                    misses = 0;
+                } else {
+                    misses += 1;
+                    longest = longest.max(misses);
+                }
+            }
+            let rate = landed as f32 / 400.0;
+            assert!((rate - chance).abs() < 0.08, "creature {creature}: {rate} landed, the odds are {chance}");
+            assert!(longest < 20, "creature {creature}: {longest} misses in a row");
+        }
     }
 }

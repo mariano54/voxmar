@@ -10,6 +10,8 @@
 //! every terrain bind group, the sky material and the volumetric pass bind. See
 //! atmosphere.wgsl for how the shaders use it.
 
+use std::sync::{Arc, OnceLock};
+
 use bevy::color::ColorToComponents;
 use bevy::math::{DVec2, DVec3};
 use bevy::prelude::*;
@@ -31,9 +33,11 @@ impl Plugin for AtmospherePlugin {
         load_shader_library!(app, "clouds.wgsl");
         load_shader_library!(app, "atmosphere.wgsl");
         load_shader_library!(app, "shadows.wgsl");
-        app.init_resource::<Atmosphere>().add_plugins(ExtractResourcePlugin::<Atmosphere>::default());
+        let shared = SharedAtmosphere::default();
+        app.init_resource::<Atmosphere>().insert_resource(shared.clone()).add_plugins(ExtractResourcePlugin::<Atmosphere>::default());
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
+            .insert_resource(shared)
             .add_systems(RenderStartup, create_buffer)
             .add_systems(Render, write_buffer.in_set(RenderSystems::PrepareResources));
     }
@@ -354,13 +358,28 @@ fn luminance(color: Vec3) -> f32 {
 #[derive(Resource)]
 pub struct AtmosphereBuffer(pub Buffer);
 
-fn create_buffer(mut commands: Commands, device: Res<RenderDevice>) {
-    commands.insert_resource(AtmosphereBuffer(device.create_buffer(&BufferDescriptor {
+/// The same buffer for the main world, where materials are made: a material that wants the
+/// air (fog over a creature, say) binds it as a read-only storage buffer and calls
+/// `fogged` from `voxmar::atmosphere` (the terrain's own shaders bind it as a uniform at
+/// group 2, which a material cannot reach). Empty until the renderer has started.
+#[derive(Resource, Clone, Default)]
+pub struct SharedAtmosphere(Arc<OnceLock<Buffer>>);
+
+impl SharedAtmosphere {
+    pub fn get(&self) -> Option<Buffer> {
+        self.0.get().cloned()
+    }
+}
+
+fn create_buffer(mut commands: Commands, device: Res<RenderDevice>, shared: Res<SharedAtmosphere>) {
+    let buffer = device.create_buffer(&BufferDescriptor {
         label: Some("atmosphere"),
         size: Atmosphere::min_size().get(),
-        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        usage: BufferUsages::UNIFORM | BufferUsages::STORAGE | BufferUsages::COPY_DST,
         mapped_at_creation: false,
-    })));
+    });
+    let _ = shared.0.set(buffer.clone());
+    commands.insert_resource(AtmosphereBuffer(buffer));
 }
 
 fn write_buffer(atmosphere: Res<Atmosphere>, buffer: Res<AtmosphereBuffer>, queue: Res<RenderQueue>) {

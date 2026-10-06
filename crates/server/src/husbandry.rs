@@ -15,7 +15,7 @@ use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_protocol::{PlayerId, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::creatures::product_ticks;
@@ -57,14 +57,9 @@ impl Server {
     }
 
     fn grant(&mut self, player: PlayerId, skill: Option<SkillId>, xp: f32) {
-        let (Some(skill), Some(p)) = (skill, self.players.get_mut(&player)) else { return };
-        let tenths = (xp * 10.0) as u32;
-        if tenths == 0 {
-            return;
+        if let Some(skill) = skill {
+            self.grant_xp(player, skill, xp);
         }
-        p.skills.grant(skill, tenths);
-        p.changed(traits::SKILLS);
-        p.connection.send(ServerMessage::Xp { skill, tenths });
     }
 
     /// Whether creature `id` takes `item` from `player`: food that tames it (if wild), food
@@ -74,8 +69,13 @@ impl Server {
         let species = self.content.creatures.get(creature.species);
         let tags = &self.content.blocks.def(item).tags;
         let mine = creature.owner.is_some() && creature.owner == self.player_name(player);
-        let tames = creature.owner.is_none() && species.def.taming.is_some() && species.tame_food.contains(&item);
-        let breeds = mine && creature.grows_up.is_none() && species.def.breeding.is_some() && species.breed_food.contains(&item);
+        // One too wild for the player yet turns the food down rather than eat it for nothing.
+        let can_tame = species.def.taming.as_ref().is_some_and(|t| self.skill_level(player, "core:hunter") >= t.level);
+        let tames = creature.owner.is_none() && can_tame && species.tame_food.contains(&item);
+        // Nor does a kept one take breeding food it cannot use yet (the player's Farming too
+        // low, or it bred too recently).
+        let can_breed = species.def.breeding.as_ref().is_some_and(|b| self.skill_level(player, "core:farming") >= b.level) && self.tick >= creature.breeds_again;
+        let breeds = mine && creature.grows_up.is_none() && can_breed && species.breed_food.contains(&item);
         let tool = mine && species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
         tames || breeds || tool
     }
@@ -125,10 +125,6 @@ impl Server {
         let creature = &self.creatures.live[&id];
         if creature.owner.is_none() {
             let Some(taming) = species.def.taming.clone() else { return };
-            if self.skill_level(player, "core:hunter") < taming.level {
-                // Too wild for them yet: it eats, and trusts them no more for it.
-                return;
-            }
             let u = unit_from(mix(creature.seed, self.tick ^ 0x7a3e));
             let creature = self.creatures.live.get_mut(&id).expect("checked");
             if creature.trusting != name {

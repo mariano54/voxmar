@@ -409,7 +409,11 @@ impl Server {
         while !stop.load(Ordering::Relaxed) {
             self.accept_connections();
             self.receive_generated();
+            // Timed actions due by now complete after the messages that came before now,
+            // which may have cancelled them.
+            let now = Instant::now();
             self.handle_messages();
+            self.complete_actions(now);
             while let Ok(line) = self.console.try_recv() {
                 self.console(&line);
             }
@@ -463,8 +467,8 @@ impl Server {
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
             while let Some(player) = self.players.get(&id) {
-                match player.connection.try_recv() {
-                    Ok(Some(message)) => self.handle_message(id, message),
+                match player.connection.try_recv_at() {
+                    Ok(Some((at, message))) => self.handle_message(id, message, at),
                     Ok(None) => break,
                     Err(_) => {
                         tracing::info!("{} left", player.name);
@@ -481,7 +485,6 @@ impl Server {
         let started = Instant::now();
         self.tick += 1;
         self.day += self.day_speed as f64;
-        self.complete_actions();
         self.run_processes();
         self.tick_items();
         self.tick_creatures();
@@ -545,7 +548,7 @@ impl Server {
     fn save_player(&self, player: &Player) {
         if let Some(save) = &self.save
             && player.joined
-            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills), &self.content.blocks)
+            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), &self.content.blocks)
         {
             tracing::error!("could not save player {}: {e}", player.name);
         }

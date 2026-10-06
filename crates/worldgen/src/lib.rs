@@ -29,6 +29,7 @@ mod hue;
 mod lattice;
 mod noise;
 mod parallel;
+pub use parallel::set_helper_limit;
 #[cfg(test)]
 mod perf;
 mod rarity;

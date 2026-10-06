@@ -24,6 +24,12 @@
 //! biome's is held by worldgen's `grass_is_kept_in_check`, which does not move when the
 //! world reseeds and spawn lands elsewhere).
 //!
+//! Breaking is played under load besides: a row of blocks of every hardness broken with
+//! the bare hand, a held block (throwing one halfway through) and every tool, while busy
+//! threads contend for the cores, the game's own frames stall now and then and the server runs behind
+//! (`SERVER_LAG`). Mariano kept losing blocks he broke on a busy machine; client and server
+//! must still agree on every one.
+//!
 //! It runs headless like `--capture`, builds its own test ground high above spawn with
 //! commands (so terrain changes don't move it), and exits with an error if any check
 //! failed. Each check is logged as `gate: ok …` or `gate: FAILED …`, and the shots are
@@ -139,6 +145,9 @@ enum Step {
     DigSettle,
     /// Walking into the hole picks up what the dug blocks dropped.
     Collect,
+    /// A row of blocks of every hardness, broken with the bare hand, a held block and every
+    /// tool, under load: client and server agree on every one, and none comes back.
+    Breaks,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
@@ -165,6 +174,9 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
+    /// player's folder and clipboard alone) and says so in the chat.
+    Screenshot,
     /// Every in-game screen and state, in English and Japanese: no text reaches past the
     /// element it sits in.
     Fit,
@@ -211,12 +223,26 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// Whether the loading cover was checked.
+    cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// The interface font before the gate tried another, to go back to.
+    font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    /// While taming, frames the junglefowl was under the crosshair, another creature was,
+    /// or none was, and the nearest the player came to it.
+    tame_aim: [u32; 3],
+    tame_nearest: f32,
+    breaks: Breaks,
     failures: Vec<String>,
     passes: usize,
+    /// The weather's fractions as shown last frame, and the biggest change from one frame
+    /// to the next relative to the most it may change in a frame (over 1 is a jump), with
+    /// which and when.
+    weather_last: Option<[f32; 24]>,
+    weather_jump: (f32, &'static str, f32),
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
@@ -246,10 +272,17 @@ impl Gate {
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
+            cover_checked: false,
             spills: Vec::new(),
+            font: None,
             food_moved: false,
+            tame_aim: [0; 3],
+            tame_nearest: f32::MAX,
+            breaks: Breaks::default(),
             failures: Vec::new(),
             passes: 0,
+            weather_last: None,
+            weather_jump: (0.0, "", 0.0),
             frame_ms: Vec::new(),
             longest: default(),
         }
@@ -381,10 +414,16 @@ fn run(world: &mut World) {
     let screen = *world.resource::<State<Screen>>().get();
     let mut gate = world.remove_resource::<Gate>().expect("gate state");
     gate.frames += 1;
+    gate.breaks.hitch(gate.frames);
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
     *longest = longest.max(frame_ms);
+    if screen == Screen::InGame && world.resource::<crate::weather::WeatherReady>().0 {
+        watch_weather(world, &mut gate, now);
+    } else {
+        gate.weather_last = None;
+    }
     if gate.step != Step::Done {
         match guard(world, &mut gate, now, screen) {
             Ok(()) => step(world, &mut gate, now),
@@ -435,7 +474,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     let feet = gate.feet;
     match gate.step {
         Step::Load => {
-            if loaded(world) {
+            // As a loading screen would, waiting for the weather to show too.
+            if loaded(world) && world.resource::<crate::weather::WeatherReady>().0 {
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
                 land(world, gate);
                 // From here on, anything first drawn compiles its pipeline in that frame
@@ -615,11 +655,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 };
                 gate.check("drops", result);
                 key(world, KeyCode::KeyW, false);
-                let line = format!("tp {} {} {}", feet.x as f32 + 4.5, feet.y - 2, feet.z as f32 + 0.5);
-                world.resource::<Net>().command(&line);
-                gate.next(Step::Swim, now);
+                gate.next(Step::Breaks, now);
             }
         }
+        Step::Breaks => breaks(world, gate, now, in_phase),
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
@@ -631,6 +670,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
@@ -671,6 +711,302 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         }
         Step::Done => {}
     }
+}
+
+/// The player's effects that the weather brings on, by name in English.
+fn weather_effects(world: &World) -> Vec<String> {
+    let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+    let weathery = |c: &voxmar_engine::effect::Condition| {
+        use voxmar_engine::effect::Condition::*;
+        matches!(c, Rain(_) | Snow(_) | Hail(_) | Wind(_) | Dust(_) | Storm(_))
+    };
+    player
+        .vitals
+        .effects
+        .iter()
+        .map(|a| launch.content.effects.get(a.effect))
+        .filter(|def| def.when.as_ref().is_some_and(weathery))
+        .map(|def| def.title.to_lowercase())
+        .collect()
+}
+
+/// Blocks of every hardness the breaks step lays out: glass and snow break in a blink,
+/// stone and cobblestone take seconds.
+const BREAK_BLOCKS: [&str; 6] = ["base:glass", "base:dirt", "base:stone", "base:snow_block", "base:gravel", "base:cobblestone"];
+/// Where the player's feet go for the breaks step, and the first block of the row,
+/// from the test ground's middle.
+const BREAK_STAND: IVec3 = IVec3::new(-1, 0, 0);
+const BREAK_ROW: IVec3 = IVec3::new(-3, 0, -2);
+/// The hotbar slot tools are swapped into.
+const TOOL_SLOT: usize = voxmar_engine::inventory::HOTBAR_SLOTS - 1;
+/// Longest the row may take to break, in seconds of game time.
+const BREAKS_LIMIT: f32 = 25.0;
+
+/// What a block is broken with in the breaks step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Holder {
+    Hand,
+    /// The starting planks, one thrown with Q halfway through: an instant action while
+    /// the break goes on, which must not cancel it.
+    Planks,
+    Tool(BlockId),
+}
+
+/// The breaks step's state, and the load it puts the machine under.
+#[derive(Default)]
+struct Breaks {
+    /// The row: each cell, what it was, and what it is broken with.
+    row: Vec<(IVec3, BlockId, Holder)>,
+    /// Blocks done so far; when the current one began; whether its Q was pressed.
+    done: usize,
+    began: f32,
+    thrown: bool,
+    /// Cells the client has shown broken, and any it has seen come back since.
+    shown: Vec<IVec3>,
+    came_back: Vec<IVec3>,
+    load: Option<Load>,
+}
+
+impl Breaks {
+    /// Stalls the game's frame now and then while under load: 80 to 320 ms every fifth
+    /// frame or so, as Mariano's slow frames did.
+    fn hitch(&self, frame: u32) {
+        if self.load.is_some() {
+            let roll = crate::sfx::mix(frame as u64);
+            if roll % 5 == 0 {
+                std::thread::sleep(Duration::from_millis(80 + (roll >> 8) % 240));
+            }
+        }
+    }
+}
+
+/// Threads spinning until dropped: a few, enough to contend with the game's own threads
+/// on a machine that is already busy (gate runs share it with builds and other gates, and
+/// with Mariano's game) without taking every core from everyone else.
+const LOAD_THREADS: usize = 4;
+
+/// Threads spinning until dropped.
+struct Load {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl Load {
+    fn start() -> Self {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let threads = (0..LOAD_THREADS)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    let mut x = 1u64;
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        for _ in 0..10_000 {
+                            x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
+                        }
+                    }
+                })
+            })
+            .collect();
+        Self { stop, threads }
+    }
+}
+
+impl Drop for Load {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// A row of blocks of every hardness, broken one after another with the button held, as a
+/// player sweeps along a wall: with the bare hand, the starting planks (throwing one with Q
+/// halfway through) and every tool, swapped into the hotbar as needed. Busy threads
+/// contend for the cores, the game's frames stall now and then, and the server runs behind. Every
+/// block must end broken on the client and the server alike, and none may come back.
+fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let feet = gate.feet;
+    match gate.phase {
+        0 => {
+            let (row, tools) = {
+                let registry = &world.resource::<ClientWorld>().registry;
+                let tools: Vec<BlockId> = registry.ids().filter(|&id| registry.def(id).has_tag("tool")).collect();
+                let mut holders = vec![Holder::Hand, Holder::Planks];
+                holders.extend(tools.iter().map(|&t| Holder::Tool(t)));
+                let blocks: Vec<BlockId> = BREAK_BLOCKS.iter().filter_map(|name| registry.id(name)).collect();
+                let count = blocks.len().max(holders.len());
+                let row: Vec<(IVec3, BlockId, Holder)> =
+                    (0..count).map(|i| (feet + BREAK_ROW + IVec3::new(-(i as i32 / 6), 0, i as i32 % 6), blocks[i % blocks.len()], holders[i % holders.len()])).collect();
+                let names: Vec<String> = tools.iter().map(|&t| registry.def(t).name.clone()).collect();
+                (row, names)
+            };
+            let net = world.resource::<Net>();
+            let stand = feet + BREAK_STAND;
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            let registry = &world.resource::<ClientWorld>().registry;
+            for &(cell, block, _) in &row {
+                net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
+            }
+            for tool in tools {
+                net.command(&format!("give {tool} 1"));
+            }
+            gate.breaks = Breaks { row, ..default() };
+            gate.advance(now);
+        }
+        1 => {
+            // The row in place on both sides, the tools in the inventory, the player there.
+            let row = gate.breaks.row.clone();
+            let client = world.resource::<ClientWorld>();
+            let built = |side: &dyn Fn(IVec3) -> Option<BlockId>| row.iter().all(|&(cell, block, _)| side(cell) == Some(block));
+            let server = gate.observer.as_ref().is_none_or(|o| built(&|p| o.world.block(p)));
+            let player = world.resource::<LocalPlayer>();
+            let tools = row.iter().all(|&(_, _, holder)| match holder {
+                Holder::Tool(tool) => (0..voxmar_engine::inventory::SLOTS).any(|s| player.inventory.get(s).is_some_and(|stack| stack.item == tool)),
+                _ => true,
+            });
+            let standing = player.on_ground && player.position.floor().as_ivec3() == feet + BREAK_STAND;
+            if built(&|p| client.block(p)) && server && tools && standing {
+                gate.breaks.load = Some(Load::start());
+                gate.breaks.began = now;
+                gate.advance(now);
+            } else if in_phase > 10.0 {
+                gate.check("breaks", Err(format!("the row was never built (client {}, server {server}), the tools never came ({tools}) or the player never stood there", built(&|p| client.block(p)))));
+                end_breaks(world, gate, now);
+            }
+        }
+        2 => {
+            let breaks = &mut gate.breaks;
+            let client = world.resource::<ClientWorld>();
+            for &(cell, _, _) in &breaks.row {
+                let air = client.block(cell).is_some_and(|b| b.is_air());
+                if air && !breaks.shown.contains(&cell) {
+                    breaks.shown.push(cell);
+                } else if !air && breaks.shown.contains(&cell) && !breaks.came_back.contains(&cell) {
+                    breaks.came_back.push(cell);
+                }
+            }
+            while breaks.done < breaks.row.len() && client.block(breaks.row[breaks.done].0).is_some_and(|b| b.is_air()) {
+                breaks.done += 1;
+                breaks.began = now;
+                breaks.thrown = false;
+            }
+            let Some(&(cell, _, holder)) = breaks.row.get(breaks.done) else {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+                return;
+            };
+            if in_phase > BREAKS_LIMIT {
+                mouse(world, MouseButton::Left, false);
+                let stuck = format!("{} of {} blocks broke in {BREAKS_LIMIT}s; stuck on {cell} with {holder:?}", breaks.done, breaks.row.len());
+                gate.check("breaks", Err(stuck));
+                end_breaks(world, gate, now);
+                return;
+            }
+            hold(world, holder);
+            // Q halfway through the planks' block: thrown while the break goes on.
+            let progress = world.resource::<crate::interact::Target>().breaking.filter(|(at, _)| *at == cell).map_or(0.0, |(_, p)| p);
+            let throw = holder == Holder::Planks && !gate.breaks.thrown && progress >= 0.5;
+            if throw {
+                gate.breaks.thrown = true;
+            }
+            key(world, KeyCode::KeyQ, throw);
+            aim(world, cell);
+            mouse(world, MouseButton::Left, true);
+        }
+        _ => {
+            // Both sides settle with every block broken; then nothing may have come back.
+            gate.breaks.load = None;
+            let cells: Vec<IVec3> = gate.breaks.row.iter().map(|&(cell, ..)| cell).collect();
+            if !edit_settled(world, gate, in_phase, &cells, |b| b.is_air()) {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let named = |block: Option<BlockId>| block.map_or_else(|| "not loaded".to_owned(), |b| client.registry.def(b).name.clone());
+            let mut wrong: Vec<String> = Vec::new();
+            for &(cell, block, holder) in &gate.breaks.row {
+                let server = gate.observer.as_ref().and_then(|o| o.world.block(cell));
+                if !client.block(cell).is_some_and(|b| b.is_air()) || !server.is_some_and(|b| b.is_air()) {
+                    wrong.push(format!("{} with {holder:?} at {cell}: client {}, server {}", named(Some(block)), named(client.block(cell)), named(server)));
+                }
+            }
+            wrong.extend(gate.breaks.came_back.iter().map(|cell| format!("{cell} came back after it broke")));
+            let differ = gate.observer.as_ref().map_or(0, |o| disagreements(client, &o.world, feet).len());
+            if differ > 0 {
+                wrong.push(format!("{differ} blocks around differ between client and server"));
+            }
+            let holders: Vec<String> = gate.breaks.row.iter().map(|&(_, _, holder)| match holder {
+                Holder::Tool(tool) => client.registry.def(tool).name.clone(),
+                other => format!("{other:?}").to_lowercase(),
+            }).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            let longest = gate.longest.get(&Step::Breaks).copied().unwrap_or(0.0);
+            let result = if wrong.is_empty() {
+                Ok(format!("{} blocks of {} hardnesses broke with {} under load (frames up to {longest:.0} ms), and stayed broken on both sides", gate.breaks.row.len(), BREAK_BLOCKS.len(), holders.join(", ")))
+            } else {
+                Err(wrong.join("; "))
+            };
+            gate.check("breaks", result);
+            end_breaks(world, gate, now);
+        }
+    }
+}
+
+/// Puts `holder` in the player's hand: an empty hotbar slot, the planks, or the tool,
+/// swapped into the tool slot first if it is elsewhere (predicted, as a click would).
+fn hold(world: &mut World, holder: Holder) {
+    let actions = world.resource::<crate::Actions>().0.clone();
+    let transfer = actions.expect("core:transfer");
+    let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+    let mut swap = None;
+    {
+        let mut player = world.resource_mut::<LocalPlayer>();
+        let find = |player: &LocalPlayer, wanted: &dyn Fn(Option<BlockId>) -> bool, slots: std::ops::Range<usize>| {
+            slots.into_iter().find(|&s| wanted(player.inventory.get(s).map(|stack| stack.item)))
+        };
+        let hotbar = 0..voxmar_engine::inventory::HOTBAR_SLOTS;
+        let slot = match holder {
+            Holder::Hand => find(&player, &|item| item.is_none(), hotbar),
+            Holder::Planks => find(&player, &|item| item.is_some() && item == planks, hotbar),
+            Holder::Tool(tool) => match find(&player, &|item| item == Some(tool), hotbar) {
+                Some(slot) => Some(slot),
+                None => {
+                    let from = find(&player, &|item| item == Some(tool), voxmar_engine::inventory::HOTBAR_SLOTS..voxmar_engine::inventory::SLOTS);
+                    if let Some(from) = from
+                        && player.inventory.move_items(from, TOOL_SLOT, u8::MAX)
+                    {
+                        swap = Some(from);
+                    }
+                    swap.map(|_| TOOL_SLOT)
+                }
+            },
+        };
+        if let Some(slot) = slot {
+            player.selected = slot;
+        }
+    }
+    if let Some(from) = swap {
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: TOOL_SLOT as u8, count: u8::MAX };
+        world.resource::<Net>().propose(transfer, target);
+    }
+}
+
+/// Lifts the load, puts the tools away (later steps want room in the hotbar) and goes on
+/// to the pool.
+fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
+    gate.breaks.load = None;
+    mouse(world, MouseButton::Left, false);
+    key(world, KeyCode::KeyQ, false);
+    let registry = world.resource::<ClientWorld>().registry.clone();
+    let net = world.resource::<Net>();
+    for &(_, _, holder) in &gate.breaks.row {
+        if let Holder::Tool(tool) = holder {
+            net.command(&format!("clear {}", registry.def(tool).name));
+        }
+    }
+    let feet = gate.feet;
+    let line = format!("tp {} {} {}", feet.x as f32 + 4.5, feet.y - 2, feet.z as f32 + 0.5);
+    world.resource::<Net>().command(&line);
+    gate.next(Step::Swim, now);
 }
 
 /// In the pool, facing the bank with the step on it, holding forward and jump climbs out
@@ -733,6 +1069,18 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             look(world, 0.0, 5.0);
+            // The loading cover lifted only once the world's weather showed.
+            if !gate.cover_checked {
+                gate.cover_checked = true;
+                let covered = world.query_filtered::<(), With<crate::menu::loading::Cover>>().iter(world).count() > 0;
+                let weather = world.resource::<crate::weather::WeatherReady>().0;
+                let result = match (covered, weather) {
+                    (false, true) => Ok("lifted, with the world's weather showing".to_owned()),
+                    (true, _) => Err("still up a whole step into the game".to_owned()),
+                    (false, false) => Err("lifted before the weather was ready".to_owned()),
+                };
+                gate.check("loading cover", result);
+            }
             if gate.shot(world, "game").is_some() {
                 // The HUD reads health and hunger off the server's vitals.
                 let hunger = world.resource::<LocalPlayer>().vitals.hunger;
@@ -782,6 +1130,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     },
                 );
                 set_language(world, "en");
+                // And another interface font, as the setting changes it.
+                let mut settings = world.resource_mut::<crate::settings::Settings>();
+                gate.font = Some(settings.font);
+                settings.font = crate::ui::skin::InterfaceFont::ALL.into_iter().find(|f| *f != settings.font).unwrap_or_default();
                 gate.advance(now);
             }
         }
@@ -790,6 +1142,17 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let words = localized_text(world, "menu.quit_game");
                 let back = if words.as_deref() == Some("Quit game") { Ok("back in English".into()) } else { Err(format!("reads {words:?} after switching back")) };
                 gate.check("language: English", back);
+                let font = world.resource::<crate::settings::Settings>().font;
+                gate.check(
+                    "font change",
+                    match crate::lang::texts_without_a_font(world) {
+                        None => Ok(format!("every text has {}", font.label())),
+                        Some(lost) => Err(format!("in {}, {lost} have no font: every letter a box", font.label())),
+                    },
+                );
+                if let Some(font) = gate.font.take() {
+                    world.resource_mut::<crate::settings::Settings>().font = font;
+                }
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
             }
@@ -888,7 +1251,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Fit, now);
+        gate.next(Step::Screenshot, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -913,7 +1276,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Fit, now);
+                gate.next(Step::Screenshot, now);
             }
         }
         2 => {
@@ -934,6 +1297,37 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Screenshot, now);
+        }
+    }
+}
+
+/// The screenshot key, as a player presses it: a PNG of the frame lands in the folder.
+fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::screenshot::{Elsewhere, Kept, LastShot};
+    let key_code = world.resource::<crate::settings::Settings>().screenshot_key.0;
+    match gate.phase {
+        0 => {
+            world.insert_resource(Elsewhere(gate.dir.join("screenshots")));
+            world.resource_mut::<LastShot>().0 = None;
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, key_code, false);
+            let kept = world.resource::<LastShot>().0.clone();
+            let result = match kept {
+                Some(Kept::Saved { path, .. }) if path.is_file() => {
+                    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                    Ok(format!("{} saved, {size} bytes", path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())))
+                }
+                Some(Kept::Saved { path, .. }) => Err(format!("said it saved {} but there is no such file", path.display())),
+                Some(Kept::Failed(why)) => Err(why),
+                None if in_phase < 10.0 => return,
+                None => Err("pressing the key saved nothing in 10 s".into()),
+            };
+            gate.check("screenshot", result);
+            world.remove_resource::<Elsewhere>();
             gate.next(Step::Fit, now);
         }
     }
@@ -944,6 +1338,8 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 enum View {
     /// The HUD alone, with experience, a refusal and a level-up showing.
     Hud,
+    /// The HUD with the debug overlay on.
+    Debug,
     Inventory,
     Character,
     /// The character screen with one skill's guide open.
@@ -954,8 +1350,8 @@ enum View {
     Dead,
     /// The chat and command line, open.
     Console,
-    /// The recipe viewer over the inventory: a campfire's recipes, or an oak log's uses.
-    Recipes(bool),
+    /// The recipe viewer over the inventory, on one of `FIT_LOOKUPS`.
+    Recipes(usize),
     /// The menus before a game: the title screen, the worlds, a new world, joining one,
     /// and the settings on one tab.
     Title,
@@ -964,6 +1360,10 @@ enum View {
     Join,
     Settings(usize),
 }
+
+/// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
+/// item, an ingredient, and a creature's product with a range of amounts.
+const FIT_LOOKUPS: [(&str, bool); 3] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false)];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -976,7 +1376,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let views: Vec<View> = if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Dead, View::Console, View::Inventory, View::Recipes(false), View::Recipes(true), View::Character]
+        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
             .into_iter()
             .chain((0..skills).map(View::Guide))
             .chain((0..crate::settings::TABS).map(View::Menu))
@@ -1029,6 +1429,10 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<NextState<Screen>>().set(screen);
     }
     world.resource_mut::<LocalPlayer>().dead = matches!(view, Some(View::Dead));
+    let debug = matches!(view, Some(View::Debug));
+    if world.resource::<crate::settings::Settings>().debug_overlay != debug {
+        world.resource_mut::<crate::settings::Settings>().debug_overlay = debug;
+    }
     let mut ui = world.resource_mut::<UiState>();
     (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
     match view {
@@ -1043,9 +1447,10 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         ui.recipes_open = false;
     }
     let lookup = match view {
-        Some(View::Recipes(uses)) => {
+        Some(View::Recipes(index)) => {
+            let (name, uses) = FIT_LOOKUPS[index];
             let blocks = &world.resource::<Launch>().content.blocks;
-            blocks.id(if uses { "base:oak_log" } else { "base:campfire" }).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
+            blocks.id(name).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
         }
         _ => None,
     };
@@ -1087,6 +1492,41 @@ fn localized_text(world: &mut World, key: &str) -> Option<String> {
     texts.iter(world).find(|(localized, _)| localized.0 == key).map(|(_, text)| text.0.clone())
 }
 
+/// Follows the weather shown from frame to frame once it is ready. On the first frame it
+/// must already be the server's (joining shows the real weather, not a change from the
+/// menus' sky into it); after that no fraction may change faster than easing lets it
+/// (`weather::fastest`), so fog, rain and the rest come and go gradually.
+fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
+    let weather = world.resource::<crate::weather::ClientWeather>();
+    let shown = weather.current.fractions();
+    let values = shown.map(|(_, v)| v);
+    match gate.weather_last {
+        None if gate.step == Step::Load => {
+            let target = weather.target().map(|t| t.fractions());
+            let off = target.map_or(f32::INFINITY, |t| t.iter().zip(&shown).map(|(t, s)| (t.1 - s.1).abs()).fold(0.0, f32::max));
+            // Exactly: until ready every report is shown at once, and easing leaves a value
+            // at its goal where it is.
+            let result = if off == 0.0 {
+                Ok(format!("ready at {now:.1}s, showing the server's weather at once: {}", weather.current.summary()))
+            } else {
+                Err(format!("first shown {} away from the server's report: {}", off, weather.current.summary()))
+            };
+            gate.check("weather: joined", result);
+        }
+        None => {}
+        Some(last) => {
+            let dt = world.resource::<Time>().delta_secs();
+            for (i, (&(name, value), was)) in shown.iter().zip(last).enumerate() {
+                let ratio = (value - was).abs() / (crate::weather::fastest(i) * dt + 1e-4);
+                if ratio > gate.weather_jump.0 {
+                    gate.weather_jump = (ratio, name, now);
+                }
+            }
+        }
+    }
+    gate.weather_last = Some(values);
+}
+
 /// A storm, then snow, each drawn (rain, snow and their particles change the view), then
 /// clear skies again.
 fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -1109,18 +1549,26 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         phase @ (1 | 2) => {
             let (kind, name, arrived) = kinds[phase as usize - 1];
             if !arrived(&shown) {
-                if in_phase > 8.0 {
+                if in_phase > 12.0 {
                     gate.check(&format!("weather: {kind}"), Err(format!("it did not come: {}", shown.summary())));
                     world.resource::<Net>().command("weather clear 600");
                     gate.phase = 3;
                 }
                 return;
             }
-            // Let it fill the air before the shot.
-            if in_phase < 1.0 {
+            // Let it fill the air before the shot, and the server tell the player they are
+            // out in it (effects are judged once a second).
+            let weathered = weather_effects(world);
+            if in_phase < 1.0 || (weathered.is_empty() && in_phase < 5.0) {
                 return;
             }
             let Some(shot) = gate.shot(world, name) else { return };
+            let felt = if weathered.is_empty() {
+                Err(format!("out in it, the player has no weather effect (felt {:.0} °C)", world.resource::<LocalPlayer>().vitals.felt))
+            } else {
+                Ok(format!("out in it, the player is {}", weathered.join(", ")))
+            };
+            gate.check(&format!("weather: {kind}: effects"), felt);
             let change = gate.earlier_shot("clear").map_or(0.0, |clear| change(&clear, &shot, 0.0));
             let result = if change >= SCREEN_CHANGE {
                 Ok(format!("{}, changing the view by {change:.1} levels", shown.summary()))
@@ -1132,13 +1580,29 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource::<Net>().command(&next);
             gate.advance(now);
         }
-        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => gate.next(Step::Sky, now),
-        3 if in_phase > 8.0 => {
+        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
+            eased(gate);
+            gate.next(Step::Sky, now);
+        }
+        3 if in_phase > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
+            eased(gate);
             gate.next(Step::Sky, now);
         }
         _ => {}
     }
+}
+
+/// Whether every change of weather so far (the commands' storm, snow and clearing among
+/// them) eased in without a jump.
+fn eased(gate: &mut Gate) {
+    let (ratio, name, at) = gate.weather_jump;
+    let result = if ratio <= 1.01 {
+        Ok(format!("no jumps, at most {:.0}% of the fastest easing allows ({name})", ratio * 100.0))
+    } else {
+        Err(format!("{name} jumped at {at:.1}s, {ratio:.1} times what easing allows in a frame"))
+    };
+    gate.check("weather: eases", result);
 }
 
 /// A small tree grows on the test ground: a trunk under a crown of leaves with an apple
@@ -1244,6 +1708,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.shot(world, "creatures").is_some() {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                gate.check("creature voices", crate::creature_sounds::loaded(world));
                 gate.next(Step::Strike, now);
             }
         }
@@ -1311,6 +1776,11 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    // Its cries reached the sound system (a silent run plays none).
+                    let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
+                    let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
+                    let result = if cries.iter().all(|&n| n > 0) { Ok(format!("{} hurt and {} death sounds asked for", cries[0], cries[1])) } else { Err(format!("hurt and death sounds asked for: {cries:?}")) };
+                    gate.check("creature cries", result);
                     if !gate.readout_seen {
                         gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
                     }
@@ -1500,13 +1970,24 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if in_phase > 25.0 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
-                gate.check("tame", Err("25 seconds of feeding wheat did not tame it".into()));
+                let (wheat, trust) = (item_count(world, "base:wheat"), view.trust);
+                let [on, other, none] = gate.tame_aim;
+                gate.check("tame", Err(format!(
+                    "25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left; the crosshair was on it {on} frames, on another creature {other}, on none {none}; nearest {:.1} blocks",
+                    gate.tame_nearest
+                )));
                 gate.next(Step::Gorge, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.3);
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                // Only with the junglefowl itself under the crosshair: a mouflon wandering in
+                // front would be offered the wheat instead (they love it too).
+                let under = world.resource::<crate::interact::Target>().creature;
+                let aimed = under == Some(view.id);
+                gate.tame_aim[if aimed { 0 } else if under.is_some() { 1 } else { 2 }] += 1;
+                gate.tame_nearest = gate.tame_nearest.min(world.resource::<LocalPlayer>().eye().distance(view.position));
+                mouse(world, MouseButton::Right, aimed && ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
         3 => {
@@ -1626,6 +2107,13 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         9 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
+            // Down at the land around, lit by the night sky alone.
+            world.resource_mut::<LocalPlayer>().pitch = -0.6;
+            gate.advance(now);
+        }
+        10 if in_phase > 0.3 => {
+            let Some(shot) = gate.shot(world, "night ground") else { return };
+            gate.check("sky: night ground", night_ground(&shot));
             gate.next(Step::Tree, now);
         }
         1 if in_phase > 15.0 => {
@@ -1913,6 +2401,30 @@ fn stars(shot: &Image) -> Result<String, String> {
         Ok(format!("{count} star pixels"))
     } else {
         Err(format!("only {count} star pixels"))
+    }
+}
+
+/// Open ground at midnight, in the lower half of a shot: dark, but not black. Before nights
+/// were lifted (2026-10-06) a moonless night's ground averaged 2 or 3 of 255 and Mariano
+/// could not see where he walked.
+fn night_ground(shot: &Image) -> Result<String, String> {
+    const DARKEST: f32 = 6.0;
+    const BRIGHTEST: f32 = 70.0;
+    let (w, h, data) = pixels(shot)?;
+    let (mut sum, mut count) = (0.0f32, 0.0f32);
+    // The lower half, above the hotbar.
+    for y in h / 2..h * 4 / 5 {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            sum += (data[i] as f32 * 54.0 + data[i + 1] as f32 * 183.0 + data[i + 2] as f32 * 19.0) / 256.0;
+            count += 1.0;
+        }
+    }
+    let mean = sum / count.max(1.0);
+    match mean {
+        m if m < DARKEST => Err(format!("the ground at night averages {m:.1} of 255: black")),
+        m if m > BRIGHTEST => Err(format!("the ground at night averages {m:.1} of 255: not night")),
+        m => Ok(format!("the ground at night averages {m:.1} of 255")),
     }
 }
 

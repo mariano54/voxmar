@@ -66,14 +66,15 @@ changes don't move it, and checks:
 
 | step | what the player does | what must follow |
 | --- | --- | --- |
-| load | | the world around spawn loads and is meshed |
+| load | | the world around spawn loads and is meshed, and the weather is ready (`weather::WeatherReady`), showing the server's report from its first frame (no change from the menus' sky into it) |
 | arrive | clicks into the game | the mouse is grabbed |
 | place | three right clicks on the ground | the planks are on the client and the server, the two agree on every block around, the renderer has every column as it now is, the middle of the screen changed, the hand holds three fewer |
 | dig | holds the left button over the ground | a hole three blocks deep, with the same four checks |
 | drops | walks into the hole | every dug block's drop is picked up |
+| breaks | holds the left button along a row of glass, dirt, stone, snow, gravel and cobblestone, with the bare hand, the starting planks (throwing one with Q halfway) and every item tagged `tool`, while busy threads contend for the cores and the game's own frames stall 80 to 320 ms every fifth frame or so | every block ends broken on the client and the server, none comes back, the two agree on every block around. The server judges breaks by when the player's messages arrived, so a server held up decides as one that kept up (crates/server/src/actions.rs) |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
-| weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |
+| weather | `/weather storm`, `/weather snow`, `/weather clear` | each arrives and changes the view (rain, snow, their particles), and out in it the player gets a weather effect (soaked, snowblown…); from joining to here, no weather fraction shown changed in a frame by more than easing allows (`weather::fastest`: a full swing over six seconds at the quickest, after a command) |
 | sky | looks at the morning sun, flies above the world's top, looks towards and away from the setting sun, then at the midnight moon, then away | a bright disc where each should be, a sky that darkens upwards, a lit sky from above the world, a sunset sky warmer towards the sun than away, stars |
 | tree | at noon, a small tree with an apple among its leaves is filled in | it reaches the client and draws, leaves, leaf cards and fruit, changing the view |
 | cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
@@ -114,7 +115,9 @@ tools/bench history [SCENE]
 It builds this tree with `--release` and runs six fixed scenes, seed 1 at Mariano's
 settings (32 chunks, SMAA, VSync off, 2268×1473: 75% of his 3024×1964 screen), each N
 times (default 3), reporting the median of the runs: `flight75` (a 40 s flight), `flightfast` (the same at his 400% fly
-speed, the world streaming in faster than it is made), `forest`, `mountains`,
+speed, the world streaming in faster than it is made), `flighthigh` (the same at y=260 looking
+down at 40°, the whole view of about 36k chunks in sight, where his slow frames gathered),
+`forest`, `mountains`,
 `night_rain` (still views measured for 13 s), and `dig` (15 s digging a shaft, holding the
 button: breaking, particles, drops, remeshing). For each it prints the average FPS, the 1%
 low (the mean of the slowest 1% of frames, as FPS), the p99 and worst frame in ms (by the

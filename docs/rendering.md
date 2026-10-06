@@ -204,7 +204,12 @@ On the Linux box (Vulkan on an NVIDIA L4), `VOXMAR_GPU_TIMES=1` makes a capture 
 the GPU time of every pass that records a span (Bevy's `RenderDiagnosticsPlugin`, from
 timestamp queries; passes without a span are not listed), and `perf record -p` on a
 running capture shows the CPU side by thread. There, most scenes are limited by the CPU:
-the GPU was 40% busy in the creature scene.
+the GPU was 40% busy in the creature scene. `VOXMAR_GPU_FRAMES=FILE` (`render::gpu_clock`)
+records every frame instead: its GPU time split into the terrain's compaction, shadows,
+main passes and post-processing (FILE), the main world's frame time and busy time
+(FILE.cpu), and the render world's preparation, graph and cleanup (FILE.render), by frame
+number. In a fast flight it showed the GPU's frames smooth (at most 5.4 ms) while the worst
+frames came from the CPU.
 
 A run at a tiny size (640×416) shows the CPU's limit, as the GPU then does little:
 about 3.6–4.2 ms a frame in Low Power Mode. No thread is busy for all of it (the render
@@ -361,8 +366,10 @@ vertex data is needed.
 A plant's block data picks its shape (`model`, voxmar_engine::block::PlantModel) and
 height (`plant_height`, a share of the usual, so 1.4 for a big flower): `Cross`, the two
 diagonal quads every plant had; `Hash`, four straight quads in a # standing square with
-the blocks, for crops and reeds; `Cap`, a crossed stem under a flat cap of the block's top
-texture, for mushrooms; and `Bush`, the cross with a straight one through it. Every model
+the blocks, for crops and reeds; `Cap`, a mushroom of eight quads: a thin crossed stem (the
+side texture), a flat crown and four sloping sides down to a wider rim (the top texture),
+and gills under the rim (the bottom texture), each mushroom a little bigger or smaller and
+leaning its own way by a hash of its cell; and `Bush`, the cross with a straight one through it. Every model
 starts with the crossed pair; the mesher packs each further quad as a diagonal one, with
 the model in bits 28..29 and which quad it is in bits 30..31 and the face's low bit, and
 the height in eighths in word 1 bits 14..18, so the vertex stays 8 bytes; the shader

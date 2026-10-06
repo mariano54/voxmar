@@ -119,6 +119,8 @@ pub struct SavedPlayer {
     pub inventory: Inventory,
     /// Experience in tenths, by skill name.
     pub skills: Vec<(String, u32)>,
+    /// Effects food gave, by name, with seconds left.
+    pub effects: Vec<(String, f32)>,
 }
 
 /// Players saved before hunger existed come back full.
@@ -140,6 +142,8 @@ struct PlayerFile {
     inventory: Vec<Option<(String, u8)>>,
     #[serde(default)]
     skills: Vec<(String, u32)>,
+    #[serde(default)]
+    effects: Vec<(String, f32)>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -276,7 +280,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let hunger = file.hunger.min(voxmar_engine::vitals::MAX_HUNGER);
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, hunger, inventory, skills: file.skills }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, hunger, inventory, skills: file.skills, effects: file.effects }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -298,6 +302,7 @@ impl WorldSave {
             hunger: player.hunger,
             inventory,
             skills: player.skills.clone(),
+            effects: player.effects.clone(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -521,6 +526,7 @@ mod tests {
             hunger: 7,
             inventory,
             skills: vec![("core:farming".into(), 1234)],
+            effects: vec![("base:hearty".into(), 120.5)],
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();

@@ -18,12 +18,13 @@ use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::VertexAttributeValues;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, Buffer, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionTarget, REACH_CREATURE};
@@ -35,6 +36,7 @@ use voxmar_engine::physics::Aabb;
 use voxmar_protocol::{CreatureGone, CreatureView};
 
 use crate::Actions;
+use crate::creature_sounds::{CreatureSound, CreatureSounds, Kind as Sound};
 use crate::breaking::sky_light;
 use crate::drops::block_light;
 use crate::interact::Target;
@@ -79,6 +81,11 @@ fn heart_image() -> Image {
     image
 }
 
+/// One clear texel of skin, worn while the real one is painted.
+fn blank_skin() -> Image {
+    Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![0; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
+}
+
 fn nearest() -> ImageSampler {
     ImageSampler::Descriptor(ImageSamplerDescriptor { mag_filter: ImageFilterMode::Nearest, min_filter: ImageFilterMode::Nearest, ..default() })
 }
@@ -93,10 +100,10 @@ fn despawn(commands: &mut Commands, shown: &Shown) {
 
 /// Seconds between a player's blows (the server's own limit is a little shorter).
 const SWING: f32 = 0.55;
+/// Creatures built a frame at most; more coming into view wait for the next frames.
+const SPAWNS: usize = 3;
 /// Creatures further than this are not drawn.
 const DRAWN_WITHIN: f32 = 96.0;
-/// The darkest a creature is drawn, so one in a cave is still a shape.
-const DARKEST: f32 = 0.12;
 /// Steps a creature's light is rounded to, so the slow change of daylight rewrites its
 /// material now and then rather than every frame.
 const LIGHT_STEPS: f32 = 128.0;
@@ -122,13 +129,17 @@ impl Plugin for CreaturesPlugin {
 /// volume and snapped to the block pixel grid (`creature_skin.wgsl`).
 pub type SkinMaterial = ExtendedMaterial<StandardMaterial, CreatureSkin>;
 
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct CreatureSkin {
     #[texture(100, dimension = "3d")]
     #[sampler(101)]
     pub skin: Handle<Image>,
     #[uniform(102)]
     pub frame: SkinFrame,
+    /// The air between the eye and the creature, as the terrain's fog reads it
+    /// (`render::atmosphere::SharedAtmosphere`).
+    #[storage(103, read_only, buffer)]
+    pub atmosphere: Buffer,
 }
 
 /// Where the skin's volume lies in model space.
@@ -150,7 +161,7 @@ impl MaterialExtension for CreatureSkin {
 struct SpeciesBody {
     mesh: Handle<Mesh>,
     binds: Handle<SkinnedMeshInverseBindposes>,
-    shape: Shape,
+    shape: std::sync::Arc<Shape>,
     /// The skin's volume: its corner and size in texels.
     origin: Vec3,
     dims: [u32; 3],
@@ -167,11 +178,15 @@ struct Shown {
     /// Its body's mesh, and one joint per part, which the animation turns.
     body: Entity,
     joints: Vec<(Entity, Part)>,
-    /// Its skin, which is darkened by the light and flashed red.
+    /// Its skin, which is darkened by the light and flashed red, and the skin being painted
+    /// for it, until it is ready.
     material: Handle<SkinMaterial>,
+    painting: Option<Task<Image>>,
     skin: Handle<Image>,
     /// Stride phase, in cycles.
     stride: f32,
+    /// Seconds until it may make an idle noise or call again.
+    quiet: f32,
     flash: f32,
     /// Seconds since it died, if it did.
     dying: Option<f32>,
@@ -194,8 +209,12 @@ pub struct Creatures {
     /// Views and departures received since they were last applied.
     inbox: Vec<CreatureView>,
     left: Vec<CreatureGone>,
+    /// Creatures that came into view but wait for a later frame to be built (`SPAWNS`).
+    waiting: Vec<CreatureView>,
     /// Each species' body, made when the first of it is seen.
     bodies: FxHashMap<CreatureId, SpeciesBody>,
+    /// The skin a body wears until its own is painted (it is hidden meanwhile).
+    blank: Option<Handle<Image>>,
     /// A shaded cube for hearts, and their colours: full and empty.
     heart: Option<(Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>)>,
     /// Creatures seen to die since joining.
@@ -341,7 +360,7 @@ fn body_mesh(body: &BodyMesh) -> Mesh {
 /// Builds a species' body from its parts.
 fn species_body(parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
     let body = volume::build(parts);
-    let shape = Shape::new(parts);
+    let shape = std::sync::Arc::new(Shape::new(parts));
     // Each joint sits at its part's pivot; at rest it moves nothing.
     let inverse: Vec<Mat4> = parts.iter().map(|p| Mat4::from_translation(-p.pivot)).collect();
     let texel = 1.0 / skin::TEXELS;
@@ -350,15 +369,31 @@ fn species_body(parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<Sk
     SpeciesBody { mesh: meshes.add(body_mesh(&body)), binds: binds.add(SkinnedMeshInverseBindposes::from(inverse)), shape, origin, dims }
 }
 
-/// An individual's skin, painted through its species' body volume.
-fn skin_volume(def: &creature::BodyDef, parts: &[Part], body: &SpeciesBody, seed: u32) -> Image {
-    let shell = body.shape.cell * 0.75 + 1.5 / skin::TEXELS;
-    let pixels = skin::paint_volume(def, parts, seed, body.origin, body.dims, shell, |p| body.shape.nearest(p));
-    let [w, h, d] = body.dims;
-    let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
-    let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
-    image.sampler = nearest();
-    image
+/// Paints an individual's skin through its species' body volume, off the main thread, so
+/// a herd coming into view never holds a frame: the body shows once its skin is ready.
+fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32) -> Task<Image> {
+    let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
+    AsyncComputeTaskPool::get().spawn(async move {
+        let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
+        let pixels = skin::paint_volume(&def, &parts, seed, origin, dims, shell, |p| shape.nearest(p));
+        let [w, h, d] = dims;
+        let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
+        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+        image.sampler = nearest();
+        image
+    })
+}
+
+/// The light creatures are lit by and the air they are fogged by, as the terrain's.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Air<'w> {
+    light: Res<'w, crate::render::SceneLight>,
+    atmosphere: Res<'w, crate::render::atmosphere::SharedAtmosphere>,
+}
+
+/// A sound a creature makes now.
+fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
+    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young }
 }
 
 /// Applies what the server sent, then moves and animates every creature, and handles
@@ -369,7 +404,7 @@ fn show(
     time: Res<Time>,
     launch: Res<Launch>,
     world: Res<ClientWorld>,
-    cycle: Res<crate::render::DayCycle>,
+    air: Air,
     player: Res<LocalPlayer>,
     mut creatures: ResMut<Creatures>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -380,11 +415,15 @@ fn show(
     mut transforms: Query<&mut Transform>,
     mut looks: Query<&mut MeshMaterial3d<StandardMaterial>>,
     mut visible: Query<&mut Visibility>,
+    mut sounds: ResMut<CreatureSounds>,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
     // Their pipelines (a skinned box, and a heart's clipped one) compile as the world loads
     // (`render::warm`), not when the first creature comes into view.
+    // Nothing is drawn until the renderer has made the air they are fogged by.
+    let Some(atmosphere) = air.atmosphere.get() else { return };
+    let scene_light = &air.light;
     let (heart_mesh, heart_full, heart_empty) = creatures
         .heart
         .get_or_insert_with(|| {
@@ -400,7 +439,7 @@ fn show(
                 ..default()
             };
             let pixel = Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![255; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
-            let body = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: images.add(pixel), frame: SkinFrame { origin: Vec4::new(-1.0, -1.0, -1.0, skin::TEXELS), size: Vec4::splat(2.0) } } });
+            let body = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: images.add(pixel), frame: SkinFrame { origin: Vec4::new(-1.0, -1.0, -1.0, skin::TEXELS), size: Vec4::splat(2.0) }, atmosphere: atmosphere.clone() } });
             let warm_binds = binds.add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY]));
             crate::render::warm::warm_skinned(&mut commands, meshes.add(body_mesh(&cube)), body, warm_binds, DespawnOnExit(Screen::InGame));
             let heart = |colour: Color| StandardMaterial { base_color: colour, base_color_texture: Some(image.clone()), alpha_mode: AlphaMode::Mask(0.5), unlit: true, ..default() };
@@ -416,25 +455,48 @@ fn show(
 
     let creatures = &mut *creatures;
     for gone in std::mem::take(&mut creatures.left) {
+        creatures.waiting.retain(|view| view.id != gone.id);
         match creatures.shown.get_mut(&gone.id) {
             Some(shown) if gone.died => {
                 shown.dying = Some(0.0);
+                sounds.push(sound(Sound::Death, gone.id, &shown.view, shown.position, 0.0));
                 creatures.deaths += 1;
             }
             Some(shown) => {
                 despawn(&mut commands, shown);
                 if let Some(shown) = creatures.shown.remove(&gone.id) {
-                    images.remove(&shown.skin);
+                    if shown.painting.is_none() {
+                images.remove(&shown.skin);
+            }
                     skins.remove(&shown.material);
                 }
             }
             None => {}
         }
     }
-    for view in std::mem::take(&mut creatures.inbox) {
+    let mut built = 0;
+    let views: Vec<CreatureView> = std::mem::take(&mut creatures.waiting).into_iter().chain(std::mem::take(&mut creatures.inbox)).collect();
+    for view in views {
         if let Some(shown) = creatures.shown.get_mut(&view.id) {
             if view.health < shown.view.health {
                 shown.flash = FLASH;
+                sounds.push(sound(Sound::Hurt, view.id, &view, shown.position, 0.0));
+            }
+            // What it does now, heard as it starts.
+            if view.pose != shown.view.pose {
+                let kind = match view.pose {
+                    Pose::Grazing => Some(Sound::Graze),
+                    Pose::Alert => Some(Sound::Alert),
+                    Pose::Resting => Some(Sound::Rest),
+                    Pose::Attacking => Some(Sound::Attack),
+                    Pose::Idle | Pose::Crouched => None,
+                };
+                if let Some(kind) = kind {
+                    sounds.push(sound(kind, view.id, &view, shown.position, 0.0));
+                }
+            }
+            if view.ready && !shown.view.ready {
+                sounds.push(sound(Sound::Ready, view.id, &view, shown.position, 0.0));
             }
             shown.view = view;
             shown.told_at = now;
@@ -443,15 +505,23 @@ fn show(
         if view.species.0 as usize >= registry.len() {
             continue;
         }
+        // A herd coming into view at once is built a few a frame: painting a skin and
+        // spawning a model took a frame 4.5 ms longer for a handful.
+        if built == SPAWNS || creatures.waiting.iter().any(|waiting| waiting.id == view.id) {
+            creatures.waiting.push(view);
+            continue;
+        }
+        built += 1;
         let species = registry.get(view.species);
         let body = creatures.bodies.entry(view.species).or_insert_with(|| species_body(&species.parts, &mut meshes, &mut binds));
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
-        let skin = images.add(skin_volume(&species.def.body.with(&traits), &species.parts, body, view.seed));
+        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed));
+        let skin = creatures.blank.get_or_insert_with(|| images.add(blank_skin())).clone();
         let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
         let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
-        let material = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: skin.clone(), frame } });
+        let material = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: skin.clone(), frame, atmosphere: atmosphere.clone() } });
         let entity = commands.spawn((Transform::from_translation(view.position), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
         let joints: Vec<(Entity, Part)> = species.parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(entity))).id(), part)).collect();
         let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
@@ -467,8 +537,10 @@ fn show(
                 body,
                 joints,
                 material,
+                painting,
                 skin,
                 stride: 0.0,
+                quiet: 2.0 + creature::unit_from(creature::mix(view.seed as u64, 77)) * 8.0,
                 flash: 0.0,
                 dying: None,
                 struck: false,
@@ -480,7 +552,6 @@ fn show(
         );
     }
 
-    let daylight = 0.25 + 0.75 * creature::daylight(cycle.ticks.max(0.0) as u64);
     let eye = player.eye();
     let me = creatures.me;
     let mut finished = Vec::new();
@@ -499,7 +570,20 @@ fn show(
         let speed = (shown.position - before).with_y(0.0).length() / dt.max(1e-4);
         let scale = shown.view.scale;
         let height = def.body.size.1 * scale;
+        let before_step = (shown.stride * 2.0).floor();
         shown.stride += speed * dt / (def.body.size.0.max(0.3) * 1.6 * scale);
+        // A footfall each half stride, while it walks on something.
+        if (shown.stride * 2.0).floor() != before_step && speed > 0.3 && shown.dying.is_none() && def.movement.style != Style::Drifter {
+            sounds.push(sound(Sound::Step, id, &shown.view, shown.position, speed));
+        }
+        // Now and then, at its own pace, a contented noise, or a call to its kind.
+        shown.quiet -= dt;
+        if shown.quiet <= 0.0 && shown.dying.is_none() {
+            let roll = creature::unit_from(creature::mix(shown.view.seed as u64, (now * 10.0) as u64));
+            let kind = if roll < 0.25 { Sound::Call } else { Sound::Idle };
+            sounds.push(sound(kind, id, &shown.view, shown.position, speed));
+            shown.quiet = 6.0 + roll * 18.0;
+        }
         shown.flash = (shown.flash - dt).max(0.0);
 
         let (nod, crouch) = match shown.view.pose {
@@ -586,8 +670,18 @@ fn show(
             let chance = creature::unit_from(creature::mix(id as u64 ^ slot as i64 as u64, side.to_bits() as u64));
             if chance < 0.18 { ((now * 0.8 + id as f32 * 0.37 + side * 0.21).fract() * std::f32::consts::TAU).sin().max(0.0) * 0.6 } else { 0.0 }
         };
+        // Its skin, once painted.
+        if let Some(task) = shown.painting.as_mut()
+            && let Some(image) = block_on(future::poll_once(task))
+        {
+            shown.painting = None;
+            shown.skin = images.add(image);
+            if let Some(mut material) = skins.get_mut(&shown.material) {
+                material.extension.skin = shown.skin.clone();
+            }
+        }
         if let Ok(mut shows) = visible.get_mut(shown.body) {
-            let want = if far { Visibility::Hidden } else { Visibility::Inherited };
+            let want = if far || shown.painting.is_some() { Visibility::Hidden } else { Visibility::Inherited };
             if *shows != want {
                 *shows = want;
             }
@@ -619,22 +713,22 @@ fn show(
                 *transform = Transform { translation: part.pivot, rotation, scale: stretch };
             }
         }
-        // Lit as the terrain around it is, a glowing creature by itself; red when struck.
+        // Lit exactly as the terrain around it is (`SceneLight`: at night as dark as the
+        // ground, which a separate daylight curve left far brighter), a glowing creature by
+        // itself; red when struck.
         let cell = (shown.position + Vec3::Y * 0.5).floor().as_ivec3();
         let light = if def.body.glows {
-            1.0
+            LinearRgba::WHITE
         } else {
-            let sky = sky_light(&world, cell) as f32 / 15.0 * daylight;
-            let block = block_light(&world, cell) as f32 / 15.0;
-            sky.max(block).max(DARKEST)
+            scene_light.at(sky_light(&world, cell), block_light(&world, cell))
         };
         // In steps too fine to see, and written only when it changes: a changed material
         // is uploaded again and every part drawn with it specialised again for the camera
         // and each shadow cascade: writing it every frame took a herd of 40 from 4 to 8 ms
         // a frame on an NVIDIA L4.
-        let light = (light * LIGHT_STEPS).round() / LIGHT_STEPS;
+        let step = |c: f32| (c * LIGHT_STEPS).round() / LIGHT_STEPS;
         let red = shown.flash / FLASH;
-        let lit = LinearRgba::rgb(light, light, light);
+        let lit = LinearRgba::rgb(step(light.red), step(light.green), step(light.blue));
         let colour = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
         if skins.get(&shown.material).is_some_and(|material| material.base.base_color != colour)
             && let Some(mut material) = skins.get_mut(&shown.material)
@@ -645,7 +739,9 @@ fn show(
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
             despawn(&mut commands, &shown);
-            images.remove(&shown.skin);
+            if shown.painting.is_none() {
+                images.remove(&shown.skin);
+            }
             skins.remove(&shown.material);
         }
     }

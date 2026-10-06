@@ -12,7 +12,9 @@
 //! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid), `--recipes NAME` / `--uses NAME` (open the recipe viewer on an item),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--scale-factor N` (screen
 //! pixels per interface pixel, 2 to shoot as a Retina display draws: use twice the size), `--clip SECONDS` (save
-//! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
+//! every frame of that much game time at 30 fps instead, to check motion; `--clip-join` starts
+//! it the moment the player joins rather than once the world has settled, `--clip-command LINE`
+//! runs a console command as it starts), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
 //! scale; with the saved settings when `VOXMAR_CONFIG` is set), `--flicker` or
 //! `--flicker-still` (measure shimmer; see capture.rs) or
@@ -32,6 +34,7 @@
 mod ambience;
 mod breaking;
 mod capture;
+mod creature_sounds;
 mod creatures;
 mod drops;
 mod emitters;
@@ -45,6 +48,7 @@ mod music;
 mod net;
 mod player;
 mod render;
+mod screenshot;
 mod session;
 mod settings;
 mod sfx;
@@ -116,6 +120,10 @@ struct Options {
     guide: Option<String>,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
+    /// `--clip-join`: start the clip on joining; `--clip-command LINE`: run it as the clip
+    /// starts.
+    clip_join: bool,
+    clip_commands: Vec<String>,
     /// `--press left|right`: hold a mouse button at the start of the clip.
     press: Option<MouseButton>,
     /// `--hold ITEM`: select the hotbar slot holding an item, once it is there.
@@ -166,6 +174,8 @@ fn parse_options() -> Result<Options, String> {
         guide: None,
         flicker: None,
         clip: None,
+        clip_join: false,
+        clip_commands: Vec::new(),
         press: None,
         hold: None,
         repeat: false,
@@ -221,6 +231,8 @@ fn parse_options() -> Result<Options, String> {
             "--repeat" => options.repeat = true,
             "--face-creature" => options.face_creature = true,
             "--clip" => options.clip = Some(value()?.parse().map_err(|e| format!("--clip: {e}"))?),
+            "--clip-join" => options.clip_join = true,
+            "--clip-command" => options.clip_commands.push(value()?),
             "--press" => {
                 options.press = Some(match value()?.as_str() {
                     "left" => MouseButton::Left,
@@ -265,6 +277,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .thread_name(|i| format!("worker-{i}"))
         .start_handler(|_| lower_thread_priority())
         .build_global()?;
+    // The generator's region builds borrow helper threads besides: no more than there are
+    // workers.
+    voxmar_worldgen::set_helper_limit(workers);
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
@@ -310,7 +325,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // does (see docs/rendering.md).
     let mut plugins = DefaultPlugins
         .set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() })
-        .set(bevy::pbr::PbrPlugin { use_gpu_instance_buffer_builder: false, ..default() });
+        .set(bevy::pbr::PbrPlugin { use_gpu_instance_buffer_builder: false, ..default() })
+        .set({
+            // Bevy's systems run on a pool of their own, by default every thread left over (24
+            // on the 32-thread Linux box), while streaming does its work on our workers. Six
+            // served better: waking two dozen threads for each parallel system cost more than
+            // they did, and the frame-bound scenes there gained 5-13% (dig 2.95 to 2.62 ms a
+            // frame, mountains 2.98 to 2.65).
+            let mut options = bevy::app::TaskPoolOptions::default();
+            options.compute.max_threads = SYSTEM_THREADS;
+            bevy::app::TaskPoolPlugin { task_pool_options: options }
+        });
     if muted {
         plugins = plugins.disable::<bevy::audio::AudioPlugin>();
     }
@@ -329,6 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         silence(&mut app);
     }
     app
+    .add_plugins(screenshot::ScreenshotPlugin)
     .add_plugins((
         FrameTimeDiagnosticsPlugin::default(),
         render::RenderPlugin,
@@ -347,7 +373,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui::UiPlugin,
     ))
     .add_plugins(lang::LangPlugin);
-    app.add_plugins(creatures::CreaturesPlugin);
+    app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
@@ -402,10 +428,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.insert_resource(hud::recipes::StartLookup(name, uses));
     }
     // Slow frames of real play are recorded for later (see slow_frames.rs); captures and
-    // gate runs, which run on a busy machine by design, are not.
+    // gate runs, which run on a busy machine by design, are not, unless
+    // VOXMAR_RECORD_SLOW_FRAMES asks (with VOXMAR_CONFIG elsewhere, to keep them apart).
     // The renderer's part of a slow frame's record is always there to be set.
     app.init_resource::<slow_frames::SlowFrameExtra>();
-    if !headless {
+    if !headless || std::env::var_os("VOXMAR_RECORD_SLOW_FRAMES").is_some() {
         app.add_plugins(slow_frames::SlowFramesPlugin);
     }
     if options.music && !headless {
@@ -429,6 +456,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             character: options.character,
             flicker: options.flicker,
             clip: options.clip,
+            clip_join: options.clip_join,
+            clip_commands: options.clip_commands,
             press: options.press,
             hold: options.hold,
             repeat: options.repeat,
@@ -449,6 +478,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// Threads Bevy runs systems on (its compute task pool), at most.
+const SYSTEM_THREADS: usize = 6;
 
 /// Physical cores, where they differ from hardware threads (Linux, from sysfs).
 fn physical_cores() -> Option<usize> {
@@ -649,7 +681,20 @@ fn setup(
             source.read(&format!("ui/skill/{name}")).or_else(|| unknown.clone()).map(|art| images.add(ui_image(&art))).unwrap_or_default()
         })
         .collect();
-    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons });
+    // Each effect's icon, `ui/effect/<icon>` (content's effects.ron names it), or the plain
+    // one for a buff or a debuff.
+    let mut picture = |name: &str| source.read(name).map(|art| images.add(ui_image(&art)));
+    let (buff, debuff) = (picture("ui/effect/buff").unwrap_or_default(), picture("ui/effect/debuff").unwrap_or_default());
+    let effects = &launch.content.effects;
+    let effects = effects
+        .ids()
+        .map(|id| {
+            let def = effects.get(id);
+            let plain = if def.kind == voxmar_engine::effect::Kind::Buff { &buff } else { &debuff };
+            picture(&format!("ui/effect/{}", def.icon)).unwrap_or_else(|| plain.clone())
+        })
+        .collect();
+    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

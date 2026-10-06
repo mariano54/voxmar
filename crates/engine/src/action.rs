@@ -217,6 +217,10 @@ pub trait ActionContext {
     fn actor_hunger(&self) -> u8 {
         crate::vitals::MAX_HUNGER
     }
+    /// How fast the actor mines, from its effects (1 normally).
+    fn actor_mining_speed(&self) -> f32 {
+        1.0
+    }
     /// Whether any agent's body overlaps the cell.
     fn occupied(&self, cell: IVec3) -> bool;
     /// The cooking recipes, where the context knows them.
@@ -358,7 +362,7 @@ impl ActionDef {
             Duration::Instant => 0.0,
             Duration::Seconds(s) => s,
             Duration::TargetHardness => match target {
-                ActionTarget::Block { block, .. } => ctx.block(block).map_or(0.0, |b| ctx.info(b).hardness.max(0.0)),
+                ActionTarget::Block { block, .. } => ctx.block(block).map_or(0.0, |b| ctx.info(b).hardness.max(0.0)) / ctx.actor_mining_speed().max(0.05),
                 _ => 0.0,
             },
         }

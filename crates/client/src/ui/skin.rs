@@ -21,6 +21,10 @@ use crate::textures::{Rgba, Source};
 pub const PX: f32 = 2.0;
 
 /// The pixel font, at every size.
+/// The narrowest a key cap is drawn: its sliced frame needs room for both corners, or a
+/// one-letter cap loses pixels of its border.
+pub const CAP_MIN: f32 = 12.0 * PX;
+
 pub const FONT: Handle<Font> = Handle::Uuid(Uuid::from_u128(0x766f_786d_6172_5f75_695f_666f_6e74_0000), std::marker::PhantomData);
 
 /// Font sizes that draw each font pixel as a whole number of screen pixels.

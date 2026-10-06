@@ -9,7 +9,10 @@
 //! waiting for the render thread, extraction, the window's events), what the client was
 //! busy with (meshing jobs, columns waiting, quads handed to the renderer, distant tiles),
 //! where the player was and what they had set, the weather, what happened that frame
-//! (blocks broken), and `render`: what the renderer adds through [`SlowFrameExtra`].
+//! (blocks broken), the machine's load average over the last minute (`load_average`: well
+//! above the core count, everything waits for a core, the game too), how the render thread
+//! spent its last few frames (`render_thread_ms`, see `render::frame_timing`), and
+//! `render`: what the renderer adds through [`SlowFrameExtra`].
 //! Frames while the world loads, or just after a teleport, are marked `loading`.
 //!
 //! While frames are fine this costs six `Instant`s and a ring of frame times; nothing is
@@ -147,6 +150,16 @@ fn path() -> Option<PathBuf> {
     Some(crate::settings::config_dir()?.join("slow-frames.jsonl"))
 }
 
+/// The system's load average over the last minute: how many threads wanted a core. Well
+/// above the core count, every thread waits its turn, the game's too, and frames slow down
+/// with nothing in the game to blame (other work on the machine, say a build).
+fn load_average() -> Option<f64> {
+    let mut loads = [0.0f64; 3];
+    // SAFETY: getloadavg writes at most `nelem` doubles into the buffer it is given.
+    let n = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+    (n >= 1).then_some(loads[0])
+}
+
 /// Milliseconds between two marks, if both were taken.
 fn between(a: Option<Instant>, b: Option<Instant>) -> Option<f32> {
     Some(b?.saturating_duration_since(a?).as_secs_f32() * 1000.0)
@@ -161,6 +174,7 @@ fn record(
     screen: Res<State<Screen>>,
     player: Res<LocalPlayer>,
     (world, lod, settings, weather): (Res<ClientWorld>, Option<Res<Lod>>, Res<Settings>, Res<ClientWeather>),
+    spans: Option<Res<crate::render::frame_timing::PostUpdateSpans>>,
 ) {
     let end = Instant::now();
     let frames = &mut *frames;
@@ -203,6 +217,8 @@ fn record(
             "first": stages[0], "pre_update": stages[1], "update": stages[2], "post_update": stages[3], "last": stages[4],
         },
         "outside_ms": (frame_ms - main_ms).max(0.0),
+        "render_thread_ms": crate::render::frame_timing::recent(),
+        "post_update_ms": spans.map_or(Value::Null, |spans| spans.json()),
         "world": {
             "columns": world.voxels.len(),
             "jobs_in_flight": stats.jobs_in_flight,
@@ -230,6 +246,7 @@ fn record(
         "weather": weather.current.summary(),
         "events": { "blocks_broken": broken },
         "render": render,
+        "load_average": load_average(),
     });
     frames.write(&line);
 }

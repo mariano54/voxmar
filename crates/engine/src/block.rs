@@ -262,7 +262,8 @@ pub enum PlantModel {
     Cross,
     /// Four quads in a #, straight with the blocks: crops and reeds, as Minecraft's wheat.
     Hash,
-    /// A crossed stem under a flat cap of the block's top texture: mushrooms.
+    /// A mushroom with volume: a stem of the side texture, a domed cap of the top texture
+    /// (a crown and four sloping sides) and gills of the bottom texture under it.
     Cap,
     /// A cross with a second, straight one through it: fuller bushes and shrubs.
     Bush,
@@ -847,6 +848,11 @@ impl BlockRegistry {
     /// Like [`Self::id`] but for names the engine or generator cannot work without.
     pub fn expect(&self, name: &str) -> BlockId {
         self.id(name).unwrap_or_else(|| panic!("content is missing required block `{name}`"))
+    }
+
+    /// Every block's id, in registration order.
+    pub fn ids(&self) -> impl Iterator<Item = BlockId> + '_ {
+        (0..self.defs.len() as u16).map(BlockId)
     }
 
     pub fn len(&self) -> usize {

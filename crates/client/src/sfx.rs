@@ -126,11 +126,13 @@ pub struct SoundCue {
     pub at: Option<Vec3>,
     /// Multiplies the cue's usual volume.
     pub gain: f32,
+    /// Multiplies its pitch (and speed): a small creature's steps are quicker and higher.
+    pub pitch: f32,
 }
 
 impl SoundCue {
     pub fn new(sound: Sound, cue: Cue) -> Self {
-        Self { sound, cue, at: None, gain: 1.0 }
+        Self { sound, cue, at: None, gain: 1.0, pitch: 1.0 }
     }
 
     pub fn for_block(world: &ClientWorld, block: BlockId, cue: Cue) -> Self {
@@ -149,6 +151,11 @@ impl SoundCue {
     /// At `gain` times the usual volume.
     pub fn scaled(self, gain: f32) -> Self {
         Self { gain: self.gain * gain, ..self }
+    }
+
+    /// At `pitch` times the usual pitch.
+    pub fn pitched(self, pitch: f32) -> Self {
+        Self { pitch: self.pitch * pitch, ..self }
     }
 }
 
@@ -428,7 +435,7 @@ fn play_cues(
         else {
             continue;
         };
-        let speed = clip.speed * (0.94 + 0.12 * jitter);
+        let speed = clip.speed * cue.pitch * (0.94 + 0.12 * jitter);
         let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * gain * master)) };
         commands.spawn((AudioPlayer(clip.source.clone()), playback));
     }
@@ -788,17 +795,22 @@ fn splash(noise: &mut Noise) -> Vec<f32> {
 
 /// Encodes mono samples as a 16-bit PCM WAV file.
 pub(crate) fn wav(samples: &[f32]) -> Vec<u8> {
-    encode(1, samples.len(), samples.iter().copied())
+    wav_at(RATE, samples)
+}
+
+/// Encodes mono samples at `rate` as a 16-bit PCM WAV file.
+pub(crate) fn wav_at(rate: u32, samples: &[f32]) -> Vec<u8> {
+    encode(1, rate, samples.len(), samples.iter().copied())
 }
 
 /// Encodes two channels of equal length as a 16-bit PCM WAV file.
 pub(crate) fn wav_stereo(left: &[f32], right: &[f32]) -> Vec<u8> {
     debug_assert_eq!(left.len(), right.len());
-    encode(2, left.len(), left.iter().zip(right).flat_map(|(&l, &r)| [l, r]))
+    encode(2, RATE, left.len(), left.iter().zip(right).flat_map(|(&l, &r)| [l, r]))
 }
 
-/// A WAV file of `frames` frames of `channels` interleaved samples.
-fn encode(channels: u16, frames: usize, samples: impl Iterator<Item = f32>) -> Vec<u8> {
+/// A WAV file of `frames` frames of `channels` interleaved samples at `rate`.
+fn encode(channels: u16, rate: u32, frames: usize, samples: impl Iterator<Item = f32>) -> Vec<u8> {
     let block = channels as u32 * 2;
     let data_len = frames as u32 * block;
     let mut out = Vec::with_capacity(44 + data_len as usize);
@@ -808,8 +820,8 @@ fn encode(channels: u16, frames: usize, samples: impl Iterator<Item = f32>) -> V
     out.extend_from_slice(&16u32.to_le_bytes());
     out.extend_from_slice(&1u16.to_le_bytes()); // PCM
     out.extend_from_slice(&channels.to_le_bytes());
-    out.extend_from_slice(&RATE.to_le_bytes());
-    out.extend_from_slice(&(RATE * block).to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * block).to_le_bytes());
     out.extend_from_slice(&(block as u16).to_le_bytes());
     out.extend_from_slice(&16u16.to_le_bytes());
     out.extend_from_slice(b"data");

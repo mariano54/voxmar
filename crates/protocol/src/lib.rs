@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 18;
+pub const PROTOCOL_VERSION: u32 = 20;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -46,13 +46,16 @@ pub type PlayerId = u32;
 pub enum ClientMessage {
     Hello { name: String, protocol: u32, content: u64 },
     Input(PlayerInput),
-    /// Propose an action; it replaces any action still in progress.
+    /// Propose an action. A timed one (mining) replaces any timed action still in
+    /// progress; an instant one (placing, throwing) leaves it be.
     Propose { action: ActionId, target: ActionTarget },
-    /// Abandon the action in progress (for example, the mouse button was released).
+    /// Abandon the timed action in progress (for example, the mouse button was released).
     Cancel,
-    /// The action in progress is done by the player's own clock (a block shows broken):
-    /// the next proposal must not cancel it, however late the server's own clock runs.
-    Finished,
+    /// The timed action at `target` is done by the player's own clock (a block shows
+    /// broken): it completes, now or in its own time, and nothing the player does next
+    /// cancels it. If the server has no such action (it refused it), it answers with the
+    /// truth about the target, so the client never keeps a break the server did not make.
+    Finished { target: ActionTarget },
     /// The player's preferences: streaming radius in columns (capped by the server) and
     /// flight speed multiplier (honoured for admins only).
     Settings { view_distance: u8, fly_speed: f32 },
