@@ -18,6 +18,9 @@ struct DistantView {
     // The sky's zenith and horizon colours, for water's reflection.
     zenith: vec4<f32>,
     horizon: vec4<f32>,
+    // xy: the block position across the land the rings are laid out around, which follows
+    // the camera only once the finer rings' tiles there have arrived.
+    rings: vec4<i32>,
 };
 
 // Tile origins (x, z) and cell size (w), by instance index; shared with the real chunks.
@@ -72,6 +75,9 @@ const PATCHES: f32 = 0.3;
 // their average: a wider, dimmer sun glint, and a surface facing the eye a little more (the
 // variance of the ripples' slope).
 const RIPPLE_FADE: f32 = 256.0;
+// Blocks of water across a pixel (its longer side) over which the ripples fade out: their
+// shortest wavelength is a little over two blocks.
+const RIPPLE_ALIAS = vec2(0.4, 1.2);
 const GLINT_SHARPNESS = vec2(50.0, 220.0);
 const GLINT = vec2(0.9, 1.0);
 const RIPPLE_SLOPE_VARIANCE: f32 = 0.0013;
@@ -163,7 +169,7 @@ fn real_column(xz: vec2<f32>) -> bool {
 
 // Whether a position lies more than `margin` inside finer detail: real chunks, wherever they
 // have been meshed (at long view distances past the finest rings too), or the next finer
-// ring, derived from the camera position exactly as the client chooses its tiles.
+// ring, derived from where the rings are laid out exactly as the client chooses its tiles.
 fn covered_by_finer(xz: vec2<f32>, margin: f32, cell: f32) -> bool {
     if real_column(xz + vec2(-margin, -margin)) && real_column(xz + vec2(margin, -margin))
         && real_column(xz + vec2(-margin, margin)) && real_column(xz + vec2(margin, margin)) {
@@ -173,7 +179,7 @@ fn covered_by_finer(xz: vec2<f32>, margin: f32, cell: f32) -> bool {
         return false;
     }
     let tile = cell * 0.5 * CELLS_PER_TILE;
-    let center = floor(view.world_position.xz / tile);
+    let center = floor(vec2<f32>(distant.rings.xy) / tile);
     let low = (center - RING) * tile;
     let high = (center + RING + 1.0) * tile;
     return all(xz > low + margin) && all(xz < high - margin);
@@ -310,7 +316,7 @@ fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surfa
 // sheet falls steeply (`surface_slope`, rise per block: a river dropping off a cliff) it is
 // white water, as real falling water is, not a mirror: a level sheet's reflection there
 // took the horizon's colour, and waterfalls showed as sky-blue holes in the hills.
-fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32) -> vec3<f32> {
+fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32, footprint: f32) -> vec3<f32> {
     let light = shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, true);
     let floor = saturate(in.side) * face_light(in, UP, 1.0, 1.0, false);
     if in.kind == ICE {
@@ -318,7 +324,10 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32) -> vec3<f32> {
     }
     let past_real = max(abs(in.world_position.x - view.world_position.x), abs(in.world_position.z - view.world_position.z))
         - f32(distant.coverage.w) * COLUMN;
-    let ripples = 1.0 - smoothstep(0.0, RIPPLE_FADE, past_real);
+    // They also fade where a pixel spans a ripple or more: sampled that sparsely they
+    // alias into a fine checker, which showed as a hard-edged band of it beyond the real
+    // water (Mariano's title screen, 2026-10-06).
+    let ripples = (1.0 - smoothstep(0.0, RIPPLE_FADE, past_real)) * (1.0 - smoothstep(RIPPLE_ALIAS.x, RIPPLE_ALIAS.y, footprint));
     let n = normalize(mix(UP, water_normal(in.world_position), ripples));
     // Ripples facing the eye fill more of the view than those facing away, the more so the
     // lower the angle, so on average real water faces the eye more than a flat sheet.
@@ -386,7 +395,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             color *= 1.0 + PATCHES * patches * (value_noise(in.world_position.xz / PATCH_CELL + 17.0).x - 0.5);
         }
     } else {
-        color = sheet(in, to_eye, surface_slope);
+        color = sheet(in, to_eye, surface_slope, footprint.x);
     }
     // A NaN from a degenerate sliver would bloom into a blob; drop it.
     color = select(color, vec3(0.0), color != color);

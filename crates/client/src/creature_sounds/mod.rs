@@ -148,7 +148,6 @@ pub struct CreatureSound {
 pub struct CreatureSounds(pub Vec<CreatureSound>);
 
 impl CreatureSounds {
-    #[allow(dead_code, reason = "the creatures module calls it once its sound hooks land")]
     pub fn push(&mut self, sound: CreatureSound) {
         self.0.push(sound);
     }

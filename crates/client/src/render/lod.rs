@@ -260,6 +260,17 @@ pub struct Lod {
     pending: FxHashSet<TileKey>,
     wanted: Vec<TileKey>,
     last_camera: Option<IVec2>,
+    /// Where the rings are laid out around for drawing (the shader hides each ring inside
+    /// the next finer one as laid out here), and the tiles that layout needs. It moves to
+    /// the camera only once every tile wanted there has arrived, and those tiles stay
+    /// until it does: rings laid out at once around a moving camera hid the coarser ring
+    /// where the finer ring's new tiles were still being built, and the bare floor under
+    /// the sea showed through as a long straight strip (flight shots, 2026-10-06).
+    shown: FxHashSet<TileKey>,
+    /// Whether the layout drawn is the one wanted now.
+    settled: bool,
+    /// The camera position the wanted tiles are laid out around.
+    wanting: IVec2,
     results_tx: Sender<Option<TileMesh>>,
     results_rx: Receiver<Option<TileMesh>>,
 }
@@ -276,6 +287,9 @@ impl Lod {
             pending: FxHashSet::default(),
             wanted: Vec::new(),
             last_camera: None,
+            shown: FxHashSet::default(),
+            settled: false,
+            wanting: IVec2::ZERO,
             results_tx,
             results_rx,
         }
@@ -293,8 +307,22 @@ impl Lod {
         self.generator = generator;
         self.pending.clear();
         self.wanted.clear();
+        self.shown.clear();
+        self.settled = false;
         (self.results_tx, self.results_rx) = unbounded();
         self.set_real_columns(0);
+    }
+
+    /// Removes the tiles not in `keep`.
+    fn drop_tiles_but(&mut self, keep: &FxHashSet<TileKey>) {
+        let terrain = &self.terrain;
+        self.tiles.retain(|key| {
+            let kept = keep.contains(key);
+            if !kept {
+                terrain.remove_tile(*key);
+            }
+            kept
+        });
     }
 
     /// Radius, in columns, of the real chunks the rings surround.
@@ -309,24 +337,20 @@ impl Lod {
         self.last_camera = None;
     }
 
-    /// Tiles shown and tiles wanted.
+    /// Tiles wanted that have arrived, and tiles wanted.
     pub fn progress(&self) -> (usize, usize) {
-        (self.tiles.len(), self.wanted.len())
+        (self.wanted.iter().filter(|key| self.tiles.contains(key)).count(), self.wanted.len())
     }
 
     /// Tiles each ring needs around `camera`, nearest rings first: those in the ring's
-    /// square that are not entirely covered by finer detail. The finest ring also keeps the
-    /// tiles under the real chunks, which stand in wherever those have not been meshed.
+    /// square that are not entirely covered by the next finer ring. Tiles under the real
+    /// chunks are kept, to stand in wherever those have not been meshed yet.
     fn wanted_tiles(&self, camera: IVec2) -> Vec<TileKey> {
-        let column = camera.div_euclid(IVec2::splat(CHUNK_SIZE));
-        let real = ((column - (self.real_columns - 1)) * CHUNK_SIZE, (column + self.real_columns) * CHUNK_SIZE);
         let mut wanted = Vec::new();
         for level in 0..LEVELS as u8 {
             let tile = (FIRST_CELL << level) * CELLS;
             let center = camera.div_euclid(IVec2::splat(tile));
-            let finer = if level == 0 {
-                real
-            } else {
+            let finer = {
                 let finer = tile / 2;
                 let c = camera.div_euclid(IVec2::splat(finer));
                 ((c - RING) * finer, (c + RING + 1) * finer)
@@ -336,9 +360,12 @@ impl Lod {
                 for x in center.x - RING..=center.x + RING {
                     let low = IVec2::new(x, z) * tile;
                     let high = low + tile;
-                    // Real chunks can reach past the finer rings at long view distances.
-                    let inside = |(hole_low, hole_high): (IVec2, IVec2)| low.cmpge(hole_low).all() && high.cmple(hole_high).all();
-                    let hidden = level > 0 && (inside(finer) || inside(real));
+                    // Tiles where real chunks belong are kept all the same: those chunks arrive
+                    // over many frames (a fast flight outruns them by hundreds of blocks),
+                    // and the shader hides a tile only where they have. Hiding them here left
+                    // a hole between the finest ring and the real chunks still to come, which
+                    // showed as a long straight strip of sky and sunken sea floor.
+                    let hidden = level > 0 && low.cmpge(finer.0).all() && high.cmple(finer.1).all();
                     if !hidden {
                         ring.push(TileKey { level, x, z });
                     }
@@ -363,15 +390,22 @@ fn request_tiles(mut lod: ResMut<Lod>, world: Res<WorldGenerator>, camera: Query
     if lod.last_camera != Some(column) {
         lod.last_camera = Some(column);
         lod.wanted = lod.wanted_tiles(position);
-        let keep: FxHashSet<TileKey> = lod.wanted.iter().copied().collect();
-        let terrain = &lod.terrain;
-        lod.tiles.retain(|key| {
-            let keep = keep.contains(key);
-            if !keep {
-                terrain.remove_tile(*key);
-            }
-            keep
-        });
+        lod.settled = false;
+        lod.wanting = position;
+        let mut keep: FxHashSet<TileKey> = lod.wanted.iter().copied().collect();
+        keep.extend(&lod.shown);
+        lod.drop_tiles_but(&keep);
+    }
+    // The layout follows the camera once everything it wants is in, the first time too:
+    // a layout settled before its tiles came would leave holes until it moved on, and its
+    // tiles, no longer wanted, would never be asked for.
+    if !lod.settled && lod.wanted.iter().all(|key| lod.tiles.contains(key)) {
+        lod.settled = true;
+        lod.terrain.set_rings_around(lod.wanting);
+        lod.shown = lod.wanted.iter().copied().collect();
+        let keep = std::mem::take(&mut lod.shown);
+        lod.drop_tiles_but(&keep);
+        lod.shown = keep;
     }
 
     for i in 0..lod.wanted.len() {
