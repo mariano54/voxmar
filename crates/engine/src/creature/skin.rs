@@ -540,6 +540,7 @@ mod tests {
             },
             colours: vec![[150, 118, 86], [226, 216, 196], [70, 52, 40]],
             glows: false,
+            scale: 1.0,
             skin: SkinDef { markings: vec![Marking::Spots { colour: [40, 30, 20], size: 0.08, density: 0.5 }], ..Default::default() },
         }
     }

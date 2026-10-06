@@ -657,4 +657,5 @@
     "personality.lazy": "のんびり",
     "personality.skittish": "神経質",
     "personality.calm": "落ち着いている",
+    "inspect.breed": "品種:{breed}。",
 }
