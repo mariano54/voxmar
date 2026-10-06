@@ -269,6 +269,14 @@ farm recordings.
 
 | Our files | Recording | Recordist | Source |
 | --- | --- | --- | --- |
+| `camel/` alert_1, call_1, death_1, hurt_1 | Camelids - Dromedary; Single; Close Perspective | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/801959/ |
+| `camel/` idle_1 | Camelids - Dromedary; Single; Medium Perspective | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/848099/ |
+| `camel/` idle_2 | Camelids - Alpaca; Moan, Close Perspective | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/840890/ |
+| `camel/` idle_3 | Camelids - Alpaca; Two Moans, Close Perspective | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/839524/ |
+| `parrot/` alert_1, idle_2 | Parrots - Sulfur-crested Cockatoo | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/844340/ |
+| `parrot/` call_1, call_2 | Parrots - Blue-and-Gold Macaw; Long Calls, Medium Perspective | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/846538/ |
+| `parrot/` call_3, death_1 | Parrots - Blue-and-Gold Macaw; Long Call | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/844349/ |
+| `parrot/` hurt_1, idle_1 | Parrots - Goffin's Cockatoo, Squawk | TheKingOfGeeks360 | https://freesound.org/people/TheKingOfGeeks360/sounds/759965/ |
 | `cavy/` idle_1, idle_2, idle_3 | capybara | %D0%9A%D0%B0%D0%BF%D1%8B%D0%B1%D0%B0%D1%80%D0%B0_12345 | https://freesound.org/people/%D0%9A%D0%B0%D0%BF%D1%8B%D0%B1%D0%B0%D1%80%D0%B0_12345/sounds/849980/ |
 | `wolf/` alert_4 | dog_growling 2.wav | 15GPanskaBokstefflova_Nicola | https://freesound.org/people/15GPanskaBokstefflova_Nicola/sounds/461518/ |
 | `wolf/` death_1, idle_1, idle_2, ready_1, ready_2 | dog_whining 1.wav | 15GPanskaBokstefflova_Nicola | https://freesound.org/people/15GPanskaBokstefflova_Nicola/sounds/461527/ |
