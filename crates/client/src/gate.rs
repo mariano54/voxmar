@@ -1993,6 +1993,20 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let viewer = world.resource::<RecipeViewer>();
             let back = viewer.trail.last().is_some_and(|lookup| lookup.item == log && lookup.uses);
             gate.check("recipes: back", if back { Ok("Back returns to the log's uses".into()) } else { Err(format!("after Back the viewer shows {:?}", viewer.trail.last())) });
+            // A log's tooltip says what it goes into, planks among them.
+            let lines = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                let planks_name = locale.block(launch.content.blocks.def(planks));
+                world.resource::<RecipeViewer>().book().map(|book| (crate::hud::inventory::origins_and_uses(locale, &launch.content, book, log), planks_name))
+            };
+            gate.check(
+                "tooltip: used in",
+                match lines {
+                    Some((lines, planks)) if lines.iter().any(|line| line.contains(&planks)) => Ok(format!("an oak log's tooltip: {}", lines.join(" / "))),
+                    Some((lines, _)) => Err(format!("an oak log's tooltip says {lines:?}")),
+                    None => Err("no recipe book to read".into()),
+                },
+            );
             world.resource_mut::<RecipeViewer>().trail.clear();
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
@@ -2628,6 +2642,9 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
+                // Those near enough to fight show their combat level over them.
+                let labels: Vec<String> = world.query::<(&crate::hud::levels::LevelLabel, &Text)>().iter(world).map(|(_, text)| text.0.clone()).collect();
+                gate.check("creature levels", if labels.is_empty() { Err("no creature shows its level over it".into()) } else { Ok(format!("{} creatures show their level over them ({})", labels.len(), labels[0])) });
                 gate.next(Step::Strike, now);
             }
         }
