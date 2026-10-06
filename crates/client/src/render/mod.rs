@@ -37,6 +37,7 @@ pub mod bolts;
 pub mod cloud_map;
 pub mod cracks;
 pub mod gpu_clock;
+pub mod in_flight;
 pub mod items;
 pub mod lod;
 pub mod night;
