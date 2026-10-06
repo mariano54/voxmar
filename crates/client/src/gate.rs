@@ -153,7 +153,8 @@ enum Step {
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
     /// over picks up.
     Strike,
-    /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory.
+    /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
+    /// smoke and embers rise from the fire.
     Cook,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
@@ -1304,7 +1305,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if cooked > gate.count_before {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
-                gate.next(Step::Tame, now);
+                gate.advance(now);
             } else if in_phase > 15.0 {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
@@ -1313,9 +1314,32 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
+        // The air over the fire, twice a little apart: its smoke and embers move it.
+        3 => {
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 1.6, 0.5));
+            if in_phase > 0.5 && gate.shot(world, "fire").is_some() {
+                gate.advance(now);
+            }
+        }
+        4 if in_phase > 0.6 => {
+            let Some(later) = gate.shot(world, "fire_later") else { return };
+            let change = gate.earlier_shot("fire").map_or(0.0, |earlier| change(&earlier, &later, 0.4));
+            let result = if change >= FIRE_CHANGE {
+                Ok(format!("smoke and embers rise, changing the view over it by {change:.2} levels"))
+            } else {
+                Err(format!("nothing rises from it: the view over it changed by {change:.2} levels"))
+            };
+            gate.check("campfire smoke", result);
+            gate.next(Step::Tame, now);
+        }
         _ => {}
     }
 }
+
+/// How much the middle of the view over a campfire must change in a little over half a
+/// second, in levels (of 255) on average: its smoke and embers drifting up. Nothing else
+/// there moves but the odd leaf.
+const FIRE_CHANGE: f32 = 0.3;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).

@@ -48,6 +48,29 @@
                 Border(width: 1, amount: -0.3),
             ], clean: true),
         ]),
+        // A torch: a stick charred at the top, its flame white-hot at the heart. Its
+        // flickering and embers are particles (blocks_food.ron).
+        "block/torch": (base: "shape/plant", layers: [Grid(legend: {
+            'W': "#fff8d8", 'Y': "#ffd860", 'y': "#f8a030", 'o': "#d85a18", 'c': "#2a1e16",
+            'k': "#5a3e22", 'l': "#94693a", 'm': "#6e4c2a",
+        }, rows: [
+            "................",
+            "........y.......",
+            ".......yy.......",
+            "......yYy.y.....",
+            "......yYYy......",
+            ".....yYWWYy.....",
+            ".....yWWWYy.....",
+            ".....oYWWYo.....",
+            "......oYYo......",
+            ".......cc.......",
+            ".......lm.......",
+            ".......lm.......",
+            ".......lm.......",
+            ".......lk.......",
+            ".......lm.......",
+            ".......km.......",
+        ])]),
         "block/cactus_side": (palettes: {"main": ["#1f4a1a", "#2a5d20", "#357127", "#41842f", "#4e9638", "#5da943"], "spine": ["#d8d3a8", "#f2eecc"]}, layers: [
             Paint(palette: "main", base: 0.55, shade: [
                 Stripes(vertical: true, period: 4.0, width: 0.25, amount: -0.4, phase: 1.0),
