@@ -235,7 +235,11 @@ fn particle(emission: &Emission, emitter: &Emitter, light: u8, wind: Vec3, dice:
             grow: 3.0,
             wander: 0.3,
             life: 3.5 + 1.5 * r2,
-            color: color([150, 144, 138], 140),
+            // Soft greys, each puff a little lighter or darker than the last.
+            color: {
+                let grey = (138.0 + 24.0 * (dice.roll() - 0.5)) as u8;
+                color([grey, grey - 4, grey - 8], 140)
+            },
             light: [emitter.sky, light.saturating_sub(3)],
             ..default()
         },

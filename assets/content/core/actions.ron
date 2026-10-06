@@ -6,7 +6,7 @@
         (
             name: "mine",
             duration: TargetHardness,
-            requires: [Alive, InReach, Breakable],
+            requires: [Alive, InReach, Breakable, BlockLevel, ToolGood],
             effects: [DropLoot, ClearTarget],
         ),
         (

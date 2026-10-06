@@ -70,6 +70,9 @@ pub struct LocalPlayer {
     /// When the vitals last came, in seconds since startup: timed effects count down from it.
     pub vitals_at: f32,
     pub selected: usize,
+    /// The crafting table the player is working at (its three-by-three grid shows in the
+    /// inventory), until the inventory closes.
+    pub station: Option<IVec3>,
     pub dead: bool,
     /// Set once the server has welcomed us.
     pub joined: bool,
@@ -94,6 +97,7 @@ impl Default for LocalPlayer {
             admin: false,
             fly_speed: 1.0,
             health: 20,
+            station: None,
             max_health: 20,
             inventory: Inventory::default(),
             skills: Skills::default(),

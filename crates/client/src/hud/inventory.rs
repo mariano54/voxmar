@@ -49,7 +49,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item).after(InventorySystems))
+                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -150,7 +150,14 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     column_gap: Val::Px(PX),
                     ..default()
                 };
-                row.spawn(square).with_children(|grid| (CRAFT..CRAFT + GRID).for_each(|slot| spawn_slot(grid, slot)));
+                // Two by two, or three by three at a crafting table (`fit_grid`).
+                row.spawn((square, CraftSquare)).with_children(|grid| {
+                    for cell in 0..GRID {
+                        let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
+                        grid.spawn((Button, Silent, InventorySlot(CRAFT + cell), CraftCell(cell), RelativeCursorPosition::default(), node, Piece::Well.image()))
+                            .with_children(|slot| slot_contents(slot, font, CRAFT + cell));
+                    }
+                });
                 row.spawn(shadowed(font, "→", LARGE, GOLD));
                 let node = Node { width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
                 row.spawn((Button, Silent, OutputSlot, RelativeCursorPosition::default(), node, Piece::Frame.image())).with_children(|cell| {
@@ -234,10 +241,21 @@ fn craft(
     if !ui.inventory_open {
         return;
     }
-    let recipes = launch.content.recipes.clone();
-    let made = recipes.find(&player.inventory.grid()).map(|r| (r.output, r.count));
+    let (recipes, skills) = (launch.content.recipes.clone(), launch.content.skills.clone());
+    // As the server allows it: bigger than two by two only at a table, and with the
+    // recipe's skill level.
+    let at_table = player.station.is_some();
+    let short = |r: &voxmar_engine::craft::Recipe| r.skill.filter(|&s| skills.level(player.skills.xp(s)) < r.level);
+    let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
+    let found = recipes.find(&player.inventory.grid());
+    let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
+    let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
     let filled = player.inventory.grid().iter().any(Option::is_some);
     let (title, how) = match made {
+        _ if let Some((skill, level)) = lacking => {
+            let skill = locale.skill(skills.get(skill));
+            (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))]))
+        }
         Some((item, _)) => (locale.block(launch.content.blocks.def(item)), locale.get("inventory.craft.take").to_owned()),
         None if filled => (locale.get("inventory.craft.nothing").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
         None => (locale.get("inventory.craft").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
@@ -274,10 +292,38 @@ fn craft(
         return;
     }
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let recipe = |grid: &[Option<voxmar_engine::block::BlockId>; GRID]| recipes.find(grid).map(|r| (r.output, r.count));
-    if player.inventory.craft(recipe, all) > 0 {
+    let recipe = |grid: &[Option<voxmar_engine::block::BlockId>; GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
+    let mut inventory = player.inventory.clone();
+    if inventory.craft(recipe, all) > 0 {
+        player.inventory = inventory;
         net.propose(actions.0.expect("core:craft"), ActionTarget::Slot(if all { 0 } else { 1 }));
         sounds.write(UiSound::Click);
+    }
+}
+
+/// The crafting grid's square, and each of its cells by number (`craft::GRID`).
+#[derive(Component)]
+struct CraftSquare;
+#[derive(Component)]
+pub(crate) struct CraftCell(pub usize);
+
+/// Lays the crafting grid out two by two, or three by three while the player works at a
+/// crafting table. What the bigger grid held goes back into the inventory with the rest
+/// when the screen closes.
+fn fit_grid(player: Res<LocalPlayer>, mut square: Query<&mut Node, With<CraftSquare>>, mut cells: Query<(&CraftCell, &mut Node), Without<CraftSquare>>) {
+    let side = if player.station.is_some() { voxmar_engine::craft::SIDE } else { 2 };
+    if let Ok(mut node) = square.single_mut() {
+        let columns = vec![RepeatedGridTrack::px(side as u16, SLOT)];
+        if node.grid_template_columns != columns {
+            node.grid_template_columns = columns;
+        }
+    }
+    for (cell, mut node) in &mut cells {
+        let shown = cell.0 % voxmar_engine::craft::SIDE < side && cell.0 / voxmar_engine::craft::SIDE < side;
+        let display = if shown { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
+        }
     }
 }
 
@@ -297,6 +343,8 @@ fn toggle(
     }
     if *was_open && !ui.inventory_open {
         *gesture = Gesture::default();
+        // Walking away from a crafting table, as closing the screen does.
+        player.station = None;
         send(&net, &actions, &mut player.inventory, Move::Stow);
     }
     *was_open = ui.inventory_open;

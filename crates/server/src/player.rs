@@ -40,6 +40,9 @@ pub struct Player {
     pub yaw: f32,
     pub pitch: f32,
     pub selected: usize,
+    /// The crafting table the player last opened, whose three-by-three grid they may use
+    /// while within reach of it.
+    pub station: Option<voxmar_engine::glam::IVec3>,
     pub flying: bool,
     pub health: Health,
     pub inventory: Inventory,
@@ -80,6 +83,7 @@ impl Player {
             yaw: 0.0,
             pitch: 0.0,
             selected: 0,
+            station: None,
             flying: false,
             health: Health::full(MAX_HEALTH),
             inventory: Inventory::default(),

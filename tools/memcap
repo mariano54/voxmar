@@ -120,6 +120,9 @@ take_lock() {
 
 slots=${VOXMAR_SLOTS:-4}
 lock=
+# A timing run takes no slot: under its QUIET it is all that runs, and the builds QUIET
+# paused still hold the slots, so waiting for one would wait for ever.
+[[ -n $VOXMAR_TIMING ]] && lock=/tmp/voxmar-timing-$$.lock
 waited=0
 while [[ -z $lock ]]; do
   for i in $(seq 1 "$slots"); do

@@ -5,8 +5,8 @@
 //! shift clicks, drags, double clicks and number keys) comes down to a few moves here:
 //! [`Inventory::move_items`] between two slots, one of which may be the stack held on the
 //! pointer ([`CURSOR`]), [`Inventory::quick_move`] between the hotbar and the rest, and
-//! [`Inventory::stow_cursor`] when the screen closes. The two-by-two crafting grid is four
-//! more slots ([`CRAFT`]), and [`Inventory::craft`] turns what it holds into a recipe's
+//! [`Inventory::stow_cursor`] when the screen closes. The crafting grid is nine more slots
+//! ([`CRAFT`]; two by two of them away from a crafting table, see `craft::SMALL`), and [`Inventory::craft`] turns what it holds into a recipe's
 //! output. The client works out which moves a gesture means; the server checks and
 //! applies each the same way.
 
@@ -20,7 +20,7 @@ pub const SLOTS: usize = 36;
 pub const MAX_STACK: u8 = 64;
 /// The slot number of the stack held on the pointer while the inventory screen is open.
 pub const CURSOR: usize = SLOTS;
-/// The crafting grid's first slot; its four are `CRAFT..CRAFT + 4`, row by row.
+/// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
 pub const CRAFT: usize = CURSOR + 1;
 /// The last slot number there is.
 const LAST: usize = CRAFT + GRID - 1;
@@ -343,9 +343,11 @@ mod tests {
     #[test]
     fn the_grid_crafts_once_or_all() {
         let mut inv = Inventory::default();
-        inv.craft = [stack(DIRT, 3), None, None, None];
+        inv.craft[0] = stack(DIRT, 3);
         // One dirt makes four sand.
-        let recipe = |grid: &[Option<BlockId>; GRID]| (grid == &[Some(DIRT), None, None, None]).then_some((SAND, 4));
+        let mut one_dirt = [None; GRID];
+        one_dirt[0] = Some(DIRT);
+        let recipe = |grid: &[Option<BlockId>; GRID]| (grid == &one_dirt).then_some((SAND, 4));
         assert_eq!(inv.craft(recipe, false), 1);
         assert_eq!((inv.cursor, inv.craft[0]), (stack(SAND, 4), stack(DIRT, 2)));
         // Shift crafts the rest into the inventory.

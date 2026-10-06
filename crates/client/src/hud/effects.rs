@@ -80,14 +80,14 @@ fn show(
     hovered: Query<(&EffectHover, &RelativeCursorPosition, &InheritedVisibility, &bevy::ui::UiGlobalTransform, &ComputedNode)>,
     pinned: Option<Res<PinnedTip>>,
     cameras: Query<&Camera, With<Camera3d>>,
-    mut tip: Query<(&mut Node, &mut Visibility, &ComputedNode), With<EffectTip>>,
+    mut tip: Query<(&mut Node, &mut Visibility), With<EffectTip>>,
     mut name: Query<(&mut Text, &mut TextColor), (With<EffectTipName>, Without<EffectTipWhat>)>,
     mut what: Query<&mut Text, (With<EffectTipWhat>, Without<EffectTipName>, Without<EffectTipLeft>)>,
     mut left: Query<(&mut Text, &mut Node), (With<EffectTipLeft>, Without<EffectTipName>, Without<EffectTipWhat>, Without<EffectTip>)>,
     mut icon: Query<&mut ImageNode, With<EffectTipIcon>>,
     (scale, time, player, images): (Res<UiScale>, Res<Time>, Res<crate::player::LocalPlayer>, Res<super::HudImages>),
 ) {
-    let Ok((mut node, mut visibility, plate)) = tip.single_mut() else { return };
+    let Ok((mut node, mut visibility)) = tip.single_mut() else { return };
     let over = hovered.iter().find(|(_, cursor, visible, ..)| visible.get() && cursor.cursor_over()).map(|(effect, ..)| effect.0);
     // The pointer is in the window's points; the interface is laid out at its own scale.
     let at = window.single().ok().and_then(Window::cursor_position).map(|at| at / scale.0);
@@ -118,13 +118,14 @@ fn show(
             text.0 = words;
         }
     }
-    // Beside the pointer, below and to the right, or above or to the left where the window
-    // has no room for it there.
+    // Beside the pointer, toward the middle of the window: below it in the top half, above
+    // it in the bottom half, held by the edge it grows away from so it is never squeezed.
     let room = crate::ui::view_size(&window, &cameras).map_or(Vec2::splat(f32::MAX), |view| view / scale.0);
-    let size = plate.size() * plate.inverse_scale_factor();
-    let place = |at: f32, size: f32, room: f32| if at + OFFSET + size <= room { at + OFFSET } else { (at - OFFSET - size).max(0.0) };
-    node.left = Val::Px(place(at.x, size.x, room.x));
-    node.top = Val::Px(place(at.y, size.y, room.y));
+    let (left, right) = if at.x < room.x / 2.0 { (Val::Px(at.x + OFFSET), Val::Auto) } else { (Val::Auto, Val::Px(room.x - at.x + OFFSET)) };
+    let (top, bottom) = if at.y < room.y / 2.0 { (Val::Px(at.y + OFFSET), Val::Auto) } else { (Val::Auto, Val::Px(room.y - at.y + OFFSET)) };
+    if (node.left, node.right, node.top, node.bottom) != (left, right, top, bottom) {
+        (node.left, node.right, node.top, node.bottom) = (left, right, top, bottom);
+    }
     if let Ok((mut text, mut color)) = name.single_mut() {
         let words = locale.effect(effect);
         if text.0 != words {
