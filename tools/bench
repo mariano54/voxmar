@@ -125,7 +125,7 @@ case ${1:-} in
     commit=$(git rev-parse --short HEAD)$([[ -n $(git status --porcelain --untracked-files=no) ]] && echo '+changes')
     lines=()
     for ((r = 1; r <= repeats; r++)); do
-      line=$($memcap 16 -- cargo test --release -p voxmar_server --test cpu_bench -- --ignored --nocapture 2>&1 | tee target/bench/cpu.txt | grep '^cpu:')
+      line=$(VOXMAR_FOREGROUND=1 $memcap 16 -- cargo test --release -p voxmar_server --test cpu_bench -- --ignored --nocapture 2>&1 | tee target/bench/cpu.txt | grep '^cpu:')
       [[ -n $line ]] || { echo "bench: FAILED: no cpu line; see target/bench/cpu.txt" >&2; exit 1; }
       echo "$line"
       lines+=("$(sed -E 's/^cpu: [0-9]+ ticks, median ([0-9.]+) ms, p99 ([0-9.]+) ms, max ([0-9.]+) ms; ([0-9]+) columns\/s streamed; ([0-9.]+) ms .*/\1 \2 \3 \4 \5/' <<<"$line")")
@@ -302,7 +302,7 @@ run() {
   game_running && { echo "bench: FAILED: Mariano started playing; no numbers taken now are trustworthy" >&2; exit 1; }
   local settings=$config
   [[ $view == flightfast || $view == flighthigh ]] && settings=$fast
-  log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  log=$(cd "$dir" && VOXMAR_MUTE=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG="$settings" $memcap 16 -- target/release/voxmar --capture "$out/$view.png" --seed 1 "${view_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
   # Numbers from a software renderer (llvmpipe, SwiftShader) or the wrong GPU are worthless.
   local adapter
   adapter=$(grep -m1 -o 'AdapterInfo { name: "[^"]*".*device_type: [A-Za-z]*' <<<"$log")

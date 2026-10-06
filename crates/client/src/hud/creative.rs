@@ -28,7 +28,7 @@ impl Plugin for CreativePlugin {
         app.init_resource::<Catalogue>()
             .add_systems(PostStartup, spawn)
             .add_systems(PreUpdate, hold_keys_while_typing.after(bevy::input::InputSystems))
-            .add_systems(Update, (index, show, lay_out, read_input, draw).chain().run_if(in_state(Screen::InGame)));
+            .add_systems(Update, (index, start_search, show, lay_out, read_input, draw).chain().run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -78,6 +78,10 @@ struct Entry {
     /// Everything it is called, in lower case with katakana as hiragana, one name a line.
     words: String,
 }
+
+/// A search to open the catalogue on (`--catalogue`), in creative mode.
+#[derive(Resource)]
+pub struct StartSearch(pub String);
 
 /// What the catalogue shows.
 #[derive(Resource, Default)]
@@ -238,6 +242,17 @@ fn index(launch: Res<Launch>, mut catalogue: ResMut<Catalogue>) {
     catalogue.found_for = None;
 }
 
+/// `--catalogue`'s search, once the player is in creative mode.
+fn start_search(mut commands: Commands, start: Option<Res<StartSearch>>, player: Res<LocalPlayer>, mut catalogue: ResMut<Catalogue>, mut ui: ResMut<UiState>) {
+    let Some(start) = start else { return };
+    if !player.allow_flight {
+        return;
+    }
+    catalogue.query.clone_from(&start.0);
+    ui.inventory_open = true;
+    commands.remove_resource::<StartSearch>();
+}
+
 /// Up beside the inventory in creative mode.
 fn show(
     mut commands: Commands,
@@ -320,6 +335,7 @@ fn read_input(
     tabs: Query<(&TabButton, &Interaction), Changed<Interaction>>,
     pages: Query<(&PageButton, &Interaction), Changed<Interaction>>,
     cells: Query<(&Cell, &RelativeCursorPosition, &InheritedVisibility)>,
+    mut last_typed: Local<String>,
 ) {
     let scrolled: f32 = wheel.read().map(|event| if event.unit == MouseScrollUnit::Line { event.y } else { event.y / 32.0 }).sum();
     let Ok((visibility, over_panel)) = panel.single() else { return };
@@ -328,7 +344,10 @@ fn read_input(
         return;
     }
     if let Ok((field, typed, interaction)) = search.single() {
-        if catalogue.query != typed.value {
+        // What is typed replaces the search; a search set otherwise (`--catalogue`, the
+        // gate) stands until then.
+        if *last_typed != typed.value {
+            last_typed.clone_from(&typed.value);
             catalogue.query.clone_from(&typed.value);
         }
         // A click anywhere else stops the typing, so the keys work again.
