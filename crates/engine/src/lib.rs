@@ -18,6 +18,7 @@ pub mod coords;
 pub mod creature;
 pub mod craft;
 pub mod crop;
+pub mod effect;
 pub mod dropped;
 pub mod field;
 pub mod fluid;

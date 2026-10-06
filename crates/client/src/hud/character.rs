@@ -433,11 +433,12 @@ fn draw_condition(
     mut nodes: Query<&mut Node>,
     children: Query<&Children>,
     mut texts: Query<&mut Text, Without<FeltLine>>,
-    mut shown: Local<Option<Vec<voxmar_engine::vitals::Effect>>>,
-    locale: Res<Locale>,
+    mut shown: Local<Option<Vec<voxmar_engine::effect::ActiveEffect>>>,
+    (locale, launch, images): (Res<Locale>, Res<Launch>, Res<super::HudImages>),
 ) {
+    let most = player.max_health.max(1);
     for meter in &health {
-        set_meter(meter, player.health as f32 / 20.0, &format!("{}/20", player.health), &mut nodes, &children, &mut texts);
+        set_meter(meter, player.health as f32 / most as f32, &format!("{}/{most}", player.health), &mut nodes, &children, &mut texts);
     }
     let max = voxmar_engine::vitals::MAX_HUNGER;
     for meter in &hunger {
@@ -461,11 +462,18 @@ fn draw_condition(
             if effects.is_empty() {
                 list.spawn((Localized("character.no_effects"), text(&font.0, "", BODY, MUTED)));
             }
-            for &effect in effects {
-                list.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|row| {
-                    let color = if effect.is_buff() { ACCENT } else { crate::ui::widgets::ERROR };
-                    row.spawn(shadowed(&font.0, format!("{} {}", if effect.is_buff() { "▴" } else { "▾" }, locale.effect(effect)), BODY, color));
-                    row.spawn(text(&font.0, locale.effect_description(effect), BODY, MUTED));
+            for active in effects {
+                let def = launch.content.effects.get(active.effect);
+                let buff = def.kind == voxmar_engine::effect::Kind::Buff;
+                // Its icon and name, what it does under them; hover it for the details.
+                let row = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
+                list.spawn((row, Button, super::effects::EffectHover(active.effect), bevy::ui::RelativeCursorPosition::default())).with_children(|row| {
+                    let color = if buff { ACCENT } else { crate::ui::widgets::ERROR };
+                    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|line| {
+                        line.spawn((Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::new(images.effect(active.effect))));
+                        line.spawn(shadowed(&font.0, locale.effect(def), BODY, color));
+                    });
+                    row.spawn(text(&font.0, locale.effect_description(def), BODY, MUTED));
                 });
             }
         });

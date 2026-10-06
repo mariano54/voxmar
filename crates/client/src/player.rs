@@ -59,6 +59,8 @@ pub struct LocalPlayer {
     /// Flight speed multiplier, as last agreed with the server.
     pub fly_speed: f32,
     pub health: u8,
+    /// The most health the player may have: twice their Hitpoints level, and what effects add.
+    pub max_health: u8,
     pub inventory: Inventory,
     /// Experience in every skill, as the server last said, and whether it has said yet.
     pub skills: Skills,
@@ -90,6 +92,7 @@ impl Default for LocalPlayer {
             admin: false,
             fly_speed: 1.0,
             health: 20,
+            max_health: 20,
             inventory: Inventory::default(),
             skills: Skills::default(),
             skills_known: false,
@@ -402,8 +405,10 @@ fn movement(
         jump_delay: player.jump_delay,
     };
     let water = world.registry.id("base:water").unwrap_or(BlockId::AIR);
-    let tuning = &launch.content.movement;
-    movement::advance(&mut body, &Around { world: &world, water }, tuning, controls, time.delta_secs().min(0.25));
+    // Quicker or slower on foot as the player's effects say (fruit, a gale).
+    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed;
+    let tuning = launch.content.movement.on_foot(speed);
+    movement::advance(&mut body, &Around { world: &world, water }, &tuning, controls, time.delta_secs().min(0.25));
     player.position = body.position;
     player.velocity = body.velocity;
     player.on_ground = body.on_ground;

@@ -106,6 +106,13 @@ struct TooltipLines;
 struct OutputSlot;
 #[derive(Component)]
 struct OutputIcon;
+/// The words beside the crafting grid's result: its name, then how to take it.
+#[derive(Component)]
+struct CraftName;
+#[derive(Component)]
+struct CraftHint;
+/// Room for those words, wrapped.
+const CRAFT_WORDS: f32 = 120.0 * PX;
 #[derive(Component)]
 struct OutputCount;
 
@@ -135,7 +142,6 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
-                row.spawn((Localized("inventory.craft"), text(font, "", BODY, MUTED)));
                 let square = Node {
                     display: Display::Grid,
                     grid_template_columns: RepeatedGridTrack::px(2, SLOT),
@@ -151,6 +157,12 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
                     cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
                     cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(2.0 * PX), bottom: Val::Px(PX), ..default() }, shadowed(font, "", BODY, TEXT), OutputCount));
+                });
+                // What the grid makes and how to take it, or how to find a recipe.
+                let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
+                row.spawn(words).with_children(|words| {
+                    words.spawn((shadowed(font, "", BODY, TEXT), CraftName));
+                    words.spawn((text(font, "", BODY, MUTED), CraftHint));
                 });
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
@@ -212,7 +224,10 @@ fn craft(
     mut player: ResMut<LocalPlayer>,
     output: Query<&RelativeCursorPosition, With<OutputSlot>>,
     mut icon: Query<(&mut ImageNode, &mut Visibility), With<OutputIcon>>,
-    mut count: Query<&mut Text, With<OutputCount>>,
+    mut count: Query<&mut Text, (With<OutputCount>, Without<CraftName>, Without<CraftHint>)>,
+    mut name: Query<&mut Text, (With<CraftName>, Without<OutputCount>, Without<CraftHint>)>,
+    mut hint: Query<&mut Text, (With<CraftHint>, Without<OutputCount>, Without<CraftName>)>,
+    (locale, settings): (Res<Locale>, Res<Settings>),
     mut sounds: MessageWriter<UiSound>,
 ) {
     if !ui.inventory_open {
@@ -220,6 +235,19 @@ fn craft(
     }
     let recipes = launch.content.recipes.clone();
     let made = recipes.find(&player.inventory.grid()).map(|r| (r.output, r.count));
+    let filled = player.inventory.grid().iter().any(Option::is_some);
+    let (title, how) = match made {
+        Some((item, _)) => (locale.block(launch.content.blocks.def(item)), locale.get("inventory.craft.take").to_owned()),
+        None if filled => (locale.get("inventory.craft.nothing").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
+        None => (locale.get("inventory.craft").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
+    };
+    for (query, words) in [(name.single_mut().ok(), title), (hint.single_mut().ok(), how)] {
+        if let Some(mut text) = query
+            && text.0 != words
+        {
+            text.0 = words;
+        }
+    }
     if let Ok((mut image, mut visibility)) = icon.single_mut() {
         match made {
             Some((item, _)) => {
@@ -474,6 +502,7 @@ fn follow_pointer(
     mut held: Query<&mut Node, With<PointerStack>>,
     mut slots: Query<(&InventorySlot, &RelativeCursorPosition, &mut ImageNode)>,
     gesture: Res<Gesture>,
+    scale: Res<UiScale>,
 ) {
     if !ui.inventory_open {
         return;
@@ -481,6 +510,8 @@ fn follow_pointer(
     if let (Ok(window), Ok(mut node)) = (window.single(), held.single_mut())
         && let Some(at) = window.cursor_position()
     {
+        // The pointer is in the window's points, the interface laid out at its own scale.
+        let at = at / scale.0;
         node.left = Val::Px(at.x - SLOT / 2.0);
         node.top = Val::Px(at.y - SLOT / 2.0);
     }
@@ -594,7 +625,7 @@ fn spawn_legend(card: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     card.spawn(legend).with_children(|legend| {
         for (key, hint) in LEGEND {
             legend.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|entry| {
-                let cap = Node { padding: UiRect::all(Val::Px(space::INNER)), ..default() };
+                let cap = Node { padding: UiRect::all(Val::Px(space::INNER)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
                 entry.spawn((cap, Piece::Button.image())).with_child((Localized(key), shadowed(font, "", BODY, SOFT), TightLine));
                 entry.spawn((Localized(hint), text(font, "", BODY, MUTED)));
             });
@@ -637,9 +668,11 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
-    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool)>>,
+    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
+    (keys, scale): (Res<ButtonInput<KeyCode>>, Res<UiScale>),
+    mut japanese: Local<Option<Locale>>,
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let item = hovered(&slots)
@@ -651,12 +684,34 @@ fn tooltip(
         *shown = None;
         return;
     };
-    let key = (item, settings.debug_overlay);
+    // Shift shows how the name reads: in Japanese, the kana over the name; in another
+    // language, the Japanese name with its kana under it.
+    let reading = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let key = (item, settings.debug_overlay, reading);
     if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
+        let readings: Vec<String> = if !reading {
+            Vec::new()
+        } else if locale.code() == "ja" {
+            locale.block_reading(def).into_iter().collect()
+        } else {
+            let japanese = japanese.get_or_insert_with(|| Locale::load(&voxmar_server::assets_dir().join("content"), "ja"));
+            [Some(japanese.block(def)), japanese.block_reading(def)].into_iter().flatten().collect()
+        };
+        let in_japanese = locale.code() == "ja";
         commands.entity(entity).despawn_children().with_children(|lines| {
+            if in_japanese {
+                for line in &readings {
+                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                }
+            }
             lines.spawn(shadowed(&font.0, locale.block(def), BODY, rarity_color(def.rarity)));
+            if !in_japanese {
+                for line in &readings {
+                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                }
+            }
             let lines_after = seed_line(&locale, &launch.content, &player, item).into_iter().chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
                 lines.spawn(text(&font.0, line, BODY, color));
@@ -667,9 +722,11 @@ fn tooltip(
     if let Ok(window) = window.single()
         && let Some(at) = window.cursor_position()
     {
-        // Up and to the right of the pointer, kept on screen.
+        // Up and to the right of the pointer, kept on screen; the pointer is in the
+        // window's points, the interface laid out at its own scale.
+        let (at, width) = (at / scale.0, window.width() / scale.0);
         let size = computed.size() * computed.inverse_scale_factor();
-        let left = (at.x + 6.0 * PX).min(window.width() - size.x - 2.0 * PX);
+        let left = (at.x + 6.0 * PX).min(width - size.x - 2.0 * PX);
         let top = (at.y - size.y - 2.0 * PX).max(2.0 * PX);
         node.left = Val::Px(left);
         node.top = Val::Px(top);

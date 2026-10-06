@@ -31,6 +31,8 @@ struct Client {
     /// The last position the server corrected us to.
     teleported: Option<Vec3>,
     health: u8,
+    max_health: u8,
+    vitals: voxmar_engine::vitals::Vitals,
     content: Content,
     inventory: voxmar_engine::inventory::Inventory,
     weather: Option<Weather>,
@@ -88,6 +90,8 @@ impl Client {
             allow_flight: false,
             teleported: None,
             health: 0,
+            max_health: 0,
+            vitals: Default::default(),
             content,
             inventory: Default::default(),
             weather: None,
@@ -136,8 +140,10 @@ impl Client {
                     self.world.set_block(pos, block);
                 }
             }
-            ServerMessage::PlayerState { health, inventory, skills, .. } => {
+            ServerMessage::PlayerState { health, inventory, skills, vitals } => {
                 self.health = health.current;
+                self.max_health = health.max;
+                self.vitals = vitals;
                 self.inventory = inventory;
                 self.skills = skills;
             }
@@ -560,6 +566,20 @@ fn players_are_told_the_weather() {
     let fractions = [weather.cover, weather.convection, weather.cirrus, weather.humidity, weather.precipitation, weather.snow];
     assert!(fractions.iter().all(|f| (0.0..=1.0).contains(f)), "{weather:?}");
     assert!(weather.wind.is_finite());
+}
+
+#[test]
+fn health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it() {
+    let mut client = Client::join();
+    // Hitpoints starts at 10: 20 health.
+    client.pump_until(|c| c.max_health == 20);
+    let named = |c: &Client| c.vitals.effects.iter().map(|a| c.content.effects.get(a.effect).name.clone()).collect::<Vec<_>>();
+    client.ok("/fill ~-1 ~ ~-1 ~1 ~50 ~1 air");
+    client.ok("/weather rain heavy 600");
+    client.pump_until(|c| named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
+    // Under a roof, it stops.
+    client.ok("/fill ~-1 ~3 ~-1 ~1 ~3 ~1 stone");
+    client.pump_until(|c| !named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
 }
 
 /// Water placed by a command flows, and players see it flow through batched updates; the

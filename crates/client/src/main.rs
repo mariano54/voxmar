@@ -48,6 +48,7 @@ mod music;
 mod net;
 mod player;
 mod render;
+mod screenshot;
 mod session;
 mod settings;
 mod sfx;
@@ -353,6 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         silence(&mut app);
     }
     app
+    .add_plugins(screenshot::ScreenshotPlugin)
     .add_plugins((
         FrameTimeDiagnosticsPlugin::default(),
         render::RenderPlugin,
@@ -678,7 +680,20 @@ fn setup(
             source.read(&format!("ui/skill/{name}")).or_else(|| unknown.clone()).map(|art| images.add(ui_image(&art))).unwrap_or_default()
         })
         .collect();
-    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons });
+    // Each effect's icon, `ui/effect/<icon>` (content's effects.ron names it), or the plain
+    // one for a buff or a debuff.
+    let mut picture = |name: &str| source.read(name).map(|art| images.add(ui_image(&art)));
+    let (buff, debuff) = (picture("ui/effect/buff").unwrap_or_default(), picture("ui/effect/debuff").unwrap_or_default());
+    let effects = &launch.content.effects;
+    let effects = effects
+        .ids()
+        .map(|id| {
+            let def = effects.get(id);
+            let plain = if def.kind == voxmar_engine::effect::Kind::Buff { &buff } else { &debuff };
+            picture(&format!("ui/effect/{}", def.icon)).unwrap_or_else(|| plain.clone())
+        })
+        .collect();
+    commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects });
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

@@ -4,7 +4,7 @@
 
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::traits;
-use voxmar_protocol::{PlayerId, ServerMessage};
+use voxmar_protocol::PlayerId;
 
 use crate::Server;
 use crate::items::random3;
@@ -35,10 +35,8 @@ impl Server {
         }
         player.changed(traits::INVENTORY);
         if let (false, Some(skill)) = (burnt, cooking.skill) {
-            let tenths = (recipe.def.xp * 10.0) as u32;
-            player.skills.grant(skill, tenths);
-            player.changed(traits::SKILLS);
-            player.connection.send(ServerMessage::Xp { skill, tenths });
+            let xp = recipe.def.xp;
+            self.grant_xp(agent, skill, xp);
         }
     }
 }

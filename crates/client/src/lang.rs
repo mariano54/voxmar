@@ -19,7 +19,7 @@ use voxmar_engine::block::{BlockDef, BlockRegistry};
 use voxmar_engine::creature::CreatureDef;
 use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, languages, title_from_id};
 use voxmar_engine::skill::SkillDef;
-use voxmar_engine::vitals::Effect;
+use voxmar_engine::effect::EffectDef;
 
 use crate::settings::Settings;
 
@@ -73,7 +73,6 @@ impl Locale {
     /// How a block or item's name reads, when it holds kanji: kanji in hiragana, the rest as
     /// written (オークのげんぼく for オークの原木). None for a name with no kanji, and in a
     /// language that has none. The same for the others below.
-    #[allow(dead_code, reason = "the interface shows readings with names (Shift over one)")]
     pub fn block_reading(&self, def: &BlockDef) -> Option<String> {
         self.lang.block_reading(def)
     }
@@ -92,8 +91,8 @@ impl Locale {
 
     /// How a condition's name reads (see [`Locale::block_reading`]).
     #[allow(dead_code, reason = "the interface shows readings with names (Shift over one)")]
-    pub fn effect_reading(&self, effect: Effect) -> Option<String> {
-        self.reading(&format!("effect.{}", effect_key(effect)))
+    pub fn effect_reading(&self, def: &EffectDef) -> Option<String> {
+        self.reading(&def_key("effect", &def.name))
     }
 
     /// What a creature is called.
@@ -129,14 +128,14 @@ impl Locale {
         self.find("language.tight_line").and_then(|value| value.parse().ok()).filter(|&h: &f32| (1.0..2.0).contains(&h)).unwrap_or(1.0)
     }
 
-    /// What a condition (well fed, chilly) is called.
-    pub fn effect(&self, effect: Effect) -> String {
-        self.get_or(&format!("effect.{}", effect_key(effect)), effect.title()).to_owned()
+    /// What an effect (well fed, soaked, hearty) is called.
+    pub fn effect(&self, def: &EffectDef) -> String {
+        self.get_or(&def_key("effect", &def.name), &def.title).to_owned()
     }
 
-    /// What a condition does, in a line.
-    pub fn effect_description(&self, effect: Effect) -> String {
-        self.get_or(&format!("effect.{}.description", effect_key(effect)), effect.description()).to_owned()
+    /// What an effect does, in a line.
+    pub fn effect_description(&self, def: &EffectDef) -> String {
+        self.get_or(&format!("{}.description", def_key("effect", &def.name)), &def.description).to_owned()
     }
 
     /// The language's name in itself, for the language setting.
@@ -164,18 +163,6 @@ fn resolve(wanted: &str, languages: &[Language]) -> String {
     let system = sys_locale::get_locale().unwrap_or_default();
     let primary = system.split(['-', '_', '.']).next().unwrap_or("").to_ascii_lowercase();
     if has(&primary) { primary } else { ENGLISH.to_owned() }
-}
-
-/// The end of a condition's keys: `WellFed` is `well_fed`.
-fn effect_key(effect: Effect) -> String {
-    let mut key = String::new();
-    for (i, c) in format!("{effect:?}").chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            key.push('_');
-        }
-        key.extend(c.to_lowercase());
-    }
-    key
 }
 
 /// Text that shows a key's string in the player's language, rewritten when it changes.
