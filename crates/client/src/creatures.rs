@@ -358,9 +358,10 @@ fn body_mesh(body: &BodyMesh) -> Mesh {
 }
 
 /// Builds a species' body from its parts.
-fn species_body(parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
-    let body = volume::build(parts);
-    let shape = std::sync::Arc::new(Shape::new(parts));
+fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
+    let anatomy = creature::anatomy::of(model, parts);
+    let body = volume::build(parts, anatomy.as_ref());
+    let shape = std::sync::Arc::new(Shape::new(parts, anatomy.as_ref()));
     // Each joint sits at its part's pivot; at rest it moves nothing.
     let inverse: Vec<Mat4> = parts.iter().map(|p| Mat4::from_translation(-p.pivot)).collect();
     let texel = 1.0 / skin::TEXELS;
@@ -375,7 +376,8 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
     let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
     AsyncComputeTaskPool::get().spawn(async move {
         let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
-        let pixels = skin::paint_volume(&def, &parts, seed, origin, dims, shell, |p| shape.nearest(p));
+        // The part each point belongs to, at the body's own surface distance.
+        let pixels = skin::paint_volume(&def, &parts, seed, origin, dims, shell, |p| shape.nearest(p).map(|(i, _)| (i, shape.distance(p))));
         let [w, h, d] = dims;
         let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
         let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
@@ -513,7 +515,7 @@ fn show(
         }
         built += 1;
         let species = registry.get(view.species);
-        let body = creatures.bodies.entry(view.species).or_insert_with(|| species_body(&species.parts, &mut meshes, &mut binds));
+        let body = creatures.bodies.entry(view.species).or_insert_with(|| species_body(&species.def.body.model, &species.parts, &mut meshes, &mut binds));
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));

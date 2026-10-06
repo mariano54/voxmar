@@ -141,12 +141,17 @@ done
 # cores (6 of the 18 are performance cores, and our builds on them gave his game 25-35 ms
 # frames); elsewhere at the lowest CPU priority. Timing runs (VOXMAR_TIMING=1, or
 # VOXMAR_FOREGROUND=1 for a benchmark's timed runs outside a quiet window) run as his game does.
+# VOXMAR_QOS=utility runs a job a step higher (the gate's own build and tests): it may use a
+# performance core his game leaves free, still below his game, and PLAYING pauses it anyway.
+# On the efficiency cores alone a landing's build took 25 minutes.
 background=()
+qos=${VOXMAR_QOS:-background}
+[[ $qos == utility ]] || qos=background
 if [[ -z $VOXMAR_TIMING && -z $VOXMAR_FOREGROUND ]]; then
   if [[ $(uname -s) == Darwin ]] && command -v taskpolicy >/dev/null; then
-    background=(taskpolicy -c background)
+    background=(taskpolicy -c "$qos")
   elif command -v nice >/dev/null; then
-    background=(nice -n 19)
+    background=(nice -n "$( [[ $qos == utility ]] && echo 10 || echo 19)")
   fi
 fi
 

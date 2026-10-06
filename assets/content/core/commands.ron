@@ -127,17 +127,20 @@
             run: Skill,
         ),
     ],
+    // Real minutes a whole day takes at normal speed: the sun is up for two thirds of it.
+    // Longer than Minecraft's 20, so the first night comes less soon (Mariano, 2026-10-06).
+    day_minutes: 25.0,
     // Times of day `/time set` knows by name, in ticks after sunrise.
     times: [
         ("sunrise", 0),
         ("day", 1000),
         ("morning", 2000),
-        ("noon", 6000),
-        ("afternoon", 8500),
-        ("sunset", 12000),
-        ("dusk", 12500),
-        ("night", 13000),
-        ("midnight", 18000),
+        ("noon", 8000),
+        ("afternoon", 11000),
+        ("sunset", 16000),
+        ("dusk", 16500),
+        ("night", 17000),
+        ("midnight", 20000),
         ("dawn", 23500),
     ],
 )

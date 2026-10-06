@@ -254,14 +254,15 @@ impl Server {
     fn describe_time(&self) -> Words {
         let ticks = self.day.floor() as u64;
         let of_day = ticks % TICKS_PER_DAY;
-        // Tick 0 is sunrise, at six in the morning.
-        let hours = (of_day / TICKS_PER_HOUR + 6) % 24;
+        // Tick 0 is sunrise, at four in the morning: the sun is up two thirds of the day, so
+        // it is highest at noon and sets at eight in the evening.
+        let hours = (of_day / TICKS_PER_HOUR + 4) % 24;
         let minutes = of_day % TICKS_PER_HOUR * 60 / TICKS_PER_HOUR;
         let pace = match self.day_speed {
             0.0 => Words::key("command.time.frozen"),
             1.0 => Words::key("command.time.normal"),
             speed => {
-                let minutes = TICKS_PER_DAY as f32 / TICKS_PER_SECOND as f32 / 60.0 / speed;
+                let minutes = self.content.commands.day_minutes() / speed;
                 let day = if minutes >= 1.0 {
                     Words::key("command.time.minutes").with("minutes", Words::text(format!("{minutes:.1}")))
                 } else {
@@ -528,7 +529,17 @@ impl Server {
                     creature.breeds_again = 0;
                 }
                 // Stands still for a minute: for a closer look, or a picture.
-                "hold" => creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64,
+                // Stands still for a minute, side on to whoever asked, for a closer look or
+                // a picture.
+                "hold" => {
+                    creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64;
+                    let to = (at - creature.body.position).with_y(0.0);
+                    let side = voxmar_engine::glam::Vec3::new(to.z, 0.0, -to.x);
+                    if side.length_squared() > 1e-4 {
+                        creature.body.yaw = voxmar_engine::creature::motion::yaw_of(side);
+                    }
+                    creature.body.velocity = voxmar_engine::glam::Vec3::ZERO;
+                }
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {

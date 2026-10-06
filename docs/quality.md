@@ -162,7 +162,8 @@ Mariano plays only commits that passed the full gate: `tools/gate --passed --ful
 <commit>` must succeed before a play build is made (run `tools/gate --full` on it first),
 and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/play`
 (`cargo build --release`), never copied from another worktree, so the binary and its
-`assets/` always match.
+`assets/` always match. Build it with `VOXMAR_FOREGROUND=1` before memcap: he is waiting
+for it, and at memcap's background priority the last crate alone once took half an hour.
 
 ## Staying out of his way, and quiet windows
 
