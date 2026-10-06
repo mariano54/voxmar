@@ -20,7 +20,7 @@ mod wear;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -152,6 +152,7 @@ pub struct ServerHandle {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     tick_times: Arc<Mutex<VecDeque<Duration>>>,
+    ticks: Arc<AtomicU64>,
 }
 
 /// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
@@ -162,6 +163,12 @@ impl ServerHandle {
     /// worth), for benchmarks and diagnostics.
     pub fn tick_times(&self) -> Vec<Duration> {
         self.tick_times.lock().map(|t| t.iter().copied().collect()).unwrap_or_default()
+    }
+
+    /// How many ticks the server has simulated: its own clock, which a server running behind
+    /// on a busy machine keeps, where wall-clock seconds do not.
+    pub fn ticks(&self) -> u64 {
+        self.ticks.load(Ordering::Relaxed)
     }
 
     /// Sender for new connections (local or accepted by a TCP listener).
@@ -194,13 +201,14 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
     let (console, lines) = unbounded();
     let stop = Arc::new(AtomicBool::new(false));
     let tick_times = Arc::new(Mutex::new(VecDeque::with_capacity(TICK_TIMES)));
+    let ticks = Arc::new(AtomicU64::new(0));
     let thread = {
-        let (stop, tick_times) = (stop.clone(), tick_times.clone());
+        let (stop, tick_times, ticks) = (stop.clone(), tick_times.clone(), ticks.clone());
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, meta, save, content, incoming, lines).run(&stop, &tick_times))?
+            .spawn(move || Server::new(config, meta, save, content, incoming, lines).run(&stop, &tick_times, &ticks))?
     };
-    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times })
+    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks })
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -411,7 +419,7 @@ impl Server {
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
     /// handled as soon as they arrive so actions feel immediate.
-    fn run(mut self, stop: &AtomicBool, tick_times: &Mutex<VecDeque<Duration>>) {
+    fn run(mut self, stop: &AtomicBool, tick_times: &Mutex<VecDeque<Duration>>, ticks: &AtomicU64) {
         let tick_length = Duration::from_secs(1) / TICKS_PER_SECOND;
         let mut next_tick = Instant::now();
         while !stop.load(Ordering::Relaxed) {
@@ -428,6 +436,7 @@ impl Server {
             let now = Instant::now();
             if now >= next_tick {
                 self.tick();
+                ticks.fetch_add(1, Ordering::Relaxed);
                 if let Ok(mut times) = tick_times.lock() {
                     if times.len() == TICK_TIMES {
                         times.pop_front();
