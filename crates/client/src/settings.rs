@@ -140,6 +140,8 @@ pub struct Settings {
     /// Keys that show, over an item, the recipes that make it and the ones it goes into.
     pub recipes_key: Key,
     pub uses_key: Key,
+    /// Key that copies the frame to the clipboard and saves it (`screenshot`).
+    pub screenshot_key: Key,
     /// The language's code (`en`, `ja`), or empty to follow the system's.
     pub language: String,
 }
@@ -305,6 +307,7 @@ impl Default for Settings {
             character_key: Key(KeyCode::KeyC),
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
+            screenshot_key: Key(KeyCode::F2),
             language: String::new(),
         }
     }
@@ -688,6 +691,7 @@ enum Binding {
     Character,
     Recipes,
     Uses,
+    Screenshot,
 }
 
 impl Binding {
@@ -700,6 +704,7 @@ impl Binding {
             Binding::Character => "settings.key.character",
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
+            Binding::Screenshot => "settings.key.screenshot",
         }
     }
 
@@ -712,6 +717,7 @@ impl Binding {
             Binding::Character => settings.character_key,
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
+            Binding::Screenshot => settings.screenshot_key,
         }
     }
 
@@ -724,6 +730,7 @@ impl Binding {
             Binding::Character => &mut settings.character_key,
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
+            Binding::Screenshot => &mut settings.screenshot_key,
         } = key;
     }
 }
@@ -850,6 +857,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Character),
             Control::Key(Binding::Recipes),
             Control::Key(Binding::Uses),
+            Control::Key(Binding::Screenshot),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Sprint),
             Control::Key(Binding::Zoom),

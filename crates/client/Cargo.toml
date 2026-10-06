@@ -13,6 +13,9 @@ tracy = ["bevy/trace_tracy"]
 chrome = ["bevy/trace_chrome"]
 
 [dependencies]
+# The screenshot key: the frame to the clipboard as an image, and saved as a PNG.
+arboard = "3.6"
+image = { version = "0.25", default-features = false, features = ["png"] }
 voxmar_engine.workspace = true
 voxmar_protocol.workspace = true
 voxmar_server.workspace = true

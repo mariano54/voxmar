@@ -164,6 +164,12 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
+    /// player's folder and clipboard alone) and says so in the chat.
+    Screenshot,
+    /// Choosing another font in the settings lays every text out in it, and choosing the
+    /// first again puts it back.
+    Font,
     /// Every in-game screen and state, in English and Japanese: no text reaches past the
     /// element it sits in.
     Fit,
@@ -210,6 +216,8 @@ struct Gate {
     blows_seen: u32,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// How wide the inventory's words were before the font changed.
+    width_before: f32,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
@@ -245,6 +253,7 @@ impl Gate {
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
+            width_before: 0.0,
             spills: Vec::new(),
             food_moved: false,
             failures: Vec::new(),
@@ -630,6 +639,8 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Screenshot => screenshot(world, gate, now, in_phase),
+        Step::Font => font(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
@@ -887,7 +898,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Fit, now);
+        gate.next(Step::Screenshot, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -912,7 +923,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Fit, now);
+                gate.next(Step::Screenshot, now);
             }
         }
         2 => {
@@ -933,8 +944,76 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Screenshot, now);
+        }
+    }
+}
+
+/// The screenshot key, as a player presses it: a PNG of the frame lands in the folder.
+fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::screenshot::{Elsewhere, Kept, LastShot};
+    let key_code = world.resource::<crate::settings::Settings>().screenshot_key.0;
+    match gate.phase {
+        0 => {
+            world.insert_resource(Elsewhere(gate.dir.join("screenshots")));
+            world.resource_mut::<LastShot>().0 = None;
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, key_code, false);
+            let kept = world.resource::<LastShot>().0.clone();
+            let result = match kept {
+                Some(Kept::Saved { path, .. }) if path.is_file() => {
+                    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                    Ok(format!("{} saved, {size} bytes", path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())))
+                }
+                Some(Kept::Saved { path, .. }) => Err(format!("said it saved {} but there is no such file", path.display())),
+                Some(Kept::Failed(why)) => Err(why),
+                None if in_phase < 10.0 => return,
+                None => Err("pressing the key saved nothing in 10 s".into()),
+            };
+            gate.check("screenshot", result);
+            world.remove_resource::<Elsewhere>();
+            gate.next(Step::Font, now);
+        }
+    }
+}
+
+/// How wide the visible texts are laid out, together: it changes with the font.
+fn text_width(world: &mut World) -> f32 {
+    let mut texts = world.query::<(&bevy::text::TextLayoutInfo, &InheritedVisibility)>();
+    texts.iter(world).filter(|(_, visible)| visible.get()).map(|(layout, _)| layout.size.x).sum()
+}
+
+/// The font setting: the proportional Voxmar font lays the inventory's words out narrower
+/// than the monospace one, and choosing that again puts them back.
+fn font(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::ui::skin::InterfaceFont;
+    match gate.phase {
+        0 => {
+            world.resource_mut::<UiState>().inventory_open = true;
+            if in_phase > 0.5 {
+                gate.width_before = text_width(world);
+                world.resource_mut::<crate::settings::Settings>().font = InterfaceFont::Voxmar;
+                gate.advance(now);
+            }
+        }
+        1 if in_phase > 0.5 => {
+            let (before, after) = (gate.width_before, text_width(world));
+            let changed = (after - before).abs() > 1.0;
+            gate.check("font", if changed { Ok(format!("the words took {after:.0} px across in Voxmar, {before:.0} in Ledger")) } else { Err(format!("choosing Voxmar left the words {after:.0} px across, as in Ledger")) });
+            world.resource_mut::<crate::settings::Settings>().font = InterfaceFont::Ledger;
+            gate.advance(now);
+        }
+        2 if in_phase > 0.5 => {
+            let (before, back) = (gate.width_before, text_width(world));
+            let same = (back - before).abs() <= 1.0;
+            gate.check("font: back", if same { Ok("Ledger again lays them out as before".into()) } else { Err(format!("back in Ledger the words take {back:.0} px, not {before:.0}")) });
+            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Fit, now);
         }
+        _ => {}
     }
 }
 

@@ -45,6 +45,7 @@ mod music;
 mod net;
 mod player;
 mod render;
+mod screenshot;
 mod session;
 mod settings;
 mod sfx;
@@ -339,6 +340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drops::DropsPlugin,
         net::NetPlugin,
         hud::HudPlugin,
+        screenshot::ScreenshotPlugin,
         sfx::SfxPlugin,
         settings::SettingsPlugin,
         menu::MenuPlugin,
