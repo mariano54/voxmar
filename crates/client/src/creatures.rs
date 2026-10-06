@@ -24,6 +24,7 @@ use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionTarget, REACH_CREATURE};
@@ -78,6 +79,11 @@ fn heart_image() -> Image {
     let mut image = Image::new(extent, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
     image.sampler = nearest();
     image
+}
+
+/// One clear texel of skin, worn while the real one is painted.
+fn blank_skin() -> Image {
+    Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![0; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
 }
 
 fn nearest() -> ImageSampler {
@@ -151,7 +157,7 @@ impl MaterialExtension for CreatureSkin {
 struct SpeciesBody {
     mesh: Handle<Mesh>,
     binds: Handle<SkinnedMeshInverseBindposes>,
-    shape: Shape,
+    shape: std::sync::Arc<Shape>,
     /// The skin's volume: its corner and size in texels.
     origin: Vec3,
     dims: [u32; 3],
@@ -168,8 +174,10 @@ struct Shown {
     /// Its body's mesh, and one joint per part, which the animation turns.
     body: Entity,
     joints: Vec<(Entity, Part)>,
-    /// Its skin, which is darkened by the light and flashed red.
+    /// Its skin, which is darkened by the light and flashed red, and the skin being painted
+    /// for it, until it is ready.
     material: Handle<SkinMaterial>,
+    painting: Option<Task<Image>>,
     skin: Handle<Image>,
     /// Stride phase, in cycles.
     stride: f32,
@@ -199,6 +207,8 @@ pub struct Creatures {
     left: Vec<CreatureGone>,
     /// Each species' body, made when the first of it is seen.
     bodies: FxHashMap<CreatureId, SpeciesBody>,
+    /// The skin a body wears until its own is painted (it is hidden meanwhile).
+    blank: Option<Handle<Image>>,
     /// A shaded cube for hearts, and their colours: full and empty.
     heart: Option<(Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>)>,
     /// Creatures seen to die since joining.
@@ -344,7 +354,7 @@ fn body_mesh(body: &BodyMesh) -> Mesh {
 /// Builds a species' body from its parts.
 fn species_body(parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
     let body = volume::build(parts);
-    let shape = Shape::new(parts);
+    let shape = std::sync::Arc::new(Shape::new(parts));
     // Each joint sits at its part's pivot; at rest it moves nothing.
     let inverse: Vec<Mat4> = parts.iter().map(|p| Mat4::from_translation(-p.pivot)).collect();
     let texel = 1.0 / skin::TEXELS;
@@ -353,15 +363,19 @@ fn species_body(parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<Sk
     SpeciesBody { mesh: meshes.add(body_mesh(&body)), binds: binds.add(SkinnedMeshInverseBindposes::from(inverse)), shape, origin, dims }
 }
 
-/// An individual's skin, painted through its species' body volume.
-fn skin_volume(def: &creature::BodyDef, parts: &[Part], body: &SpeciesBody, seed: u32) -> Image {
-    let shell = body.shape.cell * 0.75 + 1.5 / skin::TEXELS;
-    let pixels = skin::paint_volume(def, parts, seed, body.origin, body.dims, shell, |p| body.shape.nearest(p));
-    let [w, h, d] = body.dims;
-    let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
-    let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
-    image.sampler = nearest();
-    image
+/// Paints an individual's skin through its species' body volume, off the main thread, so
+/// a herd coming into view never holds a frame: the body shows once its skin is ready.
+fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32) -> Task<Image> {
+    let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
+    AsyncComputeTaskPool::get().spawn(async move {
+        let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
+        let pixels = skin::paint_volume(&def, &parts, seed, origin, dims, shell, |p| shape.nearest(p));
+        let [w, h, d] = dims;
+        let extent = Extent3d { width: w, height: h, depth_or_array_layers: d };
+        let mut image = Image::new(extent, TextureDimension::D3, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+        image.sampler = nearest();
+        image
+    })
 }
 
 /// A sound a creature makes now.
@@ -434,7 +448,9 @@ fn show(
             Some(shown) => {
                 despawn(&mut commands, shown);
                 if let Some(shown) = creatures.shown.remove(&gone.id) {
-                    images.remove(&shown.skin);
+                    if shown.painting.is_none() {
+                images.remove(&shown.skin);
+            }
                     skins.remove(&shown.material);
                 }
             }
@@ -475,7 +491,8 @@ fn show(
         // Painted as its genes show: its coat colours and markings.
         let genes = &species.def.genes;
         let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
-        let skin = images.add(skin_volume(&species.def.body.with(&traits), &species.parts, body, view.seed));
+        let painting = Some(paint_skin(species.def.body.with(&traits), species.parts.clone(), body, view.seed));
+        let skin = creatures.blank.get_or_insert_with(|| images.add(blank_skin())).clone();
         let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
         let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
         let material = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: skin.clone(), frame } });
@@ -494,6 +511,7 @@ fn show(
                 body,
                 joints,
                 material,
+                painting,
                 skin,
                 stride: 0.0,
                 quiet: 2.0 + creature::unit_from(creature::mix(view.seed as u64, 77)) * 8.0,
@@ -627,8 +645,18 @@ fn show(
             let chance = creature::unit_from(creature::mix(id as u64 ^ slot as i64 as u64, side.to_bits() as u64));
             if chance < 0.18 { ((now * 0.8 + id as f32 * 0.37 + side * 0.21).fract() * std::f32::consts::TAU).sin().max(0.0) * 0.6 } else { 0.0 }
         };
+        // Its skin, once painted.
+        if let Some(task) = shown.painting.as_mut()
+            && let Some(image) = block_on(future::poll_once(task))
+        {
+            shown.painting = None;
+            shown.skin = images.add(image);
+            if let Some(mut material) = skins.get_mut(&shown.material) {
+                material.extension.skin = shown.skin.clone();
+            }
+        }
         if let Ok(mut shows) = visible.get_mut(shown.body) {
-            let want = if far { Visibility::Hidden } else { Visibility::Inherited };
+            let want = if far || shown.painting.is_some() { Visibility::Hidden } else { Visibility::Inherited };
             if *shows != want {
                 *shows = want;
             }
@@ -686,7 +714,9 @@ fn show(
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
             despawn(&mut commands, &shown);
-            images.remove(&shown.skin);
+            if shown.painting.is_none() {
+                images.remove(&shown.skin);
+            }
             skins.remove(&shown.material);
         }
     }
