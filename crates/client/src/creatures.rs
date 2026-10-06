@@ -357,7 +357,10 @@ fn show(
             .meshes
             .entry(view.species)
             .or_insert_with(|| layout.faces.iter().map(|rects| meshes.add(part_mesh(rects, (layout.width, layout.height)))).collect());
-        let skin = images.add(skin_image(&species.def.body, &species.parts, layout, view.seed));
+        // Painted as its genes show: its coat colours and markings.
+        let genes = &species.def.genes;
+        let traits = voxmar_engine::genes::express(genes, &voxmar_engine::genes::unpack(genes, &view.genes));
+        let skin = images.add(skin_image(&species.def.body.with(&traits), &species.parts, layout, view.seed));
         let material = materials.add(StandardMaterial { base_color_texture: Some(skin.clone()), unlit: true, ..default() });
         let entity = commands.spawn((Transform::from_translation(view.position), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
         let parts: Vec<(Entity, Part)> = species

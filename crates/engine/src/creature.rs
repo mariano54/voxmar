@@ -126,6 +126,24 @@ pub struct BodyDef {
     pub skin: skin::SkinDef,
 }
 
+impl BodyDef {
+    /// The body as an individual's genes show it: colours replaced, markings added, the
+    /// species' own markings dropped for a solid coat.
+    pub fn with(&self, traits: &crate::genes::Traits) -> BodyDef {
+        let mut body = self.clone();
+        for &(index, rgb) in &traits.colours {
+            if let Some(colour) = body.colours.get_mut(index as usize) {
+                *colour = rgb;
+            }
+        }
+        if traits.plain {
+            body.skin.markings.clear();
+        }
+        body.skin.markings.extend(traits.markings.iter().cloned());
+        body
+    }
+}
+
 /// The climate a species is comfortable in, as plants.ron and crops.ron write it, plus
 /// aether. Outside a range its numbers fall off over a margin.
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -392,6 +410,10 @@ pub struct CreatureDef {
     /// What kept ones give on timers.
     #[serde(default)]
     pub products: Vec<husbandry::Product>,
+    /// What individuals inherit: coat colours, size, yield, temper (docs/breeding.md). At
+    /// most [`crate::genes::MOST`].
+    #[serde(default)]
+    pub genes: Vec<crate::genes::GeneDef>,
 }
 
 fn first() -> u8 {
@@ -490,6 +512,9 @@ impl CreatureRegistry {
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
+            }
+            if def.genes.len() > crate::genes::MOST {
+                return Err(error(format!("has more than {} genes", crate::genes::MOST)));
             }
             if def.supernatural && def.habitat.comfort.aether.0 <= 0.0 {
                 return Err(error("a supernatural creature needs an aether minimum in its comfort".into()));

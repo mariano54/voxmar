@@ -116,7 +116,7 @@ pub enum Eyes {
 }
 
 /// A pattern painted over a species' colours. Colours are (r, g, b).
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub enum Marking {
     /// Round spots `size` blocks across, on about `density` of the places one could be.
     Spots { colour: [u8; 3], size: f32, density: f32 },
