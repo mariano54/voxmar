@@ -31,7 +31,8 @@ use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::traits;
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_engine::lang::Words;
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
@@ -313,9 +314,10 @@ impl Server {
                     }
                 }
                 (Effect::Respawn, _) => {
-                    // Home, if the player has one, else world spawn.
+                    // Home, if the player has one, else the bed they last slept in, else
+                    // world spawn.
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.unwrap_or(self.spawn);
+                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     player.position = spawn;
@@ -338,7 +340,13 @@ impl Server {
                         player.changed(traits::INVENTORY);
                     }
                 }
-                (Effect::ClaimHome, ActionTarget::Block { block, .. }) => self.claim_home(agent, block),
+                (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
+                (Effect::Sleep, ActionTarget::Block { block, .. }) => {
+                    let player = self.players.get_mut(&agent).unwrap();
+                    player.bed = Some(block.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+                    let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
+                    player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key) });
+                }
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }

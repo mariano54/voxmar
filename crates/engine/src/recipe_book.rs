@@ -19,9 +19,9 @@ pub enum Method {
     /// from different woods (or stones) is one entry with each way laid out, as NEI
     /// cycles them.
     Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool },
-    /// Cooked at a station (blocks with the station's tag), from Cooking `level`; what is
-    /// left when it burns, if anything.
-    Cook { input: BlockId, station: String, level: u8, burnt: Option<BlockId> },
+    /// Cooked (or fired, or smelted) at a station (blocks with the station's tag), from
+    /// `level` in `skill`; what is left when it burns, if anything.
+    Cook { input: BlockId, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
     /// Taken from a kept creature with a tool (items with the tool's tag), or left by it
     /// without one (eggs).
     Product { creature: CreatureId, tool: Option<String> },
@@ -75,7 +75,7 @@ impl RecipeBook {
         for (input, recipe) in content.cooking.iter() {
             let station = recipe.def.station.clone();
             let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
-            let method = Method::Cook { input, station, level: recipe.def.level, burnt: recipe.burnt };
+            let method = Method::Cook { input, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
             book.add(Entry { method, output: recipe.output, count: (1, 1) }, [input].into_iter().chain(stations).collect());
         }
         for (id, creature) in content.creatures.iter() {

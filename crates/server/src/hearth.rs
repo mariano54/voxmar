@@ -1,27 +1,49 @@
-//! The Homestead Hearth: a multiblock (`multiblocks.ron`) that, lit, becomes a player's home
-//! (the Nomad age's gate in the progression plan). They wake beside it after dying.
+//! Lighting a multiblock (`multiblocks.ron`) by its core: the Homestead Hearth becomes a
+//! player's home (the Nomad age's gate in the progression plan), where they wake after
+//! dying; the Crucible Kiln (the Farm age's) starts smelting. Quests count what was lit.
 
 use voxmar_engine::glam::{IVec3, Vec3};
-use voxmar_engine::lang::Words;
+use voxmar_engine::lang::{Words, def_key};
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
 
 use crate::Server;
 
-/// The multiblock a hearth's core must stand in.
-const HEARTH: &str = "base:homestead_hearth";
-
 impl Server {
-    /// `agent` lights the hearthstone at `core`: their home if the whole hearth stands.
-    pub(crate) fn claim_home(&mut self, agent: PlayerId, core: IVec3) {
-        let stands = self.content.multiblocks.get(HEARTH).is_some_and(|hearth| hearth.stands(core, |p| self.block(p)));
-        let Some(player) = self.players.get_mut(&agent) else { return };
-        let words = if stands {
-            // On the hearthstone, in the middle of its ring.
-            player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
-            Words::key("hearth.claimed")
-        } else {
-            Words::key("hearth.incomplete")
+    /// `agent` lights the core block at `core`: each multiblock it is the core of that
+    /// stands comes to life; if none does, they are told what the first needs.
+    pub(crate) fn light(&mut self, agent: PlayerId, core: IVec3) {
+        let Some(block) = self.block(core) else { return };
+        let multiblocks = self.content.multiblocks.clone();
+        let candidates: Vec<_> = multiblocks.with_core(block).collect();
+        let standing = candidates.iter().find(|m| m.stands(core, |p| self.block(p)));
+        let words = match (standing, candidates.first()) {
+            (Some(lit), _) => {
+                let name = lit.name.clone();
+                self.tally(agent, "built", &name, 1);
+                if lit.home
+                    && let Some(player) = self.players.get_mut(&agent)
+                {
+                    // On the core, in the middle of its ring.
+                    player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+                }
+                let key = if lit.home { "multiblock.home" } else { "multiblock.lit" };
+                Words::key(key).with("structure", Words::Own(def_key("multiblock", &lit.name), lit.title.clone()))
+            }
+            (None, Some(first)) => Words::Own(format!("{}.hint", def_key("multiblock", &first.name)), first.hint.clone()),
+            (None, None) => return,
         };
-        player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+        if let Some(player) = self.players.get(&agent) {
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+        }
+    }
+
+    /// Whether a station block that is a multiblock's core (a crucible) stands in its
+    /// structure; any other station always works.
+    pub(crate) fn station_stands(&self, at: IVec3) -> bool {
+        let Some(block) = self.block(at) else { return false };
+        if !self.content.blocks.def(block).has_tag("multiblock_core") {
+            return true;
+        }
+        self.content.multiblocks.with_core(block).any(|m| m.stands(at, |p| self.block(p)))
     }
 }

@@ -14,11 +14,32 @@
         // and lit with a right click, and a chimney two blocks tall at a corner.
         (
             name: "hearthstone", sound: Stone, textures: Sides(top: "hearthstone_top", bottom: "cobblestone", side: "hearthstone_side"),
-            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "station", "building"], light: 6,
+            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "multiblock_core", "station", "building"], light: 6,
         ),
         (
             name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),
             hardness: 2.0, color: (130, 100, 90), tags: ["chimney", "building"],
+        ),
+        // The Farm age's fire (multiblocks.ron): a pit kiln fires clay into pots, vials and
+        // bricks; kiln bricks build the Crucible Kiln round a crucible, which smelts copper
+        // and tin and alloys them into bronze once the kiln stands.
+        (
+            name: "pit_kiln", sound: Stone, textures: Sides(top: "pit_kiln_top", bottom: "cobblestone", side: "pit_kiln_side"),
+            hardness: 1.5, color: (120, 90, 70), tags: ["pit_kiln", "station", "heat"], light: 8,
+        ),
+        (
+            name: "kiln_bricks", sound: Stone, textures: All("kiln_bricks"),
+            hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building"],
+        ),
+        (
+            name: "crucible", sound: Stone, textures: Sides(top: "crucible_top", bottom: "kiln_bricks", side: "crucible_side"),
+            hardness: 2.0, color: (150, 80, 50), tags: ["crucible", "multiblock_core", "station", "heat"], light: 10,
+        ),
+        // A sleeping bag: sleep in it (right click) and you wake there after dying, until a
+        // hearth gives you a home.
+        (
+            name: "sleeping_bag", render: Plant, model: Rock, plant_height: 1.6, solid: false, sound: Grass, textures: All("sleeping_bag"),
+            hardness: 0.3, color: (150, 110, 70), tags: ["bed", "sleeping_bag"],
         ),
         // A herb planter: herbs and flowers placed in it grow back when picked (regrowth.ron),
         // for a gardener whose Farming level is enough for them. Herbs cannot be sown.
@@ -68,6 +89,15 @@
         (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
         // Worn or carried when you die, it keeps a fourth item and holds the rest for an hour.
         (template: "drop", name: "grave_ward_amulet", tags: ["amulet", "grave_ward"], all: (color: (110, 80, 180), rarity: VeryRare)),
+        // Pottery and metal for the Farm age: shaped clay fired in a pit kiln, and bronze.
+        (template: "drop", name: "unfired_pot", tags: ["unfired", "clay"], all: (color: (160, 166, 179))),
+        (template: "drop", name: "clay_pot", tags: ["pot", "container"], all: (color: (180, 100, 60))),
+        (template: "drop", name: "unfired_vial", tags: ["unfired", "clay"], all: (color: (160, 166, 179))),
+        (template: "drop", name: "vial", tags: ["vial", "container"], all: (color: (190, 120, 80))),
+        (template: "drop", name: "fired_brick", tags: ["brick"], all: (color: (170, 90, 60))),
+        (template: "drop", name: "tin_ingot", tags: ["ingot", "metal:tin"], all: (color: (200, 205, 200))),
+        (template: "drop", name: "bronze_blend", tags: ["alloy_blend", "metal:bronze"], all: (color: (190, 140, 80))),
+        (template: "drop", name: "bronze_ingot", tags: ["ingot", "metal:bronze"], all: (color: (200, 140, 70))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "fuel"], all: (color: (40, 36, 34))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),

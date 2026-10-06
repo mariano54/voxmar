@@ -265,6 +265,8 @@ struct Gate {
     /// (in server seconds) that last went up.
     fell: Vec3,
     gathered: (u32, f32),
+    /// The crucible of the kiln the workshop builds and lights.
+    kiln: IVec3,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -353,6 +355,7 @@ impl Gate {
             count_before: 0,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
+            kiln: IVec3::ZERO,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -1577,10 +1580,47 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 for line in ["clear", "give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
                     net.command(line);
                 }
-                end_workshop(world, gate, now);
+                // A Crucible Kiln set into the ground ahead, to light.
+                for line in [
+                    "fill ~-1 ~ ~2 ~1 ~2 ~4 air",
+                    "fill ~-1 ~-1 ~2 ~1 ~-1 ~4 kiln_bricks",
+                    "setblock ~ ~-1 ~3 crucible",
+                    "setblock ~-1 ~ ~2 kiln_bricks",
+                    "setblock ~1 ~ ~2 kiln_bricks",
+                    "setblock ~-1 ~ ~4 kiln_bricks",
+                    "setblock ~1 ~ ~4 kiln_bricks",
+                ] {
+                    net.command(line);
+                }
+                gate.kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, -1, 3);
+                gate.advance(now);
             } else if gate.server_now - gate.gathered.1 > 15.0 {
                 let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
                 fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
+            }
+        }
+        // Right clicking the crucible lights the kiln: the quest that asks for it counts it.
+        15 => {
+            let kiln = gate.kiln;
+            let lit = |world: &World| {
+                world.resource::<LocalPlayer>().quests.iter().find(|q| q.name == "base:crucible_kiln").and_then(|q| q.tasks.first()?.first().copied()).is_some_and(|(have, _)| have > 0)
+            };
+            let crucible = world.resource::<ClientWorld>().registry.id("base:crucible");
+            if world.resource::<ClientWorld>().block(kiln) != crucible {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "kiln", "the crucible never came".into());
+                }
+                return;
+            }
+            aim(world, kiln);
+            mouse(world, MouseButton::Right, gate.frames % 2 == 0 && !lit(world));
+            if lit(world) {
+                mouse(world, MouseButton::Right, false);
+                gate.check("workshop: kiln", Ok("right clicking the crucible lit the Crucible Kiln round it".into()));
+                end_workshop(world, gate, now);
+            } else if in_phase > WORKSHOP_WAIT + 4.0 {
+                mouse(world, MouseButton::Right, false);
+                fail(world, gate, "kiln", "right clicking the crucible in its kiln never lit it".into());
             }
         }
         _ => {}
