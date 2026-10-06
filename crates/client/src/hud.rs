@@ -105,7 +105,7 @@ struct HungerMeter;
 struct EffectChips;
 
 #[derive(Component)]
-struct DebugText;
+pub(crate) struct DebugText;
 /// The plate the debug overlay sits in.
 #[derive(Component)]
 struct DebugPlate;
@@ -364,7 +364,7 @@ const RECENT_SECONDS: f32 = 5.0;
 const SLOW_FRAME_MS: f32 = 25.0;
 /// How often the debug overlay's text is rewritten, in seconds. New text means laying out
 /// the UI again; rewritten every frame, that was 10 to 25 ms of Mariano's slow frames.
-const DEBUG_REFRESH: f32 = 0.25;
+pub(crate) const DEBUG_REFRESH: f32 = 0.25;
 
 /// The wall-clock length of every frame in the last `RECENT_SECONDS`, kept while the overlay
 /// is hidden too, so its worst frames are there the moment it opens.
