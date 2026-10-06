@@ -343,7 +343,7 @@ fn read_input(
     }
     catalogue.refresh();
     let pages_count = catalogue.pages();
-    let mut turn = |by: i32, catalogue: &mut Catalogue| catalogue.page = (catalogue.page as i32 + by).rem_euclid(pages_count as i32) as usize;
+    let turn = |by: i32, catalogue: &mut Catalogue| catalogue.page = (catalogue.page as i32 + by).rem_euclid(pages_count as i32) as usize;
     for (page, interaction) in &pages {
         if *interaction == Interaction::Pressed {
             turn(page.0, &mut catalogue);
@@ -408,14 +408,14 @@ fn draw(
     let words = if catalogue.found.is_empty() {
         locale.get("creative.none").to_owned()
     } else {
-        locale.format("creative.shown", &[("tab", locale.get(catalogue.tab.key())), ("count", &catalogue.found.len().to_string())])
+        locale.format("creative.shown", &[("tab", &locale.get(catalogue.tab.key())), ("count", &catalogue.found.len())])
     };
     if let Ok(mut text) = shown.single_mut()
         && text.0 != words
     {
         text.0 = words;
     }
-    let words = locale.format("creative.page", &[("page", &(catalogue.page + 1).to_string()), ("pages", &catalogue.pages().to_string())]);
+    let words = locale.format("creative.page", &[("page", &(catalogue.page + 1)), ("pages", &catalogue.pages())]);
     if let Ok(mut text) = page_text.single_mut()
         && text.0 != words
     {
