@@ -572,7 +572,7 @@ fn setup(
 ) {
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures);
-    let (size, mut block_textures) = source.block_textures(registry.textures());
+    let (size, mut block_textures, animations) = source.block_textures(registry.textures());
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
     for id in 0..registry.len() {
@@ -583,7 +583,7 @@ fn setup(
             }
         }
     }
-    for (texture, keep) in block_textures.iter_mut().zip(see_through) {
+    for (texture, &keep) in block_textures.iter_mut().zip(&see_through) {
         if !keep {
             texture.fill_transparent();
         }
@@ -628,6 +628,21 @@ fn setup(
             block_textures.push(overlay);
             layers.push(LayerInfo::default());
         }
+    }
+    // An animated texture's frames after its first go after everything else, each a layer
+    // of its own, which the terrain shader steps through by the clock (`LayerInfo`).
+    for (layer, animation) in animations.into_iter().enumerate() {
+        let Some(animation) = animation else { continue };
+        let first = block_textures.len() as u16;
+        let frames = animation.frames.len() as u8 + 1;
+        for mut frame in animation.frames {
+            if !see_through[layer] {
+                frame.fill_transparent();
+            }
+            block_textures.push(frame);
+            layers.push(LayerInfo { animation: None, ..layers[layer].clone() });
+        }
+        layers[layer].animation = Some(render::Animation { first, frames, ticks: animation.ticks });
     }
     ui::skin::load(&mut source, &mut images);
     ui::skin::set_font(settings.font, &mut fonts);
