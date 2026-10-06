@@ -17,7 +17,7 @@
         "carrot_roast": ["#8a3a08", "#c86218", "#f09440"],
         "char": ["#141010", "#2a2220", "#46382e"],
         "log_bark": ["#3a2614", "#5e4024", "#7e5a34"],
-        "flame": ["#c83a0a", "#f08a1a", "#ffe070"],
+        "flame": ["#b02a08", "#e85c14", "#f89a26"],
         "stem_green": ["#2c5a14", "#3e7a1a", "#5a9a2a"],
         "shell_white": ["#c8bca4", "#ece2cc", "#fffaf0"],
         "shell_teal": ["#9ab8aa", "#c4dccf", "#eaf6ee"],
@@ -51,7 +51,7 @@
         "block/campfire": (base: "shape/plant", palettes: {"fruit": "flame", "wood": "log_bark"}, layers: [Grid(rows: [
             "................", "................", ".......j........", "......jh........",
             "......jhj..j....", ".....jhhjjhh....", "....jhhhhhhh....", "....hhjjjjhhj...",
-            "...jhhjjjjjhh...", "...hhjjWjjjhh...", "....ffhhhhhff...", ".kkllmllmllkk...",
+            "...jhhjjjjjhh...", "...hhjjjjjjhh...", "....ffhhhhhff...", ".kkllmllmllkk...",
             "..lkkmmkkmmkl...", ".kllkkllkkllk...", "..kk.kk..kk.k...", "................",
         ])]),
         "block/egg": (base: "shape/plant", palettes: {"fruit": "shell_white"}, layers: [Grid(rows: ["................", "................", "......jjj.......", ".....jhhhj......", "....jhhhhhj.....", "....hhhhhhh.....", "...jhhhhhhhh....", "...hhhhhhhhf....", "...hhhhhhhhf....", "...fhhhhhhff....", "....fhhhhhf.....", ".....ffffff.....", "................", "................", "................", "................"])]),

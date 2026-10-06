@@ -60,8 +60,10 @@ pub enum Run {
     Locate,
     /// Puts creatures of a species beside the player.
     Summon,
-    /// Lists the creatures about the player.
+    /// Lists the creatures about the player, or (admins) tames, readies or hastens them.
     Creatures,
+    /// Sets a player's level in a skill.
+    Skill,
     /// Runs these command lines in order. `$1`, `$2`, … stand for this command's
     /// arguments and `$*` for all of them.
     Alias(Vec<String>),

@@ -202,16 +202,16 @@
         "block/diamond_ore": (base: "block/stone", palettes: {"ore": ["#156d6b", "#2fb7b0", "#6ff0e6", "#d8fffb"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (6, 10), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
         ]),
-        "block/cobalt_ore": (base: "block/stone", palettes: {"ore": ["#16246e", "#2d47b8", "#5a80f0", "#b6cbff"]}, layers: [
+        "block/cobalt_ore": (palettes: {"ore": ["#16246e", "#2d47b8", "#5a80f0", "#b6cbff"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (8, 12), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
         ]),
-        "block/tin_ore": (base: "block/stone", palettes: {"ore": ["#5f6b70", "#97a5aa", "#c8d4d7", "#eef5f6"]}, layers: [
+        "block/tin_ore": (palettes: {"ore": ["#5f6b70", "#97a5aa", "#c8d4d7", "#eef5f6"]}, layers: [
             Clusters(palette: "ore", count: 5, size: (6, 10), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
         ]),
-        "block/silver_ore": (base: "block/stone", palettes: {"ore": ["#70737c", "#b0b5c0", "#dfe3ec", "#ffffff"]}, layers: [
+        "block/silver_ore": (palettes: {"ore": ["#70737c", "#b0b5c0", "#dfe3ec", "#ffffff"]}, layers: [
             Clusters(palette: "ore", count: 5, size: (5, 9), spacing: 5.0, shade: 1, shadow: -1, margin: 1),
         ]),
-        "block/aetherite_ore": (base: "block/deepslate", palettes: {"ore": ["#4a1f8c", "#8a4cf0", "#c39bff", "#f2e6ff"], "glint": ["#7af5ff"]}, layers: [
+        "block/aetherite_ore": (palettes: {"ore": ["#4a1f8c", "#8a4cf0", "#c39bff", "#f2e6ff"], "glint": ["#7af5ff"]}, layers: [
             Clusters(palette: "ore", count: 4, size: (7, 11), spacing: 5.5, shade: 1, shadow: -1, margin: 1),
             Paint(palette: "glint", mask: [Speckle(chance: 0.03, amount: 1.0, seed: 9)]),
         ]),

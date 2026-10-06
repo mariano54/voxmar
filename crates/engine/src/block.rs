@@ -194,6 +194,11 @@ pub struct BlockDef {
     /// How its textures vary from block to block, so a large motif does not repeat in a
     /// grid across a wall or a floor. Opaque blocks only.
     pub texture_variety: TextureVariety,
+    /// The block it is drawn over, by name: an ore over the rock it lies in. Each face's
+    /// texture is drawn over the host's, from whichever pack draws the host, so the rock
+    /// around the ore always matches the rock around it in the world; its own textures
+    /// need only the ore, on clear texels. Any ore can then lie in any rock.
+    pub host: Option<String>,
     /// Particles it gives off while near the player: a campfire's smoke, embers and sparks,
     /// a torch's flame. Only the client draws them.
     pub particles: Vec<Emission>,
@@ -293,6 +298,7 @@ impl Default for BlockDef {
             item: false,
             action: None,
             texture_variety: TextureVariety::default(),
+            host: None,
             particles: Vec::new(),
         }
     }
@@ -326,6 +332,7 @@ impl BlockDef {
         };
         qualify(&mut self.name);
         self.drops.iter_mut().for_each(qualify);
+        self.host.iter_mut().for_each(qualify);
         self.family.iter_mut().for_each(qualify);
         self.variant_of.iter_mut().for_each(qualify);
         if let Some(fluid) = &mut self.fluid {
@@ -518,6 +525,8 @@ pub struct BlockInfo {
 #[derive(Clone, Debug)]
 pub struct TextureRef {
     pub name: String,
+    /// A texture it is drawn over (its block's host's, see [`BlockDef::host`]).
+    pub under: Option<String>,
     pub color: [u8; 3],
     /// How the first block using the texture is drawn, so placeholders can match its shape.
     pub render: RenderKind,
@@ -674,15 +683,23 @@ impl BlockRegistry {
         }
 
         let mut textures: Vec<TextureRef> = Vec::new();
-        let mut texture_index = FxHashMap::<String, u16>::default();
+        let mut texture_index = FxHashMap::<(String, Option<String>), u16>::default();
         let mut info = Vec::with_capacity(defs.len());
         for (def, &fluid) in defs.iter().zip(&states) {
+            let host = match &def.host {
+                Some(name) => match by_name.get(name) {
+                    Some(&id) => Some(&defs[id.0 as usize]),
+                    None => return Err(RegistryError(format!("block `{}` lies in unknown block `{name}`", def.name))),
+                },
+                None => None,
+            };
             let mut layers = [0u16; 6];
             let mut tints = [Tint::None; 6];
             for face in Face::ALL {
                 if let Some(name) = def.textures.face(face) {
-                    layers[face as usize] = *texture_index.entry(name.to_owned()).or_insert_with(|| {
-                        textures.push(TextureRef { name: name.to_owned(), color: def.color, render: def.render });
+                    let under = host.and_then(|host| host.textures.face(face)).map(str::to_owned);
+                    layers[face as usize] = *texture_index.entry((name.to_owned(), under.clone())).or_insert_with(|| {
+                        textures.push(TextureRef { name: name.to_owned(), under, color: def.color, render: def.render });
                         (textures.len() - 1) as u16
                     });
                 }
