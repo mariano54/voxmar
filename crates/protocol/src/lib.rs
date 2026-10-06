@@ -25,7 +25,7 @@ use voxmar_engine::world::Column;
 pub use transport::{ClientConnection, Connection, Disconnected, ServerConnection, local_pair, tcp};
 pub use voxmar_engine::weather::Weather;
 
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 21;
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -64,6 +64,9 @@ pub enum ClientMessage {
     Command { line: String },
     /// Something said to everyone in the console.
     Chat { text: String },
+    /// Creative mode's catalogue of every item (the inventory's item panel): `count` of
+    /// `item`, onto the pointer (`held`) or into the inventory. Refused in survival.
+    Take { item: BlockId, count: u8, held: bool },
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
