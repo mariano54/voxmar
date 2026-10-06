@@ -209,6 +209,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// The Farming guide sorts its lines into kinds down the left; Planting shows only
+    /// planting, and a line opens its page.
+    Guides,
     /// In creative mode the inventory's catalogue finds an item by its English name and by
     /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
     Catalogue,
@@ -843,6 +846,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Guides => guides(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
@@ -2017,6 +2021,51 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Guides, now);
+        }
+    }
+}
+
+fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::character::{Guide, GuideView};
+    let skills = &world.resource::<Launch>().content.skills;
+    let Some(farming) = skills.ids().find(|&id| skills.get(id).name.ends_with("farming")) else {
+        gate.check("guides", Err("no Farming skill in the content".into()));
+        gate.next(Step::Catalogue, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            world.resource_mut::<UiState>().character_open = true;
+            world.resource_mut::<Guide>().0 = Some(farming);
+            world.resource_mut::<GuideView>().category = Some("planting".into());
+            gate.advance(now);
+        }
+        1 => {
+            let (lines, kinds) = crate::hud::character::guide_buttons(world);
+            if lines == 0 && in_phase < 2.0 {
+                return;
+            }
+            gate.check("guides: kinds", if kinds >= 3 && lines > 0 { Ok(format!("{kinds} kinds down the left, {lines} planting lines")) } else { Err(format!("{kinds} kinds and {lines} lines")) });
+            let first = {
+                let locale = world.resource::<Locale>().clone();
+                let launch = world.resource::<Launch>();
+                crate::hud::guide::entries(&locale, launch, farming).iter().position(|e| e.category == "planting")
+            };
+            world.resource_mut::<GuideView>().entry = first;
+            gate.advance(now);
+        }
+        _ => {
+            let needs = world.resource::<Locale>().get("guide.needs").to_owned();
+            let mut texts = world.query::<&Text>();
+            let shown = texts.iter(world).any(|t| t.0 == needs);
+            if !shown && in_phase < 2.0 {
+                return;
+            }
+            gate.check("guides: page", if shown { Ok("a planting line opens its page".into()) } else { Err("a line's page never showed what it needs".into()) });
+            *world.resource_mut::<GuideView>() = GuideView::default();
+            world.resource_mut::<Guide>().0 = None;
+            world.resource_mut::<UiState>().character_open = false;
             gate.next(Step::Catalogue, now);
         }
     }
