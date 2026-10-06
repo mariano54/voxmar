@@ -49,7 +49,7 @@ it takes well under a minute.
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
-A change that touches only docs or tools skips 3 and 4. A tree that already passed is not
+A change that touches only docs or tools skips 2, 3 and 4. A tree that already passed is not
 gated again, so merging or rebasing without changing anything costs nothing.
 
 `tools/gate --full`, before every play build: every test and the session at the normal
