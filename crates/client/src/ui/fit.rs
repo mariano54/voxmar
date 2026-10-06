@@ -166,8 +166,10 @@ pub fn find(world: &mut World) -> Vec<Spill> {
 
         // Across, a text past its own box runs into its neighbours. Up and down, a glyph may
         // stand a little proud of a one-line box (`TightLine`): the element around it judges.
+        // Kanji drawn on a finer grid than ours (three quarters, `fallback.ron`) land between
+        // screen pixels, and their smoothed edge can show a pixel either side of the box.
         let by = past(lines, own);
-        if spills(&by, false, slack) {
+        if spills(&by, false, slack + units_per_pixel) {
             found.push(Spill { text, past: by, own: true, size: own.size(), lines: lines.size(), over: None });
             continue;
         }

@@ -16,7 +16,7 @@ use std::collections::VecDeque;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
-use voxmar_engine::effect::{EffectDef, EffectId, Kind};
+use voxmar_engine::effect::{ActiveEffect, EffectDef, EffectId, Kind};
 use voxmar_engine::vitals::{MAX_HUNGER, Vitals};
 
 use crate::lang::Locale;
@@ -26,7 +26,7 @@ use crate::player::LocalPlayer;
 use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{ACCENT, BODY, ERROR, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, SOFT, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
 use crate::ui::widgets::space;
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
@@ -42,6 +42,7 @@ impl Plugin for HudPlugin {
                 (
                     update_slots.after(inventory::InventorySystems),
                     update_vitals,
+                    count_down,
                     update_status,
                     update_debug,
                     show_held_name,
@@ -73,6 +74,10 @@ impl HudImages {
         self.effects.get(effect.0 as usize).cloned().unwrap_or_default()
     }
 }
+
+/// How far a stack's count sits in from its slot's corner: inside the frame, with a pixel
+/// to spare, at any interface size.
+pub const COUNT_INSET: f32 = 2.0 * PX;
 
 /// A slot's side: an item's 16 texels plus a 2-texel rim, in screen pixels.
 pub const SLOT: f32 = 20.0 * PX;
@@ -131,7 +136,7 @@ pub fn slot_contents(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, slo
     let inset = (SLOT - 16.0 * PX) / 2.0;
     parent.spawn((absolute(inset, inset, 16.0 * PX, 16.0 * PX), ImageNode::default(), Visibility::Hidden, SlotIcon(slot)));
     parent.spawn((
-        Node { position_type: PositionType::Absolute, right: Val::Px(PX), bottom: Val::Px(0.0), ..default() },
+        Node { position_type: PositionType::Absolute, right: Val::Px(COUNT_INSET), bottom: Val::Px(COUNT_INSET), ..default() },
         shadowed(font, "", BODY, TEXT),
         SlotCount(slot),
     ));
@@ -284,7 +289,9 @@ fn update_vitals(
     if shown.as_ref() == Some(&state) && !locale.is_changed() {
         return;
     }
-    let effects_changed = locale.is_changed() || shown.as_ref().is_none_or(|(_, _, v)| v.effects != state.2.effects);
+    // The chips are drawn again when the effects come or go, not as their time runs down.
+    let kept = |v: &Vitals| v.effects.iter().map(|a| (a.effect, a.seconds_left.is_some())).collect::<Vec<_>>();
+    let effects_changed = locale.is_changed() || shown.as_ref().is_none_or(|(_, _, v)| kept(v) != kept(&state.2));
     *shown = Some(state);
     if let Ok(meter) = health.single() {
         let most = player.max_health.max(1);
@@ -297,20 +304,58 @@ fn update_vitals(
     if effects_changed && let Ok(row) = chips.single() {
         commands.entity(row).despawn_children().with_children(|row| {
             for active in &player.vitals.effects {
-                spawn_effect_chip(row, &font.0, &locale, &images, active.effect, launch.content.effects.get(active.effect));
+                spawn_effect_chip(row, &font.0, &locale, &images, active, launch.content.effects.get(active.effect));
             }
         });
     }
 }
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
-pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, images: &HudImages, id: EffectId, effect: &EffectDef) {
+pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, images: &HudImages, active: &ActiveEffect, effect: &EffectDef) {
     let chip = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::HAIR), padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
     let color = if effect.kind == Kind::Buff { ACCENT } else { ERROR };
+    let id = active.effect;
     parent.spawn((chip, Piece::Tooltip.image(), Button, effects::EffectHover(id), bevy::ui::RelativeCursorPosition::default(), crate::ui::widgets::HoverLight)).with_children(|chip| {
-        chip.spawn((Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::new(images.effect(id))));
+        chip.spawn(effect_icon(images, id));
         chip.spawn((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
+        if active.seconds_left.is_some() {
+            let gap = Node { margin: UiRect::left(Val::Px(space::INNER)), ..default() };
+            chip.spawn((shadowed(font, "", BODY, SOFT), gap, crate::lang::TightLine, EffectTimer(id)));
+        }
     });
+}
+
+/// An effect's icon, its 10 pixels of art drawn at the interface's pixel size.
+pub fn effect_icon(images: &HudImages, id: EffectId) -> (Node, ImageNode) {
+    (Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), flex_shrink: 0.0, ..default() }, ImageNode::new(images.effect(id)))
+}
+
+/// The time left on a timed effect, counting down between the server's word on it.
+#[derive(Component)]
+pub struct EffectTimer(pub EffectId);
+
+/// Seconds left on `effect` now, if it is timed and on the player.
+pub fn seconds_left(player: &LocalPlayer, effect: EffectId, now: f32) -> Option<u32> {
+    let active = player.vitals.effects.iter().find(|a| a.effect == effect)?;
+    let told = active.seconds_left? as f32;
+    Some((told - (now - player.vitals_at)).max(0.0).ceil() as u32)
+}
+
+/// A time as a clock reads it: 4:05, or 1:02:03 past the hour.
+pub fn clock(seconds: u32) -> String {
+    let (hours, minutes, secs) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 { format!("{hours}:{minutes:02}:{secs:02}") } else { format!("{minutes}:{secs:02}") }
+}
+
+/// Counts every timed effect's clock down.
+fn count_down(time: Res<Time>, player: Res<LocalPlayer>, mut timers: Query<(&EffectTimer, &mut Text)>) {
+    let now = time.elapsed_secs();
+    for (timer, mut text) in &mut timers {
+        let words = seconds_left(&player, timer.0, now).map_or_else(String::new, clock);
+        if text.0 != words {
+            text.0 = words;
+        }
+    }
 }
 
 fn update_status(

@@ -205,6 +205,8 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// A timed effect's chip counts its time down, and its hover plate says how long is left.
+    Effects,
     /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
     /// player's folder and clipboard alone) and says so in the chat.
     Screenshot,
@@ -720,6 +722,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Effects => effects(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
@@ -1660,7 +1663,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Screenshot, now);
+        gate.next(Step::Effects, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -1685,7 +1688,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Screenshot, now);
+                gate.next(Step::Effects, now);
             }
         }
         2 => {
@@ -1706,6 +1709,31 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Effects, now);
+        }
+    }
+}
+
+/// A timed effect on the player (as eating would give, the server not told): its chip
+/// counts down from 1:30 and its plate, as if the pointer were over the chip, says so too.
+fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::effects::{PinnedTip, ShowEffects};
+    match gate.phase {
+        0 => {
+            world.insert_resource(ShowEffects(vec![("hearty".into(), 90)]));
+            world.insert_resource(PinnedTip("hearty".into()));
+            gate.advance(now);
+        }
+        _ => {
+            let chip = world.query_filtered::<&Text, With<crate::hud::EffectTimer>>().iter(world).map(|t| t.0.clone()).find(|t| !t.is_empty());
+            let left = crate::hud::effects::shown_left(world);
+            let counting = chip.as_deref().is_some_and(|t| t.starts_with("1:")) && left.as_deref().is_some_and(|t| t.contains("1:"));
+            if !counting && in_phase < 3.0 {
+                return;
+            }
+            gate.check("effects: countdown", if counting { Ok(format!("the chip reads {}, the plate {}", chip.unwrap_or_default(), left.unwrap_or_default())) } else { Err(format!("chip {chip:?}, plate {left:?}")) });
+            world.remove_resource::<ShowEffects>();
+            world.remove_resource::<PinnedTip>();
             gate.next(Step::Screenshot, now);
         }
     }
