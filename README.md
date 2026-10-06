@@ -146,7 +146,8 @@ line per language; anything a language leaves out shows in English, then as a na
 the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
 way. Kanji and kana come from BIZ UDGothic, a smooth Japanese font (listed in
 `assets/ui/fonts/fallback.ron`) that text falls back to for those scripts at its own size,
-while letters and digits stay in the crisp pixel font. Tests in `crates/client/src/lang.rs` hold every
+while letters and digits stay in the crisp pixel font. Every Japanese name with kanji has a
+reading in `lang/readings/ja.ron` (オークのげんぼく for オークの原木) that the interface can show with it. Tests in `crates/client/src/lang.rs` hold every
 language complete, every key the code names defined, and every character drawn.
 
 ### Console and commands
@@ -705,6 +706,22 @@ writes about twenty seconds of each of seventeen typical places to `target/ambie
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
 `weather_sound_preview -- --ignored` writes the thunder, swimming and splashes to
 `target/sound_preview/`, as the game plays them.
+
+Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while
+they wander, munching, sighs and purrs at rest, barks and snorts of alarm, calls carrying far,
+mating calls, snarls when they strike, and cries when hurt or dying. `creature_sounds.ron` in
+any content package gives each species a *voice* (several recordings per event, one picked at
+random each time at a slightly different pitch); a voice can be `like` another, a missing event
+falls back to the nearest it has, and a later package replaces voices and species by name, so a
+sound pack can revoice every creature. Each voice says how tall the animal recorded was, and
+species of another size play it higher or lower, each individual a little more for its genes,
+the young higher still. Sounds come from where the creature is, panned, and fade out over their
+event's reach (a call farther than a munch). Supernatural creatures shimmer, ring and echo
+slightly. A creature never talks over itself and at most fourteen play at once. The recordings
+are Freesound's (CC0 and CC-BY, credited in THIRD_PARTY_NOTICES.md); hisses, slime, wings,
+clicks, embers and the wisps' chimes are synthesized. `cargo test -p voxmar_client
+creature_sound_preview -- --ignored` writes every species' sounds, as each plays them, to
+`target/creature_sounds/`.
 
 ## Rendering and performance
 

@@ -1,0 +1,447 @@
+// Creature voices: what each species sounds like. Read by the client
+// (crates/client/src/creature_sounds); any package may add a `creature_sounds.ron`, and a
+// later package's voices and species replace earlier ones by name, so a sound pack can
+// revoice the world.
+//
+// - A voice is the sounds of one kind of animal, each event several recordings, one
+//   picked at random each time at a slightly different pitch. Events: step, idle,
+//   graze, alert, rest, call, ready (to breed), attack, hurt, death. A voice lacking one
+//   takes it from the voice it is `like`, then falls back to the nearest event it has
+//   (alert and ready to call, call to idle, attack and hurt to alert, death to hurt).
+// - `size` is the height in blocks of the animal recorded: a species of another height
+//   sounds higher or lower (by the square root of the ratio), each individual a little
+//   more for its genes, the young higher still. A species' `pitch` overrides it.
+// - Each event may set `gain` (its loudness; by default the event's usual one: a call
+//   loud, a munch soft), `pitch: (low, high)` (the random spread), `range` (blocks at
+//   which it fades away; by default the event's usual reach) and `chance` (of sounding
+//   at all).
+// - `ground: false` silences the ground underfoot for things that fly, float or slide;
+//   others' steps sound the block they walk on, as the player's do.
+// - `aether` (0..1) on a species makes it otherworldly: a shimmer, a glassy ring and a
+//   bright echo. Supernatural species have 0.5 unless they say.
+//
+// Recordings: Freesound, CC0 and CC-BY (credited in THIRD_PARTY_NOTICES.md); the rest are
+// synthesized (hisses, slime, wings, clicks, embers, chimes).
+(
+    voices: {
+        // Munching, shared by small grazers.
+        "grazer_small": (
+            graze: (clips: ["sounds/creatures/grazer_small/graze_1.ogg", "sounds/creatures/grazer_small/graze_2.ogg", "sounds/creatures/grazer_small/graze_3.ogg"], chance: 0.7),
+        ),
+        // Munching and slow breaths, shared by cattle and their kin.
+        "grazer_large": (
+            graze: (clips: ["sounds/creatures/grazer_large/graze_1.ogg", "sounds/creatures/grazer_large/graze_2.ogg", "sounds/creatures/grazer_large/graze_3.ogg", "sounds/creatures/grazer_large/graze_4.ogg", "sounds/creatures/grazer_large/graze_5.ogg"], chance: 0.7),
+            rest: (clips: ["sounds/creatures/grazer_large/rest_1.ogg", "sounds/creatures/grazer_large/rest_2.ogg"]),
+        ),
+        // Bleats.
+        "sheep": (
+            like: "grazer_small",
+            size: 0.95,
+            idle: (clips: ["sounds/creatures/sheep/idle_1.ogg", "sounds/creatures/sheep/idle_2.ogg", "sounds/creatures/sheep/idle_3.ogg", "sounds/creatures/sheep/idle_4.ogg", "sounds/creatures/sheep/idle_5.ogg"]),
+            alert: (clips: ["sounds/creatures/sheep/alert_1.ogg", "sounds/creatures/sheep/alert_2.ogg"]),
+            call: (clips: ["sounds/creatures/sheep/call_1.ogg", "sounds/creatures/sheep/call_2.ogg", "sounds/creatures/sheep/call_3.ogg", "sounds/creatures/sheep/call_4.ogg"]),
+            ready: (clips: ["sounds/creatures/sheep/ready_1.ogg", "sounds/creatures/sheep/ready_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/sheep/hurt_1.ogg", "sounds/creatures/sheep/hurt_2.ogg", "sounds/creatures/sheep/hurt_3.ogg"]),
+            death: (clips: ["sounds/creatures/sheep/death_1.ogg", "sounds/creatures/sheep/death_2.ogg"]),
+        ),
+        // Bleats, rutting blubbers and the clack of horns.
+        "goat": (
+            like: "grazer_small",
+            size: 1.0,
+            idle: (clips: ["sounds/creatures/goat/idle_1.ogg", "sounds/creatures/goat/idle_2.ogg", "sounds/creatures/goat/idle_3.ogg"]),
+            call: (clips: ["sounds/creatures/goat/call_1.ogg", "sounds/creatures/goat/call_2.ogg", "sounds/creatures/goat/call_3.ogg"]),
+            ready: (clips: ["sounds/creatures/goat/ready_1.ogg", "sounds/creatures/goat/ready_2.ogg"]),
+            attack: (clips: ["sounds/creatures/goat/attack_1.ogg"]),
+            hurt: (clips: ["sounds/creatures/goat/hurt_1.ogg", "sounds/creatures/goat/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/goat/death_1.ogg"]),
+        ),
+        // Moos and bull bellows.
+        "cattle": (
+            like: "grazer_large",
+            size: 1.45,
+            idle: (clips: ["sounds/creatures/cattle/idle_1.ogg", "sounds/creatures/cattle/idle_2.ogg", "sounds/creatures/cattle/idle_3.ogg", "sounds/creatures/cattle/idle_4.ogg"]),
+            alert: (clips: ["sounds/creatures/cattle/alert_1.ogg", "sounds/creatures/cattle/alert_2.ogg"]),
+            call: (clips: ["sounds/creatures/cattle/call_1.ogg", "sounds/creatures/cattle/call_2.ogg", "sounds/creatures/cattle/call_3.ogg"]),
+            ready: (clips: ["sounds/creatures/cattle/ready_1.ogg", "sounds/creatures/cattle/ready_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/cattle/hurt_1.ogg", "sounds/creatures/cattle/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/cattle/death_1.ogg", "sounds/creatures/cattle/death_2.ogg"]),
+        ),
+        // Nasal huffs, otherwise as cattle.
+        "bison": (
+            like: "cattle",
+            size: 1.4,
+            idle: (clips: ["sounds/creatures/bison/idle_1.ogg", "sounds/creatures/bison/idle_2.ogg", "sounds/creatures/bison/idle_3.ogg", "sounds/creatures/bison/idle_4.ogg"]),
+            alert: (clips: ["sounds/creatures/bison/alert_1.ogg"]),
+        ),
+        // Grunts, snorts and squeals.
+        "pig": (
+            size: 0.85,
+            idle: (clips: ["sounds/creatures/pig/idle_1.ogg", "sounds/creatures/pig/idle_2.ogg", "sounds/creatures/pig/idle_3.ogg", "sounds/creatures/pig/idle_4.ogg", "sounds/creatures/pig/idle_5.ogg", "sounds/creatures/pig/idle_6.ogg", "sounds/creatures/pig/idle_7.ogg", "sounds/creatures/pig/idle_8.ogg", "sounds/creatures/pig/idle_9.ogg", "sounds/creatures/pig/idle_10.ogg", "sounds/creatures/pig/idle_11.ogg"]),
+            graze: (clips: ["sounds/creatures/pig/graze_1.ogg", "sounds/creatures/pig/graze_2.ogg", "sounds/creatures/pig/graze_3.ogg", "sounds/creatures/pig/graze_4.ogg", "sounds/creatures/pig/graze_5.ogg", "sounds/creatures/pig/graze_6.ogg"], chance: 0.7),
+            alert: (clips: ["sounds/creatures/pig/alert_1.ogg", "sounds/creatures/pig/alert_2.ogg", "sounds/creatures/pig/alert_3.ogg", "sounds/creatures/pig/alert_4.ogg"]),
+            rest: (clips: ["sounds/creatures/pig/rest_1.ogg", "sounds/creatures/pig/rest_2.ogg", "sounds/creatures/pig/rest_3.ogg", "sounds/creatures/pig/rest_4.ogg"]),
+            call: (clips: ["sounds/creatures/pig/call_1.ogg", "sounds/creatures/pig/call_2.ogg"]),
+            attack: (clips: ["sounds/creatures/pig/attack_1.ogg", "sounds/creatures/pig/attack_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/pig/hurt_1.ogg", "sounds/creatures/pig/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/pig/death_1.ogg", "sounds/creatures/pig/death_2.ogg"]),
+        ),
+        // Barks of alarm, bleats and the roars of the rut.
+        "deer": (
+            like: "grazer_small",
+            size: 1.5,
+            idle: (clips: ["sounds/creatures/deer/idle_1.ogg", "sounds/creatures/deer/idle_2.ogg", "sounds/creatures/deer/idle_3.ogg", "sounds/creatures/deer/idle_4.ogg", "sounds/creatures/deer/idle_5.ogg"]),
+            alert: (clips: ["sounds/creatures/deer/alert_1.ogg", "sounds/creatures/deer/alert_2.ogg", "sounds/creatures/deer/alert_3.ogg"]),
+            call: (clips: ["sounds/creatures/deer/call_1.ogg", "sounds/creatures/deer/call_2.ogg", "sounds/creatures/deer/call_3.ogg"]),
+            ready: (clips: ["sounds/creatures/deer/ready_1.ogg", "sounds/creatures/deer/ready_2.ogg", "sounds/creatures/deer/ready_3.ogg", "sounds/creatures/deer/ready_4.ogg"], range: 64.0),
+            hurt: (clips: ["sounds/creatures/deer/hurt_1.ogg", "sounds/creatures/deer/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/deer/death_1.ogg", "sounds/creatures/deer/death_2.ogg"]),
+        ),
+        // Grunting, otherwise as deer.
+        "reindeer": (
+            like: "deer",
+            size: 1.4,
+            idle: (clips: ["sounds/creatures/reindeer/idle_1.ogg", "sounds/creatures/reindeer/idle_2.ogg", "sounds/creatures/reindeer/idle_3.ogg", "sounds/creatures/reindeer/idle_4.ogg", "sounds/creatures/reindeer/idle_5.ogg", "sounds/creatures/reindeer/idle_6.ogg", "sounds/creatures/reindeer/idle_7.ogg"]),
+            ready: (clips: ["sounds/creatures/reindeer/ready_1.ogg", "sounds/creatures/reindeer/ready_2.ogg"]),
+        ),
+        // Whinnies, nickers and snorts.
+        "horse": (
+            size: 1.5,
+            idle: (clips: ["sounds/creatures/horse/idle_1.ogg", "sounds/creatures/horse/idle_2.ogg", "sounds/creatures/horse/idle_3.ogg", "sounds/creatures/horse/idle_4.ogg", "sounds/creatures/horse/idle_5.ogg", "sounds/creatures/horse/idle_6.ogg"]),
+            graze: (clips: ["sounds/creatures/horse/graze_1.ogg", "sounds/creatures/horse/graze_2.ogg", "sounds/creatures/horse/graze_3.ogg", "sounds/creatures/horse/graze_4.ogg", "sounds/creatures/horse/graze_5.ogg", "sounds/creatures/horse/graze_6.ogg"], chance: 0.7),
+            alert: (clips: ["sounds/creatures/horse/alert_1.ogg", "sounds/creatures/horse/alert_2.ogg", "sounds/creatures/horse/alert_3.ogg"]),
+            rest: (clips: ["sounds/creatures/horse/rest_1.ogg", "sounds/creatures/horse/rest_2.ogg", "sounds/creatures/horse/rest_3.ogg"]),
+            call: (clips: ["sounds/creatures/horse/call_1.ogg", "sounds/creatures/horse/call_2.ogg", "sounds/creatures/horse/call_3.ogg", "sounds/creatures/horse/call_4.ogg", "sounds/creatures/horse/call_5.ogg"]),
+            ready: (clips: ["sounds/creatures/horse/ready_1.ogg", "sounds/creatures/horse/ready_2.ogg", "sounds/creatures/horse/ready_3.ogg"]),
+            attack: (clips: ["sounds/creatures/horse/attack_1.ogg", "sounds/creatures/horse/attack_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/horse/hurt_1.ogg", "sounds/creatures/horse/hurt_2.ogg", "sounds/creatures/horse/hurt_3.ogg"]),
+            death: (clips: ["sounds/creatures/horse/death_1.ogg", "sounds/creatures/horse/death_2.ogg"]),
+        ),
+        // Howls, growls, whines and yelps.
+        "wolf": (
+            size: 0.9,
+            idle: (clips: ["sounds/creatures/wolf/idle_1.ogg", "sounds/creatures/wolf/idle_2.ogg", "sounds/creatures/wolf/idle_3.ogg", "sounds/creatures/wolf/idle_4.ogg"]),
+            alert: (clips: ["sounds/creatures/wolf/alert_1.ogg", "sounds/creatures/wolf/alert_2.ogg", "sounds/creatures/wolf/alert_3.ogg", "sounds/creatures/wolf/alert_4.ogg"]),
+            rest: (clips: ["sounds/creatures/wolf/rest_1.ogg", "sounds/creatures/wolf/rest_2.ogg", "sounds/creatures/wolf/rest_3.ogg"]),
+            call: (clips: ["sounds/creatures/wolf/call_1.ogg", "sounds/creatures/wolf/call_2.ogg"], range: 96.0),
+            ready: (clips: ["sounds/creatures/wolf/ready_1.ogg", "sounds/creatures/wolf/ready_2.ogg"]),
+            attack: (clips: ["sounds/creatures/wolf/attack_1.ogg", "sounds/creatures/wolf/attack_2.ogg", "sounds/creatures/wolf/attack_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/wolf/hurt_1.ogg", "sounds/creatures/wolf/hurt_2.ogg", "sounds/creatures/wolf/hurt_3.ogg"]),
+            death: (clips: ["sounds/creatures/wolf/death_1.ogg", "sounds/creatures/wolf/death_2.ogg"]),
+        ),
+        // Yips, barks and the vixen's scream.
+        "fox": (
+            size: 0.6,
+            idle: (clips: ["sounds/creatures/fox/idle_1.ogg", "sounds/creatures/fox/idle_2.ogg", "sounds/creatures/fox/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/fox/alert_1.ogg", "sounds/creatures/fox/alert_2.ogg", "sounds/creatures/fox/alert_3.ogg", "sounds/creatures/fox/alert_4.ogg"]),
+            call: (clips: ["sounds/creatures/fox/call_1.ogg", "sounds/creatures/fox/call_2.ogg", "sounds/creatures/fox/call_3.ogg"]),
+            ready: (clips: ["sounds/creatures/fox/ready_1.ogg", "sounds/creatures/fox/ready_2.ogg", "sounds/creatures/fox/ready_3.ogg", "sounds/creatures/fox/ready_4.ogg"], range: 56.0),
+            hurt: (clips: ["sounds/creatures/fox/hurt_1.ogg", "sounds/creatures/fox/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/fox/death_1.ogg"]),
+        ),
+        // Growls and huffs.
+        "bear": (
+            size: 1.4,
+            idle: (clips: ["sounds/creatures/bear/idle_1.ogg", "sounds/creatures/bear/idle_2.ogg", "sounds/creatures/bear/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/bear/alert_1.ogg", "sounds/creatures/bear/alert_2.ogg", "sounds/creatures/bear/alert_3.ogg"]),
+            call: (clips: ["sounds/creatures/bear/call_1.ogg", "sounds/creatures/bear/call_2.ogg"]),
+            attack: (clips: ["sounds/creatures/bear/attack_1.ogg", "sounds/creatures/bear/attack_2.ogg", "sounds/creatures/bear/attack_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/bear/hurt_1.ogg", "sounds/creatures/bear/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/bear/death_1.ogg"]),
+        ),
+        // Hisses, growls, yowls and a purr: the big cats.
+        "cat": (
+            size: 0.75,
+            idle: (clips: ["sounds/creatures/cat/idle_1.ogg", "sounds/creatures/cat/idle_2.ogg", "sounds/creatures/cat/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/cat/alert_1.ogg", "sounds/creatures/cat/alert_2.ogg", "sounds/creatures/cat/alert_3.ogg", "sounds/creatures/cat/alert_4.ogg"]),
+            rest: (clips: ["sounds/creatures/cat/rest_1.ogg", "sounds/creatures/cat/rest_2.ogg", "sounds/creatures/cat/rest_3.ogg"]),
+            call: (clips: ["sounds/creatures/cat/call_1.ogg", "sounds/creatures/cat/call_2.ogg"]),
+            ready: (clips: ["sounds/creatures/cat/ready_1.ogg"]),
+            attack: (clips: ["sounds/creatures/cat/attack_1.ogg", "sounds/creatures/cat/attack_2.ogg", "sounds/creatures/cat/attack_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/cat/hurt_1.ogg", "sounds/creatures/cat/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/cat/death_1.ogg"]),
+        ),
+        // Snarls, chirps and noisy eating.
+        "badger": (
+            size: 0.45,
+            idle: (clips: ["sounds/creatures/badger/idle_1.ogg", "sounds/creatures/badger/idle_2.ogg"]),
+            graze: (clips: ["sounds/creatures/badger/graze_1.ogg", "sounds/creatures/badger/graze_2.ogg", "sounds/creatures/badger/graze_3.ogg", "sounds/creatures/badger/graze_4.ogg", "sounds/creatures/badger/graze_5.ogg", "sounds/creatures/badger/graze_6.ogg"]),
+            alert: (clips: ["sounds/creatures/badger/alert_1.ogg", "sounds/creatures/badger/alert_2.ogg", "sounds/creatures/badger/alert_3.ogg", "sounds/creatures/badger/alert_4.ogg"]),
+            attack: (clips: ["sounds/creatures/badger/attack_1.ogg", "sounds/creatures/badger/attack_2.ogg", "sounds/creatures/badger/attack_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/badger/hurt_1.ogg", "sounds/creatures/badger/hurt_2.ogg"]),
+        ),
+        // Clucks, alarm cackles and the cock's crow.
+        "fowl": (
+            size: 0.6,
+            idle: (clips: ["sounds/creatures/fowl/idle_1.ogg", "sounds/creatures/fowl/idle_2.ogg", "sounds/creatures/fowl/idle_3.ogg", "sounds/creatures/fowl/idle_4.ogg", "sounds/creatures/fowl/idle_5.ogg", "sounds/creatures/fowl/idle_6.ogg", "sounds/creatures/fowl/idle_7.ogg", "sounds/creatures/fowl/idle_8.ogg", "sounds/creatures/fowl/idle_9.ogg", "sounds/creatures/fowl/idle_10.ogg"]),
+            alert: (clips: ["sounds/creatures/fowl/alert_1.ogg", "sounds/creatures/fowl/alert_2.ogg", "sounds/creatures/fowl/alert_3.ogg", "sounds/creatures/fowl/alert_4.ogg"]),
+            call: (clips: ["sounds/creatures/fowl/call_1.ogg", "sounds/creatures/fowl/call_2.ogg", "sounds/creatures/fowl/call_3.ogg", "sounds/creatures/fowl/call_4.ogg"], range: 72.0),
+            ready: (clips: ["sounds/creatures/fowl/ready_1.ogg", "sounds/creatures/fowl/ready_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/fowl/hurt_1.ogg", "sounds/creatures/fowl/hurt_2.ogg"]),
+            death: (clips: ["sounds/creatures/fowl/death_1.ogg"]),
+        ),
+        // Trills.
+        "quail": (
+            size: 0.32,
+            idle: (clips: ["sounds/creatures/quail/idle_1.ogg", "sounds/creatures/quail/idle_2.ogg", "sounds/creatures/quail/idle_3.ogg", "sounds/creatures/quail/idle_4.ogg"]),
+            call: (clips: ["sounds/creatures/quail/call_1.ogg", "sounds/creatures/quail/call_2.ogg", "sounds/creatures/quail/call_3.ogg", "sounds/creatures/quail/call_4.ogg", "sounds/creatures/quail/call_5.ogg"]),
+            hurt: (clips: ["sounds/creatures/quail/hurt_1.ogg"]),
+        ),
+        // The cock's crow and chatter.
+        "pheasant": (
+            size: 0.55,
+            idle: (clips: ["sounds/creatures/pheasant/idle_1.ogg", "sounds/creatures/pheasant/idle_2.ogg", "sounds/creatures/pheasant/idle_3.ogg", "sounds/creatures/pheasant/idle_4.ogg", "sounds/creatures/pheasant/idle_5.ogg"]),
+            alert: (clips: ["sounds/creatures/pheasant/alert_1.ogg", "sounds/creatures/pheasant/alert_2.ogg", "sounds/creatures/pheasant/alert_3.ogg", "sounds/creatures/pheasant/alert_4.ogg"]),
+            call: (clips: ["sounds/creatures/pheasant/call_1.ogg", "sounds/creatures/pheasant/call_2.ogg"]),
+            ready: (clips: ["sounds/creatures/pheasant/ready_1.ogg", "sounds/creatures/pheasant/ready_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/pheasant/hurt_1.ogg"]),
+        ),
+        // Quacks.
+        "duck": (
+            size: 0.55,
+            idle: (clips: ["sounds/creatures/duck/idle_1.ogg", "sounds/creatures/duck/idle_2.ogg", "sounds/creatures/duck/idle_3.ogg", "sounds/creatures/duck/idle_4.ogg", "sounds/creatures/duck/idle_5.ogg", "sounds/creatures/duck/idle_6.ogg"]),
+            alert: (clips: ["sounds/creatures/duck/alert_1.ogg", "sounds/creatures/duck/alert_2.ogg", "sounds/creatures/duck/alert_3.ogg"]),
+            call: (clips: ["sounds/creatures/duck/call_1.ogg", "sounds/creatures/duck/call_2.ogg", "sounds/creatures/duck/call_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/duck/hurt_1.ogg", "sounds/creatures/duck/hurt_2.ogg"]),
+        ),
+        // Harsh croaking cries.
+        "heron": (
+            size: 1.2,
+            idle: (clips: ["sounds/creatures/heron/idle_1.ogg"]),
+            alert: (clips: ["sounds/creatures/heron/alert_1.ogg", "sounds/creatures/heron/alert_2.ogg", "sounds/creatures/heron/alert_3.ogg", "sounds/creatures/heron/alert_4.ogg"]),
+            call: (clips: ["sounds/creatures/heron/call_1.ogg", "sounds/creatures/heron/call_2.ogg", "sounds/creatures/heron/call_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/heron/hurt_1.ogg"]),
+        ),
+        // Croaks.
+        "frog": (
+            size: 0.18,
+            idle: (clips: ["sounds/creatures/frog/idle_1.ogg", "sounds/creatures/frog/idle_2.ogg", "sounds/creatures/frog/idle_3.ogg", "sounds/creatures/frog/idle_4.ogg", "sounds/creatures/frog/idle_5.ogg", "sounds/creatures/frog/idle_6.ogg", "sounds/creatures/frog/idle_7.ogg"]),
+            call: (clips: ["sounds/creatures/frog/call_1.ogg", "sounds/creatures/frog/call_2.ogg"]),
+        ),
+        // Trills and squeaks.
+        "toad": (
+            size: 0.2,
+            idle: (clips: ["sounds/creatures/toad/idle_1.ogg"]),
+            call: (clips: ["sounds/creatures/toad/call_1.ogg"]),
+            hurt: (clips: ["sounds/creatures/toad/hurt_1.ogg", "sounds/creatures/toad/hurt_2.ogg", "sounds/creatures/toad/hurt_3.ogg", "sounds/creatures/toad/hurt_4.ogg", "sounds/creatures/toad/hurt_5.ogg"]),
+        ),
+        // Squeaks.
+        "mouse": (
+            size: 0.2,
+            idle: (clips: ["sounds/creatures/mouse/idle_1.ogg", "sounds/creatures/mouse/idle_2.ogg", "sounds/creatures/mouse/idle_3.ogg", "sounds/creatures/mouse/idle_4.ogg", "sounds/creatures/mouse/idle_5.ogg", "sounds/creatures/mouse/idle_6.ogg", "sounds/creatures/mouse/idle_7.ogg"]),
+            alert: (clips: ["sounds/creatures/mouse/alert_1.ogg", "sounds/creatures/mouse/alert_2.ogg", "sounds/creatures/mouse/alert_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/mouse/hurt_1.ogg", "sounds/creatures/mouse/hurt_2.ogg", "sounds/creatures/mouse/hurt_3.ogg"]),
+        ),
+        // Chatter and scolding.
+        "squirrel": (
+            size: 0.3,
+            idle: (clips: ["sounds/creatures/squirrel/idle_1.ogg", "sounds/creatures/squirrel/idle_2.ogg", "sounds/creatures/squirrel/idle_3.ogg", "sounds/creatures/squirrel/idle_4.ogg", "sounds/creatures/squirrel/idle_5.ogg", "sounds/creatures/squirrel/idle_6.ogg"]),
+            alert: (clips: ["sounds/creatures/squirrel/alert_1.ogg", "sounds/creatures/squirrel/alert_2.ogg", "sounds/creatures/squirrel/alert_3.ogg", "sounds/creatures/squirrel/alert_4.ogg", "sounds/creatures/squirrel/alert_5.ogg", "sounds/creatures/squirrel/alert_6.ogg"]),
+            hurt: (clips: ["sounds/creatures/squirrel/hurt_1.ogg", "sounds/creatures/squirrel/hurt_2.ogg"]),
+        ),
+        // Mostly silent: a thump of warning, a sniff, munching, a scream when hurt.
+        "rabbit": (
+            size: 0.45,
+            idle: (clips: ["sounds/creatures/rabbit/idle_1.ogg", "sounds/creatures/rabbit/idle_2.ogg", "sounds/creatures/rabbit/idle_3.ogg"]),
+            graze: (clips: ["sounds/creatures/rabbit/graze_1.ogg", "sounds/creatures/rabbit/graze_2.ogg", "sounds/creatures/rabbit/graze_3.ogg", "sounds/creatures/rabbit/graze_4.ogg", "sounds/creatures/rabbit/graze_5.ogg", "sounds/creatures/rabbit/graze_6.ogg"]),
+            alert: (clips: ["sounds/creatures/rabbit/alert_1.ogg", "sounds/creatures/rabbit/alert_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/rabbit/hurt_1.ogg", "sounds/creatures/rabbit/hurt_2.ogg", "sounds/creatures/rabbit/hurt_3.ogg"]),
+            death: (clips: ["sounds/creatures/rabbit/death_1.ogg"]),
+        ),
+        // Snuffles and huffs.
+        "hedgehog": (
+            size: 0.22,
+            idle: (clips: ["sounds/creatures/hedgehog/idle_1.ogg", "sounds/creatures/hedgehog/idle_2.ogg", "sounds/creatures/hedgehog/idle_3.ogg", "sounds/creatures/hedgehog/idle_4.ogg", "sounds/creatures/hedgehog/idle_5.ogg"]),
+            alert: (clips: ["sounds/creatures/hedgehog/alert_1.ogg", "sounds/creatures/hedgehog/alert_2.ogg", "sounds/creatures/hedgehog/alert_3.ogg", "sounds/creatures/hedgehog/alert_4.ogg", "sounds/creatures/hedgehog/alert_5.ogg"]),
+            hurt: (clips: ["sounds/creatures/hedgehog/hurt_1.ogg", "sounds/creatures/hedgehog/hurt_2.ogg"]),
+        ),
+        // Purrs, wheeks and squeals: capybaras and their small kin.
+        "cavy": (
+            size: 0.6,
+            idle: (clips: ["sounds/creatures/cavy/idle_1.ogg", "sounds/creatures/cavy/idle_2.ogg", "sounds/creatures/cavy/idle_3.ogg", "sounds/creatures/cavy/idle_4.ogg", "sounds/creatures/cavy/idle_5.ogg", "sounds/creatures/cavy/idle_6.ogg", "sounds/creatures/cavy/idle_7.ogg"]),
+            rest: (clips: ["sounds/creatures/cavy/rest_1.ogg", "sounds/creatures/cavy/rest_2.ogg", "sounds/creatures/cavy/rest_3.ogg", "sounds/creatures/cavy/rest_4.ogg"]),
+            hurt: (clips: ["sounds/creatures/cavy/hurt_1.ogg", "sounds/creatures/cavy/hurt_2.ogg"]),
+        ),
+        // A slow hiss, and the male's croak in season.
+        "tortoise": (
+            size: 0.35,
+            graze: (clips: ["sounds/creatures/tortoise/graze_1.ogg", "sounds/creatures/tortoise/graze_2.ogg"]),
+            alert: (clips: ["sounds/creatures/tortoise/alert_1.ogg", "sounds/creatures/tortoise/alert_2.ogg", "sounds/creatures/tortoise/alert_3.ogg"]),
+            ready: (clips: ["sounds/creatures/tortoise/ready_1.ogg", "sounds/creatures/tortoise/ready_2.ogg"]),
+        ),
+        // Chirps, hisses and growls.
+        "croc": (
+            size: 0.5,
+            idle: (clips: ["sounds/creatures/croc/idle_1.ogg", "sounds/creatures/croc/idle_2.ogg", "sounds/creatures/croc/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/croc/alert_1.ogg", "sounds/creatures/croc/alert_2.ogg", "sounds/creatures/croc/alert_3.ogg"]),
+            call: (clips: ["sounds/creatures/croc/call_1.ogg"]),
+            attack: (clips: ["sounds/creatures/croc/attack_1.ogg", "sounds/creatures/croc/attack_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/croc/hurt_1.ogg"]),
+        ),
+        // Claws ticking on the ground.
+        "crab": (
+            size: 0.18,
+            step: (clips: ["sounds/creatures/crab/step_1.ogg", "sounds/creatures/crab/step_2.ogg", "sounds/creatures/crab/step_3.ogg", "sounds/creatures/crab/step_4.ogg", "sounds/creatures/crab/step_5.ogg", "sounds/creatures/crab/step_6.ogg", "sounds/creatures/crab/step_7.ogg", "sounds/creatures/crab/step_8.ogg"]),
+            idle: (clips: ["sounds/creatures/crab/idle_1.ogg", "sounds/creatures/crab/idle_2.ogg", "sounds/creatures/crab/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/crab/alert_1.ogg", "sounds/creatures/crab/alert_2.ogg"]),
+            attack: (clips: ["sounds/creatures/crab/attack_1.ogg", "sounds/creatures/crab/attack_2.ogg"]),
+        ),
+        // Squeaks and chitters.
+        "bat": (
+            like: "wings",
+            size: 0.4,
+            ground: false,
+            idle: (clips: ["sounds/creatures/bat/idle_1.ogg", "sounds/creatures/bat/idle_2.ogg", "sounds/creatures/bat/idle_3.ogg", "sounds/creatures/bat/idle_4.ogg", "sounds/creatures/bat/idle_5.ogg", "sounds/creatures/bat/idle_6.ogg", "sounds/creatures/bat/idle_7.ogg"]),
+            alert: (clips: ["sounds/creatures/bat/alert_1.ogg"]),
+            attack: (clips: ["sounds/creatures/bat/attack_1.ogg", "sounds/creatures/bat/attack_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/bat/hurt_1.ogg", "sounds/creatures/bat/hurt_2.ogg"]),
+        ),
+        // Clicks, hisses and rattling: things with many legs.
+        "insect": (
+            like: "crab",
+            size: 0.6,
+            idle: (clips: ["sounds/creatures/insect/idle_1.ogg", "sounds/creatures/insect/idle_2.ogg", "sounds/creatures/insect/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/insect/alert_1.ogg", "sounds/creatures/insect/alert_2.ogg", "sounds/creatures/insect/alert_3.ogg", "sounds/creatures/insect/alert_4.ogg"]),
+            attack: (clips: ["sounds/creatures/insect/attack_1.ogg", "sounds/creatures/insect/attack_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/insect/hurt_1.ogg"]),
+        ),
+        // Groans and gargles.
+        "zombie": (
+            size: 1.8,
+            idle: (clips: ["sounds/creatures/zombie/idle_1.ogg", "sounds/creatures/zombie/idle_2.ogg", "sounds/creatures/zombie/idle_3.ogg", "sounds/creatures/zombie/idle_4.ogg"]),
+            alert: (clips: ["sounds/creatures/zombie/alert_1.ogg", "sounds/creatures/zombie/alert_2.ogg"]),
+            attack: (clips: ["sounds/creatures/zombie/attack_1.ogg", "sounds/creatures/zombie/attack_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/zombie/hurt_1.ogg"]),
+            death: (clips: ["sounds/creatures/zombie/death_1.ogg"]),
+        ),
+        // Screams and chirps of birds of prey.
+        "raptor": (
+            like: "wings",
+            size: 0.7,
+            ground: false,
+            idle: (clips: ["sounds/creatures/raptor/idle_1.ogg", "sounds/creatures/raptor/idle_2.ogg", "sounds/creatures/raptor/idle_3.ogg", "sounds/creatures/raptor/idle_4.ogg"]),
+            alert: (clips: ["sounds/creatures/raptor/alert_1.ogg", "sounds/creatures/raptor/alert_2.ogg", "sounds/creatures/raptor/alert_3.ogg"]),
+            call: (clips: ["sounds/creatures/raptor/call_1.ogg", "sounds/creatures/raptor/call_2.ogg", "sounds/creatures/raptor/call_3.ogg", "sounds/creatures/raptor/call_4.ogg"]),
+            hurt: (clips: ["sounds/creatures/raptor/hurt_1.ogg"]),
+        ),
+        // Groaning bellows: camels and alpacas.
+        "camel": (
+            like: "grazer_large",
+            size: 1.8,
+            idle: (clips: ["sounds/creatures/camel/idle_1.ogg", "sounds/creatures/camel/idle_2.ogg", "sounds/creatures/camel/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/camel/alert_1.ogg"]),
+            call: (clips: ["sounds/creatures/camel/call_1.ogg"]),
+            hurt: (clips: ["sounds/creatures/camel/hurt_1.ogg"]),
+            death: (clips: ["sounds/creatures/camel/death_1.ogg"]),
+        ),
+        // Squawks and screeching calls.
+        "parrot": (
+            like: "wings",
+            size: 0.6,
+            idle: (clips: ["sounds/creatures/parrot/idle_1.ogg", "sounds/creatures/parrot/idle_2.ogg"]),
+            alert: (clips: ["sounds/creatures/parrot/alert_1.ogg"]),
+            call: (clips: ["sounds/creatures/parrot/call_1.ogg", "sounds/creatures/parrot/call_2.ogg", "sounds/creatures/parrot/call_3.ogg"], range: 80.0),
+            hurt: (clips: ["sounds/creatures/parrot/hurt_1.ogg"]),
+            death: (clips: ["sounds/creatures/parrot/death_1.ogg"]),
+        ),
+        // Wingbeats, for fliers.
+        "wings": (
+            ground: false,
+            step: (clips: ["sounds/creatures/wings/step_1.ogg", "sounds/creatures/wings/step_2.ogg", "sounds/creatures/wings/step_3.ogg", "sounds/creatures/wings/step_4.ogg", "sounds/creatures/wings/step_5.ogg", "sounds/creatures/wings/step_6.ogg"]),
+        ),
+        // Wet slides and pops: snails and other soft things.
+        "slime": (
+            size: 0.45,
+            ground: false,
+            step: (clips: ["sounds/creatures/slime/step_1.ogg", "sounds/creatures/slime/step_2.ogg", "sounds/creatures/slime/step_3.ogg", "sounds/creatures/slime/step_4.ogg"]),
+            idle: (clips: ["sounds/creatures/slime/idle_1.ogg", "sounds/creatures/slime/idle_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/slime/hurt_1.ogg", "sounds/creatures/slime/hurt_2.ogg", "sounds/creatures/slime/hurt_3.ogg"]),
+            death: (clips: ["sounds/creatures/slime/death_1.ogg"]),
+        ),
+        // Fluttering.
+        "moth": (
+            size: 0.4,
+            ground: false,
+            idle: (clips: ["sounds/creatures/moth/idle_1.ogg", "sounds/creatures/moth/idle_2.ogg", "sounds/creatures/moth/idle_3.ogg", "sounds/creatures/moth/idle_4.ogg", "sounds/creatures/moth/idle_5.ogg", "sounds/creatures/moth/idle_6.ogg"]),
+            alert: (clips: ["sounds/creatures/moth/alert_1.ogg", "sounds/creatures/moth/alert_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/moth/hurt_1.ogg"]),
+        ),
+        // Hisses and tiny clicks.
+        "lizard": (
+            size: 0.15,
+            idle: (clips: ["sounds/creatures/lizard/idle_1.ogg", "sounds/creatures/lizard/idle_2.ogg"]),
+            alert: (clips: ["sounds/creatures/lizard/alert_1.ogg", "sounds/creatures/lizard/alert_2.ogg", "sounds/creatures/lizard/alert_3.ogg"]),
+            hurt: (clips: ["sounds/creatures/lizard/hurt_1.ogg"]),
+        ),
+        // Crackles and hisses of a body that burns.
+        "ember": (
+            like: "lizard",
+            size: 0.25,
+            step: (clips: ["sounds/creatures/ember/step_1.ogg", "sounds/creatures/ember/step_2.ogg", "sounds/creatures/ember/step_3.ogg"]),
+            idle: (clips: ["sounds/creatures/ember/idle_1.ogg", "sounds/creatures/ember/idle_2.ogg", "sounds/creatures/ember/idle_3.ogg"]),
+            alert: (clips: ["sounds/creatures/ember/alert_1.ogg", "sounds/creatures/ember/alert_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/ember/hurt_1.ogg"]),
+        ),
+        // Chimes and whispers.
+        "wisp": (
+            size: 0.4,
+            ground: false,
+            idle: (clips: ["sounds/creatures/wisp/idle_1.ogg", "sounds/creatures/wisp/idle_2.ogg", "sounds/creatures/wisp/idle_3.ogg", "sounds/creatures/wisp/idle_4.ogg"]),
+            alert: (clips: ["sounds/creatures/wisp/alert_1.ogg", "sounds/creatures/wisp/alert_2.ogg"]),
+            call: (clips: ["sounds/creatures/wisp/call_1.ogg", "sounds/creatures/wisp/call_2.ogg"]),
+            hurt: (clips: ["sounds/creatures/wisp/hurt_1.ogg"]),
+            death: (clips: ["sounds/creatures/wisp/death_1.ogg"]),
+        ),
+    },
+    species: {
+        "rabbit": (voice: "rabbit"),
+        "hare": (voice: "rabbit"),
+        "moonhare": (voice: "rabbit"),
+        "junglefowl": (voice: "fowl"),
+        "quail": (voice: "quail"),
+        "pheasant": (voice: "pheasant"),
+        "mallard": (voice: "duck"),
+        "grey_heron": (voice: "heron"),
+        "mouflon": (voice: "sheep"),
+        "mountain_goat": (voice: "goat"),
+        "aurochs": (voice: "cattle"),
+        "bison": (voice: "bison"),
+        "wild_boar": (voice: "pig"),
+        "red_deer": (voice: "deer"),
+        "reindeer": (voice: "reindeer"),
+        "frost_stag": (voice: "deer", aether: 0.6),
+        "wild_horse": (voice: "horse"),
+        "fox": (voice: "fox"),
+        "arctic_fox": (voice: "fox", pitch: 1.08),
+        "wolf": (voice: "wolf"),
+        "brown_bear": (voice: "bear"),
+        "lynx": (voice: "cat"),
+        "badger": (voice: "badger"),
+        "field_mouse": (voice: "mouse"),
+        "red_squirrel": (voice: "squirrel"),
+        "hedgehog": (voice: "hedgehog"),
+        "capybara": (voice: "cavy"),
+        "common_frog": (voice: "frog"),
+        "toad": (voice: "toad"),
+        "tortoise": (voice: "tortoise"),
+        "crocodile": (voice: "croc"),
+        "sand_lizard": (voice: "lizard"),
+        "shore_crab": (voice: "crab"),
+        "garden_snail": (voice: "slime"),
+        "lumen_snail": (voice: "slime", aether: 0.6),
+        "ember_salamander": (voice: "ember", aether: 0.35),
+        "glimmer_moth": (voice: "moth", aether: 0.6),
+        "sunwing": (voice: "raptor", aether: 0.6),
+        "wisp": (voice: "wisp", aether: 0.7),
+        "gazelle": (voice: "deer"),
+        "camel": (voice: "camel"),
+        "fennec_fox": (voice: "fox"),
+        "snow_leopard": (voice: "cat"),
+        "beaver": (voice: "cavy"),
+        "macaw": (voice: "parrot"),
+        "sporeling": (voice: "slime", aether: 0.6, pitch: 0.9),
+        "crystal_beetle": (voice: "insect", aether: 0.6),
+        "cave_crawler": (voice: "insect"),
+        "cave_bat": (voice: "bat"),
+        "shambler": (voice: "zombie", aether: 0.3, pitch: 0.85),
+    },
+)

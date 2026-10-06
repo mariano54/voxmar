@@ -1,0 +1,20 @@
+// How the Japanese names that hold kanji read, kanji in hiragana and the rest as written,
+// by the same keys as `../ja.ron`: shown with a name (Shift over an item, or above it). A
+// template's reading fills `{name}` with its family's reading, or the family's name when
+// that has no kanji. A mod adds its own `lang/readings/ja.ron` beside its `lang/ja.ron`.
+{
+    "effect.well_fed": "まんぷく",
+    "effect.hungry": "くうふく",
+    "effect.starving": "きが",
+    "effect.by_the_fire": "たきびのそば",
+    "effect.chilly": "はださむい",
+    "effect.freezing": "こごえる",
+    "effect.hot": "あつい",
+    "effect.overheated": "ねっちゅうしょう",
+    "skill.core.farming": "のうぎょう",
+    "skill.core.hunter": "しゅりょう",
+    "skill.core.mining": "さいくつ",
+    "skill.core.cooking": "りょうり",
+    "skill.core.attack": "こうげき",
+    "skill.core.defence": "ぼうぎょ",
+}

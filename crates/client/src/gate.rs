@@ -213,6 +213,8 @@ struct Gate {
     readout_seen: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// The interface font before the gate tried another, to go back to.
+    font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
     failures: Vec<String>,
@@ -252,6 +254,7 @@ impl Gate {
             blows_seen: 0,
             readout_seen: false,
             spills: Vec::new(),
+            font: None,
             food_moved: false,
             failures: Vec::new(),
             passes: 0,
@@ -795,6 +798,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     },
                 );
                 set_language(world, "en");
+                // And another interface font, as the setting changes it.
+                let mut settings = world.resource_mut::<crate::settings::Settings>();
+                gate.font = Some(settings.font);
+                settings.font = crate::ui::skin::InterfaceFont::ALL.into_iter().find(|f| *f != settings.font).unwrap_or_default();
                 gate.advance(now);
             }
         }
@@ -803,6 +810,17 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let words = localized_text(world, "menu.quit_game");
                 let back = if words.as_deref() == Some("Quit game") { Ok("back in English".into()) } else { Err(format!("reads {words:?} after switching back")) };
                 gate.check("language: English", back);
+                let font = world.resource::<crate::settings::Settings>().font;
+                gate.check(
+                    "font change",
+                    match crate::lang::texts_without_a_font(world) {
+                        None => Ok(format!("every text has {}", font.label())),
+                        Some(lost) => Err(format!("in {}, {lost} have no font: every letter a box", font.label())),
+                    },
+                );
+                if let Some(font) = gate.font.take() {
+                    world.resource_mut::<crate::settings::Settings>().font = font;
+                }
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
             }
@@ -1306,6 +1324,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.shot(world, "creatures").is_some() {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                gate.check("creature voices", crate::creature_sounds::loaded(world));
                 gate.next(Step::Strike, now);
             }
         }
@@ -1373,6 +1392,11 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    // Its cries reached the sound system (a silent run plays none).
+                    let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
+                    let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
+                    let result = if cries.iter().all(|&n| n > 0) { Ok(format!("{} hurt and {} death sounds asked for", cries[0], cries[1])) } else { Err(format!("hurt and death sounds asked for: {cries:?}")) };
+                    gate.known("creature cries", result, "the creatures thread adds the sound hooks");
                     if !gate.readout_seen {
                         gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
                     }
