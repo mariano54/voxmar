@@ -383,8 +383,7 @@ fn listen(
     env.set(Fixed::Sleet, shown.precipitation * shown.sleet * heard);
     env.set(Fixed::Dust, shown.dust * smooth.sky.max(0.15 * smooth.air));
     env.set(Fixed::Cover, shown.cover);
-    let angle = (cycle.ticks / TICKS_PER_DAY as f64).fract() as f32 * std::f32::consts::TAU;
-    env.set(Fixed::Sun, angle.sin() / 1.0308);
+    env.set(Fixed::Sun, voxmar_engine::calendar::sun_height((cycle.ticks / TICKS_PER_DAY as f64).rem_euclid(1.0)) as f32);
     env.set(Fixed::Underwater, cycle.underwater as u8 as f32);
 }
 

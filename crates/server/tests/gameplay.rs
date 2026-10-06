@@ -107,12 +107,26 @@ impl Client {
         client
     }
 
+    /// Applies what the server sends until `done`. The limits only catch a server that
+    /// hangs, so they follow its progress rather than the clock: a fixed ten seconds failed
+    /// four tests on a machine whose cores other builds had (generating the world around a
+    /// joining player took longer), though the server was working all along.
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let start = Instant::now();
+        let mut heard = start;
         while !done(self) {
-            assert!(Instant::now() < deadline, "timed out waiting for server");
+            let now = Instant::now();
+            assert!(
+                now - heard < SERVER_SILENT && now - start < SERVER_WAIT,
+                "timed out waiting for server: {:.1}s in all, {:.1}s since its last message",
+                (now - start).as_secs_f32(),
+                (now - heard).as_secs_f32()
+            );
             match self.connection.try_recv() {
-                Ok(Some(message)) => self.apply(message),
+                Ok(Some(message)) => {
+                    heard = now;
+                    self.apply(message);
+                }
                 Ok(None) => std::thread::sleep(Duration::from_millis(1)),
                 Err(_) => panic!("server disconnected"),
             }
@@ -211,6 +225,11 @@ impl Client {
 /// Ticks a server behind the clock runs back to back to catch up, at most (it gives up on
 /// a longer backlog, see `Server::run`), plus the one in progress: how much earlier by the
 /// clock than its ticks say an action can complete.
+/// How long the server may send nothing, and how long a wait may last in all, before a
+/// test gives up on it.
+const SERVER_SILENT: Duration = Duration::from_secs(20);
+const SERVER_WAIT: Duration = Duration::from_secs(120);
+
 const CATCH_UP: Duration = Duration::from_millis(11 * 1000 / TICKS_PER_SECOND as u64);
 
 #[test]
@@ -495,13 +514,13 @@ fn commands_set_the_time_and_the_weather() {
     let (before, _) = client.day.unwrap();
     assert!(client.ok("/time set noon").contains("12:00"));
     let (day, speed) = client.day.unwrap();
-    assert_eq!((day % TICKS_PER_DAY, speed), (6000, 1.0));
+    assert_eq!((day % TICKS_PER_DAY, speed), (8000, 1.0));
     assert!(day >= before && day < before + TICKS_PER_DAY);
     client.ok("/night");
-    assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 13_000);
+    assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 17_000);
     client.ok("/time add 2h");
     // Two hours on, give or take the ticks that ran in between.
-    assert!((client.day.unwrap().0 % TICKS_PER_DAY).abs_diff(15_000) < 40, "{:?}", client.day);
+    assert!((client.day.unwrap().0 % TICKS_PER_DAY).abs_diff(19_000) < 40, "{:?}", client.day);
     assert!(client.ok("/time freeze").contains("frozen"));
     assert_eq!(client.day.unwrap().1, 0.0);
     assert!(client.ok("/time speed 10").contains("2.0 minutes per day"));
@@ -631,7 +650,7 @@ fn the_server_console_runs_commands_as_an_admin() {
     guest.pump_until(|c| c.day.is_some());
     // The console speaks for the server, and needs no admin rights.
     guest._server.console("/time set midnight");
-    guest.pump_until(|c| c.day.is_some_and(|(day, _)| day % TICKS_PER_DAY == 18_000));
+    guest.pump_until(|c| c.day.is_some_and(|(day, _)| day % TICKS_PER_DAY == 20_000));
     guest._server.console("say hello");
     guest.pump_until(|c| c.chat.iter().any(|(_, text)| text == "[Server] hello"));
     guest._server.console("gamemode creative guest");
