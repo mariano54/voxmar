@@ -160,7 +160,13 @@ and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/pla
 
 ## Staying out of his way, and quiet windows
 
-Every heavy command goes through `memcap`, which gets out of the way:
+Every heavy command goes through `memcap`, which gets out of the way. The copy every thread
+runs is `~/Projects/voxmar-wt/memcap`; install a new version only by copying `tools/memcap`
+next to it and renaming it over the old one (`cp tools/memcap ~/Projects/voxmar-wt/memcap.new
+&& mv -f ~/Projects/voxmar-wt/memcap.new ~/Projects/voxmar-wt/memcap`). Bash reads a running
+script from its file as it goes, so writing over the file in place breaks every copy that is
+running: on 2026-10-06 that turned the play binary and a thread's build into six-byte files.
+
 
 - When Mariano says he will play, the coordinator writes `~/Projects/voxmar-wt/PLAYING`.
   While it exists nothing new starts and whatever is running pauses, builds, tests and
