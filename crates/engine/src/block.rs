@@ -347,11 +347,14 @@ pub struct Variant {
     /// How often this look appears among the block's looks (the block's own look is
     /// common).
     pub rarity: Rarity,
+    /// Its plant model, when it differs from the block's: a clump of mushrooms drawn as a
+    /// cross while a single one has a cap.
+    pub model: Option<PlantModel>,
 }
 
 impl Default for Variant {
     fn default() -> Self {
-        Self { name: String::new(), textures: Textures::None, size: 1, rarity: Rarity::Common }
+        Self { name: String::new(), textures: Textures::None, size: 1, rarity: Rarity::Common, model: None }
     }
 }
 
@@ -380,6 +383,8 @@ pub struct BlockPatch {
     pub support: Option<Support>,
     pub item: Option<bool>,
     pub action: Option<String>,
+    pub model: Option<PlantModel>,
+    pub plant_height: Option<f32>,
 }
 
 impl BlockPatch {
@@ -404,6 +409,8 @@ impl BlockPatch {
             support,
             item,
             action,
+            model,
+            plant_height,
         } =
             self.clone();
         render.into_iter().for_each(|v| def.render = v);
@@ -425,6 +432,8 @@ impl BlockPatch {
         support.into_iter().for_each(|v| def.support = Some(v));
         item.into_iter().for_each(|v| def.item = v);
         action.into_iter().for_each(|v| def.action = Some(v));
+        model.into_iter().for_each(|v| def.model = v);
+        plant_height.into_iter().for_each(|v| def.plant_height = v);
     }
 }
 
@@ -630,6 +639,7 @@ impl BlockRegistry {
                     drop_count: variant.size,
                     variants: Vec::new(),
                     variant_of: Some(base.name.clone()),
+                    model: variant.model.unwrap_or(base.model),
                     ..base.clone()
                 });
             }
