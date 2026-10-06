@@ -98,8 +98,9 @@ fn despawn(commands: &mut Commands, shown: &Shown) {
     }
 }
 
-/// Seconds between a player's blows (the server's own limit is a little shorter).
-const SWING: f32 = 0.55;
+/// The least seconds between a player's blows; how hard each lands for the wait is the
+/// server's (`voxmar_engine::combat`).
+const SWING: f32 = voxmar_engine::combat::QUICKEST;
 /// Creatures built a frame at most; more coming into view wait for the next frames.
 const SPAWNS: usize = 3;
 /// Creatures further than this are not drawn.

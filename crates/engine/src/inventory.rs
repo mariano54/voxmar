@@ -17,7 +17,23 @@ use crate::craft::GRID;
 
 pub const HOTBAR_SLOTS: usize = 9;
 pub const SLOTS: usize = 36;
+/// The most items one stack holds, unless an item holds fewer (see [`max_stack`]).
 pub const MAX_STACK: u8 = 64;
+
+/// Each item's most per stack, by block id, as content sets them (`stacking.ron`: cooked
+/// food and potions take a slot each, as RuneScape's do, so what you carry into a fight is
+/// a choice). Unset, every item stacks to [`MAX_STACK`].
+static LIMITS: std::sync::RwLock<Vec<u8>> = std::sync::RwLock::new(Vec::new());
+
+/// Sets each item's most per stack, by block id.
+pub fn set_stack_limits(limits: Vec<u8>) {
+    *LIMITS.write().unwrap_or_else(|e| e.into_inner()) = limits;
+}
+
+/// The most of `item` one stack holds.
+pub fn max_stack(item: BlockId) -> u8 {
+    LIMITS.read().unwrap_or_else(|e| e.into_inner()).get(item.0 as usize).copied().unwrap_or(MAX_STACK)
+}
 /// The slot number of the stack held on the pointer while the inventory screen is open.
 pub const CURSOR: usize = SLOTS;
 /// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
@@ -55,7 +71,7 @@ impl Inventory {
     /// did not fit.
     pub fn add(&mut self, item: BlockId, mut count: u8) -> u8 {
         for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item) {
-            let moved = count.min(MAX_STACK - stack.count);
+            let moved = count.min(max_stack(item).saturating_sub(stack.count));
             stack.count += moved;
             count -= moved;
         }
@@ -63,7 +79,7 @@ impl Inventory {
             if count == 0 {
                 break;
             }
-            let moved = count.min(MAX_STACK);
+            let moved = count.min(max_stack(item));
             *slot = Some(ItemStack { item, count: moved });
             count -= moved;
         }
@@ -119,7 +135,7 @@ impl Inventory {
             } else {
                 match self.cursor {
                     None => self.cursor = Some(ItemStack { item: output, count }),
-                    Some(held) if held.item == output && held.count as u32 + count as u32 <= MAX_STACK as u32 => {
+                    Some(held) if held.item == output && held.count as u32 + count as u32 <= max_stack(output) as u32 => {
                         self.cursor = Some(ItemStack { count: held.count + count, ..held });
                     }
                     Some(_) => break,
@@ -156,7 +172,7 @@ impl Inventory {
                 self.set(from, Some(ItemStack { count: source.count - moved, ..source }));
             }
             Some(target) if target.item == source.item => {
-                let moved = count.min(source.count).min(MAX_STACK - target.count);
+                let moved = count.min(source.count).min(max_stack(source.item).saturating_sub(target.count));
                 if moved == 0 {
                     return false;
                 }
@@ -191,7 +207,7 @@ impl Inventory {
         let before = stack.count;
         for to in others.clone() {
             if let Some(target) = self.slots[to].as_mut().filter(|t| t.item == stack.item) {
-                let moved = stack.count.min(MAX_STACK - target.count);
+                let moved = stack.count.min(max_stack(stack.item).saturating_sub(target.count));
                 target.count += moved;
                 stack.count -= moved;
             }
@@ -228,8 +244,8 @@ impl Inventory {
             .slots
             .iter()
             .map(|slot| match slot {
-                None => MAX_STACK as u32,
-                Some(stack) if stack.item == item => (MAX_STACK - stack.count) as u32,
+                None => max_stack(item) as u32,
+                Some(stack) if stack.item == item => max_stack(item).saturating_sub(stack.count) as u32,
                 Some(_) => 0,
             })
             .sum();

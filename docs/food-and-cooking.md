@@ -4,6 +4,12 @@ Oct 6, 2026. Ingredients, recipes, stations, preservation and the Cooking skill,
 the hunger and warmth the Game UI thread added (`engine::vitals`). Part of the creatures,
 food and breeding design (see [creatures.md](creatures.md)).
 
+> **2026-10-06: there is no hunger any more** (Mariano). Food heals: an item heals its
+> `heal:N` or `food:N` (the larger), a tenth less each time the same food is eaten in a row,
+> down to half, recovering as other foods are eaten or a minute passes
+> (`engine::vitals::Recent`). Health comes back slowly by itself (a point every ten
+> seconds). Read "hunger" below as healing where it still appears.
+
 ## Decisions
 
 | # | Question | Decision |

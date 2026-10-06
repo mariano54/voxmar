@@ -90,7 +90,16 @@ stone, copper and iron pickaxes, axes, shovels, hoes and knives) and anything el
 than two by two. Each recipe trains a skill (Crafting, Engineering for tools and stations,
 Cooking for food) and may need a level in it. Tools mine what they are made for faster and
 find more there; ores ask for a Mining level and a pickaxe tier (`tools.ron`). A hoe tills
-soil into farmland, where crops are sown. See docs/tools-and-crafting.md.
+soil into farmland, where crops are sown. See docs/tools-and-crafting.md. Cooked food, drinks and potions take a slot each, as in
+RuneScape, so what you carry is a choice (`stacking.ron`).
+
+Fishing: twine (three wheat) and sticks make a fishing rod at a crafting table. Hold right
+click with it over water to cast, again each time the line comes up: after a few seconds a
+fish bites or nothing does. What bites depends on your Fishing level, salt or fresh water,
+the biome, day or night and rain (`fishing.ron`): shrimp and minnows at 1, trout in cold
+rivers at 15, eels at night at 45, tuna in warm seas at 50, and glimmer koi in fantastical
+waters on rainy nights at 75. Levels and a fine rod land more often; fish cook on a
+campfire.
 
 The recipe viewer works as NEI does: over any item in the inventory (or in the viewer),
 R shows the recipes that make it and U everything it goes into, drawn as they happen (the
@@ -99,17 +108,22 @@ pages, clicking an item looks up its recipes (right-click, its uses) and Back re
 steps. Both keys can be changed in Settings, Keys. It reads the same content the game plays
 by, so a package's recipes show up in it on their own.
 
-The character screen (C) shows health, hunger, how warm you feel and the effects on you,
-and every skill with its icon, level and progress; click a skill for its guide, what each
-level opens up. Hunger empties slowly, faster while cold, and food fills it: right-click
-food in hand to eat it. How warm you feel follows the air, water and any fire or torch
-nearby, and gives effects (Chilly, Freezing, Hot, Overheated, By the fire, Well fed, Hungry,
-Starving) that change how fast you heal and hunger, or hurt you. The HUD shows health and
-hunger as bars and the effects as chips above them. Every in-game screen lists the keys to
+The character screen (C) shows health, how warm you feel and the effects on you, and
+every skill with its icon, level and progress; click a skill for its guide, what each level
+opens up. There is no hunger: health comes back slowly by itself, and food heals (right-click
+food in hand to eat it when hurt), a tenth less each time you eat the same thing in a row,
+down to half, so a varied pack is worth carrying. How warm you feel follows the air, water
+and any fire or torch nearby, and gives effects (Chilly, Freezing, Hot, Overheated, By the
+fire) that change how fast you heal and move, or hurt you. The HUD shows health as a bar
+and the effects as chips above it. Every in-game screen lists the keys to
 the others under it. A creature under the crosshair is named at the top of the screen with
 its level, coloured RuneScape-style against your combat level (green below, gold even, red
 above), and once you strike at it, a thin bar of its health; the one you are fighting stays
 there a few seconds after you look away.
+
+Combat is Minecraft's without the knockback: a blow lands at full strength 0.6 s after the
+last, and quicker ones (down to 0.3 s) land lighter, so well-timed blows deal about a tenth
+more damage a second than clicking as fast as you can (`engine/src/combat.rs`).
 
 Farming, with RuneScape-style skills: right-click soil with seeds to sow them (carrots and
 potatoes are sown from themselves). Each crop needs a farming level, from wheat at 1 to
@@ -129,7 +143,7 @@ fruit leaves to pick them, at any level, and they bear again.
 
 Broken blocks drop items, as in Minecraft: what a block gives pops out as a tiny copy of it
 (a plant as a flat sprite with thickness) that turns and bobs where it lands, floats in
-water, merges with nearby stacks of the same thing, and lasts five minutes. After half a
+water, merges with nearby stacks of the same thing, and lasts half an hour of world time. After half a
 second, walking near draws it in with a pop. Q throws one item from the hand, Ctrl+Q the
 whole stack; thrown items wait two seconds before they can be picked up again. Dropped items
 are kept with the world (`items.ron`).

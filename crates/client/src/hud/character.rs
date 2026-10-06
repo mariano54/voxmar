@@ -1,4 +1,4 @@
-//! The character screen (C): how you are on the left (health, hunger, how warm you feel
+//! The character screen (C): how you are on the left (health, how warm you feel
 //! and the effects on you, also shown in the inventory), every skill on the right with its level and how far to the next.
 //! Clicking a skill opens its guide: what it opens up at each level, from the skill's own
 //! guide in skills.ron and every crop that needs it, marked as reached or not.
@@ -370,15 +370,13 @@ fn guide_steps(locale: &Locale, launch: &Launch, skill: SkillId) -> Vec<(u8, Str
     steps
 }
 
-/// How you are, as the character and inventory screens show it: health and hunger
+/// How you are, as the character and inventory screens show it: health
 /// meters, how warm you feel, and every effect on you with what it does.
 #[derive(Component)]
 pub struct Condition;
 /// The list of effects in a condition panel.
 #[derive(Component)]
 struct EffectList;
-#[derive(Component)]
-struct HungerMeter;
 #[derive(Component)]
 struct FeltLine;
 
@@ -393,10 +391,6 @@ pub fn spawn_condition(parent: &mut ChildSpawnerCommands, font: &Handle<Font>) {
         panel.spawn(row()).with_children(|row| {
             row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, Localized("character.health"), text(font, "", BODY, MUTED), TextLayout::no_wrap()));
             spawn_meter(row, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
-        });
-        panel.spawn(row()).with_children(|row| {
-            row.spawn((Node { width: Val::Px(LABEL), flex_shrink: 0.0, ..default() }, Localized("character.hunger"), text(font, "", BODY, MUTED), TextLayout::no_wrap()));
-            spawn_meter(row, font, Piece::BarHunger, Val::Percent(100.0), HungerMeter);
         });
         panel.spawn((FeltLine, text(font, "", BODY, SOFT)));
         panel.spawn((EffectList, Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), margin: UiRect::top(Val::Px(space::HAIR)), ..default() }));
@@ -427,7 +421,6 @@ fn draw_condition(
     player: Res<LocalPlayer>,
     font: Res<UiFont>,
     health: Query<&Meter, With<HealthMeter>>,
-    hunger: Query<&Meter, (With<HungerMeter>, Without<HealthMeter>)>,
     mut felt: Query<&mut Text, With<FeltLine>>,
     lists: Query<(Entity, Ref<EffectList>)>,
     mut nodes: Query<&mut Node>,
@@ -439,11 +432,6 @@ fn draw_condition(
     let most = player.max_health.max(1);
     for meter in &health {
         set_meter(meter, player.health as f32 / most as f32, &format!("{}/{most}", player.health), &mut nodes, &children, &mut texts);
-    }
-    let max = voxmar_engine::vitals::MAX_HUNGER;
-    for meter in &hunger {
-        let value = player.vitals.hunger;
-        set_meter(meter, value as f32 / max as f32, &format!("{value}/{max}"), &mut nodes, &children, &mut texts);
     }
     let line = locale.format("character.feels_like", &[("temperature", &format!("{:.0}", player.vitals.felt))]);
     for mut text in &mut felt {
