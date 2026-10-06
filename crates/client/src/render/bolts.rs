@@ -70,11 +70,14 @@ struct Bolts;
 
 fn spawn(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<BoltMaterial>>) {
     // Never empty: the renderer's mesh allocator cannot hold a mesh with no vertices.
-    let mesh = Ribbons { positions: vec![[0.0; 3]; 3], uvs: vec![[0.0; 2]; 3], indices: vec![0, 1, 2] }.mesh();
+    let mesh = meshes.add(Ribbons { positions: vec![[0.0; 3]; 3], uvs: vec![[0.0; 2]; 3], indices: vec![0, 1, 2] }.mesh());
+    let material = materials.add(BoltMaterial::default());
+    // Hidden until the first strike, which would build the additive pipeline that frame.
+    super::warm::warm(&mut commands, mesh.clone(), material.clone(), false, ());
     commands.spawn((
         Bolts,
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(materials.add(BoltMaterial::default())),
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
         Transform::IDENTITY,
         Visibility::Hidden,
         NoFrustumCulling,
