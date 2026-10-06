@@ -5,7 +5,7 @@
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use bevy::window::PrimaryWindow;
-use voxmar_engine::vitals::Effect;
+use voxmar_engine::effect::{EffectId, Kind};
 
 use crate::lang::Locale;
 use crate::menu::Screen;
@@ -20,9 +20,9 @@ impl Plugin for EffectsPlugin {
     }
 }
 
-/// Something that shows `Effect`, to say what it is on hover.
+/// Something that shows an effect, to say what it is on hover.
 #[derive(Component, Clone, Copy)]
-pub struct EffectHover(pub Effect);
+pub struct EffectHover(pub EffectId);
 
 #[derive(Component)]
 struct EffectTip;
@@ -54,6 +54,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
 #[allow(clippy::type_complexity)]
 fn show(
     locale: Res<Locale>,
+    launch: Res<crate::session::Launch>,
     window: Query<&Window, With<PrimaryWindow>>,
     hovered: Query<(&EffectHover, &RelativeCursorPosition, &InheritedVisibility)>,
     mut tip: Query<(&mut Node, &mut Visibility), With<EffectTip>>,
@@ -64,7 +65,7 @@ fn show(
     let Ok((mut node, mut visibility)) = tip.single_mut() else { return };
     let over = hovered.iter().find(|(_, cursor, visible)| visible.get() && cursor.cursor_over()).map(|(effect, _, _)| effect.0);
     let at = window.single().ok().and_then(Window::cursor_position);
-    let (Some(effect), Some(at)) = (over, at) else {
+    let (Some(effect), Some(at)) = (over.map(|id| launch.content.effects.get(id)), at) else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
@@ -77,7 +78,7 @@ fn show(
         if text.0 != words {
             text.0 = words;
         }
-        color.set_if_neq(TextColor(if effect.is_buff() { ACCENT } else { ERROR }));
+        color.set_if_neq(TextColor(if effect.kind == Kind::Buff { ACCENT } else { ERROR }));
     }
     if let Ok(mut text) = what.single_mut() {
         let words = locale.effect_description(effect);

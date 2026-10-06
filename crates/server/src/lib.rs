@@ -548,7 +548,7 @@ impl Server {
     fn save_player(&self, player: &Player) {
         if let Some(save) = &self.save
             && player.joined
-            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills), &self.content.blocks)
+            && let Err(e) = save.write_player(&player.name, &player.saved(&self.content.skills, &self.content.effects), &self.content.blocks)
         {
             tracing::error!("could not save player {}: {e}", player.name);
         }

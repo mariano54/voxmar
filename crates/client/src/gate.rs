@@ -25,8 +25,8 @@
 //! world reseeds and spawn lands elsewhere).
 //!
 //! Breaking is played under load besides: a row of blocks of every hardness broken with
-//! the bare hand, a held block (throwing one halfway through) and every tool, while threads
-//! spin on every core, the game's own frames stall now and then and the server runs behind
+//! the bare hand, a held block (throwing one halfway through) and every tool, while busy
+//! threads contend for the cores, the game's own frames stall now and then and the server runs behind
 //! (`SERVER_LAG`). Mariano kept losing blocks he broke on a busy machine; client and server
 //! must still agree on every one.
 //!
@@ -707,6 +707,23 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
+/// The player's effects that the weather brings on, by name in English.
+fn weather_effects(world: &World) -> Vec<String> {
+    let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+    let weathery = |c: &voxmar_engine::effect::Condition| {
+        use voxmar_engine::effect::Condition::*;
+        matches!(c, Rain(_) | Snow(_) | Hail(_) | Wind(_) | Dust(_) | Storm(_))
+    };
+    player
+        .vitals
+        .effects
+        .iter()
+        .map(|a| launch.content.effects.get(a.effect))
+        .filter(|def| def.when.as_ref().is_some_and(weathery))
+        .map(|def| def.title.to_lowercase())
+        .collect()
+}
+
 /// Blocks of every hardness the breaks step lays out: glass and snow break in a blink,
 /// stone and cobblestone take seconds.
 const BREAK_BLOCKS: [&str; 6] = ["base:glass", "base:dirt", "base:stone", "base:snow_block", "base:gravel", "base:cobblestone"];
@@ -757,7 +774,12 @@ impl Breaks {
     }
 }
 
-/// Threads spinning on every core until dropped.
+/// Threads spinning until dropped: a few, enough to contend with the game's own threads
+/// on a machine that is already busy (gate runs share it with builds and other gates, and
+/// with Mariano's game) without taking every core from everyone else.
+const LOAD_THREADS: usize = 4;
+
+/// Threads spinning until dropped.
 struct Load {
     stop: Arc<std::sync::atomic::AtomicBool>,
     threads: Vec<std::thread::JoinHandle<()>>,
@@ -766,8 +788,7 @@ struct Load {
 impl Load {
     fn start() -> Self {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
-        let threads = (0..cores)
+        let threads = (0..LOAD_THREADS)
             .map(|_| {
                 let stop = stop.clone();
                 std::thread::spawn(move || {
@@ -795,8 +816,8 @@ impl Drop for Load {
 
 /// A row of blocks of every hardness, broken one after another with the button held, as a
 /// player sweeps along a wall: with the bare hand, the starting planks (throwing one with Q
-/// halfway through) and every tool, swapped into the hotbar as needed. Threads spin on
-/// every core, the game's frames stall now and then, and the server runs behind. Every
+/// halfway through) and every tool, swapped into the hotbar as needed. Busy threads
+/// contend for the cores, the game's frames stall now and then, and the server runs behind. Every
 /// block must end broken on the client and the server alike, and none may come back.
 fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let feet = gate.feet;
@@ -1477,7 +1498,9 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
         None if gate.step == Step::Load => {
             let target = weather.target().map(|t| t.fractions());
             let off = target.map_or(f32::INFINITY, |t| t.iter().zip(&shown).map(|(t, s)| (t.1 - s.1).abs()).fold(0.0, f32::max));
-            let result = if off < 0.02 {
+            // Exactly: until ready every report is shown at once, and easing leaves a value
+            // at its goal where it is.
+            let result = if off == 0.0 {
                 Ok(format!("ready at {now:.1}s, showing the server's weather at once: {}", weather.current.summary()))
             } else {
                 Err(format!("first shown {} away from the server's report: {}", off, weather.current.summary()))
@@ -1527,11 +1550,19 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            // Let it fill the air before the shot.
-            if in_phase < 1.0 {
+            // Let it fill the air before the shot, and the server tell the player they are
+            // out in it (effects are judged once a second).
+            let weathered = weather_effects(world);
+            if in_phase < 1.0 || (weathered.is_empty() && in_phase < 5.0) {
                 return;
             }
             let Some(shot) = gate.shot(world, name) else { return };
+            let felt = if weathered.is_empty() {
+                Err(format!("out in it, the player has no weather effect (felt {:.0} °C)", world.resource::<LocalPlayer>().vitals.felt))
+            } else {
+                Ok(format!("out in it, the player is {}", weathered.join(", ")))
+            };
+            gate.check(&format!("weather: {kind}: effects"), felt);
             let change = gate.earlier_shot("clear").map_or(0.0, |clear| change(&clear, &shot, 0.0));
             let result = if change >= SCREEN_CHANGE {
                 Ok(format!("{}, changing the view by {change:.1} levels", shown.summary()))
@@ -2063,6 +2094,13 @@ fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         9 if in_phase > 0.3 => {
             let Some(shot) = gate.shot(world, "stars") else { return };
             gate.check("sky: stars", stars(&shot));
+            // Down at the land around, lit by the night sky alone.
+            world.resource_mut::<LocalPlayer>().pitch = -0.6;
+            gate.advance(now);
+        }
+        10 if in_phase > 0.3 => {
+            let Some(shot) = gate.shot(world, "night ground") else { return };
+            gate.check("sky: night ground", night_ground(&shot));
             gate.next(Step::Tree, now);
         }
         1 if in_phase > 15.0 => {
@@ -2350,6 +2388,30 @@ fn stars(shot: &Image) -> Result<String, String> {
         Ok(format!("{count} star pixels"))
     } else {
         Err(format!("only {count} star pixels"))
+    }
+}
+
+/// Open ground at midnight, in the lower half of a shot: dark, but not black. Before nights
+/// were lifted (2026-10-06) a moonless night's ground averaged 2 or 3 of 255 and Mariano
+/// could not see where he walked.
+fn night_ground(shot: &Image) -> Result<String, String> {
+    const DARKEST: f32 = 6.0;
+    const BRIGHTEST: f32 = 70.0;
+    let (w, h, data) = pixels(shot)?;
+    let (mut sum, mut count) = (0.0f32, 0.0f32);
+    // The lower half, above the hotbar.
+    for y in h / 2..h * 4 / 5 {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            sum += (data[i] as f32 * 54.0 + data[i + 1] as f32 * 183.0 + data[i + 2] as f32 * 19.0) / 256.0;
+            count += 1.0;
+        }
+    }
+    let mean = sum / count.max(1.0);
+    match mean {
+        m if m < DARKEST => Err(format!("the ground at night averages {m:.1} of 255: black")),
+        m if m > BRIGHTEST => Err(format!("the ground at night averages {m:.1} of 255: not night")),
+        m => Ok(format!("the ground at night averages {m:.1} of 255")),
     }
 }
 

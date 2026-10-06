@@ -299,8 +299,12 @@ impl Server {
 
     /// Adds experience to a player's skill and tells them.
     pub(crate) fn grant_xp(&mut self, agent: PlayerId, skill: SkillId, xp: f32) {
-        let tenths = (xp * 10.0).round().max(0.0) as u32;
-        let Some(player) = self.players.get_mut(&agent).filter(|_| tenths > 0) else { return };
+        let Some(player) = self.players.get_mut(&agent) else { return };
+        // Effects that sharpen (or dull) learning: a good breakfast, a storm overhead.
+        let tenths = (xp * player.modifiers.xp * 10.0).round().max(0.0) as u32;
+        if tenths == 0 {
+            return;
+        }
         player.skills.grant(skill, tenths);
         player.changed(traits::SKILLS);
         player.connection.send(ServerMessage::Xp { skill, tenths });

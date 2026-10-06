@@ -1,0 +1,51 @@
+// Buffs and debuffs (engine/src/effect.rs). Each has a kind, an icon (`ui/effect/<icon>`
+// in the packs, its own name unless given), an English title and line (the fallback for
+// the keys `effect.<package>.<name>` and `….description` in lang/), and what it does as
+// modifiers: `heal`, `hunger`, `speed`, `mining` and `xp` multiply (1 changes nothing,
+// 0 stops healing), `warmth` adds degrees to how warm you feel, `max_health` adds health
+// points, `hurt_every` hurts a point every so many seconds.
+//
+// `when` is what brings it on, checked every second: hunger, how warm you feel, a fire
+// nearby, and the weather where you stand (rain, snow, hail, dust and storms only out in
+// it, under open sky; wind anywhere). An effect without one comes only from what you do:
+// food with an `effect:NAME:SECONDS` tag gives it for that long (base/effects.ron).
+// `replaces` hides milder effects while a stronger one lasts.
+(
+    effects: [
+        // Hunger.
+        (name: "well_fed", kind: Buff, title: "Well fed", description: "Heal twice as fast.",
+            when: Some(HungerAtLeast(18)), modifiers: (heal: 2.0)),
+        (name: "hungry", kind: Debuff, title: "Hungry", description: "No healing until you eat.",
+            when: Some(HungerAtMost(6)), modifiers: (heal: 0.0)),
+        (name: "starving", kind: Debuff, title: "Starving", description: "Lose health until you eat.",
+            when: Some(HungerAtMost(0)), replaces: ["hungry"], modifiers: (heal: 0.0, hurt_every: Some(8.0))),
+
+        // Warmth.
+        (name: "by_the_fire", kind: Buff, title: "By the fire", description: "Warmed by a fire or torch nearby.",
+            when: Some(Warmed)),
+        (name: "chilly", kind: Debuff, title: "Chilly", description: "Heal slower, hunger faster. Find warmth.",
+            when: Some(FeltBelow(6.0)), modifiers: (heal: 0.5, hunger: 1.5)),
+        (name: "freezing", kind: Debuff, title: "Freezing", description: "No healing, hunger fast, lose health. Get warm.",
+            when: Some(FeltBelow(-6.0)), replaces: ["chilly"], modifiers: (heal: 0.0, hunger: 2.0, hurt_every: Some(10.0))),
+        (name: "hot", kind: Debuff, title: "Hot", description: "Heal slower, hunger a little faster.",
+            when: Some(FeltAbove(30.0)), modifiers: (heal: 0.5, hunger: 1.25)),
+        (name: "overheated", kind: Debuff, title: "Overheated", description: "No healing, lose health. Find shade or water.",
+            when: Some(FeltAbove(37.0)), replaces: ["hot"], modifiers: (heal: 0.0, hurt_every: Some(12.0))),
+
+        // Bad weather, out in it.
+        (name: "soaked", kind: Debuff, title: "Soaked", description: "Rain runs down your back: you feel 4° colder. Get under a roof.",
+            when: Some(Rain(0.3)), modifiers: (warmth: -4.0)),
+        (name: "drenched", kind: Debuff, title: "Drenched", description: "A downpour: 7° colder, slower to heal and to walk.",
+            when: Some(Rain(0.7)), replaces: ["soaked"], modifiers: (warmth: -7.0, heal: 0.75, speed: 0.95)),
+        (name: "snowblown", kind: Debuff, title: "Snowblown", description: "Snow underfoot and in your face: 3° colder and slower going.",
+            when: Some(Snow(0.35)), modifiers: (warmth: -3.0, speed: 0.9)),
+        (name: "pelted", kind: Debuff, title: "Pelted by hail", description: "Hail stings: lose a point of health now and then. Get under a roof.",
+            when: Some(Hail(0.25)), modifiers: (hurt_every: Some(15.0))),
+        (name: "windswept", kind: Debuff, title: "Windswept", description: "The gale takes your breath and your warmth: 3° colder, slower going, hungrier.",
+            when: Some(Wind(14.0)), modifiers: (warmth: -3.0, speed: 0.92, hunger: 1.2)),
+        (name: "sandblasted", kind: Debuff, title: "Sandblasted", description: "Sand in the air: slower going, hungrier, and harder to work.",
+            when: Some(Dust(0.4)), modifiers: (speed: 0.9, hunger: 1.25, mining: 0.9)),
+        (name: "storm_wary", kind: Debuff, title: "Storm-wary", description: "Lightning about: you heal slower and learn less while out in it.",
+            when: Some(Storm(0.5)), modifiers: (heal: 0.75, xp: 0.9)),
+    ],
+)
