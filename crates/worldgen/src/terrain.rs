@@ -26,7 +26,7 @@ use crate::ecology::{Ground, Plant};
 use crate::features::{self, Features};
 use crate::geology::{GeoGrid, noise};
 use crate::lattice::{self, Lattice, Profile};
-use crate::resources::Resources;
+use crate::ores::Ores;
 use crate::rng::hash3;
 use crate::rocks::Rocks;
 use crate::stage::{self, Stage};
@@ -87,7 +87,8 @@ pub struct Terrain {
     /// What lying snow makes of a ground block, by block id (`snow_cover` in weather.ron).
     snow_cover: Vec<Option<BlockId>>,
     seed: u64,
-    resources: Resources,
+    /// Ore veins, and the samples of their ore over them.
+    pub(crate) ores: Ores,
     pub(crate) features: Features,
     /// Trail treads, by the biome tags they suit (none: everywhere); bridge decks and
     /// stepping stones.
@@ -175,7 +176,7 @@ impl Terrain {
             blanket,
             snow_cover,
             seed,
-            resources: Resources::new(registry),
+            ores: Ores::new(content, registry, rocks),
             features: Features::new(content, registry),
             treads: content.trails.tread.iter().map(|t| (t.biome.clone(), Palette::new(&t.blocks, registry))).collect(),
             worn_edge: registry.expect(&content.trails.edge),
@@ -547,7 +548,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     }
     {
         let _stage = stage::enter(Stage::Ores);
-        terrain.resources.place(world.seed, pos, &mut blocks);
+        terrain.ores.place(world, pos, &mut blocks);
     }
     let decoration = stage::enter(Stage::Decoration);
     terrain.features.place(world, &area, &geology, &caves, pos, &mut blocks, &mut column.colors);
@@ -591,6 +592,23 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 }
                 _ => {}
             }
+        }
+    }
+
+    // Samples of ore over the veins below, on open ground of the land's own: never in
+    // water, on a path, on wood or leaves, or where the vein would lie above the ground.
+    for sample in terrain.ores.samples(world, pos) {
+        let (x, z) = (sample.x - origin.x, sample.z - origin.z);
+        let site = &surfaces[(z * CHUNK_SIZE + x) as usize].0;
+        let h = site.height;
+        if h < site.water || h <= sample.floor || site.trail > 0.2 || h + 2 >= WORLD_HEIGHT {
+            continue;
+        }
+        let ground = blocks.get_local(x, h, z);
+        let (above, over) = (blocks.get_local(x, h + 1, z), blocks.get_local(x, h + 2, z));
+        let open = above.is_air() || terrain.plants[above.0 as usize] && !terrain.plants[over.0 as usize];
+        if terrain.firm[ground.0 as usize] && terrain.earth[ground.0 as usize] && open {
+            blocks.set_local(x, h + 1, z, sample.block);
         }
     }
 

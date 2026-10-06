@@ -122,7 +122,9 @@ const MODEL_CROSS: u32 = 0u;
 const MODEL_HASH: u32 = 1u;
 const MODEL_CAP: u32 = 2u;
 const MODEL_BUSH: u32 = 3u;
+const MODEL_ROCK: u32 = 4u;
 const PLANT_MODEL_SHIFT: u32 = 28u;
+const PLANT_MODEL_HIGH_SHIFT: u32 = 24u;
 const PLANT_PIECE_SHIFT: u32 = 30u;
 const PLANT_HEIGHT_SHIFT: u32 = 14u;
 // A mushroom (`MODEL_CAP`, eight quads): a stem of two narrow quads crossing square with
@@ -135,7 +137,7 @@ const CAP_CROWN_HALF: f32 = 0.2;
 const STEM_HALF: f32 = 0.075;
 
 fn plant_model(w0: u32) -> u32 {
-    return (w0 >> PLANT_MODEL_SHIFT) & 3u;
+    return ((w0 >> PLANT_MODEL_SHIFT) & 3u) | ((w0 >> PLANT_MODEL_HIGH_SHIFT) & 1u) << 2u;
 }
 
 // Which quad of its model a plant vertex belongs to: the even ones are packed along one
@@ -190,6 +192,73 @@ fn cap_vertex(w0: u32) -> CapVertex {
     return out;
 }
 
+// A small rock (`MODEL_ROCK`, eight quads), as GregTech's surface rocks over a vein (the idea
+// alone, see INSPIRATIONS.md): a lump with a flat top and four sloping sides
+// whose feet sink a little into the ground, and a chip of three faces rising to a point
+// beside it. Sizes in blocks; `a` and `b` (hashes of its cell) give each its own
+// proportions, the tilt of its top and where its chip lies. Every face shows the whole
+// texture, so a sample of ore shows its ore from every side. It lies still: no wind moves
+// it. Its sides are shaded darker than its top, which gives it its volume (`shade`).
+const ROCK_TOP: f32 = 0.16;
+const ROCK_FOOT: f32 = 0.3;
+const ROCK_HEIGHT: f32 = 0.27;
+const ROCK_SUNK: f32 = 0.06;
+const ROCK_SIDE_SHADE = array<f32, 4>(0.72, 0.84, 0.66, 0.78);
+
+struct RockVertex {
+    at: vec3<f32>,
+    uv: vec2<f32>,
+    brightness: f32,
+}
+
+fn rock_vertex(w0: u32, a: vec3<f32>, b: vec3<f32>) -> RockVertex {
+    let corner = (w0 >> 21u) & 3u;
+    let piece = plant_piece(w0);
+    let far = corner == 1u || corner == 2u;
+    let lower = corner < 2u;
+    var square = array<vec2<f32>, 4>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
+    let stretch = vec2(mix(0.8, 1.25, a.x), mix(0.75, 1.05, b.z));
+    let height = ROCK_HEIGHT * mix(0.75, 1.3, a.z);
+    let tilt = (vec2(a.y, b.x) - 0.5) * 0.12;
+    var out: RockVertex;
+    if piece == 0u {
+        let p = square[corner];
+        out.at = vec3(p.x * ROCK_TOP * stretch.x, height + dot(p, tilt), p.y * ROCK_TOP * stretch.y);
+        out.uv = 0.5 + p * 0.5;
+        out.brightness = 1.0;
+        return out;
+    }
+    if piece <= 4u {
+        let side = piece - 1u;
+        let along = select(square[side], square[(side + 1u) % 4u], far);
+        let p = along * select(ROCK_TOP, ROCK_FOOT, lower) * stretch;
+        out.at = vec3(p.x, select(height + dot(along, tilt), -ROCK_SUNK, lower), p.y);
+        out.uv = vec2(select(0.0, 1.0, far), select(0.0, 1.0, lower));
+        out.brightness = ROCK_SIDE_SHADE[side];
+        return out;
+    }
+    // The chip, of three faces, each from two feet up to its point.
+    let k = f32(piece - 5u);
+    let towards = vec2(cos(b.y * 6.2831853), sin(b.y * 6.2831853));
+    let centre = towards * (ROCK_FOOT * max(stretch.x, stretch.y) + 0.04);
+    let turn = a.x * 6.2831853 + select(k, k + 1.0, far) * 2.0943951;
+    let foot = centre + vec2(cos(turn), sin(turn)) * 0.11;
+    let point = vec3(centre.x, 0.14 * mix(0.8, 1.3, b.z), centre.y);
+    out.at = select(point, vec3(foot.x, -ROCK_SUNK, foot.y), lower);
+    out.uv = select(vec2(0.5, 0.25), vec2(select(0.25, 0.75, far), 0.75), lower);
+    out.brightness = 0.86 - 0.08 * k;
+    return out;
+}
+
+// How brightly a plant's quad is shaded: a rock's sides darker than its top, any other
+// plant evenly.
+fn plant_shade(w0: u32) -> f32 {
+    if plant_model(w0) == MODEL_ROCK {
+        return rock_vertex(w0, vec3(0.5), vec3(0.5)).brightness;
+    }
+    return 1.0;
+}
+
 // Where a model's quad's vertex lies across its cell: past the two crossed diagonal quads
 // every model starts with, a # of four straight quads (crops), a flat cap (mushrooms) or a
 // straight cross through the middle (bushes).
@@ -223,6 +292,9 @@ fn plant_uv(w0: u32) -> vec2<f32> {
     if plant_model(w0) == MODEL_CAP {
         return cap_vertex(w0).uv;
     }
+    if plant_model(w0) == MODEL_ROCK {
+        return rock_vertex(w0, vec3(0.5), vec3(0.5)).uv;
+    }
     return face_uv(local_position(w0), face_of(w0));
 }
 
@@ -253,6 +325,16 @@ fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
     let a = pcg3d(vec3<u32>(cell));
     let b = pcg3d(vec3<u32>(cell + vec3(0, 991, 0)));
     var tilt = vec2(0.0);
+    if model == MODEL_ROCK {
+        // Turned any way, a little off the middle of its cell, and still.
+        let rock = rock_vertex(w0, a, b);
+        let size = f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0 * mix(0.85, 1.15, b.x);
+        let angle = a.x * 6.2831853;
+        let o = rock.at.xz * size;
+        let turned = vec2(o.x * cos(angle) - o.y * sin(angle), o.x * sin(angle) + o.y * cos(angle));
+        let shift = (a.yz - 0.5) * 0.3;
+        return vec3(base.x + 0.5 + turned.x + shift.x, base.y + rock.at.y * size, base.z + 0.5 + turned.y + shift.y);
+    }
     if model == MODEL_CAP {
         // Each mushroom its own size, as wide as it is tall, and leaning a little its own way.
         let cap = cap_vertex(w0);
@@ -521,7 +603,7 @@ fn vertex(in: Vertex) -> VertexOutput {
 #endif
     // Plants have no ambient occlusion; their AO bits hold the corner, and water's its flow.
     let water = tint_kind(w1) == TINT_WATER;
-    let ao = select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, face_of(w0) >= FACE_PLANT || water);
+    let ao = select(select(AO_CURVE[(w0 >> 21u) & 3u], 1.0, water), plant_shade(w0), face_of(w0) >= FACE_PLANT);
     out.light = vec3(ao, f32(w1 >> 28u) / 15.0, f32((w1 >> 24u) & 15u) / 15.0);
     out.surface = w1 & 0xFFFFFFu;
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);

@@ -208,7 +208,8 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   say where. Block names may leave out the
   package (`water` for `base:water`).
 - `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
-  (within 4000 blocks unless you say).
+  (within 4000 blocks unless you say); `/locate ore [NAME] [RADIUS]` the nearest sample of ore
+  lying on the ground over a vein (of an ore or vein named so, such as `iron`; within 1000).
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
 Commands are data: each package's `commands.ron` names its commands, who may use them, their
@@ -545,6 +546,9 @@ and routes that failed. `river_sights` prints
 waterfalls, confluences, river mouths, tunnels, islands, hot springs), which
 `Overworld::water_sights` finds; `shape_sights` does the same for the best example of each
 terrain shape and the highest peak, with a `/tp` command and `--pose` for each.
+`ore_preview` (with `SEED`, a centre `X`, `Z` and `COLUMNS`) writes an x-ray of the ore veins
+from above and a cut through the richest row to `target/ores_*.ppm`, with the surface samples
+in white, and prints each ore's blocks per column and the share lying alone.
 `cave_preview` (with `SEED`, and a centre `X`, `Z` and two heights `Y1`, `Y2` for level cuts)
 writes an x-ray map, sections, level cuts and a cave biome map of the caves over 1.5 km to
 `target/caves_*.ppm`; `cave_sights` prints `--pose` arguments for captures of caverns,
