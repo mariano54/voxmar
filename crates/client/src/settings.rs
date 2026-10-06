@@ -932,7 +932,9 @@ struct OpenSection(usize);
 pub struct StartTab(pub String);
 
 fn open_start_tab(start: Option<Res<StartTab>>, mut open: ResMut<OpenSection>) {
-    if let Some(index) = start.and_then(|start| SECTIONS.iter().position(|(name, _)| name.eq_ignore_ascii_case(&start.0))) {
+    // Tabs go by the last word of their name's key: `settings.tab.video` is `video`.
+    let named = |key: &str, wanted: &str| key.rsplit('.').next().is_some_and(|name| name.eq_ignore_ascii_case(wanted));
+    if let Some(index) = start.and_then(|start| SECTIONS.iter().position(|(key, _)| named(key, &start.0))) {
         open.0 = index;
     }
 }

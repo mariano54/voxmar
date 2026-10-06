@@ -4,5 +4,5 @@
 // font, on the same baseline (see `voxmar_texgen::font::import`), so only what that font
 // lacks comes from here. `pixels_per_em` is the pixel grid the font is drawn on.
 [
-    (file: "japanese/fusion-pixel-10px-monospaced-ja.ttf", pixels_per_em: 10),
+    (file: "japanese/fusion-pixel-12px-monospaced-ja.ttf", pixels_per_em: 12),
 ]
