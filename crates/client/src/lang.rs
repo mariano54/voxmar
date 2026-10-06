@@ -148,15 +148,20 @@ fn switch(settings: Res<Settings>, mut locale: ResMut<Locale>) {
     }
 }
 
+/// A one-line text whose line is just its font size tall in every language, so it sits
+/// centred in a box made to fit it: the number in a meter, the name on a chip.
+#[derive(Component, Clone, Copy, Default)]
+pub struct TightLine;
+
 /// Writes each new [`Localized`] text, and every one when the language changes, before
 /// text is laid out so no frame shows a key; and spaces the lines of every text as the
 /// language wants.
-fn localize(locale: Res<Locale>, mut texts: Query<(Option<Ref<Localized>>, Mut<Text>, &mut LineHeight)>) {
+fn localize(locale: Res<Locale>, mut texts: Query<(Option<Ref<Localized>>, Mut<Text>, &mut LineHeight, Has<TightLine>)>) {
     let all = locale.is_changed();
     let height = LineHeight::RelativeToFont(locale.line_height());
-    for (localized, mut text, mut line) in &mut texts {
+    for (localized, mut text, mut line, tight) in &mut texts {
         if all || text.is_added() {
-            line.set_if_neq(height);
+            line.set_if_neq(if tight { LineHeight::RelativeToFont(1.0) } else { height });
         }
         if let Some(localized) = localized
             && (all || localized.is_added() || localized.is_changed())

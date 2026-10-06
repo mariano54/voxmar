@@ -19,6 +19,9 @@
 //! `--strike CREATURE` summons one beside the player and strikes it once, a moment before
 //! the shot, to show the target readout with its health; `--level-up SKILL` notes that skill's
 //! next level as reached just before the shot, to show how a new level is announced.
+//! `--tend CREATURE` summons one as soon as the world settles and keeps feeding it from the
+//! hotbar until the shot, which tames it and then readies it to breed (give the food with
+//! `--command`, and time with `--wait`).
 //!
 //! `--press left|right` holds that mouse button through the first second of a clip,
 //! aimed where `--pose` looks, as a player would: a real break or place, through the server,
@@ -85,6 +88,8 @@ pub struct CapturePlugin {
     pub strike: Option<String>,
     /// The skill whose next level to note before the shot (see the module docs).
     pub level_up: Option<String>,
+    /// The creature to summon and keep feeding until the shot (see the module docs).
+    pub tend: Option<String>,
     /// Width and height of the shot, in pixels.
     pub size: UVec2,
     /// Render to a real window and shoot that, rather than an offscreen image: slower to
@@ -139,6 +144,8 @@ impl Plugin for CapturePlugin {
             repeat: self.repeat,
             face_creature: self.face_creature,
             strike: self.strike.clone(),
+            tend: self.tend.clone(),
+            fed_at: 0.0,
             summoned: false,
             struck: false,
             level_up: self.level_up.clone(),
@@ -192,6 +199,9 @@ struct Capture {
     repeat: bool,
     face_creature: bool,
     strike: Option<String>,
+    tend: Option<String>,
+    /// When `--tend` last fed its creature.
+    fed_at: f32,
     summoned: bool,
     struck: bool,
     level_up: Option<String>,
@@ -351,6 +361,8 @@ fn dig(state: Res<Capture>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut ui:
 /// enough that nothing has wandered off or faded.
 const SUMMON_LEAD: f32 = 1.2;
 const SHOWCASE_LEAD: f32 = 0.6;
+/// Seconds between `--tend`'s feeds, as a player clicks.
+const TEND_EVERY: f32 = 0.5;
 
 /// Summons and strikes a creature for `--strike`, as a player clicking on it, and notes a
 /// new level for `--level-up`, just before the shot.
@@ -372,6 +384,38 @@ fn showcase(
         mouse.release(MouseButton::Left);
     }
     let until_shot = 4.0 + state.wait - (now - settled);
+    if state.tend.is_some() && mouse.pressed(MouseButton::Right) {
+        mouse.release(MouseButton::Right);
+    }
+    if let Some(name) = state.tend.clone()
+        && state.taken_at.is_none()
+    {
+        if !state.summoned {
+            console.run_when_joined(vec![format!("/summon {name} 1 ~ ~ ~-2")]);
+            state.summoned = true;
+        } else if now - state.fed_at > TEND_EVERY
+            && let Some(species) = launch.content.creatures.find(&name).or_else(|| launch.content.creatures.find(&format!("base:{name}")))
+            && let Some(view) = creatures.views().filter(|v| v.species == species).min_by_key(|v| v.id)
+        {
+            // Turn to it, and feed it whatever in the hotbar it takes now: taming food until
+            // it is ours, then breeding food.
+            // Ready to breed, it has had all it wants: just keep looking at it.
+            let creature = launch.content.creatures.get(species);
+            let food = if view.kept { &creature.breed_food } else { &creature.tame_food };
+            let height = creature.def.body.size.1 * view.scale;
+            let to = view.position + Vec3::Y * height * 0.6 - player.eye();
+            player.yaw = (-to.x).atan2(-to.z);
+            player.pitch = to.y.atan2(to.xz().length());
+            if !view.ready
+                && let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| food.contains(&stack.item)))
+            {
+                player.selected = slot;
+                ui.cursor_locked = true;
+                mouse.press(MouseButton::Right);
+            }
+            state.fed_at = now;
+        }
+    }
     if state.taken_at.is_some() || until_shot > SUMMON_LEAD {
         return;
     }

@@ -191,6 +191,22 @@ pub struct BlockDef {
     /// The action using it performs instead of placing it (`base:plant` for a seed), by
     /// its full name.
     pub action: Option<String>,
+    /// How its textures vary from block to block, so a large motif does not repeat in a
+    /// grid across a wall or a floor. Opaque blocks only.
+    pub texture_variety: TextureVariety,
+}
+
+/// How an opaque block's textures vary from block to block, as Minecraft's stone, sand and
+/// dirt do: each block picks, by its position, a quarter turn of its top and bottom, and
+/// whether its faces are mirrored left to right. Turning suits textures without an up
+/// (stone, sand, gravel, crystal); mirroring nearly anything without lettering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TextureVariety {
+    /// Top and bottom faces turn a quarter turn at a time, at random.
+    pub turn: bool,
+    /// Faces are mirrored left to right at random.
+    pub mirror: bool,
 }
 
 /// Which neighbour a block rests on. It cannot be placed without a solid block there, and
@@ -232,6 +248,7 @@ impl Default for BlockDef {
             support: None,
             item: false,
             action: None,
+            texture_variety: TextureVariety::default(),
         }
     }
 }

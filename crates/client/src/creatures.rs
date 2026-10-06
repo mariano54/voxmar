@@ -138,6 +138,20 @@ pub struct Sighting {
     pub health: u16,
     /// Whether we have struck at it: its health is shown only then, as in RuneScape.
     pub struck: bool,
+    /// Who keeps it, if anyone: ourselves, someone else (by id, while they are here), or
+    /// someone away.
+    pub keeper: Option<Keeper>,
+    pub young: bool,
+    /// Fed and looking for a mate.
+    pub ready: bool,
+}
+
+/// Who keeps a kept creature, as the target readout tells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Keeper {
+    Us,
+    Other(voxmar_protocol::PlayerId),
+    Away,
 }
 
 impl Creatures {
@@ -166,7 +180,13 @@ impl Creatures {
     pub fn sighting(&self, id: u32) -> Option<Sighting> {
         let shown = self.shown.get(&id)?;
         let health = if shown.dying.is_some() { 0 } else { shown.view.health };
-        Some(Sighting { species: shown.view.species, health, struck: shown.struck })
+        let view = &shown.view;
+        let keeper = view.kept.then(|| match view.owner {
+            Some(owner) if Some(owner) == self.me => Keeper::Us,
+            Some(owner) => Keeper::Other(owner),
+            None => Keeper::Away,
+        });
+        Some(Sighting { species: view.species, health, struck: shown.struck, keeper, young: view.young, ready: view.ready })
     }
 
     /// The creature we struck at in the last `within` seconds before `now`, while it is

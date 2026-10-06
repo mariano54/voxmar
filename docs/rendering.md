@@ -710,6 +710,13 @@ is nothing to blend. Leaves cut out of the shadow maps at the mip whose texels a
 again as large as the cascade's (voxel.wgsl, `alpha_test`), so their holes are never finer
 than the map holds and the dappled shade under a crown does not sparkle as cascades move.
 
+**Shadow resolution.** High draws each of the four cascades (12, 31, 78 and 200 blocks
+out) into a 2048-texel map; from about 30 blocks out, in the third cascade, a shadow's edge
+shows steps (Mariano's playtest of 2026-10-05: shadows don't look great, maybe they need
+higher res). The Ultra setting draws 4096-texel maps, which takes the steps out, for about
+1.8 ms a frame at his settings (Low Power Mode, a busy machine) and 268 MB of maps; near
+shadows look the same at either size, as the soft filter, not the map, sets their edge.
+
 **Soft shadows with a penumbra** (shadows.wgsl, our own sampling of Bevy's cascades): a
 blocker search finds how far the caster is and the filter widens with that distance
 (percentage-closer soft shadows), so a trunk's contact shadow is crisp and a canopy's
@@ -899,6 +906,19 @@ with `k` how far a direction looks towards the sun across the land (its horizont
 the zenith and a top face take neither side) and `d` how strongly dusk shows (from the sun's
 height, none under thick cloud). The sky's horizon, the haze the land fades into, the sky
 water mirrors and the sky light on walls all take it, so they agree.
+
+## Texture variety
+
+Block textures used to repeat identically on every block, so a large motif (a crystal, a
+pebble pattern) showed its grid across a wall or a floor. A block's data can now ask for
+variety (`texture_variety: (turn: true, mirror: true)` in its definition, opaque blocks
+only): each block picks, by a hash of its position, a quarter turn of its top and bottom
+and whether its faces are mirrored left to right, as Minecraft's stone, sand and dirt do.
+The flags travel per texture layer in the layer table's tint byte (64 turn, 128 mirror)
+and the terrain shader lays the texture by them (`laid` in voxel.wgsl), mapping the
+texture coordinates' per-pixel changes the same way so mip levels stay right across block
+edges. It costs a hash and a 2×2 matrix per pixel on the blocks that ask for it. Stone,
+dirt, gravel, sand and grass blocks ask for both.
 
 ## Night, dawn and dusk
 

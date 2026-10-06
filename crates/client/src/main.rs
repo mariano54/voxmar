@@ -9,7 +9,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot),
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion), `--windowed`
 //! (draw to a real window and shoot that, for what only a window has, such as the render
@@ -103,6 +103,8 @@ struct Options {
     /// `--strike CREATURE`, `--level-up SKILL`: show the target readout and a new level in the shot.
     strike: Option<String>,
     level_up: Option<String>,
+    /// `--tend CREATURE`: summon one and feed it until the shot.
+    tend: Option<String>,
     /// `--tab NAME`: the settings tab to open; `--guide SKILL`: the skill guide to open.
     tab: Option<String>,
     guide: Option<String>,
@@ -149,6 +151,7 @@ fn parse_options() -> Result<Options, String> {
         character: false,
         loading: false,
         strike: None,
+        tend: None,
         level_up: None,
         tab: None,
         guide: None,
@@ -196,6 +199,7 @@ fn parse_options() -> Result<Options, String> {
             "--loading" => options.loading = true,
             "--strike" => options.strike = Some(value()?),
             "--level-up" => options.level_up = Some(value()?),
+            "--tend" => options.tend = Some(value()?),
             "--tab" => options.tab = Some(value()?),
             "--guide" => options.guide = Some(value()?),
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
@@ -404,6 +408,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             face_creature: options.face_creature,
             strike: options.strike,
             level_up: options.level_up,
+            tend: options.tend,
             size: options.size,
             windowed: options.windowed,
         });
@@ -481,13 +486,20 @@ fn setup(
             texture.fill_transparent();
         }
     }
-    // Blocks that give off light glow by themselves, as brightly as the light they give.
+    // Blocks that give off light glow by themselves, as brightly as the light they give;
+    // opaque ones vary their textures from block to block as their data says.
     let mut layers = vec![LayerInfo::default(); block_textures.len()];
     for id in 0..registry.len() {
-        let info = registry.info(voxmar_engine::block::BlockId(id as u16));
+        let block = voxmar_engine::block::BlockId(id as u16);
+        let info = registry.info(block);
+        let variety = registry.def(block).texture_variety;
         for layer in info.layers {
-            let glow = &mut layers[layer as usize].glow;
-            *glow = glow.max(info.emission as f32 / 15.0);
+            let layer = &mut layers[layer as usize];
+            layer.glow = layer.glow.max(info.emission as f32 / 15.0);
+            if info.render == RenderKind::Opaque {
+                layer.variety.turn |= variety.turn;
+                layer.variety.mirror |= variety.mirror;
+            }
         }
     }
     // The untinted sides of an opaque block with a tinted top (a grass block) take the

@@ -137,10 +137,12 @@ pub enum ShadowQuality {
     Medium,
     #[default]
     High,
+    Ultra,
 }
 
 impl ShadowQuality {
-    pub const ALL: [ShadowQuality; 4] = [ShadowQuality::Off, ShadowQuality::Low, ShadowQuality::Medium, ShadowQuality::High];
+    pub const ALL: [ShadowQuality; 5] =
+        [ShadowQuality::Off, ShadowQuality::Low, ShadowQuality::Medium, ShadowQuality::High, ShadowQuality::Ultra];
 
     /// The key of its name in the settings (see `lang`).
     pub fn key(self) -> &'static str {
@@ -149,6 +151,7 @@ impl ShadowQuality {
             ShadowQuality::Low => "settings.value.low",
             ShadowQuality::Medium => "settings.value.medium",
             ShadowQuality::High => "settings.value.high",
+            ShadowQuality::Ultra => "settings.value.ultra",
         }
     }
 
@@ -158,12 +161,19 @@ impl ShadowQuality {
             ShadowQuality::Off => 0,
             ShadowQuality::Low => 1,
             ShadowQuality::Medium => 8,
-            ShadowQuality::High => 16,
+            ShadowQuality::High | ShadowQuality::Ultra => 16,
         }
     }
 
+    /// Texels across each cascade's map. Ultra's 4096 sharpens shadows from about 30 blocks
+    /// out, where 2048 shows steps along a shadow's edge, for about 1.8 ms a frame at the
+    /// player's settings (Low Power Mode, a busy machine) and 268 MB of shadow maps.
     fn map_size(self) -> usize {
-        if self == ShadowQuality::Low { 1024 } else { 2048 }
+        match self {
+            ShadowQuality::Low => 1024,
+            ShadowQuality::Ultra => 4096,
+            _ => 2048,
+        }
     }
 
     /// The cascades: how many, how far the first reaches and how far shadows reach, in
@@ -172,7 +182,7 @@ impl ShadowQuality {
         let (num_cascades, first_cascade_far_bound, maximum_distance) = match self {
             ShadowQuality::Off | ShadowQuality::Low => (2, 16.0, 96.0),
             ShadowQuality::Medium => (3, 12.0, 160.0),
-            ShadowQuality::High => (4, 12.0, 200.0),
+            ShadowQuality::High | ShadowQuality::Ultra => (4, 12.0, 200.0),
         };
         CascadeShadowConfigBuilder { num_cascades, first_cascade_far_bound, maximum_distance, ..default() }.build()
     }
@@ -444,18 +454,23 @@ pub struct LayerInfo {
     pub overlay: Option<(u16, Tint)>,
     /// How brightly it glows by itself, 0..1.
     pub glow: f32,
+    /// How it varies from block to block (see `voxmar_engine::block::TextureVariety`).
+    pub variety: voxmar_engine::block::TextureVariety,
 }
 
 /// Each block texture layer's `LayerInfo`, one texel per layer: red and green the overlay's
-/// layer plus one (0 for none), blue its tint, alpha the glow. The terrain shader adds the
-/// glow to the texels bright enough to be the glowing part (see voxel.wgsl).
+/// layer plus one (0 for none), blue its tint in the low six bits and in the top two
+/// whether the layer turns (64) and mirrors (128) from block to block, alpha the glow. The
+/// terrain shader adds the glow to the texels bright enough to be the glowing part (see
+/// voxel.wgsl).
 fn layer_table(layers: &[LayerInfo]) -> Image {
     let data = layers
         .iter()
         .flat_map(|layer| {
             let (overlay, tint) = layer.overlay.map_or((0, 0), |(overlay, tint)| (overlay + 1, tint as u8));
             let [low, high] = overlay.to_le_bytes();
-            [low, high, tint, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
+            let variety = (layer.variety.turn as u8) << 6 | (layer.variety.mirror as u8) << 7;
+            [low, high, tint | variety, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
         })
         .collect::<Vec<u8>>();
     let mut image = Image::new(
@@ -864,6 +879,20 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_layer_table_keeps_tint_and_variety_apart() {
+        use voxmar_engine::block::TextureVariety;
+        let layers = [
+            LayerInfo { overlay: Some((300, Tint::Water)), glow: 1.0, variety: TextureVariety { turn: true, mirror: false } },
+            LayerInfo { overlay: None, glow: 0.0, variety: TextureVariety { turn: false, mirror: true } },
+        ];
+        let table = layer_table(&layers);
+        let data = table.data.unwrap();
+        assert_eq!(data[..4], [45, 1, Tint::Water as u8 | 64, 255]);
+        assert_eq!(data[4..8], [0, 0, 128, 0]);
+        assert!((Tint::Water as u8) < 64, "tints must fit under the variety bits");
+    }
 
     #[test]
     fn clear_texels_take_the_colour_of_visible_ones_in_every_mip() {
