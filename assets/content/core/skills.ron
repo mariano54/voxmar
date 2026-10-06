@@ -97,6 +97,37 @@
             ],
         ),
         (
+            name: "engineering", title: "Engineering", description: "Making tools, stations and machines, and working metal.",
+            guide: [
+                (level: 1, text: "Crafting tables, sticks, torches and wooden and stone tools", icon: "crafting_table"),
+                (level: 1, text: "Shears for wool, pails for milk, campfires", icon: "shears"),
+                (level: 5, text: "Copper ingots and copper tools: faster work and better finds", icon: "copper_pickaxe"),
+                (level: 10, text: "Tin; bronze to come", icon: "tin_ore"),
+                (level: 15, text: "Iron ingots and iron tools", icon: "iron_pickaxe"),
+                (level: 20, text: "Doors, gates and ladders (to come)"),
+                (level: 25, text: "Levers, pressure plates and traps (to come)"),
+                (level: 30, text: "A furnace and a forge for metals (to come)"),
+                (level: 35, text: "Pulleys, gears and water wheels (to come)"),
+                (level: 40, text: "Carts and rails (to come)"),
+                (level: 50, text: "Aether engines (to come)", icon: "aether_mote"),
+            ],
+        ),
+        (
+            name: "crafting", title: "Crafting", description: "Making materials, cloth, leather and fine things.",
+            guide: [
+                (level: 1, text: "Planks and sticks from logs; bricks and sandstone", icon: "oak_planks"),
+                (level: 1, text: "Mossy stonework", icon: "mossy_cobblestone"),
+                (level: 5, text: "Rope and twine from fibre (to come)"),
+                (level: 10, text: "Baskets and sacks (to come)"),
+                (level: 15, text: "Wool cloth and beds (to come)", icon: "wool"),
+                (level: 20, text: "Leather from hides (to come)", icon: "hide"),
+                (level: 25, text: "Dyes from flowers and berries (to come)"),
+                (level: 30, text: "Glass panes and lanterns (to come)", icon: "glass"),
+                (level: 40, text: "Fine furniture and banners (to come)"),
+                (level: 50, text: "Aether-woven cloth (to come)", icon: "aether_mote"),
+            ],
+        ),
+        (
             name: "attack", title: "Attack", description: "Hitting hard and often, with weapons, fangs and claws.",
             guide: [
                 (level: 1, text: "Fists, wooden and stone weapons, and a bone club; your blows land and hurt more as you level", icon: "bone"),

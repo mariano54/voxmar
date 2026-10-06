@@ -16,6 +16,7 @@ and [creature-data.md](creature-data.md) for the data formats.
 | 6 | Hitpoints | Starts at level 10, as in RuneScape. Your maximum health is twice your Hitpoints level: 20 at the start (today's health bar), 198 at 99. |
 | 7 | Hunger and warmth | Kept as the Game UI thread built them (`engine::vitals`: hunger 0–20, warmth bands, Well fed and other effects). Food and cooking build on them; see [food-and-cooking.md](food-and-cooking.md). |
 | 8 | First content tops out at 50 | The first set of content unlocks up to about level 50, with many things at level 1 (Mariano, 2026-10-06). |
+| 9 | Engineering and Crafting | Two more skills (Mariano, 2026-10-06): **Engineering** makes tools, stations and machines and works metal; **Crafting** makes materials, cloth, leather and fine things. Every recipe names the skill it trains (Crafting unless it says), a level it may need, and the experience each one made gives ([tools-and-crafting.md](tools-and-crafting.md)). |
 
 **Hunter.** Breeding lives in Farming, food in Cooking and fighting in Attack, Defence
 and Hitpoints, which left wild animals without a skill of their own: tracking, trapping,
@@ -24,9 +25,8 @@ hand-off: **Hunter gets an animal home, Farming keeps and breeds it.** Mariano c
 over folding taming into Farming (2026-10-05).
 
 Later skills the systems leave room for, not designed here: Fishing (fish are creatures
-already, see [creatures.md](creatures.md)), Woodcutting, Smithing, Crafting (wool, leather,
-feathers and bone all have uses waiting), and Alchemy (every plant already carries
-`alchemy:` tags).
+already, see [creatures.md](creatures.md)), Woodcutting and Alchemy (every plant already
+carries `alchemy:` tags). Smithing is folded into Engineering.
 
 ## How a skill works
 
@@ -118,7 +118,10 @@ trains alongside Attack whenever you deal damage (a third of the combat experien
 ### Mining
 
 Breaking stone and ore. Levels gate ores and raise ore yields and gem finds; tools set the
-speed.
+speed. Built: `base/tools.ron` gives each ore the Mining level and the pickaxe tier it asks
+for and the experience it teaches (natural stone teaches a little; what a player placed
+teaches nothing), and the level above the ore's, with the pickaxe's `yield`, raises the
+chance of an extra ore.
 
 | Level | Unlocks |
 | --- | --- |
