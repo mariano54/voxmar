@@ -20,15 +20,17 @@ apart still read as one hand.
   Nothing natural is pure grey: stone is a grey with a breath of violet in the
   shadows, dirt a soft umber, sand a pale straw. Saturation is kept for the things a player
   looks for: flowers, ores, fruit and magic.
-- **Big shapes, drawn finely.** Stylised, not noisy: each texture is a few large, clear
-  shapes (eight or nine cobbles, a handful of rock plates, a couple of dozen leaves, four
-  boards) that read from across a valley, and 32×32 is spent on drawing those shapes well,
-  with smooth shading inside each, crisp one-texel edges and a deliberate highlight, rather
-  than on fine noise. Mariano's verdict on the first fine-grained draft (2026-10-06): "too
-  uniform, the features are too tiny; features should be larger, but high res, more
-  stylised".
-- **Readable at a distance.** The big shapes are the block's silhouette of value, so they
-  survive mipmapping; the detail lives in their shading and edges.
+- **Vanilla's design language, our own drawing.** Mariano's verdicts: the first draft (fine
+  soft noise) was "too uniform, the features too tiny"; the second (big stylised shapes)
+  made stone and dirt "look terrible"; he wants it "inspired by vanilla". So the pack
+  speaks Minecraft's visual language at twice the resolution: a handful of clear shades
+  per material, posterised blotches two to six texels across with crisp, slightly jagged
+  edges, the contrast and palette restraint that keep vanilla readable, and features
+  sitting on the texel grid. Every texture is still drawn by us: no Mojang pixel is copied,
+  traced or sampled, and the designs are ours (our ores are crystals and nuggets, our
+  cobbles our stones).
+- **Readable at a distance.** The blotch pattern is the block's silhouette of value, so it
+  survives mipmapping.
 
 These goals come from Mariano's notes on the screenshots he liked (fine soft grass with
 light yellow-green speckle and gentle variation, thin pale grass blades, flowers as dense
@@ -39,8 +41,9 @@ sampled.
 
 ## Palette ramps
 
-Every material is one ramp of **7 to 9 shades**, darkest first (the default pack uses 4 to
-6; more shades give the soft gradients 32×32 has room for).
+Every material is one ramp of **5 or 6 shades** for natural blocks (stone, dirt, bark),
+darkest first, so blotches read as clear steps as vanilla's do; crafted and tinted
+textures may use up to eight.
 
 - **Hue shift.** Shadows turn towards blue-violet, highlights towards yellow, about 15–25°
   across the ramp (a `Ramp` with `hue: 20`), the way a painter would light it. This is what
@@ -57,9 +60,9 @@ Every material is one ramp of **7 to 9 shades**, darkest first (the default pack
 
   | family | key | notes |
   | --- | --- | --- |
-  | stone | `#82827f` | grey with the barest warmth, violet shadows |
+  | stone | `#868684` | grey with the barest warmth, six shades |
   | deepslate | `#4b4a54` | cool, the one cold rock |
-  | dirt | `#7a5c46` | umber, never orange |
+  | dirt | `#8f6443` | warm brown, six explicit shades |
   | sand | `#d9c79b` | straw |
   | gravel | `#8a8682` | mixed stones, a few warm |
   | oak | `#a27b52` | honey planks, grey-brown bark |
@@ -79,29 +82,22 @@ shadows.
 
 ## Shapes and detail
 
-Shapes come first, shading second, grit last and least:
-
-1. **Shapes** (cells, bricks, boards, strata, sprites) carry the texture. Few and large:
-   about two to four across a block for stone plates and bark, three for cobbles, four
-   boards, leaves seven to ten texels long, ore crystals half the block tall. Draw sprites
-   (leaves, crystals, nuggets, pebbles) as text grids with an outline, a lit face, a shaded
-   face and a highlight, as a pixel artist would.
-2. **Shading** within each shape: a smooth ramp of three or four shades from a lit top
-   left to a darker rim (`Cells` with `bevel` and `round`; `lip: 0` drops the bright line a
-   16×16 recipe puts on a cell's edge, which at 32×32 reads as scratches). Gentle macro
-   variation across the block (noise of two to four lattice cells, amount 0.15–0.25).
-3. **Grit**, if any: per-texel `Grain` at most 0.08 at 32×32, and sparse single-shade
-   flecks. Fine noise is what made the first draft look uniform.
-
-Rules of thumb:
-
-- Neighbouring texels differ by at most two shades except on a deliberate edge (an
-  outline, a mortar line, a seam, a crack).
-- `clean: true` on every paint of a form, so no lone texel floats in a flat area.
-- Highlights are few and placed: the tip of a crystal, the crown of a pebble, the lit lip
-  of a crack.
-- Dark accents (cracks, mortar, furrows) are bold where they are part of the shape (two
-  texels of mortar between cobbles, deep bark furrows) and thin where they are detail.
+- **Shades.** Five or six per natural material (vanilla uses about four to six), so each
+  step reads as a deliberate shade, not a gradient.
+- **Blotches.** Two noise layers: a broad one (four to eight lattice cells) for the
+  material's large pattern, and a texel-scale one (sixteen to thirty-two cells, amount
+  about 0.5) that breaks every edge into small jagged steps. Paint with `clean: true`. No
+  per-texel `Grain`: it reads as static, not as a material.
+- **Direction.** Stone's blotches run a little sideways (more lattice cells down than
+  across); bark's run up the log; dirt's are round.
+- **Accents.** Small clusters of the darkest or lightest shade (dark pits in dirt, pale
+  pebbles), two to four texels each.
+- **Forms.** Where a material has parts (cobbles, bricks, boards), the parts are vanilla's
+  size doubled: about sixteen cobbles a block with one-texel dark mortar, four boards, two
+  bricks across. Sprites (ore crystals and nuggets, pebbles) are drawn as text grids with an
+  outline, a lit face, a shaded face and a highlight.
+- **Contrast.** Darkest to lightest about 0.3 in OKLab lightness for natural blocks. The
+  second draft's smooth low-contrast shapes are what made stone and dirt look wrong.
 
 ## Edges
 
@@ -126,13 +122,10 @@ Rules of thumb:
   their texture from block to block (`texture_variety` in `blocks.ron`), which removes
   most visible repeats; their textures must therefore look right in any of the eight
   orientations: no directional strata on them.
-- Big shapes and turning don't mix freely: a large facet or crack that meets the block's
-  edge meets its own mirror image in the next block, and a wall of them becomes a
-  kaleidoscope (stone with big plates did, 2026-10-07). So on the blocks seen in their
-  thousands (stone, dirt, sand) the big shapes are many small-to-medium ones of a kind
-  (chunky flecks, clods, pebbles) over quiet clouding, cracks stay well inside the
-  block, and the boldest shapes go on blocks seen in smaller runs (cobble, bark, planks,
-  ores, leaves).
+- Big shapes and turning don't mix: a large facet or crack that meets the block's edge
+  meets its own mirror image in the next block, and a wall of them becomes a kaleidoscope
+  (the second draft's stone did). Small blotches tile and turn invisibly, which is part of
+  why vanilla's language works.
 - Blocks with a direction (logs, planks, bricks, sandstone strata) keep one orientation,
   so their repeats are hidden by the pattern itself: boards with joints at varied places,
   bricks of varied tone, bark plates of varied width.
