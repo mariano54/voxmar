@@ -24,27 +24,61 @@ pub struct CharacterPlugin;
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Guide>()
+            .init_resource::<GuideView>()
             .add_systems(PostStartup, (spawn, open_start_guide))
             .add_systems(
                 Update,
                 ((show, pick_skill, draw_skills, draw_guide).chain().after(ScreenSystems), draw_condition, draw_combat).run_if(in_state(Screen::InGame)),
             )
-            .add_systems(OnExit(Screen::InGame), |mut guide: ResMut<Guide>| guide.0 = None);
+            .add_systems(OnExit(Screen::InGame), |mut guide: ResMut<Guide>, mut view: ResMut<GuideView>| {
+                guide.0 = None;
+                *view = GuideView::default();
+            });
     }
 }
 
 /// The skill whose guide is open, if any.
 #[derive(Resource, Default)]
-pub(crate) struct Guide(pub(crate) Option<SkillId>);
+pub struct Guide(pub Option<SkillId>);
 
-/// A skill guide to open at startup, by the skill's name (`--guide`, for captures).
+/// Within an open guide: the kind of line shown (all when none), and the line whose page
+/// is open, by its place in the guide.
+#[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
+pub struct GuideView {
+    pub category: Option<String>,
+    pub entry: Option<usize>,
+}
+
+/// A button choosing which kind of guide line shows (all of them for none).
+#[derive(Component)]
+struct CategoryButton(Option<String>);
+/// A guide line, which opens its page.
+#[derive(Component)]
+struct EntryButton(usize);
+
+/// How many guide lines and kinds of line the open guide shows (for the gate).
+pub fn guide_buttons(world: &mut World) -> (usize, usize) {
+    let lines = world.query_filtered::<(), With<EntryButton>>().iter(world).count();
+    let kinds = world.query_filtered::<(), With<CategoryButton>>().iter(world).count();
+    (lines, kinds)
+}
+
+/// A skill guide to open at startup, by the skill's name (`--guide`, for captures), with
+/// the kind of line and the line's page to show.
 #[derive(Resource)]
 pub struct StartGuide(pub String);
 
-fn open_start_guide(start: Option<Res<StartGuide>>, launch: Res<Launch>, mut guide: ResMut<Guide>) {
+/// `--guide SKILL[/KIND[/LINE]]`: the skill, then the kind of line shown and the line whose
+/// page is open, by its place in the guide (`farming/planting/2`).
+fn open_start_guide(start: Option<Res<StartGuide>>, launch: Res<Launch>, mut guide: ResMut<Guide>, mut view: ResMut<GuideView>) {
     let skills = &launch.content.skills;
-    if let Some(id) = start.and_then(|start| skills.ids().find(|&id| skills.get(id).name.ends_with(&start.0) || skills.get(id).title.eq_ignore_ascii_case(&start.0))) {
+    let Some(start) = start else { return };
+    let mut parts = start.0.split('/');
+    let skill = parts.next().unwrap_or_default();
+    if let Some(id) = skills.ids().find(|&id| skills.get(id).name.ends_with(skill) || skills.get(id).title.eq_ignore_ascii_case(skill)) {
         guide.0 = Some(id);
+        view.category = parts.next().filter(|kind| !kind.is_empty() && *kind != "all").map(str::to_owned);
+        view.entry = parts.next().and_then(|line| line.parse().ok());
     }
 }
 
@@ -148,15 +182,35 @@ fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<CharacterScreen>
 fn pick_skill(
     rows: Query<(&SkillRow, &Interaction), Changed<Interaction>>,
     back: Query<&Interaction, (Changed<Interaction>, With<BackToSkills>)>,
+    categories: Query<(&CategoryButton, &Interaction), Changed<Interaction>>,
+    lines: Query<(&EntryButton, &Interaction), Changed<Interaction>>,
     mut guide: ResMut<Guide>,
+    mut view: ResMut<GuideView>,
 ) {
     for (row, interaction) in &rows {
         if *interaction == Interaction::Pressed {
             guide.0 = Some(row.0);
+            *view = GuideView::default();
         }
     }
+    for (category, interaction) in &categories {
+        if *interaction == Interaction::Pressed {
+            view.category.clone_from(&category.0);
+        }
+    }
+    for (line, interaction) in &lines {
+        if *interaction == Interaction::Pressed {
+            view.entry = Some(line.0);
+        }
+    }
+    // Back from a line's page to the guide, and from the guide to the skills.
     if back.iter().any(|i| *i == Interaction::Pressed) {
-        guide.0 = None;
+        if view.entry.is_some() {
+            view.entry = None;
+        } else {
+            guide.0 = None;
+            *view = GuideView::default();
+        }
     }
 }
 
@@ -275,100 +329,157 @@ fn draw_levels(locale: &Locale, launch: &Launch, player: &LocalPlayer, levels: &
     }
 }
 
-/// Fills the guide when one opens.
+/// Fills the guide when one opens, and again for another kind of line or a line's page.
 #[allow(clippy::too_many_arguments)]
 fn draw_guide(
     mut commands: Commands,
     guide: Res<Guide>,
+    view: Res<GuideView>,
     launch: Res<Launch>,
     player: Res<LocalPlayer>,
     font: Res<UiFont>,
     locale: Res<Locale>,
-    mut page: Query<(Entity, &mut Node), With<GuidePage>>,
+    mut page: Query<(Entity, &mut Node, &mut ScrollPosition), With<GuidePage>>,
     mut levels: Query<(&SkillLevel, &mut Text)>,
-    mut drawn: Local<Option<SkillId>>,
+    mut drawn: Local<Option<(SkillId, GuideView)>>,
     images: Res<super::HudImages>,
 ) {
     draw_levels(&locale, &launch, &player, &mut levels);
-    let Ok((entity, mut node)) = page.single_mut() else { return };
+    let Ok((entity, mut node, mut scroll)) = page.single_mut() else { return };
     let display = if guide.0.is_some() { Display::Flex } else { Display::None };
     if node.display != display {
         node.display = display;
     }
-    if *drawn == guide.0 && !locale.is_changed() {
+    let wanted = guide.0.map(|id| (id, view.clone()));
+    if *drawn == wanted && !locale.is_changed() {
         return;
     }
-    *drawn = guide.0;
+    *drawn = wanted;
     commands.entity(entity).despawn_children();
+    scroll.0 = Vec2::ZERO;
     let Some(id) = guide.0 else { return };
     let skills = &launch.content.skills;
     let def = skills.get(id);
     let (level, _, progress) = standing(&locale, skills, player.skills.xp(id));
-    let steps = guide_steps(&locale, &launch, id);
+    let entries = super::guide::entries(&locale, &launch, id);
     let font = &font.0;
+    let fallback = images.skills.get(id.0 as usize).cloned().unwrap_or_default();
+    let icon_of = |item: Option<BlockId>| item.and_then(|item| images.icons.get(item.0 as usize).cloned()).unwrap_or_else(|| fallback.clone());
+    // A guide line: its mark, the level it opens at and its words, dim until reached.
+    let spawn_line = |list: &mut ChildSpawnerCommands, i: usize| {
+        let entry = &entries[i];
+        let reached = level >= entry.level;
+        // A grid, so the line's words wrap to exactly the width their column gets.
+        let row = Node {
+            display: Display::Grid,
+            grid_template_columns: vec![GridTrack::px(16.0 * PX), GridTrack::px(22.0 * PX), GridTrack::flex(1.0)],
+            column_gap: Val::Px(space::GAP),
+            align_items: AlignItems::Start,
+            padding: UiRect::all(Val::Px(space::HAIR)),
+            flex_shrink: 0.0,
+            ..default()
+        };
+        list.spawn((Button, crate::ui::widgets::HoverLight, EntryButton(i), row)).with_children(|row| {
+            let tint = if reached { Color::WHITE } else { Color::srgba(1.0, 1.0, 1.0, 0.45) };
+            row.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(icon_of(entry.icon)).with_color(tint)));
+            row.spawn(text(font, format!("{}", entry.level), BODY, if reached { GOLD } else { MUTED }));
+            row.spawn((Node { min_width: Val::ZERO, ..default() }, text(font, entry.words.clone(), BODY, if reached { TEXT } else { MUTED })));
+        });
+    };
     commands.entity(entity).with_children(|page| {
-        page.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, flex_shrink: 0.0, ..default() }).with_children(|top| {
-            let level = locale.format("character.level", &[("level", &level)]);
-            top.spawn(shadowed(font, format!("{}  {level}", locale.skill(def)), BODY, GOLD));
-            top.spawn(Node { width: Val::Px(40.0 * PX), ..default() }).with_children(|cell| {
+        let open = view.entry.filter(|&i| i < entries.len());
+        let top = Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), flex_shrink: 0.0, ..default() };
+        page.spawn(top).with_children(|top| {
+            match open {
+                // A line's page is headed by the line itself.
+                Some(i) => {
+                    top.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }).with_children(|title| {
+                        title.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), flex_shrink: 0.0, ..default() }, ImageNode::new(icon_of(entries[i].icon))));
+                        title.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, shadowed(font, entries[i].words.clone(), BODY, GOLD)));
+                    });
+                }
+                None => {
+                    let level = locale.format("character.level", &[("level", &level)]);
+                    top.spawn(shadowed(font, format!("{}  {level}", locale.skill(def)), BODY, GOLD));
+                }
+            }
+            top.spawn(Node { width: Val::Px(40.0 * PX), flex_shrink: 0.0, ..default() }).with_children(|cell| {
                 spawn_button(cell, font, "character.back", ButtonStyle::Secondary, BackToSkills);
             });
         });
+        if let Some(i) = open {
+            let (parts, near) = super::guide::page(&locale, &launch, id, &entries, i);
+            for part in parts {
+                match part {
+                    super::guide::Part::Heading(words) => {
+                        page.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, shadowed(font, words, BODY, ACCENT)));
+                    }
+                    super::guide::Part::Line(words) => {
+                        page.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, words, BODY, SOFT)));
+                    }
+                    super::guide::Part::Items(items) => {
+                        let row = Node { flex_wrap: FlexWrap::Wrap, column_gap: Val::Px(space::GAP), row_gap: Val::Px(space::HAIR), flex_shrink: 0.0, ..default() };
+                        page.spawn(row).with_children(|row| {
+                            for item in items {
+                                row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|chip| {
+                                    chip.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), flex_shrink: 0.0, ..default() }, ImageNode::new(icon_of(Some(item)))));
+                                    chip.spawn(text(font, locale.block(launch.content.blocks.def(item)), BODY, TEXT));
+                                });
+                            }
+                        });
+                    }
+                }
+            }
+            if !near.is_empty() {
+                page.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized("guide.related"), shadowed(font, "", BODY, ACCENT)));
+                for i in near {
+                    spawn_line(page, i);
+                }
+            }
+            return;
+        }
         page.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, locale.skill_description(def), BODY, SOFT)));
         page.spawn((Node { flex_shrink: 0.0, margin: UiRect::bottom(Val::Px(space::INNER)), ..default() }, text(font, progress, BODY, MUTED)));
-        if steps.is_empty() {
+        if entries.is_empty() {
             page.spawn((Node { flex_shrink: 0.0, ..default() }, Localized("character.untrained"), text(font, "", BODY, MUTED)));
         }
-        let fallback = images.skills.get(id.0 as usize).cloned().unwrap_or_default();
-        for (at, line, icon) in steps {
-            let reached = level >= at;
-            // A grid, so the step's words wrap to exactly the width their column gets.
-            let row = Node {
-                display: Display::Grid,
-                grid_template_columns: vec![GridTrack::px(16.0 * PX), GridTrack::px(22.0 * PX), GridTrack::flex(1.0)],
-                column_gap: Val::Px(space::GAP),
-                align_items: AlignItems::Start,
-                flex_shrink: 0.0,
-                ..default()
-            };
-            page.spawn(row).with_children(|row| {
-                // What it opens, or the skill's own mark; dim until reached.
-                let image = icon.and_then(|item| images.icons.get(item.0 as usize).cloned()).unwrap_or_else(|| fallback.clone());
-                let tint = if reached { Color::WHITE } else { Color::srgba(1.0, 1.0, 1.0, 0.45) };
-                row.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::new(image).with_color(tint)));
-                row.spawn(text(font, format!("{at}"), BODY, if reached { GOLD } else { MUTED }));
-                row.spawn((Node { min_width: Val::ZERO, ..default() }, text(font, line, BODY, if reached { TEXT } else { MUTED })));
+        let categories = super::guide::categories(&entries);
+        let shown: Vec<usize> = (0..entries.len()).filter(|&i| view.category.as_ref().is_none_or(|c| &entries[i].category == c)).collect();
+        // With kinds to sort by, they stand down the left, the lines beside them.
+        page.spawn(Node { column_gap: Val::Px(space::GAP), align_items: AlignItems::Start, flex_shrink: 0.0, ..default() }).with_children(|split| {
+            if !categories.is_empty() {
+                let side = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CATEGORIES), flex_shrink: 0.0, ..default() };
+                split.spawn(side).with_children(|side| {
+                    let all = [(None, locale.get("guide.category.all").to_owned())];
+                    for (category, words) in all.into_iter().chain(categories.iter().map(|c| (Some(c.clone()), super::guide::category_name(&locale, c)))) {
+                        let node = Node {
+                            min_height: Val::Px(BUTTON_SMALL),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)),
+                            ..default()
+                        };
+                        let style = ButtonStyle::Secondary;
+                        let mut button = side.spawn((Button, style, node, style.pieces()[0].image(), CategoryButton(category.clone())));
+                        if view.category == category {
+                            button.insert(crate::ui::widgets::Selected);
+                        }
+                        button.with_child((shadowed(font, words, BODY, TEXT), crate::lang::TightLine));
+                    }
+                });
+            }
+            split.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), flex_grow: 1.0, min_width: Val::ZERO, ..default() }).with_children(|list| {
+                for i in shown {
+                    spawn_line(list, i);
+                }
             });
-        }
+        });
     });
 }
 
-/// What a skill opens up, by level: its own guide in skills.ron, and every crop it
-/// needs to sow.
-fn guide_steps(locale: &Locale, launch: &Launch, skill: SkillId) -> Vec<(u8, String, Option<BlockId>)> {
-    let content = &launch.content;
-    let def = content.skills.get(skill);
-    let item = |name: &str| content.blocks.id(name).or_else(|| content.blocks.id(&format!("base:{name}")));
-    let mut steps: Vec<(u8, String, Option<BlockId>)> =
-        def.guide.iter().enumerate().map(|(i, step)| (step.level, locale.skill_guide(def, i), step.icon.as_deref().and_then(item))).collect();
-    for (_, crop) in content.crops.iter().filter(|(_, crop)| crop.skill == skill && crop.def.sown) {
-        let words = locale.format("character.sow", &[("crop", &locale.block_named(&content.blocks, &crop.def.name))]);
-        steps.push((crop.def.level, words, item(&crop.def.name)));
-    }
-    // Everything cooked, at the level it starts at, once each.
-    if content.cooking.skill == Some(skill) {
-        let mut cooked: Vec<BlockId> = Vec::new();
-        for (_, recipe) in content.cooking.iter() {
-            if !cooked.contains(&recipe.output) {
-                cooked.push(recipe.output);
-                let words = locale.format("character.cook", &[("item", &locale.block(content.blocks.def(recipe.output)))]);
-                steps.push((recipe.def.level, words, Some(recipe.output)));
-            }
-        }
-    }
-    steps.sort_by_key(|(level, _, _)| *level);
-    steps
-}
+/// The width of a guide's column of kinds, and the least height of their buttons.
+const CATEGORIES: f32 = 56.0 * PX;
+const BUTTON_SMALL: f32 = 16.0 * PX;
 
 /// How you are, as the character and inventory screens show it: health
 /// meters, how warm you feel, and every effect on you with what it does.

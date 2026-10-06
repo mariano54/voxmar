@@ -1,0 +1,21 @@
+// Multiblocks (engine/src/multiblock.rs): structures recognised from a pattern of blocks.
+// Layers go from the bottom up; in each, rows run north to south and characters west to
+// east, and the pattern counts turned any of four ways. `key` says what a character takes
+// (an item, `tag:TAG`, or `a|b`), `.` anything and a space only air. `core` is the block
+// a player uses to bring it to life.
+(
+    multiblocks: [
+        // The Homestead Hearth, the Nomad age's gate: a hearthstone in a ring of stone, a
+        // chimney two blocks tall at one corner. Lit, it is your home: you wake there.
+        (
+            name: "homestead_hearth",
+            layers: [
+                ["sss", "sHs", "sss"],
+                ["C..", "...", "..."],
+                ["C..", "...", "..."],
+            ],
+            key: {'s': "tag:stone", 'H': "hearthstone", 'C': "chimney"},
+            core: 'H',
+        ),
+    ],
+)

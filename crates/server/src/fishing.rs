@@ -20,7 +20,7 @@ impl Server {
     pub(crate) fn fish(&mut self, agent: PlayerId, at: IVec3) {
         let fishing = self.content.fishing.clone();
         let Some(player) = self.players.get(&agent) else { return };
-        let level = fishing.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
+        let level = fishing.skill.map_or(1, |skill| self.check_level(agent, skill));
         let rod = self.content.tools.tool(player.held());
         let biome = self.overworld.biome_at(at.x, at.z);
         let tags = biome.tags.clone();
@@ -34,6 +34,7 @@ impl Server {
             level,
             rod_tier: rod.tier,
             rod_yield: rod.yield_,
+            luck: player.modifiers.fishing,
         };
         let [land, pick, kick] = random3(self.tick, at, agent ^ 0xf15);
         let Some(catch) = fishing.cast(&spot, land, pick).cloned() else {
@@ -52,5 +53,6 @@ impl Server {
         if let Some(skill) = fishing.skill {
             self.grant_xp(agent, skill, catch.def.xp);
         }
+        self.discover(agent, voxmar_engine::journal::Page::Fish, &catch.def.item, 1);
     }
 }

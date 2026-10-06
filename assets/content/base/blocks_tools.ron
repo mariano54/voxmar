@@ -10,6 +10,22 @@
             name: "crafting_table", sound: Wood, textures: Sides(top: "crafting_table_top", bottom: "oak_planks", side: "crafting_table_side"),
             hardness: 2.5, color: (150, 110, 70), tags: ["station", "crafting_table", "wood", "fuel", "building"],
         ),
+        // The Homestead Hearth's pieces (multiblocks.ron): a hearthstone, ringed with stone
+        // and lit with a right click, and a chimney two blocks tall at a corner.
+        (
+            name: "hearthstone", sound: Stone, textures: Sides(top: "hearthstone_top", bottom: "cobblestone", side: "hearthstone_side"),
+            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "station", "building"], light: 6,
+        ),
+        (
+            name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),
+            hardness: 2.0, color: (130, 100, 90), tags: ["chimney", "building"],
+        ),
+        // A herb planter: herbs and flowers placed in it grow back when picked (regrowth.ron),
+        // for a gardener whose Farming level is enough for them. Herbs cannot be sown.
+        (
+            name: "herb_planter", sound: Wood, textures: Sides(top: "herb_planter_top", bottom: "oak_planks", side: "herb_planter_side"),
+            hardness: 1.5, color: (120, 85, 55), tags: ["planter", "wood", "building"],
+        ),
         // Farmland: soil a hoe has turned, where crops are sown.
         (
             name: "farmland", sound: Soil, textures: Sides(top: "farmland", bottom: "dirt", side: "dirt"),
@@ -47,6 +63,11 @@
         // Materials.
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
         // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
+        // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
+        (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
+        (template: "drop", name: "seed_pouch", tags: ["pouch", "holds:seed"], all: (color: (170, 140, 90), action: Some("base:empty_pouch"))),
+        // Worn or carried when you die, it keeps a fourth item and holds the rest for an hour.
+        (template: "drop", name: "grave_ward_amulet", tags: ["amulet", "grave_ward"], all: (color: (110, 80, 180), rarity: VeryRare)),
         (template: "drop", name: "charcoal", tags: ["charcoal", "fuel"], all: (color: (40, 36, 34))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
