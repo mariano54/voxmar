@@ -202,12 +202,12 @@ enum Step {
     Cook,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
-    /// `/locate gorge` finds a river deep between walls, and the server's world there has
-    /// them.
-    Gorge,
     /// `/locate ore` finds a sample of ore on the ground, and the server's world there has
     /// it, with its vein's ore below it.
     Ore,
+    /// `/locate gorge` finds a river deep between walls, and the server's world there has
+    /// them.
+    Gorge,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
@@ -2513,7 +2513,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let species = world.resource::<Launch>().content.creatures.find(CREATURE);
     let Some(species) = species else {
         gate.check("creatures", Err(format!("no `{CREATURE}` in the content")));
-        gate.next(Step::Gorge, now);
+        gate.next(Step::Ore, now);
         return;
     };
     let snail = |world: &World| {
@@ -2549,7 +2549,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(view) = snail(world) else {
                 if in_phase > 10.0 {
                     gate.check("creatures", Err("a summoned creature never reached the client".into()));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 return;
             };
@@ -2622,7 +2622,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let distance = view.position.distance(world.resource::<LocalPlayer>().eye());
                     let why = if stalled { format!("the server answered no blow for {UNANSWERED}s") } else { format!("{blows} blows ({landed} landed) did not kill it") };
                     gate.check("creature struck", Err(format!("{why} (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 None => {
                     mouse(world, MouseButton::Left, false);
@@ -2689,7 +2689,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:campfire")) else {
                 gate.check("cook", Err("no raw rabbit or campfire in the content".into()));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
                 return;
             };
             let lit = client.block(fire) == Some(campfire);
@@ -2704,7 +2704,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 _ if in_phase > 10.0 => {
                     gate.check("cook", Err(format!("the campfire ({lit}) or raw rabbit in the hotbar ({slot:?}) never came")));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 _ => {}
             }
@@ -2719,7 +2719,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if in_phase > 15.0 {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
@@ -2815,7 +2815,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 _ if in_phase > 10.0 => {
                     gate.check("tame", Err("the junglefowl or the wheat never came".into()));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 _ => {}
             }
@@ -2823,7 +2823,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         2 => {
             let Some(view) = hen(world) else {
                 gate.check("tame", Err("the junglefowl went".into()));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
                 return;
             };
             let me = world.resource::<crate::creatures::Creatures>().me;
@@ -2841,7 +2841,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     "25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left; the crosshair was on it {on} frames, on another creature {other}, on none {none}; nearest {:.1} blocks",
                     gate.tame_nearest
                 )));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
@@ -2866,11 +2866,11 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if tags.contains(&kept.as_str()) {
                 let detail = format!("{} {}: {}", readout.name, readout.level, tags.join(", "));
                 gate.check("readout: kept", Ok(detail));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             } else if in_phase > 3.0 {
                 let detail = format!("aimed at the tamed junglefowl, it read {:?} {:?} with tags {tags:?}", readout.name, readout.level);
                 gate.check("readout: kept", Err(detail));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             }
         }
         _ => {}
@@ -3030,7 +3030,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("gorge"))) else {
                 if in_phase > 20.0 {
                     gate.check("gorge", Err("no answer to /locate gorge".into()));
-                    gate.next(Step::Ore, now);
+                    gate.next(Step::Recipes, now);
                 }
                 return;
             };
@@ -3041,7 +3041,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("gorge", Err(format!("/locate gorge: {reply}")));
-                gate.next(Step::Ore, now);
+                gate.next(Step::Recipes, now);
                 return;
             };
             gate.gorge = at;
@@ -3082,7 +3082,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                              and the player {reached} {away:.0} blocks away"
                         )),
                     );
-                    gate.next(Step::Ore, now);
+                    gate.next(Step::Recipes, now);
                 }
                 return;
             }
@@ -3120,17 +3120,18 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the walls by the water at {} {} {} stand only {walls} blocks high", at.x, water, at.z)),
             };
             gate.check("gorge", result);
-            gate.next(Step::Ore, now);
+            gate.next(Step::Recipes, now);
         }
         _ => {}
     }
 }
 
-/// How far from the gorge `/locate ore` looks for a sample of ore: samples lie over every
-/// vein, which lie a hundred or so blocks apart.
+/// How far from the test ground `/locate ore` looks for a sample of ore: samples lie over
+/// every vein, which lie a hundred or so blocks apart.
 const ORE_RADIUS: i32 = 600;
 
-/// `/locate ore` finds a sample of ore on the ground near the gorge. Going there, the
+/// `/locate ore` finds a sample of ore on the ground near the test ground (before the
+/// gorge, whose own long load then settles the server before the steps after). Going there, the
 /// server's world has it on solid ground with ore of the same kind below it, its vein,
 /// the client has it too, and the ore around lies in veins, not alone.
 fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -3148,7 +3149,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("vein") || r.contains("ore"))) else {
                 if in_phase > 20.0 {
                     gate.check("ore", Err("no answer to /locate ore".into()));
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Gorge, now);
                 }
                 return;
             };
@@ -3159,7 +3160,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("ore", Err(format!("/locate ore: {reply}")));
-                gate.next(Step::Recipes, now);
+                gate.next(Step::Gorge, now);
                 return;
             };
             gate.ore = at;
@@ -3181,7 +3182,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let limit = if load > cores { GORGE_OVERLOADED_LIMIT } else { GORGE_LOAD_LIMIT };
                 if in_phase > limit {
                     gate.check("ore", Err(format!("the world around the sample of ore at {at} did not load in {limit:.0}s (load {load:.0} on {cores} cores)")));
-                    gate.next(Step::Recipes, now);
+                    gate.next(Step::Gorge, now);
                 }
                 return;
             }
@@ -3237,7 +3238,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
             };
             gate.check("ore", result);
-            gate.next(Step::Recipes, now);
+            gate.next(Step::Gorge, now);
         }
         _ => {}
     }
