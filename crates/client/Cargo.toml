@@ -13,6 +13,8 @@ tracy = ["bevy/trace_tracy"]
 chrome = ["bevy/trace_chrome"]
 
 [dependencies]
+# Bevy's own wgpu, for what Bevy does not re-export (timestamp query sets).
+wgpu = { version = "29", default-features = false }
 voxmar_engine.workspace = true
 voxmar_protocol.workspace = true
 voxmar_server.workspace = true

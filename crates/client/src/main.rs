@@ -265,6 +265,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .thread_name(|i| format!("worker-{i}"))
         .start_handler(|_| lower_thread_priority())
         .build_global()?;
+    // The generator's region builds borrow helper threads besides: no more than there are
+    // workers.
+    voxmar_worldgen::set_helper_limit(workers);
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
@@ -310,7 +313,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // does (see docs/rendering.md).
     let mut plugins = DefaultPlugins
         .set(AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() })
-        .set(bevy::pbr::PbrPlugin { use_gpu_instance_buffer_builder: false, ..default() });
+        .set(bevy::pbr::PbrPlugin { use_gpu_instance_buffer_builder: false, ..default() })
+        .set({
+            // Bevy's systems run on a pool of their own, by default every thread left over (24
+            // on the 32-thread Linux box), while streaming does its work on our workers. Six
+            // served better: waking two dozen threads for each parallel system cost more than
+            // they did, and the frame-bound scenes there gained 5-13% (dig 2.95 to 2.62 ms a
+            // frame, mountains 2.98 to 2.65).
+            let mut options = bevy::app::TaskPoolOptions::default();
+            options.compute.max_threads = SYSTEM_THREADS;
+            bevy::app::TaskPoolPlugin { task_pool_options: options }
+        });
     if muted {
         plugins = plugins.disable::<bevy::audio::AudioPlugin>();
     }
@@ -449,6 +462,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// Threads Bevy runs systems on (its compute task pool), at most.
+const SYSTEM_THREADS: usize = 6;
 
 /// Physical cores, where they differ from hardware threads (Linux, from sysfs).
 fn physical_cores() -> Option<usize> {

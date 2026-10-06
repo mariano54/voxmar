@@ -85,6 +85,8 @@ fn despawn(commands: &mut Commands, shown: &Shown) {
 
 /// Seconds between a player's blows (the server's own limit is a little shorter).
 const SWING: f32 = 0.55;
+/// Creatures built a frame at most; more coming into view wait for the next frames.
+const SPAWNS: usize = 3;
 /// Creatures further than this are not drawn.
 const DRAWN_WITHIN: f32 = 96.0;
 /// The darkest a creature is drawn, so one in a cave is still a shape.
@@ -146,6 +148,8 @@ pub struct Creatures {
     /// Views and departures received since they were last applied.
     inbox: Vec<CreatureView>,
     left: Vec<CreatureGone>,
+    /// Creatures that came into view but wait for a later frame to be built (`SPAWNS`).
+    waiting: Vec<CreatureView>,
     /// Each species' part meshes, made when the first of it is seen.
     meshes: FxHashMap<CreatureId, Meshes>,
     /// A shaded cube for hearts, and their colours: full and empty.
@@ -327,6 +331,7 @@ fn show(
 
     let creatures = &mut *creatures;
     for gone in std::mem::take(&mut creatures.left) {
+        creatures.waiting.retain(|view| view.id != gone.id);
         match creatures.shown.get_mut(&gone.id) {
             Some(shown) if gone.died => {
                 shown.dying = Some(0.0);
@@ -342,7 +347,9 @@ fn show(
             None => {}
         }
     }
-    for view in std::mem::take(&mut creatures.inbox) {
+    let mut built = 0;
+    let views: Vec<CreatureView> = std::mem::take(&mut creatures.waiting).into_iter().chain(std::mem::take(&mut creatures.inbox)).collect();
+    for view in views {
         if let Some(shown) = creatures.shown.get_mut(&view.id) {
             if view.health < shown.view.health {
                 shown.flash = FLASH;
@@ -354,6 +361,13 @@ fn show(
         if view.species.0 as usize >= registry.len() {
             continue;
         }
+        // A herd coming into view at once is built a few a frame: painting a skin and
+        // spawning a model took a frame 4.5 ms longer for a handful.
+        if built == SPAWNS || creatures.waiting.iter().any(|waiting| waiting.id == view.id) {
+            creatures.waiting.push(view);
+            continue;
+        }
+        built += 1;
         let species = registry.get(view.species);
         let layout = &species.layout;
         let part_meshes = creatures
