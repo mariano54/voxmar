@@ -34,8 +34,9 @@ impl Plugin for ScreenshotPlugin {
 /// How a screenshot went, from the worker that kept it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kept {
-    /// Saved here, and copied to the clipboard (or not, with why).
-    Saved { path: PathBuf, copied: Result<(), String> },
+    /// Saved here, and copied to the clipboard (true), not asked to be (false), or not
+    /// copied, with why.
+    Saved { path: PathBuf, copied: Result<bool, String> },
     Failed(String),
 }
 
@@ -114,10 +115,11 @@ fn keep(image: Image, folder: Option<PathBuf>, copy: bool) -> Kept {
     pixels.chunks_exact_mut(4).for_each(|pixel| pixel[3] = 255);
     let (width, height) = (opaque.width() as usize, opaque.height() as usize);
     if !copy {
-        return Kept::Saved { path, copied: Err("not asked to".into()) };
+        return Kept::Saved { path, copied: Ok(false) };
     }
     let copied = arboard::Clipboard::new()
         .and_then(|mut clipboard| clipboard.set_image(arboard::ImageData { width, height, bytes: pixels.into() }))
+        .map(|()| true)
         .map_err(|error| error.to_string());
     Kept::Saved { path, copied }
 }
@@ -150,7 +152,8 @@ fn report(time: Res<Time>, shots: Res<Shots>, locale: Res<Locale>, mut console: 
     let Ok(receiver) = shots.receiver.lock() else { return };
     for kept in receiver.try_iter() {
         let (kind, words) = match &kept {
-            Kept::Saved { path, copied: Ok(()) } => (ChatKind::Info, locale.format("screenshot.copied", &[("file", &file_name(path))])),
+            Kept::Saved { path, copied: Ok(true) } => (ChatKind::Info, locale.format("screenshot.copied", &[("file", &file_name(path))])),
+            Kept::Saved { path, copied: Ok(false) } => (ChatKind::Info, locale.format("screenshot.saved", &[("file", &file_name(path))])),
             Kept::Saved { path, copied: Err(why) } => {
                 warn!("screenshot: not copied to the clipboard: {why}");
                 (ChatKind::Info, locale.format("screenshot.saved", &[("file", &file_name(path))]))
