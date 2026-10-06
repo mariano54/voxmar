@@ -1,9 +1,9 @@
 // 日本語 (Japanese). Keys as in en.ron; anything left out shows in English.
 {
     "language.name": "日本語",
-    // Kanji fill their whole box, so lines of them need more room than letters.
-    "language.line_height": "1.65",
-    "language.tight_line": "1.4",
+    // Kanji fill their whole box, so lines of them need a little more room than letters.
+    "language.line_height": "1.4",
+    "language.tight_line": "1.1",
     // Between items in a line: a middle dot never starts a line in Japanese.
     "language.dot": "・",
 

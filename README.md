@@ -46,8 +46,10 @@ between the shots (the sun and wind moving), as shadows and leaves flicker over 
 DIR, and `--server-lag MS` makes every tick of the integrated server take that much longer,
 as on a busy machine (see docs/quality.md).
 
-Before landing on main, run `tools/gate` (a quick gate: the build, the tests the change can
-reach and that session in a small world); play builds pass `tools/gate --full`. For changes
+Land on main with `tools/land`: it merges origin's main and the local one in, runs
+`tools/gate` (a quick gate: the build, the tests the change can reach and that session in a
+small world), fast-forwards main and pushes it, and checks that origin has it. Play builds
+pass `tools/gate --full`. For changes
 that can cost frame time, `tools/bench` compares frame times with main's on a quiet
 machine. All are described in docs/quality.md.
 
@@ -138,9 +140,9 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
 the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
-way. Kanji and kana come from a Japanese pixel font (listed in `assets/ui/fonts/fallback.ron`)
-whose glyphs are read at startup and merged under the chosen interface font, on its
-baseline, so every font speaks Japanese. Tests in `crates/client/src/lang.rs` hold every
+way. Kanji and kana come from BIZ UDGothic, a smooth Japanese font (listed in
+`assets/ui/fonts/fallback.ron`) that text falls back to for those scripts at its own size,
+while letters and digits stay in the crisp pixel font. Tests in `crates/client/src/lang.rs` hold every
 language complete, every key the code names defined, and every character drawn.
 
 ### Console and commands

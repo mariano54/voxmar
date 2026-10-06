@@ -140,6 +140,13 @@ if ((!full)); then
   ((${#packages[@]})) || session=0
 fi
 
+# A change that reaches no crate (docs, tools) has nothing to build, test or play: main
+# built and played as it is, so waiting a build slot for it gains nothing.
+log=
+if ((!full && !${#packages[@]})); then
+  step "build, tests and play skipped: the change reaches no crate"
+else
+
 step "build"
 $memcap -- cargo build --profile iter --workspace --all-targets >"$out/build.txt" 2>&1 || { tail -40 "$out/build.txt"; fail "the build"; }
 if grep -q '^warning' "$out/build.txt"; then
@@ -203,7 +210,6 @@ if ((tests_failed)); then
 fi
 status=$(cat "$out/game.status" 2>/dev/null || echo 0)
 ((session)) && [[ ! -e $out/game.status ]] && fail "the session never ran ($out/run.txt)"
-log=
 if ((session)); then
   log=$(sed 's/\x1b\[[0-9;]*m//g' "$out/game.txt")
   grep -E 'gate: (FAILED|KNOWN|SKIPPED)' <<<"$log" | sed -E 's/.*gate: //'
@@ -216,6 +222,8 @@ if ((session)); then
   problems=$(grep -v 'gate: FAILED\|gate FAILED' <<<"$problems" | sed '/^$/d')
   [[ -n $problems ]] && { echo "$problems" | head -20; fail "the game logged errors or unexpected warnings ($out/game.txt)"; }
   ((status == 0)) || fail "the game exited with $status ($out/game.txt, shots in $out)"
+fi
+
 fi
 
 checks=$(grep -c 'gate: ok' <<<"$log")

@@ -18,6 +18,8 @@ voxmar_protocol.workspace = true
 voxmar_server.workspace = true
 voxmar_worldgen.workspace = true
 voxmar_texgen.workspace = true
+# Bevy's text layout, for its font fallback (see lang.rs); the version Bevy uses.
+parley = { version = "0.9", default-features = false }
 # Only the parts in use: every plugin adds systems and render graph nodes that run each
 # frame whether or not anything uses them.
 bevy = { workspace = true, features = [
