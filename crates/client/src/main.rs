@@ -334,6 +334,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins(lang::LangPlugin);
     app.add_plugins(creatures::CreaturesPlugin);
+    // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
+    // beside their frame statistics.
+    if std::env::var_os("VOXMAR_GPU_TIMES").is_some() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
     .insert_resource(Actions(content.actions))
