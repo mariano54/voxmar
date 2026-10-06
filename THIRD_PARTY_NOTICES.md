@@ -246,15 +246,17 @@ Kenney anyway. Licence checked in the pack's License.txt on 5 October 2026. Unch
 
 ## Fusion Pixel Font (Japanese text)
 
-- Source: https://github.com/TakWolf/fusion-pixel-font (release 2026.09.25, 10 px monospaced, `ja` variant)
-- Author: TakWolf, built from Ark Pixel Font (TakWolf), Galmuri (Lee Minseo) and Boutique
-  Bitmap 9x9 (Cen-cyun Liu, fancy type foundry)
-- Licence: SIL Open Font License 1.1 (all three sources too). Licence checked in the release's
+- Source: https://github.com/TakWolf/fusion-pixel-font (release 2026.09.25, 12 px monospaced, `ja` variant)
+- Author: TakWolf, built from Ark Pixel Font (TakWolf), Galmuri (Lee Minseo) and Cubic 11
+  (itself built on JF Dot M+H 12, M+ FONTS PROJECT, and the M+ bitmap fonts, COZ)
+- Licence: SIL Open Font License 1.1; Galmuri OFL 1.1; Cubic 11 OFL 1.1 with the M+ fonts'
+  licence (free use, copying and distribution, with or without changes) for the glyphs it
+  takes from them. Licence checked in the release's
   `OFL.txt` and `LICENSES/` on 5 October 2026.
 - What we use: the font file, unmodified, for every kana and kanji the interface writes. The
   game reads its glyphs at startup and merges them under the chosen interface font
   (`voxmar_texgen::font::import`); the file itself ships as released.
-- Where: `assets/ui/fonts/japanese/fusion-pixel-10px-monospaced-ja.ttf`, with the font's
+- Where: `assets/ui/fonts/japanese/fusion-pixel-12px-monospaced-ja.ttf`, with the font's
   `OFL.txt` and its sources' licences in `assets/ui/fonts/japanese/LICENSES/` beside it,
   listed in `assets/ui/fonts/fallback.ron`.
 
