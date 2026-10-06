@@ -25,8 +25,8 @@
 //! world reseeds and spawn lands elsewhere).
 //!
 //! Breaking is played under load besides: a row of blocks of every hardness broken with
-//! the bare hand, a held block (throwing one halfway through) and every tool, while threads
-//! spin on every core, the game's own frames stall now and then and the server runs behind
+//! the bare hand, a held block (throwing one halfway through) and every tool, while busy
+//! threads contend for the cores, the game's own frames stall now and then and the server runs behind
 //! (`SERVER_LAG`). Mariano kept losing blocks he broke on a busy machine; client and server
 //! must still agree on every one.
 //!
@@ -767,7 +767,12 @@ impl Breaks {
     }
 }
 
-/// Threads spinning on every core until dropped.
+/// Threads spinning until dropped: a few, enough to contend with the game's own threads
+/// on a machine that is already busy (gate runs share it with builds and other gates, and
+/// with Mariano's game) without taking every core from everyone else.
+const LOAD_THREADS: usize = 4;
+
+/// Threads spinning until dropped.
 struct Load {
     stop: Arc<std::sync::atomic::AtomicBool>,
     threads: Vec<std::thread::JoinHandle<()>>,
@@ -776,8 +781,7 @@ struct Load {
 impl Load {
     fn start() -> Self {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
-        let threads = (0..cores)
+        let threads = (0..LOAD_THREADS)
             .map(|_| {
                 let stop = stop.clone();
                 std::thread::spawn(move || {
@@ -805,8 +809,8 @@ impl Drop for Load {
 
 /// A row of blocks of every hardness, broken one after another with the button held, as a
 /// player sweeps along a wall: with the bare hand, the starting planks (throwing one with Q
-/// halfway through) and every tool, swapped into the hotbar as needed. Threads spin on
-/// every core, the game's frames stall now and then, and the server runs behind. Every
+/// halfway through) and every tool, swapped into the hotbar as needed. Busy threads
+/// contend for the cores, the game's frames stall now and then, and the server runs behind. Every
 /// block must end broken on the client and the server alike, and none may come back.
 fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let feet = gate.feet;
