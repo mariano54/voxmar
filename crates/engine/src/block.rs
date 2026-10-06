@@ -849,6 +849,11 @@ impl BlockRegistry {
         self.id(name).unwrap_or_else(|| panic!("content is missing required block `{name}`"))
     }
 
+    /// Every block's id, in registration order.
+    pub fn ids(&self) -> impl Iterator<Item = BlockId> + '_ {
+        (0..self.defs.len() as u16).map(BlockId)
+    }
+
     pub fn len(&self) -> usize {
         self.defs.len()
     }

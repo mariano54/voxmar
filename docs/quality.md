@@ -67,6 +67,7 @@ changes don't move it, and checks:
 | place | three right clicks on the ground | the planks are on the client and the server, the two agree on every block around, the renderer has every column as it now is, the middle of the screen changed, the hand holds three fewer |
 | dig | holds the left button over the ground | a hole three blocks deep, with the same four checks |
 | drops | walks into the hole | every dug block's drop is picked up |
+| breaks | holds the left button along a row of glass, dirt, stone, snow, gravel and cobblestone, with the bare hand, the starting planks (throwing one with Q halfway) and every item tagged `tool`, while threads spin on every core and the game's own frames stall 80 to 320 ms every fifth frame or so | every block ends broken on the client and the server, none comes back, the two agree on every block around. The server judges breaks by when the player's messages arrived, so a server held up decides as one that kept up (crates/server/src/actions.rs) |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
 | weather | `/weather storm`, `/weather snow` | each arrives and changes the view (rain, snow, their particles) |

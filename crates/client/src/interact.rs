@@ -45,10 +45,14 @@ pub struct InteractSystems;
 #[derive(Resource, Default)]
 pub struct Target {
     pub hit: Option<RayHit>,
+    /// The block under the crosshair whether or not a creature is in front of it.
+    block_hit: Option<RayHit>,
     /// The creature under the crosshair, nearer than any block (see `creatures::aim`).
     pub creature: Option<u32>,
     /// Block being broken and progress in 0..1.
     pub breaking: Option<(IVec3, f32)>,
+    /// The target the mining in progress was proposed at, which its `Finished` names.
+    mining: Option<ActionTarget>,
     mining_seconds: f32,
     place_cooldown: f32,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
@@ -122,6 +126,7 @@ fn find_target(world: Res<ClientWorld>, player: Res<LocalPlayer>, mut target: Re
     target.hit = raycast(player.eye(), player.look_direction(), dims::REACH, |p| {
         world.block(p).is_some_and(|b| shows_breaking(world.registry.info(b)))
     });
+    target.block_hit = target.hit;
 }
 
 /// The client's view for checking actions before proposing them, using the same rules
@@ -198,7 +203,10 @@ fn break_and_place(
     target.place_cooldown -= time.delta_secs();
     target.mine_cooldown -= time.delta_secs();
     let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
-    let mining = hit.filter(|_| mouse.pressed(MouseButton::Left));
+    // A creature wandering across the block being mined does not stop the mining: only a
+    // fresh click strikes it (`creatures::aim`).
+    let still_mining = target.block_hit.filter(|h| target.breaking.is_some_and(|(pos, _)| pos == h.block));
+    let mining = hit.or(still_mining).filter(|_| ui.cursor_locked && !player.dead && mouse.pressed(MouseButton::Left));
 
     // Stop mining when the button is released or the target changes.
     if let Some((pos, _)) = target.breaking
@@ -224,11 +232,11 @@ fn break_and_place(
                 }
                 let progress = progress + step;
                 if progress >= 1.0 {
-                    // The server commits at the same moment; predict it, tell the server it
-                    // shows done here (so starting on the next block cannot cancel it if
-                    // the server runs behind), and wait Minecraft's five ticks.
+                    // The server commits at the same moment by the time the proposal reached
+                    // it; predict it, tell the server it shows done here (it completes or
+                    // undoes it, whatever comes next), and wait Minecraft's five ticks.
                     target.mine_cooldown = 0.25;
-                    net.finished();
+                    net.finished(target.mining.take().unwrap_or(action_target));
                     predict_break(&mut world, &player, &launch.content, hit.block, &mut broken);
                     target.breaking = None;
                 } else {
@@ -237,6 +245,7 @@ fn break_and_place(
             }
             _ if target.mine_cooldown <= 0.0 && def.validate(&context, action_target).is_ok() => {
                 target.mining_seconds = def.seconds(&context, action_target);
+                target.mining = Some(action_target);
                 net.propose_from(&player, mine, action_target);
                 // Plants and other blocks that break at once go now, as on the server,
                 // whose word would otherwise arrive before a predicted break.
@@ -287,7 +296,11 @@ fn break_and_place(
             let context = ClientContext { world: &world, player: &player, content };
             match actions.0.get(eat).map(|def| def.validate(&context, ActionTarget::None)) {
                 Some(Ok(())) => {
+                    // Eating takes the player's hands: the server drops (or, if nearly
+                    // done, completes) any mining it replaces, and so does the client.
                     net.propose_from(&player, eat, ActionTarget::None);
+                    target.breaking = None;
+                    target.mine_cooldown = 1.2;
                     target.place_cooldown = 1.2;
                 }
                 Some(Err(Rejection::Unmet(Requirement::Hungry))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),

@@ -66,6 +66,13 @@
             run: Give,
         ),
         (
+            name: "clear",
+            usage: "[item]",
+            help: "Empties your inventory, or takes every one of an item out of it.",
+            permission: Admin,
+            run: Clear,
+        ),
+        (
             name: "drop",
             usage: "<item> [count] [x y z]",
             help: "Drops a stack of an item into the world (up to 64 at a time) at a block (~ is where you are), or at your feet.",

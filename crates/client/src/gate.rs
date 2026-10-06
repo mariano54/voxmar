@@ -24,6 +24,12 @@
 //! biome's is held by worldgen's `grass_is_kept_in_check`, which does not move when the
 //! world reseeds and spawn lands elsewhere).
 //!
+//! Breaking is played under load besides: a row of blocks of every hardness broken with
+//! the bare hand, a held block (throwing one halfway through) and every tool, while threads
+//! spin on every core, the game's own frames stall now and then and the server runs behind
+//! (`SERVER_LAG`). Mariano kept losing blocks he broke on a busy machine; client and server
+//! must still agree on every one.
+//!
 //! It runs headless like `--capture`, builds its own test ground high above spawn with
 //! commands (so terrain changes don't move it), and exits with an error if any check
 //! failed. Each check is logged as `gate: ok …` or `gate: FAILED …`, and the shots are
@@ -138,6 +144,9 @@ enum Step {
     DigSettle,
     /// Walking into the hole picks up what the dug blocks dropped.
     Collect,
+    /// A row of blocks of every hardness, broken with the bare hand, a held block and every
+    /// tool, under load: client and server agree on every one, and none comes back.
+    Breaks,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
@@ -214,6 +223,7 @@ struct Gate {
     spills: Vec<(String, String)>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    breaks: Breaks,
     failures: Vec<String>,
     passes: usize,
     /// Real frame times so far (milliseconds), and the longest in each step.
@@ -247,6 +257,7 @@ impl Gate {
             readout_seen: false,
             spills: Vec::new(),
             food_moved: false,
+            breaks: Breaks::default(),
             failures: Vec::new(),
             passes: 0,
             frame_ms: Vec::new(),
@@ -380,6 +391,7 @@ fn run(world: &mut World) {
     let screen = *world.resource::<State<Screen>>().get();
     let mut gate = world.remove_resource::<Gate>().expect("gate state");
     gate.frames += 1;
+    gate.breaks.hitch(gate.frames);
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
@@ -614,11 +626,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 };
                 gate.check("drops", result);
                 key(world, KeyCode::KeyW, false);
-                let line = format!("tp {} {} {}", feet.x as f32 + 4.5, feet.y - 2, feet.z as f32 + 0.5);
-                world.resource::<Net>().command(&line);
-                gate.next(Step::Swim, now);
+                gate.next(Step::Breaks, now);
             }
         }
+        Step::Breaks => breaks(world, gate, now, in_phase),
         Step::Swim => swim(world, gate, now, in_phase),
         Step::Screens => screens(world, gate, now, in_phase),
         Step::Weather => weather(world, gate, now, in_phase),
@@ -670,6 +681,281 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         }
         Step::Done => {}
     }
+}
+
+/// Blocks of every hardness the breaks step lays out: glass and snow break in a blink,
+/// stone and cobblestone take seconds.
+const BREAK_BLOCKS: [&str; 6] = ["base:glass", "base:dirt", "base:stone", "base:snow_block", "base:gravel", "base:cobblestone"];
+/// Where the player's feet go for the breaks step, and the first block of the row,
+/// from the test ground's middle.
+const BREAK_STAND: IVec3 = IVec3::new(-1, 0, 0);
+const BREAK_ROW: IVec3 = IVec3::new(-3, 0, -2);
+/// The hotbar slot tools are swapped into.
+const TOOL_SLOT: usize = voxmar_engine::inventory::HOTBAR_SLOTS - 1;
+/// Longest the row may take to break, in seconds of game time.
+const BREAKS_LIMIT: f32 = 25.0;
+
+/// What a block is broken with in the breaks step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Holder {
+    Hand,
+    /// The starting planks, one thrown with Q halfway through: an instant action while
+    /// the break goes on, which must not cancel it.
+    Planks,
+    Tool(BlockId),
+}
+
+/// The breaks step's state, and the load it puts the machine under.
+#[derive(Default)]
+struct Breaks {
+    /// The row: each cell, what it was, and what it is broken with.
+    row: Vec<(IVec3, BlockId, Holder)>,
+    /// Blocks done so far; when the current one began; whether its Q was pressed.
+    done: usize,
+    began: f32,
+    thrown: bool,
+    /// Cells the client has shown broken, and any it has seen come back since.
+    shown: Vec<IVec3>,
+    came_back: Vec<IVec3>,
+    load: Option<Load>,
+}
+
+impl Breaks {
+    /// Stalls the game's frame now and then while under load: 80 to 320 ms every fifth
+    /// frame or so, as Mariano's slow frames did.
+    fn hitch(&self, frame: u32) {
+        if self.load.is_some() {
+            let roll = crate::sfx::mix(frame as u64);
+            if roll % 5 == 0 {
+                std::thread::sleep(Duration::from_millis(80 + (roll >> 8) % 240));
+            }
+        }
+    }
+}
+
+/// Threads spinning on every core until dropped.
+struct Load {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl Load {
+    fn start() -> Self {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let threads = (0..cores)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    let mut x = 1u64;
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        for _ in 0..10_000 {
+                            x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
+                        }
+                    }
+                })
+            })
+            .collect();
+        Self { stop, threads }
+    }
+}
+
+impl Drop for Load {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// A row of blocks of every hardness, broken one after another with the button held, as a
+/// player sweeps along a wall: with the bare hand, the starting planks (throwing one with Q
+/// halfway through) and every tool, swapped into the hotbar as needed. Threads spin on
+/// every core, the game's frames stall now and then, and the server runs behind. Every
+/// block must end broken on the client and the server alike, and none may come back.
+fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let feet = gate.feet;
+    match gate.phase {
+        0 => {
+            let (row, tools) = {
+                let registry = &world.resource::<ClientWorld>().registry;
+                let tools: Vec<BlockId> = registry.ids().filter(|&id| registry.def(id).has_tag("tool")).collect();
+                let mut holders = vec![Holder::Hand, Holder::Planks];
+                holders.extend(tools.iter().map(|&t| Holder::Tool(t)));
+                let blocks: Vec<BlockId> = BREAK_BLOCKS.iter().filter_map(|name| registry.id(name)).collect();
+                let count = blocks.len().max(holders.len());
+                let row: Vec<(IVec3, BlockId, Holder)> =
+                    (0..count).map(|i| (feet + BREAK_ROW + IVec3::new(-(i as i32 / 6), 0, i as i32 % 6), blocks[i % blocks.len()], holders[i % holders.len()])).collect();
+                let names: Vec<String> = tools.iter().map(|&t| registry.def(t).name.clone()).collect();
+                (row, names)
+            };
+            let net = world.resource::<Net>();
+            let stand = feet + BREAK_STAND;
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            let registry = &world.resource::<ClientWorld>().registry;
+            for &(cell, block, _) in &row {
+                net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
+            }
+            for tool in tools {
+                net.command(&format!("give {tool} 1"));
+            }
+            gate.breaks = Breaks { row, ..default() };
+            gate.advance(now);
+        }
+        1 => {
+            // The row in place on both sides, the tools in the inventory, the player there.
+            let row = gate.breaks.row.clone();
+            let client = world.resource::<ClientWorld>();
+            let built = |side: &dyn Fn(IVec3) -> Option<BlockId>| row.iter().all(|&(cell, block, _)| side(cell) == Some(block));
+            let server = gate.observer.as_ref().is_none_or(|o| built(&|p| o.world.block(p)));
+            let player = world.resource::<LocalPlayer>();
+            let tools = row.iter().all(|&(_, _, holder)| match holder {
+                Holder::Tool(tool) => (0..voxmar_engine::inventory::SLOTS).any(|s| player.inventory.get(s).is_some_and(|stack| stack.item == tool)),
+                _ => true,
+            });
+            let standing = player.on_ground && player.position.floor().as_ivec3() == feet + BREAK_STAND;
+            if built(&|p| client.block(p)) && server && tools && standing {
+                gate.breaks.load = Some(Load::start());
+                gate.breaks.began = now;
+                gate.advance(now);
+            } else if in_phase > 10.0 {
+                gate.check("breaks", Err(format!("the row was never built (client {}, server {server}), the tools never came ({tools}) or the player never stood there", built(&|p| client.block(p)))));
+                end_breaks(world, gate, now);
+            }
+        }
+        2 => {
+            let breaks = &mut gate.breaks;
+            let client = world.resource::<ClientWorld>();
+            for &(cell, _, _) in &breaks.row {
+                let air = client.block(cell).is_some_and(|b| b.is_air());
+                if air && !breaks.shown.contains(&cell) {
+                    breaks.shown.push(cell);
+                } else if !air && breaks.shown.contains(&cell) && !breaks.came_back.contains(&cell) {
+                    breaks.came_back.push(cell);
+                }
+            }
+            while breaks.done < breaks.row.len() && client.block(breaks.row[breaks.done].0).is_some_and(|b| b.is_air()) {
+                breaks.done += 1;
+                breaks.began = now;
+                breaks.thrown = false;
+            }
+            let Some(&(cell, _, holder)) = breaks.row.get(breaks.done) else {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+                return;
+            };
+            if in_phase > BREAKS_LIMIT {
+                mouse(world, MouseButton::Left, false);
+                let stuck = format!("{} of {} blocks broke in {BREAKS_LIMIT}s; stuck on {cell} with {holder:?}", breaks.done, breaks.row.len());
+                gate.check("breaks", Err(stuck));
+                end_breaks(world, gate, now);
+                return;
+            }
+            hold(world, holder);
+            // Q halfway through the planks' block: thrown while the break goes on.
+            let progress = world.resource::<crate::interact::Target>().breaking.filter(|(at, _)| *at == cell).map_or(0.0, |(_, p)| p);
+            let throw = holder == Holder::Planks && !gate.breaks.thrown && progress >= 0.5;
+            if throw {
+                gate.breaks.thrown = true;
+            }
+            key(world, KeyCode::KeyQ, throw);
+            aim(world, cell);
+            mouse(world, MouseButton::Left, true);
+        }
+        _ => {
+            // Both sides settle with every block broken; then nothing may have come back.
+            gate.breaks.load = None;
+            let cells: Vec<IVec3> = gate.breaks.row.iter().map(|&(cell, ..)| cell).collect();
+            if !edit_settled(world, gate, in_phase, &cells, |b| b.is_air()) {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let named = |block: Option<BlockId>| block.map_or_else(|| "not loaded".to_owned(), |b| client.registry.def(b).name.clone());
+            let mut wrong: Vec<String> = Vec::new();
+            for &(cell, block, holder) in &gate.breaks.row {
+                let server = gate.observer.as_ref().and_then(|o| o.world.block(cell));
+                if !client.block(cell).is_some_and(|b| b.is_air()) || !server.is_some_and(|b| b.is_air()) {
+                    wrong.push(format!("{} with {holder:?} at {cell}: client {}, server {}", named(Some(block)), named(client.block(cell)), named(server)));
+                }
+            }
+            wrong.extend(gate.breaks.came_back.iter().map(|cell| format!("{cell} came back after it broke")));
+            let differ = gate.observer.as_ref().map_or(0, |o| disagreements(client, &o.world, feet).len());
+            if differ > 0 {
+                wrong.push(format!("{differ} blocks around differ between client and server"));
+            }
+            let holders: Vec<String> = gate.breaks.row.iter().map(|&(_, _, holder)| match holder {
+                Holder::Tool(tool) => client.registry.def(tool).name.clone(),
+                other => format!("{other:?}").to_lowercase(),
+            }).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            let longest = gate.longest.get(&Step::Breaks).copied().unwrap_or(0.0);
+            let result = if wrong.is_empty() {
+                Ok(format!("{} blocks of {} hardnesses broke with {} under load (frames up to {longest:.0} ms), and stayed broken on both sides", gate.breaks.row.len(), BREAK_BLOCKS.len(), holders.join(", ")))
+            } else {
+                Err(wrong.join("; "))
+            };
+            gate.check("breaks", result);
+            end_breaks(world, gate, now);
+        }
+    }
+}
+
+/// Puts `holder` in the player's hand: an empty hotbar slot, the planks, or the tool,
+/// swapped into the tool slot first if it is elsewhere (predicted, as a click would).
+fn hold(world: &mut World, holder: Holder) {
+    let actions = world.resource::<crate::Actions>().0.clone();
+    let transfer = actions.expect("core:transfer");
+    let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+    let mut swap = None;
+    {
+        let mut player = world.resource_mut::<LocalPlayer>();
+        let find = |player: &LocalPlayer, wanted: &dyn Fn(Option<BlockId>) -> bool, slots: std::ops::Range<usize>| {
+            slots.into_iter().find(|&s| wanted(player.inventory.get(s).map(|stack| stack.item)))
+        };
+        let hotbar = 0..voxmar_engine::inventory::HOTBAR_SLOTS;
+        let slot = match holder {
+            Holder::Hand => find(&player, &|item| item.is_none(), hotbar),
+            Holder::Planks => find(&player, &|item| item.is_some() && item == planks, hotbar),
+            Holder::Tool(tool) => match find(&player, &|item| item == Some(tool), hotbar) {
+                Some(slot) => Some(slot),
+                None => {
+                    let from = find(&player, &|item| item == Some(tool), voxmar_engine::inventory::HOTBAR_SLOTS..voxmar_engine::inventory::SLOTS);
+                    if let Some(from) = from
+                        && player.inventory.move_items(from, TOOL_SLOT, u8::MAX)
+                    {
+                        swap = Some(from);
+                    }
+                    swap.map(|_| TOOL_SLOT)
+                }
+            },
+        };
+        if let Some(slot) = slot {
+            player.selected = slot;
+        }
+    }
+    if let Some(from) = swap {
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: TOOL_SLOT as u8, count: u8::MAX };
+        world.resource::<Net>().propose(transfer, target);
+    }
+}
+
+/// Lifts the load, puts the tools away (later steps want room in the hotbar) and goes on
+/// to the pool.
+fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
+    gate.breaks.load = None;
+    mouse(world, MouseButton::Left, false);
+    key(world, KeyCode::KeyQ, false);
+    let registry = world.resource::<ClientWorld>().registry.clone();
+    let net = world.resource::<Net>();
+    for &(_, _, holder) in &gate.breaks.row {
+        if let Holder::Tool(tool) = holder {
+            net.command(&format!("clear {}", registry.def(tool).name));
+        }
+    }
+    let feet = gate.feet;
+    let line = format!("tp {} {} {}", feet.x as f32 + 4.5, feet.y - 2, feet.z as f32 + 0.5);
+    world.resource::<Net>().command(&line);
+    gate.next(Step::Swim, now);
 }
 
 /// In the pool, facing the bank with the step on it, holding forward and jump climbs out
@@ -1499,13 +1785,17 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if in_phase > 25.0 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
-                gate.check("tame", Err("25 seconds of feeding wheat did not tame it".into()));
+                let (wheat, trust) = (item_count(world, "base:wheat"), view.trust);
+                gate.check("tame", Err(format!("25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left")));
                 gate.next(Step::Gorge, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.3);
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                // Only with the junglefowl itself under the crosshair: a mouflon wandering in
+                // front would be offered the wheat instead (they love it too).
+                let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
+                mouse(world, MouseButton::Right, aimed && ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
         3 => {

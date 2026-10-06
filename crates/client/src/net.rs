@@ -81,9 +81,10 @@ impl Net {
         self.connection.send(ClientMessage::Cancel);
     }
 
-    /// Tells the server the action in progress shows done here (see `ClientMessage::Finished`).
-    pub fn finished(&self) {
-        self.connection.send(ClientMessage::Finished);
+    /// Tells the server the timed action proposed at `target` shows done here (see
+    /// `ClientMessage::Finished`).
+    pub fn finished(&self, target: ActionTarget) {
+        self.connection.send(ClientMessage::Finished { target });
     }
 
     pub fn send_settings(&self, view_distance: u8, fly_speed: f32) {

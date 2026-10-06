@@ -173,7 +173,8 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   `/fill X1 Y1 Z1 X2 Y2 Z2 BLOCK` fills a box (at most 32768 blocks and 128 across; `air`
   empties it). Both load the columns they touch first. `/give BLOCK [COUNT]` hands you blocks
   (64 unless you say; what does not fit drops at your feet), so `/give water` lets you pour
-  water. `/drop ITEM [COUNT] [X Y Z]` drops a stack into the world, at your feet unless you
+  water. `/clear [ITEM]` empties your inventory, or takes every one of an item out of it.
+  `/drop ITEM [COUNT] [X Y Z]` drops a stack into the world, at your feet unless you
   say where. Block names may leave out the
   package (`water` for `base:water`).
 - `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
