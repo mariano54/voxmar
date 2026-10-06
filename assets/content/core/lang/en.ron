@@ -347,7 +347,7 @@
     "effect.base.queasy": "Queasy",
     "effect.base.queasy.description": "Raw meat: slower to heal and a little slower going. Cook it.",
     "character.hint": "Click a skill for its guide: what each level opens up.",
-    "character.guide_hint": "Scroll for more; Back returns to your skills.",
+    "character.guide_hint": "Click a line for how to go about it; Back returns.",
     "character.combat_level": "Combat level {level}",
     "character.level": "Lv {level}",
     "character.xp": "{xp} xp",

@@ -317,7 +317,7 @@
     "effect.core.storm_wary": "雷に用心",
     "effect.core.storm_wary.description": "雷が近い。外にいる間は回復が遅く、経験も少し減る。",
     "character.hint": "スキルをクリックでガイド: レベルごとにできること。",
-    "character.guide_hint": "スクロールで続きへ・戻るでスキル一覧へ",
+    "character.guide_hint": "行をクリックでやり方へ・戻るで前の画面へ",
     "character.combat_level": "戦闘レベル {level}",
     "character.level": "Lv {level}",
     "character.xp": "{xp} xp",

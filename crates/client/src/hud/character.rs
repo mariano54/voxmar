@@ -393,9 +393,9 @@ fn draw_guide(
             match open {
                 // A line's page is headed by the line itself.
                 Some(i) => {
-                    top.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), min_width: Val::ZERO, ..default() }).with_children(|title| {
+                    top.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }).with_children(|title| {
                         title.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), flex_shrink: 0.0, ..default() }, ImageNode::new(icon_of(entries[i].icon))));
-                        title.spawn((Node { min_width: Val::ZERO, ..default() }, shadowed(font, entries[i].words.clone(), BODY, GOLD)));
+                        title.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, shadowed(font, entries[i].words.clone(), BODY, GOLD)));
                     });
                 }
                 None => {
