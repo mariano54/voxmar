@@ -50,6 +50,12 @@ pub struct GuideStep {
     /// The item drawn beside it, by name; the skill's own icon when none is given.
     #[serde(default)]
     pub icon: Option<String>,
+    /// The kind of line it is, which the guide sorts it under (`planting`, `breeding`).
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Roughly how to go about it, for the page the line opens: a hint, not every detail.
+    #[serde(default)]
+    pub how: Option<String>,
 }
 
 /// How much experience each level takes.

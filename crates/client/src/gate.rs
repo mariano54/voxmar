@@ -209,6 +209,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// The Farming guide sorts its lines into kinds down the left; Planting shows only
+    /// planting, and a line opens its page.
+    Guides,
     /// In creative mode the inventory's catalogue finds an item by its English name and by
     /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
     Catalogue,
@@ -306,6 +309,12 @@ struct Gate {
     /// and button (a step that passes may hand one on, as digging hands walking on).
     last_step: Step,
     failures_then: usize,
+    /// The player's health last frame, and whether a death was reported: the session must
+    /// never kill its player, and a dead one fails every step after.
+    health_last: u8,
+    death_seen: bool,
+    /// Set while a step kills the player on purpose (the workshop's /kill), until the step ends.
+    killed_on_purpose: bool,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
     /// Frames on which the open overlay's text changed (each one lays the UI out again),
@@ -363,6 +372,9 @@ impl Gate {
             phase_server: 0.0,
             last_step: Step::Load,
             failures_then: 0,
+            health_last: 0,
+            death_seen: false,
+            killed_on_purpose: false,
             overlay_changes: 0,
             overlay_counted: (0.0, 0.0),
         }
@@ -522,6 +534,11 @@ fn run(world: &mut World) {
     }
     if gate.step != gate.last_step {
         (gate.last_step, gate.failures_then) = (gate.step, gate.failures.len());
+        gate.killed_on_purpose = false;
+    }
+    // (The text-fit steps put the player through the death screen on purpose.)
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitMenus | Step::Leave | Step::Done) {
+        watch_health(world, &mut gate);
     }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
     gate.frame_ms.push(frame_ms);
@@ -558,6 +575,40 @@ fn stall_under_test(frame: u32) {
         if roll % 5 == 0 {
             std::thread::sleep(Duration::from_millis(80 + (roll >> 8) % 240));
         }
+    }
+}
+
+/// Logs every loss of health with what was around the player, and fails the session the
+/// moment the player dies, then respawns them on the test ground: three sessions on a
+/// loaded machine lost their player during the swim and failed every step after with no
+/// word of why.
+fn watch_health(world: &mut World, gate: &mut Gate) {
+    let player = world.resource::<LocalPlayer>();
+    let (health, dead, position, in_water) = (player.health, player.dead, player.position, player.in_water);
+    if health < gate.health_last {
+        let client = world.resource::<ClientWorld>();
+        let name = |at: Vec3| client.block(at.floor().as_ivec3()).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+        let nearest = world
+            .resource::<crate::creatures::Creatures>()
+            .views()
+            .map(|v| (v.species, v.position.distance(position)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or("none".to_owned(), |(species, d)| format!("species {species:?} {d:.1} blocks off"));
+        info!(
+            "gate: health {} -> {health} during {:?} at {position:.1}: feet in {}, head in {}, in water {in_water}, nearest creature {nearest}",
+            gate.health_last,
+            gate.step,
+            name(position + Vec3::Y * 0.1),
+            name(position + Vec3::Y * 1.6)
+        );
+    }
+    gate.health_last = health;
+    if dead && !gate.death_seen && !gate.killed_on_purpose {
+        gate.death_seen = true;
+        gate.check("alive", Err(format!("the player died during {:?} at {position:.1} (the health losses before are logged)", gate.step)));
+        key(world, KeyCode::KeyR, true);
+    } else if gate.death_seen && !dead && gate.health_last > 0 {
+        key(world, KeyCode::KeyR, false);
     }
 }
 
@@ -798,6 +849,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Guides => guides(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
@@ -1461,6 +1513,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if carried(world) == 44 {
                 gate.count_before = 44;
                 gate.fell = world.resource::<LocalPlayer>().position;
+                gate.killed_on_purpose = true;
                 world.resource::<Net>().command("kill");
                 gate.advance(now);
             } else if in_phase > WORKSHOP_WAIT {
@@ -1699,13 +1752,22 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if gate.shot(world, "game").is_some() {
                 // The HUD reads health off the server; there is no hunger to show.
-                let player = world.resource::<LocalPlayer>();
-                let reading = format!("{}/{}", player.health, player.max_health);
+                let (health, max_health) = {
+                    let player = world.resource::<LocalPlayer>();
+                    (player.health, player.max_health)
+                };
+                let reading = format!("{health}/{max_health}");
                 let mut texts = world.query::<&Text>();
                 let meters = texts.iter(world).filter(|text| text.0 == reading).count();
                 gate.check(
                     "vitals",
-                    if meters >= 1 { Ok(format!("health {reading}, shown on {meters} meters")) } else { Err(format!("no meter reads the health {reading}")) },
+                    if health < max_health {
+                        Err(format!("the player has lost health: {reading}"))
+                    } else if meters >= 1 {
+                        Ok(format!("health {reading}, shown on {meters} meters"))
+                    } else {
+                        Err(format!("no meter reads the health {reading}"))
+                    },
                 );
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
@@ -1974,6 +2036,51 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Guides, now);
+        }
+    }
+}
+
+fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::character::{Guide, GuideView};
+    let skills = &world.resource::<Launch>().content.skills;
+    let Some(farming) = skills.ids().find(|&id| skills.get(id).name.ends_with("farming")) else {
+        gate.check("guides", Err("no Farming skill in the content".into()));
+        gate.next(Step::Catalogue, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            world.resource_mut::<UiState>().character_open = true;
+            world.resource_mut::<Guide>().0 = Some(farming);
+            world.resource_mut::<GuideView>().category = Some("planting".into());
+            gate.advance(now);
+        }
+        1 => {
+            let (lines, kinds) = crate::hud::character::guide_buttons(world);
+            if lines == 0 && in_phase < 2.0 {
+                return;
+            }
+            gate.check("guides: kinds", if kinds >= 3 && lines > 0 { Ok(format!("{kinds} kinds down the left, {lines} planting lines")) } else { Err(format!("{kinds} kinds and {lines} lines")) });
+            let first = {
+                let locale = world.resource::<Locale>().clone();
+                let launch = world.resource::<Launch>();
+                crate::hud::guide::entries(&locale, launch, farming).iter().position(|e| e.category == "planting")
+            };
+            world.resource_mut::<GuideView>().entry = first;
+            gate.advance(now);
+        }
+        _ => {
+            let needs = world.resource::<Locale>().get("guide.needs").to_owned();
+            let mut texts = world.query::<&Text>();
+            let shown = texts.iter(world).any(|t| t.0 == needs);
+            if !shown && in_phase < 2.0 {
+                return;
+            }
+            gate.check("guides: page", if shown { Ok("a planting line opens its page".into()) } else { Err("a line's page never showed what it needs".into()) });
+            *world.resource_mut::<GuideView>() = GuideView::default();
+            world.resource_mut::<Guide>().0 = None;
+            world.resource_mut::<UiState>().character_open = false;
             gate.next(Step::Catalogue, now);
         }
     }
