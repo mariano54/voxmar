@@ -73,7 +73,7 @@
         // A rock: as it lies, broken into cobbles (what mining it gives), polished, and
         // cut into bricks.
         "stone": [
-            (name: "{name}", textures: All("{name}"), hardness: 1.5, drops: "cobbled_{name}", color: (125, 125, 125), tags: ["stone", "natural"]),
+            (name: "{name}", texture_variety: (turn: true, mirror: true), textures: All("{name}"), hardness: 1.5, drops: "cobbled_{name}", color: (125, 125, 125), tags: ["stone", "natural"]),
             (name: "cobbled_{name}", textures: All("cobbled_{name}"), hardness: 2.0, color: (110, 110, 110), tags: ["stone", "cobbled", "building"]),
             (name: "polished_{name}", textures: All("polished_{name}"), hardness: 1.5, color: (135, 135, 135), tags: ["stone", "polished", "building"]),
             (name: "{name}_bricks", textures: All("{name}_bricks"), hardness: 1.5, color: (120, 120, 120), tags: ["stone", "bricks", "building"]),
@@ -125,12 +125,12 @@
         ],
         // Fired clay in one colour.
         "terracotta": [
-            (name: "{name}_terracotta", textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}"]),
+            (name: "{name}_terracotta", texture_variety: (turn: true, mirror: true), textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}"]),
         ],
     },
     blocks: [
         // Rock
-        (name: "bedrock", textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
+        (name: "bedrock", texture_variety: (turn: true, mirror: true), textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
         (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
         (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet"]),
@@ -139,15 +139,15 @@
         (name: "mossy_stone_bricks", textures: All("mossy_stone_bricks"), hardness: 1.5, color: (105, 118, 95), family: "stone", tags: ["stone", "bricks", "building", "mossy", "wet"]),
         (name: "cracked_stone_bricks", textures: All("cracked_stone_bricks"), hardness: 1.5, color: (115, 115, 115), family: "stone", tags: ["stone", "bricks", "building", "ruined"]),
         // Volcanic glass, where lava meets water.
-        (name: "obsidian", sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep"]),
+        (name: "obsidian", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep"]),
         // Soil
         (name: "dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"]),
-        (name: "coarse_dirt", sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"]),
-        (name: "rooted_dirt", sound: Soil, textures: All("rooted_dirt"), hardness: 0.5, color: (144, 104, 77), tags: ["soil", "natural"]),
-        (name: "mud", sound: Mud, textures: All("mud"), hardness: 0.5, color: (60, 57, 61), tags: ["soil", "wet", "natural", "surface"]),
-        (name: "moss_block", sound: Moss, textures: All("moss_block"), hardness: 0.1, color: (89, 110, 45), tags: ["soil", "wet", "groundcover", "natural", "surface"]),
+        (name: "coarse_dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"]),
+        (name: "rooted_dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("rooted_dirt"), hardness: 0.5, color: (144, 104, 77), tags: ["soil", "natural"]),
+        (name: "mud", texture_variety: (turn: true, mirror: true), sound: Mud, textures: All("mud"), hardness: 0.5, color: (60, 57, 61), tags: ["soil", "wet", "natural", "surface"]),
+        (name: "moss_block", texture_variety: (turn: true, mirror: true), sound: Moss, textures: All("moss_block"), hardness: 0.1, color: (89, 110, 45), tags: ["soil", "wet", "groundcover", "natural", "surface"]),
         (
-            name: "podzol", sound: Soil,
+            name: "podzol", sound: Soil, texture_variety: (turn: true, mirror: true),
             textures: Sides(top: "podzol_top", bottom: "dirt", side: "podzol_side"),
             hardness: 0.5,
             drops: "dirt",
@@ -176,13 +176,13 @@
             color: (125, 135, 75),
             tags: ["soil", "worn", "natural", "surface"],
         ),
-        (name: "packed_earth", sound: Soil, textures: All("packed_earth"), hardness: 0.6, drops: "dirt", color: (150, 116, 80), tags: ["soil", "worn", "path", "surface"]),
-        (name: "clay", sound: Soil, textures: All("clay"), hardness: 0.6, color: (160, 166, 179), tags: ["clay", "wet", "natural"]),
+        (name: "packed_earth", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("packed_earth"), hardness: 0.6, drops: "dirt", color: (150, 116, 80), tags: ["soil", "worn", "path", "surface"]),
+        (name: "clay", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("clay"), hardness: 0.6, color: (160, 166, 179), tags: ["clay", "wet", "natural"]),
         (name: "gravel", texture_variety: (turn: true, mirror: true), sound: Gravel, textures: All("gravel"), hardness: 0.6, color: (136, 126, 126), tags: ["gravel", "natural", "surface"]),
-        (name: "loam", sound: Soil, textures: All("loam"), hardness: 0.5, color: (94, 71, 54), tags: ["soil", "fertile", "natural", "surface"]),
-        (name: "peat", sound: Mud, textures: All("peat"), hardness: 0.5, color: (55, 42, 33), tags: ["soil", "wet", "acidic", "fuel", "natural", "surface", "wetland"]),
-        (name: "red_earth", sound: Soil, textures: All("red_earth"), hardness: 0.5, color: (157, 74, 47), tags: ["soil", "dry", "natural", "surface", "tropical", "savanna"]),
-        (name: "silt", sound: Sand, textures: All("silt"), hardness: 0.5, color: (176, 168, 153), tags: ["soil", "wet", "fertile", "natural", "surface", "riverbank"]),
+        (name: "loam", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("loam"), hardness: 0.5, color: (94, 71, 54), tags: ["soil", "fertile", "natural", "surface"]),
+        (name: "peat", texture_variety: (turn: true, mirror: true), sound: Mud, textures: All("peat"), hardness: 0.5, color: (55, 42, 33), tags: ["soil", "wet", "acidic", "fuel", "natural", "surface", "wetland"]),
+        (name: "red_earth", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("red_earth"), hardness: 0.5, color: (157, 74, 47), tags: ["soil", "dry", "natural", "surface", "tropical", "savanna"]),
+        (name: "silt", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("silt"), hardness: 0.5, color: (176, 168, 153), tags: ["soil", "wet", "fertile", "natural", "surface", "riverbank"]),
         // Snow and ice
         (
             name: "snowy_grass_block", sound: Snow,
@@ -192,15 +192,15 @@
             color: (240, 245, 250),
             tags: ["soil", "snow", "cold", "natural", "surface"],
         ),
-        (name: "snow_block", sound: Snow, textures: All("snow"), hardness: 0.2, color: (240, 245, 250), tags: ["snow", "cold", "natural", "surface"]),
-        (name: "powder_snow", sound: Snow, textures: All("powder_snow"), hardness: 0.25, color: (248, 253, 253), tags: ["snow", "cold", "natural", "surface"]),
+        (name: "snow_block", texture_variety: (turn: true, mirror: true), sound: Snow, textures: All("snow"), hardness: 0.2, color: (240, 245, 250), tags: ["snow", "cold", "natural", "surface"]),
+        (name: "powder_snow", texture_variety: (turn: true, mirror: true), sound: Snow, textures: All("powder_snow"), hardness: 0.25, color: (248, 253, 253), tags: ["snow", "cold", "natural", "surface"]),
         (name: "ice", sound: Glass, textures: All("ice"), render: Translucent, light_filter: 2, hardness: 0.5, color: (150, 190, 250), tags: ["ice", "cold", "natural"]),
-        (name: "packed_ice", sound: Glass, textures: All("packed_ice"), hardness: 0.5, color: (141, 180, 250), tags: ["ice", "cold", "natural"]),
-        (name: "blue_ice", sound: Glass, textures: All("blue_ice"), hardness: 2.8, color: (116, 167, 253), tags: ["ice", "cold", "natural"]),
+        (name: "packed_ice", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("packed_ice"), hardness: 0.5, color: (141, 180, 250), tags: ["ice", "cold", "natural"]),
+        (name: "blue_ice", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("blue_ice"), hardness: 2.8, color: (116, 167, 253), tags: ["ice", "cold", "natural"]),
         // Sand
         (name: "sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("sand"), hardness: 0.5, color: (219, 207, 163), tags: ["sand", "natural", "surface"]),
-        (name: "red_sand", sound: Sand, textures: All("red_sand"), hardness: 0.5, color: (190, 102, 33), tags: ["sand", "natural", "surface"]),
-        (name: "terracotta", textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["terracotta", "clay", "natural", "building", "colour:brown"]),
+        (name: "red_sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("red_sand"), hardness: 0.5, color: (190, 102, 33), tags: ["sand", "natural", "surface"]),
+        (name: "terracotta", texture_variety: (turn: true, mirror: true), textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["terracotta", "clay", "natural", "building", "colour:brown"]),
         // Fluids. Each also makes its flowing and falling states (`water_flow_1` ..
         // `water_flow_7`, `water_falling`), and water the river states that carry a current
         // (see engine/src/fluid.rs). `tick`: ticks per step of a flow; `drop`: eighths of
@@ -249,20 +249,20 @@
         ),
         // Caves: dripstone, glowing growth, crystals, magma, the deep dark's gloomvein,
         // giant mushroom blocks and roots hanging from the roof.
-        (name: "dripstone_block", textures: All("dripstone_block"), hardness: 1.5, color: (130, 104, 88), tags: ["stone", "sedimentary", "natural", "cave", "dripstone"]),
+        (name: "dripstone_block", texture_variety: (turn: false, mirror: true), textures: All("dripstone_block"), hardness: 1.5, color: (130, 104, 88), tags: ["stone", "sedimentary", "natural", "cave", "dripstone"]),
         (name: "pointed_dripstone", render: Plant, solid: false, textures: All("pointed_dripstone_up_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalagmite"]),
         (name: "hanging_dripstone", render: Plant, solid: false, support: Above, textures: All("pointed_dripstone_down_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalactite", "hanging"]),
         (name: "glow_berries", render: Plant, solid: false, support: Above, sound: Leaves, textures: All("cave_vines_lit"), light: 8, hardness: 0.0, color: (90, 120, 40), rarity: Uncommon, tags: ["plant", "cave", "hanging", "berry", "edible", "flavour:sweet", "glowing", "alchemy:night_sight"]),
         (name: "glow_lichen", render: Plant, solid: false, sound: Grass, textures: All("glow_lichen"), light: 7, hardness: 0.0, drops: "core:air", color: (110, 160, 140), tags: ["plant", "cave", "groundcover", "glowing", "alchemy:luminous"]),
         (name: "moss_carpet", render: Plant, solid: false, sound: Moss, textures: All("moss_carpet"), hardness: 0.0, color: (89, 110, 45), tags: ["plant", "groundcover", "cave", "forest_floor", "shade", "wet"]),
         (name: "hanging_roots", render: Plant, solid: false, support: Above, sound: Grass, textures: All("hanging_roots"), hardness: 0.0, color: (160, 120, 90), tags: ["plant", "cave", "hanging", "root", "fibre"]),
-        (name: "crystal_block", sound: Glass, textures: All("crystal_block"), light: 1, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity"]),
+        (name: "crystal_block", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("crystal_block"), light: 1, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity"]),
         (name: "crystal_cluster", render: Plant, solid: false, sound: Glass, textures: All("crystal_cluster"), light: 4, hardness: 1.0, color: (170, 150, 220), rarity: Uncommon, tags: ["gem", "cave", "glowing", "alchemy:clarity", "alchemy:aether"]),
-        (name: "magma_block", textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
-        (name: "gloomvein", sound: Soil, textures: All("gloomvein"), light: 1, hardness: 0.6, color: (20, 40, 46), rarity: Rare, tags: ["natural", "cave", "deep", "wonder", "glowing", "alchemy:night_sight", "alchemy:aether"]),
-        (name: "brown_mushroom_block", sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "brown_mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor"]),
-        (name: "red_mushroom_block", sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor"]),
-        (name: "mushroom_stem", sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "magma_block", texture_variety: (turn: true, mirror: true), textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
+        (name: "gloomvein", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("gloomvein"), light: 1, hardness: 0.6, color: (20, 40, 46), rarity: Rare, tags: ["natural", "cave", "deep", "wonder", "glowing", "alchemy:night_sight", "alchemy:aether"]),
+        (name: "brown_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "brown_mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "red_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "mushroom_stem", texture_variety: (turn: false, mirror: true), sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor"]),
         // Leaves turned for autumn, for groves that biomes want in colour.
         (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow"]),
         // Leaves of their own, on borrowed wood: an olive's grey-green, untinted, and a
