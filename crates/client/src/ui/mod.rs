@@ -29,15 +29,18 @@ const FULL_SIZE: Vec2 = Vec2::new(1200.0, 800.0);
 
 /// Draws the interface at the size the settings ask for, or at the largest smaller step
 /// that fits the view, so every screen fits on it.
-fn fit_scale(settings: Res<Settings>, windows: Query<&Window, With<PrimaryWindow>>, cameras: Query<&Camera, With<Camera3d>>, mut scale: ResMut<UiScale>) {
-    // The window's own size: the world's camera may draw into a smaller image (the
-    // resolution setting), which the interface is not. Without a window (captures, the
-    // gate), the image drawn off screen.
-    let view = match windows.single() {
+/// The size the interface is laid out on, in the window's points: the window's own size (the
+/// world's camera may draw into a smaller image, the resolution setting, which the interface
+/// is not), or without a window (captures, the gate) the image drawn off screen.
+pub fn view_size(windows: &Query<&Window, With<PrimaryWindow>>, cameras: &Query<&Camera, With<Camera3d>>) -> Option<Vec2> {
+    match windows.single() {
         Ok(window) => Some(Vec2::new(window.width(), window.height())),
         Err(_) => cameras.iter().filter_map(Camera::logical_viewport_size).reduce(Vec2::max),
-    };
-    let Some(view) = view else { return };
+    }
+}
+
+fn fit_scale(settings: Res<Settings>, windows: Query<&Window, With<PrimaryWindow>>, cameras: Query<&Camera, With<Camera3d>>, mut scale: ResMut<UiScale>) {
+    let Some(view) = view_size(&windows, &cameras) else { return };
     let wanted = settings.ui_scale.clamp(50, 150);
     let fits = |percent: i32| view.cmpge(FULL_SIZE * percent as f32 / 100.0).all();
     let percent = crate::settings::UI_SCALES.iter().rev().copied().find(|&step| step <= wanted && fits(step)).unwrap_or(50);
