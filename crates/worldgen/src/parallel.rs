@@ -23,6 +23,17 @@ static ENABLED: AtomicBool = AtomicBool::new(true);
 /// Helper threads alive now, across every world.
 static HELPERS: AtomicUsize = AtomicUsize::new(0);
 
+/// Most helper threads alive at once, and so taken by one build; 0 for one per core.
+static LIMIT: AtomicUsize = AtomicUsize::new(0);
+
+/// Caps the helper threads alive at once at `threads` (0 for one per core). The game client
+/// gives it its worker count: on a machine with two hardware threads a core, a build taking
+/// one helper per hardware thread while every worker was busy left the main and render
+/// threads waiting for a core, the worst frames of a fast flight.
+pub fn set_helper_limit(threads: usize) {
+    LIMIT.store(threads, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 pub(crate) fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::Relaxed);
@@ -32,8 +43,10 @@ pub(crate) fn set_enabled(enabled: bool) {
 /// core, as the cap allows), each taking the next item in order.
 pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let limit = LIMIT.load(Ordering::Relaxed);
     let wanted = cores.min(items.len()).saturating_sub(1);
-    let helpers = if ENABLED.load(Ordering::Relaxed) { reserve(wanted, 2 * cores) } else { 0 };
+    let cap = if limit == 0 { 2 * cores } else { limit };
+    let helpers = if ENABLED.load(Ordering::Relaxed) { reserve(wanted.min(cap), cap) } else { 0 };
     if helpers == 0 {
         items.iter().for_each(f);
         return;

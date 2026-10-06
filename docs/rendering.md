@@ -204,7 +204,12 @@ On the Linux box (Vulkan on an NVIDIA L4), `VOXMAR_GPU_TIMES=1` makes a capture 
 the GPU time of every pass that records a span (Bevy's `RenderDiagnosticsPlugin`, from
 timestamp queries; passes without a span are not listed), and `perf record -p` on a
 running capture shows the CPU side by thread. There, most scenes are limited by the CPU:
-the GPU was 40% busy in the creature scene.
+the GPU was 40% busy in the creature scene. `VOXMAR_GPU_FRAMES=FILE` (`render::gpu_clock`)
+records every frame instead: its GPU time split into the terrain's compaction, shadows,
+main passes and post-processing (FILE), the main world's frame time and busy time
+(FILE.cpu), and the render world's preparation, graph and cleanup (FILE.render), by frame
+number. In a fast flight it showed the GPU's frames smooth (at most 5.4 ms) while the worst
+frames came from the CPU.
 
 A run at a tiny size (640×416) shows the CPU's limit, as the GPU then does little:
 about 3.6–4.2 ms a frame in Low Power Mode. No thread is busy for all of it (the render
