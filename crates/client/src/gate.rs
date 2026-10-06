@@ -1996,15 +1996,19 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         1 => {
+            // Only once the server has cleared any real one: on a busy server the clear comes
+            // late, and the chip shows the real effect until then, then the one set here.
+            let hearty = world.resource::<Launch>().content.effects.find("hearty");
+            let real = world.resource::<LocalPlayer>().vitals.effects.iter().any(|e| Some(e.effect) == hearty);
             let (chip, left) = reading(world);
             let agree = chip.as_deref().and_then(seconds).filter(|&c| left.as_deref().and_then(seconds) == Some(c));
             match agree {
-                Some(first) if in_phase > 0.2 => {
+                Some(first) if in_phase > 0.2 && !real => {
                     gate.count_before = first;
                     gate.advance(now);
                 }
-                _ if in_phase > 3.0 => {
-                    gate.check("effects: countdown", Err(format!("chip {chip:?}, plate {left:?}")));
+                _ if in_phase > if real { 15.0 } else { 3.0 } => {
+                    gate.check("effects: countdown", Err(format!("chip {chip:?}, plate {left:?}{}", if real { ", the real effect never cleared" } else { "" })));
                     world.remove_resource::<ShowEffects>();
                     world.remove_resource::<PinnedTip>();
                     gate.next(Step::Screenshot, now);
