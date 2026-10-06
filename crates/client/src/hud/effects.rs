@@ -151,7 +151,10 @@ fn show_effects(shown: Res<ShowEffects>, launch: Res<crate::session::Launch>, ti
         .iter()
         .filter_map(|(name, seconds)| {
             let effect = launch.content.effects.find(name)?;
-            let left = (*seconds as f32 - (player.vitals_at - since).max(0.0)).max(0.0) as u16;
+            // Measured from when the server's last word came, which may be from before they
+            // were shown (a busy server): then they have more left at that word, so the chip
+            // still counts down from when they were shown and never jumps back up.
+            let left = (*seconds as f32 - (player.vitals_at - since)).max(0.0) as u16;
             Some(ActiveEffect { effect, seconds_left: Some(left) })
         })
         .filter(|a| !player.vitals.effects.iter().any(|b| b.effect == a.effect))
