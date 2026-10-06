@@ -187,6 +187,7 @@ fn notice(
         ("catalogue", ui.inventory_open && player.allow_flight),
     ];
     for (name, now) in met {
+        debug_assert!(TIPS.contains(&name), "the tip {name} has no words listed");
         let seen = settings.tips_seen.iter().any(|s| s == name);
         if now && !seen && !tips.queue.contains(&name) && tips.showing.is_none_or(|(showing, _)| showing != name) {
             tips.queue.push(name);
