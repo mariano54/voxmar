@@ -187,6 +187,14 @@ fn far_color(a: Atmosphere, eye: vec3<f32>, direction: vec3<f32>, to_sun: vec3<f
 // pass's reach, and sunlight scattered within its reach, are left to that pass, which
 // shapes the one and knows where shadows fall for the other. The far edge of the distant
 // terrain fades completely into what lies beyond.
+// `color` at `world` seen from `eye` through the air, `to_sun` the direction towards the sun
+// (or moon): the terrain's `apply_fog` for a material, which reads the atmosphere from the
+// shared buffer (atmosphere.rs, `SharedAtmosphere`) rather than the terrain's bind group.
+fn fogged(a: Atmosphere, eye: vec3<f32>, world: vec3<f32>, to_sun: vec3<f32>, color: vec3<f32>) -> vec3<f32> {
+    let air = aerial(a, eye, world - eye, to_sun);
+    return color * air.transmittance + air.light;
+}
+
 fn aerial(a: Atmosphere, eye: vec3<f32>, offset: vec3<f32>, to_sun: vec3<f32>) -> Aerial {
     if a.water_light.w > 0.0 {
         return under_water(a, eye, offset);

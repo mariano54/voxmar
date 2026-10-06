@@ -434,7 +434,7 @@ fn draw_condition(
     children: Query<&Children>,
     mut texts: Query<&mut Text, Without<FeltLine>>,
     mut shown: Local<Option<Vec<voxmar_engine::vitals::Effect>>>,
-    locale: Res<Locale>,
+    (locale, images): (Res<Locale>, Res<super::HudImages>),
 ) {
     for meter in &health {
         set_meter(meter, player.health as f32 / 20.0, &format!("{}/20", player.health), &mut nodes, &children, &mut texts);
@@ -462,9 +462,14 @@ fn draw_condition(
                 list.spawn((Localized("character.no_effects"), text(&font.0, "", BODY, MUTED)));
             }
             for &effect in effects {
-                list.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|row| {
+                // Its icon and name, what it does under them; hover it for the details.
+                let row = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
+                list.spawn((row, Button, super::effects::EffectHover(effect), bevy::ui::RelativeCursorPosition::default())).with_children(|row| {
                     let color = if effect.is_buff() { ACCENT } else { crate::ui::widgets::ERROR };
-                    row.spawn(shadowed(&font.0, format!("{} {}", if effect.is_buff() { "▴" } else { "▾" }, locale.effect(effect)), BODY, color));
+                    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|line| {
+                        line.spawn((Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::new(images.effect(effect))));
+                        line.spawn(shadowed(&font.0, locale.effect(effect), BODY, color));
+                    });
                     row.spawn(text(&font.0, locale.effect_description(effect), BODY, MUTED));
                 });
             }
