@@ -206,7 +206,7 @@ const ROCK_SIDE_SHADE = array<f32, 4>(0.72, 0.84, 0.66, 0.78);
 struct RockVertex {
     at: vec3<f32>,
     uv: vec2<f32>,
-    shade: f32,
+    brightness: f32,
 }
 
 fn rock_vertex(w0: u32, a: vec3<f32>, b: vec3<f32>) -> RockVertex {
@@ -223,7 +223,7 @@ fn rock_vertex(w0: u32, a: vec3<f32>, b: vec3<f32>) -> RockVertex {
         let p = square[corner];
         out.at = vec3(p.x * ROCK_TOP * stretch.x, height + dot(p, tilt), p.y * ROCK_TOP * stretch.y);
         out.uv = 0.5 + p * 0.5;
-        out.shade = 1.0;
+        out.brightness = 1.0;
         return out;
     }
     if piece <= 4u {
@@ -232,7 +232,7 @@ fn rock_vertex(w0: u32, a: vec3<f32>, b: vec3<f32>) -> RockVertex {
         let p = along * select(ROCK_TOP, ROCK_FOOT, lower) * stretch;
         out.at = vec3(p.x, select(height + dot(along, tilt), -ROCK_SUNK, lower), p.y);
         out.uv = vec2(select(0.0, 1.0, far), select(0.0, 1.0, lower));
-        out.shade = ROCK_SIDE_SHADE[side];
+        out.brightness = ROCK_SIDE_SHADE[side];
         return out;
     }
     // The chip, of three faces, each from two feet up to its point.
@@ -244,7 +244,7 @@ fn rock_vertex(w0: u32, a: vec3<f32>, b: vec3<f32>) -> RockVertex {
     let point = vec3(centre.x, 0.11 * mix(0.8, 1.3, b.z), centre.y);
     out.at = select(point, vec3(foot.x, -ROCK_SUNK, foot.y), lower);
     out.uv = select(vec2(0.5, 0.25), vec2(select(0.25, 0.75, far), 0.75), lower);
-    out.shade = 0.86 - 0.08 * k;
+    out.brightness = 0.86 - 0.08 * k;
     return out;
 }
 
@@ -252,7 +252,7 @@ fn rock_vertex(w0: u32, a: vec3<f32>, b: vec3<f32>) -> RockVertex {
 // plant evenly.
 fn plant_shade(w0: u32) -> f32 {
     if plant_model(w0) == MODEL_ROCK {
-        return rock_vertex(w0, vec3(0.5), vec3(0.5)).shade;
+        return rock_vertex(w0, vec3(0.5), vec3(0.5)).brightness;
     }
     return 1.0;
 }

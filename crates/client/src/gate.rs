@@ -2737,7 +2737,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let at = gate.ore;
             let ore_of = |block: BlockId| {
                 let def = registry.def(block);
-                def.has_tag("ore").then(|| def.drops.clone().unwrap_or_else(|| def.name.clone()))
+                (def.has_tag("ore") && !def.has_tag("ore_sample")).then(|| def.drops.clone().unwrap_or_else(|| def.name.clone()))
             };
             let sample = observer.world.block(at).filter(|&b| registry.def(b).has_tag("ore_sample"));
             let result = match sample {

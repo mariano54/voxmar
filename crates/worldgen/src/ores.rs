@@ -668,7 +668,7 @@ mod tests {
             }
             columns[(cz * count + cx) as usize].block(IVec3::new(x & 31, y, z & 31))
         };
-        let ore = |b: BlockId| registry.def(b).has_tag("ore");
+        let ore = |b: BlockId| registry.def(b).has_tag("ore") && !registry.def(b).has_tag("ore_sample");
         let sample = |b: BlockId| registry.def(b).has_tag("ore_sample");
         let colour = |b: BlockId| registry.def(b).color.map(|c| c as f32 / 255.0);
         // Ore at full strength, so a vein stands out: coal black, the rest their colour at
@@ -816,10 +816,10 @@ mod tests {
                     for x in 0..CHUNK_SIZE {
                         let b = column.block(IVec3::new(x, y, z));
                         let def = registry.def(b);
-                        if def.has_tag("ore") {
-                            ores.push((origin + IVec3::new(x, y, z), b));
-                        } else if def.has_tag("ore_sample") {
+                        if def.has_tag("ore_sample") {
                             samples.push((origin + IVec3::new(x, y, z), b));
+                        } else if def.has_tag("ore") {
+                            ores.push((origin + IVec3::new(x, y, z), b));
                         }
                     }
                 }
@@ -877,6 +877,36 @@ mod tests {
         assert!(registry.def(block).has_tag("ore_sample"));
         if let Some((_, iron)) = world.locate_ore(Some("iron"), spawn.xz(), 1500) {
             assert_eq!(registry.def(iron).name, "base:iron_ore_sample");
+        }
+    }
+
+    /// `cargo test --profile iter -p voxmar_worldgen ore_sights -- --ignored --nocapture`
+    /// (optionally `SEED=n`, 1 by default, and `BACK`, the camera's distance, 3 by default)
+    /// prints `--pose` arguments that look at the nearest sample of each ore near spawn, for
+    /// in-game captures.
+    #[test]
+    #[ignore]
+    fn ore_sights() {
+        let env = |name: &str, default: f64| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
+        let (seed, back) = (env("SEED", 1.0) as u64, env("BACK", 3.0) as f32);
+        let world = Overworld::new(seed, registry());
+        let spawn = world.spawn_point();
+        let eye = spawn.as_vec3() + voxmar_engine::glam::Vec3::Y * 1.62;
+        println!("seed {seed}, spawn {spawn}");
+        for ore in ["coal", "copper", "iron", "tin", "silver", "gold", "cobalt", "diamond", "aetherite"] {
+            let Some((at, _)) = world.locate_ore(Some(ore), spawn.xz(), 1500) else {
+                println!("{ore}: none within 1500");
+                continue;
+            };
+            // From the south-east, a little above, looking down at it.
+            let target = at.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 0.2, 0.5);
+            let mut camera = target + voxmar_engine::glam::Vec3::new(back, back * 0.9, back);
+            camera.y = camera.y.max(world.height(camera.x as i32, camera.z as i32) as f32 + 2.6);
+            let d = target - camera;
+            let yaw = (-d.x).atan2(-d.z).to_degrees();
+            let pitch = d.y.atan2(d.x.hypot(d.z)).to_degrees();
+            let o = camera - eye;
+            println!("{ore} at {at}: --pose {:.1},{:.1},{:.1},{yaw:.0},{pitch:.0}", o.x, o.y, o.z);
         }
     }
 
