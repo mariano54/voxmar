@@ -383,13 +383,18 @@ impl Server {
             (at_table || !r.needs_table())
                 && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
         };
-        let found = recipes.find(&player.inventory.grid()).filter(|r| allowed(r)).map(|r| (r.skill, r.xp));
+        let found = recipes.find(&player.inventory.grid()).filter(|r| allowed(r)).map(|r| (r.skill, r.xp, r.output, r.count));
         let recipe = |grid: &[Option<BlockId>; voxmar_engine::craft::GRID]| recipes.find(grid).filter(|r| allowed(r)).map(|r| (r.output, r.count));
         let made = player.inventory.craft(recipe, all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
-        if let Some((Some(skill), xp)) = found.filter(|_| made > 0) {
-            self.grant_xp(agent, skill, xp * made as f32);
+        if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
+            if let Some(skill) = skill {
+                self.grant_xp(agent, skill, xp * made as f32);
+            }
+            // For quests that ask for things made.
+            let name = self.content.blocks.def(output).name.clone();
+            self.tally(agent, "crafted", &name, made * count as u32);
         }
     }
 

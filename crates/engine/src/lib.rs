@@ -35,6 +35,7 @@ pub mod mesh;
 pub mod movement;
 pub mod multiblock;
 pub mod physics;
+pub mod quest;
 pub mod recipe_book;
 pub mod regrowth;
 pub mod schedule;
