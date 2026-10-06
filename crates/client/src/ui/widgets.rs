@@ -522,12 +522,14 @@ pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece
                 track.spawn((notch, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35))));
             }
         });
+        // The number's shadow falls below it: centred a pixel high, the two sit centred.
         let centre = Node {
             position_type: PositionType::Absolute,
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
+            padding: UiRect::bottom(Val::Px(PX)),
             ..default()
         };
         label = well.spawn(centre).with_children(|centre| {
