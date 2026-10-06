@@ -205,6 +205,8 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// A timed effect's chip counts its time down, and its hover plate says how long is left.
+    Effects,
     /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
     /// player's folder and clipboard alone) and says so in the chat.
     Screenshot,
@@ -284,6 +286,10 @@ struct Gate {
     longest: FxHashMap<Step, f32>,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
+    /// Frames on which the open overlay's text changed (each one lays the UI out again),
+    /// and when counting began and last went on.
+    overlay_changes: u32,
+    overlay_counted: (f32, f32),
 }
 
 impl Gate {
@@ -326,6 +332,8 @@ impl Gate {
             frame_ms: Vec::new(),
             longest: default(),
             overlay_ms: default(),
+            overlay_changes: 0,
+            overlay_counted: (0.0, 0.0),
         }
     }
 
@@ -714,6 +722,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Effects => effects(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
@@ -1382,9 +1391,12 @@ const SCREEN_WAIT: f32 = 10.0;
 const OVERLAY_TIMED: f32 = 2.0;
 const OVERLAY_FRAMES: usize = 60;
 
-/// F3 opens the debug overlay and closes it again, and with it open PostUpdate takes no
-/// longer than with it closed: an overlay that rewrote its text every frame had UI layout
-/// redone every frame, 10 to 25 ms of Mariano's slow frames.
+/// F3 opens the debug overlay and closes it again, and while it is open its text changes
+/// only a few times a second: an overlay that rewrote its text every frame had UI layout
+/// redone every frame, 10 to 25 ms of Mariano's slow frames. That is judged by counting
+/// the changes, which a loaded machine cannot blur; PostUpdate's time with the overlay
+/// closed and open is reported beside it (before the fix it rose 0.77 ms in the median,
+/// within the noise of a loaded machine).
 fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let shown = world.resource::<Settings>().debug_overlay;
     let ms = world.resource::<PostUpdateTime>().ms;
@@ -1415,6 +1427,15 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if in_phase > 0.5 {
                 gate.overlay_ms[1].push(ms);
+                // An exclusive system sees changes made since its last run: this frame's.
+                let mut text = world.query_filtered::<Ref<Text>, With<crate::hud::DebugText>>();
+                if text.iter(world).any(|text| text.is_changed()) {
+                    gate.overlay_changes += 1;
+                }
+                if gate.overlay_counted.0 == 0.0 {
+                    gate.overlay_counted.0 = now;
+                }
+                gate.overlay_counted.1 = now;
             }
             if timed(gate, 1) {
                 key(world, KeyCode::F3, true);
@@ -1437,22 +1458,22 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (at(0.5), at(0.9))
             };
             let ((closed, closed_p90), (open, open_p90)) = (stats(&gate.overlay_ms[0]), stats(&gate.overlay_ms[1]));
+            let seconds = (gate.overlay_counted.1 - gate.overlay_counted.0).max(0.1);
+            let rate = gate.overlay_changes as f32 / seconds;
+            let most = 1.0 / crate::hud::DEBUG_REFRESH + 1.0;
             let detail = format!(
-                "PostUpdate median {open:.2} ms open against {closed:.2} ms closed, p90 {open_p90:.2} against {closed_p90:.2} ms ({} and {} frames)",
+                "its text changed on {} of {} frames in {seconds:.1}s, {rate:.1} a second (at most {most:.0}); \
+                 PostUpdate median {open:.2} ms open against {closed:.2} ms closed, p90 {open_p90:.2} against {closed_p90:.2} ms",
+                gate.overlay_changes,
                 gate.overlay_ms[1].len(),
-                gate.overlay_ms[0].len()
             );
-            let result = if open <= closed + OVERLAY_MARGIN_MS && open_p90 <= closed_p90 * 1.5 + OVERLAY_MARGIN_MS { Ok(detail) } else { Err(detail) };
+            let result = if gate.overlay_changes > 0 && rate <= most { Ok(detail) } else { Err(detail) };
             gate.check("overlay: no layout every frame", result);
             gate.next(Step::Weather, now);
         }
         _ => {}
     }
 }
-
-/// How much longer PostUpdate may take with the overlay open: its text changing a few times
-/// a second costs a layout then, a fraction of a millisecond in the median.
-const OVERLAY_MARGIN_MS: f32 = 0.5;
 
 fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let ui = world.resource::<UiState>();
@@ -1642,7 +1663,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::Screenshot, now);
+        gate.next(Step::Effects, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -1667,7 +1688,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::Screenshot, now);
+                gate.next(Step::Effects, now);
             }
         }
         2 => {
@@ -1688,6 +1709,31 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
+            gate.next(Step::Effects, now);
+        }
+    }
+}
+
+/// A timed effect on the player (as eating would give, the server not told): its chip
+/// counts down from 1:30 and its plate, as if the pointer were over the chip, says so too.
+fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::effects::{PinnedTip, ShowEffects};
+    match gate.phase {
+        0 => {
+            world.insert_resource(ShowEffects(vec![("hearty".into(), 90)]));
+            world.insert_resource(PinnedTip("hearty".into()));
+            gate.advance(now);
+        }
+        _ => {
+            let chip = world.query_filtered::<&Text, With<crate::hud::EffectTimer>>().iter(world).map(|t| t.0.clone()).find(|t| !t.is_empty());
+            let left = crate::hud::effects::shown_left(world);
+            let counting = chip.as_deref().is_some_and(|t| t.starts_with("1:")) && left.as_deref().is_some_and(|t| t.contains("1:"));
+            if !counting && in_phase < 3.0 {
+                return;
+            }
+            gate.check("effects: countdown", if counting { Ok(format!("the chip reads {}, the plate {}", chip.unwrap_or_default(), left.unwrap_or_default())) } else { Err(format!("chip {chip:?}, plate {left:?}")) });
+            world.remove_resource::<ShowEffects>();
+            world.remove_resource::<PinnedTip>();
             gate.next(Step::Screenshot, now);
         }
     }
@@ -2427,8 +2473,8 @@ fn item_count(world: &World, name: &str) -> u32 {
 fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // Morning (ticks after sunrise), sunset with the sun a few degrees up, and midnight.
     const MORNING: u64 = 1920;
-    const SUNSET: u64 = 11_830;
-    const MIDNIGHT: u64 = 18_000;
+    const SUNSET: u64 = 15_830;
+    const MIDNIGHT: u64 = 20_000;
     let ticks = world.resource::<crate::render::DayCycle>().ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64);
     let at = |time: u64| (ticks - time as f64).abs() < 100.0;
     // The sky's checks judge the sun, moon and stars against the sky around them, so they

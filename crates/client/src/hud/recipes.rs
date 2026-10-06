@@ -374,7 +374,7 @@ fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &Hu
         let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
         cell.spawn((icon, ImageNode::new(images.icons.get(item.0 as usize).cloned().unwrap_or_default())));
         if let Some(count) = count {
-            cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(PX), bottom: Val::ZERO, ..default() }, shadowed(font, count, BODY, TEXT)));
+            cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET), bottom: Val::Px(super::COUNT_INSET), ..default() }, shadowed(font, count, BODY, TEXT)));
         }
     });
 }

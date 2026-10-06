@@ -831,7 +831,7 @@ impl WeatherState {
         let settled = sky.noise(GUSTS, at.as_dvec2() / 6000.0, seconds / 1500.0) as f32;
         let veer = (sky.noise(GUSTS + 16, DVec2::ZERO, seconds / 900.0) - 0.5) as f32 + 0.4 * contrast.clamp(-1.0, 1.0);
         let direction = (sky.prevailing + sky.prevailing.perp() * (veer * 1.2) as f64).normalize();
-        let afternoon = 1.0 - (((fraction - 0.35) / 0.35) as f32).abs().min(1.0);
+        let afternoon = 1.0 - (((fraction - 0.45) / 0.35) as f32).abs().min(1.0);
         let exposure = (1.0 + smoothstep(10.0, 90.0, place.altitude) * 0.5 + 0.25 * place.water)
             * (1.0 - 0.35 * place.forest)
             * (1.0 - 0.3 * smoothstep(2.0, 20.0, place.valley));
@@ -900,7 +900,7 @@ impl WeatherState {
         let sun = sun_height(day);
         let daylight = smoothstep(-0.2, 0.15, sun);
         let d = if day > 0.5 { day - 1.0 } else { day } as f32;
-        let e = (day - 0.5) as f32;
+        let e = (day - voxmar_engine::calendar::DAYLIGHT_SHARE) as f32;
         let mut inputs = Inputs::default();
         for (input, value) in [
             (Input::Cover, weather.cover),
@@ -1174,23 +1174,18 @@ fn day_fraction(day: f64) -> f64 {
     (day / TICKS_PER_DAY as f64).rem_euclid(1.0)
 }
 
-/// Height of the sun at a fraction of the day, as the sky draws it: the sine of its angle
-/// along a slightly tilted arc. Bhaskara's approximation of the sine keeps it exact
-/// arithmetic.
+/// Height of the sun at a fraction of the day, as the sky draws it (the sine of its
+/// elevation; it is up two thirds of the day).
 fn sun_height(day: f64) -> f32 {
-    let x = (day * std::f64::consts::TAU) as f32;
-    let (x, sign) = if x <= std::f32::consts::PI { (x, 1.0) } else { (x - std::f32::consts::PI, -1.0) };
-    let pi = std::f32::consts::PI;
-    let sine = 16.0 * x * (pi - x) / (5.0 * pi * pi - 4.0 * x * (pi - x));
-    // The arc's tilt: (cos, sin, 0.25) normalised.
-    sign * sine / 1.030_776_4
+    voxmar_engine::calendar::sun_height(day) as f32
 }
 
 /// The air temperature now from the climate's mean: coldest around sunrise and warmest
 /// in the early afternoon, by more in dry climates and under clear skies.
 fn now_temperature(mean: f32, cover: f32, moisture: f32, day: f64) -> f32 {
     let swing = (3.0 + 5.0 * (1.0 - smoothstep(0.2, 1.5, moisture))) * (1.0 - 0.6 * cover);
-    const PEAK: f64 = 0.35;
+    // Early afternoon: noon is a third of the way through the day, sunset two thirds.
+    const PEAK: f64 = 0.45;
     let curve = if day < PEAK {
         -1.0 + 2.0 * smoothstep(0.0, 1.0, (day / PEAK) as f32)
     } else {
