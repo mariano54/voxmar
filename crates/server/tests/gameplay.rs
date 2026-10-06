@@ -354,7 +354,7 @@ fn a_block_the_client_finished_breaks_even_if_the_server_started_it_late() {
     client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
     let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
     mine(&client, a);
-    client.connection.send(ClientMessage::Finished);
+    client.connection.send(ClientMessage::Finished { target: ActionTarget::Block { block: a, face: Face::PosY } });
     mine(&client, b);
     client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
 }
@@ -758,3 +758,71 @@ fn looking_closely_shows_more_with_farming() {
         assert!(all.contains(words), "{words} missing from {all}");
     }
 }
+
+#[test]
+fn a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks() {
+    // About nine ticks a second instead of twenty: judged by its ticks, stone would take
+    // the server more than twice its time, long after the player saw it break.
+    let lag = voxmar_server::Lag { per_tick: Duration::from_millis(60), ..Default::default() };
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, lag, ..Default::default() });
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    client.ok("/setblock ~ ~-1 ~ stone");
+    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:stone"));
+    let hardness = client.content.blocks.info(client.world.block(below).unwrap()).hardness;
+    let started = Instant::now();
+    client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    let took = started.elapsed().as_secs_f32();
+    assert!(took >= hardness - 0.05 && took <= hardness + 0.4, "stone ({hardness} s) broke after {took:.2} s");
+}
+
+#[test]
+fn placing_or_throwing_while_mining_does_not_cancel_the_mining() {
+    // Instant actions run alongside a timed one: a block placed or an item thrown halfway
+    // through a break must not cost the break the player then sees finish.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, lag: SLOW, ..Default::default() });
+    let feet = client.position.floor().as_ivec3();
+    let (a, b) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2));
+    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
+    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    let hardness = client.content.blocks.info(client.world.block(a).unwrap()).hardness;
+    for (block, instant) in [(a, "core:drop"), (b, "core:place")] {
+        let target = ActionTarget::Block { block, face: Face::PosY };
+        client.propose("core:mine", target);
+        std::thread::sleep(Duration::from_secs_f32(hardness * 0.5));
+        match instant {
+            "core:drop" => client.propose(instant, ActionTarget::Stack { slot: 0, count: 1 }),
+            _ => client.propose(instant, ActionTarget::Block { block: feet + IVec3::new(2, -1, 0), face: Face::PosY }),
+        }
+        std::thread::sleep(Duration::from_secs_f32(hardness * 0.5));
+        client.connection.send(ClientMessage::Finished { target });
+    }
+    client.pump_until(|cl| cl.world.block(a) == Some(BlockId::AIR) && cl.world.block(b) == Some(BlockId::AIR));
+}
+
+#[test]
+fn a_finished_break_the_server_refused_is_undone_on_the_client() {
+    // The client shows a break done; if the server refused it (here: out of reach), the
+    // client must be told what is really there rather than keep a block only it broke.
+    let mut client = Client::join();
+    let far = client.position.floor().as_ivec3() + IVec3::new(0, -1, 9);
+    client.ok("/setblock ~ ~-1 ~9 stone");
+    client.pump_until(|c| c.world.block(far) == c.content.blocks.id("base:stone"));
+    let stone = client.world.block(far).unwrap();
+    let target = ActionTarget::Block { block: far, face: Face::PosY };
+    client.propose("core:mine", target);
+    let refused = Instant::now() + Duration::from_millis(300);
+    client.pump_until(|_| Instant::now() > refused);
+    client.world.set_block(far, BlockId::AIR);
+    client.connection.send(ClientMessage::Finished { target });
+    client.pump_until(|c| c.world.block(far) == Some(stone));
+}
+
+/// A server held up as on a busy machine: every tick slow, every fifth stalled, and a
+/// stall as every other action is proposed (as `voxmar_client::gate::SERVER_LAG`).
+const SLOW: voxmar_server::Lag = voxmar_server::Lag {
+    per_tick: Duration::from_millis(40),
+    stall: Duration::from_millis(300),
+    stall_every: 5,
+    proposal_stall: Duration::from_millis(400),
+};
