@@ -91,8 +91,9 @@ const OPEN_WATER_REACH: i32 = 12;
 /// On plant vertices, bits 25..27 hold how many plant cells lie below in the same stack.
 const PLANT_STACK_SHIFT: u32 = 25;
 /// On plant vertices, bits 28..29 the model and 30..31 the quad of it (with the face's low
-/// bit); word 1 bits 14..18 the plant's height in eighths.
+/// bit); word 1 bits 14..18 the plant's height in eighths. Bit 24 is the model's third bit.
 const PLANT_MODEL_SHIFT: u32 = 28;
+const PLANT_MODEL_HIGH_SHIFT: u32 = 24;
 const PLANT_PIECE_SHIFT: u32 = 30;
 const PLANT_HEIGHT_SHIFT: u32 = 14;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
@@ -180,6 +181,10 @@ struct Look {
     fluid: u8,
     /// An opaque block whose top is tinted like grass, which grows grass blades.
     grass_top: bool,
+    /// A solid cube that does not hide what is behind it (glass, ice, leaves): water and
+    /// ice show no face against one, as they show none against stone, or the side of a
+    /// pool of water seen through a pane of glass stood in it is a wall of deep water.
+    wall: bool,
     /// Texture layer and tint of each face, by `Face`.
     layers: [u16; 6],
     tints: [Tint; 6],
@@ -193,6 +198,10 @@ impl Look {
             render: info.render,
             fluid: info.fluid.map_or(0, |f| f.fluid.0 + 1),
             grass_top: info.render == RenderKind::Opaque && info.tints[Face::PosY as usize] == Tint::Grass,
+            wall: info.solid
+                && !info.occludes
+                && matches!(info.render, RenderKind::Cutout | RenderKind::Leaves | RenderKind::Translucent)
+                && info.fluid.is_none(),
             layers: info.layers,
             tints: info.tints,
         }
@@ -204,6 +213,8 @@ impl Look {
 struct Scratch {
     cells: Vec<Cell>,
     occ: Axes,
+    /// `occ` and the see-through solid cubes (`Look::wall`), which hide translucent faces.
+    walled: Axes,
     opaque: Axes,
     cutout: Axes,
     translucent: Axes,
@@ -220,6 +231,7 @@ impl Default for Scratch {
         Self {
             cells: Vec::new(),
             occ: Axes::default(),
+            walled: Axes::default(),
             opaque: Axes::default(),
             cutout: Axes::default(),
             translucent: Axes::default(),
@@ -235,7 +247,7 @@ impl Scratch {
     /// Clears the bit tables; every cell is written before it is read.
     fn reset(&mut self, registry: &BlockRegistry) {
         self.cells.resize(P * P * P, Cell::default());
-        for axes in [&mut self.occ, &mut self.opaque, &mut self.cutout, &mut self.translucent, &mut self.joins.hidden, &mut self.joins.single] {
+        for axes in [&mut self.occ, &mut self.walled, &mut self.opaque, &mut self.cutout, &mut self.translucent, &mut self.joins.hidden, &mut self.joins.single] {
             axes.clear();
         }
         *self.leaves = [[0; P]; P];
@@ -248,7 +260,7 @@ impl Scratch {
 }
 
 fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion, column: &Column, cy: i32, detail: i32) -> ChunkMesh {
-    let Scratch { cells, occ, opaque, cutout, translucent, joins, leaves, looks, .. } = scratch;
+    let Scratch { cells, occ, walled, opaque, cutout, translucent, joins, leaves, looks, .. } = scratch;
     let origin = IVec3::new(-1, cy * CHUNK_SIZE - 1, -1);
     let mut plants = Vec::new();
     let mut grids: Vec<LodGrid> =
@@ -297,7 +309,10 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
                 cells[pidx(x, y, z)] = cell;
                 if occludes {
                     occ.set(x, y, z);
+                    walled.set(x, y, z);
                     occluding += 1;
+                } else if look.wall {
+                    walled.set(x, y, z);
                 }
                 grass |= look.grass_top;
                 match render {
@@ -331,7 +346,8 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     if occluding == P * P * P {
         return ChunkMesh { connectivity: Connectivity::NONE, ..Default::default() };
     }
-    let (cells, occ, opaque, cutout, translucent, joins, leaves) = (&*cells, &*occ, &*opaque, &*cutout, &*translucent, joins, &**leaves);
+    let (cells, occ, walled, opaque, cutout, translucent, joins, leaves) =
+        (&*cells, &*occ, &*walled, &*opaque, &*cutout, &*translucent, joins, &**leaves);
 
     join_leaves(leaves, occ, joins);
 
@@ -341,7 +357,7 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     for face in Face::ALL {
         mesher.mesh_faces(face, occ, opaque, joins, &mut mesh.opaque);
         mesher.mesh_faces(face, occ, cutout, joins, &mut mesh.cutout);
-        mesher.mesh_faces(face, occ, translucent, joins, &mut mesh.translucent);
+        mesher.mesh_faces(face, walled, translucent, joins, &mut mesh.translucent);
     }
     mesh.inner = split_inner(&mut mesh.cutout);
     for i in plants {
@@ -1039,16 +1055,18 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
         // A stem of two quads and a cap of six: crown, four sides, gills.
         PlantModel::Cap => 8,
         PlantModel::Hash | PlantModel::Bush => 4,
+        // A lump of five quads (top and four sides) and a chip of three.
+        PlantModel::Rock => 8,
     };
     for piece in 0..pieces {
         let (face, (x0, z0), (x1, z1)) =
             if piece % 2 == 0 { (PLANT_DIAGONAL, (0, 0), (1, 1)) } else { (PLANT_ANTIDIAGONAL, (1, 0), (0, 1)) };
         // A mushroom's stem is drawn with the block's side texture, its crown and sides with
         // the top texture and its gills with the bottom one (voxel.wgsl `cap_vertex`).
-        let cap = info.model == PlantModel::Cap && piece >= 2;
+        let cap = info.model == PlantModel::Cap && piece >= 2 || info.model == PlantModel::Rock;
         let w1 = w1(match (cap, piece) {
             (false, _) => Face::PosX,
-            (true, 7) => Face::NegY,
+            (true, 7) if info.model == PlantModel::Cap => Face::NegY,
             (true, _) => Face::PosY,
         });
         let base = out.vertices.len() as u32;
@@ -1062,7 +1080,8 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
                 | (corner as u32) << 21
                 | (top as u32) << 23
                 | stack << PLANT_STACK_SHIFT
-                | (info.model as u32) << PLANT_MODEL_SHIFT
+                | (info.model as u32 & 3) << PLANT_MODEL_SHIFT
+                | (info.model as u32 >> 2) << PLANT_MODEL_HIGH_SHIFT
                 | (piece as u32 / 2) << PLANT_PIECE_SHIFT;
             out.vertices.push([w0, w1]);
         }
@@ -1405,6 +1424,7 @@ mod tests {
     const FLUIDS: &str = r#"(
         blocks: [
             (name: "stone"),
+            (name: "glass", render: Cutout),
             (
                 name: "water", render: Translucent, solid: false, tint: Water, hardness: -1.0,
                 fluid: (tick: 5, drop: 1, slope: 4, infinite: true, pools: true, currents: true),
@@ -1434,6 +1454,19 @@ mod tests {
         let w = v[0];
         let p = IVec3::new((w & 63) as i32, (w >> 6 & 63) as i32, (w >> 12 & 63) as i32);
         (p, w >> 18 & 7, w >> 21 & 3, w >> SURFACE_DROP_SHIFT & 7, w >> FLOW_DIRECTION_SHIFT)
+    }
+
+    #[test]
+    fn water_shows_no_face_against_glass() {
+        // A source with glass on one side and air on the other three: its top and the three
+        // open sides, but nothing against the glass, as against stone.
+        let mesh = water_mesh(|reg, water, column| {
+            column.set_block(IVec3::new(5, 32, 5), water.source);
+            column.set_block(IVec3::new(6, 32, 5), reg.expect("test:glass"));
+        });
+        let faces: Vec<u32> = mesh.vertices.chunks(4).map(|quad| unpack(quad[0]).1).collect();
+        assert_eq!(faces.len(), 4, "{faces:?}");
+        assert!(!faces.contains(&(Face::PosX as u32)), "{faces:?}");
     }
 
     #[test]

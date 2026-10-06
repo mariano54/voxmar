@@ -143,8 +143,11 @@ impl Server {
                 creature.owner = name;
                 creature.owner_id = Some(player);
                 creature.home = creature.body.position;
+                // For quests that ask for tamed animals.
+                let tamed = species.def.name.clone();
                 let hunter = self.content.skills.id("core:hunter");
                 self.grant(player, hunter, taming.xp);
+                self.tally(player, "tamed", &tamed, 1);
             }
             return;
         }

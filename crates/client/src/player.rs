@@ -80,6 +80,8 @@ pub struct LocalPlayer {
     pub seed: u64,
     /// What the player has discovered, as the server tells it (the journal screen's data).
     pub journal: voxmar_engine::journal::Journal,
+    /// Every quest's state, as the server tells it (the quest book's data).
+    pub quests: Vec<voxmar_engine::quest::QuestState>,
 }
 
 impl Default for LocalPlayer {
@@ -111,6 +113,7 @@ impl Default for LocalPlayer {
             joined: false,
             seed: 0,
             journal: Default::default(),
+            quests: Vec::new(),
         }
     }
 }

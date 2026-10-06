@@ -280,6 +280,11 @@ impl Creatures {
     }
 
     /// Creature `id` as the target readout shows it; one dying still is, at no health.
+    /// Every living creature shown, by id: its species and where its feet are.
+    pub fn living(&self) -> impl Iterator<Item = (u32, CreatureId, Vec3)> + '_ {
+        self.shown.iter().filter(|(_, shown)| shown.dying.is_none()).map(|(&id, shown)| (id, shown.view.species, shown.position))
+    }
+
     pub fn sighting(&self, id: u32) -> Option<Sighting> {
         let shown = self.shown.get(&id)?;
         let health = if shown.dying.is_some() { 0 } else { shown.view.health };

@@ -8,10 +8,12 @@ pub mod death;
 pub mod effects;
 pub mod guide;
 pub mod inventory;
+pub mod levels;
 pub mod screens;
 pub mod recipes;
 pub mod skills;
 pub mod target;
+pub mod tips;
 
 use std::collections::VecDeque;
 
@@ -38,6 +40,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
+            .add_plugins((tips::TipsPlugin, levels::LevelsPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
@@ -113,7 +116,7 @@ struct EffectChips;
 pub(crate) struct DebugText;
 /// The plate the debug overlay sits in.
 #[derive(Component)]
-struct DebugPlate;
+pub struct DebugPlate;
 #[derive(Component)]
 struct BreakBar;
 /// The name of the item in hand, shown above the hotbar for a moment after it changes.

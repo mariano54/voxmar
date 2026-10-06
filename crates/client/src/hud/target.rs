@@ -109,7 +109,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
 
 /// A creature's level colour against ours: gold when even, greener the weaker it is and
 /// redder the stronger, as RuneScape colours its levels.
-fn level_colour(theirs: u8, ours: Option<u8>) -> Color {
+pub fn level_colour(theirs: u8, ours: Option<u8>) -> Color {
     let Some(ours) = ours else { return GOLD };
     let difference = theirs as f32 - ours as f32;
     let towards = if difference > 0.0 { ERROR } else { EASY };

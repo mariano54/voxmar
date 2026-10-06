@@ -82,8 +82,9 @@ pub const SERVER_LAG: Lag = Lag {
 /// Size of the gate's shots: enough to judge, quick to read back.
 const SHOT: UVec2 = UVec2::new(960, 540);
 /// Longest the whole session may take, and the world to load, in seconds of game time.
-/// The whole session has room for the gorge's longest wait on an overloaded machine.
-const TIME_LIMIT: f32 = 300.0 + GORGE_OVERLOADED_LIMIT;
+/// The whole session has room for the gorge's longest wait on an overloaded machine, and
+/// the ore's on a quiet one.
+const TIME_LIMIT: f32 = 300.0 + GORGE_OVERLOADED_LIMIT + GORGE_LOAD_LIMIT;
 const LOAD_LIMIT: f32 = 180.0;
 /// Longest a single step may take.
 const STEP_LIMIT: f32 = 30.0;
@@ -201,6 +202,9 @@ enum Step {
     Cook,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
+    /// `/locate ore` finds a sample of ore on the ground, and the server's world there has
+    /// it, with its vein's ore below it.
+    Ore,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
     Gorge,
@@ -209,6 +213,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// An effect that comes on pops up with its name, and the first look at the inventory
+    /// brings its tip.
+    Tips,
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
@@ -254,8 +261,10 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
-    /// Where the player died in the workshop.
+    /// Where the player died in the workshop, the most items carried since waking, and when
+    /// (in server seconds) that last went up.
     fell: Vec3,
+    gathered: (u32, f32),
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -263,6 +272,8 @@ struct Gate {
     /// Whether the player has arrived there: the river's current may carry them off while
     /// the world around loads, which says nothing about the world.
     gorge_reached: bool,
+    /// Where `/locate ore` found a sample of ore.
+    ore: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// Blows the server has answered, as last counted.
@@ -341,9 +352,11 @@ impl Gate {
             dug: Vec::new(),
             count_before: 0,
             fell: Vec3::ZERO,
+            gathered: (0, 0.0),
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
+            ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             blows_seen: 0,
             readout_seen: false,
@@ -622,12 +635,12 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
-        Step::Gorge => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
+        Step::Gorge | Step::Ore => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 100.0,
+        Step::Workshop => 160.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -844,8 +857,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
+        Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -1487,6 +1502,14 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
+                // The crafting table made earlier finished the quest that asks for one.
+                let quests = &world.resource::<LocalPlayer>().quests;
+                let table = quests.iter().find(|q| q.name == "base:crafting_table").map(|q| q.done);
+                gate.check("workshop: quests", match table {
+                    Some(true) => Ok(format!("the crafting table quest is done ({} of {} quests)", quests.iter().filter(|q| q.done).count(), quests.len())),
+                    Some(false) => Err("a crafting table was made, but its quest is not done".into()),
+                    None => Err("the server sent no quests".into()),
+                });
                 // A small pack to die with, so what is left lies in a few stacks by the feet.
                 let net = world.resource::<Net>();
                 for line in ["clear", "give stone_pickaxe 1", "give bread 1", "give stick 10", "give dirt 20", "give oak_planks 12"] {
@@ -1531,11 +1554,22 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
+            // Walk to each stack still lying near where they fell, as a player gathers
+            // them: one that rolled into the pool or down a step is out of reach from the
+            // spot itself.
+            let fell = gate.fell;
+            let lying: Vec<Vec3> = world.resource::<crate::drops::Drops>().lying().map(|(_, _, at)| at).filter(|at| at.distance(fell) < 10.0).collect();
             if gate.frames % 30 == 0 {
-                let line = format!("tp {} {} {}", gate.fell.x, gate.fell.y, gate.fell.z);
+                let to = lying.iter().copied().min_by(|a, b| a.distance(fell).total_cmp(&b.distance(fell))).unwrap_or(fell);
+                let line = format!("tp {} {} {}", to.x, to.y, to.z);
                 world.resource::<Net>().command(&line);
             }
             let back = carried(world);
+            // Picking up is the server's work: under load it gathers slowly, so the wait
+            // runs while the count keeps rising, by the server's clock.
+            if back > gate.gathered.0 || gate.gathered.1 == 0.0 {
+                gate.gathered = (back.max(gate.gathered.0), gate.server_now);
+            }
             if back >= gate.count_before {
                 gate.check("workshop: grave", Ok(format!("woke and picked all {back} items back up where the player fell")));
                 // The kit a new player starts with, for the steps after.
@@ -1544,8 +1578,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     net.command(line);
                 }
                 end_workshop(world, gate, now);
-            } else if in_phase > 15.0 {
-                fail(world, gate, "grave", format!("15 seconds back where the player fell, carrying {back} of {} items", gate.count_before));
+            } else if gate.server_now - gate.gathered.1 > 15.0 {
+                let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
+                fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
             }
         }
         _ => {}
@@ -1851,6 +1886,12 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("changed the screen from the inventory's by only {change:.1} levels"))
                 };
                 gate.check("character", shown);
+                // Every skill has its tile, all of them on screen, three across.
+                let (skills, tiles, inside) = crate::hud::character::skill_tiles(world);
+                gate.check(
+                    "character: skills",
+                    if skills > 0 && tiles == skills && inside == skills { Ok(format!("all {skills} skills on screen")) } else { Err(format!("{skills} skills, {tiles} tiles shown, {inside} on screen")) },
+                );
                 key(world, KeyCode::KeyC, true);
                 gate.advance(now);
             } else if in_phase > SCREEN_WAIT {
@@ -1952,6 +1993,20 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let viewer = world.resource::<RecipeViewer>();
             let back = viewer.trail.last().is_some_and(|lookup| lookup.item == log && lookup.uses);
             gate.check("recipes: back", if back { Ok("Back returns to the log's uses".into()) } else { Err(format!("after Back the viewer shows {:?}", viewer.trail.last())) });
+            // A log's tooltip says what it goes into, planks among them.
+            let lines = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                let planks_name = locale.block(launch.content.blocks.def(planks));
+                world.resource::<RecipeViewer>().book().map(|book| (crate::hud::inventory::origins_and_uses(locale, &launch.content, book, log), planks_name))
+            };
+            gate.check(
+                "tooltip: used in",
+                match lines {
+                    Some((lines, planks)) if lines.iter().any(|line| line.contains(&planks)) => Ok(format!("an oak log's tooltip: {}", lines.join(" / "))),
+                    Some((lines, _)) => Err(format!("an oak log's tooltip says {lines:?}")),
+                    None => Err("no recipe book to read".into()),
+                },
+            );
             world.resource_mut::<RecipeViewer>().trail.clear();
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
@@ -2008,7 +2063,10 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (chip, left) = reading(world);
             let (chip_s, left_s) = (chip.as_deref().and_then(seconds), left.as_deref().and_then(seconds));
             let counted = chip_s.is_some_and(|c| c < gate.count_before) && chip_s == left_s;
-            if !counted && in_phase < 3.0 {
+            // While the server holds the effect itself (the session's cooking gives it), the
+            // count moves on the server's clock, which a loaded machine slows: given five of
+            // the server's seconds, however long they take.
+            if !counted && gate.server_in_phase() < 5.0 {
                 return;
             }
             let first = gate.count_before;
@@ -2020,6 +2078,37 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Tips, now);
+        }
+    }
+}
+
+fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::effects::ShowEffects;
+    use crate::hud::tips::{Popup, Tips};
+    let Some(warmed) = world.resource::<Launch>().content.effects.find("ember_warmed") else {
+        gate.check("tips", Err("no ember_warmed effect in the content".into()));
+        gate.next(Step::Guides, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            // As for a player who has seen none.
+            world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
+            world.insert_resource(ShowEffects(vec![("ember_warmed".into(), 60)]));
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        _ => {
+            let popped = world.query::<&Popup>().iter(world).any(|popup| popup.0 == warmed);
+            let tip = world.resource::<Tips>().showing.map(|(name, _)| name);
+            if !(popped && tip.is_some()) && in_phase < 3.0 {
+                return;
+            }
+            gate.check("tips: effect", if popped { Ok("Ember-warmed popped up as it came on".into()) } else { Err("an effect came on with no pop-up".into()) });
+            gate.check("tips: first look", match tip { Some(name) => Ok(format!("the {name} tip showed")), None => Err("opening the inventory brought no tip".into()) });
+            world.remove_resource::<ShowEffects>();
+            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }
     }
@@ -2505,7 +2594,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let species = world.resource::<Launch>().content.creatures.find(CREATURE);
     let Some(species) = species else {
         gate.check("creatures", Err(format!("no `{CREATURE}` in the content")));
-        gate.next(Step::Gorge, now);
+        gate.next(Step::Ore, now);
         return;
     };
     let snail = |world: &World| {
@@ -2541,7 +2630,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(view) = snail(world) else {
                 if in_phase > 10.0 {
                     gate.check("creatures", Err("a summoned creature never reached the client".into()));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 return;
             };
@@ -2553,6 +2642,9 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
+                // Those near enough to fight show their combat level over them.
+                let labels: Vec<String> = world.query::<(&crate::hud::levels::LevelLabel, &Text)>().iter(world).map(|(_, text)| text.0.clone()).collect();
+                gate.check("creature levels", if labels.is_empty() { Err("no creature shows its level over it".into()) } else { Ok(format!("{} creatures show their level over them ({})", labels.len(), labels[0])) });
                 gate.next(Step::Strike, now);
             }
         }
@@ -2614,7 +2706,7 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let distance = view.position.distance(world.resource::<LocalPlayer>().eye());
                     let why = if stalled { format!("the server answered no blow for {UNANSWERED}s") } else { format!("{blows} blows ({landed} landed) did not kill it") };
                     gate.check("creature struck", Err(format!("{why} (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 None => {
                     mouse(world, MouseButton::Left, false);
@@ -2681,7 +2773,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:campfire")) else {
                 gate.check("cook", Err("no raw rabbit or campfire in the content".into()));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
                 return;
             };
             let lit = client.block(fire) == Some(campfire);
@@ -2696,7 +2788,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 _ if in_phase > 10.0 => {
                     gate.check("cook", Err(format!("the campfire ({lit}) or raw rabbit in the hotbar ({slot:?}) never came")));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 _ => {}
             }
@@ -2711,7 +2803,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if in_phase > 15.0 {
                 mouse(world, MouseButton::Right, false);
                 gate.check("cook", Err("right clicks on the campfire cooked nothing".into()));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
@@ -2807,7 +2899,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 _ if in_phase > 10.0 => {
                     gate.check("tame", Err("the junglefowl or the wheat never came".into()));
-                    gate.next(Step::Gorge, now);
+                    gate.next(Step::Ore, now);
                 }
                 _ => {}
             }
@@ -2815,7 +2907,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         2 => {
             let Some(view) = hen(world) else {
                 gate.check("tame", Err("the junglefowl went".into()));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
                 return;
             };
             let me = world.resource::<crate::creatures::Creatures>().me;
@@ -2833,7 +2925,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     "25 seconds of feeding wheat did not tame it: trust {trust}%, {wheat} wheat left; the crosshair was on it {on} frames, on another creature {other}, on none {none}; nearest {:.1} blocks",
                     gate.tame_nearest
                 )));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             } else {
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
@@ -2858,11 +2950,11 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if tags.contains(&kept.as_str()) {
                 let detail = format!("{} {}: {}", readout.name, readout.level, tags.join(", "));
                 gate.check("readout: kept", Ok(detail));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             } else if in_phase > 3.0 {
                 let detail = format!("aimed at the tamed junglefowl, it read {:?} {:?} with tags {tags:?}", readout.name, readout.level);
                 gate.check("readout: kept", Err(detail));
-                gate.next(Step::Gorge, now);
+                gate.next(Step::Ore, now);
             }
         }
         _ => {}
@@ -3113,6 +3205,124 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             gate.check("gorge", result);
             gate.next(Step::Recipes, now);
+        }
+        _ => {}
+    }
+}
+
+/// How far from the test ground `/locate ore` looks for a sample of ore: samples lie over
+/// every vein, which lie a hundred or so blocks apart.
+const ORE_RADIUS: i32 = 600;
+
+/// `/locate ore` finds a sample of ore on the ground near the test ground (before the
+/// gorge, whose own long load then settles the server before the steps after). Going there, the
+/// server's world has it on solid ground with ore of the same kind below it, its vein,
+/// the client has it too, and the ore around lies in veins, not alone.
+fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    match gate.phase {
+        0 => {
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.replies.clear();
+                observer.connection.send(ClientMessage::Command { line: format!("locate ore {ORE_RADIUS}") });
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("vein") || r.contains("ore"))) else {
+                if in_phase > 20.0 {
+                    gate.check("ore", Err("no answer to /locate ore".into()));
+                    gate.next(Step::Gorge, now);
+                }
+                return;
+            };
+            // "… /tp X Y Z goes there."
+            let at = reply.split("/tp ").nth(1).and_then(|rest| {
+                let n: Vec<i32> = rest.split_whitespace().take(3).filter_map(|v| v.parse().ok()).collect();
+                (n.len() == 3).then(|| IVec3::new(n[0], n[1], n[2]))
+            });
+            let Some(at) = at else {
+                gate.check("ore", Err(format!("/locate ore: {reply}")));
+                gate.next(Step::Gorge, now);
+                return;
+            };
+            gate.ore = at;
+            let net = world.resource::<Net>();
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
+            }
+            gate.advance(now);
+        }
+        2 => {
+            let at = gate.ore;
+            let held = gate.observer.as_ref().is_some_and(|o| columns_around(at).into_iter().all(|c| o.world.contains(c)));
+            let there = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2() + 0.5) < 4.0;
+            let client = world.resource::<ClientWorld>();
+            let shown = columns_around(at).into_iter().all(|c| client.voxels.contains(c)) && settled(world, at);
+            if !(held && there && shown && in_phase > 1.0) {
+                let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
+                let limit = if load > cores { GORGE_OVERLOADED_LIMIT } else { GORGE_LOAD_LIMIT };
+                if in_phase > limit {
+                    gate.check("ore", Err(format!("the world around the sample of ore at {at} did not load in {limit:.0}s (load {load:.0} on {cores} cores)")));
+                    gate.next(Step::Gorge, now);
+                }
+                return;
+            }
+            // Standing over it, looking down at it a little from the side.
+            look(world, 0.0, -70.0);
+            gate.advance(now);
+        }
+        3 if in_phase > 0.5 => {
+            if gate.shot(world, "ore").is_none() {
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let registry = client.registry.clone();
+            let Some(observer) = gate.observer.as_ref() else { return };
+            let at = gate.ore;
+            let ore_of = |block: BlockId| {
+                let def = registry.def(block);
+                (def.has_tag("ore") && !def.has_tag("ore_sample")).then(|| def.drops.clone().unwrap_or_else(|| def.name.clone()))
+            };
+            let sample = observer.world.block(at).filter(|&b| registry.def(b).has_tag("ore_sample"));
+            let result = match sample {
+                None => Err(format!("no sample of ore at {at}, where /locate ore said")),
+                Some(sample) => {
+                    let def = registry.def(sample);
+                    let wanted = def.drops.clone().unwrap_or_else(|| def.name.clone());
+                    let ground = observer.world.block(at - IVec3::Y).is_some_and(|b| registry.def(b).solid);
+                    // The ore around, from the bottom of the world up to the sample: its vein
+                    // below it, and none of it lying alone.
+                    let mut ores = Vec::new();
+                    for z in -AGREE_WITHIN..=AGREE_WITHIN {
+                        for x in -AGREE_WITHIN..=AGREE_WITHIN {
+                            for y in 1..at.y {
+                                let p = IVec3::new(at.x + x, y, at.z + z);
+                                if let Some(ore) = observer.world.block(p).and_then(ore_of) {
+                                    ores.push((p, ore));
+                                }
+                            }
+                        }
+                    }
+                    let below = ores.iter().filter(|(_, o)| *o == wanted).count();
+                    let alone = ores
+                        .iter()
+                        .filter(|(p, _)| !ores.iter().any(|(q, _)| q != p && (*q - *p).abs().max_element() <= 2))
+                        .count();
+                    let drawn = client.block(at) == Some(sample);
+                    match (ground, below > 0, alone * 30 <= ores.len(), drawn) {
+                        (false, ..) => Err(format!("the {} at {at} lies on no solid ground", def.name)),
+                        (_, false, ..) => Err(format!("no {wanted} below the {} at {at}: it points to no vein", def.name)),
+                        (.., false, _) => Err(format!("{alone} of the {} ore blocks around {at} lie alone, not in veins", ores.len())),
+                        (.., false) => Err(format!("the client does not have the {} at {at}", def.name)),
+                        _ => Ok(format!("a {} at {at} over {below} blocks of {wanted} ({alone} of {} ore blocks around alone)", def.name, ores.len())),
+                    }
+                }
+            };
+            gate.check("ore", result);
+            gate.next(Step::Gorge, now);
         }
         _ => {}
     }
