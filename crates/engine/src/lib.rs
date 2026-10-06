@@ -28,6 +28,7 @@ pub mod genes;
 pub mod inventory;
 pub mod journal;
 pub mod lang;
+pub mod level;
 pub mod light;
 pub mod loot;
 pub mod mesh;

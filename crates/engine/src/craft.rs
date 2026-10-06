@@ -43,6 +43,9 @@ pub struct RecipeDef {
     pub level: u8,
     #[serde(default)]
     pub xp: f32,
+    /// Boosts and schematics cannot lower its level (the Singularity's Engineering 90).
+    #[serde(default)]
+    pub firm: bool,
 }
 
 fn one() -> u8 {
@@ -67,6 +70,7 @@ pub struct Recipe {
     pub skill: Option<SkillId>,
     pub level: u8,
     pub xp: f32,
+    pub firm: bool,
 }
 
 impl Recipe {
@@ -221,7 +225,7 @@ impl RecipeRegistry {
                 let mut ingredients: Vec<BlockId> = def.ingredients.iter().map(resolve).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
                 ingredients.sort();
                 let output = resolve(&def.output)?.ok_or_else(|| bad("no output"))?;
-                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp });
+                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm });
             }
         }
         Ok(Self { recipes })

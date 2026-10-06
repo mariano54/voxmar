@@ -47,7 +47,7 @@ impl Server {
                 return;
             }
             let farming = self.content.skills.id("core:farming");
-            let level = farming.map_or(1, |skill| self.content.skills.level(self.players.get(&agent).map_or(0, |p| p.skills.xp(skill))));
+            let level = farming.map_or(1, |skill| self.check_level(agent, skill));
             let needs = regrowth.rules.planter_level.of(rarity) as u8;
             if level < needs {
                 let words = Words::key("farming.planter_needs").with("plant", Words::Block(self.content.blocks.def(plant).name.clone())).with("level", Words::text(needs));

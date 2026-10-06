@@ -20,7 +20,7 @@ impl Server {
     pub(crate) fn fish(&mut self, agent: PlayerId, at: IVec3) {
         let fishing = self.content.fishing.clone();
         let Some(player) = self.players.get(&agent) else { return };
-        let level = fishing.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
+        let level = fishing.skill.map_or(1, |skill| self.check_level(agent, skill));
         let rod = self.content.tools.tool(player.held());
         let biome = self.overworld.biome_at(at.x, at.z);
         let tags = biome.tags.clone();

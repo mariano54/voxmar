@@ -228,3 +228,13 @@ level shifts animals' rarer drops.
 | 44 | *Sunwings* |
 | 47 | *Griffins* |
 | 50 | *Silver harts* |
+
+## Effective level
+
+Every level check (a recipe, an ore, a seed, a catch, a herb planter) sees an effective
+level (`engine/src/level.rs`): your level, plus what your effects boost (an effect's
+`boosts: [("engineering", 3)]`, at most +6 in all), plus, for a recipe, the best discount a
+schematic you carry gives (an item tagged `schematic:<item>:<levels>`, 5 to 10). A recipe
+marked `firm` takes neither (the Singularity's Engineering 90). Boosts and schematics help
+with making and gathering, never with wielding or wearing. Server and client use the same
+functions, so the client predicts what the server allows.

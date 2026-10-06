@@ -157,7 +157,7 @@ impl ActionContext for ClientContext<'_> {
     }
 
     fn actor_level(&self, skill: SkillId) -> u8 {
-        self.content.skills.level(self.player.skills.xp(skill))
+        voxmar_engine::level::check_level(&self.content.skills, &self.content.effects, &self.player.skills, &self.player.vitals.effects, skill)
     }
 
     fn actor_eye(&self) -> Vec3 {

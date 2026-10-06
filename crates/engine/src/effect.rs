@@ -50,6 +50,10 @@ pub struct EffectDef {
     pub replaces: Vec<String>,
     #[serde(default)]
     pub modifiers: Modifiers,
+    /// Levels it adds to skills' checks (a boost potion: `[("engineering", 3)]`); all
+    /// boosts together stop at +6 (`level::MAX_BOOST`).
+    #[serde(default)]
+    pub boosts: Vec<(String, i8)>,
 }
 
 /// What an effect changes. Rates are multipliers (1 changes nothing).
@@ -214,6 +218,12 @@ impl EffectRegistry {
         for def in &mut file.effects {
             qualify(&mut def.name);
             def.replaces.iter_mut().for_each(qualify);
+            // Skills are all core's.
+            for (skill, _) in &mut def.boosts {
+                if !skill.contains(':') {
+                    *skill = format!("core:{skill}");
+                }
+            }
             if def.icon.is_empty() {
                 def.icon = def.name.rsplit(':').next().unwrap_or_default().to_owned();
             }
@@ -281,6 +291,12 @@ impl EffectRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.defs.is_empty()
+    }
+
+    /// Levels `active` effects add to `skill`'s checks, capped at `level::MAX_BOOST` either way.
+    pub fn boost(&self, active: &[ActiveEffect], skill: &str) -> i8 {
+        let sum: i32 = active.iter().flat_map(|a| self.get(a.effect).boosts.iter()).filter(|(s, _)| s == skill).map(|&(_, n)| n as i32).sum();
+        sum.clamp(-crate::level::MAX_BOOST as i32, crate::level::MAX_BOOST as i32) as i8
     }
 
     /// The effects a player has: those whose conditions hold, and the timed ones given
