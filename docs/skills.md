@@ -9,7 +9,7 @@ and [creature-data.md](creature-data.md) for the data formats.
 | # | Question | Decision |
 | --- | --- | --- |
 | 1 | Curve | RuneScape's, levels 1 to 99 (13,034,431 experience at 99, level 92 is half way), shared by every skill. Already in `core/skills.ron`. |
-| 2 | Skills | Attack, Defence, Hitpoints, Mining, Farming, Cooking (Mariano's list), plus **Hunter**, which Mariano chose on 2026-10-05. |
+| 2 | Skills | Attack, Defence, Hitpoints, Mining, Farming, Cooking (Mariano's list), plus **Hunter**, which Mariano chose on 2026-10-05; Engineering and Crafting (2026-10-06), Fishing. Content peaks at 80; only Engineering runs to 90. |
 | 3 | Breeding | Part of Farming, never its own skill (Mariano). Farming covers crops, trees, beekeeping, animal husbandry and breeding. |
 | 4 | What levels do | Gate what you may do, raise yields, rare finds and quality, lower failure (burning, misses). Levels never make the world run faster: crops and animals grow at the world's pace. |
 | 5 | Where experience comes from | Actions only, whoever performs them. Machines and tamed animals working for you earn nothing; building and configuring them is gated by level. |
@@ -228,3 +228,13 @@ level shifts animals' rarer drops.
 | 44 | *Sunwings* |
 | 47 | *Griffins* |
 | 50 | *Silver harts* |
+
+## Effective level
+
+Every level check (a recipe, an ore, a seed, a catch, a herb planter) sees an effective
+level (`engine/src/level.rs`): your level, plus what your effects boost (an effect's
+`boosts: [("engineering", 3)]`, at most +6 in all), plus, for a recipe, the best discount a
+schematic you carry gives (an item tagged `schematic:<item>:<levels>`, 5 to 10). A recipe
+marked `firm` takes neither (the Singularity's Engineering 90). Boosts and schematics help
+with making and gathering, never with wielding or wearing. Server and client use the same
+functions, so the client predicts what the server allows.
