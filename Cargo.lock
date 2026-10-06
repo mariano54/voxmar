@@ -5049,6 +5049,7 @@ dependencies = [
  "voxmar_server",
  "voxmar_texgen",
  "voxmar_worldgen",
+ "wgpu",
  "zip",
 ]
 
