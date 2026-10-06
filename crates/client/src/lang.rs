@@ -30,7 +30,7 @@ impl Plugin for LangPlugin {
         app.init_resource::<SmoothFonts>()
             .add_systems(Startup, load_smooth_fonts)
             .add_systems(Update, switch.run_if(resource_changed::<Settings>))
-            .add_systems(PostUpdate, (localize.before(bevy::ui::UiSystems::Prepare), fall_back_to_smooth_fonts.after(bevy::text::load_font_assets_into_font_collection).before(bevy::ui::UiSystems::Prepare)));
+            .add_systems(PostUpdate, (localize.before(bevy::ui::UiSystems::Prepare), fall_back_to_smooth_fonts.run_if(resource_changed::<FontCx>).after(bevy::text::load_font_assets_into_font_collection).before(bevy::ui::UiSystems::Prepare)));
     }
 }
 
@@ -214,7 +214,8 @@ fn load_smooth_fonts(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
 const SMOOTH_SCRIPTS: [[u8; 4]; 4] = [*b"Hira", *b"Kana", *b"Hani", *b"Zyyy"];
 
 /// Makes the smooth fonts what Japanese text falls back to, once Bevy has them in its
-/// font collection, and again whenever it rebuilds that (when a font is removed).
+/// font collection, and again whenever it rebuilds that (when a font is removed). Runs
+/// only when the collection may have changed.
 fn fall_back_to_smooth_fonts(smooth: Res<SmoothFonts>, mut font_cx: ResMut<FontCx>, mut texts: Query<&mut TextFont>) {
     if smooth.0.is_empty() {
         return;
