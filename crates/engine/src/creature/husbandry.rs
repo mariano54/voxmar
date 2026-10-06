@@ -99,6 +99,10 @@ pub const IN_LOVE_SECONDS: f32 = 30.0;
 pub const MATE_RANGE: f32 = 10.0;
 /// A young one's size against an adult's.
 pub const YOUNG_SCALE: f32 = 0.55;
+/// How far a kept creature strolls from its home, and how far it strays before it heads
+/// back: farm animals stay where they are kept, with or without a fence.
+pub const KEPT_ROAM: f32 = 4.0;
+pub const KEPT_LEASH: f32 = 7.0;
 
 /// The trust a feeding gives, from a draw `u` in 0..1.
 pub fn trust_gain(taming: &Taming, u: f32) -> f32 {

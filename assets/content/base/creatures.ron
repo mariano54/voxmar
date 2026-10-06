@@ -24,8 +24,9 @@
             name: "rabbit", level: 1, health: 3,
             body: (
                 size: (0.4, 0.45),
-                model: Quadruped(body: (0.3, 0.26, 0.42), head: (0.24, 0.22, 0.24), legs: 0.1, ears: (0.07, 0.2), tail: (0.1, 0.1, 0.08)),
+                model: Quadruped(body: (0.3, 0.26, 0.42), head: (0.22, 0.21, 0.24), legs: 0.1, ears: (0.07, 0.22), ear_lean: 8.0, tail: (0.1, 0.1, 0.08), tail_droop: -40.0, haunches: true, snout: (0.12, 0.08, 0.04)),
                 colours: [(150, 118, 86), (226, 216, 196), (70, 52, 40)],
+                skin: (fur: 0.12, belly: 0.32, feet: (196, 184, 164), markings: [EarTips(colour: (82, 62, 46)), Muzzle(colour: (196, 176, 150))]),
             ),
             movement: (style: Hopper, walk: 2.2, run: 7.0, turn: 420.0, jump: 7.0),
             habitat: (
@@ -51,8 +52,9 @@
             name: "junglefowl", title: "Junglefowl", level: 1, health: 3,
             body: (
                 size: (0.4, 0.6),
-                model: Biped(body: (0.3, 0.3, 0.42), head: (0.2, 0.22, 0.2), legs: 0.2, wings: (0.06, 0.32), beak: (0.08, 0.06, 0.1), tail: (0.08, 0.22, 0.14)),
-                colours: [(176, 92, 42), (214, 170, 84), (236, 188, 52)],
+                model: Biped(body: (0.3, 0.3, 0.42), head: (0.18, 0.2, 0.18), legs: 0.2, wings: (0.05, 0.34), beak: (0.07, 0.05, 0.08), tail: (0.06, 0.22, 0.2), tilt: 14.0, tail_lift: 55.0, crest: (0.04, 0.08, 0.13), wattle: (0.05, 0.06)),
+                colours: [(176, 72, 32), (40, 60, 52), (236, 188, 52), (204, 36, 30)],
+                skin: (iris: (232, 140, 40), fur: 0.06, belly: 0.4, markings: [Collar(colour: (230, 150, 52), width: 0.14), Hood(colour: (214, 112, 40))]),
             ),
             movement: (walk: 1.5, run: 4.8, turn: 480.0, jump: 6.5),
             habitat: (
@@ -73,8 +75,9 @@
             name: "mallard", level: 1, health: 3, rarity: Uncommon,
             body: (
                 size: (0.4, 0.55),
-                model: Biped(body: (0.3, 0.26, 0.46), head: (0.18, 0.2, 0.2), legs: 0.14, wings: (0.06, 0.36), beak: (0.1, 0.05, 0.14), tail: (0.1, 0.08, 0.1)),
-                colours: [(120, 100, 80), (60, 120, 70), (230, 170, 40)],
+                model: Biped(body: (0.3, 0.26, 0.46), head: (0.17, 0.18, 0.2), legs: 0.12, wings: (0.05, 0.36), beak: (0.1, 0.04, 0.13), tail: (0.12, 0.06, 0.1), tilt: 4.0, tail_lift: 18.0),
+                colours: [(126, 116, 104), (88, 74, 62), (230, 170, 40)],
+                skin: (fur: 0.04, belly: 0.4, markings: [Hood(colour: (34, 104, 62)), Collar(colour: (236, 236, 228), width: 0.025), Saddle(colour: (100, 82, 66))]),
             ),
             movement: (style: Walker, walk: 1.2, run: 4.0, turn: 360.0, jump: 6.0),
             habitat: (
@@ -96,8 +99,9 @@
             name: "lumen_snail", supernatural: true, level: 1, health: 4, rarity: Uncommon,
             body: (
                 size: (0.4, 0.45),
-                model: Blob(body: (0.3, 0.2, 0.6), head: (0.18, 0.18, 0.18), shell: (0.36, 0.34, 0.36)),
+                model: Blob(body: (0.26, 0.16, 0.6), head: (0.18, 0.16, 0.18), shell: (0.3, 0.32, 0.34), stalks: 0.14),
                 colours: [(110, 236, 206), (96, 70, 140)],
+                skin: (eyes: Hidden, fur: 0.04, belly: 0.0, markings: [Spots(colour: (200, 255, 240), size: 0.04, density: 0.4)]),
                 glows: true,
             ),
             movement: (style: Creeper, walk: 0.35, run: 0.7, turn: 90.0, jump: 0.0),
@@ -121,8 +125,9 @@
             name: "mouflon", level: 2, health: 6,
             body: (
                 size: (0.7, 0.95),
-                model: Quadruped(body: (0.56, 0.5, 0.82), head: (0.32, 0.32, 0.36), legs: 0.38, ears: (0.1, 0.08), horns: (0.1, 0.22), tail: (0.12, 0.15, 0.06)),
-                colours: [(150, 108, 72), (226, 214, 192), (120, 98, 78)],
+                model: Quadruped(body: (0.56, 0.5, 0.82), head: (0.3, 0.3, 0.36), legs: 0.4, ears: (0.1, 0.1), ear_lean: 70.0, horns: (0.09, 0.56), horn_shape: Curl, neck: (0.12, 35.0), snout: (0.18, 0.14, 0.1), tail: (0.12, 0.15, 0.08), tail_droop: 70.0),
+                colours: [(150, 98, 60), (232, 222, 204), (126, 104, 82)],
+                skin: (fur: 0.11, belly: 0.3, feet: (60, 48, 40), markings: [Muzzle(colour: (226, 218, 204)), Socks(colour: (226, 220, 206), height: 0.45), Dorsal(colour: (82, 56, 38), width: 0.08)]),
             ),
             movement: (walk: 1.4, run: 5.5, turn: 260.0, jump: 8.0),
             habitat: (
@@ -147,8 +152,9 @@
             name: "red_deer", level: 5, health: 8,
             body: (
                 size: (0.8, 1.5),
-                model: Quadruped(body: (0.52, 0.58, 1.0), head: (0.3, 0.3, 0.42), legs: 0.75, ears: (0.08, 0.14), horns: (0.06, 0.46), tail: (0.1, 0.12, 0.05)),
-                colours: [(150, 90, 52), (222, 202, 170), (200, 178, 140)],
+                model: Quadruped(body: (0.5, 0.58, 1.0), head: (0.28, 0.28, 0.4), legs: 0.75, ears: (0.09, 0.16), ear_lean: 55.0, horns: (0.06, 0.62), horn_shape: Antlers, neck: (0.34, 50.0), snout: (0.16, 0.14, 0.12), tail: (0.1, 0.12, 0.08), tail_droop: 65.0),
+                colours: [(150, 86, 50), (222, 202, 170), (206, 186, 150)],
+                skin: (fur: 0.08, belly: 0.28, feet: (52, 40, 34), markings: [Muzzle(colour: (120, 82, 60)), TailTip(colour: (236, 222, 196), length: 1.0), Dorsal(colour: (110, 64, 38), width: 0.1)]),
             ),
             movement: (walk: 1.5, run: 8.5, turn: 300.0, jump: 9.5),
             habitat: (
@@ -174,8 +180,9 @@
             defence: 4,
             body: (
                 size: (1.1, 1.45),
-                model: Quadruped(body: (0.9, 0.85, 1.45), head: (0.5, 0.46, 0.52), legs: 0.62, horns: (0.12, 0.36), snout: (0.3, 0.2, 0.12), tail: (0.08, 0.42, 0.08)),
-                colours: [(70, 50, 40), (110, 80, 60), (226, 220, 200)],
+                model: Quadruped(body: (0.9, 0.85, 1.45), head: (0.46, 0.44, 0.52), legs: 0.62, ears: (0.12, 0.08), ear_lean: 85.0, horns: (0.12, 0.62), horn_shape: Curved, snout: (0.32, 0.22, 0.1), hump: 0.16, tail: (0.08, 0.08, 0.5), tail_droop: 82.0),
+                colours: [(58, 40, 32), (90, 66, 50), (226, 220, 200)],
+                skin: (fur: 0.1, belly: 0.25, feet: (34, 28, 26), markings: [Dorsal(colour: (186, 160, 120), width: 0.07), Muzzle(colour: (210, 196, 172)), TailTip(colour: (30, 24, 22), length: 0.25)]),
             ),
             movement: (style: Lumberer, walk: 1.2, run: 5.0, turn: 160.0, jump: 7.5),
             habitat: (
@@ -199,8 +206,9 @@
             defence: 5,
             body: (
                 size: (0.8, 0.85),
-                model: Quadruped(body: (0.6, 0.55, 0.92), head: (0.4, 0.38, 0.42), legs: 0.3, ears: (0.1, 0.12), horns: (0.05, 0.1), snout: (0.24, 0.16, 0.14), tail: (0.05, 0.2, 0.05)),
+                model: Quadruped(body: (0.6, 0.55, 0.92), head: (0.38, 0.38, 0.42), legs: 0.3, ears: (0.1, 0.12), ear_lean: 30.0, horns: (0.05, 0.12), horn_shape: Tusks, snout: (0.22, 0.16, 0.16), hump: 0.2, tail: (0.05, 0.05, 0.22), tail_droop: 60.0),
                 colours: [(82, 62, 46), (112, 90, 70), (226, 214, 190)],
+                skin: (fur: 0.18, belly: 0.2, feet: (36, 28, 24), markings: [Dorsal(colour: (46, 34, 28), width: 0.16), Muzzle(colour: (120, 96, 84))]),
             ),
             movement: (style: Lumberer, walk: 1.3, run: 6.0, turn: 220.0, jump: 7.5),
             habitat: (
@@ -230,8 +238,9 @@
             attack: (damage: (1, 2), reach: 0.8, every: 1.0),
             body: (
                 size: (0.55, 0.6),
-                model: Quadruped(body: (0.3, 0.3, 0.62), head: (0.26, 0.24, 0.26), legs: 0.25, ears: (0.09, 0.14), snout: (0.12, 0.1, 0.14), tail: (0.16, 0.16, 0.42)),
+                model: Quadruped(body: (0.28, 0.3, 0.6), head: (0.26, 0.22, 0.24), legs: 0.26, ears: (0.1, 0.15), ear_lean: 10.0, snout: (0.11, 0.09, 0.15), tail: (0.16, 0.16, 0.44), tail_droop: 25.0),
                 colours: [(212, 112, 42), (240, 234, 224), (52, 38, 32)],
+                skin: (eyes: Front, iris: (210, 150, 40), fur: 0.09, belly: 0.35, markings: [Socks(colour: (52, 38, 32), height: 0.5), TailTip(colour: (240, 236, 228), length: 0.22), EarTips(colour: (48, 34, 30)), Muzzle(colour: (240, 234, 224))]),
             ),
             movement: (style: Stalker, walk: 1.8, run: 7.5, turn: 420.0, jump: 8.5),
             habitat: (
@@ -254,8 +263,9 @@
             defence: 8,
             body: (
                 size: (0.7, 0.9),
-                model: Quadruped(body: (0.44, 0.48, 0.9), head: (0.36, 0.34, 0.36), legs: 0.42, ears: (0.1, 0.14), snout: (0.18, 0.14, 0.2), tail: (0.12, 0.12, 0.42)),
-                colours: [(128, 128, 132), (204, 202, 198), (42, 42, 46)],
+                model: Quadruped(body: (0.42, 0.48, 0.9), head: (0.34, 0.3, 0.34), legs: 0.44, ears: (0.11, 0.15), ear_lean: 8.0, snout: (0.17, 0.13, 0.2), neck: (0.06, 20.0), tail: (0.12, 0.12, 0.44), tail_droop: 40.0),
+                colours: [(128, 128, 132), (210, 206, 200), (42, 42, 46)],
+                skin: (eyes: Front, iris: (206, 168, 72), fur: 0.13, belly: 0.35, feet: (90, 88, 88), markings: [Saddle(colour: (82, 80, 82)), Muzzle(colour: (214, 210, 204)), TailTip(colour: (40, 40, 44), length: 0.2), Mask(colour: (160, 158, 160))]),
             ),
             movement: (style: Trotter, walk: 2.4, run: 7.0, turn: 320.0, jump: 8.5),
             habitat: (
@@ -283,8 +293,9 @@
             defence: 20,
             body: (
                 size: (1.2, 1.4),
-                model: Quadruped(body: (1.0, 0.95, 1.5), head: (0.56, 0.5, 0.5), legs: 0.55, ears: (0.14, 0.12), snout: (0.28, 0.2, 0.2), tail: (0.12, 0.12, 0.1)),
-                colours: [(96, 66, 42), (122, 88, 58), (40, 30, 25)],
+                model: Quadruped(body: (1.0, 0.92, 1.5), head: (0.54, 0.46, 0.46), legs: 0.55, ears: (0.14, 0.12), ear_lean: 25.0, snout: (0.26, 0.2, 0.2), hump: 0.22, tail: (0.12, 0.12, 0.1), tail_droop: 30.0),
+                colours: [(96, 66, 42), (112, 80, 54), (40, 30, 25)],
+                skin: (eyes: Front, fur: 0.17, belly: 0.15, feet: (44, 32, 26), markings: [Muzzle(colour: (150, 116, 84)), Saddle(colour: (124, 90, 60))]),
             ),
             movement: (style: Lumberer, walk: 1.3, run: 6.5, turn: 160.0, jump: 7.0),
             habitat: (
@@ -315,8 +326,9 @@
             defence: 4,
             body: (
                 size: (0.9, 0.6),
-                model: Crawler(body: (0.6, 0.4, 0.7), head: (0.4, 0.34, 0.36), legs: 0.6, pairs: 4),
+                model: Crawler(body: (0.6, 0.4, 0.7), head: (0.38, 0.3, 0.34), legs: 0.6, pairs: 4),
                 colours: [(52, 46, 46), (82, 42, 42)],
+                skin: (eyes: Cluster, iris: (220, 40, 30), fur: 0.12, belly: 0.0, markings: [Dorsal(colour: (120, 36, 32), width: 0.12), Spots(colour: (90, 80, 76), size: 0.06, density: 0.35)]),
             ),
             movement: (style: Creeper, walk: 1.6, run: 5.2, turn: 400.0, jump: 7.0),
             habitat: (active: Any),
@@ -333,6 +345,7 @@
                 size: (0.6, 1.8),
                 model: Biped(body: (0.5, 0.7, 0.3), head: (0.42, 0.42, 0.42), legs: 0.72, arms: 0.66),
                 colours: [(92, 112, 82), (72, 62, 52), (40, 40, 40)],
+                skin: (eyes: Front, iris: (190, 230, 90), fur: 0.14, belly: 0.0, markings: [Spots(colour: (64, 80, 58), size: 0.1, density: 0.5), Mask(colour: (70, 86, 62))]),
             ),
             movement: (style: Creeper, walk: 1.0, run: 2.8, turn: 180.0, jump: 7.0),
             habitat: (comfort: (aether: (0.2, 1.0)), active: Any),
@@ -351,8 +364,9 @@
             name: "moonhare", supernatural: true, level: 10, health: 6, rarity: Rare,
             body: (
                 size: (0.45, 0.5),
-                model: Quadruped(body: (0.32, 0.28, 0.46), head: (0.26, 0.24, 0.26), legs: 0.12, ears: (0.07, 0.28), tail: (0.12, 0.12, 0.1)),
+                model: Quadruped(body: (0.32, 0.28, 0.46), head: (0.24, 0.22, 0.26), legs: 0.12, ears: (0.07, 0.3), ear_lean: 12.0, tail: (0.12, 0.12, 0.1), tail_droop: -40.0, haunches: true, snout: (0.12, 0.08, 0.04)),
                 colours: [(196, 216, 250), (236, 242, 255), (120, 150, 230)],
+                skin: (iris: (120, 160, 255), fur: 0.08, belly: 0.3, markings: [Spots(colour: (150, 180, 240), size: 0.05, density: 0.45), EarTips(colour: (120, 150, 230))]),
                 glows: true,
             ),
             movement: (style: Hopper, walk: 2.4, run: 9.0, turn: 480.0, jump: 7.5),
@@ -382,8 +396,9 @@
             name: "wisp", kind: Spirit, supernatural: true, level: 3, health: 3, rarity: Rare,
             body: (
                 size: (0.4, 0.4),
-                model: Blob(body: (0.3, 0.3, 0.3)),
+                model: Blob(body: (0.3, 0.3, 0.3), motes: 4),
                 colours: [(232, 214, 255), (200, 180, 255)],
+                skin: (eyes: Front, fur: 0.05, belly: 0.0),
                 glows: true,
             ),
             movement: (style: Drifter, walk: 1.2, run: 4.0, turn: 360.0, jump: 0.0),

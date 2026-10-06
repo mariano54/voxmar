@@ -1,8 +1,11 @@
 //! Creatures on the client: what the server says lives nearby, drawn as box models from
-//! their species' body plan (`engine::creature::Model`), carried on smoothly between the
-//! server's updates, and animated from how they move: legs swing with their stride, heads
-//! dip to graze and lift when alert, tails sway, wings flap, a struck creature flashes red
-//! and a dead one topples and sinks away. Left click on one strikes it (`core:attack`).
+//! their species' body plan (`engine::creature::Model`) in a skin painted for each one
+//! (`engine::creature::skin`), carried on smoothly between the server's updates, and
+//! animated from how they move: legs swing with their stride (hoppers and bounding runners
+//! move their pairs together), the body bobs with each step and breathes at rest, heads dip
+//! to graze and turn to watch a player who comes near, ears twitch, tails sway (a kept
+//! creature's faster when its keeper is near), wings flap, a struck creature flashes red and
+//! a dead one topples and sinks away. Left click on one strikes it (`core:attack`).
 //!
 //! They are ordinary Bevy meshes outside the renderer (docs/rendering.md, "Keeping room for
 //! what comes next"), unlit, with their faces shaded by hand and their colours darkened by
@@ -10,12 +13,16 @@
 //! instanced creature pass belongs to the graphics thread when it comes.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::{ActionTarget, REACH_CREATURE};
 use voxmar_engine::creature::brain::Pose;
-use voxmar_engine::creature::{self, CreatureId, EYE, Part, Swing};
+use voxmar_engine::creature::skin::{self, FACES, Layout};
+use voxmar_engine::creature::{self, CreatureId, Part, Style, Swing};
 use voxmar_engine::physics::Aabb;
 use voxmar_protocol::{CreatureGone, CreatureView};
 
@@ -38,25 +45,40 @@ const FLASH: f32 = 0.3;
 const DYING: f32 = 0.9;
 /// Hearts shown over a creature being tamed or ready to breed.
 const HEARTS: usize = 3;
+/// Blocks within which a creature turns its head to watch the player, and how far it turns.
+const WATCHES_WITHIN: f32 = 9.0;
+const WATCH_TURN: f32 = 1.0;
 
-/// A heart of three boxes (two lobes over a point), about a fifth of a block across,
-/// facing +Z in its own frame.
-fn spawn_heart(commands: &mut Commands, cube: &Handle<Mesh>, material: &Handle<StandardMaterial>) -> (Entity, Vec<Entity>) {
-    let root = commands.spawn((Transform::default(), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
-    let lobe = Vec3::new(0.09, 0.09, 0.03);
-    let boxes = [
-        Transform::from_translation(Vec3::new(-0.045, 0.03, 0.0)).with_scale(lobe),
-        Transform::from_translation(Vec3::new(0.045, 0.03, 0.0)).with_scale(lobe),
-        Transform::from_translation(Vec3::new(0.0, -0.025, 0.0)).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)).with_scale(Vec3::new(0.1, 0.1, 0.03)),
-    ];
-    let boxes = boxes.into_iter().map(|t| commands.spawn((Mesh3d(cube.clone()), MeshMaterial3d(material.clone()), t, ChildOf(root))).id()).collect();
-    (root, boxes)
+/// The heart's pixels, a row a string: `#` is heart, `+` its highlight.
+const HEART: [&str; 7] = ["         ", " ##   ## ", "#+##.####", "#+#######", " ####### ", "  #####  ", "    #    "];
+
+/// A heart drawn in pixels, white (tinted by its material), clear around it.
+fn heart_image() -> Image {
+    let (w, h) = (HEART[0].len() as u32, HEART.len() as u32);
+    let mut data = Vec::with_capacity((w * h * 4) as usize);
+    for row in HEART {
+        for c in row.chars() {
+            data.extend_from_slice(match c {
+                '#' => &[255, 255, 255, 255],
+                '+' | '.' => &[255, 235, 235, 255],
+                _ => &[0, 0, 0, 0],
+            });
+        }
+    }
+    let extent = Extent3d { width: w, height: h, depth_or_array_layers: 1 };
+    let mut image = Image::new(extent, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+    image.sampler = nearest();
+    image
+}
+
+fn nearest() -> ImageSampler {
+    ImageSampler::Descriptor(ImageSamplerDescriptor { mag_filter: ImageFilterMode::Nearest, min_filter: ImageFilterMode::Nearest, ..default() })
 }
 
 /// Removes a creature's model and its hearts.
 fn despawn(commands: &mut Commands, shown: &Shown) {
     commands.entity(shown.entity).despawn();
-    for (heart, _) in &shown.hearts {
+    for heart in &shown.hearts {
         commands.entity(*heart).despawn();
     }
 }
@@ -76,7 +98,7 @@ impl Plugin for CreaturesPlugin {
             .add_systems(Update, show.run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut commands: Commands, mut creatures: ResMut<Creatures>| {
                 for shown in creatures.shown.values() {
-                    despawn(&mut commands, &shown);
+                    despawn(&mut commands, shown);
                 }
                 *creatures = Creatures::default();
             });
@@ -92,8 +114,9 @@ struct Shown {
     yaw: f32,
     entity: Entity,
     parts: Vec<(Entity, Part)>,
-    /// Its materials, one per colour (and one for its eyes), to darken and flash.
-    materials: Vec<(Handle<StandardMaterial>, Color)>,
+    /// Its skin, which is darkened by the light and flashed red.
+    material: Handle<StandardMaterial>,
+    skin: Handle<Image>,
     /// Stride phase, in cycles.
     stride: f32,
     flash: f32,
@@ -101,13 +124,17 @@ struct Shown {
     dying: Option<f32>,
     /// Whether we have struck at it, so the target readout shows its health.
     struck: bool,
-    /// Smoothed head pitch and body crouch.
+    /// Smoothed head pitch and turn, and body crouch.
     nod: f32,
+    look: f32,
     crouch: f32,
     /// Hearts over it, made when first needed: trust filling while it is tamed, and all
-    /// red while a kept one is ready to breed. Each is a root with three boxes.
-    hearts: Vec<(Entity, Vec<Entity>)>,
+    /// red while a kept one is ready to breed.
+    hearts: Vec<Entity>,
 }
+
+/// A species' meshes: one per part, its texture coordinates in the species' layout.
+type Meshes = Vec<Handle<Mesh>>;
 
 /// Every creature the server has told us about.
 #[derive(Resource, Default)]
@@ -116,10 +143,10 @@ pub struct Creatures {
     /// Views and departures received since they were last applied.
     inbox: Vec<CreatureView>,
     left: Vec<CreatureGone>,
-    /// A cube with its faces shaded, shared by every part.
-    cube: Option<Handle<Mesh>>,
-    /// The hearts' colours: full and empty.
-    heart: Option<(Handle<StandardMaterial>, Handle<StandardMaterial>)>,
+    /// Each species' part meshes, made when the first of it is seen.
+    meshes: FxHashMap<CreatureId, Meshes>,
+    /// A shaded cube for hearts, and their colours: full and empty.
+    heart: Option<(Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>)>,
     /// Creatures seen to die since joining.
     pub deaths: u32,
     /// Blows of ours the server took since joining, and how many landed.
@@ -213,25 +240,24 @@ impl Creatures {
     }
 }
 
-/// A unit cube centred on the origin whose faces are shaded as the sun would light them
-/// from above: top brightest, then the sides, the bottom darkest.
-fn shaded_cube() -> Mesh {
-    // (normal, shade, four corners)
-    let faces: [([f32; 3], f32, [[f32; 3]; 4]); 6] = [
-        ([0.0, 1.0, 0.0], 1.0, [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]]),
-        ([0.0, -1.0, 0.0], 0.5, [[-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5]]),
-        ([1.0, 0.0, 0.0], 0.8, [[0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [0.5, -0.5, 0.5]]),
-        ([-1.0, 0.0, 0.0], 0.7, [[-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5]]),
-        ([0.0, 0.0, 1.0], 0.75, [[-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]]),
-        ([0.0, 0.0, -1.0], 0.85, [[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, -0.5, -0.5]]),
-    ];
-    let (mut positions, mut normals, mut colours, mut indices) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (normal, shade, corners) in faces {
+/// How bright each face is drawn, as the sun lights a box from above: top brightest, then
+/// the sides, the bottom darkest. In [`FACES`] order.
+const SHADES: [f32; 6] = [1.0, 0.5, 0.8, 0.7, 0.75, 0.85];
+
+/// A unit cube centred on the origin with its faces shaded and its texture coordinates in
+/// `rects` of a `layout`-sized texture (each face its whole patch), the corners laid out
+/// as the skin painter lays its texels ([`FACES`]).
+fn part_mesh(rects: &[skin::Rect; 6], layout: (u32, u32)) -> Mesh {
+    let (mut positions, mut normals, mut colours, mut uvs, mut indices) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for ((face, rect), shade) in FACES.iter().zip(rects).zip(SHADES) {
         let base = positions.len() as u32;
-        for corner in corners {
-            positions.push(corner);
-            normals.push(normal);
+        // Corners counter-clockwise seen from outside: (u, v) of (0,1), (1,1), (1,0), (0,0).
+        for (u, v) in [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)] {
+            let corner = face.normal * 0.5 + face.u * (u - 0.5) + face.v * (v - 0.5);
+            positions.push(corner.to_array());
+            normals.push(face.normal.to_array());
             colours.push([shade, shade, shade, 1.0]);
+            uvs.push([(rect.x as f32 + u * rect.w as f32) / layout.0 as f32, (rect.y as f32 + v * rect.h as f32) / layout.1 as f32]);
         }
         indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
@@ -239,13 +265,22 @@ fn shaded_cube() -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colours)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
         .with_inserted_indices(Indices::U32(indices))
 }
 
-/// A colour from the species' palette, a shade lighter or darker by the individual.
-fn tint(rgb: [u8; 3], seed: u32) -> Color {
-    let shift = 0.92 + 0.16 * creature::unit_from(creature::mix(seed as u64, 9));
-    Color::srgb(rgb[0] as f32 / 255.0 * shift, rgb[1] as f32 / 255.0 * shift, rgb[2] as f32 / 255.0 * shift)
+/// A whole-texture patch on every face, for hearts and warming.
+fn whole(size: (u32, u32)) -> [skin::Rect; 6] {
+    [skin::Rect { x: 0, y: 0, w: size.0, h: size.1 }; 6]
+}
+
+/// An individual's skin as a texture.
+fn skin_image(def: &creature::BodyDef, parts: &[Part], layout: &Layout, seed: u32) -> Image {
+    let pixels = skin::paint(def, parts, layout, seed);
+    let extent = Extent3d { width: layout.width, height: layout.height, depth_or_array_layers: 1 };
+    let mut image = Image::new(extent, TextureDimension::D2, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+    image.sampler = nearest();
+    image
 }
 
 /// Applies what the server sent, then moves and animates every creature, and handles
@@ -260,32 +295,29 @@ fn show(
     player: Res<LocalPlayer>,
     mut creatures: ResMut<Creatures>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut transforms: Query<&mut Transform>,
     mut looks: Query<&mut MeshMaterial3d<StandardMaterial>>,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    // Their pipelines compile as the world loads (`render::warm`), not when the first
-    // creature comes into view.
-    let cube = creatures
-        .cube
-        .get_or_insert_with(|| {
-            let cube = meshes.add(shaded_cube());
-            let material = materials.add(StandardMaterial { unlit: true, ..default() });
-            crate::render::warm::warm(&mut commands, cube.clone(), material, true, DespawnOnExit(Screen::InGame));
-            cube
-        })
-        .clone();
-    let (heart_full, heart_empty) = creatures
+    // Their pipelines (a skinned box, and a heart's clipped one) compile as the world loads
+    // (`render::warm`), not when the first creature comes into view.
+    let (heart_mesh, heart_full, heart_empty) = creatures
         .heart
         .get_or_insert_with(|| {
-            let full = materials.add(StandardMaterial { base_color: Color::srgb(0.92, 0.18, 0.25), unlit: true, ..default() });
-            let empty = materials.add(StandardMaterial { base_color: Color::srgb(0.35, 0.33, 0.36), unlit: true, ..default() });
-            // The same pipeline as the bodies', warmed with them; warmed again in case a
-            // future change gives hearts their own.
-            crate::render::warm::warm(&mut commands, cube.clone(), full.clone(), false, DespawnOnExit(Screen::InGame));
-            (full, empty)
+            let image = images.add(heart_image());
+            let mesh = meshes.add(part_mesh(&whole((1, 1)), (1, 1)));
+            let skinned = materials.add(StandardMaterial { base_color_texture: Some(image.clone()), unlit: true, ..default() });
+            crate::render::warm::warm(&mut commands, mesh.clone(), skinned, true, DespawnOnExit(Screen::InGame));
+            let heart = |colour: Color| StandardMaterial { base_color: colour, base_color_texture: Some(image.clone()), alpha_mode: AlphaMode::Mask(0.5), unlit: true, ..default() };
+            let full = materials.add(heart(Color::srgb(0.95, 0.16, 0.24)));
+            let empty = materials.add(heart(Color::srgb(0.3, 0.27, 0.3)));
+            // Hearts cast no shadow, but a clipped material's depth pipeline is warmed too, in
+            // case any pass draws them.
+            crate::render::warm::warm(&mut commands, mesh.clone(), full.clone(), true, DespawnOnExit(Screen::InGame));
+            (mesh, full, empty)
         })
         .clone();
     let registry = &launch.content.creatures;
@@ -298,8 +330,11 @@ fn show(
                 creatures.deaths += 1;
             }
             Some(shown) => {
-                despawn(&mut commands, &shown);
-                creatures.shown.remove(&gone.id);
+                despawn(&mut commands, shown);
+                if let Some(shown) = creatures.shown.remove(&gone.id) {
+                    images.remove(&shown.skin);
+                    materials.remove(&shown.material);
+                }
             }
             None => {}
         }
@@ -317,39 +352,49 @@ fn show(
             continue;
         }
         let species = registry.get(view.species);
-        let def = &species.def;
-        let glows = def.body.glows;
-        let eye = if glows { Color::WHITE } else { Color::srgb(0.06, 0.06, 0.07) };
-        let palette: Vec<(Handle<StandardMaterial>, Color)> = def
-            .body
-            .colours
-            .iter()
-            .map(|&rgb| tint(rgb, view.seed))
-            .chain([eye])
-            .map(|colour| (materials.add(StandardMaterial { base_color: colour, unlit: true, ..default() }), colour))
-            .collect();
-        let entity = commands
-            .spawn((Transform::from_translation(view.position), Visibility::default(), DespawnOnExit(Screen::InGame)))
-            .id();
+        let layout = &species.layout;
+        let part_meshes = creatures
+            .meshes
+            .entry(view.species)
+            .or_insert_with(|| layout.faces.iter().map(|rects| meshes.add(part_mesh(rects, (layout.width, layout.height)))).collect());
+        let skin = images.add(skin_image(&species.def.body, &species.parts, layout, view.seed));
+        let material = materials.add(StandardMaterial { base_color_texture: Some(skin.clone()), unlit: true, ..default() });
+        let entity = commands.spawn((Transform::from_translation(view.position), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
         let parts: Vec<(Entity, Part)> = species
             .parts
             .iter()
-            .map(|&part| {
-                let index = if part.colour == EYE { palette.len() - 1 } else { (part.colour as usize).min(palette.len() - 2) };
-                let child = commands
-                    .spawn((Mesh3d(cube.clone()), MeshMaterial3d(palette[index].0.clone()), Transform::from_translation(part.centre).with_scale(part.size), ChildOf(entity)))
-                    .id();
-                (child, part)
+            .zip(part_meshes.iter())
+            .map(|(&part, mesh)| {
+                let transform = Transform::from_translation(part.centre).with_rotation(part.rest).with_scale(part.size);
+                (commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform, ChildOf(entity))).id(), part)
             })
             .collect();
         creatures.shown.insert(
             view.id,
-            Shown { view, told_at: now, position: view.position, yaw: view.yaw, entity, parts, materials: palette, stride: 0.0, flash: 0.0, dying: None, struck: false, nod: 0.0, crouch: 0.0, hearts: Vec::new() },
+            Shown {
+                view,
+                told_at: now,
+                position: view.position,
+                yaw: view.yaw,
+                entity,
+                parts,
+                material,
+                skin,
+                stride: 0.0,
+                flash: 0.0,
+                dying: None,
+                struck: false,
+                nod: 0.0,
+                look: 0.0,
+                crouch: 0.0,
+                hearts: Vec::new(),
+            },
         );
     }
 
     let daylight = 0.25 + 0.75 * creature::daylight(cycle.ticks.max(0.0) as u64);
     let eye = player.eye();
+    let me = creatures.me;
     let mut finished = Vec::new();
     for (&id, shown) in creatures.shown.iter_mut() {
         let def = &registry.get(shown.view.species).def;
@@ -365,6 +410,7 @@ fn show(
         shown.yaw += turn * (10.0 * dt).min(1.0);
         let speed = (shown.position - before).with_y(0.0).length() / dt.max(1e-4);
         let scale = shown.view.scale;
+        let height = def.body.size.1 * scale;
         shown.stride += speed * dt / (def.body.size.0.max(0.3) * 1.6 * scale);
         shown.flash = (shown.flash - dt).max(0.0);
 
@@ -378,15 +424,36 @@ fn show(
         };
         shown.nod += (nod - shown.nod) * (6.0 * dt).min(1.0);
         shown.crouch += (crouch - shown.crouch) * (6.0 * dt).min(1.0);
+        // Watching the player who comes near, unless grazing or running.
+        let to_eye = eye - shown.position;
+        let watching = to_eye.length() < WATCHES_WITHIN && shown.view.pose != Pose::Grazing && speed < def.movement.walk * 1.2 && shown.dying.is_none();
+        let look = if watching {
+            let facing = (-to_eye.x).atan2(-to_eye.z);
+            ((facing - shown.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).clamp(-WATCH_TURN, WATCH_TURN)
+        } else {
+            0.0
+        };
+        shown.look += (look - shown.look) * (4.0 * dt).min(1.0);
 
-        let mut root = Transform::from_translation(shown.position - Vec3::Y * shown.crouch * def.body.size.1 * scale)
+        let moving = (speed / (def.movement.walk.max(0.5) * 1.5)).min(1.0);
+        let running = speed > def.movement.walk * 1.6;
+        // Hoppers hop, and anything running bounds: pairs together. Otherwise diagonal pairs.
+        let paired = def.movement.style == Style::Hopper || (running && def.movement.style != Style::Creeper);
+        let step = shown.stride * std::f32::consts::TAU;
+        let bob = if paired { (step.sin().abs() * 0.12 - 0.02).max(0.0) * moving } else { step.sin().abs() * 0.025 * moving };
+        let bob = match def.movement.style {
+            Style::Drifter => (now * 1.7 + id as f32).sin() * 0.06,
+            _ => bob,
+        };
+
+        let mut root = Transform::from_translation(shown.position + Vec3::Y * height * (bob - shown.crouch))
             .with_rotation(Quat::from_rotation_y(shown.yaw))
             .with_scale(Vec3::splat(scale));
         if let Some(dying) = shown.dying.as_mut() {
             *dying += dt;
             let t = (*dying / DYING).min(1.0);
             root.rotation *= Quat::from_rotation_z(t.min(0.5) * 2.0 * std::f32::consts::FRAC_PI_2);
-            root.translation.y -= (t - 0.5).max(0.0) * def.body.size.1 * scale;
+            root.translation.y -= (t - 0.5).max(0.0) * height;
             if t >= 1.0 {
                 finished.push(id);
             }
@@ -400,42 +467,63 @@ fn show(
         let filled = if shown.view.ready { HEARTS } else { (shown.view.trust as usize * HEARTS).div_ceil(100) };
         let showing = (shown.view.ready || (!shown.view.kept && shown.view.trust > 0)) && shown.dying.is_none() && !far;
         if showing && shown.hearts.is_empty() {
-            shown.hearts = (0..HEARTS).map(|_| spawn_heart(&mut commands, &cube, &heart_empty)).collect();
+            shown.hearts = (0..HEARTS)
+                .map(|_| commands.spawn((Mesh3d(heart_mesh.clone()), MeshMaterial3d(heart_empty.clone()), Transform::default(), NotShadowCaster, DespawnOnExit(Screen::InGame))).id())
+                .collect();
         }
-        let above = shown.position + Vec3::Y * (def.body.size.1 * scale + 0.35 + (now * 3.0 + id as f32).sin() * 0.04);
+        let above = shown.position + Vec3::Y * (height + 0.3 + (now * 3.0 + id as f32).sin() * 0.04);
         let toward = (eye - above).with_y(0.0).normalize_or(Vec3::Z);
         let facing = Quat::from_rotation_y(toward.x.atan2(toward.z));
         let across = facing * Vec3::X;
-        for (i, (heart, boxes)) in shown.hearts.iter().enumerate() {
+        for (i, heart) in shown.hearts.iter().enumerate() {
             if let Ok(mut transform) = transforms.get_mut(*heart) {
-                let offset = (i as f32 - (HEARTS as f32 - 1.0) / 2.0) * 0.26;
-                *transform = Transform::from_translation(above + across * offset).with_rotation(facing).with_scale(Vec3::splat(if showing { 1.0 } else { 0.0 }));
+                let offset = (i as f32 - (HEARTS as f32 - 1.0) / 2.0) * 0.27;
+                let size = if showing { Vec3::new(0.25, 0.2, 0.01) } else { Vec3::ZERO };
+                *transform = Transform::from_translation(above + across * offset).with_rotation(facing).with_scale(size);
             }
             let colour = if i < filled { &heart_full } else { &heart_empty };
-            for part in boxes {
-                if let Ok(mut look) = looks.get_mut(*part)
-                    && look.0 != *colour
-                {
-                    look.0 = colour.clone();
-                }
+            if let Ok(mut look) = looks.get_mut(*heart)
+                && look.0 != *colour
+            {
+                look.0 = colour.clone();
             }
         }
-        let swing = (speed / (def.movement.walk.max(0.5) * 1.5)).min(1.0);
+
+        // A kept creature wags faster when its keeper is near.
+        let keeper_near = shown.view.kept && shown.view.owner.is_some() && shown.view.owner == me && to_eye.length() < 6.0;
+        let breath = 1.0 + (now * 2.2 + id as f32 * 0.7).sin() * 0.012 * (1.0 - moving);
+        let twitch = |side: f32| {
+            // Now and then, one ear flicks back.
+            let slot = (now * 0.8 + id as f32 * 0.37 + side * 0.21).floor();
+            let chance = creature::unit_from(creature::mix(id as u64 ^ slot as i64 as u64, side.to_bits() as u64));
+            if chance < 0.18 { ((now * 0.8 + id as f32 * 0.37 + side * 0.21).fract() * std::f32::consts::TAU).sin().max(0.0) * 0.6 } else { 0.0 }
+        };
         for (child, part) in &shown.parts {
-            let rotation = match part.swing {
-                Swing::Leg { phase } => Quat::from_rotation_x(((shown.stride + phase) * std::f32::consts::TAU).sin() * 0.7 * swing),
-                Swing::Head => Quat::from_rotation_x(-shown.nod),
-                Swing::Tail => Quat::from_rotation_y((now * 2.5 + id as f32).sin() * 0.3 + speed.min(4.0) * 0.05),
-                Swing::Wing { side } => {
-                    let beat = if speed > def.movement.walk * 1.2 { (now * 18.0).sin() * 0.5 } else { 0.0 };
-                    Quat::from_rotation_z(side * beat)
+            let (rotation, stretch) = match part.swing {
+                Swing::Leg { phase, hind } => {
+                    let phase = if paired { if hind { 0.0 } else { 0.5 } } else { phase };
+                    let reach = if paired { 0.9 } else { 0.7 };
+                    (Quat::from_rotation_x(((shown.stride + phase) * std::f32::consts::TAU).sin() * reach * moving), Vec3::ONE)
                 }
-                Swing::Still => Quat::IDENTITY,
+                Swing::Scuttle { phase } => (Quat::from_rotation_y(((shown.stride * 1.5 + phase) * std::f32::consts::TAU).sin() * 0.45 * moving), Vec3::ONE),
+                Swing::Head => (Quat::from_rotation_y(shown.look) * Quat::from_rotation_x(-shown.nod), Vec3::ONE),
+                Swing::Ear { side } => (Quat::from_rotation_x(twitch(side)) * Quat::from_rotation_y(shown.look), Vec3::ONE),
+                Swing::Tail => {
+                    let (rate, sway) = if keeper_near { (11.0, 0.45) } else { (2.5, 0.3) };
+                    (Quat::from_rotation_y((now * rate + id as f32).sin() * sway + speed.min(4.0) * 0.05), Vec3::ONE)
+                }
+                Swing::Wing { side } => {
+                    let beat = if running || speed > def.movement.walk * 1.2 { (now * 18.0).sin() * 0.6 } else { 0.0 };
+                    (Quat::from_rotation_z(side * beat), Vec3::ONE)
+                }
+                Swing::Orbit { phase } => (Quat::from_rotation_y((now * 1.3 + phase) * std::f32::consts::TAU), Vec3::ONE),
+                Swing::Still if part.role == creature::Role::Torso => (Quat::IDENTITY, Vec3::new(1.0, breath, 1.0)),
+                Swing::Still => (Quat::IDENTITY, Vec3::ONE),
             };
             if let Ok(mut transform) = transforms.get_mut(*child) {
                 transform.translation = part.pivot + rotation * (part.centre - part.pivot);
-                transform.rotation = rotation;
-                transform.scale = if far { Vec3::ZERO } else { part.size };
+                transform.rotation = rotation * part.rest;
+                transform.scale = if far { Vec3::ZERO } else { part.size * stretch };
             }
         }
         // Lit as the terrain around it is, a glowing creature by itself; red when struck.
@@ -448,16 +536,16 @@ fn show(
             sky.max(block).max(DARKEST)
         };
         let red = shown.flash / FLASH;
-        for (handle, colour) in &shown.materials {
-            if let Some(mut material) = materials.get_mut(handle) {
-                let lit = colour.to_linear() * light;
-                material.base_color = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
-            }
+        if let Some(mut material) = materials.get_mut(&shown.material) {
+            let lit = LinearRgba::rgb(light, light, light);
+            material.base_color = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
         }
     }
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
             despawn(&mut commands, &shown);
+            images.remove(&shown.skin);
+            materials.remove(&shown.material);
         }
     }
 }

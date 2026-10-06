@@ -33,6 +33,7 @@ mod breaking;
 mod capture;
 mod creatures;
 mod drops;
+mod emitters;
 mod gate;
 mod hud;
 mod interact;
@@ -339,6 +340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins(lang::LangPlugin);
     app.add_plugins(creatures::CreaturesPlugin);
+    app.add_plugins(emitters::EmittersPlugin);
     let terrain = app.world().resource::<render::terrain::Terrain>().clone();
     app.insert_resource(ClientWorld::new(registry.clone(), settings.view_distance, terrain))
     .insert_resource(Actions(content.actions))
