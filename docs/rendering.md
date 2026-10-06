@@ -200,6 +200,12 @@ That is how each part of the terrain's shading was weighed: a scratch build pass
 `VOXMAR_ABLATE` to the terrain pipelines as shader defs that switch parts off (fog,
 shadows, cloud shade, biome tint, weathering, all lighting), one run each.
 
+On the Linux box (Vulkan on an NVIDIA L4), `VOXMAR_GPU_TIMES=1` makes a capture print
+the GPU time of every pass that records a span (Bevy's `RenderDiagnosticsPlugin`, from
+timestamp queries; passes without a span are not listed), and `perf record -p` on a
+running capture shows the CPU side by thread. There, most scenes are limited by the CPU:
+the GPU was 40% busy in the creature scene.
+
 A run at a tiny size (640×416) shows the CPU's limit, as the GPU then does little:
 about 3.6–4.2 ms a frame in Low Power Mode. No thread is busy for all of it (the render
 thread about 40%): the frame waits on hand-offs between the main and render threads and
