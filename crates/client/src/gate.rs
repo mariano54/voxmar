@@ -118,7 +118,7 @@ fn render_offscreen(
     mut images: ResMut<Assets<Image>>,
     camera: Query<Entity, With<Camera3d>>,
 ) {
-    gate.target = crate::capture::offscreen(&mut commands, &mut images, &camera, SHOT);
+    gate.target = crate::capture::offscreen(&mut commands, &mut images, &camera, SHOT, 1.0);
 }
 
 /// The steps, in order.

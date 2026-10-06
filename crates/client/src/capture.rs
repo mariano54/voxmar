@@ -92,6 +92,8 @@ pub struct CapturePlugin {
     pub tend: Option<String>,
     /// Width and height of the shot, in pixels.
     pub size: UVec2,
+    /// Screen pixels per interface pixel, as a window on a Retina display has 2.
+    pub scale_factor: f32,
     /// Render to a real window and shoot that, rather than an offscreen image: slower to
     /// set up and in the way on screen, but it exercises what only a window has (the
     /// render scale, presenting frames).
@@ -150,6 +152,7 @@ impl Plugin for CapturePlugin {
             struck: false,
             level_up: self.level_up.clone(),
             size: self.size,
+            scale_factor: self.scale_factor,
             windowed: self.windowed,
         })
         .add_systems(PostStartup, render_offscreen.run_if(|state: Res<Capture>| !state.windowed))
@@ -206,6 +209,7 @@ struct Capture {
     struck: bool,
     level_up: Option<String>,
     size: UVec2,
+    scale_factor: f32,
     windowed: bool,
 }
 
@@ -252,22 +256,24 @@ fn render_offscreen(
     mut images: ResMut<Assets<Image>>,
     camera: Query<Entity, With<Camera3d>>,
 ) {
-    state.target = offscreen(&mut commands, &mut images, &camera, state.size);
+    state.target = offscreen(&mut commands, &mut images, &camera, state.size, state.scale_factor);
 }
 
 /// Points the world's camera at a new offscreen image `size` pixels across, which shots
-/// are then taken of, and returns the image.
+/// are then taken of, and returns the image. `scale_factor` is screen pixels per
+/// interface pixel, as on a window.
 pub(crate) fn offscreen(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     camera: &Query<Entity, With<Camera3d>>,
     size: UVec2,
+    scale_factor: f32,
 ) -> Handle<Image> {
     let mut image = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None);
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     let target = images.add(image);
     for entity in camera {
-        commands.entity(entity).insert(RenderTarget::Image(target.clone().into()));
+        commands.entity(entity).insert(RenderTarget::Image(bevy::camera::ImageRenderTarget { handle: target.clone(), scale_factor }));
     }
     target
 }

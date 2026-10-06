@@ -211,6 +211,13 @@ pub fn read_fallback(dir: &std::path::Path) -> PixelFont {
         file: String,
         /// The pixels its em is drawn on.
         pixels_per_em: u32,
+        /// How big its pixels are drawn, in ours: below 1, its glyphs keep all their detail
+        /// and take less room.
+        #[serde(default = "full_size")]
+        scale: f32,
+    }
+    fn full_size() -> f32 {
+        1.0
     }
     let list = std::fs::read_to_string(dir.join("fallback.ron")).map_err(|e| e.to_string()).and_then(|source| {
         ron::from_str::<Vec<Fallback>>(&source).map_err(|e| e.to_string())
@@ -221,7 +228,7 @@ pub fn read_fallback(dir: &std::path::Path) -> PixelFont {
             for entry in list {
                 let font = std::fs::read(dir.join(&entry.file))
                     .map_err(|e| e.to_string())
-                    .and_then(|data| voxmar_texgen::font::import(&data, entry.pixels_per_em).map_err(|e| e.to_string()));
+                    .and_then(|data| voxmar_texgen::font::import(&data, entry.pixels_per_em, entry.scale).map_err(|e| e.to_string()));
                 match font {
                     Ok(font) => merged.fill_from(&font),
                     Err(e) => warn!("cannot read the fallback font {}: {e}", entry.file),
