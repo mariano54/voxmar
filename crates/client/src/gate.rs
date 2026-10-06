@@ -1416,7 +1416,9 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
         None if gate.step == Step::Load => {
             let target = weather.target().map(|t| t.fractions());
             let off = target.map_or(f32::INFINITY, |t| t.iter().zip(&shown).map(|(t, s)| (t.1 - s.1).abs()).fold(0.0, f32::max));
-            let result = if off < 0.02 {
+            // Exactly: until ready every report is shown at once, and easing leaves a value
+            // at its goal where it is.
+            let result = if off == 0.0 {
                 Ok(format!("ready at {now:.1}s, showing the server's weather at once: {}", weather.current.summary()))
             } else {
                 Err(format!("first shown {} away from the server's report: {}", off, weather.current.summary()))

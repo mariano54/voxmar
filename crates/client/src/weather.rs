@@ -51,6 +51,9 @@ pub struct ClientWeather {
     speeds: Speeds,
     /// When (seconds since startup) the real weather first showed in this game.
     shown_since: Option<f32>,
+    /// Whether `WeatherReady` has been said in this game: until then every report is shown
+    /// at once, so the first frame shown is the latest report, not a change towards it.
+    settled: bool,
     /// How far gust fronts have travelled, advanced locally, and how far it still has to
     /// move to agree with the server's last report.
     gust_offset: Vec2,
@@ -319,6 +322,7 @@ impl Default for ClientWeather {
             mean_wind: FAIR.wind,
             speeds: Speeds::default(),
             shown_since: None,
+            settled: false,
             gust_offset: Vec2::ZERO,
             gust_error: Vec2::ZERO,
             effects: Vec::new(),
@@ -340,8 +344,11 @@ impl ClientWeather {
         if self.forced {
             return;
         }
-        // The first report is shown at once, rather than eased into from the menus' sky.
-        if !self.reported {
+        // Until the weather is ready to show (see `WeatherReady`), each report is shown at
+        // once, rather than eased into from the menus' sky or from an earlier report: on
+        // joining, the server's report on arrival and its next scheduled one can come a
+        // tick apart.
+        if !self.settled {
             self.reported = true;
             self.current = weather;
             self.mean_wind = weather.wind;
@@ -433,6 +440,7 @@ impl ClientWeather {
             *self = Self::default();
         }
         self.shown_since = None;
+        self.settled = false;
     }
 
     /// Shows `weather` from now on, ignoring the server.
@@ -549,6 +557,7 @@ fn ready(time: Res<Time>, mut weather: ResMut<ClientWeather>, air: Res<atmospher
     let since = *weather.shown_since.get_or_insert(now);
     if air.sampled() || now - since >= AIR_WAIT {
         ready.0 = true;
+        weather.settled = true;
         info!("weather: ready, showing {}", weather.current.summary());
     }
 }
@@ -667,9 +676,16 @@ mod tests {
         assert!(weather.ready());
         assert_eq!(weather.current.fractions(), storm.fractions());
         assert_eq!(weather.mean_wind, storm.wind);
-        // Later reports are eased into.
+        // Until the weather is ready, a later report (the server's next, a tick after the
+        // one sent on joining) is shown at once too: the first frame is the latest report.
+        let later = Weather { fog: 0.5, ..storm };
+        weather.receive(later, Vec::new(), Nearby::default(), false, 3.05);
+        assert_eq!(weather.current.fractions(), later.fractions());
+        assert_eq!(weather.target().map(|t| t.fractions()), Some(later.fractions()));
+        // Once ready, later reports are eased into.
+        weather.settled = true;
         weather.receive(FAIR, Vec::new(), Nearby::default(), false, 4.0);
-        assert_eq!(weather.current.fractions(), storm.fractions());
+        assert_eq!(weather.current.fractions(), later.fractions());
         // Leaving forgets it, so the next game starts at its own weather again.
         weather.leave();
         assert!(!weather.ready() && weather.current.fractions() == FAIR.fractions());
