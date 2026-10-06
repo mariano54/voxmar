@@ -609,6 +609,7 @@ and drifting near the eye, so they look like volumes from inside and above; rain
 and fills puddles; frost whitens it; clouds cast moving shadows. Rainbows, halos, aurora,
 shooting stars and heat haze are in the weather the client receives and wait on the renderer
 (docs/weather-effects.md). F3 shows the weather and the effects showing.
+
 Blocks give off particles near the player as their data says (`particles` in blocks.ron, each a
 `style` of Smoke, Ember, Spark or Flame with its rate, burst count, place, spread, colour and size;
 `engine::block::Emission`): a campfire smokes, floats embers and now and then crackles with
