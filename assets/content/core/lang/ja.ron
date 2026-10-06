@@ -201,6 +201,7 @@
 
     "hud.died.title": "死んでしまった",
     "hud.died": "Rかボタンでリスポーン。",
+    "hud.died.cost": "価値の高い3つは手元に残り、ほかは30分間、倒れた場所に残ります。",
     "hud.respawn": "リスポーン",
 
     "inventory.key.right_click": "右クリック",
@@ -254,6 +255,7 @@
     "skills.needs": "{skill} {level} が必要",
     "tools.needs": "{tool}以上が必要",
     "fishing.nothing": "何もかからない。",
+    "death.left": "残した物は倒れた場所 {x} {y} {z} に{minutes}分間あります。拾えるのはあなただけです。",
     "pouch.holds": "{item} × {count}",
     "pouch.nothing": "空",
     "pouch.hint": "手に持って右クリックで中身を取り出す",
@@ -515,6 +517,7 @@
     "command.give": "{block}を{count}個あげました",
     "command.give.spilled": "{gave}。{left}個は入りきらず足元に落ちました。",
     "command.clear": "持ち物から{count}個を取り除きました。",
+    "command.kill": "死にました。",
     "command.effect": "{effect}を{seconds}秒。",
     "command.effect.cleared": "時間で切れる効果をすべて消しました。",
     "command.grow.other": "作物を{count}個育てました。",
@@ -651,6 +654,8 @@
     "command.core.give.help.summary": "ブロックをくれます。",
     "command.core.clear.help": "持ち物を空にするか、指定したアイテムをすべて取り除きます。",
     "command.core.clear.help.summary": "持ち物を空にします。",
+    "command.core.kill.help": "落下や狼のように死にます。価値の高い3つは残り、ほかは倒れた場所に残ります。",
+    "command.core.kill.help.summary": "死にます。",
     "command.core.effect.help": "食べ物のように、しばらく効果を与えます（指定がなければ60秒）。clear ですべて消します。",
     "command.core.effect.help.summary": "効果を与えます。",
     "command.core.drop.help": "アイテムの束を (一度に64個まで) ワールドの指定したブロックか足元に落とします (~ は今いる場所)。",

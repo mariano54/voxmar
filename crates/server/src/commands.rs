@@ -171,6 +171,7 @@ impl Server {
             Run::Give => self.give(id, args),
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
+            Run::Kill => self.kill_command(id),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -770,6 +771,15 @@ impl Server {
         let id = effects.find(name).ok_or_else(|| Words::key("command.error.no_such_effect").with("effect", name.as_str()))?;
         player.give_effects(&[(id, seconds)]);
         Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
+    }
+
+    fn kill_command(&mut self, source: Source) -> Reply {
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        if player.health.damage(u8::MAX) {
+            player.changed(voxmar_engine::traits::HEALTH);
+            player.connection.send(ServerMessage::Died);
+        }
+        Ok(Words::key("command.kill"))
     }
 
     fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {

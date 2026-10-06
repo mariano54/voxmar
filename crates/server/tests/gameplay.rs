@@ -46,7 +46,8 @@ struct Client {
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
-    _server: ServerHandle,
+    /// The server, for the first player to join it (dropping it stops the server).
+    _server: Option<ServerHandle>,
 }
 
 fn content() -> Content {
@@ -75,6 +76,17 @@ impl Client {
     }
 
     fn hello(connection: ClientConnection, name: &str, server: ServerHandle) -> Self {
+        Self::greet(connection, name, Some(server))
+    }
+
+    /// Joins this player's server too, as `name`.
+    fn another(&self, name: &str) -> Self {
+        let (connection, server_side) = local_pair();
+        self._server.as_ref().expect("the first player holds the server").connections().send(server_side).unwrap();
+        Self::greet(connection, name, None)
+    }
+
+    fn greet(connection: ClientConnection, name: &str, server: Option<ServerHandle>) -> Self {
         let content = content();
         connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint() });
         let mut client = Self {
@@ -649,11 +661,11 @@ fn the_server_console_runs_commands_as_an_admin() {
     let mut guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
     guest.pump_until(|c| c.day.is_some());
     // The console speaks for the server, and needs no admin rights.
-    guest._server.console("/time set midnight");
+    guest._server.as_ref().unwrap().console("/time set midnight");
     guest.pump_until(|c| c.day.is_some_and(|(day, _)| day % TICKS_PER_DAY == 20_000));
-    guest._server.console("say hello");
+    guest._server.as_ref().unwrap().console("say hello");
     guest.pump_until(|c| c.chat.iter().any(|(_, text)| text == "[Server] hello"));
-    guest._server.console("gamemode creative guest");
+    guest._server.as_ref().unwrap().console("gamemode creative guest");
     guest.pump_until(|c| c.allow_flight);
 }
 
@@ -992,4 +1004,27 @@ fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
     // Right click empties it into the pack.
     client.propose("base:empty_pouch", ActionTarget::None);
     client.pump_until(|c| c.inventory.pouched(seeds) == 0 && c.inventory.slots.iter().flatten().filter(|s| s.item == seeds).map(|s| s.count as u32).sum::<u32>() == 99);
+}
+
+#[test]
+fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
+    let mut owner = Client::join_remote("owner", &["owner"]);
+    let mut thief = owner.another("thief");
+    for line in ["/clear", "/give iron_pickaxe 1", "/give iron_ingot 5", "/give dirt 30", "/give stick 10", "/give bread 1"] {
+        owner.ok(line);
+    }
+    let carried = |c: &Client| c.inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>();
+    owner.pump_until(|c| carried(c) == 47);
+    let said = owner.ok("/kill");
+    owner.pump_until(|c| c.health == 0 && carried(c) == 3 && c.items.values().map(|i| i.stack.count as u32).sum::<u32>() == 44);
+    let pickaxe = owner.content.blocks.expect("base:iron_pickaxe");
+    assert!(owner.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "the pickaxe is the most valuable: {:?}", owner.inventory);
+    assert!(said.contains("for 30 minutes") || owner.chat.iter().any(|(_, text)| text.contains("for 30 minutes")), "{said} {:?}", owner.chat);
+    // The thief stands where the owner fell (both joined at spawn) and picks up nothing.
+    let watch = Instant::now() + Duration::from_secs(3);
+    thief.pump_until(|c| c.items.len() >= 4 && Instant::now() > watch);
+    assert!(thief.collected.is_empty(), "someone else picked up a dead player's things");
+    // The owner wakes at spawn, by their things, and gathers them all.
+    owner.propose("core:respawn", ActionTarget::None);
+    owner.pump_until(|c| c.health > 0 && carried(c) == 47);
 }

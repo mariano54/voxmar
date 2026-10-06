@@ -308,8 +308,10 @@ impl Server {
                     }
                 }
                 (Effect::Respawn, _) => {
-                    let spawn = self.spawn;
+                    // Home, if the player has one, else world spawn.
                     let player = self.players.get_mut(&agent).unwrap();
+                    let spawn = player.home.unwrap_or(self.spawn);
+                    player.buried = false;
                     player.health.heal(u8::MAX);
                     player.position = spawn;
                     player.fall_start = None;

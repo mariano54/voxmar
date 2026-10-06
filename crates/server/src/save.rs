@@ -124,6 +124,8 @@ pub struct SavedPlayer {
     pub skills: Vec<(String, u32)>,
     /// Effects food gave, by name, with seconds left.
     pub effects: Vec<(String, f32)>,
+    /// Where the player wakes after dying, if a bed or hearth set it.
+    pub home: Option<[f32; 3]>,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -140,6 +142,8 @@ struct PlayerFile {
     skills: Vec<(String, u32)>,
     #[serde(default)]
     effects: Vec<(String, f32)>,
+    #[serde(default)]
+    home: Option<[f32; 3]>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -275,7 +279,7 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -297,6 +301,7 @@ impl WorldSave {
             inventory,
             skills: player.skills.clone(),
             effects: player.effects.clone(),
+            home: player.home,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -313,6 +318,12 @@ pub struct SavedItem {
     pub position: [f32; 3],
     /// Seconds it has lain.
     pub age: f32,
+    /// Whose alone it is (a hash of their name), for what a player left where they died.
+    #[serde(default)]
+    pub owner: Option<u64>,
+    /// Seconds it lasts, if not the usual.
+    #[serde(default)]
+    pub lifetime: Option<f32>,
 }
 
 /// A planted crop as a save keeps it.
@@ -520,6 +531,7 @@ mod tests {
             inventory,
             skills: vec![("core:farming".into(), 1234)],
             effects: vec![("base:hearty".into(), 120.5)],
+            home: Some([3.5, 70.0, -2.5]),
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();

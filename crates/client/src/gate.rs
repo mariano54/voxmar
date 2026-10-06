@@ -175,7 +175,8 @@ enum Step {
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
     /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
-    /// cast into the pool catches a fish.
+    /// cast into the pool catches a fish. Then the player dies: three items stay in hand,
+    /// the rest lie where they fell, and after waking they are picked up again.
     Workshop,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
@@ -245,6 +246,8 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// Where the player died in the workshop.
+    fell: Vec3,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -312,6 +315,7 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            fell: Vec3::ZERO,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -508,7 +512,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 75.0,
+        Step::Workshop => 100.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -1365,14 +1369,57 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
-                end_workshop(world, gate, now);
+                gate.count_before = carried(world);
+                gate.fell = world.resource::<LocalPlayer>().position;
+                world.resource::<Net>().command("kill");
+                gate.advance(now);
             } else if in_phase > 40.0 {
                 mouse(world, MouseButton::Right, false);
                 fail(world, gate, "fishing", "40 seconds of casting into the pool at Fishing 80 caught nothing".into());
             }
         }
+        // Dead: the three most valuable items stay, the rest lie where the player fell.
+        12 => {
+            let (dead, kept) = (world.resource::<LocalPlayer>().dead, carried(world));
+            if dead && kept == 3 {
+                let lying = world.resource::<crate::drops::Drops>().lying().filter(|(_, _, at)| at.distance(gate.fell) < 4.0).count();
+                let result = if lying > 0 { Ok(format!("dying kept 3 of {} items; {lying} stacks lie where the player fell", gate.count_before)) } else { Err("dying kept 3 items, but nothing lies where the player fell".into()) };
+                gate.check("workshop: death keeps three", result);
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose(actions.expect("core:respawn"), voxmar_engine::action::ActionTarget::None);
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "death keeps three", format!("after /kill: dead {dead}, carrying {kept} of {} items", gate.count_before));
+            }
+        }
+        // Awake again, back where they fell, the player picks everything up.
+        13 => {
+            if world.resource::<LocalPlayer>().dead {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "grave", "the player never woke after asking to respawn".into());
+                }
+                return;
+            }
+            if gate.frames % 30 == 0 {
+                let line = format!("tp {} {} {}", gate.fell.x, gate.fell.y, gate.fell.z);
+                world.resource::<Net>().command(&line);
+            }
+            let back = carried(world);
+            if back >= gate.count_before {
+                gate.check("workshop: grave", Ok(format!("woke and picked all {back} items back up where the player fell")));
+                end_workshop(world, gate, now);
+            } else if in_phase > 15.0 {
+                fail(world, gate, "grave", format!("15 seconds back where the player fell, carrying {back} of {} items", gate.count_before));
+            }
+        }
         _ => {}
     }
+}
+
+/// Every item the player carries, pouches and all.
+fn carried(world: &World) -> u32 {
+    let inventory = &world.resource::<LocalPlayer>().inventory;
+    inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>() + inventory.pouched.iter().map(|&(_, n)| n as u32).sum::<u32>()
 }
 
 /// Puts the workshop's tools away and goes on to the pool.

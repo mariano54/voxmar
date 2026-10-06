@@ -213,6 +213,7 @@
 
     "hud.died.title": "You died",
     "hud.died": "Press R, or the button, to respawn.",
+    "hud.died.cost": "You keep your three most valuable items; the rest lies where you fell for 30 minutes.",
     "hud.respawn": "Respawn",
 
     "inventory.key.right_click": "Right-click",
@@ -266,6 +267,7 @@
     "skills.needs": "Needs {skill} {level}",
     "tools.needs": "Needs a {tool} or better",
     "fishing.nothing": "Nothing bites.",
+    "death.left": "What you did not keep lies where you fell, at {x} {y} {z}, for {minutes} minutes. Only you can pick it up.",
     "pouch.holds": "{count} × {item}",
     "pouch.nothing": "Empty",
     "pouch.hint": "Right click it in hand to empty it into your pack",
@@ -381,6 +383,7 @@
     "command.give": "Gave {count} {block}",
     "command.give.spilled": "{gave}; {left} did not fit and dropped at your feet.",
     "command.clear": "Took {count} items out of your inventory.",
+    "command.kill": "You died.",
     "command.effect": "{effect} for {seconds} seconds.",
     "command.effect.cleared": "Your timed effects are gone.",
     "command.grow.one": "Grew {count} crop.",

@@ -202,6 +202,7 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   empties it). Both load the columns they touch first. `/give BLOCK [COUNT]` hands you blocks
   (64 unless you say; what does not fit drops at your feet), so `/give water` lets you pour
   water. `/clear [ITEM]` empties your inventory, or takes every one of an item out of it.
+  `/kill` kills you, to try what dying costs.
   `/drop ITEM [COUNT] [X Y Z]` drops a stack into the world, at your feet unless you
   say where. Block names may leave out the
   package (`water` for `base:water`).

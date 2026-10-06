@@ -77,3 +77,15 @@ those items go into `Inventory::pouched` instead of the slots, up to 1,000 of a 
 kinds in all. A seed pouch in hand sows (`actor_seed`: the first seed in it the player's
 Farming level allows) and right click empties it (`base:empty_pouch`). What a pouch holds
 stays with the player if the pouch is dropped; a pouch is needed to put more in.
+
+## Dying
+
+Dying costs what you carried, not your skills (Mariano, 2026-10-06). You keep your three most
+valuable items, counted one at a time; everything else, pouches' contents too, lies where
+you fell for 30 minutes, and only you can pick it up (`Dropped::owner`, the hash of your
+name); then it is gone. An item's worth is its rarity (1, 4, 16, 64, 256) times one more than
+its tool tier, doubled when it cannot stack. A grave-ward amulet (tag `grave_ward`) is always
+kept, keeps a fourth item and holds the rest for an hour; for now it comes only from `/give`.
+You wake at `Player::home` (a bed or hearth will set it, and it is saved), or at world spawn.
+The server code is `crates/server/src/death.rs`; the gate's workshop step dies with `/kill`
+and picks everything back up.

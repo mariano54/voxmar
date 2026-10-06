@@ -6,6 +6,7 @@ mod commands;
 mod cooking;
 mod creatures;
 mod fishing;
+mod death;
 mod farm;
 mod husbandry;
 mod inspect;
@@ -494,6 +495,7 @@ impl Server {
         self.tick += 1;
         self.day += self.day_speed as f64;
         self.run_processes();
+        self.bury_the_dead();
         self.tick_items();
         self.tick_creatures();
         self.flow();

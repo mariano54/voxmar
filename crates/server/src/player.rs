@@ -59,6 +59,10 @@ pub struct Player {
     /// What the player ate lately, for how much the same food heals again, and the
     /// seconds toward its next recovery.
     pub recent_food: voxmar_engine::vitals::Recent,
+    /// Where the player wakes after dying (a bed or hearth sets it), and whether what
+    /// they carried has been left where they fell since they last died (`death`).
+    pub home: Option<Vec3>,
+    pub buried: bool,
     pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
@@ -94,6 +98,8 @@ impl Player {
             timed_effects: Vec::new(),
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
+            home: None,
+            buried: false,
             food_clock: 0.0,
             heal_clock: 0.0,
             hurt_clock: 0.0,
@@ -158,6 +164,7 @@ impl Player {
             inventory: self.inventory.clone(),
             skills: skills.ids().map(|id| (skills.get(id).name.clone(), self.skills.xp(id))).filter(|(_, xp)| *xp > 0).collect(),
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
+            home: self.home.map(|h| h.to_array()),
         }
     }
 }
@@ -234,6 +241,7 @@ impl Server {
                 player.health = saved.health;
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
+                player.home = saved.home.map(Vec3::from_array);
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
             }
             // Players who left dead come back to life at the spawn point.
