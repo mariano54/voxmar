@@ -1,0 +1,153 @@
+// Ore veins (crates/worldgen/src/ores.rs). Ore lies only in large veins of a few ores that
+// belong together, placed on a coarse grid, after GregTech's veins as StaTech Industry plays
+// them (the idea alone; see INSPIRATIONS.md). Each square of the grid, `spacing` blocks
+// across, holds up to `slots` veins at different heights, each there by `chance`.
+//
+// A vein is drawn by `weight` times its rarity's (Uncommon 0.3, Rare 0.08, VeryRare 0.015)
+// times its liking for the rock province, where `provinces` names it or one of its tags.
+// `height` is where its middle may lie, above sea level (negative below; deepslate starts
+// 48 below, bedrock lies 128 below). A Layered vein is a lens: `radius` its half-length
+// across (its other axis 0.6 to 1 of it), `thickness` its thickness at the middle. A Pipe
+// is an upright carrot: `radius` at its top, `thickness` its height. `density` is the share
+// of the rock that is ore at its heart, thinning towards its edges. Each ore keeps to its
+// band of the vein (`within`, 0 its foot, 1 its top), drawn by `share` where bands overlap.
+// `sample` lies on the ground over the vein, `samples` of it at most (fewer where the
+// ground is not open), so a sample always has its vein below.
+(
+    grid: (spacing: 112, slots: 2, chance: 0.8),
+    veins: [
+        // Coal in seams in the bedded rocks, shallow: the first vein most players find.
+        (
+            name: "coal_seam",
+            weight: 30,
+            height: (-45, 15),
+            radius: (16, 26),
+            thickness: (4, 7),
+            density: 0.6,
+            ores: [(block: "coal_ore")],
+            provinces: {"sedimentary": 2.5, "igneous": 0.4},
+            sample: "coal_ore_sample",
+            samples: (3, 5),
+        ),
+        // Copper over tin, as in the granites where tin lodes lie: bronze from one vein.
+        (
+            name: "copper_tin",
+            weight: 18,
+            height: (-60, 5),
+            radius: (14, 22),
+            thickness: (6, 9),
+            ores: [
+                (block: "copper_ore", share: 3, within: (0.4, 1.0)),
+                (block: "tin_ore", share: 2, within: (0.0, 0.6)),
+            ],
+            provinces: {"granite": 2.5, "igneous": 1.4, "sedimentary": 0.6},
+            sample: "copper_ore_sample",
+        ),
+        // Banded iron in old metamorphic and sedimentary beds, broad and plain.
+        (
+            name: "banded_iron",
+            weight: 24,
+            height: (-70, 0),
+            radius: (18, 28),
+            thickness: (5, 8),
+            ores: [
+                (block: "iron_ore", share: 5),
+                (block: "copper_ore", share: 1, within: (0.0, 0.35)),
+            ],
+            provinces: {"metamorphic": 2.0, "sedimentary": 1.3, "volcanic": 0.5},
+            sample: "iron_ore_sample",
+        ),
+        // A porphyry deposit: copper above, iron below, a little gold through it.
+        (
+            name: "porphyry_copper",
+            weight: 12,
+            height: (-80, -10),
+            radius: (14, 20),
+            thickness: (7, 10),
+            density: 0.45,
+            ores: [
+                (block: "copper_ore", share: 4, within: (0.3, 1.0)),
+                (block: "iron_ore", share: 2, within: (0.0, 0.5)),
+                (block: "gold_ore", share: 0.3),
+            ],
+            provinces: {"igneous": 2.0, "sedimentary": 0.5},
+            sample: "copper_ore_sample",
+        ),
+        // Silver over gold, as in the young volcanic rocks where such veins form.
+        (
+            name: "silver_gold",
+            weight: 20,
+            rarity: Uncommon,
+            height: (-90, -35),
+            radius: (12, 18),
+            thickness: (4, 7),
+            density: 0.45,
+            ores: [
+                (block: "silver_ore", share: 3, within: (0.3, 1.0)),
+                (block: "gold_ore", share: 1.5, within: (0.0, 0.5)),
+            ],
+            provinces: {"volcanic": 3.0, "igneous": 1.5},
+            sample: "silver_ore_sample",
+        ),
+        // A gold reef in quartz, deep and narrow, with a little iron in it.
+        (
+            name: "gold_reef",
+            weight: 12,
+            rarity: Uncommon,
+            height: (-100, -50),
+            radius: (10, 16),
+            thickness: (3, 6),
+            density: 0.4,
+            ores: [
+                (block: "gold_ore", share: 4),
+                (block: "iron_ore", share: 1, within: (0.0, 0.4)),
+            ],
+            provinces: {"metamorphic": 2.0, "igneous": 1.3},
+            sample: "gold_ore_sample",
+        ),
+        // Cobalt over silver, as in the old shield rocks where both are mined together.
+        (
+            name: "cobalt_silver",
+            weight: 15,
+            rarity: Uncommon,
+            height: (-110, -60),
+            radius: (10, 16),
+            thickness: (4, 7),
+            density: 0.45,
+            ores: [
+                (block: "cobalt_ore", share: 3, within: (0.35, 1.0)),
+                (block: "silver_ore", share: 2, within: (0.0, 0.6)),
+            ],
+            provinces: {"shield": 3.0, "igneous": 1.3, "sedimentary": 0.5},
+            sample: "cobalt_ore_sample",
+        ),
+        // A kimberlite pipe rising from the depths, sparse with diamonds.
+        (
+            name: "kimberlite_pipe",
+            weight: 30,
+            rarity: Rare,
+            height: (-100, -70),
+            shape: Pipe,
+            radius: (3, 4.5),
+            thickness: (24, 40),
+            density: 0.3,
+            ores: [(block: "diamond_ore")],
+            provinces: {"shield": 3.0, "igneous": 1.5},
+            sample: "diamond_ore_sample",
+            samples: (2, 3),
+        ),
+        // A lode of aetherite near the bottom of the world, glowing in the dark.
+        (
+            name: "aetherite_lode",
+            weight: 40,
+            rarity: VeryRare,
+            height: (-118, -100),
+            radius: (6, 9),
+            thickness: (3, 5),
+            density: 0.35,
+            ores: [(block: "aetherite_ore")],
+            sample: "aetherite_ore_sample",
+            samples: (1, 2),
+        ),
+    ],
+)
