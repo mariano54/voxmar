@@ -290,6 +290,7 @@ fn particle(emission: &Emission, emitter: &Emitter, light: u8, wind: Vec3, dice:
             ..default()
         },
     };
+    particle.blend = emission.blend.unwrap_or(emission.style.blend());
     // Rising further: faster and for longer, both by the square root, and with drag
     // eased to match, so the distance grows with the height asked for.
     if let Some(height) = emission.height {

@@ -96,6 +96,12 @@ impl Net {
         self.connection.send(ClientMessage::Command { line: line.into() });
     }
 
+    /// Takes `count` of `item` from creative mode's catalogue, onto the pointer (`held`) or
+    /// into the inventory (see `ClientMessage::Take`).
+    pub fn take(&self, item: voxmar_engine::block::BlockId, count: u8, held: bool) {
+        self.connection.send(ClientMessage::Take { item, count, held });
+    }
+
     /// Says something to everyone.
     pub fn chat(&self, text: &str) {
         self.connection.send(ClientMessage::Chat { text: text.into() });
@@ -179,6 +185,7 @@ pub(crate) fn receive(
                 player.admin = admin;
                 player.seed = seed;
                 player.joined = true;
+                player.journal = Default::default();
             }
             ServerMessage::Rejected { reason } => {
                 notice.0 = Some(locale.format("net.rejected", &[("reason", &locale.render(&reason, &world.registry))]));
@@ -273,6 +280,7 @@ pub(crate) fn receive(
             }
             ServerMessage::Lightning { at, seed, cloud } => weather.lightning(at, seed, at.distance(player.eye()), cloud),
             ServerMessage::Died => player.dead = true,
+            ServerMessage::Journal { entries } => player.journal.merge(entries),
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed } => creatures.struck(creature, damage, killed, time.elapsed_secs()),

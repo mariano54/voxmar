@@ -175,7 +175,8 @@ enum Step {
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
     /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
-    /// cast into the pool catches a fish.
+    /// cast into the pool catches a fish. Then the player dies: three items stay in hand,
+    /// the rest lie where they fell, and after waking they are picked up again.
     Workshop,
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
@@ -208,6 +209,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// In creative mode the inventory's catalogue finds an item by its English name and by
+    /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
+    Catalogue,
     /// The screenshot key saves the frame as a PNG (in the gate's folder, leaving the
     /// player's folder and clipboard alone) and says so in the chat.
     Screenshot,
@@ -247,6 +251,8 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// Where the player died in the workshop.
+    fell: Vec3,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -284,9 +290,26 @@ struct Gate {
     /// which and when.
     weather_last: Option<[f32; 24]>,
     weather_jump: (f32, &'static str, f32),
+    /// The catalogue step: whether the player was in creative before it, and how many oak
+    /// logs they had before a click.
+    was_creative: bool,
+    counted: u32,
     /// Real frame times so far (milliseconds), and the longest in each step.
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, f32>,
+    /// The server's clock (its ticks, in seconds) this frame, and when the phase began by it.
+    server_now: f32,
+    phase_server: f32,
+    /// The step last frame, and the failures by then: a step that fails lets go of every key
+    /// and button (a step that passes may hand one on, as digging hands walking on).
+    last_step: Step,
+    failures_then: usize,
+    /// The player's health last frame, and whether a death was reported: the session must
+    /// never kill its player, and a dead one fails every step after.
+    health_last: u8,
+    death_seen: bool,
+    /// Set while a step kills the player on purpose (the workshop's /kill), until the step ends.
+    killed_on_purpose: bool,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
     /// Frames on which the open overlay's text changed (each one lays the UI out again),
@@ -314,6 +337,7 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            fell: Vec3::ZERO,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -333,9 +357,18 @@ impl Gate {
             passes: 0,
             weather_last: None,
             weather_jump: (0.0, "", 0.0),
+            was_creative: false,
+            counted: 0,
             frame_ms: Vec::new(),
             longest: default(),
             overlay_ms: default(),
+            server_now: 0.0,
+            phase_server: 0.0,
+            last_step: Step::Load,
+            failures_then: 0,
+            health_last: 0,
+            death_seen: false,
+            killed_on_purpose: false,
             overlay_changes: 0,
             overlay_counted: (0.0, 0.0),
         }
@@ -370,12 +403,22 @@ impl Gate {
         self.frames = 0;
         self.phase = 0;
         self.phase_since = now;
+        self.phase_server = self.server_now;
+        self.food_moved = false;
     }
 
     /// On to the next stage of a step.
     fn advance(&mut self, now: f32) {
         self.phase += 1;
         self.phase_since = now;
+        self.phase_server = self.server_now;
+    }
+
+    /// Seconds of the server's own clock since the phase began: what a wait on the server
+    /// (an effect it gives, a blow it answers) is measured in, for a server running behind
+    /// on a busy machine takes longer by the wall clock and the game's.
+    fn server_in_phase(&self) -> f32 {
+        self.server_now - self.phase_server
     }
 
     /// The shot called `name` of what is drawn now, asking for it the first time; it
@@ -468,6 +511,29 @@ fn run(world: &mut World) {
     let mut gate = world.remove_resource::<Gate>().expect("gate state");
     gate.frames += 1;
     gate.breaks.hitch(gate.frames);
+    stall_under_test(gate.frames);
+    // (No server once the world is left: the clock stands still then.)
+    if let Some(net) = world.get_resource::<Net>() {
+        gate.server_now = net.server().map_or(now, |server| server.ticks() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32);
+    }
+    // A step that failed lets go of everything it held: one once left the player walking
+    // off the test ground, failing every step after it.
+    if gate.step != gate.last_step && gate.failures.len() > gate.failures_then {
+        for code in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD, KeyCode::Space, KeyCode::ShiftLeft, KeyCode::ControlLeft] {
+            key(world, code, false);
+        }
+        for button in [MouseButton::Left, MouseButton::Right] {
+            mouse(world, button, false);
+        }
+    }
+    if gate.step != gate.last_step {
+        (gate.last_step, gate.failures_then) = (gate.step, gate.failures.len());
+        gate.killed_on_purpose = false;
+    }
+    // (The text-fit steps put the player through the death screen on purpose.)
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitMenus | Step::Leave | Step::Done) {
+        watch_health(world, &mut gate);
+    }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
@@ -492,6 +558,54 @@ fn run(world: &mut World) {
     world.insert_resource(gate);
 }
 
+/// With `VOXMAR_GATE_STALL` set, every frame of the session stalls as a machine loaded far
+/// past its cores makes it: 80 to 320 ms every fifth frame or so. Steps that pass only on an
+/// idle machine (a fixed number of frames, a wait in seconds of game time that a stall
+/// stretches) fail this way every time rather than now and then.
+fn stall_under_test(frame: u32) {
+    static STALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *STALL.get_or_init(|| std::env::var_os("VOXMAR_GATE_STALL").is_some()) {
+        let roll = crate::sfx::mix(frame as u64 ^ 0x5eed);
+        if roll % 5 == 0 {
+            std::thread::sleep(Duration::from_millis(80 + (roll >> 8) % 240));
+        }
+    }
+}
+
+/// Logs every loss of health with what was around the player, and fails the session the
+/// moment the player dies, then respawns them on the test ground: three sessions on a
+/// loaded machine lost their player during the swim and failed every step after with no
+/// word of why.
+fn watch_health(world: &mut World, gate: &mut Gate) {
+    let player = world.resource::<LocalPlayer>();
+    let (health, dead, position, in_water) = (player.health, player.dead, player.position, player.in_water);
+    if health < gate.health_last {
+        let client = world.resource::<ClientWorld>();
+        let name = |at: Vec3| client.block(at.floor().as_ivec3()).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+        let nearest = world
+            .resource::<crate::creatures::Creatures>()
+            .views()
+            .map(|v| (v.species, v.position.distance(position)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or("none".to_owned(), |(species, d)| format!("species {species:?} {d:.1} blocks off"));
+        info!(
+            "gate: health {} -> {health} during {:?} at {position:.1}: feet in {}, head in {}, in water {in_water}, nearest creature {nearest}",
+            gate.health_last,
+            gate.step,
+            name(position + Vec3::Y * 0.1),
+            name(position + Vec3::Y * 1.6)
+        );
+    }
+    gate.health_last = health;
+    if dead && !gate.death_seen && !gate.killed_on_purpose {
+        gate.death_seen = true;
+        gate.check("alive", Err(format!("the player died during {:?} at {position:.1} (the health losses before are logged)", gate.step)));
+        key(world, KeyCode::KeyR, true);
+    } else if gate.death_seen && !dead && gate.health_last > 0 {
+        key(world, KeyCode::KeyR, false);
+    }
+}
+
 /// What ends the session early: leaving the game, the observer cut off, or time running
 /// out.
 fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result<(), String> {
@@ -510,7 +624,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 75.0,
+        Step::Workshop => 100.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -729,6 +843,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
@@ -1329,15 +1444,30 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let result = if stacks.iter().all(|&n| n == 1) { Ok("three loaves took three slots".to_owned()) } else { Err(format!("bread stacked: {stacks:?}")) };
                 gate.check("workshop: food takes a slot each", result);
                 let net = world.resource::<Net>();
-                net.command("give fishing_rod 1");
-                net.command("skill fishing 80");
+                net.command("give seed_pouch 1");
+                net.command("give wheat_seeds 50");
                 gate.advance(now);
             } else if in_phase > WORKSHOP_WAIT {
                 fail(world, gate, "food takes a slot each", format!("three loaves given, the inventory shows {stacks:?}"));
             }
         }
-        // A rod held over the pool, right button down, casts until something bites.
+        // With a seed pouch carried, seeds go into it rather than taking slots.
         10 => {
+            let seeds = world.resource::<ClientWorld>().registry.id("base:wheat_seeds");
+            let pouched = seeds.map_or(0, |s| world.resource::<LocalPlayer>().inventory.pouched(s));
+            if pouched >= 50 {
+                gate.check("workshop: seed pouch", Ok(format!("50 seeds given went into the pouch ({pouched} there)")));
+                let net = world.resource::<Net>();
+                net.command("clear seed_pouch");
+                net.command("give fishing_rod 1");
+                net.command("skill fishing 80");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "seed pouch", format!("50 seeds given with a seed pouch carried, the pouch holds {pouched}"));
+            }
+        }
+        // A rod held over the pool, right button down, casts until something bites.
+        11 => {
             let fish = |world: &World| {
                 let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
                 player.inventory.slots.iter().flatten().find(|s| client.registry.def(s.item).has_tag("fish")).map(|s| client.registry.def(s.item).name.clone())
@@ -1353,14 +1483,75 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
-                end_workshop(world, gate, now);
+                // A small pack to die with, so what is left lies in a few stacks by the feet.
+                let net = world.resource::<Net>();
+                for line in ["clear", "give stone_pickaxe 1", "give bread 1", "give stick 10", "give dirt 20", "give oak_planks 12"] {
+                    net.command(line);
+                }
+                gate.advance(now);
             } else if in_phase > 40.0 {
                 mouse(world, MouseButton::Right, false);
                 fail(world, gate, "fishing", "40 seconds of casting into the pool at Fishing 80 caught nothing".into());
             }
         }
+        12 => {
+            if carried(world) == 44 {
+                gate.count_before = 44;
+                gate.fell = world.resource::<LocalPlayer>().position;
+                gate.killed_on_purpose = true;
+                world.resource::<Net>().command("kill");
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "death keeps three", format!("the pack to die with never came: carrying {}", carried(world)));
+            }
+        }
+        // Dead: the three most valuable items stay, the rest lie where the player fell.
+        13 => {
+            let (dead, kept) = (world.resource::<LocalPlayer>().dead, carried(world));
+            if dead && kept == 3 {
+                let lying = world.resource::<crate::drops::Drops>().lying().filter(|(_, _, at)| at.distance(gate.fell) < 4.0).count();
+                let result = if lying > 0 { Ok(format!("dying kept 3 of {} items; {lying} stacks lie where the player fell", gate.count_before)) } else { Err("dying kept 3 items, but nothing lies where the player fell".into()) };
+                gate.check("workshop: death keeps three", result);
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose(actions.expect("core:respawn"), voxmar_engine::action::ActionTarget::None);
+                gate.advance(now);
+            } else if in_phase > WORKSHOP_WAIT {
+                fail(world, gate, "death keeps three", format!("after /kill: dead {dead}, carrying {kept} of {} items", gate.count_before));
+            }
+        }
+        // Awake again, back where they fell, the player picks everything up.
+        14 => {
+            if world.resource::<LocalPlayer>().dead {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "grave", "the player never woke after asking to respawn".into());
+                }
+                return;
+            }
+            if gate.frames % 30 == 0 {
+                let line = format!("tp {} {} {}", gate.fell.x, gate.fell.y, gate.fell.z);
+                world.resource::<Net>().command(&line);
+            }
+            let back = carried(world);
+            if back >= gate.count_before {
+                gate.check("workshop: grave", Ok(format!("woke and picked all {back} items back up where the player fell")));
+                // The kit a new player starts with, for the steps after.
+                let net = world.resource::<Net>();
+                for line in ["clear", "give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
+                    net.command(line);
+                }
+                end_workshop(world, gate, now);
+            } else if in_phase > 15.0 {
+                fail(world, gate, "grave", format!("15 seconds back where the player fell, carrying {back} of {} items", gate.count_before));
+            }
+        }
         _ => {}
     }
+}
+
+/// Every item the player carries, pouches and all.
+fn carried(world: &World) -> u32 {
+    let inventory = &world.resource::<LocalPlayer>().inventory;
+    inventory.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>() + inventory.pouched.iter().map(|&(_, n)| n as u32).sum::<u32>()
 }
 
 /// Puts the workshop's tools away and goes on to the pool.
@@ -1541,13 +1732,22 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if gate.shot(world, "game").is_some() {
                 // The HUD reads health off the server; there is no hunger to show.
-                let player = world.resource::<LocalPlayer>();
-                let reading = format!("{}/{}", player.health, player.max_health);
+                let (health, max_health) = {
+                    let player = world.resource::<LocalPlayer>();
+                    (player.health, player.max_health)
+                };
+                let reading = format!("{health}/{max_health}");
                 let mut texts = world.query::<&Text>();
                 let meters = texts.iter(world).filter(|text| text.0 == reading).count();
                 gate.check(
                     "vitals",
-                    if meters >= 1 { Ok(format!("health {reading}, shown on {meters} meters")) } else { Err(format!("no meter reads the health {reading}")) },
+                    if health < max_health {
+                        Err(format!("the player has lost health: {reading}"))
+                    } else if meters >= 1 {
+                        Ok(format!("health {reading}, shown on {meters} meters"))
+                    } else {
+                        Err(format!("no meter reads the health {reading}"))
+                    },
                 );
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
@@ -1758,9 +1958,22 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// A timed effect on the player (as eating would give, the server not told): its chip
-/// counts down from 1:30 and its plate, as if the pointer were over the chip, says so too.
+/// counts down and its plate, as if the pointer were over the chip, says the same. Judged
+/// by two readings a moment apart rather than by where the count starts: the session's own
+/// cooking gives the same effect earlier, and on a loaded machine that one is further along.
 fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::effects::{PinnedTip, ShowEffects};
+    let reading = |world: &mut World| {
+        let chip = world.query_filtered::<&Text, With<crate::hud::EffectTimer>>().iter(world).map(|t| t.0.clone()).find(|t| !t.is_empty());
+        let left = crate::hud::effects::shown_left(world);
+        (chip, left)
+    };
+    // Seconds a reading such as "1:28" or "1:28 left" stands for.
+    let seconds = |text: &str| {
+        let clock = text.split_whitespace().next()?;
+        let (m, s) = clock.split_once(':')?;
+        Some(m.parse::<u32>().ok()? * 60 + s.parse::<u32>().ok()?)
+    };
     match gate.phase {
         0 => {
             // Food eaten earlier in the run (eating heals the hurt) may have given a real
@@ -1770,16 +1983,115 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.insert_resource(PinnedTip("hearty".into()));
             gate.advance(now);
         }
+        1 => {
+            let (chip, left) = reading(world);
+            let agree = chip.as_deref().and_then(seconds).filter(|&c| left.as_deref().and_then(seconds) == Some(c));
+            match agree {
+                Some(first) if in_phase > 0.2 => {
+                    gate.count_before = first;
+                    gate.advance(now);
+                }
+                _ if in_phase > 3.0 => {
+                    gate.check("effects: countdown", Err(format!("chip {chip:?}, plate {left:?}")));
+                    world.remove_resource::<ShowEffects>();
+                    world.remove_resource::<PinnedTip>();
+                    gate.next(Step::Screenshot, now);
+                }
+                _ => {}
+            }
+        }
         _ => {
-            let chip = world.query_filtered::<&Text, With<crate::hud::EffectTimer>>().iter(world).map(|t| t.0.clone()).find(|t| !t.is_empty());
-            let left = crate::hud::effects::shown_left(world);
-            let counting = chip.as_deref().is_some_and(|t| t.starts_with("1:")) && left.as_deref().is_some_and(|t| t.contains("1:"));
-            if !counting && in_phase < 3.0 {
+            let (chip, left) = reading(world);
+            let (chip_s, left_s) = (chip.as_deref().and_then(seconds), left.as_deref().and_then(seconds));
+            let counted = chip_s.is_some_and(|c| c < gate.count_before) && chip_s == left_s;
+            if !counted && in_phase < 3.0 {
                 return;
             }
-            gate.check("effects: countdown", if counting { Ok(format!("the chip reads {}, the plate {}", chip.unwrap_or_default(), left.unwrap_or_default())) } else { Err(format!("chip {chip:?}, plate {left:?}")) });
+            let first = gate.count_before;
+            let result = if counted {
+                Ok(format!("the chip went from {}:{:02} to {}, the plate with it ({})", first / 60, first % 60, chip.unwrap_or_default(), left.unwrap_or_default()))
+            } else {
+                Err(format!("from {}:{:02}, chip {chip:?}, plate {left:?}", first / 60, first % 60))
+            };
+            gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Catalogue, now);
+        }
+    }
+}
+
+/// How many of `item` the player has, held or in the inventory.
+fn count_of(world: &World, item: BlockId) -> u32 {
+    let inventory = &world.resource::<LocalPlayer>().inventory;
+    inventory.slots.iter().chain(std::iter::once(&inventory.cursor)).flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum()
+}
+
+fn catalogue(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::creative::Catalogue;
+    let Some(log) = world.resource::<Launch>().content.blocks.id("base:oak_log") else {
+        gate.check("catalogue", Err("no oak log in the content".into()));
+        gate.next(Step::Screenshot, now);
+        return;
+    };
+    // The search, as typed: one of every item it finds, or why not.
+    let search = |world: &mut World, query: &str| {
+        let mut catalogue = world.resource_mut::<Catalogue>();
+        catalogue.query = query.to_owned();
+        catalogue.refresh();
+        catalogue.found.contains(&log)
+    };
+    match gate.phase {
+        0 => {
+            gate.was_creative = world.resource::<LocalPlayer>().allow_flight;
+            world.resource::<Net>().command("gamemode creative");
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        1 => {
+            if !world.resource::<LocalPlayer>().allow_flight && in_phase < 3.0 {
+                return;
+            }
+            let english = search(world, "oak log");
+            let japanese = search(world, "げんぼく");
+            let katakana = search(world, "オーク");
+            gate.check(
+                "catalogue: search",
+                if english && japanese && katakana { Ok("\"oak log\", \"げんぼく\" and \"オーク\" all find the oak log".into()) } else { Err(format!("finds the oak log: by \"oak log\" {english}, \"げんぼく\" {japanese}, \"オーク\" {katakana}")) },
+            );
+            gate.counted = count_of(world, log);
+            crate::hud::creative::take(world.resource::<Net>(), log, false, true);
+            gate.advance(now);
+        }
+        2 => {
+            let gained = count_of(world, log).saturating_sub(gate.counted);
+            if gained == 0 && in_phase < 3.0 {
+                return;
+            }
+            gate.check("catalogue: creative", if gained > 0 { Ok(format!("Shift-click gave {gained} oak logs")) } else { Err("a Shift-click gave nothing in creative".into()) });
+            world.resource::<Net>().command("gamemode survival");
+            gate.advance(now);
+        }
+        3 => {
+            if world.resource::<LocalPlayer>().allow_flight && in_phase < 3.0 {
+                return;
+            }
+            gate.counted = count_of(world, log);
+            crate::hud::creative::take(world.resource::<Net>(), log, false, true);
+            gate.advance(now);
+        }
+        _ => {
+            // Long enough for a stack to arrive, were it given.
+            if in_phase < 1.0 {
+                return;
+            }
+            let gained = count_of(world, log).saturating_sub(gate.counted);
+            gate.check("catalogue: survival", if gained == 0 { Ok("a click in survival gives nothing".into()) } else { Err(format!("survival was given {gained} oak logs")) });
+            if gate.was_creative {
+                world.resource::<Net>().command("gamemode creative");
+            }
+            world.resource_mut::<Catalogue>().query.clear();
+            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Screenshot, now);
         }
     }
@@ -2042,7 +2354,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Let it fill the air before the shot, and the server tell the player they are
             // out in it (effects are judged once a second).
             let weathered = weather_effects(world);
-            if in_phase < 1.0 || (weathered.is_empty() && in_phase < 5.0) {
+            if in_phase < 1.0 || (weathered.is_empty() && gate.server_in_phase() < 5.0) {
                 return;
             }
             let Some(shot) = gate.shot(world, name) else { return };
@@ -2228,8 +2540,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if blows > gate.blows_seen {
                 gate.blows_seen = blows;
                 gate.phase_since = now;
+                gate.phase_server = gate.server_now;
             }
-            let stalled = now - gate.phase_since > UNANSWERED;
+            let stalled = gate.server_in_phase() > UNANSWERED;
             match snail(world) {
                 Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
@@ -2323,10 +2636,9 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             let lit = client.block(fire) == Some(campfire);
-            let slot = {
-                let player = world.resource::<LocalPlayer>();
-                (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == raw))
-            };
+            // Earlier steps fill the hotbar with what they pick up, more of it on some runs
+            // than others: the rabbit then lands in the pack, and is moved down, once.
+            let slot = in_hotbar(world, &mut gate.food_moved, raw);
             match (lit, slot) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
@@ -3032,20 +3344,21 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     sorted.sort_by(f32::total_cmp);
     let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
     let longest = gate.longest.get(&step).copied().unwrap_or(0.0);
-    let limit = HITCH_MS.max(HITCH_FACTOR * median);
-    let result = if longest <= limit {
-        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms)"))
-    } else {
-        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms)"))
-    };
-    // A machine asked for more than all its cores (other threads' builds) starves the game
-    // for whole seconds: a long frame then says nothing about the game. A real hitch shows
-    // again on any run with the machine less loaded, as every build's first run is.
+    // A machine asked for more than all its cores (other threads' builds) stretches every
+    // frame's waits by about how far over it is: the bar rises with it rather than the
+    // check being skipped, for the machine is rarely calm enough to wait for. Pipelines
+    // compiled on the spot, what this check first caught, the pipelines check catches at
+    // any load.
     let (load, cores) = (load_average(), std::thread::available_parallelism().map_or(1, |n| n.get()) as f64);
-    if result.is_err() && load > cores {
-        info!("gate: SKIPPED {name}: smooth: {} (the machine was overloaded, load {load:.0} on {cores} cores)", result.unwrap_err());
-        return;
-    }
+    let crowded = (load / cores).max(1.0) as f32;
+    let limit = HITCH_MS.max(HITCH_FACTOR * median) * crowded;
+    let on = if crowded > 1.0 { format!(", the bar {crowded:.1}× higher at load {load:.0} on {cores} cores") } else { String::new() };
+    let result = if longest <= limit {
+        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms{on})"))
+    } else {
+        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms{on})"))
+    };
+    let known = if std::env::var_os("VOXMAR_GATE_STALL").is_some() { Some("frames stalled on purpose (VOXMAR_GATE_STALL)") } else { known };
     match known {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
@@ -3187,6 +3500,25 @@ fn key(world: &mut World, key_code: KeyCode, down: bool) {
     let state = if down { ButtonState::Pressed } else { ButtonState::Released };
     let logical_key = Key::Unidentified(NativeKey::Unidentified);
     world.write_message(KeyboardInput { key_code, logical_key, state, text: None, repeat: false, window: Entity::PLACEHOLDER });
+}
+
+/// The hotbar slot holding `item`; if it is only in the pack, asks once (`moved`) for it to
+/// be moved into the last hotbar slot, as dragging it there would.
+fn in_hotbar(world: &mut World, moved: &mut bool, item: BlockId) -> Option<usize> {
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, SLOTS};
+    let player = world.resource::<LocalPlayer>();
+    let holds = |s: &usize| player.inventory.get(*s).is_some_and(|stack| stack.item == item);
+    let (slot, packed) = ((0..HOTBAR_SLOTS).find(holds), (HOTBAR_SLOTS..SLOTS).find(holds));
+    if slot.is_none()
+        && !*moved
+        && let Some(from) = packed
+    {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (HOTBAR_SLOTS - 1) as u8, count: u8::MAX };
+        world.resource::<Net>().propose(actions.expect("core:transfer"), target);
+        *moved = true;
+    }
+    slot
 }
 
 /// How many items the selected hotbar slot holds.

@@ -3,7 +3,8 @@
 // it changes after it is spawned.
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import voxmar::lighting::{shade_normal, apply_fog}
+#import bevy_pbr::view_transformations::{depth_ndc_to_view_z, position_world_to_view}
+#import voxmar::lighting::{shade_normal, apply_fog, air_between}
 
 struct Particle {
     origin: vec3<f32>,
@@ -17,7 +18,8 @@ struct Particle {
     // layer:12 | grow:6 (eighths) | wander:6 (hundredths of a block) | block light:4 |
     // sky light:4
     surface: u32,
-    // corner u:8 | corner v:8 | span:8 (256ths of the texture) | motion:4 | flags:4
+    // corner u:8 | corner v:8 | span:8 (256ths of the texture) | motion:2 | blend:2 |
+    // flags:4
     sprite: u32,
     // sRGB colour and opacity
     color: u32,
@@ -30,6 +32,15 @@ struct Particle {
 // Each texture layer's overlay (render/mod.rs, `layer_table`; voxel.wgsl draws it alike).
 @group(2) @binding(7) var block_layers: texture_2d<f32>;
 
+#ifdef BLENDED
+// The scene's depth, which blended particles fade against (particles.rs, `blended_pass`).
+#ifdef DEPTH_MULTISAMPLED
+@group(3) @binding(0) var scene_depth: texture_depth_multisampled_2d;
+#else
+@group(3) @binding(0) var scene_depth: texture_depth_2d;
+#endif
+#endif
+
 // globals.time wraps every hour.
 const TIME_WRAP: f32 = 3600.0;
 const MOTION_BALLISTIC: u32 = 0u;
@@ -37,6 +48,20 @@ const MOTION_RISE: u32 = 1u;
 const FLAG_TEXTURED: u32 = 1u;
 const FLAG_GLOW: u32 = 2u;
 const FLAG_COOLS: u32 = 4u;
+// How a particle is drawn (particles.rs, `blend_bits`): cut out, adding light, or a veil.
+const BLEND_CUTOUT: u32 = 0u;
+const BLEND_LIGHT: u32 = 1u;
+const BLEND_SOFT: u32 = 2u;
+// The blend this pipeline draws.
+#ifdef BLEND_ADD
+const DRAWN: u32 = BLEND_LIGHT;
+#else ifdef BLEND_VEIL
+const DRAWN: u32 = BLEND_SOFT;
+#else
+const DRAWN: u32 = BLEND_CUTOUT;
+#endif
+// Blocks over which a blended particle fades out as it nears whatever is behind it.
+const SOFT_DEPTH: f32 = 0.4;
 // What a cooling particle's colour is multiplied by at the end of its life: dimmer, and
 // redder, as blue and green go first.
 const COOLED: vec3<f32> = vec3(0.5, 0.2, 0.05);
@@ -134,13 +159,14 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     var out: VertexOutput;
     let p = particles[instance_index];
     let age = age_of(p);
-    // Dead or never written: every vertex at one point, so nothing is drawn.
-    if age >= p.life {
+    // Dead, never written, or drawn by another pipeline: every vertex at one point, so
+    // nothing is drawn.
+    if age >= p.life || ((p.sprite >> 26u) & 3u) != DRAWN {
         out.clip_position = vec4(0.0, 0.0, 0.0, 1.0);
         return out;
     }
     var center = p.origin;
-    let motion = (p.sprite >> 24u) & 15u;
+    let motion = (p.sprite >> 24u) & 3u;
     var fade_time = min(FADE, 0.5 * p.life);
     var fade_in = 1.0;
     if motion == MOTION_BALLISTIC {
@@ -220,7 +246,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // Smoke is a little darker at its thin edge than in its body.
         albedo *= mix(0.8, 1.0, coverage);
     }
-#ifdef ALPHA_TO_COVERAGE
+#ifdef BLENDED
+    // Soft against the scene: no hard line where smoke or a flame meets a wall or the
+    // ground. The depth is the nearest (reverse-Z largest) of the pixel's samples' first.
+    let behind = depth_ndc_to_view_z(textureLoad(scene_depth, vec2<i32>(in.clip_position.xy), 0));
+    let soft = saturate((position_world_to_view(in.world_position).z - behind) / SOFT_DEPTH);
+    // Smooth edges throughout: nothing here is cut out.
+    let alpha = coverage * in.color.a * soft;
+    if alpha <= 0.001 {
+        discard;
+    }
+#else ifdef ALPHA_TO_COVERAGE
     // Sharpened so texel edges stay crisp; the fade spreads over the samples. Smoke
     // stays soft: its edge thins out like its fade.
     var alpha = saturate((coverage - 0.5) / max(fwidth(coverage), 0.0001) + 0.5) * in.color.a;
@@ -245,5 +281,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // Hard-edged shadows: a particle is too small to show a penumbra.
         color = shade_normal(albedo, in.world_position, vec3(0.0, 1.0, 0.0), 0.85, sky, block, 1.0, true, false);
     }
+#ifdef BLEND_ADD
+    // Light added to the scene, dimmed by the air between, which adds no light of its own
+    // (it is already in what lies behind).
+    return vec4(color * alpha * air_between(in.world_position).transmittance, 0.0);
+#else ifdef BLEND_VEIL
+    // Premultiplied.
+    return vec4(apply_fog(color, in.world_position) * alpha, alpha);
+#else
     return vec4(apply_fog(color, in.world_position), alpha);
+#endif
 }

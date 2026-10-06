@@ -9,7 +9,7 @@
 //! SECONDS` (let the world run that much longer first, for weather to build), `--time
 //! FRACTION` (hold the time of day, 0 is sunrise), `--mine PROGRESS` (mine the block in
 //! the middle of the view that far, cracks and chips showing; 1 breaks it just before the
-//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid; up to nine, row by row, show a crafting table's three by three), `--recipes NAME` / `--uses NAME` (open the recipe viewer on an item), `--effect NAME:SECONDS` (show the player that timed effect, the server not told), `--effect-tip NAME` (show that effect's hover plate over its chip),
+//! screenshot), `--menu` (show the settings menu), `--inventory` (show the inventory), `--character` (the character screen), `--loading` (keep the loading cover up), `--tab NAME` (open that settings tab), `--guide SKILL` (open that skill's guide), `--strike CREATURE` (summon one and strike it before the shot), `--level-up SKILL` (note that skill's next level before the shot), `--tend CREATURE` (summon one and feed it until the shot), `--grid A,B,C,D` (lay items into the crafting grid; up to nine, row by row, show a crafting table's three by three), `--recipes NAME` / `--uses NAME` (open the recipe viewer on an item), `--effect NAME:SECONDS` (show the player that timed effect, the server not told), `--effect-tip NAME` (show that effect's hover plate over its chip), `--catalogue SEARCH` (open creative mode's catalogue on a search, once in creative),
 //! `--size WIDTHxHEIGHT` (the shot's size, 1920x1080 unless given), `--scale-factor N` (screen
 //! pixels per interface pixel, 2 to shoot as a Retina display draws: use twice the size), `--clip SECONDS` (save
 //! every frame of that much game time at 30 fps instead, to check motion; `--clip-join` starts
@@ -123,6 +123,8 @@ struct Options {
     /// effect whose hover plate to show over its chip.
     effects: Vec<(String, u16)>,
     effect_tip: Option<String>,
+    /// `--catalogue SEARCH`: creative mode's catalogue, searched.
+    catalogue: Option<String>,
     flicker: Option<capture::FlickerKind>,
     clip: Option<f32>,
     /// `--clip-join`: start the clip on joining; `--clip-command LINE`: run it as the clip
@@ -179,6 +181,7 @@ fn parse_options() -> Result<Options, String> {
         guide: None,
         effects: Vec::new(),
         effect_tip: None,
+        catalogue: None,
         flicker: None,
         clip: None,
         clip_join: false,
@@ -238,6 +241,7 @@ fn parse_options() -> Result<Options, String> {
                 options.effects.push((name.to_owned(), seconds.parse().map_err(|e| format!("--effect: {e}"))?));
             }
             "--effect-tip" => options.effect_tip = Some(value()?),
+            "--catalogue" => options.catalogue = Some(value()?),
             "--flicker" => options.flicker = Some(capture::FlickerKind::Step),
             "--flicker-still" => options.flicker = Some(capture::FlickerKind::Still),
             "--hold" => options.hold = Some(value()?),
@@ -439,6 +443,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !options.effects.is_empty() {
         app.insert_resource(hud::effects::ShowEffects(options.effects));
+    }
+    if let Some(search) = options.catalogue {
+        app.insert_resource(hud::creative::StartSearch(search));
     }
     if let Some(name) = options.effect_tip {
         app.insert_resource(hud::effects::PinnedTip(name));
