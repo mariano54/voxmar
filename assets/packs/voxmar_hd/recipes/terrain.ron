@@ -98,5 +98,37 @@
         "block/powder_snow": (base: "block/snow", layers: [
             Clusters(palette: "main", count: 12, size: (1, 3), spacing: 5.0, shade: 5, seed: 2),
         ]),
+
+        // Batch three: the deep and strange stones.
+        "block/bedrock": (size: (32, 32), palettes: {"main": "bedrock"}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Noise(cells: (8, 8), octaves: 2, amount: 0.6), Noise(cells: (32, 32), amount: 0.6)], clean: true),
+        ]),
+        "block/obsidian": (base: "block/hd_rock_round", palettes: {"main": "obsidian"}, layers: [
+            Clusters(palette: "main", count: 7, size: (1, 3), spread: (1.6, 0.6), spacing: 7.0, shade: 5, seed: 2),
+        ]),
+        // Deepslate's cut face: tiles of blotched rock parted by dark joints.
+        "block/deepslate_top": (size: (32, 32), palettes: {"main": "deepslate"}, layers: [
+            Paint(palette: "main", base: 0.58, shade: [
+                Cells(count: (3, 3), jitter: 0.8, value: 0.3, edge: -0.5, width: 1.0, bevel: 0.2, lip: 0.15),
+                Noise(cells: (32, 32), amount: 0.4),
+            ], clean: true),
+        ]),
+        "block/dripstone_block": (size: (32, 32), palettes: {"main": ["#5c483c", "#6e584a", "#806858", "#927a68", "#a48c78", "#b8a08c"]}, layers: [
+            Paint(palette: "main", base: 0.52, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.45), Stripes(vertical: true, period: 8.0, width: 0.25, amount: -0.2, warp: 1.5), Noise(cells: (32, 8), amount: 0.45)], clean: true),
+        ]),
+        // Glowing rock: lit cells of mineral parted by dark seams.
+        "block/glowstone": (size: (32, 32), palettes: {"main": ["#6b4a1c", "#a8742c", "#d9a341", "#f2c766", "#ffe196", "#fff4cc"]}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Cells(count: (5, 5), jitter: 1.0, value: 0.5, edge: -0.55, width: 1.0, bevel: 0.35, lip: 0.2, warp: 1.0),
+                Noise(cells: (32, 32), amount: 0.3),
+            ], clean: true),
+        ]),
+        // Crusted cells with molten seams between them.
+        "block/magma": (size: (32, 32), palettes: {"main": "magma"}, layers: [
+            Paint(palette: "main", base: 0.3, shade: [
+                Cells(count: (4, 4), jitter: 1.0, value: 0.2, edge: 0.6, width: 1.0, bevel: 0.1, lip: 0.0, round: -0.15, warp: 1.2),
+                Noise(cells: (32, 32), amount: 0.25),
+            ], clean: true),
+        ]),
     },
 )

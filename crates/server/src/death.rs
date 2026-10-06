@@ -5,7 +5,7 @@
 
 use voxmar_engine::block::{BlockId, Rarity};
 use voxmar_engine::dropped::{self, LIFETIME};
-use voxmar_engine::glam::IVec3;
+use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{Inventory, ItemStack};
 use voxmar_engine::lang::Words;
 use voxmar_engine::traits;
@@ -57,8 +57,12 @@ impl Server {
         let lifetime = (LIFETIME * minutes * TICKS_PER_SECOND as f32) as u32;
         let cell = at.floor().as_ivec3();
         for (i, stack) in left.into_iter().enumerate() {
-            // Spread a little, as a dropped pack does, never far.
-            let body = dropped::popped(cell + IVec3::Y, random3(tick, cell, i as u32 ^ 0x9a7e));
+            // A pile at the feet, barely spread, so nothing rolls off a ledge or into water
+            // out of reach of the one who comes back for it.
+            let [a, b, c] = random3(tick, cell, i as u32 ^ 0x9a7e);
+            let nudge = Vec3::new(a - 0.5, 0.0, b - 0.5) * 0.4;
+            let angle = c * std::f32::consts::TAU;
+            let body = dropped::Loose::new(at + nudge + Vec3::Y * 0.25, Vec3::new(angle.cos() * 0.3, 1.5, angle.sin() * 0.3));
             self.items.spawn_for(stack, body, 1.0, Some(owner), lifetime);
         }
         let words = Words::key("death.left")
