@@ -28,11 +28,15 @@ pub struct Body {
     pub size: (f32, f32),
     /// Whether the last step was stopped by a wall across.
     pub against_wall: bool,
+    /// How far its head reaches ahead of its centre, and how high it is: a deer's head is
+    /// well out in front of its box, and must not go into rock.
+    pub reach: f32,
+    pub head: f32,
 }
 
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
-        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false }
+        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0 }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -42,6 +46,19 @@ impl Body {
     /// The direction it faces.
     pub fn forward(&self) -> Vec3 {
         Vec3::new(-self.yaw.sin(), 0.0, -self.yaw.cos())
+    }
+
+    /// Whether its head (and the neck on the way to it), beyond its box, is in something
+    /// solid.
+    pub fn head_blocked(&self, world: &impl Surroundings) -> bool {
+        if self.reach <= self.size.0 * 0.5 + 0.05 {
+            return false;
+        }
+        let forward = self.forward();
+        [(1.0, 1.0), (1.0, 0.7), (0.75, 0.85)].into_iter().any(|(out, up)| {
+            let p = self.position + forward * self.reach * out + Vec3::Y * (self.head * up).max(0.2);
+            world.solid(p.floor().as_ivec3())
+        })
     }
 }
 
@@ -81,6 +98,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     body.in_water = world.water(feet) || world.water(middle);
     let floating = water == Water::Air || movement.style == Style::Drifter;
 
+    let (start, start_yaw) = (body.position, body.yaw);
     // Face the way it moves, or what it was asked to look at.
     let heading = if drive.wish.length_squared() > 1e-4 { Some(drive.wish) } else { drive.face };
     if let Some(heading) = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4) {
@@ -133,6 +151,18 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         }
     }
     body.position = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
+    // Its head stops at what its box does not: back out of the turn or the step that put it
+    // into a wall, and count it as against the wall, so it climbs or turns away.
+    if body.head_blocked(world) {
+        body.yaw = start_yaw;
+        let back = Vec3::new(start.x, body.position.y, start.z);
+        if !Aabb::standing(back, body.size.0, body.size.1).intersects(|p| world.solid(p)) {
+            body.position = back;
+        }
+        body.velocity.x = 0.0;
+        body.velocity.z = 0.0;
+        body.against_wall = true;
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +197,29 @@ mod tests {
         assert!(body.on_ground && body.position.y.abs() < 1e-4);
         assert!(body.position.x > 3.5, "walked to {}", body.position.x);
         assert!((body.forward() - Vec3::X).length() < 0.05, "faces where it goes");
+    }
+
+    #[test]
+    fn heads_stop_at_walls() {
+        // A wall two blocks high: the box would reach it, the head first.
+        struct Wall;
+        impl Surroundings for Wall {
+            fn solid(&self, cell: IVec3) -> bool {
+                cell.y < 0 || (cell.x >= 3 && (0..3).contains(&cell.y))
+            }
+            fn water(&self, _: IVec3) -> bool {
+                false
+            }
+        }
+        let mut body = Body::new(Vec3::new(0.5, 0.0, 0.5), -std::f32::consts::FRAC_PI_2, (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        let movement = Movement { jump: 0.0, ..Movement::default() };
+        for _ in 0..80 {
+            step(&mut body, &Wall, &movement, Water::Land, Drive { wish: Vec3::X, speed: 2.0, face: None }, 0.05);
+        }
+        assert!(body.position.x + body.reach <= 3.0 + 1e-3, "the head went into the wall at {}", body.position.x + body.reach);
+        assert!(body.against_wall);
     }
 
     #[test]
