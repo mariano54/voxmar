@@ -244,7 +244,9 @@ fn fruit_vertex(w0: u32, origin: vec3<f32>) -> Card {
         // Under the block, at the leaf cards' hem, a little apart from each other.
         centre += vec3(spread.x, -0.45 - size * 0.4, spread.y);
     } else {
-        let n = NORMALS[hang];
+        // NORMALS lives in lighting.wgsl, which the depth prepass doesn't import.
+        var n = vec3(0.0);
+        n[hang / 2u] = 1.0 - 2.0 * f32(hang % 2u);
         let t = vec3(n.z, 0.0, -n.x);
         centre += n * (0.55 + size * 0.2) + t * spread.x - vec3(0.0, 0.3 + 0.3 * h.y, 0.0);
     }
