@@ -319,7 +319,8 @@ pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>,
         chip.spawn(effect_icon(images, id));
         chip.spawn((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
         if active.seconds_left.is_some() {
-            chip.spawn((shadowed(font, "", BODY, SOFT), crate::lang::TightLine, EffectTimer(id)));
+            let gap = Node { margin: UiRect::left(Val::Px(space::INNER)), ..default() };
+            chip.spawn((shadowed(font, "", BODY, SOFT), gap, crate::lang::TightLine, EffectTimer(id)));
         }
     });
 }

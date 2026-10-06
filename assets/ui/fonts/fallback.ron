@@ -6,6 +6,11 @@
 // A pixel-outline font (with `pixels_per_em`, the pixel grid it is drawn on) is instead read
 // once at startup and merged under the chosen font on the same baseline (see
 // `voxmar_texgen::font::import`), so only what that font lacks comes from it.
+// `scale` (1 unless given) is how big a pixel font's pixels are drawn, in ours.
 [
+    // Kana and kanji in Fusion Pixel 12px, its pixels drawn three quarters the size of
+    // ours: kanji about as tall as a 9-pixel font's, with all of their 12 pixels' detail.
+    (file: "japanese/fusion-pixel-12px-monospaced-ja.ttf", pixels_per_em: 12, scale: 0.75),
+    // Smooth, for any Japanese character it lacks.
     (file: "japanese/BIZUDGothic-Regular.ttf"),
 ]

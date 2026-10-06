@@ -79,20 +79,20 @@ fn show(
     window: Query<&Window, With<PrimaryWindow>>,
     hovered: Query<(&EffectHover, &RelativeCursorPosition, &InheritedVisibility, &bevy::ui::UiGlobalTransform, &ComputedNode)>,
     pinned: Option<Res<PinnedTip>>,
-    mut tip: Query<(&mut Node, &mut Visibility), With<EffectTip>>,
+    mut tip: Query<(&mut Node, &mut Visibility, &ComputedNode), With<EffectTip>>,
     mut name: Query<(&mut Text, &mut TextColor), (With<EffectTipName>, Without<EffectTipWhat>)>,
     mut what: Query<&mut Text, (With<EffectTipWhat>, Without<EffectTipName>, Without<EffectTipLeft>)>,
     mut left: Query<(&mut Text, &mut Node), (With<EffectTipLeft>, Without<EffectTipName>, Without<EffectTipWhat>, Without<EffectTip>)>,
     mut icon: Query<&mut ImageNode, With<EffectTipIcon>>,
     (scale, time, player, images): (Res<UiScale>, Res<Time>, Res<crate::player::LocalPlayer>, Res<super::HudImages>),
 ) {
-    let Ok((mut node, mut visibility)) = tip.single_mut() else { return };
+    let Ok((mut node, mut visibility, plate)) = tip.single_mut() else { return };
     let over = hovered.iter().find(|(_, cursor, visible, ..)| visible.get() && cursor.cursor_over()).map(|(effect, ..)| effect.0);
     // The pointer is in the window's points; the interface is laid out at its own scale.
     let at = window.single().ok().and_then(Window::cursor_position).map(|at| at / scale.0);
     let pinned = pinned.as_ref().and_then(|p| launch.content.effects.find(&p.0)).and_then(|id| {
         let (_, _, _, place, size) = hovered.iter().find(|(effect, _, visible, ..)| effect.0 == id && visible.get())?;
-        Some((id, (place.translation + size.size() * Vec2::new(0.0, 0.5)) * size.inverse_scale_factor))
+        Some((id, place.translation * size.inverse_scale_factor))
     });
     let (Some(id), Some(at)) = (over.or(pinned.map(|p| p.0)), at.or(pinned.map(|p| p.1))) else {
         visibility.set_if_neq(Visibility::Hidden);
@@ -117,8 +117,13 @@ fn show(
             text.0 = words;
         }
     }
-    node.left = Val::Px(at.x + OFFSET);
-    node.top = Val::Px(at.y + OFFSET);
+    // Beside the pointer, below and to the right, or above or to the left where the window
+    // has no room for it there.
+    let room = window.single().map_or(Vec2::splat(f32::MAX), |w| w.size() / scale.0);
+    let size = plate.size() * plate.inverse_scale_factor();
+    let place = |at: f32, size: f32, room: f32| if at + OFFSET + size <= room { at + OFFSET } else { (at - OFFSET - size).max(0.0) };
+    node.left = Val::Px(place(at.x, size.x, room.x));
+    node.top = Val::Px(place(at.y, size.y, room.y));
     if let Ok((mut text, mut color)) = name.single_mut() {
         let words = locale.effect(effect);
         if text.0 != words {
