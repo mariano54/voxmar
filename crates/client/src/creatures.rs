@@ -89,6 +89,9 @@ const SWING: f32 = 0.55;
 const DRAWN_WITHIN: f32 = 96.0;
 /// The darkest a creature is drawn, so one in a cave is still a shape.
 const DARKEST: f32 = 0.12;
+/// Steps a creature's light is rounded to, so the slow change of daylight rewrites its
+/// material now and then rather than every frame.
+const LIGHT_STEPS: f32 = 128.0;
 
 pub struct CreaturesPlugin;
 
@@ -535,10 +538,18 @@ fn show(
             let block = block_light(&world, cell) as f32 / 15.0;
             sky.max(block).max(DARKEST)
         };
+        // In steps too fine to see, and written only when it changes: a changed material
+        // is uploaded again and every part drawn with it specialised again for the camera
+        // and each shadow cascade: writing it every frame took a herd of 40 from 4 to 8 ms
+        // a frame on an NVIDIA L4.
+        let light = (light * LIGHT_STEPS).round() / LIGHT_STEPS;
         let red = shown.flash / FLASH;
-        if let Some(mut material) = materials.get_mut(&shown.material) {
-            let lit = LinearRgba::rgb(light, light, light);
-            material.base_color = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
+        let lit = LinearRgba::rgb(light, light, light);
+        let colour = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
+        if materials.get(&shown.material).is_some_and(|material| material.base_color != colour)
+            && let Some(mut material) = materials.get_mut(&shown.material)
+        {
+            material.base_color = colour;
         }
     }
     for id in finished {

@@ -674,6 +674,20 @@ fn capture(
         stats.jobs_in_flight,
         stats.pending_columns,
     );
+    // Per-pass GPU and CPU times with VOXMAR_GPU_TIMES (`RenderDiagnosticsPlugin`).
+    let mut passes: Vec<(String, f64)> = diagnostics
+        .iter()
+        .filter(|d| d.path().as_str().starts_with("render/") && d.path().as_str().ends_with("/elapsed_gpu"))
+        .filter_map(|d| Some((d.path().as_str().to_owned(), d.average()?)))
+        .collect();
+    if !passes.is_empty() {
+        passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let total: f64 = passes.iter().filter(|(p, _)| p.matches('/').count() == 2).map(|(_, t)| t).sum();
+        info!("gpu passes: {total:.3} ms at the top level");
+        for (path, ms) in passes {
+            info!("gpu {ms:7.3} ms {path}");
+        }
+    }
     let shown = &weather.current;
     info!("weather: {}: {}; effects: {}", shown.describe(), shown.summary(), weather.effects.join(", "));
     let particles: Vec<String> = air.particles.iter().map(|p| format!("{} {:.0}%", p.name, p.density * 100.0)).collect();
