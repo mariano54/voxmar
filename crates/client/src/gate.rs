@@ -209,6 +209,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// The Farming guide sorts its lines into kinds down the left; Planting shows only
+    /// planting, and a line opens its page.
+    Guides,
     /// In creative mode the inventory's catalogue finds an item by its English name and by
     /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
     Catalogue,
@@ -251,8 +254,10 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
-    /// Where the player died in the workshop.
+    /// Where the player died in the workshop, the most items carried since waking, and when
+    /// (in server seconds) that last went up.
     fell: Vec3,
+    gathered: (u32, f32),
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -338,6 +343,7 @@ impl Gate {
             dug: Vec::new(),
             count_before: 0,
             fell: Vec3::ZERO,
+            gathered: (0, 0.0),
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -624,7 +630,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Strike => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 100.0,
+        Step::Workshop => 160.0,
         _ => STEP_LIMIT,
     };
     if now - gate.since > limit {
@@ -843,6 +849,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Guides => guides(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
         Step::Fit => fit(world, gate, now, in_phase),
@@ -1532,6 +1539,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 world.resource::<Net>().command(&line);
             }
             let back = carried(world);
+            // Picking up is the server's work: under load it gathers slowly, so the wait
+            // runs while the count keeps rising, by the server's clock.
+            if back > gate.gathered.0 || gate.gathered.1 == 0.0 {
+                gate.gathered = (back.max(gate.gathered.0), gate.server_now);
+            }
             if back >= gate.count_before {
                 gate.check("workshop: grave", Ok(format!("woke and picked all {back} items back up where the player fell")));
                 // The kit a new player starts with, for the steps after.
@@ -1540,8 +1552,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     net.command(line);
                 }
                 end_workshop(world, gate, now);
-            } else if in_phase > 15.0 {
-                fail(world, gate, "grave", format!("15 seconds back where the player fell, carrying {back} of {} items", gate.count_before));
+            } else if gate.server_now - gate.gathered.1 > 15.0 {
+                fail(world, gate, "grave", format!("back where the player fell, nothing more was picked up for 15 server seconds, carrying {back} of {} items", gate.count_before));
             }
         }
         _ => {}
@@ -2022,6 +2034,51 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Guides, now);
+        }
+    }
+}
+
+fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::character::{Guide, GuideView};
+    let skills = &world.resource::<Launch>().content.skills;
+    let Some(farming) = skills.ids().find(|&id| skills.get(id).name.ends_with("farming")) else {
+        gate.check("guides", Err("no Farming skill in the content".into()));
+        gate.next(Step::Catalogue, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            world.resource_mut::<UiState>().character_open = true;
+            world.resource_mut::<Guide>().0 = Some(farming);
+            world.resource_mut::<GuideView>().category = Some("planting".into());
+            gate.advance(now);
+        }
+        1 => {
+            let (lines, kinds) = crate::hud::character::guide_buttons(world);
+            if lines == 0 && in_phase < 2.0 {
+                return;
+            }
+            gate.check("guides: kinds", if kinds >= 3 && lines > 0 { Ok(format!("{kinds} kinds down the left, {lines} planting lines")) } else { Err(format!("{kinds} kinds and {lines} lines")) });
+            let first = {
+                let locale = world.resource::<Locale>().clone();
+                let launch = world.resource::<Launch>();
+                crate::hud::guide::entries(&locale, launch, farming).iter().position(|e| e.category == "planting")
+            };
+            world.resource_mut::<GuideView>().entry = first;
+            gate.advance(now);
+        }
+        _ => {
+            let needs = world.resource::<Locale>().get("guide.needs").to_owned();
+            let mut texts = world.query::<&Text>();
+            let shown = texts.iter(world).any(|t| t.0 == needs);
+            if !shown && in_phase < 2.0 {
+                return;
+            }
+            gate.check("guides: page", if shown { Ok("a planting line opens its page".into()) } else { Err("a line's page never showed what it needs".into()) });
+            *world.resource_mut::<GuideView>() = GuideView::default();
+            world.resource_mut::<Guide>().0 = None;
+            world.resource_mut::<UiState>().character_open = false;
             gate.next(Step::Catalogue, now);
         }
     }

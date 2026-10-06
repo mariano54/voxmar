@@ -128,6 +128,20 @@
         // Health and hunger meters fill with these.
         "ui/bar_health": (base: "ui/bar", palettes: {"glow": "ui_blood"}),
         "ui/bar_hunger": (base: "ui/bar", palettes: {"glow": "ui_amber"}),
+        // A health or hunger meter's track: outlined, rounded, shadowed along the top and
+        // left. Sliced at 3.
+        "ui/meter": (size: (8, 8), palettes: {"well": "ui_pit"}, layers: [
+            Grid(rows: [
+                ".kkkkkk.",
+                "kwwwwwwk",
+                "kwvvvvvk",
+                "kwvvvvvk",
+                "kwvvvvvk",
+                "kwvvvvvk",
+                "kwvvvvvk",
+                ".kkkkkk.",
+            ]),
+        ]),
         // A slider's knob, drawn whole at two pixels per texel.
         "ui/knob": (size: (6, 9), palettes: {"frame": "ui_gold"}, layers: [
             Grid(rows: [
