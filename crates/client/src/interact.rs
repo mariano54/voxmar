@@ -446,9 +446,12 @@ fn draw_target(target: Res<Target>, mut gizmos: Gizmos) {
             let center = hit.block.as_vec3() + 0.5;
             gizmos.cube(Transform::from_translation(center).with_scale(Vec3::splat(1.004)), Color::srgba(0.0, 0.0, 0.0, 0.8));
         }
-        // An invisible line keeps the outline's pipeline in use from the first frame. On
+        // An invisible outline keeps the outline's pipelines in use from the first frame. On
         // Metal, Bevy compiles a pipeline on the render thread the first time something
-        // needs it, and the first block the player looked at held that frame for 60 ms.
-        None => gizmos.line(Vec3::ZERO, Vec3::ZERO, Color::NONE),
+        // needs it, and the first block the player looked at held that frame for 60 ms. It
+        // is drawn as the outline is, a cube: a plain line warms only one of the two
+        // pipelines the cube needs, and a world whose first block looked at came only after
+        // loading compiled the other mid-play.
+        None => gizmos.cube(Transform::from_scale(Vec3::ZERO), Color::NONE),
     }
 }
