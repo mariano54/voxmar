@@ -618,9 +618,11 @@ shooting stars and heat haze are in the weather the client receives and wait on 
 (docs/weather-effects.md). F3 shows the weather and the effects showing.
 
 Blocks give off particles near the player as their data says (`particles` in blocks.ron, each a
-`style` of Smoke, Ember, Spark or Flame with its rate, burst count, place, spread, colour and size;
-`engine::block::Emission`): a campfire smokes, floats embers and now and then crackles with
-sparks, and a torch's flame flickers. The nearest 32 within 24 blocks emit (client/src/emitters.rs).
+`style` of Smoke, Ember, Spark or Flame with its rate, burst count, place, spread, colour, size
+and how high it rises; `engine::block::Emission`): a campfire's flames lick a block and more
+above it, its smoke rises a few blocks, thinning, embers float as high, and now and then it
+crackles with sparks; a torch's flame flickers. The nearest 32 within 24 blocks emit, those
+beyond 10 blocks fewer (client/src/emitters.rs).
 
 An admin's `/weather KIND` holds the cells within about a kilometre at that kind of weather
 (kinds are data in `weather.ron`; what a kind leaves out stays natural, so `/weather rain`
