@@ -1398,22 +1398,26 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         3 => {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 1.6, 0.5));
             if in_phase > 0.5 && gate.shot(world, "fire").is_some() {
-                let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
-                emitters.watch = Some(fire);
-                emitters.watched = 0;
+                world.resource_mut::<crate::emitters::Emitters>().watch(fire);
                 gate.advance(now);
             }
         }
         4 if in_phase > FIRE_WATCH => {
             let Some(later) = gate.shot(world, "fire_later") else { return };
             let change = gate.earlier_shot("fire").map_or(0.0, |earlier| change(&earlier, &later, 0.4));
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let is_fire = {
+                let client = world.resource::<ClientWorld>();
+                client.registry.id("base:campfire").is_some_and(|c| client.block(fire) == Some(c))
+            };
             let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
             let count = emitters.watched;
+            let why = emitters.why_quiet(fire, amount);
             emitters.watch = None;
             let result = if count >= FIRE_PARTICLES {
                 Ok(format!("{count} particles rose from it in {FIRE_WATCH} s (the view over it changed by {change:.2} levels)"))
             } else {
-                Err(format!("only {count} particles rose from it in {FIRE_WATCH} s, under {FIRE_PARTICLES}"))
+                Err(format!("only {count} particles rose from it in {FIRE_WATCH} s, under {FIRE_PARTICLES} (still a campfire: {is_fire}; {why})"))
             };
             gate.check("campfire smoke", result);
             gate.next(Step::Tame, now);
