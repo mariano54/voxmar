@@ -213,6 +213,9 @@ enum Step {
     Recipes,
     /// A timed effect's chip counts its time down, and its hover plate says how long is left.
     Effects,
+    /// An effect that comes on pops up with its name, and the first look at the inventory
+    /// brings its tip.
+    Tips,
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
@@ -857,6 +860,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Effects => effects(world, gate, now, in_phase),
+        Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -2060,6 +2064,37 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("effects: countdown", result);
             world.remove_resource::<ShowEffects>();
             world.remove_resource::<PinnedTip>();
+            gate.next(Step::Tips, now);
+        }
+    }
+}
+
+fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::effects::ShowEffects;
+    use crate::hud::tips::{Popup, Tips};
+    let Some(warmed) = world.resource::<Launch>().content.effects.find("ember_warmed") else {
+        gate.check("tips", Err("no ember_warmed effect in the content".into()));
+        gate.next(Step::Guides, now);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            // As for a player who has seen none.
+            world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
+            world.insert_resource(ShowEffects(vec![("ember_warmed".into(), 60)]));
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        _ => {
+            let popped = world.query::<&Popup>().iter(world).any(|popup| popup.0 == warmed);
+            let tip = world.resource::<Tips>().showing.map(|(name, _)| name);
+            if !(popped && tip.is_some()) && in_phase < 3.0 {
+                return;
+            }
+            gate.check("tips: effect", if popped { Ok("Ember-warmed popped up as it came on".into()) } else { Err("an effect came on with no pop-up".into()) });
+            gate.check("tips: first look", match tip { Some(name) => Ok(format!("the {name} tip showed")), None => Err("opening the inventory brought no tip".into()) });
+            world.remove_resource::<ShowEffects>();
+            world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }
     }
