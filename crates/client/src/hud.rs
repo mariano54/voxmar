@@ -9,6 +9,8 @@ pub mod recipes;
 pub mod skills;
 pub mod target;
 
+use std::collections::VecDeque;
+
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
@@ -368,7 +370,40 @@ fn show_held_name(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// How far back the debug overlay looks for its worst frames, in seconds.
+const RECENT_SECONDS: f32 = 5.0;
+/// A frame over this many ms is counted as slow on the debug overlay (as in slow_frames.rs).
+const SLOW_FRAME_MS: f32 = 25.0;
+
+/// The wall-clock length of every frame in the last `RECENT_SECONDS`, kept while the overlay
+/// is hidden too, so its worst frames are there the moment it opens.
+#[derive(Default)]
+struct RecentFrames(VecDeque<(f32, f32)>);
+
+impl RecentFrames {
+    fn push(&mut self, now: f32, ms: f32) {
+        self.0.push_back((now, ms));
+        while self.0.front().is_some_and(|&(at, _)| at < now - RECENT_SECONDS) {
+            self.0.pop_front();
+        }
+    }
+
+    /// The worst frame, the 99th percentile and how many were over `SLOW_FRAME_MS`, in ms.
+    fn summary(&self) -> (f32, f32, usize) {
+        let mut times: Vec<f32> = self.0.iter().map(|&(_, ms)| ms).collect();
+        if times.is_empty() {
+            return (0.0, 0.0, 0);
+        }
+        times.sort_by(f32::total_cmp);
+        let p99 = times[(times.len() * 99 / 100).min(times.len() - 1)];
+        let slow = times.iter().filter(|&&ms| ms > SLOW_FRAME_MS).count();
+        (times[times.len() - 1], p99, slow)
+    }
+}
+
 fn update_debug(
+    time: Res<Time<Real>>,
+    mut recent: Local<RecentFrames>,
     diagnostics: Res<DiagnosticsStore>,
     world: Res<ClientWorld>,
     player: Res<LocalPlayer>,
@@ -378,6 +413,7 @@ fn update_debug(
     weather: Res<ClientWeather>,
     mut text: Query<(&mut Text, &mut Visibility), With<DebugText>>,
 ) {
+    recent.push(time.elapsed_secs(), time.delta_secs() * 1000.0);
     let Ok((mut text, mut visibility)) = text.single_mut() else { return };
     visibility.set_if_neq(if settings.debug_overlay { Visibility::Inherited } else { Visibility::Hidden });
     if !settings.debug_overlay {
@@ -385,6 +421,7 @@ fn update_debug(
     }
     let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
     let frame_ms = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()).unwrap_or(0.0);
+    let (worst, p99, slow) = recent.summary();
     let stats = world.stats;
     let p = player.position;
     let looking = target
@@ -400,7 +437,7 @@ fn update_debug(
         sky.push_str(&format!(" | rain in {raining} of the 25 cells around"));
     }
     text.0 = format!(
-        "{fps:.0} fps ({frame_ms:.2} ms)\n\
+        "{fps:.0} fps ({frame_ms:.2} ms) | last {RECENT_SECONDS:.0} s: worst {worst:.1} ms, p99 {p99:.1} ms, {slow} over {SLOW_FRAME_MS:.0} ms\n\
          xyz {:.1} {:.1} {:.1}{}\n\
          columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
          mesh jobs {} | waiting {} | distant tiles {}/{}\n\
