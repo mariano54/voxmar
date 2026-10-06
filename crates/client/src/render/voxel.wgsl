@@ -252,10 +252,11 @@ struct Card {
     // Varies the outline of the cluster from card to card.
     seed: u32,
     // Fruit only: the point it hangs from, which it sways about as one piece, the face
-    // it is lit as, and its colour and material (`fruit_vertex`).
+    // it is lit as, its colour and material, and its shading (`fruit_vertex`).
     pivot: vec3<f32>,
     face: u32,
     fruit: u32,
+    ao: f32,
 }
 
 const CARD_SIZE = vec2(2.0, 1.75);
@@ -506,6 +507,7 @@ const FRUIT_GOLD = vec3(0.48, 0.25, 0.030);
 // A box face's two edges, u × v its outward normal, so it winds counter-clockwise seen from
 // outside: by face (+x, -x, +y, -y, +z, -z), the axis each runs along.
 const BOX_U = array<u32, 6>(1u, 2u, 2u, 0u, 0u, 1u);
+const FRUIT_FACE_SHADE = array<f32, 6>(0.84, 0.84, 1.0, 0.62, 0.93, 0.93);
 const BOX_V = array<u32, 6>(2u, 1u, 0u, 2u, 1u, 0u);
 
 // A fruit's colour: its texture's at the middle of the fruit drawn there (an apple's, a
@@ -536,7 +538,9 @@ fn fruit_vertex(w0: u32, w1: u32, origin: vec3<f32>) -> Card {
     let lo = FRUIT_BOXES[id * 2u];
     let hi = FRUIT_BOXES[id * 2u + 1u];
     let unripe = (w0 & FLAG_UNRIPE) != 0u;
-    let h = pcg3d(vec3<u32>(vec3<i32>(floor(cell + 0.5)) + vec3(i32(index) * 13, 211, 0)));
+    let block = vec3<i32>(floor(cell + 0.5));
+    let h = pcg3d(vec3<u32>(block + vec3(i32(index) * 13, 211, 0)));
+    let g = pcg3d(vec3<u32>(block + vec3(0, 307, 0)));
 
     // The corner, in model pixels.
     let axis = side / 2u;
@@ -548,15 +552,19 @@ fn fruit_vertex(w0: u32, w1: u32, origin: vec3<f32>) -> Card {
     p[v] = mix(lo[v], hi[v], along.y);
 
     // Where it hangs from.
+    // A block's two fruits hang on opposite sides of it, a hash's way round, so they never
+    // run together into one shape.
     let hang = face_of(w0);
-    let spread = (h.yz - 0.5) * 0.5;
+    let away = select(0.24, -0.24, index == 1u) + (h.y - 0.5) * 0.08;
+    let bearing = g.x * 6.2832;
+    let spread = vec2(cos(bearing), sin(bearing)) * away;
     var pivot = cell + vec3(0.5 + spread.x, 0.1, 0.5 + spread.y);
     if hang != 3u {
         // NORMALS lives in lighting.wgsl, which the depth prepass doesn't import.
         var n = vec3(0.0);
         n[hang / 2u] = 1.0 - 2.0 * f32(hang % 2u);
         let t = vec3(n.z, 0.0, -n.x);
-        pivot = cell + 0.5 + n * 0.68 + t * spread.x + vec3(0.0, 0.3 + 0.3 * spread.y, 0.0);
+        pivot = cell + 0.5 + n * 0.68 + t * select(0.24, -0.24, index == 1u) + vec3(0.0, 0.3 + 0.15 * (h.z - 0.5), 0.0);
     }
     // Turned a quarter turn at random and a little more, so its pixels stay square on to
     // the light.
@@ -578,6 +586,10 @@ fn fruit_vertex(w0: u32, w1: u32, origin: vec3<f32>) -> Card {
         let m = vec2(n.x * c - n.y * s, n.x * s + n.y * c);
         fruit.face = select(select(5u, 4u, m.y > 0.0), select(1u, 0u, m.x > 0.0), abs(m.x) > abs(m.y));
     }
+    // Shaded as an entity's model is, so its volume reads even in the crown's shade: each
+    // face by which way it turns (top lightest, underside darkest), and darker towards the
+    // bottom of the fruit, as light from above falls off round it.
+    fruit.ao = clamp(1.0 + p.y * 0.035, 0.72, 1.0);
 
     // Its colour: unripe fruit greys towards green; the materials not its own keep theirs.
     var skin = fruit_skin(i32(w1 & 0xFFFu));
@@ -595,6 +607,7 @@ fn fruit_vertex(w0: u32, w1: u32, origin: vec3<f32>) -> Card {
         case 6u: { colour = FRUIT_GOLD; }
         default: {}
     }
+    colour *= FRUIT_FACE_SHADE[fruit.face];
     // Packed as its square root, so dark fruit keeps its shades in 8 bits; the alpha holds
     // the material and a seed for the pixels' pattern.
     fruit.fruit = pack4x8unorm(vec4(sqrt(colour), 0.0)) | ((material | (u32(h.x * 31.0) << 3u)) << 24u);
@@ -796,9 +809,9 @@ fn vertex(in: Vertex) -> VertexOutput {
     out.surface = w1 & 0xFFFFFFu;
 #ifdef FRINGE
     if fruit {
-        // Its texture layer alone: fruit takes no tint, and no corner shading.
+        // Its texture layer alone: fruit takes no tint; and its own shading, not a corner's.
         out.surface = w1 & 0xFFFu;
-        out.light.x = 1.0;
+        out.light.x = card.ao;
     }
 #endif
     out.covered = select(0u, 1u, out.face < FACE_PLANT && (w0 & FLAG_INNER) != 0u);
