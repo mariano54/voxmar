@@ -98,6 +98,8 @@ pub enum Requirement {
     Tillable,
     /// The target is a crafting table.
     CraftingTable,
+    /// The target is the core of a hearth (tagged `hearth`).
+    Hearth,
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
@@ -154,6 +156,9 @@ pub enum Effect {
     EmptyPouch,
     /// Bring up what bites in the target water, if anything (`fishing.ron`).
     Fish,
+    /// Light the target hearth: if the Homestead Hearth stands around it, it becomes the
+    /// actor's home, where they wake after dying.
+    ClaimHome,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -400,6 +405,10 @@ impl ActionDef {
             Requirement::CraftingTable => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("crafting_table"))
+            }
+            Requirement::Hearth => {
+                let (block, _) = block_target()?;
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("hearth"))
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };

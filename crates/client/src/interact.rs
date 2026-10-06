@@ -157,7 +157,7 @@ impl ActionContext for ClientContext<'_> {
     }
 
     fn actor_level(&self, skill: SkillId) -> u8 {
-        self.content.skills.level(self.player.skills.xp(skill))
+        voxmar_engine::level::check_level(&self.content.skills, &self.content.effects, &self.player.skills, &self.player.vitals.effects, skill)
     }
 
     fn actor_eye(&self) -> Vec3 {
@@ -294,6 +294,15 @@ fn break_and_place(
                 net.propose_from(&player, use_table, action_target);
                 player.station = Some(hit.block);
                 ui.inventory_open = true;
+                return;
+            }
+        }
+        // A hearthstone is lit: the server says whether the hearth around it stands.
+        if let (Some(hit), Some(light)) = (hit, actions.0.id("base:light_hearth")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(light).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, light, action_target);
                 return;
             }
         }

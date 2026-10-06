@@ -271,8 +271,10 @@ impl Server {
     pub(crate) fn harvest(&mut self, agent: PlayerId, id: CropId, pos: IVec3, salt: u32) {
         let crop = &self.content.crops.get(id);
         let (loot, skill, xp) = (crop.harvest.clone(), crop.skill, crop.def.xp.harvest);
+        let ripe = self.content.blocks.def(crop.stages[crop.ripe_stage() as usize]).name.clone();
         self.yield_loot(agent, id, &loot, pos, salt);
         self.grant_xp(agent, skill, xp);
+        self.discover(agent, voxmar_engine::journal::Page::Plants, &ripe, 1);
     }
 
     /// What foraging one wild plant of a crop at `pos` yields, and its experience.

@@ -159,7 +159,8 @@ impl Process for Survival {
             });
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather };
+            let biome = server.overworld.biome_at(feet.x, feet.z);
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags };
             let first = effects.active(&situation, &player.timed_effects);
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);

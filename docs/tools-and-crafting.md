@@ -38,6 +38,9 @@ the bigger grid, for as long as you are within reach of it and the screen is ope
 Anything bigger than two by two, or with more than four ingredients, needs a table; the
 server checks.
 
+A cell or ingredient can accept several items: `tag:log` takes any log, `coal_ore|charcoal`
+either (`Recipe::alternatives`; the viewer shows the first). Torches use it.
+
 Every recipe trains a skill, Crafting unless it names another, may need a `level` in it,
 and gives `xp` for every one made: tools, the table, torches, shears, pails and smelting
 train Engineering, bread and animal feed Cooking. A recipe whose level is above yours
@@ -77,6 +80,29 @@ those items go into `Inventory::pouched` instead of the slots, up to 1,000 of a 
 kinds in all. A seed pouch in hand sows (`actor_seed`: the first seed in it the player's
 Farming level allows) and right click empties it (`base:empty_pouch`). What a pouch holds
 stays with the player if the pouch is dropped; a pouch is needed to put more in.
+
+## Wild plants grow back
+
+Flowers, herbs, fungi and berry bushes the world grew come back where they were picked
+(`regrowth.ron`, engine `regrowth.rs`, server `regrow.rs`), as long as the block they grew
+from is still there: dig out or replace the ground and the spot is gone. Commons take 20
+minutes of world time, uncommons an hour, rares half a day, very rares two days and
+legendaries four. Herbs cannot be sown, and a plant a player places does not come back,
+except on a herb planter (planks and dirt at a crafting table, Engineering 5) for a player
+whose Farming level reaches the plant's (1, 15, 40, 60, 80 by rarity); picking one there
+teaches Farming. Waiting plants are saved with the world (`WorldMeta::regrowing`), and
+`/grow` brings back those near you at once.
+
+## Multiblocks and the Homestead Hearth
+
+A multiblock is a structure recognised from a pattern of blocks (`multiblocks.ron`, engine
+`multiblock.rs`): layers from the bottom up, a key from characters to items, `tag:TAG` or
+`a|b`, `.` for anything and a space for air, and a core block; it counts turned any of four
+ways. The first is the Homestead Hearth, the Nomad age's gate: a hearthstone (eight
+cobbles at a crafting table, Mining 5) in a ring of stone, with a chimney (cobbles and
+clay, Crafting 3) two blocks tall at one corner. Right click the hearthstone
+(`base:light_hearth`): if the hearth stands, it is your home (`Player::home`, saved) and
+you wake on it after dying; if not, you are told what it needs.
 
 ## Dying
 

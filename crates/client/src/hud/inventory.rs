@@ -244,7 +244,13 @@ fn craft(
     // As the server allows it: bigger than two by two only at a table, and with the
     // recipe's skill level.
     let at_table = player.station.is_some();
-    let short = |r: &voxmar_engine::craft::Recipe| r.skill.filter(|&s| skills.level(player.skills.xp(s)) < r.level);
+    let (effects, blocks) = (&launch.content.effects, &launch.content.blocks);
+    let short = |r: &voxmar_engine::craft::Recipe| {
+        r.skill.filter(|&s| {
+            let boosted = voxmar_engine::level::check_level(&skills, effects, &player.skills, &player.vitals.effects, s);
+            !voxmar_engine::level::meets_recipe(r, skills.level(player.skills.xp(s)), boosted, &player.inventory, blocks)
+        })
+    };
     let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
     let found = recipes.find(&player.inventory.grid());
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));

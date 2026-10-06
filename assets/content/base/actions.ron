@@ -22,5 +22,7 @@
         (name: "empty_pouch", duration: Instant, requires: [Alive], effects: [EmptyPouch]),
         // Working at a crafting table (right click): its three-by-three grid.
         (name: "use_table", duration: Instant, requires: [Alive, InReach, CraftingTable], effects: [UseTable]),
+        // Light a hearthstone: with the Homestead Hearth built around it, home (multiblocks.ron).
+        (name: "light_hearth", duration: Instant, requires: [Alive, InReach, Hearth], effects: [ClaimHome]),
     ],
 )

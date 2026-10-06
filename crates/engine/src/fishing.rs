@@ -82,6 +82,8 @@ pub struct Spot<'a> {
     pub level: u8,
     pub rod_tier: u8,
     pub rod_yield: f32,
+    /// How much more often than usual a cast lands, from effects (waterside, say).
+    pub luck: f32,
 }
 
 /// Chance a cast lands anything: from a third at a fishing spot's best level-1 water, up
@@ -151,7 +153,7 @@ impl FishingRegistry {
         let biting = self.biting(spot);
         let best = biting.iter().map(|c| c.def.level).max()?;
         // Each level above what the water's best fish asks lands a little more often.
-        let chance = (LAND_LEAST + 0.008 * spot.level.saturating_sub(best) as f32 + 0.05 * spot.rod_tier as f32).min(LAND_MOST);
+        let chance = ((LAND_LEAST + 0.008 * spot.level.saturating_sub(best) as f32 + 0.05 * spot.rod_tier as f32) * spot.luck).min(LAND_MOST);
         if land >= chance {
             return None;
         }
@@ -191,7 +193,7 @@ mod tests {
         let fishing = setup();
         let cold = ["cold".to_owned()];
         let names = |spot: &Spot| fishing.biting(spot).into_iter().map(|c| c.def.item.clone()).collect::<Vec<_>>();
-        let spot = Spot { salt: false, biome_tags: &cold, day: true, raining: false, level: 50, rod_tier: 1, rod_yield: 0.0 };
+        let spot = Spot { salt: false, biome_tags: &cold, day: true, raining: false, level: 50, rod_tier: 1, rod_yield: 0.0, luck: 1.0 };
         assert_eq!(names(&spot), ["t:shrimp", "t:trout"]);
         assert_eq!(names(&Spot { day: false, ..spot }), ["t:shrimp", "t:trout", "t:eel"]);
         assert_eq!(names(&Spot { level: 10, ..spot }), ["t:shrimp"]);
@@ -202,7 +204,7 @@ mod tests {
     fn casts_land_more_with_levels_and_rods() {
         let fishing = setup();
         let tags = ["cold".to_owned()];
-        let novice = Spot { salt: false, biome_tags: &tags, day: true, raining: false, level: 15, rod_tier: 1, rod_yield: 0.0 };
+        let novice = Spot { salt: false, biome_tags: &tags, day: true, raining: false, level: 15, rod_tier: 1, rod_yield: 0.0, luck: 1.0 };
         let expert = Spot { level: 80, rod_tier: 3, ..novice };
         let landed = |spot: &Spot| (0..100).filter(|&i| fishing.cast(spot, i as f32 / 100.0, 0.5).is_some()).count();
         assert_eq!(landed(&novice), 40);

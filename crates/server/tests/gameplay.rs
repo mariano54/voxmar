@@ -46,6 +46,7 @@ struct Client {
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
+    journal: voxmar_engine::journal::Journal,
     /// The server, for the first player to join it (dropping it stops the server).
     _server: Option<ServerHandle>,
 }
@@ -113,6 +114,7 @@ impl Client {
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
+            journal: Default::default(),
             _server: server,
         };
         client.pump_until(|c| c.health > 0 && c.world.contains(ColumnPos::of_block(c.position.as_ivec3())));
@@ -194,6 +196,7 @@ impl Client {
                 }
             }
             ServerMessage::Struck { .. } => self.blows += 1,
+            ServerMessage::Journal { entries } => self.journal.merge(entries),
             ServerMessage::Items { changed, gone } => {
                 for view in changed {
                     self.items.insert(view.id, view);
@@ -345,7 +348,7 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
 
     // Grown ripe, then broken: its harvest pops out and its experience is earned.
-    assert_eq!(client.ok("/grow ripe"), "Grew 1 crop.");
+    assert_eq!(client.ok("/grow ripe"), "Grew 1 plant.");
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.earned == [20, 90] && c.items.values().any(|i| i.stack.item == wheat));
@@ -1022,9 +1025,64 @@ fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
     assert!(said.contains("for 30 minutes") || owner.chat.iter().any(|(_, text)| text.contains("for 30 minutes")), "{said} {:?}", owner.chat);
     // The thief stands where the owner fell (both joined at spawn) and picks up nothing.
     let watch = Instant::now() + Duration::from_secs(3);
-    thief.pump_until(|c| c.items.len() >= 4 && Instant::now() > watch);
+    thief.pump_until(|c| c.items.values().map(|i| i.stack.count as u32).sum::<u32>() == 44 && Instant::now() > watch);
     assert!(thief.collected.is_empty(), "someone else picked up a dead player's things");
     // The owner wakes at spawn, by their things, and gathers them all.
     owner.propose("core:respawn", ActionTarget::None);
     owner.pump_until(|c| c.health > 0 && carried(c) == 47);
+}
+
+#[test]
+fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
+    let mut client = Client::join();
+    let (near, far) = (client.position.floor().as_ivec3() + IVec3::new(2, 0, 0), client.position.floor().as_ivec3() + IVec3::new(-2, 0, 0));
+    for line in ["/fill ~-2 ~-1 ~ ~2 ~-1 ~ grass_block", "/fill ~-2 ~ ~ ~2 ~ ~ air", "/setblock ~2 ~ ~ poppy", "/setblock ~-2 ~ ~ poppy"] {
+        client.ok(line);
+    }
+    let poppy = client.content.blocks.expect("base:poppy");
+    client.pump_until(|c| c.world.block(near) == Some(poppy) && c.world.block(far) == Some(poppy));
+    for at in [near, far] {
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+    }
+    // Both went into the journal, as did the biome stood in.
+    use voxmar_engine::journal::Page;
+    client.pump_until(|c| c.journal.get(Page::Plants, "base:poppy").is_some_and(|e| e.count == 2) && c.journal.found(Page::Biomes) > 0);
+    // The far one's ground is dug out and put back: a different block, so it is gone.
+    client.ok("/setblock ~-2 ~-1 ~ dirt");
+    client.ok("/grow");
+    client.pump_until(|c| c.world.block(near) == Some(poppy));
+    std::thread::sleep(Duration::from_millis(1500));
+    client.pump_until(|_| true);
+    assert_eq!(client.world.block(far), Some(BlockId::AIR), "a flower came back on ground that was replaced");
+}
+
+#[test]
+fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
+    let mut client = Client::join_remote("owner", &["owner"]);
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in [
+        "/fill ~3 ~ ~-1 ~5 ~3 ~1 air",
+        "/fill ~3 ~ ~-1 ~5 ~ ~1 cobblestone",
+        "/setblock ~4 ~ ~ hearthstone",
+    ] {
+        client.ok(line);
+    }
+    let hearthstone = client.content.blocks.expect("base:hearthstone");
+    client.pump_until(|c| c.world.block(core) == Some(hearthstone));
+    let light = |client: &mut Client| {
+        client.chat.clear();
+        client.propose("base:light_hearth", ActionTarget::Block { block: core, face: Face::PosY });
+        client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("hearth")));
+        std::mem::take(&mut client.chat).into_iter().map(|(_, t)| t).collect::<String>()
+    };
+    assert!(light(&mut client).contains("needs"), "no chimney yet");
+    client.ok("/fill ~5 ~1 ~1 ~5 ~2 ~1 chimney");
+    assert!(light(&mut client).contains("your home"));
+    // Dying far off, they wake on the hearthstone.
+    client.ok("/tp ~-20 ~ ~");
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
 }
