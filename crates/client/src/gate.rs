@@ -294,6 +294,10 @@ struct Gate {
     /// and button (a step that passes may hand one on, as digging hands walking on).
     last_step: Step,
     failures_then: usize,
+    /// The player's health last frame, and whether a death was reported: the session must
+    /// never kill its player, and a dead one fails every step after.
+    health_last: u8,
+    death_seen: bool,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
     /// Frames on which the open overlay's text changed (each one lays the UI out again),
@@ -347,6 +351,8 @@ impl Gate {
             phase_server: 0.0,
             last_step: Step::Load,
             failures_then: 0,
+            health_last: 0,
+            death_seen: false,
             overlay_changes: 0,
             overlay_counted: (0.0, 0.0),
         }
@@ -507,6 +513,10 @@ fn run(world: &mut World) {
     if gate.step != gate.last_step {
         (gate.last_step, gate.failures_then) = (gate.step, gate.failures.len());
     }
+    // (The text-fit steps put the player through the death screen on purpose.)
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitMenus | Step::Leave | Step::Done) {
+        watch_health(world, &mut gate);
+    }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
     gate.frame_ms.push(frame_ms);
     let longest = gate.longest.entry(gate.step).or_default();
@@ -542,6 +552,40 @@ fn stall_under_test(frame: u32) {
         if roll % 5 == 0 {
             std::thread::sleep(Duration::from_millis(80 + (roll >> 8) % 240));
         }
+    }
+}
+
+/// Logs every loss of health with what was around the player, and fails the session the
+/// moment the player dies, then respawns them on the test ground: three sessions on a
+/// loaded machine lost their player during the swim and failed every step after with no
+/// word of why.
+fn watch_health(world: &mut World, gate: &mut Gate) {
+    let player = world.resource::<LocalPlayer>();
+    let (health, dead, position, in_water) = (player.health, player.dead, player.position, player.in_water);
+    if health < gate.health_last {
+        let client = world.resource::<ClientWorld>();
+        let name = |at: Vec3| client.block(at.floor().as_ivec3()).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+        let nearest = world
+            .resource::<crate::creatures::Creatures>()
+            .views()
+            .map(|v| (v.species, v.position.distance(position)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or("none".to_owned(), |(species, d)| format!("species {species:?} {d:.1} blocks off"));
+        info!(
+            "gate: health {} -> {health} during {:?} at {position:.1}: feet in {}, head in {}, in water {in_water}, nearest creature {nearest}",
+            gate.health_last,
+            gate.step,
+            name(position + Vec3::Y * 0.1),
+            name(position + Vec3::Y * 1.6)
+        );
+    }
+    gate.health_last = health;
+    if dead && !gate.death_seen {
+        gate.death_seen = true;
+        gate.check("alive", Err(format!("the player died during {:?} at {position:.1} (the health losses before are logged)", gate.step)));
+        key(world, KeyCode::KeyR, true);
+    } else if gate.death_seen && !dead && gate.health_last > 0 {
+        key(world, KeyCode::KeyR, false);
     }
 }
 
@@ -1594,13 +1638,22 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if gate.shot(world, "game").is_some() {
                 // The HUD reads health off the server; there is no hunger to show.
-                let player = world.resource::<LocalPlayer>();
-                let reading = format!("{}/{}", player.health, player.max_health);
+                let (health, max_health) = {
+                    let player = world.resource::<LocalPlayer>();
+                    (player.health, player.max_health)
+                };
+                let reading = format!("{health}/{max_health}");
                 let mut texts = world.query::<&Text>();
                 let meters = texts.iter(world).filter(|text| text.0 == reading).count();
                 gate.check(
                     "vitals",
-                    if meters >= 1 { Ok(format!("health {reading}, shown on {meters} meters")) } else { Err(format!("no meter reads the health {reading}")) },
+                    if health < max_health {
+                        Err(format!("the player has lost health: {reading}"))
+                    } else if meters >= 1 {
+                        Ok(format!("health {reading}, shown on {meters} meters"))
+                    } else {
+                        Err(format!("no meter reads the health {reading}"))
+                    },
                 );
                 key(world, KeyCode::Escape, true);
                 gate.advance(now);
