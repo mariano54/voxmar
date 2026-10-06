@@ -18,7 +18,7 @@ use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::VertexAttributeValues;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, Buffer, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::NotShadowCaster;
@@ -129,13 +129,17 @@ impl Plugin for CreaturesPlugin {
 /// volume and snapped to the block pixel grid (`creature_skin.wgsl`).
 pub type SkinMaterial = ExtendedMaterial<StandardMaterial, CreatureSkin>;
 
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct CreatureSkin {
     #[texture(100, dimension = "3d")]
     #[sampler(101)]
     pub skin: Handle<Image>,
     #[uniform(102)]
     pub frame: SkinFrame,
+    /// The air between the eye and the creature, as the terrain's fog reads it
+    /// (`render::atmosphere::SharedAtmosphere`).
+    #[storage(103, read_only, buffer)]
+    pub atmosphere: Buffer,
 }
 
 /// Where the skin's volume lies in model space.
@@ -380,6 +384,13 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
     })
 }
 
+/// The light creatures are lit by and the air they are fogged by, as the terrain's.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Air<'w> {
+    light: Res<'w, crate::render::SceneLight>,
+    atmosphere: Res<'w, crate::render::atmosphere::SharedAtmosphere>,
+}
+
 /// A sound a creature makes now.
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
     CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young }
@@ -393,7 +404,7 @@ fn show(
     time: Res<Time>,
     launch: Res<Launch>,
     world: Res<ClientWorld>,
-    scene_light: Res<crate::render::SceneLight>,
+    air: Air,
     player: Res<LocalPlayer>,
     mut creatures: ResMut<Creatures>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -410,6 +421,9 @@ fn show(
     let dt = time.delta_secs();
     // Their pipelines (a skinned box, and a heart's clipped one) compile as the world loads
     // (`render::warm`), not when the first creature comes into view.
+    // Nothing is drawn until the renderer has made the air they are fogged by.
+    let Some(atmosphere) = air.atmosphere.get() else { return };
+    let scene_light = &air.light;
     let (heart_mesh, heart_full, heart_empty) = creatures
         .heart
         .get_or_insert_with(|| {
@@ -425,7 +439,7 @@ fn show(
                 ..default()
             };
             let pixel = Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![255; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
-            let body = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: images.add(pixel), frame: SkinFrame { origin: Vec4::new(-1.0, -1.0, -1.0, skin::TEXELS), size: Vec4::splat(2.0) } } });
+            let body = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: images.add(pixel), frame: SkinFrame { origin: Vec4::new(-1.0, -1.0, -1.0, skin::TEXELS), size: Vec4::splat(2.0) }, atmosphere: atmosphere.clone() } });
             let warm_binds = binds.add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY]));
             crate::render::warm::warm_skinned(&mut commands, meshes.add(body_mesh(&cube)), body, warm_binds, DespawnOnExit(Screen::InGame));
             let heart = |colour: Color| StandardMaterial { base_color: colour, base_color_texture: Some(image.clone()), alpha_mode: AlphaMode::Mask(0.5), unlit: true, ..default() };
@@ -507,7 +521,7 @@ fn show(
         let skin = creatures.blank.get_or_insert_with(|| images.add(blank_skin())).clone();
         let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
         let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
-        let material = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: skin.clone(), frame } });
+        let material = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: skin.clone(), frame, atmosphere: atmosphere.clone() } });
         let entity = commands.spawn((Transform::from_translation(view.position), Visibility::default(), DespawnOnExit(Screen::InGame))).id();
         let joints: Vec<(Entity, Part)> = species.parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(entity))).id(), part)).collect();
         let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
