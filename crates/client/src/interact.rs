@@ -55,6 +55,8 @@ pub struct Target {
     mining: Option<ActionTarget>,
     mining_seconds: f32,
     place_cooldown: f32,
+    /// When (seconds of game time) the line cast last comes up, and another may be cast.
+    fishing_until: f32,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -170,8 +172,8 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.get(self.player.selected).map(|s| s.item)
     }
 
-    fn actor_hunger(&self) -> u8 {
-        self.player.vitals.hunger
+    fn actor_hurt(&self) -> bool {
+        self.player.health < self.player.max_health
     }
 
     fn actor_mining_speed(&self) -> f32 {
@@ -330,8 +332,30 @@ fn break_and_place(
                     target.mine_cooldown = 1.2;
                     target.place_cooldown = 1.2;
                 }
-                Some(Err(Rejection::Unmet(Requirement::Hungry))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
+                Some(Err(Rejection::Unmet(Requirement::Hurt))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
                 _ => {}
+            }
+            return;
+        }
+    }
+    // A rod in hand casts into the water looked at, again each time the line comes up while
+    // the button is held.
+    if mouse.pressed(MouseButton::Right) && ui.cursor_locked && !player.dead && time.elapsed_secs() >= target.fishing_until {
+        let content = &launch.content;
+        let fish = actions.0.id("base:fish").filter(|_| player.inventory.get(player.selected).is_some_and(|s| world.registry.def(s.item).has_tag("rod")));
+        if let Some(fish) = fish {
+            let water = raycast(player.eye(), player.look_direction(), voxmar_engine::action::CAST, |p| {
+                world.block(p).is_some_and(|b| world.registry.info(b).solid || world.registry.info(b).fluid.is_some())
+            });
+            let context = ClientContext { world: &world, player: &player, content };
+            if let Some(water) = water {
+                let action_target = ActionTarget::Block { block: water.block, face: water.face };
+                if actions.0.get(fish).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                    let seconds = actions.0.get(fish).map_or(5.0, |def| def.seconds(&context, action_target));
+                    net.propose_from(&player, fish, action_target);
+                    target.fishing_until = time.elapsed_secs() + seconds + 0.2;
+                    cues.write(SoundCue::for_block(&world, water_block(&world, water.block), Cue::Hit));
+                }
             }
             return;
         }
@@ -410,6 +434,11 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
             _ => {}
         }
     }
+}
+
+/// The water block at `pos`, for its splash.
+fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
+    world.block(pos).unwrap_or(BlockId::AIR)
 }
 
 /// What to tell a player whose click a block refused: the skill level it asks for, or the

@@ -100,11 +100,11 @@ impl Process for Falling {
     }
 }
 
-/// Survival: hunger empties, warmth follows the air, fires, water and the weather, and
-/// together with what the player ate they decide each player's effects (content in
-/// `effects.ron`, see `voxmar_engine::effect`), whose modifiers heal or hurt them over time,
-/// set their most health and how fast they mine and learn. Once a second; creative players
-/// neither hunger nor hurt.
+/// Survival: warmth follows the air, fires, water and the weather, and together with what
+/// the player ate they decide each player's effects (content in `effects.ron`, see
+/// `voxmar_engine::effect`), whose modifiers heal or hurt them over time, set their most
+/// health and how fast they mine and learn. There is no hunger: food heals (`actions`).
+/// Once a second; creative players are never hurt.
 #[derive(Default)]
 struct Survival;
 
@@ -146,8 +146,12 @@ impl Process for Survival {
             let player = server.players.get_mut(&id).unwrap();
             let creative = player.allow_flight;
             let before = (player.vitals.clone(), player.health);
-            if creative {
-                player.vitals.hunger = vitals::MAX_HUNGER;
+            // A minute of other things brings back what eating the same food over and over
+            // took off it.
+            player.food_clock += seconds;
+            if player.food_clock >= 60.0 {
+                player.food_clock -= 60.0;
+                player.recent_food.recover();
             }
             player.timed_effects.retain_mut(|(_, left)| {
                 *left -= seconds;
@@ -155,16 +159,13 @@ impl Process for Survival {
             });
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
-            let mut situation = Situation { hunger: player.vitals.hunger, felt: cold_air + heat, warmed, outdoors, weather: &weather };
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather };
             let first = effects.active(&situation, &player.timed_effects);
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);
             let modifiers = effects.modifiers(&active);
             player.modifiers = modifiers;
-            let rates = vitals::rates(&modifiers, false);
-            if !creative {
-                player.exhaustion += rates.hunger_per_minute * seconds / 60.0;
-            }
+            let rates = vitals::rates(&modifiers);
             // Twice the Hitpoints level, and what effects add: what a raised most brings is
             // health to fill it, what a lowered one takes goes.
             let max = (max_level.map_or(MAX_HEALTH as i32, |level| 2 * level as i32) + modifiers.max_health as i32).clamp(1, u8::MAX as i32) as u8;
@@ -180,7 +181,6 @@ impl Process for Survival {
                     if player.heal_clock >= every {
                         player.heal_clock -= every;
                         player.health.heal(1);
-                        player.exhaustion += vitals::HEAL_COST;
                     }
                 }
                 None => player.heal_clock = 0.0,
@@ -197,13 +197,8 @@ impl Process for Survival {
                 }
                 None => player.hurt_clock = 0.0,
             }
-            while player.exhaustion >= 1.0 {
-                player.exhaustion -= 1.0;
-                player.vitals.hunger = player.vitals.hunger.saturating_sub(1);
-            }
             // The felt temperature is sent to the degree, so it does not resend every tick.
             player.vitals.felt = situation.felt.round();
-            situation.hunger = player.vitals.hunger;
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
             if player.vitals != before.0 {
                 player.changed(traits::VITALS);

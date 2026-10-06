@@ -232,11 +232,49 @@ pub struct Emission {
     /// flames lick a block up, a candle's a hand's breadth. They rise faster and last
     /// longer to get there.
     pub height: Option<f32>,
+    /// How they are drawn over what is behind them, instead of the style's own: flames,
+    /// embers and sparks add their light (`Add`), smoke is a soft veil (`Veil`), and a
+    /// `Cutout` particle is solid where it shows, as a piece of a broken block is.
+    pub blend: Option<ParticleBlend>,
+}
+
+/// How a particle is drawn over what lies behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ParticleBlend {
+    /// Solid where it shows, cut out elsewhere, written to depth like a block.
+    #[default]
+    Cutout,
+    /// Adds its light to what is behind it: fire, embers, sparks, glowing motes. Overlapping
+    /// flames merge into one brighter flame, and nothing has to be sorted.
+    Add,
+    /// A soft translucent veil, thinnest at its edges and where it meets anything solid:
+    /// smoke, steam, dust.
+    Veil,
+}
+
+impl ParticleStyle {
+    /// How the style is drawn unless an emission says otherwise.
+    pub fn blend(self) -> ParticleBlend {
+        match self {
+            ParticleStyle::Smoke => ParticleBlend::Veil,
+            ParticleStyle::Ember | ParticleStyle::Spark | ParticleStyle::Flame => ParticleBlend::Add,
+        }
+    }
 }
 
 impl Default for Emission {
     fn default() -> Self {
-        Self { style: ParticleStyle::Smoke, rate: 1.0, count: 1, at: [0.5, 0.5, 0.5], spread: 0.1, color: None, size: 1.0, height: None }
+        Self {
+            style: ParticleStyle::Smoke,
+            rate: 1.0,
+            count: 1,
+            at: [0.5, 0.5, 0.5],
+            spread: 0.1,
+            color: None,
+            size: 1.0,
+            height: None,
+            blend: None,
+        }
     }
 }
 

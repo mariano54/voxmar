@@ -33,7 +33,7 @@ impl Plugin for SkillHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SkillToasts>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, show.run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (show, move_aside).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut toasts: ResMut<SkillToasts>| *toasts = SkillToasts::default());
     }
 }
@@ -118,6 +118,23 @@ struct LevelSkill;
 #[derive(Component)]
 struct LevelReached;
 
+/// The toasts' and the level plate's places, at the right of the screen, or its left while
+/// creative mode's catalogue fills the right.
+#[derive(Component)]
+struct Corner;
+
+fn move_aside(catalogue: Query<&Visibility, With<super::creative::CataloguePanel>>, mut corners: Query<&mut Node, With<Corner>>) {
+    let aside = catalogue.iter().any(|v| *v != Visibility::Hidden);
+    let (left, right, align) = if aside { (Val::Px(space::SECTION), Val::Auto, AlignItems::FlexStart) } else { (Val::Auto, Val::Px(space::SECTION), AlignItems::FlexEnd) };
+    for mut node in &mut corners {
+        if node.right != right {
+            node.left = left;
+            node.right = right;
+            node.align_items = align;
+        }
+    }
+}
+
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
     let column = Node {
@@ -129,7 +146,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         row_gap: Val::Px(space::HAIR),
         ..default()
     };
-    commands.spawn((column, GlobalZIndex(1))).with_children(|column| {
+    commands.spawn((column, GlobalZIndex(1), Corner)).with_children(|column| {
         for i in 0..LINES {
             column.spawn((Node::default(), shadowed(font, "", BODY, ACCENT), ToastLine(i), Visibility::Hidden));
         }
@@ -142,7 +159,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
         ..default()
     };
-    commands.spawn((corner, GlobalZIndex(1))).with_children(|corner| {
+    commands.spawn((corner, GlobalZIndex(1), Corner)).with_children(|corner| {
         corner.spawn((plate, Piece::Tooltip.image(), LevelPlate, Visibility::Hidden)).with_children(|plate| {
             plate.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::default(), LevelIcon));
             plate.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|lines| {

@@ -18,6 +18,8 @@
         (name: "hoe", mines: ["crop", "leaves", "moss", "hay"]),
         (name: "shears", mines: ["leaves", "wool", "vine"]),
         (name: "knife", mines: ["plant", "vine", "flower"]),
+        // A rod mines nothing; it fishes (fishing.ron).
+        (name: "rod", mines: []),
     ],
     blocks: [
         (tags: ["ore", "alchemy:aether"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 125.0),

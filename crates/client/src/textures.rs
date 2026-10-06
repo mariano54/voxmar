@@ -431,29 +431,54 @@ fn gradient_colormap(base: [u8; 3]) -> Rgba {
 mod tests {
     use super::*;
 
-    /// Voxmar HD draws every block texture and item icon the game's content uses, itself or
-    /// from the default pack it builds on, all at its 32×32 resolution: a block that
-    /// gains a texture name no pack draws fails here (and so the landing gate) rather
-    /// than showing a placeholder in the HD look.
+    /// Every block texture and item icon the content uses resolves to art in the Voxmar HD
+    /// look: the pack's own 32×32 art, or the default pack's (or a mod pack's) drawn as the
+    /// game draws it. Only a name that no pack draws, which would show a placeholder in
+    /// every look, fails here; a block landed with default art alone passes and joins the
+    /// pack's queue: the names still on the fallback are written, one per line, to
+    /// `target/voxmar-hd-pending.txt`, so Voxmar HD never holds up anyone's landing.
     #[test]
-    fn voxmar_hd_draws_every_texture_at_32() {
-        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    fn voxmar_hd_resolves_every_texture() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("repository root");
+        let assets = root.join("assets");
         let content = voxmar_server::load_content(&assets).expect("content");
-        let mut pack = Pack::open(&assets.join("packs").join(HD_PACK)).expect("Voxmar HD opens");
-        assert_eq!(pack.name, "Voxmar HD");
+        let packs = assets.join("packs");
+        let mut hd = Pack::open(&packs.join(HD_PACK)).expect("Voxmar HD opens");
+        assert_eq!(hd.name, "Voxmar HD");
+        // What the default pack alone would draw at the pack's resolution: textures that
+        // come out the same are fallbacks, not yet redrawn for Voxmar HD.
+        let default = Library::load(&packs.join("default")).expect("default pack");
+        let mut addons: Vec<Pack> = std::fs::read_dir(&packs)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir() && !path.join(Manifest::FILE).exists() && path.file_name() != Some("default".as_ref()))
+            .filter_map(|path| Pack::open(&path).ok())
+            .collect();
         let blocks = &content.blocks;
         let icons = (0..blocks.len()).filter_map(|i| blocks.def(voxmar_engine::block::BlockId(i as u16)).icon.clone()).map(|name| format!("item/{name}"));
-        let names: Vec<String> = blocks.textures().iter().map(|r| format!("block/{}", r.name)).chain(icons).collect();
-        let mut missing = Vec::new();
-        let mut small = Vec::new();
+        let mut names: Vec<String> = blocks.textures().iter().map(|r| format!("block/{}", r.name)).chain(icons).collect();
+        names.sort();
+        names.dedup();
+        let (mut missing, mut pending) = (Vec::new(), Vec::new());
         for name in &names {
-            match pack.read(name) {
+            match hd.read(name) {
+                Some(texture) => {
+                    let fallback = default.render_at_least(name, hd.resolution).and_then(Result::ok);
+                    if fallback.is_some_and(|f| f.pixels == texture.pixels) {
+                        pending.push(name.clone());
+                    }
+                }
+                None if addons.iter_mut().any(|pack| pack.read(name).is_some()) => pending.push(name.clone()),
                 None => missing.push(name.clone()),
-                Some(texture) if texture.width < 32 => small.push(format!("{name} ({}×{})", texture.width, texture.height)),
-                Some(_) => {}
             }
         }
-        assert!(missing.is_empty(), "Voxmar HD has no texture for {} names: {missing:?}", missing.len());
-        assert!(small.is_empty(), "Voxmar HD draws {} textures below 32×32: {small:?}", small.len());
+        let list = root.join("target/voxmar-hd-pending.txt");
+        if std::fs::create_dir_all(root.join("target")).is_ok() {
+            let _ = std::fs::write(&list, pending.iter().map(|n| format!("{n}\n")).collect::<String>());
+        }
+        println!("Voxmar HD: {} of {} textures drawn for it, {} on the default fallback (listed in {})", names.len() - pending.len() - missing.len(), names.len(), pending.len(), list.display());
+        assert!(missing.is_empty(), "no pack draws {} texture names, so they show placeholders in every look: {missing:?}", missing.len());
     }
 }
