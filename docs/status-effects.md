@@ -7,7 +7,8 @@ warmth and bad weather; base's: what food does), read by `crates/engine/src/effe
 ## What an effect is
 
 - a **kind**, buff or debuff, and an **icon**: `ui/effect/<icon>` in the packs (ten texels
-  across, `assets/packs/default/recipes/effects.ron`), the effect's own name unless given;
+  across, `assets/packs/default/recipes/effects.ron` and the interface's `ui.ron`), the
+  effect's own name unless given, and the plain buff or debuff icon if the packs have none;
 - its name and a line on what it does, as language keys `effect.<package>.<name>` and
   `effect.<package>.<name>.description` (English and Japanese, with a hiragana reading
   for a Japanese name with kanji);

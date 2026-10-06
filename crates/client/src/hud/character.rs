@@ -434,7 +434,7 @@ fn draw_condition(
     children: Query<&Children>,
     mut texts: Query<&mut Text, Without<FeltLine>>,
     mut shown: Local<Option<Vec<voxmar_engine::effect::ActiveEffect>>>,
-    (locale, launch): (Res<Locale>, Res<Launch>),
+    (locale, launch, images): (Res<Locale>, Res<Launch>, Res<super::HudImages>),
 ) {
     let most = player.max_health.max(1);
     for meter in &health {
@@ -465,9 +465,14 @@ fn draw_condition(
             for active in effects {
                 let def = launch.content.effects.get(active.effect);
                 let buff = def.kind == voxmar_engine::effect::Kind::Buff;
-                list.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|row| {
+                // Its icon and name, what it does under them; hover it for the details.
+                let row = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
+                list.spawn((row, Button, super::effects::EffectHover(active.effect), bevy::ui::RelativeCursorPosition::default())).with_children(|row| {
                     let color = if buff { ACCENT } else { crate::ui::widgets::ERROR };
-                    row.spawn(shadowed(&font.0, format!("{} {}", if buff { "▴" } else { "▾" }, locale.effect(def)), BODY, color));
+                    row.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|line| {
+                        line.spawn((Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::new(images.effect(active.effect))));
+                        line.spawn(shadowed(&font.0, locale.effect(def), BODY, color));
+                    });
                     row.spawn(text(&font.0, locale.effect_description(def), BODY, MUTED));
                 });
             }
