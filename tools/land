@@ -1,0 +1,97 @@
+#!/bin/bash
+# Lands this worktree's branch on main, here and on GitHub. See docs/quality.md.
+#
+#   tools/land
+#
+# Run it from the root of your worktree, on your track branch, with everything committed.
+#
+# 1. Fetches origin, and merges origin/main and main into this branch. Main moves on
+#    GitHub too, not only here: the GPU box pushes straight to origin, so the local main
+#    can be behind. A conflict stops it; resolve, commit and run it again.
+# 2. Runs `tools/gate` on the result (quick, and free for a tree that already passed).
+# 3. Fast-forwards main to it, in the checkout that has main (or the ref itself where no
+#    checkout has it, as on the GPU box).
+# 4. Pushes main to origin, then fetches it back and checks that it has this commit.
+#
+# When origin moved in the meantime (another thread landed), it starts again from 1, up
+# to three times. It never forces anything and never rewrites history. It says
+# "land: <commit> landed" only once origin has the commit; anything else is not landed.
+
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 2
+
+say() { echo "land: $*"; }
+not_landed() { say "NOT landed: $*" >&2; exit 1; }
+
+branch=$(git branch --show-current)
+[[ -n $branch ]] || not_landed "not on a branch"
+[[ $branch != main ]] || not_landed "run it from your track branch, not main"
+[[ -z $(git status --porcelain --untracked-files=no) ]] || not_landed "commit your changes first"
+
+# The checkout that has main checked out, if any.
+main_checkout=$(git worktree list --porcelain | awk '
+  /^worktree / { path = substr($0, 10) }
+  $0 == "branch refs/heads/main" { print path; exit }')
+
+# Runs a network git command, retrying after 2, 4 and 8 s when it fails for other
+# reasons than a rejection (which is returned at once, as 3).
+network() {
+  local out delay
+  for delay in 2 4 8 0; do
+    if out=$("$@" 2>&1); then
+      return 0
+    fi
+    if grep -qE 'rejected|non-fast-forward|fetch first' <<<"$out"; then
+      echo "$out" >&2
+      return 3
+    fi
+    ((delay)) || break
+    sleep "$delay"
+  done
+  echo "$out" >&2
+  return 1
+}
+
+for attempt in 1 2 3; do
+  ((attempt == 1)) || say "origin moved meanwhile; merging it in again (attempt $attempt)"
+
+  # 1. Everything main has, here and on GitHub.
+  network git fetch origin main || not_landed "could not fetch origin"
+  for base in origin/main main; do
+    git merge-base --is-ancestor "$base" HEAD && continue
+    git merge --no-edit -q "$base" ||
+      not_landed "merging $base conflicts; resolve, commit and run tools/land again"
+  done
+  commit=$(git rev-parse HEAD)
+  short=$(git rev-parse --short HEAD)
+
+  # 2. The gate, on exactly this commit.
+  tools/gate || not_landed "$short did not pass the gate (target/gate/ has the log)"
+  tools/gate --passed "$commit" >/dev/null || not_landed "$short has no gate pass recorded"
+
+  # 3. Main, here.
+  if [[ $(git rev-parse main) != "$commit" ]]; then
+    if [[ -n $main_checkout ]]; then
+      git -C "$main_checkout" merge --ff-only -q "$commit" ||
+        not_landed "main would not fast-forward to $short (main moved here, or its checkout has uncommitted changes to the same files); run tools/land again later"
+    else
+      git fetch -q . "$commit:refs/heads/main" ||
+        not_landed "main would not fast-forward to $short; run tools/land again"
+    fi
+  fi
+
+  # 4. Main, on GitHub.
+  network git push -q origin refs/heads/main:refs/heads/main
+  case $? in
+    0) ;;
+    3) continue ;;
+    *) not_landed "$short is main here, but the push to origin failed; run tools/land again" ;;
+  esac
+  # Read back from GitHub (someone may have landed on top already, which is fine).
+  network git fetch origin main || not_landed "pushed $short, but could not read origin back to check"
+  git merge-base --is-ancestor "$commit" origin/main ||
+    not_landed "origin's main does not have $short after the push; run tools/land again"
+  say "$short landed: it is main here and on origin"
+  exit 0
+done
+not_landed "origin kept moving; run tools/land again"

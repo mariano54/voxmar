@@ -46,8 +46,10 @@ between the shots (the sun and wind moving), as shadows and leaves flicker over 
 DIR, and `--server-lag MS` makes every tick of the integrated server take that much longer,
 as on a busy machine (see docs/quality.md).
 
-Before landing on main, run `tools/gate` (a quick gate: the build, the tests the change can
-reach and that session in a small world); play builds pass `tools/gate --full`. For changes
+Land on main with `tools/land`: it merges origin's main and the local one in, runs
+`tools/gate` (a quick gate: the build, the tests the change can reach and that session in a
+small world), fast-forwards main and pushes it, and checks that origin has it. Play builds
+pass `tools/gate --full`. For changes
 that can cost frame time, `tools/bench` compares frame times with main's on a quiet
 machine. All are described in docs/quality.md.
 
