@@ -1,5 +1,12 @@
 //! Message transports. Every connection is a pair of channels; TCP connections pump
 //! those channels from reader and writer threads, so game code never touches sockets.
+//!
+//! Every message carries when it arrived: when it was sent, in process, or read off the
+//! socket, over TCP. Never when the game got round to it: a server busy with a long tick
+//! judges a player's timed actions (how long a block took to break) by when the player's
+//! messages came, not by when it read them (see the server's `actions`).
+
+use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 
@@ -11,8 +18,8 @@ pub struct Disconnected;
 
 /// One end of a bidirectional message stream.
 pub struct Connection<Out, In> {
-    tx: Sender<Out>,
-    rx: Receiver<In>,
+    tx: Sender<(Instant, Out)>,
+    rx: Receiver<(Instant, In)>,
     local: bool,
 }
 
@@ -22,11 +29,16 @@ pub type ServerConnection = Connection<ServerMessage, ClientMessage>;
 impl<Out, In> Connection<Out, In> {
     /// Queues a message. Returns false once the peer has gone away.
     pub fn send(&self, message: Out) -> bool {
-        self.tx.send(message).is_ok()
+        self.tx.send((Instant::now(), message)).is_ok()
     }
 
     /// The next received message, `Ok(None)` if none is pending, `Err` when disconnected.
     pub fn try_recv(&self) -> Result<Option<In>, Disconnected> {
+        Ok(self.try_recv_at()?.map(|(_, message)| message))
+    }
+
+    /// The next received message with when it arrived (see the module docs).
+    pub fn try_recv_at(&self) -> Result<Option<(Instant, In)>, Disconnected> {
         match self.rx.try_recv() {
             Ok(m) => Ok(Some(m)),
             Err(TryRecvError::Empty) => Ok(None),
@@ -100,13 +112,13 @@ pub mod tcp {
         In: DeserializeOwned + Send + 'static,
     {
         stream.set_nodelay(true)?;
-        let (out_tx, out_rx) = unbounded::<Out>();
-        let (in_tx, in_rx) = unbounded::<In>();
+        let (out_tx, out_rx) = unbounded::<(Instant, Out)>();
+        let (in_tx, in_rx) = unbounded::<(Instant, In)>();
 
         let mut writer = BufWriter::new(stream.try_clone()?);
         thread::Builder::new().name("net-write".into()).spawn(move || {
             let mut buffer = Vec::new();
-            while let Ok(message) = out_rx.recv() {
+            while let Ok((_, message)) = out_rx.recv() {
                 buffer.clear();
                 let ok = postcard::to_io(&message, &mut buffer).is_ok()
                     && writer.write_all(&(buffer.len() as u32).to_le_bytes()).is_ok()
@@ -138,7 +150,7 @@ pub mod tcp {
                 }
                 match postcard::from_bytes(&buffer) {
                     Ok(message) => {
-                        if in_tx.send(message).is_err() {
+                        if in_tx.send((Instant::now(), message)).is_err() {
                             break;
                         }
                     }
