@@ -171,6 +171,7 @@ impl Server {
             Run::Give => self.give(id, args),
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
+            Run::Kill => self.kill_command(id),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -782,6 +783,15 @@ impl Server {
         Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
     }
 
+    fn kill_command(&mut self, source: Source) -> Reply {
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        if player.health.damage(u8::MAX) {
+            player.changed(voxmar_engine::traits::HEALTH);
+            player.connection.send(ServerMessage::Died);
+        }
+        Ok(Words::key("command.kill"))
+    }
+
     fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {
         let stages = match args {
             [] => 1,
@@ -789,7 +799,8 @@ impl Server {
             [count] => count.parse::<u8>().ok().filter(|&c| c > 0).ok_or_else(|| Words::key("command.error.not_stages").with("word", count.as_str()))?,
             _ => return Err(Words::key("command.error.grow_how_much")),
         };
-        let grown = self.grow_around(self.position_of(source), 8.0, stages);
+        let at = self.position_of(source);
+        let grown = self.grow_around(at, 8.0, stages) + self.hurry_regrowth(at, 8.0);
         Ok(Words::key("command.grow").with("count", Words::text(grown)))
     }
 

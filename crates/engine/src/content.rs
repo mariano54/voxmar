@@ -46,6 +46,12 @@ pub struct Content {
     pub tools: Arc<ToolRegistry>,
     /// What bites where.
     pub fishing: Arc<FishingRegistry>,
+    /// Structures recognised from patterns of blocks (the Homestead Hearth).
+    pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
+    /// What it takes to study and master the journal's entries.
+    pub journal: Arc<crate::journal::JournalRules>,
+    /// Which wild plants come back where they were picked, and how soon.
+    pub regrowth: Arc<crate::regrowth::Regrowth>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -88,6 +94,9 @@ impl Content {
         let mut tools = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
+        let mut regrowth = Vec::new();
+        let mut journal = Vec::new();
+        let mut multiblocks = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
             let path = dir.join(package);
@@ -131,6 +140,18 @@ impl Content {
                         fishing.push(FishingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "multiblocks.ron" => {
+                        multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "journal.ron" => {
+                        journal.push(crate::journal::JournalRules::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "regrowth.ron" => {
+                        regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "stacking.ron" => {
                         stacking.push(source.clone());
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -166,7 +187,10 @@ impl Content {
         let effects = EffectRegistry::new(effects)?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
+        let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
+        let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
+        crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -181,6 +205,9 @@ impl Content {
             effects: Arc::new(effects),
             tools: Arc::new(tools),
             fishing: Arc::new(fishing),
+            regrowth: Arc::new(regrowth),
+            multiblocks: Arc::new(multiblocks),
+            journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
         })
@@ -221,4 +248,14 @@ fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, Reg
             own.unwrap_or(if tags.iter().any(|t| single.contains(t)) { 1 } else { crate::inventory::MAX_STACK }).min(crate::inventory::MAX_STACK)
         })
         .collect())
+}
+
+/// Each item's pouch: the first item tagged `pouch` and `holds:TAG` for a tag it has.
+fn pouches(blocks: &BlockRegistry) -> Vec<Option<crate::block::BlockId>> {
+    let holders: Vec<(crate::block::BlockId, String)> = blocks
+        .ids()
+        .filter(|&id| blocks.def(id).has_tag("pouch"))
+        .flat_map(|id| blocks.def(id).tags.iter().filter_map(move |t| Some((id, t.strip_prefix("holds:")?.to_owned()))))
+        .collect();
+    blocks.ids().map(|id| holders.iter().find(|(_, tag)| blocks.def(id).has_tag(tag)).map(|&(pouch, _)| pouch)).collect()
 }

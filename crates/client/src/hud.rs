@@ -3,6 +3,7 @@
 
 pub mod character;
 pub mod console;
+pub mod creative;
 pub mod death;
 pub mod effects;
 pub mod guide;
@@ -36,7 +37,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin))
+        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,

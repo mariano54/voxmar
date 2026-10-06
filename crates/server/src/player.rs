@@ -8,7 +8,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
-use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
+use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
 use voxmar_engine::physics::{Aabb, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
@@ -59,6 +59,12 @@ pub struct Player {
     /// What the player ate lately, for how much the same food heals again, and the
     /// seconds toward its next recovery.
     pub recent_food: voxmar_engine::vitals::Recent,
+    /// Where the player wakes after dying (a bed or hearth sets it), and whether what
+    /// they carried has been left where they fell since they last died (`death`).
+    pub home: Option<Vec3>,
+    pub buried: bool,
+    /// Everything the player has discovered (`journal`).
+    pub journal: voxmar_engine::journal::Journal,
     pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
     pub fall_start: Option<f32>,
@@ -94,6 +100,9 @@ impl Player {
             timed_effects: Vec::new(),
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
+            home: None,
+            buried: false,
+            journal: Default::default(),
             food_clock: 0.0,
             heal_clock: 0.0,
             hurt_clock: 0.0,
@@ -158,6 +167,8 @@ impl Player {
             inventory: self.inventory.clone(),
             skills: skills.ids().map(|id| (skills.get(id).name.clone(), self.skills.xp(id))).filter(|(_, xp)| *xp > 0).collect(),
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
+            home: self.home.map(|h| h.to_array()),
+            journal: self.journal.entries().cloned().collect(),
         }
     }
 }
@@ -180,7 +191,30 @@ impl Server {
             ClientMessage::Settings { view_distance, fly_speed } => self.settings(id, view_distance, fly_speed),
             ClientMessage::Command { line } => self.command(id, &line),
             ClientMessage::Chat { text } => self.chat(id, &text),
+            ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
         }
+    }
+
+    /// Creative mode's catalogue: `count` of any item onto the pointer (topping up a stack
+    /// of it there) or into the inventory, where what does not fit is not given. A survival
+    /// player gets nothing.
+    fn take_from_catalogue(&mut self, id: PlayerId, item: BlockId, count: u8, held: bool) {
+        let known = (item.0 as usize) < self.content.blocks.len() && !item.is_air();
+        let Some(player) = self.players.get_mut(&id) else { return };
+        if !known || count == 0 || player.mode() != GameMode::Creative {
+            return;
+        }
+        let count = count.min(MAX_STACK);
+        if held {
+            match &mut player.inventory.cursor {
+                None => player.inventory.cursor = Some(ItemStack { item, count }),
+                Some(stack) if stack.item == item => stack.count = stack.count.saturating_add(count).min(MAX_STACK),
+                Some(_) => return,
+            }
+        } else {
+            player.inventory.add(item, count);
+        }
+        player.changed(traits::INVENTORY);
     }
 
     fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64) {
@@ -234,12 +268,15 @@ impl Server {
                 player.health = saved.health;
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
+                player.home = saved.home.map(Vec3::from_array);
+                player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
             }
             // Players who left dead come back to life at the spawn point.
             Some(saved) => {
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
+                player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
             }
             None => {
                 for (block, count) in start_kit {
@@ -267,6 +304,8 @@ impl Server {
         tracing::info!("{} joined", player.name);
         let time = self.time_message();
         self.players[&id].connection.send(time);
+        let entries = self.players[&id].journal.entries().cloned().collect();
+        self.players[&id].connection.send(ServerMessage::Journal { entries });
     }
 
     /// Accepts the client's predicted movement if it is physically plausible, otherwise
