@@ -627,15 +627,15 @@ struct Environment {
 // turns black: on a moonless night under rain it was (Mariano's playtest, 2026-10-06).
 const SUN: Vec3 = Vec3::new(0.72, 0.68, 0.62);
 const LOW_SUN: Vec3 = Vec3::new(0.72, 0.45, 0.25);
-const MOON: Vec3 = Vec3::new(0.021, 0.028, 0.05);
+const MOON: Vec3 = Vec3::new(0.0193, 0.0258, 0.046);
 /// The night's sky and skylight without a moon, against a full moon's: not far below, as a
 /// moonless night was too dark to play in (Mariano, 2026-10-06).
-const MOONLESS: f32 = 0.85;
+const MOONLESS: f32 = 0.92;
 const DAY_AMBIENT: Vec3 = Vec3::new(0.40, 0.45, 0.55);
 /// Night's skylight, high for how dark it looks: the display's contrast and a pack's dimmer
 /// ambient (Verdant's half) crush it, and at a fifth of this a moonless night's open ground
 /// averaged 3 of 255, black.
-const NIGHT_AMBIENT: Vec3 = Vec3::new(0.16, 0.21, 0.36);
+const NIGHT_AMBIENT: Vec3 = Vec3::new(0.147, 0.193, 0.331);
 const DAY_ZENITH: Vec3 = Vec3::new(0.22, 0.45, 0.95);
 const NIGHT_ZENITH: Vec3 = Vec3::new(0.0012, 0.0018, 0.0045);
 const DAY_HORIZON: Vec3 = Vec3::new(0.62, 0.78, 0.98);
@@ -652,10 +652,11 @@ const HAIL_MELTING: f32 = 0.006;
 const WATER: Vec3 = Vec3::new(0.05, 0.2, 0.7);
 
 /// The direction towards the sun at a time of day (0..1, 0 = sunrise): a slightly tilted
-/// arc across the sky.
+/// arc across the sky, lifted so the sun is up two thirds of the day (the engine's
+/// `calendar::sun_vector`, which the server and creatures follow too).
 fn sun_path(day_fraction: f32) -> Vec3 {
-    let angle = day_fraction * std::f32::consts::TAU;
-    Vec3::new(angle.cos(), angle.sin(), 0.25).normalize()
+    let [x, y, z] = voxmar_engine::calendar::sun_vector(day_fraction as f64);
+    Vec3::new(x as f32, y as f32, z as f32).normalize()
 }
 
 /// The sun's light moves across the sky in steps of this fraction of a day (a tenth of a

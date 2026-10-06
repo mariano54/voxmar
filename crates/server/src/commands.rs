@@ -250,8 +250,9 @@ impl Server {
     fn describe_time(&self) -> Words {
         let ticks = self.day.floor() as u64;
         let of_day = ticks % TICKS_PER_DAY;
-        // Tick 0 is sunrise, at six in the morning.
-        let hours = (of_day / TICKS_PER_HOUR + 6) % 24;
+        // Tick 0 is sunrise, at four in the morning: the sun is up two thirds of the day, so
+        // it is highest at noon and sets at eight in the evening.
+        let hours = (of_day / TICKS_PER_HOUR + 4) % 24;
         let minutes = of_day % TICKS_PER_HOUR * 60 / TICKS_PER_HOUR;
         let pace = match self.day_speed {
             0.0 => Words::key("command.time.frozen"),

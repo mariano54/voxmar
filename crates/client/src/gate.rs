@@ -2143,8 +2143,8 @@ fn item_count(world: &World, name: &str) -> u32 {
 fn sky(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // Morning (ticks after sunrise), sunset with the sun a few degrees up, and midnight.
     const MORNING: u64 = 1920;
-    const SUNSET: u64 = 11_830;
-    const MIDNIGHT: u64 = 18_000;
+    const SUNSET: u64 = 15_830;
+    const MIDNIGHT: u64 = 20_000;
     let ticks = world.resource::<crate::render::DayCycle>().ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64);
     let at = |time: u64| (ticks - time as f64).abs() < 100.0;
     // The sky's checks judge the sun, moon and stars against the sky around them, so they
