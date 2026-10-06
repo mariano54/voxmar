@@ -1,0 +1,102 @@
+// Voxmar HD rocks and soils (docs/voxmar-hd.md), batch one of the queue: every raw rock
+// and the common soils in vanilla's design language, drawn by us. Each starts from one of
+// four blotch patterns below and adds its own accent (flecks, pits, veins, strata), in
+// its own palette from the default pack or stone.ron.
+(
+    textures: {
+        // Blotches that run a little sideways, like stone's.
+        "block/hd_rock": (size: (32, 32), palettes: {"main": "stone"}, layers: [
+            Paint(palette: "main", base: 0.52, shade: [Noise(cells: (4, 8), octaves: 2, gain: 0.6, amount: 0.5), Noise(cells: (16, 32), amount: 0.5)], clean: true),
+        ]),
+        // Round, granular blotches.
+        "block/hd_rock_round": (size: (32, 32), palettes: {"main": "stone"}, layers: [
+            Paint(palette: "main", base: 0.54, shade: [Noise(cells: (8, 8), octaves: 2, amount: 0.42), Noise(cells: (32, 32), amount: 0.5)], clean: true),
+        ]),
+        // Thin beds with blotches along them.
+        "block/hd_rock_layered": (size: (32, 32), palettes: {"main": "stone"}, layers: [
+            Paint(palette: "main", base: 0.54, shade: [
+                Noise(cells: (2, 16), octaves: 2, amount: 0.4),
+                Stripes(period: 8.0, width: 0.25, amount: -0.22, warp: 1.5),
+                Noise(cells: (16, 32), amount: 0.45),
+            ], clean: true),
+        ]),
+        // Soil: round clumps, broken at texel scale, with dark pits.
+        "block/hd_soil": (size: (32, 32), palettes: {"main": "dirt"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (8, 8), octaves: 2, amount: 0.4), Noise(cells: (32, 32), amount: 0.55)], clean: true),
+            Clusters(palette: "main", count: 14, size: (2, 4), spacing: 5.5, shade: 0, seed: 7),
+        ]),
+
+        // Rocks.
+        "block/granite": (base: "block/hd_rock_round", palettes: {"main": "granite", "fleck": ["#4e3530", "#cdaa9a", "#dcc0b2"]}, layers: [
+            Clusters(palette: "fleck", count: 14, size: (1, 3), spacing: 4.0, shade: 0, seed: 1),
+            Clusters(palette: "fleck", count: 12, size: (1, 3), spacing: 4.0, shade: 2, seed: 2),
+        ]),
+        "block/diorite": (base: "block/hd_rock_round", palettes: {"main": "diorite", "fleck": ["#55565a", "#717276", "#8e8f92"]}, layers: [
+            Clusters(palette: "fleck", count: 16, size: (2, 5), spacing: 4.5, shade: 1, seed: 1),
+        ]),
+        "block/andesite": (base: "block/hd_rock_round", palettes: {"main": "andesite"}, layers: [
+            Clusters(palette: "main", count: 16, size: (1, 3), spacing: 4.0, shade: 5, seed: 1),
+            Clusters(palette: "main", count: 12, size: (1, 3), spacing: 4.0, shade: 0, seed: 2),
+        ]),
+        "block/tuff": (base: "block/hd_rock_round", palettes: {"main": "tuff"}, layers: [
+            Clusters(palette: "main", count: 12, size: (2, 4), spacing: 5.0, shade: 0, seed: 1),
+            Clusters(palette: "main", count: 8, size: (1, 3), spacing: 6.0, shade: 5, seed: 2),
+        ]),
+        "block/calcite": (base: "block/hd_rock_round", palettes: {"main": "calcite"}),
+        "block/chalk": (base: "block/hd_rock_round", palettes: {"main": "chalk"}, layers: [
+            Clusters(palette: "main", count: 8, size: (1, 3), spacing: 6.0, shade: 1, seed: 1),
+        ]),
+        "block/deepslate": (base: "block/hd_rock_layered", palettes: {"main": "deepslate"}),
+        "block/limestone": (base: "block/hd_rock_layered", palettes: {"main": "limestone"}, layers: [
+            Clusters(palette: "main", count: 8, size: (1, 3), spacing: 6.0, shade: 0, seed: 1),
+        ]),
+        "block/slate": (base: "block/hd_rock_layered", palettes: {"main": "slate"}),
+        "block/travertine": (base: "block/hd_rock_layered", palettes: {"main": "travertine"}, layers: [
+            Clusters(palette: "main", count: 14, size: (2, 4), spread: (1.6, 0.6), spacing: 5.0, shade: 0, seed: 1),
+        ]),
+        // Soft white rock with a few thin grey veins that wander and fork.
+        "block/marble": (base: "block/hd_rock_round", palettes: {"main": "marble", "vein": "marble_vein"}, layers: [
+            Paint(palette: "vein", base: 0.5, mask: [Ridge(cells: (2, 2), octaves: 2, width: 0.06, amount: 1.0), Noise(cells: (4, 4), amount: 0.6)], above: 0.82),
+        ]),
+        // Rough columns: tall blotchy blocks parted by dark joints.
+        "block/basalt": (size: (32, 32), palettes: {"main": "basalt"}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [
+                Cells(count: (4, 2), jitter: 0.7, value: 0.3, edge: -0.45, width: 1.0, bevel: 0.25, lip: 0.15, warp: 1.0, stretch: (1.0, 2.5), seed: 7),
+                Noise(cells: (32, 8), amount: 0.4),
+            ], clean: true),
+        ]),
+        // Sandstone: blotchy beds with a pale band at the top and a shadowed foot.
+        "block/sandstone": (size: (32, 32), palettes: {"main": "sandstone"}, layers: [
+            Paint(palette: "main", base: 0.56, shade: [
+                Noise(cells: (2, 16), octaves: 2, amount: 0.3),
+                Noise(cells: (16, 32), amount: 0.4),
+                Stripes(period: 32.0, width: 0.1875, amount: 0.25),
+                Stripes(period: 32.0, width: 0.0625, amount: -0.3, phase: 6.0),
+                Border(width: 2, amount: -0.25, sides: (0.0, 0.0, 1.0, 0.0)),
+            ], clean: true),
+        ]),
+        "block/sandstone_top": (base: "block/hd_soil", palettes: {"main": "sandstone"}),
+        "block/sandstone_bottom": (base: "block/sandstone_top", layers: [
+            Shift(by: [Flat(-1.0)], mask: [Noise(cells: (4, 4), amount: 1.0)], above: 0.25),
+        ]),
+
+        // Soils.
+        "block/mud": (base: "block/hd_soil", palettes: {"main": "mud"}),
+        "block/loam": (base: "block/hd_soil", palettes: {"main": "loam"}),
+        "block/clay": (base: "block/hd_rock_round", palettes: {"main": "clay"}),
+        "block/silt": (base: "block/hd_rock_round", palettes: {"main": "silt"}),
+        "block/packed_earth": (base: "block/hd_soil", palettes: {"main": "packed"}),
+        "block/moss_block": (base: "block/hd_soil", palettes: {"main": "moss"}, layers: [
+            Clusters(palette: "main", count: 16, size: (2, 4), spacing: 5.0, shade: 5, seed: 3),
+        ]),
+        "block/podzol_top": (base: "block/hd_soil", palettes: {"main": "podzol", "needle": ["#3a240e", "#a3702e", "#b9853a"]}, layers: [
+            Clusters(palette: "needle", count: 18, size: (2, 3), spread: (1.8, 0.4), spacing: 4.0, shade: 1, seed: 4),
+        ]),
+        "block/snow": (size: (32, 32), palettes: {"main": "snow"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Noise(cells: (8, 8), octaves: 2, amount: 0.3), Noise(cells: (32, 32), amount: 0.35)], clean: true),
+        ]),
+        "block/powder_snow": (base: "block/snow", layers: [
+            Clusters(palette: "main", count: 12, size: (1, 3), spacing: 5.0, shade: 5, seed: 2),
+        ]),
+    },
+)
