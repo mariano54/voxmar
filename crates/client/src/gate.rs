@@ -1243,6 +1243,7 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.shot(world, "creatures").is_some() {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
+                gate.check("creature voices", crate::creature_sounds::loaded(world));
                 gate.next(Step::Strike, now);
             }
         }
@@ -1310,6 +1311,11 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     };
                     let result = if deaths > 0 { Ok(format!("killed with {landed} of {blows} blows in {:.1}s", now - gate.since)) } else { Err("it went without dying".into()) };
                     gate.check("creature struck", result);
+                    // Its cries reached the sound system (a silent run plays none).
+                    let heard = &world.resource::<crate::creature_sounds::Heard>().asked;
+                    let cries = [crate::creature_sounds::Kind::Hurt, crate::creature_sounds::Kind::Death].map(|k| heard.get(&k).copied().unwrap_or(0));
+                    let result = if cries.iter().all(|&n| n > 0) { Ok(format!("{} hurt and {} death sounds asked for", cries[0], cries[1])) } else { Err(format!("hurt and death sounds asked for: {cries:?}")) };
+                    gate.known("creature cries", result, "the creatures thread adds the sound hooks");
                     if !gate.readout_seen {
                         gate.check("target readout", Err("it never showed the struck creature's name, level and health".into()));
                     }
