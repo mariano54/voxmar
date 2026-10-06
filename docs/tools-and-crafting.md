@@ -38,6 +38,9 @@ the bigger grid, for as long as you are within reach of it and the screen is ope
 Anything bigger than two by two, or with more than four ingredients, needs a table; the
 server checks.
 
+A cell or ingredient can accept several items: `tag:log` takes any log, `coal_ore|charcoal`
+either (`Recipe::alternatives`; the viewer shows the first). Torches use it.
+
 Every recipe trains a skill, Crafting unless it names another, may need a `level` in it,
 and gives `xp` for every one made: tools, the table, torches, shears, pails and smelting
 train Engineering, bread and animal feed Cooking. A recipe whose level is above yours
