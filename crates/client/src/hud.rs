@@ -26,7 +26,7 @@ use crate::player::LocalPlayer;
 use crate::render::lod::Lod;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{ACCENT, BODY, ERROR, SOFT, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_meter};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, SOFT, Meter, SHADOW, TEXT, UiFont, set_meter, shadowed, spawn_signed_meter};
 use crate::ui::widgets::space;
 use crate::weather::ClientWeather;
 use crate::world::ClientWorld;
@@ -179,12 +179,12 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             bottom.spawn(name).with_child((HeldName, shadowed(font, "", BODY, TEXT)));
             let width = HOTBAR_SLOTS as f32 * (SLOT + GAP) - GAP + 2.0 * FRAME;
             // The effects on you, then health and hunger side by side.
-            let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), flex_wrap: FlexWrap::Wrap, ..default() };
+            let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), row_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::INNER)), flex_wrap: FlexWrap::Wrap, ..default() };
             bottom.spawn((chips, EffectChips));
-            let meters = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
+            let meters = Node { width: Val::Px(width), column_gap: Val::Px(space::SECTION), margin: UiRect::bottom(Val::Px(space::INNER)), ..default() };
             bottom.spawn(meters).with_children(|meters| {
-                spawn_meter(meters, font, Piece::BarHealth, Val::Percent(50.0), HealthMeter);
-                spawn_meter(meters, font, Piece::BarHunger, Val::Percent(50.0), HungerMeter);
+                spawn_signed_meter(meters, font, Piece::Heart, Piece::BarHealth, Val::Percent(50.0), HealthMeter);
+                spawn_signed_meter(meters, font, Piece::Drumstick, Piece::BarHunger, Val::Percent(50.0), HungerMeter);
             });
             let frame = Node { width: Val::Px(width), height: Val::Px(SLOT + 2.0 * FRAME), padding: UiRect::all(Val::Px(FRAME)), column_gap: Val::Px(GAP), ..default() };
             bottom.spawn((frame, Piece::Frame.image())).with_children(|bar| {

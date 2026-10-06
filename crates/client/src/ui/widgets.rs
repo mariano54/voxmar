@@ -18,7 +18,7 @@ pub struct WidgetsPlugin;
 impl Plugin for WidgetsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(UiFont(FONT))
-            .add_systems(Update, (style_buttons, light_hovered, scroll_lists, show_scroll_more, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
+            .add_systems(Update, (style_buttons, light_hovered, scroll_lists, show_scroll_more, drain_trails, (focus_fields, edit_fields, draw_fields).chain().after(ImeSystems)));
     }
 }
 
@@ -483,17 +483,45 @@ fn draw_fields(
 #[derive(Component)]
 pub struct Meter {
     fill: Entity,
+    /// What was lost lately, pale behind the fill, catching up with it.
+    trail: Entity,
     label: Entity,
 }
 
+/// A meter's height: room for its number inside the track with a pixel to spare.
+pub const METER: f32 = 14.0 * PX;
+/// Tick marks across a meter, each a tenth of it.
+const TICKS: usize = 10;
+/// How fast what was lost drains away, in shares of the meter a second, after it waits.
+const TRAIL_DRAIN: f32 = 0.6;
+const TRAIL_WAIT: f32 = 0.4;
+
 /// A meter `width` screen pixels wide.
 pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece: Piece, width: Val, marker: impl Bundle) -> Entity {
-    // Tall enough for its number to sit inside the frame with a pixel to spare.
-    let well = Node { width, height: Val::Px(12.0 * PX), padding: UiRect::all(Val::Px(PX)), ..default() };
-    let mut meter = parent.spawn((well, Piece::Well.image(), marker));
-    let (mut fill, mut label) = (Entity::PLACEHOLDER, Entity::PLACEHOLDER);
+    let well = Node { width, height: Val::Px(METER), padding: UiRect::all(Val::Px(2.0 * PX)), flex_shrink: 1.0, min_width: Val::Px(0.0), ..default() };
+    let mut meter = parent.spawn((well, Piece::Meter.image(), marker));
+    let (mut fill, mut trail, mut label) = (Entity::PLACEHOLDER, Entity::PLACEHOLDER, Entity::PLACEHOLDER);
     meter.with_children(|well| {
-        fill = well.spawn((Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() }, piece.image())).id();
+        let inside = |left: f32, width: f32| Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(left),
+            width: Val::Percent(width),
+            height: Val::Percent(100.0),
+            ..default()
+        };
+        // The track's inside, which the fill, what was lost and the notches lie over.
+        well.spawn(Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }).with_children(|track| {
+            trail = track.spawn((inside(0.0, 0.0), BackgroundColor(Color::srgba(1.0, 0.93, 0.85, 0.45)), TrailWait(0.0))).id();
+            fill = track.spawn((inside(0.0, 0.0), piece.image())).id();
+            // Notches every tenth, to read the meter at a glance.
+            for tick in 1..TICKS {
+                let mut notch = inside(tick as f32 * 100.0 / TICKS as f32, 0.0);
+                notch.width = Val::Px(PX);
+                notch.height = Val::Percent(50.0);
+                notch.top = Val::Percent(25.0);
+                track.spawn((notch, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35))));
+            }
+        });
         let centre = Node {
             position_type: PositionType::Absolute,
             width: Val::Percent(100.0),
@@ -506,8 +534,41 @@ pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece
             centre.spawn((shadowed(font, "", BODY, TEXT), crate::lang::TightLine));
         }).id();
     });
-    meter.insert(Meter { fill, label });
+    meter.insert(Meter { fill, trail, label });
     meter.id()
+}
+
+/// A meter with its sign before it (a heart for health), together `width` wide.
+pub fn spawn_signed_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, sign: Piece, piece: Piece, width: Val, marker: impl Bundle) {
+    let row = Node { width, align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), min_width: Val::Px(0.0), ..default() };
+    parent.spawn(row).with_children(|row| {
+        row.spawn((Node { width: Val::Px(9.0 * PX), height: Val::Px(9.0 * PX), flex_shrink: 0.0, ..default() }, sign.image()));
+        let meter = spawn_meter(row, font, piece, Val::Auto, marker);
+        row.commands().entity(meter).entry::<Node>().and_modify(|mut node| node.flex_grow = 1.0);
+    });
+}
+
+/// Seconds a meter's trail has waited before draining.
+#[derive(Component)]
+struct TrailWait(f32);
+
+/// What was lost drains after a moment, as the meter's fill went down; a rise shows at once.
+fn drain_trails(time: Res<Time>, meters: Query<&Meter>, mut nodes: Query<&mut Node>, mut waits: Query<&mut TrailWait>) {
+    for meter in &meters {
+        let Ok(Val::Percent(fill)) = nodes.get(meter.fill).map(|n| n.width) else { continue };
+        let (Ok(mut trail), Ok(mut wait)) = (nodes.get_mut(meter.trail), waits.get_mut(meter.trail)) else { continue };
+        let Val::Percent(shown) = trail.width else { continue };
+        if shown <= fill {
+            if shown != fill {
+                trail.width = Val::Percent(fill);
+            }
+            wait.0 = 0.0;
+        } else if wait.0 < TRAIL_WAIT {
+            wait.0 += time.delta_secs();
+        } else {
+            trail.width = Val::Percent((shown - TRAIL_DRAIN * 100.0 * time.delta_secs()).max(fill));
+        }
+    }
 }
 
 /// Fills a meter to `share` (0..1) and writes `text` over it.

@@ -52,6 +52,8 @@ pub enum Piece {
     Bar,
     BarHealth,
     BarHunger,
+    Meter,
+    Drumstick,
     Knob,
     KnobSmall,
     Tooltip,
@@ -63,7 +65,7 @@ pub enum Piece {
 }
 
 impl Piece {
-    const ALL: [Piece; 25] = [
+    const ALL: [Piece; 27] = [
         Piece::Panel,
         Piece::Button,
         Piece::ButtonHover,
@@ -81,6 +83,8 @@ impl Piece {
         Piece::Bar,
         Piece::BarHealth,
         Piece::BarHunger,
+        Piece::Meter,
+        Piece::Drumstick,
         Piece::Knob,
         Piece::KnobSmall,
         Piece::Tooltip,
@@ -112,6 +116,8 @@ impl Piece {
             Piece::Bar => ("ui/bar", (4, 4), Some(1.0)),
             Piece::BarHealth => ("ui/bar_health", (4, 4), Some(1.0)),
             Piece::BarHunger => ("ui/bar_hunger", (4, 4), Some(1.0)),
+            Piece::Meter => ("ui/meter", (8, 8), Some(3.0)),
+            Piece::Drumstick => ("ui/drumstick", (9, 9), None),
             Piece::Knob => ("ui/knob", (6, 9), None),
             Piece::KnobSmall => ("ui/knob_small", (6, 6), None),
             Piece::Tooltip => ("ui/tooltip", (8, 8), Some(3.0)),
