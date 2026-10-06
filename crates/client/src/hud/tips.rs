@@ -38,6 +38,10 @@ const WIDTH: f32 = 150.0 * PX;
 /// Every tip, by name: its words are `tip.<name>`.
 pub const TIPS: [&str; 10] = ["inventory", "recipes", "character", "effect", "seed", "food", "creature", "level", "table", "catalogue"];
 
+/// A tip a screenshot shows and holds (`--tip`).
+#[derive(Resource)]
+pub struct HeldTip(pub String);
+
 /// The tips waiting to show, the one showing and since when, and the effects seen.
 #[derive(Resource, Default)]
 pub struct Tips {
@@ -218,9 +222,14 @@ fn show_tip(
     mut plate: Query<&mut Visibility, With<TipPlate>>,
     mut words: Query<&mut Text, With<TipWords>>,
     mut corner: Query<&mut Node, With<TipCorner>>,
+    held: Option<Res<HeldTip>>,
     catalogue: Query<&Visibility, (With<super::creative::CataloguePanel>, Without<TipPlate>)>,
 ) {
     let now = time.elapsed_secs();
+    if let Some(name) = held.and_then(|held| TIPS.iter().find(|name| **name == held.0)) {
+        tips.showing = Some((name, now));
+        tips.queue.clear();
+    }
     if tips.showing.is_some_and(|(_, since)| now - since > TIP_SECONDS) {
         tips.showing = None;
     }
