@@ -75,6 +75,10 @@ impl HudImages {
     }
 }
 
+/// How far a stack's count sits in from its slot's corner: inside the frame, with a pixel
+/// to spare, at any interface size.
+pub const COUNT_INSET: f32 = 2.0 * PX;
+
 /// A slot's side: an item's 16 texels plus a 2-texel rim, in screen pixels.
 pub const SLOT: f32 = 20.0 * PX;
 /// The gap between slots.
@@ -134,7 +138,7 @@ pub fn slot_contents(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, slo
     let inset = (SLOT - 16.0 * PX) / 2.0;
     parent.spawn((absolute(inset, inset, 16.0 * PX, 16.0 * PX), ImageNode::default(), Visibility::Hidden, SlotIcon(slot)));
     parent.spawn((
-        Node { position_type: PositionType::Absolute, right: Val::Px(PX), bottom: Val::Px(0.0), ..default() },
+        Node { position_type: PositionType::Absolute, right: Val::Px(COUNT_INSET), bottom: Val::Px(COUNT_INSET), ..default() },
         shadowed(font, "", BODY, TEXT),
         SlotCount(slot),
     ));
