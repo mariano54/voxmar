@@ -7,6 +7,7 @@ mod cooking;
 mod creatures;
 mod farm;
 mod husbandry;
+mod inspect;
 mod fluids;
 mod items;
 mod player;

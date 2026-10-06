@@ -214,6 +214,7 @@ impl Server {
                 (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
+                (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent }, block);
                     for pos in std::iter::once(block).chain(plants) {

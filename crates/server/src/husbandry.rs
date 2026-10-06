@@ -51,7 +51,7 @@ impl Server {
         self.players.get(&player).map(|p| p.name.clone())
     }
 
-    fn skill_level(&self, player: PlayerId, skill: &str) -> u8 {
+    pub(crate) fn skill_level(&self, player: PlayerId, skill: &str) -> u8 {
         let Some(id) = self.content.skills.id(skill) else { return 99 };
         self.players.get(&player).map_or(1, |p| self.content.skills.level(p.skills.xp(id)))
     }
