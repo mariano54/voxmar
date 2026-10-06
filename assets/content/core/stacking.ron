@@ -1,0 +1,7 @@
+// What takes a slot each in the inventory (engine/src/inventory.rs, `max_stack`): items
+// with any of these tags. Cooked food, meals, drinks and potions don't stack, as in
+// RuneScape, so what you carry into a fight or a long trip is a choice; raw produce and
+// ingredients stack to 64. An item's own `stack:N` tag overrides both.
+(
+    single: ["cooked", "baked", "meal", "drink", "potion"],
+)

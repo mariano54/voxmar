@@ -1,0 +1,11 @@
+// Rare herbs the loop thread adds (the others live in blocks.ron). Each grows wild in one
+// or two biomes, which the biome decorations place, and regrows slowly where it is picked
+// (regrowth.ron); herbs cannot be sown, only kept in a herb planter.
+(
+    families: [
+        // Windroot: a wiry high-mountain herb that bends flat in the wind; the elixir of
+        // swiftness wants it. Drawn as sage until it has a sprite of its own.
+        (template: "plant", name: "windroot", tags: ["herb", "root", "alpine", "mountain", "cold", "windswept", "alchemy:swiftness", "forage"],
+            all: (model: Bush, textures: All("sage"), color: (170, 190, 150), rarity: Rare)),
+    ],
+)

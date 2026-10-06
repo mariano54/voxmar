@@ -55,6 +55,8 @@ pub struct Target {
     mining: Option<ActionTarget>,
     mining_seconds: f32,
     place_cooldown: f32,
+    /// When (seconds of game time) the line cast last comes up, and another may be cast.
+    fishing_until: f32,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -155,7 +157,7 @@ impl ActionContext for ClientContext<'_> {
     }
 
     fn actor_level(&self, skill: SkillId) -> u8 {
-        self.content.skills.level(self.player.skills.xp(skill))
+        voxmar_engine::level::check_level(&self.content.skills, &self.content.effects, &self.player.skills, &self.player.vitals.effects, skill)
     }
 
     fn actor_eye(&self) -> Vec3 {
@@ -170,8 +172,12 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.get(self.player.selected).map(|s| s.item)
     }
 
-    fn actor_hunger(&self) -> u8 {
-        self.player.vitals.hunger
+    fn actor_pouched(&self) -> Vec<BlockId> {
+        self.player.inventory.pouched.iter().map(|&(item, _)| item).collect()
+    }
+
+    fn actor_hurt(&self) -> bool {
+        self.player.health < self.player.max_health
     }
 
     fn actor_mining_speed(&self) -> f32 {
@@ -291,6 +297,15 @@ fn break_and_place(
                 return;
             }
         }
+        // A hearthstone is lit: the server says whether the hearth around it stands.
+        if let (Some(hit), Some(light)) = (hit, actions.0.id("base:light_hearth")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(light).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, light, action_target);
+                return;
+            }
+        }
         // Using what a station cooks on that station cooks it, before eating or placing.
         if let (Some(hit), Some(cook)) = (hit, actions.0.id("base:cook")) {
             let context = ClientContext { world: &world, player: &player, content };
@@ -330,8 +345,30 @@ fn break_and_place(
                     target.mine_cooldown = 1.2;
                     target.place_cooldown = 1.2;
                 }
-                Some(Err(Rejection::Unmet(Requirement::Hungry))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
+                Some(Err(Rejection::Unmet(Requirement::Hurt))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
                 _ => {}
+            }
+            return;
+        }
+    }
+    // A rod in hand casts into the water looked at, again each time the line comes up while
+    // the button is held.
+    if mouse.pressed(MouseButton::Right) && ui.cursor_locked && !player.dead && time.elapsed_secs() >= target.fishing_until {
+        let content = &launch.content;
+        let fish = actions.0.id("base:fish").filter(|_| player.inventory.get(player.selected).is_some_and(|s| world.registry.def(s.item).has_tag("rod")));
+        if let Some(fish) = fish {
+            let water = raycast(player.eye(), player.look_direction(), voxmar_engine::action::CAST, |p| {
+                world.block(p).is_some_and(|b| world.registry.info(b).solid || world.registry.info(b).fluid.is_some())
+            });
+            let context = ClientContext { world: &world, player: &player, content };
+            if let Some(water) = water {
+                let action_target = ActionTarget::Block { block: water.block, face: water.face };
+                if actions.0.get(fish).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                    let seconds = actions.0.get(fish).map_or(5.0, |def| def.seconds(&context, action_target));
+                    net.propose_from(&player, fish, action_target);
+                    target.fishing_until = time.elapsed_secs() + seconds + 0.2;
+                    cues.write(SoundCue::for_block(&world, water_block(&world, water.block), Cue::Hit));
+                }
             }
             return;
         }
@@ -347,8 +384,10 @@ fn break_and_place(
         // action of its own (a seed plants) does that; anything else is placed.
         let held = context.actor_held();
         let pick = actions.0.id("base:pick").filter(|&id| valid(id).is_some_and(|v| v.is_ok()));
+        // A seed pouch in hand sows on ground that takes its seeds, and empties elsewhere.
+        let sow = actions.0.id("base:plant").filter(|&id| held.is_some_and(|h| world.registry.def(h).has_tag("pouch")) && valid(id).is_some_and(|v| v.is_ok()));
         let own = held.and_then(|item| world.registry.def(item).action.as_deref()).and_then(|name| actions.0.id(name));
-        if let Some(action) = pick.or(own) {
+        if let Some(action) = pick.or(sow).or(own) {
             match valid(action) {
                 Some(Ok(())) => {
                     net.propose_from(&player, action, action_target);
@@ -387,10 +426,14 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
         match effect {
             Effect::Plant => {
                 let selected = player.selected;
-                let Some(seed) = player.inventory.get(selected).map(|s| s.item) else { continue };
+                let Some(seed) = (ClientContext { world, player, content }).actor_seed() else { continue };
                 let Some(crop) = content.crops.planted_by(seed) else { continue };
                 let sprout = content.crops.get(crop).stages[0];
-                player.inventory.take_one(selected);
+                if player.inventory.get(selected).is_some_and(|s| s.item == seed) {
+                    player.inventory.take_one(selected);
+                } else {
+                    player.inventory.take_pouched(seed);
+                }
                 world.set_block(target + IVec3::Y, sprout);
                 cues.write(SoundCue::for_block(world, sprout, Cue::Place));
             }
@@ -410,6 +453,11 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
             _ => {}
         }
     }
+}
+
+/// The water block at `pos`, for its splash.
+fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
+    world.block(pos).unwrap_or(BlockId::AIR)
 }
 
 /// What to tell a player whose click a block refused: the skill level it asks for, or the

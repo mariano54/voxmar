@@ -6,13 +6,13 @@
     palettes: {
         // Grey with the barest warmth, violet in the shadows, a little straw in the light.
         "stone": (ramp: "#868684", shades: 6, light: 0.28, hue: 8.0, chroma: -0.3),
-        "andesite": (ramp: "#7e7d7b", shades: 8, light: 0.34, hue: 20.0, chroma: -0.3),
-        "granite": (ramp: "#93695a", shades: 8, light: 0.34, hue: 18.0, chroma: -0.35),
-        "diorite": (ramp: "#c4c0b8", shades: 8, light: 0.3, hue: 20.0, chroma: -0.3),
-        "tuff": (ramp: "#77776a", shades: 8, light: 0.32, hue: 20.0, chroma: -0.3),
-        "deepslate": (ramp: "#4b4a54", shades: 8, light: 0.3, hue: 16.0, chroma: -0.3),
-        "limestone": (ramp: "#c2b799", shades: 8, light: 0.3, hue: 20.0, chroma: -0.3),
-        "sandstone": (ramp: "#d6c493", shades: 8, light: 0.3, hue: 18.0, chroma: -0.35),
+        "andesite": (ramp: "#7e7d7b", shades: 6, light: 0.34, hue: 20.0, chroma: -0.3),
+        "granite": (ramp: "#93695a", shades: 6, light: 0.34, hue: 18.0, chroma: -0.35),
+        "diorite": (ramp: "#c4c0b8", shades: 6, light: 0.3, hue: 20.0, chroma: -0.3),
+        "tuff": (ramp: "#77776a", shades: 6, light: 0.32, hue: 20.0, chroma: -0.3),
+        "deepslate": (ramp: "#4b4a54", shades: 6, light: 0.3, hue: 16.0, chroma: -0.3),
+        "limestone": (ramp: "#c2b799", shades: 6, light: 0.3, hue: 20.0, chroma: -0.3),
+        "sandstone": (ramp: "#d6c493", shades: 6, light: 0.3, hue: 18.0, chroma: -0.35),
         "stone_moss": (ramp: "#5f7a33", shades: 6, light: 0.3, hue: 24.0, chroma: -0.3),
     },
     templates: {
@@ -26,27 +26,25 @@
                     Noise(cells: (16, 16), octaves: 1, amount: 0.3),
                 ], clean: true),
             ]),
-            // Dressed stone: a smooth face with soft clouding, a crisp lit edge top left
-            // and a shadowed one bottom right, so a floor of it reads as laid slabs.
+            // Dressed stone in vanilla's language: a face of clear-shade blotches, finer
+            // than the raw rock's, inside a crisp lit top-left edge and a shadowed
+            // bottom-right one, so a floor of it reads as laid slabs.
             "block/polished_{name}": (size: (32, 32), palettes: {"main": "{name}"}, layers: [
                 Paint(palette: "main", base: 0.6, shade: [
-                    Noise(cells: (4, 4), octaves: 2, amount: 0.16),
-                    Grain(0.08),
-                    Border(width: 1, amount: -0.32, sides: (0.0, 1.0, 1.0, 0.0)),
-                    Border(width: 1, amount: 0.22, sides: (1.0, 0.0, 0.0, 1.0)),
-                    Border(width: 3, amount: -0.08),
+                    Noise(cells: (8, 8), octaves: 2, amount: 0.22),
+                    Noise(cells: (32, 32), amount: 0.25),
+                    Border(width: 2, amount: -0.3, sides: (0.0, 1.0, 1.0, 0.0)),
+                    Border(width: 2, amount: 0.22, sides: (1.0, 0.0, 0.0, 1.0)),
                 ], clean: true),
-                Shift(by: [Flat(-1.0)], mask: [Speckle(chance: 0.012, amount: 1.0, seed: 2)], above: 0.5),
             ]),
-            // Two bricks across, four courses, each a little different in tone, lit on
-            // its upper edge, with worn chips at a few corners.
+            // Two bricks across, four courses, each its own tone, lit on its upper edge,
+            // blotched inside like the rock, in dark mortar.
             "block/{name}_bricks": (size: (32, 32), palettes: {"main": "{name}"}, layers: [
-                Paint(palette: "main", base: 0.58, shade: [
-                    Bricks(size: (16, 8), mortar: -0.6, value: 0.22, bevel: 0.14),
-                    Noise(cells: (8, 8), octaves: 2, amount: 0.16),
-                    Grain(0.1),
+                Paint(palette: "main", base: 0.6, shade: [
+                    Bricks(size: (16, 8), mortar: -0.6, value: 0.25, bevel: 0.16),
+                    Noise(cells: (8, 16), octaves: 2, amount: 0.25),
+                    Noise(cells: (32, 32), amount: 0.3),
                 ], clean: true),
-                Paint(palette: "main", base: 0.12, mask: [Ridge(cells: (4, 4), width: 0.05, amount: 1.0), Noise(cells: (4, 4), amount: 0.9)], above: 0.95, light: 1),
             ]),
             "block/mossy_cobbled_{name}": (base: "block/cobbled_{name}", palettes: {"moss": "stone_moss"}, layers: [
                 Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.6), Grain(0.25)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.2, amount: 0.2)], above: 0.45, clean: true, shadow: -1),

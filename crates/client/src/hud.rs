@@ -3,6 +3,7 @@
 
 pub mod character;
 pub mod console;
+pub mod creative;
 pub mod death;
 pub mod effects;
 pub mod inventory;
@@ -17,7 +18,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory};
 use voxmar_engine::effect::{ActiveEffect, EffectDef, EffectId, Kind};
-use voxmar_engine::vitals::{MAX_HUNGER, Vitals};
+use voxmar_engine::vitals::Vitals;
 
 use crate::lang::Locale;
 use crate::interact::Target;
@@ -35,7 +36,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin))
+        app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
@@ -98,13 +99,11 @@ pub struct SlotIcon(pub usize);
 pub struct SlotCount(pub usize);
 #[derive(Component)]
 struct HotbarSelection;
-/// What sits along the bottom edge: the hotbar, health, hunger and effects.
+/// What sits along the bottom edge: the hotbar, health and effects.
 #[derive(Component)]
 struct Bottom;
 #[derive(Component)]
 struct HealthMeter;
-#[derive(Component)]
-struct HungerMeter;
 /// The row of effects over the meters.
 #[derive(Component)]
 struct EffectChips;
@@ -178,13 +177,12 @@ fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) 
             let name = Node { height: Val::Px(12.0 * PX), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
             bottom.spawn(name).with_child((HeldName, shadowed(font, "", BODY, TEXT)));
             let width = HOTBAR_SLOTS as f32 * (SLOT + GAP) - GAP + 2.0 * FRAME;
-            // The effects on you, then health and hunger side by side.
+            // The effects on you, then health across the hotbar's width.
             let chips = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), flex_wrap: FlexWrap::Wrap, ..default() };
             bottom.spawn((chips, EffectChips));
             let meters = Node { width: Val::Px(width), column_gap: Val::Px(space::HAIR), margin: UiRect::bottom(Val::Px(space::HAIR)), ..default() };
             bottom.spawn(meters).with_children(|meters| {
-                spawn_meter(meters, font, Piece::BarHealth, Val::Percent(50.0), HealthMeter);
-                spawn_meter(meters, font, Piece::BarHunger, Val::Percent(50.0), HungerMeter);
+                spawn_meter(meters, font, Piece::BarHealth, Val::Percent(100.0), HealthMeter);
             });
             let frame = Node { width: Val::Px(width), height: Val::Px(SLOT + 2.0 * FRAME), padding: UiRect::all(Val::Px(FRAME)), column_gap: Val::Px(GAP), ..default() };
             bottom.spawn((frame, Piece::Frame.image())).with_children(|bar| {
@@ -269,7 +267,7 @@ fn update_slots(
     }
 }
 
-/// Health and hunger as meters reading "15/20", and a chip for each effect on you: teal
+/// Health as a meter reading "15/20", and a chip for each effect on you: teal
 /// for a buff, red for a debuff.
 #[allow(clippy::too_many_arguments)]
 fn update_vitals(
@@ -277,7 +275,6 @@ fn update_vitals(
     player: Res<LocalPlayer>,
     font: Res<UiFont>,
     health: Query<&Meter, With<HealthMeter>>,
-    hunger: Query<&Meter, With<HungerMeter>>,
     chips: Query<Entity, With<EffectChips>>,
     mut nodes: Query<&mut Node>,
     children: Query<&Children>,
@@ -296,10 +293,6 @@ fn update_vitals(
     if let Ok(meter) = health.single() {
         let most = player.max_health.max(1);
         set_meter(meter, player.health as f32 / most as f32, &format!("{}/{most}", player.health), &mut nodes, &children, &mut texts);
-    }
-    if let Ok(meter) = hunger.single() {
-        let value = player.vitals.hunger;
-        set_meter(meter, value as f32 / MAX_HUNGER as f32, &format!("{value}/{MAX_HUNGER}"), &mut nodes, &children, &mut texts);
     }
     if effects_changed && let Ok(row) = chips.single() {
         commands.entity(row).despawn_children().with_children(|row| {

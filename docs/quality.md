@@ -44,12 +44,25 @@ it takes well under a minute.
    with messages waiting, and a 600 ms stall as every other action is proposed). It also
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
    first break once compiled three pipelines on the spot); on a machine asked for more
-   than all its cores (load average over the core count), a long frame says nothing about
-   the game, so that check is reported as SKIPPED instead. A skipped check is not a pass:
-   the gate waits for the load to fall under the core count (up to 20 minutes), plays the
-   session again on its own and judges that run, and fails if a check is skipped again.
-   (The gorge, a fresh area to generate, waits up to four minutes on an overloaded machine
-   instead of one, and fails, saying what was missing, rather than being skipped.) It fails on any failed
+   than all its cores (load average over the core count) the bar rises by how far over it
+   is, since the machine is rarely calm enough to wait for, and the pipelines check catches
+   compiles at any load. A check a session cannot judge is reported as SKIPPED, and is not
+   a pass: the gate waits for the load to fall under the core count (up to 20 minutes),
+   plays the session again on its own and judges that run (the first run's log and shots
+   kept in `game-skipped.txt` and `first-run/`), and fails if a check is skipped again.
+   The gorge, a fresh area to generate, waits up to four minutes on an overloaded machine
+   instead of one, and fails, saying what was missing, rather than being skipped.
+
+   Steps judge what the server does by its own clock (`ServerHandle::ticks`), not the
+   wall's or the game's: a server running behind takes longer, not too long. The tests run
+   a step below the session (`nice 10`), so they cannot starve its server; once they
+   did, and nine checks failed together. A step that fails lets go of every key and
+   button, so it cannot fail the steps after it. The session must never kill its player:
+every loss of health is logged with where and among what, and a death fails `alive` at
+once, naming the step (the workshop kills the player on purpose, and the text-fit steps show the death screen), and the
+player respawns, for a dead player fails every step after (nine checks at a time). `VOXMAR_GATE_STALL=1` (with
+   `--server-lag 150`) stalls every frame and slows the server as a machine loaded far
+   past its cores does, to show a step passes only on an idle one. It fails on any failed
    check, crash, panic, `ERROR` line (wgpu reports validation errors as these, and Bevy
    quits on them) or `WARN` line not listed in the script's `ALLOWED_WARNINGS`.
 
@@ -72,7 +85,7 @@ changes don't move it, and checks:
 | dig | holds the left button over the ground | a hole three blocks deep, with the same four checks |
 | drops | walks into the hole | every dug block's drop is picked up |
 | breaks | holds the left button along a row of glass, dirt, stone, snow, gravel and cobblestone, with the bare hand, the starting planks (throwing one with Q halfway) and every item tagged `tool`, while busy threads contend for the cores and the game's own frames stall 80 to 320 ms every fifth frame or so | every block ends broken on the client and the server, none comes back, the two agree on every block around. The server judges breaks by when the player's messages arrived, so a server held up decides as one that kept up (crates/server/src/actions.rs) |
-| workshop | crafts sticks and a crafting table in the two-by-two grid, places the table and right clicks it, crafts a stone pickaxe in its three-by-three grid, clicks an iron ore at Mining 1, then at 15 holds the button on it, right clicks dirt with a hoe | sticks and a table come back with Engineering experience; the table is on both sides and its grid shows nine cells; the ore refuses with "Needs Mining 15", then breaks on both sides with Mining experience; the dirt turns to farmland on both sides |
+| workshop | crafts sticks and a crafting table in the two-by-two grid, places the table and right clicks it, crafts a stone pickaxe in its three-by-three grid, clicks an iron ore at Mining 1, then at 15 holds the button on it, right clicks dirt with a hoe, is given three loaves, casts a rod into the pool | sticks and a table come back with Engineering experience; the table is on both sides and its grid shows nine cells; the ore refuses with "Needs Mining 15", then breaks on both sides with Mining experience; the dirt turns to farmland on both sides; three loaves given take three slots; holding right click with a rod over the pool catches a fish |
 | swim | holds forward and jump in a pool against a step | climbs out onto the step; the server has the player where the client does |
 | menu, inventory | Esc, Esc, E, E | each opens, is drawn and closes, giving the mouse back |
 | overlay | F3, then F3 again | the debug overlay opens and closes, and PostUpdate (UI layout among it) takes no longer with it open than closed: within 0.5 ms in the median |
@@ -161,7 +174,8 @@ Mariano plays only commits that passed the full gate: `tools/gate --passed --ful
 <commit>` must succeed before a play build is made (run `tools/gate --full` on it first),
 and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/play`
 (`cargo build --release`), never copied from another worktree, so the binary and its
-`assets/` always match.
+`assets/` always match. Build it with `VOXMAR_FOREGROUND=1` before memcap: he is waiting
+for it, and at memcap's background priority the last crate alone once took half an hour.
 
 ## Staying out of his way, and quiet windows
 

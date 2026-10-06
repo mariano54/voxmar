@@ -1,8 +1,8 @@
 # Status effects
 
-Buffs and debuffs change how a player heals, hungers, feels the cold, moves, mines and
-learns. They are content: every package's `effects.ron` lists its own (core's: hunger,
-warmth and bad weather; base's: what food does), read by `crates/engine/src/effect.rs`.
+Buffs and debuffs change how a player heals, feels the cold, moves, mines and learns.
+They are content: every package's `effects.ron` lists its own (core's: warmth and bad
+weather; base's: what food does), read by `crates/engine/src/effect.rs`.
 
 ## What an effect is
 
@@ -12,16 +12,22 @@ warmth and bad weather; base's: what food does), read by `crates/engine/src/effe
 - its name and a line on what it does, as language keys `effect.<package>.<name>` and
   `effect.<package>.<name>.description` (English and Japanese, with a hiragana reading
   for a Japanese name with kanji);
-- **modifiers**, a fixed vocabulary the engine owns: `heal`, `hunger`, `speed`, `mining`
-  and `xp` multiply (1 changes nothing; `heal: 0` stops healing), `warmth` adds degrees to
+- **modifiers**, a fixed vocabulary the engine owns: `heal`, `speed`, `mining`, `xp`
+  and `fishing` (how often a cast lands) multiply (1 changes nothing; `heal: 0` stops healing), `warmth` adds degrees to
   how warm you feel, `max_health` adds health points, `hurt_every` hurts a point every so
   many seconds. While several effects are on, rates multiply, warmth and health add, and
   the quickest hurt wins;
-- what brings it on: a **condition** the server checks every second (hunger, how warm you
-  feel, a fire near you in the cold, and the weather where you stand), or something you do.
+- what brings it on: a **condition** the server checks every second (how warm you
+  feel, a fire near you in the cold, the weather where you stand, and the biome: `InBiome`
+  takes a biome tag or name), or something you do.
   Rain, snow, hail, dust and lightning count only out in them, with nothing solid over
   your head; wind reaches you anywhere. `replaces` hides milder effects while a stronger
   one is on (freezing hides chilly, drenched hides soaked).
+
+Biomes give their own (base effects.ron): waterside (sea, river and marsh: casts land a
+fifth more often), forest calm (heal a fifth faster), rich rock (mountains: mine a tenth
+faster), aether-touched (fantastical biomes: a twentieth more experience) and mired
+(marsh: a little slower), so where you go matters as well as what you eat.
 
 Warmth from food and weather counts before the bands of warmth are judged: soaked through
 on a mild day, you feel chilly.

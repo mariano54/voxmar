@@ -54,6 +54,8 @@ pub enum Run {
     Clear,
     /// Gives the player a timed effect, or clears them.
     Effect,
+    /// Kills the player.
+    Kill,
     /// Drops a stack of items into the world.
     Drop,
     /// Grows the crops around the player.
@@ -108,6 +110,10 @@ struct CommandFile {
     /// Times of day `/time set` understands by name, in ticks after sunrise.
     #[serde(default)]
     times: Vec<(String, u64)>,
+    /// Real minutes a whole day takes at normal speed (the last package to say wins; 0,
+    /// the default, says nothing).
+    #[serde(default)]
+    day_minutes: f32,
 }
 
 /// Why a typed name finds no single command.
@@ -126,7 +132,11 @@ pub struct CommandRegistry {
     /// Short names more than one package defines.
     ambiguous: FxHashMap<String, Vec<usize>>,
     times: Vec<(String, u64)>,
+    day_minutes: Option<f32>,
 }
+
+/// Real minutes a day takes when no package says: its 24,000 ticks at 20 a second.
+const DEFAULT_DAY_MINUTES: f32 = 20.0;
 
 impl CommandRegistry {
     pub fn from_ron(namespace: &str, source: &str) -> Result<Self, RegistryError> {
@@ -166,7 +176,23 @@ impl CommandRegistry {
             self.times.retain(|(existing, _)| *existing != name);
             self.times.push((name, ticks));
         }
+        match file.day_minutes {
+            0.0 => {}
+            minutes if minutes > 0.0 && minutes.is_finite() => self.day_minutes = Some(minutes),
+            _ => return Err(RegistryError(format!("{namespace}/commands.ron: day_minutes must be above 0"))),
+        }
         Ok(())
+    }
+
+    /// Real minutes a whole day takes at normal speed.
+    pub fn day_minutes(&self) -> f32 {
+        self.day_minutes.unwrap_or(DEFAULT_DAY_MINUTES)
+    }
+
+    /// Ticks of the time of day per simulation tick at normal speed: below 1 when days are
+    /// longer than their 24,000 ticks at 20 a second.
+    pub fn day_pace(&self) -> f32 {
+        DEFAULT_DAY_MINUTES / self.day_minutes()
     }
 
     /// The command a typed name (with or without its namespace) refers to.

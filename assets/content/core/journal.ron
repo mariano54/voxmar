@@ -1,0 +1,23 @@
+// The journal (engine/src/journal.rs): what it takes to study and master an entry on each
+// page. An entry is seen when first found; each kill, catch, pick or mine counts toward
+// studied and mastered. Pages without numbers are studied some other way (a codex
+// instrument, a book) or only ever seen.
+(
+    pages: [
+        // Ten kills show a monster's weak style, a hundred its drop table.
+        (page: Monsters, studied: 10, mastered: 100),
+        (page: Animals, studied: 10, mastered: 100),
+        (page: Bosses, studied: 1, mastered: 10),
+        (page: Fish, studied: 10, mastered: 100),
+        (page: Plants, studied: 10, mastered: 100),
+        (page: Ores, studied: 25, mastered: 250),
+        (page: Collection, studied: 10, mastered: 100),
+        (page: Biomes),
+        (page: Breeds),
+        (page: Places),
+        (page: Sky),
+        (page: Music),
+        (page: Books),
+        (page: Discoveries),
+    ],
+)
