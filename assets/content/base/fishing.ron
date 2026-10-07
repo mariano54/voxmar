@@ -6,9 +6,9 @@
 // better rod. Nothing here asks for more than level 80.
 //
 // A fish's xp doubles every 10.5 levels: 10 × 2^((level − 1) ÷ 10.5) (design draft 63; a
-// content test holds every catch here to it). A fish an angler outlevels bites less: its
-// weight halves for every `outlevelled` levels they have over it, so the water's best
-// fish are what a high level mostly lands.
+// content test holds every catch here to it). Each fish bites twice as often, against
+// those below it, for every `outlevelled` levels it asks, so the water's best fish are
+// what a high level mostly lands (a later package may set it, design draft 91).
 (
     outlevelled: 15.0,
     catches: [
@@ -24,9 +24,9 @@
         (item: "raw_pike", level: 40, xp: 131.0, weight: 2.0, water: Fresh, biomes: ["temperate", "cool", "wetland", "forest"]),
         (item: "raw_eel", level: 45, xp: 183.0, weight: 2.0, water: Fresh, when: [Night], rarity: Uncommon),
         (item: "raw_tuna", level: 50, xp: 254.0, weight: 2.0, water: Salt, biomes: ["warm", "hot", "tropical"]),
-        // Big river fish, and the ocean's marlin, at the top of the line.
+        // A big river fish, and the deep ocean's by day, at the top of the line.
         (item: "raw_sturgeon", level: 55, xp: 353.0, weight: 1.5, water: Fresh, biomes: ["river", "temperate", "cool", "cold"], rarity: Uncommon),
-        (item: "raw_marlin", level: 60, xp: 491.0, weight: 1.0, water: Salt, biomes: ["warm", "hot", "tropical"], rarity: Rare),
+        (item: "raw_marlin", level: 60, xp: 491.0, weight: 1.0, water: Salt, biomes: ["deep"], when: [Day], rarity: Rare),
         (item: "raw_swordfish", level: 65, xp: 684.0, weight: 1.0, water: Salt, biomes: ["warm", "hot", "tropical"], rarity: Rare),
         // A deep-sea fish that rises at night, in deep ocean.
         (item: "raw_deepwater_lanternfish", level: 70, xp: 951.0, weight: 0.8, water: Salt, biomes: ["deep"], when: [Night], rarity: Rare),

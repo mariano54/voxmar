@@ -158,6 +158,7 @@ impl Content {
         let mut creatures = Vec::new();
         let mut creature_limits = Setting::<Limits>::default();
         let mut defence = Setting::<DefenceTraining>::default();
+        let mut fishing_rules = Setting::<crate::fishing::FishingRules>::default();
         let mut notes = Vec::new();
         let mut cooking = Vec::new();
         let mut recipes = Vec::new();
@@ -214,7 +215,9 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "fishing.ron" => {
-                        fishing.push(FishingRegistry::read(package, &source)?);
+                        let file = FishingRegistry::read(package, &source)?;
+                        fishing_rules.set(package, &name, "fishing rules", file.rules(), &mut notes);
+                        fishing.push(file);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "quests.ron" => {
@@ -276,7 +279,7 @@ impl Content {
         let effects = EffectRegistry::new(effects)?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
-        let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
+        let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);

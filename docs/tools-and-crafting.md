@@ -70,12 +70,13 @@ biome tags, and when (day, night, rain). A cast (`base:fish`, five seconds, a ro
 water within nine blocks with open air above) lands something with a chance that starts at
 about a third for the water's best fish at its level and grows with each level above it
 and with the rod's tier, up to nine in ten; which fish is a weighted draw among those that
-can bite, rarer ones a little more often with a better rod's yield, and a fish the angler
-outlevels bites half as often for every 15 levels over it (`outlevelled`). A fish's
+can bite, rarer ones a little more often with a better rod's yield, and each fish bites
+twice as often, against those below it, for every 15 levels it asks (`outlevelled`). A
+fish's
 experience doubles every 10.5 levels, 10 × 2^((level − 1) ÷ 10.5): perch 18, cod 35, carp
-68, pike 131, tuna 254, sturgeon 353 (55), marlin 491 (60), deepwater lanternfish 951 (70,
-deep ocean at night), koi 1,323 (design draft 63). Fish cook at a campfire (cooking.ron),
-teaching what catching them does. Fishing tops out at level 75 for now (glimmer koi), with
+68, pike 131, tuna 254, sturgeon 353 (55), marlin 491 (60, deep ocean by day), deepwater
+lanternfish 951 (70, deep ocean at night), koi 1,323 (design draft 63). Fish cook at a
+campfire (cooking.ron) in two seconds, teaching what catching them does. Fishing tops out at level 75 for now (glimmer koi), with
 the cape perk at 80.
 
 ## Pouches

@@ -60,12 +60,38 @@ fn one() -> f32 {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FishingFile {
-    /// Levels an angler has over a catch for it to bite half as often (design draft 63:
-    /// 15); none, never less. A later package's replaces an earlier one's.
+    /// See [`FishingRules::outlevelled`]; a later package's replaces an earlier one's.
     #[serde(default)]
     pub outlevelled: Option<f32>,
     #[serde(default)]
     pub catches: Vec<CatchDef>,
+}
+
+/// How what bites is weighed: single-valued data a package may set (design draft 91).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FishingRules {
+    /// Each fish bites twice as often, against those below it, for every this many levels
+    /// it asks (design draft 63: 15), so the water's best fish are what a high level mostly
+    /// lands; infinite (the default) weighs them only by `weight`.
+    pub outlevelled: f32,
+}
+
+impl Default for FishingRules {
+    fn default() -> Self {
+        Self { outlevelled: f32::INFINITY }
+    }
+}
+
+crate::content::settable! {
+    /// What one package's `fishing.ron` sets of the rules.
+    SetFishingRules for FishingRules { outlevelled: f32 }
+}
+
+impl FishingFile {
+    /// The rules this file sets, if any.
+    pub fn rules(&self) -> Option<SetFishingRules> {
+        self.outlevelled.map(|outlevelled| SetFishingRules { outlevelled: Some(outlevelled) })
+    }
 }
 
 /// A catch with its item resolved.
@@ -99,8 +125,7 @@ const LAND_MOST: f32 = 0.9;
 pub struct FishingRegistry {
     catches: Vec<Catch>,
     pub skill: Option<SkillId>,
-    /// See [`FishingFile::outlevelled`].
-    pub outlevelled: Option<f32>,
+    pub rules: FishingRules,
 }
 
 impl FishingRegistry {
@@ -115,10 +140,11 @@ impl FishingRegistry {
         Ok(file)
     }
 
-    pub fn new(files: Vec<FishingFile>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let outlevelled = files.iter().rev().find_map(|f| f.outlevelled);
-        if let Some(levels) = outlevelled.filter(|&l| !(l.is_finite() && l > 0.0)) {
-            return Err(RegistryError(format!("fishing.ron: `outlevelled: {levels}` is no number of levels above 0")));
+    /// Every package's catches, with `rules` as the packages together set them (checked
+    /// here, once all are applied).
+    pub fn new(files: Vec<FishingFile>, rules: FishingRules, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
+        if !(rules.outlevelled > 0.0) {
+            return Err(RegistryError(format!("fishing.ron: `outlevelled: {}` is no number of levels above 0", rules.outlevelled)));
         }
         let catches = files
             .into_iter()
@@ -128,7 +154,7 @@ impl FishingRegistry {
                 Ok(Catch { def, item })
             })
             .collect::<Result<_, RegistryError>>()?;
-        Ok(Self { catches, skill: skills.id("core:fishing"), outlevelled })
+        Ok(Self { catches, skill: skills.id("core:fishing"), rules })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Catch> {
@@ -167,8 +193,9 @@ impl FishingRegistry {
         if land >= chance {
             return None;
         }
-        // A fish the angler outlevels bites less, halving every `outlevelled` levels over it.
-        let outlevelled = |c: &Catch| self.outlevelled.map_or(1.0, |levels| 0.5f32.powf(spot.level.saturating_sub(c.def.level) as f32 / levels));
+        // Each fish bites twice as often, against those below it, for every `outlevelled`
+        // levels it asks (written from the angler's level down, so it stays near 1).
+        let outlevelled = |c: &Catch| 0.5f32.powf(spot.level.saturating_sub(c.def.level) as f32 / self.rules.outlevelled);
         let weight = |c: &Catch| c.def.weight * outlevelled(c) * if c.def.rarity > Rarity::Common { 1.0 + spot.rod_yield * 4.0 } else { 1.0 };
         let total: f32 = biting.iter().map(|c| weight(c)).sum();
         let mut left = pick * total;
@@ -186,6 +213,7 @@ impl FishingRegistry {
 mod tests {
     use super::*;
     use crate::block::BlockDef;
+    use crate::content::Settable;
 
     fn setup() -> FishingRegistry {
         setup_with("")
@@ -201,7 +229,9 @@ mod tests {
             (item: "tuna", level: 40, xp: 80.0, water: Salt, biomes: ["warm", "hot"]),
             (item: "eel", level: 30, xp: 70.0, water: Fresh, when: [Night]),
         ])"#);
-        FishingRegistry::new(vec![FishingRegistry::read("t", &source).unwrap()], &blocks, &skills).unwrap()
+        let file = FishingRegistry::read("t", &source).unwrap();
+        let rules = file.rules().map_or(FishingRules::default(), |set| FishingRules::default().with(&set).0);
+        FishingRegistry::new(vec![file], rules, &blocks, &skills).unwrap()
     }
 
     #[test]
@@ -227,9 +257,9 @@ mod tests {
         assert!(landed(&expert) > 85 && landed(&expert) <= 90, "{}", landed(&expert));
     }
 
-    /// A fish an angler outlevels bites half as often for every `outlevelled` levels over
-    /// it (design draft 63): at level 45 with 15, shrimp (level 1) bite 2^(44/15) times
-    /// less than at par, trout (15) 2^2 times less.
+    /// Each fish bites twice as often, against those below it, for every `outlevelled`
+    /// levels it asks (design draft 63): with 15, trout (level 15) bite 2^(14/15) times as
+    /// often as shrimp (level 1) of the same weight, at any level that catches both.
     #[test]
     fn outlevelled_fish_bite_less() {
         let cold = ["cold".to_owned()];
@@ -241,13 +271,14 @@ mod tests {
         };
         // Equal weights: half each without the rule.
         assert!((shrimp_share(&setup()) - 0.5).abs() < 0.01);
-        let (shrimp, trout) = (0.5f32.powf(44.0 / 15.0), 0.5f32.powf(30.0 / 15.0));
+        let expected = 1.0 / (1.0 + 2f32.powf(14.0 / 15.0));
         let share = shrimp_share(&setup_with("outlevelled: 15.0,"));
-        assert!((share - shrimp / (shrimp + trout)).abs() < 0.01, "shrimp bite {share} of the time");
-        // A file asking 0 levels is refused.
+        assert!((share - expected).abs() < 0.01, "shrimp bite {share} of the time, not {expected}");
+        // Rules asking 0 levels are refused.
         let blocks = BlockRegistry::new(vec![BlockDef { name: "t:shrimp".into(), ..Default::default() }]).unwrap();
         let file = FishingRegistry::read("t", "(outlevelled: 0.0, catches: [])").unwrap();
-        assert!(FishingRegistry::new(vec![file], &blocks, &SkillRegistry::default()).is_err(), "0 levels is refused");
+        let rules = FishingRules::default().with(&file.rules().unwrap()).0;
+        assert!(FishingRegistry::new(vec![file], rules, &blocks, &SkillRegistry::default()).is_err(), "0 levels is refused");
     }
 
     /// The game's catches teach by the doubling law, 10 × 2^((level − 1) ÷ 10.5) rounded
@@ -267,6 +298,6 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
-        assert_eq!(content.fishing.outlevelled, Some(15.0));
+        assert_eq!(content.fishing.rules.outlevelled, 15.0);
     }
 }
