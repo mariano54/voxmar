@@ -21,7 +21,7 @@ use voxmar_engine::world::Column;
 
 use crate::biome::Biomes;
 use crate::caves::Cave;
-use crate::content::{BlockMatch, WorldContent};
+use crate::content::WorldContent;
 use crate::ecology::{Ground, Plant};
 use crate::features::{self, Features};
 use crate::geology::{GeoGrid, noise};
@@ -137,11 +137,7 @@ impl Terrain {
         let blanket = (0..registry.len())
             .map(|i| {
                 let def = registry.def(BlockId(i as u16));
-                frost.blanket.iter().find(|(from, _)| match from {
-                    BlockMatch::Name(name) => def.name == *name,
-                    BlockMatch::Tag(tag) => def.has_tag(tag),
-                })
-                .map(|(_, to)| registry.expect(to))
+                frost.blanket.iter().find(|rule| rule.applies(def)).map(|rule| registry.expect(&rule.to))
             })
             .collect();
         let snow_cover = (0..registry.len())

@@ -45,6 +45,11 @@ of a project, not the end.
 
 ## Keeping animals
 
+One player keeps at most 64 animals, herds and pets together, counting any not yet back in
+the world. At the cap a wild animal won't take your food and a pair won't take breeding
+food, with a line saying why. A cap lowered later takes none of yours away: taming and
+births wait until you are under it.
+
 An animal's **condition** (0..1) is the product of what its species needs:
 
 | Need | Met by |

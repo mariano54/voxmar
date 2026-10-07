@@ -579,7 +579,7 @@ impl UndergroundColumn<'_> {
                 let held = match supports[block.0 as usize].0 {
                     Support::Above => holds(at + IVec3::Y, Support::Above),
                     Support::Below => holds(at - IVec3::Y, Support::Below),
-                    Support::None => true,
+                    Support::None | Support::Wall => true,
                 };
                 if !held {
                     break;

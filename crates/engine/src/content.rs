@@ -14,7 +14,7 @@ use crate::action::ActionRegistry;
 use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::cooking::CookingRegistry;
-use crate::creature::CreatureRegistry;
+use crate::creature::{CreatureRegistry, DefenceTraining, Limits, Rules};
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
 use crate::effect::EffectRegistry;
@@ -60,6 +60,70 @@ pub struct Content {
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
     pub english: Arc<Lang>,
+    /// What loading noticed and allowed, for the log: a later package replacing data an
+    /// earlier one set (creature limits, Defence training).
+    pub notes: Arc<Vec<String>>,
+}
+
+/// Single-valued data a package may set field by field (Design draft 91): a later
+/// package's fields replace an earlier one's, and the load log names both packages, so a
+/// mod tunes one number without forking base. [`settable!`] declares one.
+pub trait Settable: Copy {
+    /// Every field as an option: what one package sets.
+    type Set;
+    /// These values with `set` over them, and the names of the fields it set.
+    fn with(self, set: &Self::Set) -> (Self, Vec<&'static str>);
+}
+
+/// Declares `$set` for a [`Settable`] `$whole`: its fields as options, as a package's file
+/// reads them, and `with`, which lays them over the values so far.
+macro_rules! settable {
+    ($(#[$meta:meta])* $set:ident for $whole:ident { $($field:ident: $ty:ty),* $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize)]
+        #[serde(deny_unknown_fields, default)]
+        pub struct $set {
+            $(pub $field: Option<$ty>,)*
+        }
+
+        impl $crate::content::Settable for $whole {
+            type Set = $set;
+
+            fn with(mut self, set: &$set) -> (Self, Vec<&'static str>) {
+                let mut changed = Vec::new();
+                $(
+                    if let Some(value) = set.$field {
+                        self.$field = value;
+                        changed.push(stringify!($field));
+                    }
+                )*
+                (self, changed)
+            }
+        }
+    };
+}
+pub(crate) use settable;
+
+/// Single-valued data as the packages so far set it, and the last package that did.
+#[derive(Default)]
+struct Setting<T> {
+    value: T,
+    by: Option<String>,
+}
+
+impl<T: Settable> Setting<T> {
+    /// Lays what `package`'s `file` sets of `what` over the value, noting when that
+    /// replaces an earlier package's.
+    fn set(&mut self, package: &str, file: &str, what: &str, set: Option<T::Set>, notes: &mut Vec<String>) {
+        let Some(set) = set else { return };
+        let changed;
+        (self.value, changed) = self.value.with(&set);
+        if let Some(earlier) = self.by.replace(package.to_owned()) {
+            let note = format!("{package}/{file} replaces the {what} {earlier} set ({})", changed.join(", "));
+            tracing::info!("{note}");
+            notes.push(note);
+        }
+    }
 }
 
 /// A definition file the engine leaves to another crate.
@@ -92,6 +156,9 @@ impl Content {
         let mut skills = SkillRegistry::default();
         let mut crops = Vec::new();
         let mut creatures = Vec::new();
+        let mut creature_limits = Setting::<Limits>::default();
+        let mut defence = Setting::<DefenceTraining>::default();
+        let mut notes = Vec::new();
         let mut cooking = Vec::new();
         let mut recipes = Vec::new();
         let mut effects = Vec::new();
@@ -134,7 +201,10 @@ impl Content {
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "creatures.ron" => {
-                        creatures.extend(CreatureRegistry::read(package, &source)?);
+                        let read = CreatureRegistry::read(package, &source)?;
+                        creatures.extend(read.defs);
+                        creature_limits.set(package, &name, "creature limits", read.limits, &mut notes);
+                        defence.set(package, &name, "Defence training", read.defence, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons).
@@ -199,7 +269,8 @@ impl Content {
         skills.validate()?;
         let blocks = BlockRegistry::new(blocks)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let creatures = CreatureRegistry::new(creatures, &blocks, &skills)?;
+        let rules = Rules { limits: creature_limits.value, defence: defence.value };
+        let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
         let effects = EffectRegistry::new(effects)?;
@@ -210,6 +281,14 @@ impl Content {
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks)?);
+        // A furnishing gives itself back only where a player placed it: one that drops
+        // nothing anyway has no business with the tag.
+        if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
+            return Err(RegistryError(format!(
+                "block `{}` is a `furnishing` but drops nothing: give it a drop, or remove the tag (village props that drop nothing don't need it)",
+                blocks.def(id).name
+            )));
+        }
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -231,6 +310,7 @@ impl Content {
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
+            notes: Arc::new(notes),
         })
     }
 
