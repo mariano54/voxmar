@@ -601,3 +601,24 @@ fn house_catalogue() {
     }
 }
 
+/// How much of the world a new player waits for: finding spawn and making its column
+/// plans the settlements and lays the trails round it, and the river regions under both.
+/// Trails near settlements read far (each tile the grids of the regions three around),
+/// so this is most of the time a fresh server takes to answer; the budgets are what it
+/// needs now, and a change needing more must say why here. Counts, not times, so a busy
+/// machine cannot fail it.
+#[test]
+fn spawn_needs_only_so_much_planning() {
+    use crate::Generator;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    // Seed, then the most stream-tier river regions, trail grids and settlement squares:
+    // the server's default seed has trails laid at spawn, 0 has none.
+    for (seed, streams, grids, squares) in [(0x5eed, 36, 60, 25), (0, 8, 0, 12)] {
+        let world = Overworld::with_content(seed, content.blocks.clone(), &world_content);
+        world.generate(ColumnPos::of_block(world.spawn_point()));
+        let made = (world.rivers.made().1, world.trails.made().0, world.settlements.made());
+        assert!(made.0 <= streams && made.1 <= grids && made.2 <= squares, "seed {seed}: {made:?} river regions, trail grids and squares, over {:?}", (streams, grids, squares));
+    }
+}

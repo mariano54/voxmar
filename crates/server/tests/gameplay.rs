@@ -1246,3 +1246,16 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
+
+/// A server started on a world another server holds open answers its first player at
+/// once: the land round spawn, with its rivers, trails and settlements, is planned once
+/// per process (`Overworld::shared`), however many servers stand on it.
+#[test]
+fn a_second_server_on_the_same_world_answers_a_join_at_once() {
+    let first = Client::join();
+    let started = Instant::now();
+    let second = Client::join();
+    let took = started.elapsed();
+    assert!(took < Duration::from_secs(2), "joining a second server on the same world took {took:?}");
+    assert_eq!(first.position, second.position);
+}
