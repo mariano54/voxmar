@@ -747,27 +747,27 @@ fn settlement_census() {
 
 /// How much of the world a new player waits for: finding spawn and making its column
 /// plans the settlements and lays the trails round it, and the river regions under both.
-/// Trails near settlements read far (each tile the grids of the regions three around),
-/// so this is most of the time a fresh server takes to answer; the budgets are what it
-/// needs now, and a change needing more must say why here. Counts, not times, so a busy
-/// machine cannot fail it.
+/// Trails near settlements plan the land within a trail's length of the gates near
+/// spawn, in 128-block patches of their grid, so this is most of the time a fresh server
+/// takes to answer; the budgets are what it needs now, and a change needing more must
+/// say why here. Counts, not times, so a busy machine cannot fail it.
 #[test]
 fn spawn_needs_only_so_much_planning() {
     use crate::Generator;
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
     let content = voxmar_engine::content::Content::load(&dir).unwrap();
     let world_content = crate::content::WorldContent::load(&content).unwrap();
-    // Seed, then the most stream-tier river regions, trail grids and settlement squares:
-    // the server's default seed has trails laid at spawn, 0 has none. Seed 0 plans the
-    // squares in reach of spawn first, for the settlement promised there (rules,
-    // `spawn_settlement_within`), which reads one river region more. Since names draw
-    // from a stream of their own (`names_apart`), every plan draws its layout afresh, and
-    // the default seed's trails reach three squares more.
-    for (seed, streams, grids, squares) in [(0x5eed, 36, 60, 28), (0, 9, 0, 12)] {
+    // Seed, then the most stream-tier river regions, patches of the trails' grid and
+    // settlement squares: the server's default seed has trails laid at spawn, 0 has none.
+    // Seed 0 plans the squares in reach of spawn first, for the settlement promised there
+    // (rules, `spawn_settlement_within`). Since trails near settlements plan only round
+    // the gates near spawn, the default seed reads 25 stream regions (36 before) and 19
+    // squares (28), and its trails' grid 257 patches of 128 blocks (60 whole regions).
+    for (seed, streams, grids, squares) in [(0x5eed, 25, 257, 19), (0, 9, 0, 9)] {
         let world = Overworld::with_content(seed, content.blocks.clone(), &world_content);
         world.generate(ColumnPos::of_block(world.spawn_point()));
         let made = (world.rivers.made().1, world.trails.made().0, world.settlements.made());
-        assert!(made.0 <= streams && made.1 <= grids && made.2 <= squares, "seed {seed}: {made:?} river regions, trail grids and squares, over {:?}", (streams, grids, squares));
+        assert!(made.0 <= streams && made.1 <= grids && made.2 <= squares, "seed {seed}: {made:?} river regions, trail grid patches and squares, over {:?}", (streams, grids, squares));
     }
 }
 
