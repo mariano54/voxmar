@@ -1612,11 +1612,51 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     assert_eq!(made, 2, "one iron ore crushed across a restart");
     drop(client);
 
-    // A machines file that cannot be read is kept aside before the next save writes over it.
+    // A machines file that cannot be read is kept aside before the next save writes over it,
+    // the server goes on, and the machines standing in saved land join the factory again,
+    // empty.
     std::fs::write(dir.join("machines.ron"), "not a machine").unwrap();
-    let client = Client::join_with(config());
+    let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    client.ok(&format!("/machine {at}"));
     drop(client);
-    assert_eq!(std::fs::read_to_string(dir.join("machines.unreadable.ron")).unwrap(), "not a machine");
+    let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains("machines.unreadable.")).collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "not a machine");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() {
+    let dir = world_dir("cut");
+    let config = |cut_saves| ServerConfig { view_distance: 2, world: Some(dir.clone()), cut_saves, ..Default::default() };
+    let mut client = Client::join_with(config(false));
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give iron_ore 64"] {
+        client.ok(line);
+    }
+    let ore = client.content.blocks.expect("base:iron_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| held(c) == 64 && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // The ore goes into the chest, and every save after is cut short once the machines
+    // are written: the chest holding it is saved, the player without it is not.
+    let mut client = Client::join_with(config(true));
+    client.pump_until(|c| held(c) == 64);
+    use_machine(&mut client, chest);
+    client.pump_until(|c| held(c) == 0);
+    machine_says(&mut client, &at, "holds 64 items", 10);
+    drop(client);
+    // The last whole save: the ore in hand, the chest empty. Sixty-four in all.
+    let mut client = Client::join_with(config(false));
+    client.pump_until(|c| held(c) > 0);
+    let said = client.ok(&format!("/machine {at}"));
+    let in_chest = said.split(' ').zip(said.split(' ').skip(1)).find_map(|(n, word)| (word == "items").then(|| n.parse::<u32>().ok()).flatten()).unwrap_or(0);
+    assert_eq!(held(&client) + in_chest, 64, "the player holds {}, the chest: {said}", held(&client));
+    drop(client);
+    let staged: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".new")).collect();
+    assert!(staged.is_empty(), "the cut save was forgotten: {staged:?}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

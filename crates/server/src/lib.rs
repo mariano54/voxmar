@@ -67,6 +67,9 @@ pub struct ServerConfig {
     /// Makes the server run behind, to see how clients cope, as on a busy machine. None
     /// but in tests.
     pub lag: Lag,
+    /// Cuts every save short once its machines are written, as a crash would. Only in
+    /// tests.
+    pub cut_saves: bool,
 }
 
 /// How a server made to run behind does so (see `ServerConfig::lag`).
@@ -101,6 +104,7 @@ impl Default for ServerConfig {
             admins: Vec::new(),
             world: None,
             lag: Lag::default(),
+            cut_saves: false,
         }
     }
 }
@@ -224,7 +228,9 @@ fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, 
     let Some(dir) = &config.world else { return Ok((None, WorldMeta::new("world", config.seed, new_mode))) };
     let save = WorldSave::new(dir);
     let mut meta = if save.exists() {
-        save.read_meta()?
+        let meta = save.read_meta()?;
+        save.recover(&meta);
+        meta
     } else {
         let name = dir.file_name().map_or_else(|| "world".into(), |name| name.to_string_lossy().into_owned());
         let meta = WorldMeta::new(name, config.seed, new_mode);
@@ -496,7 +502,7 @@ impl Server {
         self.world.insert(pos, Arc::new(loaded.column));
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
-        self.reconcile_machines(pos);
+        self.reconcile_machines(pos, loaded.saved);
     }
 
     fn handle_messages(&mut self) {
@@ -508,7 +514,9 @@ impl Server {
                     Ok(None) => break,
                     Err(_) => {
                         tracing::info!("{} left", player.name);
-                        self.save_player(player);
+                        // The whole world with them: what they hold is saved as one with
+                        // what machines and the ground hold, or a crash could double it.
+                        self.save();
                         self.players.remove(&id);
                     }
                 }
@@ -552,21 +560,29 @@ impl Server {
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
-        // What machines hold before the land they stand in: a save cut short between the two
-        // loses what a machine held rather than keeping it twice.
+        // One generation: nothing counts until `world.ron` does, so a save cut short leaves
+        // the last whole one, and what a player holds never also stays in a machine.
+        let generation = self.meta.generation + 1;
+        save.begin(generation);
+        let (world, registry) = (&self.world, &self.content.blocks);
+        let mut written = FxHashSet::default();
+        self.dirty.retain(|&pos| {
+            let Some(column) = world.column(pos) else { return false };
+            match save.write_column(pos, column, registry) {
+                Ok(()) => {
+                    written.insert(pos);
+                }
+                Err(e) => tracing::error!("could not save column {pos:?}: {e}"),
+            }
+            true
+        });
         if let Err(e) = save.write_machines(&self.saved_machines()) {
             tracing::error!("could not save machines: {e}");
         }
-        let (world, registry) = (&self.world, &self.content.blocks);
-        let columns = self.dirty.len();
-        self.dirty.retain(|&pos| {
-            let Some(column) = world.column(pos) else { return false };
-            let result = save.write_column(pos, column, registry);
-            if let Err(e) = &result {
-                tracing::error!("could not save column {pos:?}: {e}");
-            }
-            result.is_err()
-        });
+        if self.config.cut_saves {
+            tracing::warn!("save {generation} cut short after its machines, as asked");
+            return;
+        }
         for player in self.players.values().filter(|p| p.joined) {
             self.save_player(player);
         }
@@ -587,10 +603,17 @@ impl Server {
         self.meta.day = Some(self.day as u64);
         self.meta.day_speed = self.day_speed;
         self.meta.last_played = save::unix_time();
-        if let Err(e) = save.write_meta(&self.meta) {
-            tracing::error!("could not save {}: {e}", save.dir().display());
+        self.meta.generation = generation;
+        match save.commit(&self.meta) {
+            // Columns saved are clean; any not moved into place are written again next time.
+            Ok(true) => self.dirty.retain(|pos| !written.contains(pos)),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::error!("could not save {}: {e}", save.dir().display());
+                self.meta.generation = generation - 1;
+            }
         }
-        tracing::debug!("saved {columns} columns and {} players in {:?}", self.players.len(), started.elapsed());
+        tracing::debug!("saved {} columns and {} players in {:?}", written.len(), self.players.len(), started.elapsed());
     }
 
     fn save_player(&self, player: &Player) {

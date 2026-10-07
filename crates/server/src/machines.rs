@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use voxmar_engine::block::BlockId;
-use voxmar_engine::coords::ColumnPos;
+use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, local_index};
 use voxmar_engine::dropped;
 use voxmar_engine::factory::{MachineState, MachineView, Status};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
@@ -418,10 +418,13 @@ impl Server {
         saved
     }
 
-    /// The machines in a column just loaded must stand in it: one whose block is gone (the
-    /// world was edited, or its save lost) leaves the factory, dropping what it held where it
-    /// stood.
-    pub(crate) fn reconcile_machines(&mut self, column: ColumnPos) {
+    /// The machines in a column just loaded and its machine blocks must agree. One whose
+    /// block is gone (the world was edited, or the land was saved after it was broken)
+    /// leaves the factory, dropping what it held where it stood: the save it came from is
+    /// the one the dropped items and players came from, so nothing is doubled. A machine
+    /// block the factory does not hold (its file could not be read) joins it, empty, if the
+    /// column was saved (`adopt`): only players build machines.
+    pub(crate) fn reconcile_machines(&mut self, column: ColumnPos, adopt: bool) {
         let gone: Vec<(IVec3, BlockId)> = self
             .factory
             .iter()
@@ -431,6 +434,31 @@ impl Server {
         for (pos, block) in gone {
             tracing::warn!("a machine at {pos} is no longer in the world; it leaves the factory");
             self.machine_changed(pos, block, BlockId::AIR);
+        }
+        let machines = &self.content.machines;
+        let Some(loaded) = self.world.column(column).filter(|_| adopt) else { return };
+        let origin = column.origin();
+        let mut found = Vec::new();
+        for (index, chunk) in loaded.chunks.iter().enumerate() {
+            if !chunk.palette().iter().any(|&b| machines.get(b).is_some()) {
+                continue;
+            }
+            let base = origin + IVec3::new(0, index as i32 * CHUNK_SIZE, 0);
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    for x in 0..CHUNK_SIZE {
+                        let block = chunk.get(local_index(IVec3::new(x, y, z)));
+                        let pos = base + IVec3::new(x, y, z);
+                        if machines.get(block).is_some() && self.factory.get(pos).is_none() {
+                            found.push((pos, block));
+                        }
+                    }
+                }
+            }
+        }
+        for (pos, block) in found {
+            tracing::warn!("a machine block at {pos} was not in the factory; it joins it, empty");
+            self.machine_changed(pos, BlockId::AIR, block);
         }
     }
 
@@ -464,11 +492,12 @@ impl Server {
             self.factory.insert_state(IVec3::from_array(machine.position), block, state, &machines);
         }
         // The land already loaded (round the spawn) is checked now, the rest as it loads.
-        let mut loaded: Vec<ColumnPos> = self.factory.iter().map(|(pos, ..)| ColumnPos::of_block(pos)).filter(|&c| self.world.contains(c)).collect();
+        let mut loaded: Vec<ColumnPos> = self.world.columns().map(|(&c, _)| c).collect();
         loaded.sort_by_key(|c| (c.0.x, c.0.y));
         loaded.dedup();
         for column in loaded {
-            self.reconcile_machines(column);
+            let saved = self.save.as_ref().is_some_and(|save| save.has_column(column));
+            self.reconcile_machines(column, saved);
         }
     }
 }

@@ -25,10 +25,14 @@ Everything a mod might want to change is in that data, not in code.
   structure) is looked at every `survey_seconds` (1 by default) where the land is loaded.
   Where it is not, a water wheel keeps what it had, a windmill takes the mean wind
   (`wind_mean`) at its height, and a walked treadwheel stops.
-- **What it holds is never lost or made.** A save that cannot be read is copied to
-  `machines.unreadable.ron` before the server refuses to start, so nothing is overwritten.
-  A machine whose block is gone when its land loads (edited, or lost to a crash) drops
-  what it held, as breaking it would. Work half done is saved with it and goes on.
+- **What it holds is never made twice (P60).** A save is one generation: machines,
+  players, dropped items and land are staged and count together once `world.ron` takes the
+  generation, so a save cut short leaves the last whole one and nothing a player put in a
+  machine is both in hand and in the machine (see `crates/server/src/save.rs`). A machines
+  file that cannot be read is copied to `machines.unreadable.<seconds>.ron` and the server
+  goes on without it; machine blocks standing in saved land join the factory again, empty.
+  A machine whose block is gone when its land loads drops what it held, as breaking it
+  would. Work half done is saved with it and goes on.
 
 ## What there is
 
