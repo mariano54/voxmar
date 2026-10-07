@@ -15,12 +15,12 @@
         // Meat: fills a little raw, more once cooking comes.
         (template: "drop", name: "raw_rabbit", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury"], all: (color: (220, 120, 120))),
         (template: "drop", name: "raw_chicken", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury"], all: (color: (235, 170, 150))),
-        (template: "drop", name: "raw_duck", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury", "fat"], all: (color: (200, 110, 100))),
+        (template: "drop", name: "raw_duck", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury", "fat"], all: (color: (200, 110, 100), rarity: Uncommon)),
         (template: "drop", name: "raw_mutton", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury"], all: (color: (200, 80, 80))),
         (template: "drop", name: "raw_pork", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury", "fat"], all: (color: (240, 150, 150))),
         (template: "drop", name: "raw_beef", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury"], all: (color: (190, 50, 50))),
         (template: "drop", name: "raw_venison", tags: ["meat", "raw", "edible", "food:3", "flavour:savoury", "game"], all: (color: (150, 40, 40))),
-        (template: "drop", name: "raw_bear", tags: ["meat", "raw", "edible", "food:4", "flavour:savoury", "game", "fat"], all: (color: (130, 40, 40))),
+        (template: "drop", name: "raw_bear", tags: ["meat", "raw", "edible", "food:4", "flavour:savoury", "game", "fat"], all: (color: (130, 40, 40), rarity: Uncommon)),
         (template: "drop", name: "raw_frog", tags: ["meat", "raw", "edible", "food:1", "flavour:savoury"], all: (color: (230, 180, 170))),
         (template: "drop", name: "raw_crab", tags: ["meat", "raw", "edible", "food:2", "flavour:savoury", "seafood"], all: (color: (220, 120, 80))),
         // Skins and fur.

@@ -428,17 +428,8 @@ fn yielded(count: u8, yield_: f32, roll: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Server, ServerConfig, load_content, open_world};
+    use crate::{Server, test_server};
     use voxmar_engine::glam::IVec3;
-
-    fn server() -> Server {
-        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
-        let mut config = ServerConfig::default();
-        let (save, meta) = open_world(&mut config).expect("no save to open");
-        let (_, incoming) = crossbeam_channel::unbounded();
-        let (_, console) = crossbeam_channel::unbounded();
-        Server::new(config, meta, save, content, incoming, console)
-    }
 
     fn rabbit(at: Vec3) -> SavedCreature {
         let at = at.to_array();
@@ -459,7 +450,7 @@ mod tests {
 
     #[test]
     fn a_waiting_animal_comes_back_once_its_place_is_loaded() {
-        let mut server = server();
+        let mut server = test_server();
         // One waits where the world is loaded (spawn), one far off where it is not.
         let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
         server.creatures.unplaced.push(rabbit(server.spawn));
@@ -485,7 +476,7 @@ mod tests {
 
     #[test]
     fn wild_creatures_leave_room_for_animals_waiting_in_the_save() {
-        let mut server = server();
+        let mut server = test_server();
         let most = server.content.creatures.limits().most;
         // Waiting animals far off fill all but two places.
         let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
@@ -521,7 +512,7 @@ mod tests {
 
     #[test]
     fn kept_animals_leave_the_wild_budget_alone() {
-        let mut server = server();
+        let mut server = test_server();
         let limits = server.content.creatures.limits();
         assert_eq!(server.wild_room(), limits.wild_most);
         // A rancher's herd, however big, takes nothing from the wild ones.
@@ -540,7 +531,7 @@ mod tests {
 
     #[test]
     fn a_birth_needs_room_and_costs_only_when_young_come() {
-        let mut server = server();
+        let mut server = test_server();
         let (a, b) = (kept_rabbit(&mut server, 1), kept_rabbit(&mut server, 2));
         let kept_each = server.content.creatures.limits().kept_each;
         // The keeper is at their cap, counting animals waiting in the save.
@@ -601,7 +592,7 @@ mod tests {
 
     #[test]
     fn taming_and_breeding_food_wait_for_room_under_the_keepers_cap() {
-        let mut server = server();
+        let mut server = test_server();
         let (player, client) = keeper(&mut server);
         let species = server.content.creatures.id("base:rabbit").expect("rabbits");
         let food = server.content.creatures.get(species).tame_food[0];
@@ -646,7 +637,7 @@ mod tests {
 
     #[test]
     fn natural_spawning_brings_a_herd_no_bigger_than_the_room_left() {
-        let mut server = server();
+        let mut server = test_server();
         let (player, _client) = keeper(&mut server);
         let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
         let full: Vec<_> = (0..server.room_left() - 1).map(|_| rabbit(far)).collect();
