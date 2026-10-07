@@ -716,8 +716,7 @@ impl Choice {
             Choice::UiSounds => words(settings.ui_sounds.key()),
             Choice::AntiAliasing => words(settings.anti_aliasing.key()),
             Choice::ShaderPack => {
-                let pack = packs.get(&settings.shader_pack);
-                locale.get_or(&pack.key(), &pack.name).to_owned()
+                packs.get(&settings.shader_pack).named(locale).to_owned()
             }
             Choice::Shadows => words(settings.shadows.key()),
             Choice::Water => words(settings.water_quality.key()),
