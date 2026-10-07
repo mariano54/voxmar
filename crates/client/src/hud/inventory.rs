@@ -49,7 +49,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item).after(InventorySystems))
+                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>| *gesture = Gesture::default());
@@ -90,6 +90,60 @@ struct LastClick {
 struct InventoryScreen;
 #[derive(Component)]
 struct InventorySlot(usize);
+/// The faint mark in an empty worn well of what it takes.
+#[derive(Component)]
+struct WornGlyph(usize);
+
+/// The mark for worn slot `slot`, if it is one, by `combat::Slot`'s order.
+fn worn_glyph(slot: usize) -> Option<Piece> {
+    let at = slot.checked_sub(WORN).filter(|_| slot <= LAST)?;
+    [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield].get(at).copied()
+}
+
+/// What packages restyle of the interface (`interface.ron`, in `core`); a later package
+/// changes what it gives. Read with the rest of the content at launch, which a bad value
+/// fails.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct InterfaceStyle {
+    /// How strongly an empty worn well shows what it takes, 0 to 1.
+    pub worn_glyph_alpha: f32,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct InterfaceFile {
+    worn_glyph_alpha: Option<f32>,
+}
+
+impl InterfaceStyle {
+    pub const FILE: &str = "interface.ron";
+
+    pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let mut alpha = None;
+        for file in files.iter().filter(|f| f.name == Self::FILE) {
+            let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
+            alpha = given.worn_glyph_alpha.or(alpha);
+        }
+        let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
+        if !(0.0..=1.0).contains(&worn_glyph_alpha) {
+            return Err(format!("{}: worn_glyph_alpha {worn_glyph_alpha} is not from 0 to 1", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha })
+    }
+}
+
+/// Each worn well's mark shows, faintly, while nothing is worn there.
+fn show_worn_glyphs(shown: Res<ShownInventory>, style: Res<InterfaceStyle>, mut glyphs: Query<(&WornGlyph, &mut Visibility, &mut ImageNode)>) {
+    let faint = Color::WHITE.with_alpha(style.worn_glyph_alpha);
+    for (glyph, mut visibility, mut image) in &mut glyphs {
+        visibility.set_if_neq(if shown.0.get(glyph.0).is_some() { Visibility::Hidden } else { Visibility::Inherited });
+        if image.color != faint {
+            image.color = faint;
+        }
+    }
+}
+
 /// A slot a screenshot shows the tooltip of, as if the pointer were over it (`--hover-slot`).
 #[derive(Resource)]
 pub struct HoverSlot(pub usize);
@@ -143,8 +197,15 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             };
             let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| {
                 let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
-                grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image()))
-                    .with_children(|cell| slot_contents(cell, font, slot));
+                grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image())).with_children(|cell| {
+                    // A worn well shows faintly what it takes, under the piece worn in it.
+                    if let Some(glyph) = worn_glyph(slot) {
+                        let inset = (SLOT - 16.0 * PX) / 2.0;
+                        let at = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
+                        cell.spawn((at, glyph.image(), WornGlyph(slot)));
+                    }
+                    slot_contents(cell, font, slot)
+                });
             };
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
@@ -971,6 +1032,18 @@ mod tests {
     use voxmar_engine::block::BlockId;
 
     use super::*;
+
+    #[test]
+    fn the_interface_style_comes_from_data_and_a_later_package_changes_it() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let mut files: Vec<_> = content.files.iter().cloned().collect();
+        assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.25);
+        let file = |source: &str| voxmar_engine::content::ContentFile { package: "mod".into(), name: InterfaceStyle::FILE.into(), source: source.into() };
+        files.push(file("(worn_glyph_alpha: 0.5)"));
+        assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
+        files.push(file("(worn_glyph_alpha: 2.0)"));
+        assert!(InterfaceStyle::load(&files).is_err());
+    }
 
     fn held(count: u8) -> Inventory {
         let mut inventory = Inventory::default();
