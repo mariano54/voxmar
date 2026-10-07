@@ -138,8 +138,6 @@ pub(crate) fn random3(tick: u64, cell: IVec3, salt: u32) -> [f32; 3] {
         ^ (cell.y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
         ^ (cell.z as u64).wrapping_mul(0x1656_67b1_9e37_79f9)
         ^ (salt as u64).wrapping_mul(0x27d4_eb2f_1656_67c5);
-    // The whole of murmur's finalizer for each: with half of it, rolls a tick apart came out
-    // within a few hundredths of each other (gravel broke sixty times without a flint).
     [0, 1, 2].map(|_| {
         h ^= h >> 33;
         h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
