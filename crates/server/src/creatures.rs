@@ -715,7 +715,7 @@ impl Server {
 
     /// Tries a spot around a player, and puts there a group of whatever suits it best,
     /// if anything does and the player has room for more around them.
-    fn spawn_near(&mut self, player: PlayerId, salt: u64) {
+    pub(crate) fn spawn_near(&mut self, player: PlayerId, salt: u64) {
         let Some(at) = self.players.get(&player).map(|p| p.position) else { return };
         let limits = self.content.creatures.limits();
         let wild_room = self.wild_room();
@@ -799,10 +799,29 @@ impl Server {
         }
     }
 
-    /// How many more wild creatures the world has room for: what the limit leaves after the
-    /// living and the kept animals still waiting in the save, so those always fit back.
-    pub(crate) fn wild_room(&self) -> usize {
+    /// Room left under the world's total: what `most` leaves after the living and the kept
+    /// animals still waiting in the save, so those always fit back.
+    pub(crate) fn room_left(&self) -> usize {
         self.content.creatures.limits().most.saturating_sub(self.creatures.live.len() + self.creatures.unplaced.len())
+    }
+
+    /// How many more wild creatures the world has room for: under the wild budget, which
+    /// kept animals never touch, and under the total.
+    pub(crate) fn wild_room(&self) -> usize {
+        let wild = self.creatures.live.values().filter(|c| c.owner.is_none()).count();
+        self.content.creatures.limits().wild_most.saturating_sub(wild).min(self.room_left())
+    }
+
+    /// How many animals a player keeps, alive or waiting in the save.
+    pub(crate) fn kept_by(&self, name: &str) -> usize {
+        let live = self.creatures.live.values().filter(|c| c.owner.as_deref() == Some(name)).count();
+        live + self.creatures.unplaced.iter().filter(|s| s.owner == name).count()
+    }
+
+    /// How many young a keeper's animals may have now: room under the keeper's own cap and
+    /// under the world's total.
+    pub(crate) fn birth_room(&self, keeper: &str) -> usize {
+        self.content.creatures.limits().kept_each.saturating_sub(self.kept_by(keeper)).min(self.room_left())
     }
 
     /// The cell nearest height `y` in a column where a body can stand: solid beneath, two
