@@ -2598,6 +2598,58 @@ mod tests {
     /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
     /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
     /// in-game captures of caves near spawn: inside the largest open space under each sight.
+    /// The stone pieces standing on the ground around `AT=x,z` (seed `SEED`): each piece's
+    /// lowest block, its size, height above the ground and blocks, to find what made one.
+    #[test]
+    #[ignore]
+    fn stone_pieces() {
+        let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
+        let at: Vec<i32> = std::env::var("AT").unwrap_or_else(|_| "0,0".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let registry = registry();
+        let world = Overworld::new(seed, registry.clone());
+        let first = ColumnPos::of_block(IVec3::new(at[0], 0, at[1])).offset(-1, -1);
+        let columns = generate_area(&world, first, 3);
+        let origin = first.origin();
+        let span = 3 * voxmar_engine::coords::CHUNK_SIZE;
+        let block = |p: IVec3| {
+            if !(0..span).contains(&(p.x - origin.x)) || !(0..span).contains(&(p.z - origin.z)) || !(1..WORLD_HEIGHT_FOR_TESTS).contains(&p.y) {
+                return BlockId::AIR;
+            }
+            columns[(((p.z - origin.z) >> 5) * 3 + ((p.x - origin.x) >> 5)) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31))
+        };
+        let stone = |b: BlockId| registry.def(b).has_tag("stone") || registry.def(b).name.ends_with("moss_block");
+        let mut seen = rustc_hash::FxHashSet::default();
+        for z in origin.z..origin.z + span {
+            for x in origin.x..origin.x + span {
+                let h = world.height(x, z);
+                for y in h + 1..h + 5 {
+                    let p = IVec3::new(x, y, z);
+                    if !stone(block(p)) || !seen.insert(p) {
+                        continue;
+                    }
+                    let mut stack = vec![p];
+                    let mut cells = Vec::new();
+                    while let Some(q) = stack.pop() {
+                        cells.push(q);
+                        for d in [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z] {
+                            let n = q + d;
+                            if n.y > world.height(n.x, n.z) && stone(block(n)) && seen.insert(n) {
+                                stack.push(n);
+                            }
+                        }
+                    }
+                    let high = cells.iter().map(|c| c.y - world.height(c.x, c.z)).max().unwrap();
+                    let mut kinds = std::collections::BTreeMap::<String, i32>::new();
+                    for c in &cells {
+                        *kinds.entry(registry.def(block(*c)).name.trim_start_matches("base:").to_owned()).or_default() += 1;
+                    }
+                    let d = (p.x - at[0]).abs().max((p.z - at[1]).abs());
+                    println!("{p} (d {d}): {} blocks, {high} high, {kinds:?}", cells.len());
+                }
+            }
+        }
+    }
+
     /// Close-ups of kinds of tree in place, for captures: `TREES=olive:mediterranean,
     /// larch:taiga SEED=n` finds, in each biome near spawn, the places the tree is likeliest,
     /// then in the first of them that has one the trunk whose crown holds most of its own

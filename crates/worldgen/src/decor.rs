@@ -133,6 +133,10 @@ pub struct Decor {
 /// Standing stones are of a local stone at least this light (0 ..= 255).
 const LIGHT_STONE: u8 = 140;
 
+/// How far a rock's shape reaches up from its widest layer, in blocks: its second layer
+/// spans about 70% of the first, so it steps in.
+const MOUND_RISE: f32 = 1.45;
+
 /// The share of a rock's blocks of its second stone.
 const ROCK_MOTTLE: f32 = 0.33;
 
@@ -392,11 +396,11 @@ impl Decor {
                 let stones = self.stones(area, site, stones);
                 let block = stones.pick(rng.unit().min(0.9999));
                 let other = second_stone(stones, block, rng);
-                // Sunk about a block, standing two or three blocks above the grass: a mound,
-                // never a slab.
-                let centre = base.as_vec3() + Vec3::new(0.5, -0.2 + 0.6 * r, 0.5);
+                // Widest on the ground, each layer above narrower: a rounded mound, never a
+                // slab or a box.
+                let centre = base.as_vec3() + Vec3::new(0.5, 0.5, 0.5);
                 let damp = *moss * dampness(site);
-                self.rock(area, centre, Vec3::new(r, r * 0.8, r), [block, other], damp, rng.next_u64(), blocks);
+                self.rock(area, centre, Vec3::new(r, (0.8 * r).max(MOUND_RISE), r), [block, other], damp, rng.next_u64(), blocks);
             }
             Form::Rocks { count, spread, size, stones, moss } => {
                 let stones = self.stones(area, site, stones);
@@ -412,10 +416,10 @@ impl Decor {
                     if area.unfit(x, z) || (area.height(x, z) - base.y + 1).abs() > 2 {
                         continue;
                     }
-                    // Sitting on the ground as a rounded mound: two blocks high in the middle,
-                    // stepping down to one around it, never a flat slab or a lone cube.
-                    let centre = Vec3::new(x as f32 + 0.5, area.height(x, z) as f32 + 1.6 + 0.15 * r, z as f32 + 0.5);
-                    self.rock(area, centre, Vec3::new(r, r * 0.95, r), [block, other], damp, seed, blocks);
+                    // A small rounded mound: widest on the ground, a narrower block or two on
+                    // top, never a flat slab or a lone cube.
+                    let centre = Vec3::new(x as f32 + 0.5, area.height(x, z) as f32 + 1.5, z as f32 + 0.5);
+                    self.rock(area, centre, Vec3::new(r, MOUND_RISE, r), [block, other], damp, seed, blocks);
                 }
             }
             Form::Bush { radius, leaves, log } => {
