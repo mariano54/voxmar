@@ -98,6 +98,29 @@ impl Rgba {
 
     fn square(&self, size: u32) -> Rgba {
         let side = self.width.min(self.height);
+        // Drawn finer than the array by a whole factor: each texel the average of the
+        // block of texels it covers, colours weighted by how opaque each is, so a cut-out
+        // edge keeps its colour rather than darkening towards the clear texels' black.
+        if side > size && side % size == 0 {
+            let k = side / size;
+            let mut pixels = Vec::with_capacity((size * size * 4) as usize);
+            for y in 0..size {
+                for x in 0..size {
+                    let (mut rgb, mut alpha) = ([0u32; 3], 0u32);
+                    for sy in y * k..(y + 1) * k {
+                        for sx in x * k..(x + 1) * k {
+                            let p = &self.pixels[((sy * self.width + sx) * 4) as usize..][..4];
+                            let a = p[3] as u32;
+                            (0..3).for_each(|c| rgb[c] += p[c] as u32 * a);
+                            alpha += a;
+                        }
+                    }
+                    let colour = rgb.map(|c| c.checked_div(alpha).unwrap_or(0) as u8);
+                    pixels.extend_from_slice(&[colour[0], colour[1], colour[2], (alpha / (k * k)) as u8]);
+                }
+            }
+            return Rgba { width: size, height: size, pixels };
+        }
         let mut pixels = Vec::with_capacity((size * size * 4) as usize);
         for y in 0..size {
             for x in 0..size {
@@ -354,7 +377,16 @@ impl Source {
             .chain(Some(format!("{} placeholders", loaded.iter().filter(|t| t.is_none()).count())))
             .collect();
         bevy::log::info!("block textures: {}", served.join(", "));
-        let size = loaded.iter().chain(&unders).flatten().map(|t| t.width.min(t.height)).max().unwrap_or(16).next_power_of_two();
+        let size = array_size(self.packs.first().map_or(0, |pack| pack.resolution), loaded.iter().chain(&unders).flatten());
+        let finer: Vec<&str> = refs
+            .iter()
+            .zip(&loaded)
+            .filter(|(_, t)| t.as_ref().is_some_and(|t| t.width.min(t.height) > size))
+            .map(|(r, _)| r.name.as_str())
+            .collect();
+        if !finer.is_empty() {
+            bevy::log::info!("block textures drawn finer than the array's {size}×{size}, scaled down to it: {}", finer.join(", "));
+        }
         // A strip without a rock under it animates (an ore over its host keeps its first
         // frame), each frame for the time its pack's .mcmeta gives.
         let animations = loaded
@@ -439,6 +471,19 @@ impl Source {
     pub fn sprite(&mut self, name: &str, fallback: (u32, u32, [u8; 4])) -> Rgba {
         self.read(&format!("gui/sprites/hud/{name}")).unwrap_or_else(|| Rgba::solid(fallback.0, fallback.1, fallback.2))
     }
+}
+
+/// How many texels across the block texture array is: the resolution of the pack that
+/// leads (`resolution`, Voxmar HD's 32, from its manifest), or, for packs without one, the
+/// side most of their textures are drawn at, rounded up to a power of two. Never the
+/// largest: one face drawn finer (the default pack's mushroom blocks at 32) would make
+/// every layer of the array that size, four times the memory, so it is scaled down instead.
+fn array_size<'a>(resolution: u32, textures: impl Iterator<Item = &'a Rgba>) -> u32 {
+    let mut sides: Vec<u32> = textures.map(|t| t.width.min(t.height)).collect();
+    sides.sort_unstable();
+    // The most common side; of two as common, the finer.
+    let common = sides.chunk_by(|a, b| a == b).max_by_key(|run| (run.len(), run[0])).map_or(16, |run| run[0]);
+    resolution.max(common).max(1).next_power_of_two()
 }
 
 /// For each block texture reference, the name of an opaque block one of whose faces it is,
@@ -668,6 +713,38 @@ mod tests {
             ["texture pack Cables Plus: block/lv_cable_side, a face of the opaque block base:lv_cable, is 62% see-through; its clear texels are filled with (65, 54, 57)"]
         );
         assert!(warnings(("Voxmar HD", true)).is_empty());
+    }
+
+    /// The block array is drawn at its pack's resolution, 16 texels for the default pack
+    /// and 32 for Voxmar HD, whatever single face is drawn finer (the default pack's
+    /// mushroom blocks at 32), which is scaled down to it.
+    #[test]
+    fn the_block_array_is_drawn_at_its_packs_resolution() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets").canonicalize().expect("assets");
+        let content = voxmar_server::load_content(&assets).expect("content");
+        let refs = content.blocks.textures();
+        let packs = assets.join("packs");
+        let open = |name: &str| Pack::open(&packs.join(name)).expect("pack opens");
+        let (default, _, _) = Source { packs: vec![open("default")] }.block_textures(refs);
+        let (hd, _, _) = Source { packs: vec![open(HD_PACK), open("default")] }.block_textures(refs);
+        assert_eq!((default, hd), (16, 32));
+        // The most common side, never the largest; a pack's own resolution leads.
+        let sides = |sides: &[u32]| sides.iter().map(|&s| Rgba::solid(s, s, [0; 4])).collect::<Vec<_>>();
+        assert_eq!(array_size(0, sides(&[16, 16, 32, 16, 64]).iter()), 16);
+        assert_eq!(array_size(32, sides(&[16, 16, 32]).iter()), 32);
+        assert_eq!(array_size(0, sides(&[24, 24, 16]).iter()), 32);
+    }
+
+    /// Scaled down by a whole factor, a texel is the average of those it covers, colours
+    /// weighted by how opaque each is: a cut-out edge keeps its colour.
+    #[test]
+    fn a_finer_face_is_averaged_down() {
+        // Two by two: opaque red, opaque blue, and two clear black texels.
+        let pixels = [[255, 0, 0, 255], [0, 0, 255, 255], [0, 0, 0, 0], [0, 0, 0, 0]].concat();
+        let one = Rgba { width: 2, height: 2, pixels }.square(1);
+        assert_eq!(one.pixels, [127, 0, 127, 127]);
+        // Up, or by no whole factor, it still takes the nearest texel.
+        assert_eq!(Rgba::solid(2, 2, [9, 9, 9, 255]).square(4).pixels, [9, 9, 9, 255].repeat(16));
     }
 
     /// Every block texture and item icon the content uses resolves to art in the Voxmar HD

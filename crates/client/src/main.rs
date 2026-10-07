@@ -708,6 +708,9 @@ fn setup(
         }
         layers[layer].variants = Some(render::Variants { first, count });
     }
+    // The array's memory on the GPU, its mips a third more.
+    let bytes = block_textures.len() as f64 * (size * size * 4) as f64 * 4.0 / 3.0;
+    info!("block texture array: {} layers of {size}×{size}, {:.1} MB with mips", block_textures.len(), bytes / (1 << 20) as f64);
     ui::skin::load(&mut source, &mut images);
     ui::skin::set_font(settings.font, &mut fonts);
     let colormaps = source.colormaps();
