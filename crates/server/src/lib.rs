@@ -291,7 +291,9 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
-    /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
+    /// Cells whose block a player placed: ores, which then teach nothing; plants, which
+    /// don't regrow by themselves; and furnishings, which give themselves back only from
+    /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
@@ -771,6 +773,17 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
             _ => center.offset(-ring, -t),
         }
     })
+}
+
+/// A server on the game's own content with a new world kept in memory, for unit tests.
+#[cfg(test)]
+pub(crate) fn test_server() -> Server {
+    let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+    let mut config = ServerConfig::default();
+    let (save, meta) = open_world(&mut config).expect("no save to open");
+    let (_, incoming) = crossbeam_channel::unbounded();
+    let (_, console) = crossbeam_channel::unbounded();
+    Server::new(config, meta, save, content, incoming, console)
 }
 
 #[cfg(test)]
