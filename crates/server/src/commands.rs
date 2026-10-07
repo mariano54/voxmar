@@ -516,6 +516,21 @@ impl Server {
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        // Killed outright, as a blow would kill them: their death, their drops.
+        if what == "kill" {
+            // Never another player's kept animals: only wild ones and the admin's own.
+            let near: Vec<u32> = self
+                .creatures
+                .live
+                .iter()
+                .filter(|(_, c)| c.body.position.distance(at) <= 8.0 && c.owner.as_ref().is_none_or(|owner| *owner == name))
+                .map(|(&id, _)| id)
+                .collect();
+            for &id in &near {
+                self.creature_dies(id);
+            }
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(near.len())));
+        }
         for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
             match what {
                 "tame" if creature.owner.is_none() => {
@@ -527,7 +542,6 @@ impl Server {
                     creature.ready_until = tick + 30 * voxmar_protocol::TICKS_PER_SECOND as u64;
                     creature.breeds_again = 0;
                 }
-                // Stands still for a minute: for a closer look, or a picture.
                 // Stands still for a minute, side on to whoever asked, for a closer look or
                 // a picture.
                 "hold" => {
