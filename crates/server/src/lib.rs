@@ -3,6 +3,8 @@
 
 mod actions;
 mod commands;
+/// The weather in words, for the debug overlay as for `/weather`.
+pub use commands::{weather_name, weather_numbers};
 mod cooking;
 mod creatures;
 mod fight;
@@ -347,7 +349,7 @@ impl Server {
         console: Receiver<String>,
     ) -> Self {
         let world_content = WorldContent::load(&content).expect("checked by load_content");
-        let overworld = Arc::new(Overworld::with_content(meta.seed, content.blocks.clone(), &world_content));
+        let overworld = Overworld::shared(meta.seed, &content, &world_content);
         let climate = overworld.clone();
         let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let land = Arc::new(weather::OverworldLand { overworld: overworld.clone(), blocks: content.blocks.clone() });
@@ -775,5 +777,38 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), 81);
+    }
+
+    /// Village furnishings give nothing when broken (design draft 80), and nothing about
+    /// them lets them be picked for more: regrowth does not take them, and the journal does
+    /// not log them as wild plants. The props are read from settlements.ron's furnishings
+    /// (barrel, bell, hay, sacks, hanging things, nets), so a mod's own props are held to it
+    /// too.
+    #[test]
+    fn village_furnishings_drop_nothing() {
+        use voxmar_worldgen::Select;
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content");
+        let world = WorldContent::load(&content).expect("world content");
+        let f = &world.settlements.furnishings;
+        let blocks = &content.blocks;
+        let mut props: Vec<voxmar_engine::block::BlockId> = f.barrel.iter().chain(&f.bell).map(|name| blocks.expect(name)).collect();
+        // A list may pick by tag: every block with the tag is a prop.
+        for list in [&f.hay, &f.sacks, &f.hanging, &f.nets] {
+            for select in list {
+                match select {
+                    Select::Name(name, _) => props.push(blocks.expect(name)),
+                    Select::Tag(tag, _) => props.extend(blocks.tagged(tag)),
+                }
+            }
+        }
+        assert!(props.len() >= 6, "only {} props", props.len());
+        for id in props {
+            let name = blocks.def(id).name.clone();
+            let (def, info) = (blocks.def(id), blocks.info(id));
+            assert_eq!(info.drops, voxmar_engine::block::BlockId::AIR, "{name} drops something");
+            assert!(!content.regrowth.regrows(def, info.solid), "{name} regrows when picked");
+            let wild = ["plant", "flower", "herb", "fungus"].iter().any(|t| def.has_tag(t));
+            assert!(info.solid || !wild, "{name} would be logged as a wild plant");
+        }
     }
 }

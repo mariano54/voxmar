@@ -263,18 +263,22 @@ first pack that has it:
 
 1. the pack chosen with `VOXMAR_TEXTURES` (a resource pack, a Minecraft jar, or
    `assets/packs/default` to see only ours), which overrides everything below;
-2. otherwise, the newest Minecraft client jar found (official launcher or Prism Launcher), for
-   the familiar look while our pack matures;
-3. our default pack, `assets/packs/default`, which draws every texture the game uses: whatever
-   Minecraft lacks (our stones, woods, plants and wonders) and, without Minecraft, everything;
+2. with Settings → Video → Minecraft assets on and Textures at "Minecraft first", the newest
+   Minecraft client jar found (official launcher or Prism Launcher);
+3. our default pack, `assets/packs/default`, which draws every texture the game uses: by
+   default everything, and with Minecraft first whatever Minecraft lacks (our stones, woods,
+   plants and wonders);
 4. any other pack in `assets/packs`, in name order: mods ship art this way, adding textures but
    never replacing ours.
 
-Settings → Video → Textures switches to "Voxmar", which puts our pack first (the Minecraft jar
-then only fills names ours lacks), or to "Voxmar HD", our own 32×32 look
-(`assets/packs/voxmar_hd`, style guide in [docs/voxmar-hd.md](docs/voxmar-hd.md)); it takes
-effect the next time the game starts. A pack folder with a `pack.ron` is such a whole look: it
-names the packs it builds on (`extends`), whose images and recipes it takes for everything it
+A new player gets Voxmar's own textures and sounds: the game reads nothing from a Minecraft
+install unless Settings → Video → Minecraft assets is on (a settings file from before that
+setting reads it as on when a jar is found, so an existing player's game is unchanged). With it
+on, the jar also fills names our pack lacks. Settings → Video → Textures picks "Voxmar",
+"Voxmar HD", our own 32×32 look (`assets/packs/voxmar_hd`, style guide in
+[docs/voxmar-hd.md](docs/voxmar-hd.md)), or, with Minecraft assets on, "Minecraft first"; it
+takes effect the next time the game starts. A pack folder with a `pack.ron` is such a whole
+look: it names the packs it builds on (`extends`), whose images and recipes it takes for everything it
 does not draw itself, and the resolution its block and item textures are drawn at (recipes
 written smaller are drawn finer, keeping their shapes), and it is used only when picked.
 Anything still missing gets a generated placeholder. The startup log says how many textures
@@ -718,10 +722,28 @@ own: 36 frames of the game itself, captured along the coast near spawn, then cro
 tinted and tiled (801915d). Starting a game fades the menu's music out, so a world
 opens in quiet; returning to the menus brings it back.
 
+Voxmar ships none of Minecraft's or any modpack's music. Only with the Minecraft assets setting on
+does music from the player's own install play: the tracks of their Prism Launcher instance join
+Voxmar's (the most recently launched GT New Horizons one, or the instance `prism_instance` names in
+`settings.ron`, in the launcher folder `prism_folder` names, empty for the standard one; a named one
+that is missing is logged). They are the vanilla music and records the launcher's asset store holds
+for its Minecraft version, a music mod's soundtrack zip (HorizonMelodies, with the newer Minecraft
+and the StaTech tracks), and music in its resource packs and mod jars. A file found once (the same
+size and CRC-32) is not added again, so packs repeating the soundtrack add nothing; the log names
+every copy skipped and the track it repeats. Nothing is copied: each track is read from where it is
+as it is about to play, and played only once it is checked to decode (one that does not leaves the
+rotation). `assets/content/base/music.ron` holds the numbers, where to look, and which moments each
+track suits by its path: menu tracks on the title screen, Nether, End, cave and structure tracks
+deep underground, the rest in the world; Voxmar's own play everywhere, a quarter of the picks.
+`cargo test --profile iter -p voxmar_client prism_music_decodes -- --ignored --nocapture` lists
+what this machine's instance has, with every copy skipped from the 1.21 and StaTech resource packs,
+and checks every track is placed and decodes.
+
 Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
 in `blocks.ron`), so new blocks sound right without new audio. Steps, landings, placing, the taps
-while mining and breaking come from the player's own Minecraft install when it has them (the
-official launcher's or Prism Launcher's asset store; nothing from Minecraft is shipped), with
+while mining and breaking come from the player's own Minecraft install when it has them and the
+Minecraft assets setting is on (the official launcher's or Prism Launcher's asset store; nothing
+from Minecraft is shipped), with
 Minecraft's pitches, levelled to the loudness of our own cues so footsteps are heard. Otherwise
 they are synthesized at startup: short, soft and warm, with several variants per cue and a small
 random pitch change so nothing repeats exactly. Footsteps come from whatever is underfoot: the

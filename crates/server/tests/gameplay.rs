@@ -629,7 +629,9 @@ fn teleporting() {
     assert!(client.world.block(feet).is_some_and(open) && client.world.block(feet + IVec3::Y).is_some_and(open), "room to stand");
     assert_eq!(client.command("/tp nobody")[0].0, ChatKind::Error);
     // Biomes: where we stand, and the nearest ocean.
-    assert!(client.ok("/biome").starts_with("base:"));
+    // Named in words (Alpine Meadow, not base:alpine_meadow), with its tags and climate.
+    let biome = client.ok("/biome");
+    assert!(!biome.contains("base:") && !biome.contains('_') && biome.contains(" °C mean"), "{biome}");
     assert!(client.ok("/locate biome ocean 8000").contains("/tp "));
     assert_eq!(client.command("/locate biome nowhere")[0].0, ChatKind::Error);
     assert_eq!(client.command("/tp 1 2 3 4 5")[0].0, ChatKind::Error);
@@ -1803,8 +1805,50 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     client.propose("core:craft", ActionTarget::Slot(0));
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
+    // comes at the next quest check: wait for it, so both grants are counted exactly.
+    client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
+    client.ok("/time");
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
-    assert_eq!(client.earned[earned..], [80], "one table's Engineering, once");
+    assert_eq!(client.earned[earned..], [80, 180], "one table's Engineering, once, then the quest's reward");
+}
+
+/// A server started on a world another server holds open answers its first player: the
+/// land round spawn, with its rivers, trails and settlements, is planned once per process
+/// (`Overworld::shared`, whose sharing worldgen's `servers_on_one_world_share_its_planning`
+/// proves), so both stand their players on the same spot; the join's own wait
+/// (`SERVER_WAIT`) is the only clock on it.
+#[test]
+fn a_second_server_on_the_same_world_answers_a_join() {
+    let first = Client::join();
+    let second = Client::join();
+    assert_eq!(first.position, second.position);
+}
+
+#[test]
+fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
+    let mut client = Client::join();
+    let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
+    let falls = client.content.creatures.get(rabbit).def.death.drops_after();
+    client.ok("/summon rabbit 1 ~ ~ ~-2");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    let before = client.items.len();
+    // Judged by the server's clock, with bounds that hold whenever this thread runs: no
+    // reply carries the tick it ran on, but the tick read before the command is no later
+    // than the kill's, and the tick read once the loot is seen is no earlier than its drop.
+    let ticks = |c: &Client| c._server.as_ref().expect("the server").ticks();
+    let asked = ticks(&client);
+    client.ok("/creatures kill");
+    // Less one: the counter is advanced after the tick's work, so loot sent in tick D is
+    // seen while ticks() reads D-1.
+    let fall = (falls * TICKS_PER_SECOND as f32).round() as u64 - 1;
+    // While the server has not run a fall's length since we asked, nothing has dropped.
+    while ticks(&client) < asked + fall {
+        assert_eq!(client.items.len(), before, "loot came out of a body still falling, {} ticks after asking", ticks(&client) - asked);
+        let until = Instant::now() + Duration::from_millis(10);
+        client.pump_until(|_| Instant::now() > until);
+    }
+    // Then its meat is on the ground, and the server had run at least the fall by then.
+    client.pump_until(|c| c.items.len() > before);
+    assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
 }

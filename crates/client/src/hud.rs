@@ -10,6 +10,7 @@ pub mod guide;
 pub mod inventory;
 pub mod journal;
 pub mod levels;
+pub mod quests;
 pub mod screens;
 pub mod recipes;
 pub mod skills;
@@ -41,12 +42,12 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
                 (
-                    update_slots.after(inventory::InventorySystems),
+                    (update_slots.after(inventory::InventorySystems), follow_counts).chain(),
                     update_vitals,
                     count_down,
                     update_status,
@@ -139,11 +140,40 @@ fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
 pub fn slot_contents(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, slot: usize) {
     let inset = (SLOT - 16.0 * PX) / 2.0;
     parent.spawn((absolute(inset, inset, 16.0 * PX, 16.0 * PX), ImageNode::default(), Visibility::Hidden, SlotIcon(slot)));
-    parent.spawn((
-        Node { position_type: PositionType::Absolute, right: Val::Px(COUNT_INSET), bottom: Val::Px(COUNT_INSET), ..default() },
-        shadowed(font, "", BODY, TEXT),
-        SlotCount(slot),
-    ));
+    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(COUNT_INSET), bottom: Val::Px(COUNT_INSET), ..default() };
+    spawn_count(parent, font, corner, SlotCount(slot));
+}
+
+/// A stack count at `corner`, ringed by a dark pixel all round so it reads over any icon
+/// (pale coins too); `marker` goes on the count itself, whose words the ring follows.
+pub fn spawn_count(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, corner: Node, marker: impl Bundle) {
+    parent.spawn(corner).with_children(|corner| {
+        let count = corner.spawn((crate::ui::widgets::text(font, "", BODY, TEXT), ZIndex(1), marker)).id();
+        // One font pixel each way, and the corner below right, under the count.
+        let pixel = BODY / crate::ui::skin::font_size(1);
+        for (x, y) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (1.0, 1.0)] {
+            let at = Node { position_type: PositionType::Absolute, left: Val::Px(x * pixel), top: Val::Px(y * pixel), ..default() };
+            corner.spawn((at, crate::ui::widgets::text(font, "", BODY, OUTLINE), Ring(count), crate::ui::fit::Decoration));
+        }
+    });
+}
+
+/// The dark ring round a stack count.
+const OUTLINE: Color = Color::srgb(0.0, 0.0, 0.02);
+
+/// One of the copies ringing the count it names.
+#[derive(Component)]
+pub struct Ring(pub Entity);
+
+/// Each ring says what its count says.
+fn follow_counts(counts: Query<&Text, (Changed<Text>, Without<Ring>)>, mut rings: Query<(&Ring, &mut Text)>) {
+    for (ring, mut text) in &mut rings {
+        if let Ok(count) = counts.get(ring.0)
+            && text.0 != count.0
+        {
+            text.0 = count.0.clone();
+        }
+    }
 }
 
 fn spawn_hud(mut commands: Commands, images: Res<HudImages>, font: Res<UiFont>) {
@@ -448,6 +478,7 @@ fn update_debug(
     target: Res<Target>,
     lod: Res<Lod>,
     weather: Res<ClientWeather>,
+    locale: Res<Locale>,
     mut text: Query<&mut Text, With<DebugText>>,
     mut plate: Query<&mut Visibility, With<DebugPlate>>,
 ) {
@@ -464,39 +495,57 @@ fn update_debug(
     let (worst, p99, slow) = recent.summary();
     let stats = world.stats;
     let p = player.position;
-    let looking = target
-        .hit
-        .and_then(|hit| world.block(hit.block).map(|b| format!("{} at {}", world.registry.def(b).name, hit.block)))
-        .unwrap_or_else(|| "nothing".into());
-    let mut sky = format!("{}: {}", weather.current.describe(), weather.current.summary());
-    if !weather.effects.is_empty() {
-        sky.push_str(&format!("\neffects: {}", weather.effects.join(", ").replace('_', " ")));
-    }
-    let raining = weather.nearby_rain().filter(|&(_, rain)| rain > 0.1).count();
-    if raining > 0 {
-        sky.push_str(&format!(" | rain in {raining} of the 25 cells around"));
-    }
-    let new = format!(
-        "{fps:.0} fps ({frame_ms:.2} ms) | last {RECENT_SECONDS:.0} s: worst {worst:.1} ms, p99 {p99:.1} ms, {slow} over {SLOW_FRAME_MS:.0} ms\n\
-         xyz {:.1} {:.1} {:.1}{}\n\
-         columns {} | chunk meshes {} | quads {} | visible chunks {}\n\
-         mesh jobs {} | waiting {} | distant tiles {}/{}\n\
-         looking at {looking}\n\
-         {sky}\n\
-         F3 debug  F fly  E inventory  T chat  / command  M music  Esc menu",
-        p.x,
-        p.y,
-        p.z,
-        if player.flying { " (flying)" } else { "" },
-        world.voxels.len(),
-        stats.chunk_entities,
-        stats.quads,
-        stats.visible_chunks,
-        stats.jobs_in_flight,
-        stats.pending_columns,
-        lod.progress().0,
-        lod.progress().1,
+    let looking = target.hit.and_then(|hit| world.block(hit.block).map(|b| (world.registry.def(b).name.clone(), hit.block))).map_or_else(
+        || locale.get("hud.debug.looking_at_nothing").to_owned(),
+        |(block, at)| locale.format("hud.debug.looking", &[("block", &block), ("position", &at)]),
     );
+    use voxmar_engine::lang::Words;
+    let state = Words::key(&format!("weather.state.{}", weather.current.describe().replace(' ', "_")));
+    let report = Words::key("command.weather.report").with("state", state).with("numbers", voxmar_server::weather_numbers(&weather.current));
+    let mut sky = locale.render(&report, &world.registry);
+    if !weather.effects.is_empty() {
+        let effects = Words::List(weather.effects.iter().map(|name| voxmar_server::weather_name("effect", name)).collect());
+        sky.push('\n');
+        sky.push_str(&locale.render(&Words::key("hud.debug.effects").with("effects", effects), &world.registry));
+    }
+    let (cells, raining) = weather.nearby_rain().fold((0, 0), |(cells, raining), (_, rain)| (cells + 1, raining + usize::from(rain > 0.1)));
+    if raining > 0 {
+        sky.push_str(locale.get("hud.debug.separator"));
+        sky.push_str(&locale.format("hud.debug.rain", &[("count", &raining), ("cells", &cells)]));
+    }
+    let separator = locale.get("hud.debug.separator");
+    let frames = locale.format(
+        "hud.debug.frames",
+        &[
+            ("fps", &format!("{fps:.0}")),
+            ("ms", &format!("{frame_ms:.2}")),
+            ("seconds", &format!("{RECENT_SECONDS:.0}")),
+            ("worst", &format!("{worst:.1}")),
+            ("p99", &format!("{p99:.1}")),
+            ("slow", &slow),
+            ("limit", &format!("{SLOW_FRAME_MS:.0}")),
+        ],
+    );
+    let (x, y, z) = (format!("{:.1}", p.x), format!("{:.1}", p.y), format!("{:.1}", p.z));
+    let position = locale.format(if player.flying { "hud.debug.position_flying" } else { "hud.debug.position" }, &[("x", &x), ("y", &y), ("z", &z)]);
+    let chunks = [
+        locale.format("hud.debug.columns", &[("count", &world.voxels.len())]),
+        locale.format("hud.debug.meshes", &[("count", &stats.chunk_entities)]),
+        locale.format("hud.debug.quads", &[("count", &stats.quads)]),
+        locale.format("hud.debug.visible", &[("count", &stats.visible_chunks)]),
+    ]
+    .join(separator);
+    let jobs = [
+        locale.format("hud.debug.jobs", &[("count", &stats.jobs_in_flight)]),
+        locale.format("hud.debug.waiting", &[("count", &stats.pending_columns)]),
+        locale.format("hud.debug.distant", &[("done", &lod.progress().0), ("all", &lod.progress().1)]),
+    ]
+    .join(separator);
+    let keys = locale.format(
+        "hud.debug.keys",
+        &[("inventory", &settings.inventory_key.name(&locale)), ("chat", &settings.chat_key.name(&locale)), ("escape", &crate::keys::escape_name(&locale))],
+    );
+    let new = [frames, position, chunks, jobs, looking, sky, keys].join("\n");
     // Only new text: an unchanged one assigned would still count as a change to lay out.
     if text.0 != new {
         text.0 = new;

@@ -24,6 +24,7 @@ pub fn hash3(seed: u64, x: i32, y: i32, z: i32) -> u64 {
 }
 
 /// A small, fast generator (SplitMix64) for placing features.
+#[derive(Clone)]
 pub struct Rng(u64);
 
 impl Rng {
