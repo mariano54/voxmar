@@ -50,6 +50,8 @@ pub struct Content {
     pub fishing: Arc<FishingRegistry>,
     /// Structures recognised from patterns of blocks (the Homestead Hearth).
     pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
+    /// Machines, what they burn and what they make (`machines.ron`, `processing.ron`).
+    pub machines: Arc<crate::machine::MachineRegistry>,
     /// The quest book.
     pub quests: Arc<crate::quest::QuestRegistry>,
     /// What it takes to study and master the journal's entries.
@@ -169,6 +171,8 @@ impl Content {
         let mut regrowth = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
+        let mut machines = Vec::new();
+        let mut processes = Vec::new();
         let mut quests = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
@@ -196,7 +200,8 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "cooking.ron" => {
+                    // `cooking.ron`, and `cooking_<topic>.ron` for what a system smelts (machines).
+                    topic if topic.starts_with("cooking") => {
                         cooking.extend(CookingRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
@@ -207,7 +212,7 @@ impl Content {
                         defence.set(package, &name, "Defence training", read.defence, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons).
+                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
                     topic if topic.starts_with("recipes") => {
                         recipes.extend(RecipeRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
@@ -221,8 +226,17 @@ impl Content {
                         quests.push(crate::quest::QuestRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "multiblocks.ron" => {
+                    // `multiblocks.ron`, and `multiblocks_<topic>.ron` for a system's own (machines).
+                    topic if topic.starts_with("multiblocks") => {
                         multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "machines.ron" => {
+                        machines.push(crate::machine::MachineRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "processing.ron" => {
+                        processes.push(crate::machine::MachineRegistry::read_processes(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "journal.ron" => {
@@ -279,6 +293,10 @@ impl Content {
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
+        let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
+        if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
+            return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
+        }
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks)?);
         // A furnishing gives itself back only where a player placed it: one that drops
@@ -306,6 +324,7 @@ impl Content {
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             multiblocks: Arc::new(multiblocks),
+            machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),

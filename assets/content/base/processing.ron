@@ -1,0 +1,23 @@
+// What machines make (engine/src/machine.rs): a recipe of a `kind` that machines of that
+// kind work (machines.ron), what goes in and comes out, now and then a byproduct, and the
+// seconds it takes at speed 1. `tier` is the least electric tier that works it (0: any).
+(
+    recipes: [
+        // Crushing ore into dust (steam crusher, macerator): with their yield, two dusts an ore.
+        (kind: "crush", inputs: [("copper_ore", 1)], outputs: [("copper_dust", 1)], seconds: 6.0),
+        (kind: "crush", inputs: [("iron_ore", 1)], outputs: [("iron_dust", 1)], seconds: 8.0),
+        // Blooming iron (Bellows Bloomery): two ore and a fuel into a bloom, hammered into
+        // three ingots, half as many again as smelting by hand.
+        (kind: "bloom", inputs: [("iron_ore", 2), ("charcoal|coal_ore", 1)], outputs: [("iron_bloom", 1)], seconds: 20.0),
+        (kind: "hammer", inputs: [("iron_bloom", 1)], outputs: [("iron_ingot", 3)], seconds: 8.0),
+        // Hammering ingots into plates (trip hammer).
+        (kind: "hammer", inputs: [("copper_ingot", 1)], outputs: [("copper_plate", 1)], seconds: 4.0),
+        (kind: "hammer", inputs: [("bronze_ingot", 1)], outputs: [("bronze_plate", 1)], seconds: 5.0),
+        (kind: "hammer", inputs: [("iron_ingot", 1)], outputs: [("iron_plate", 1)], seconds: 6.0),
+        // Smelting without fuel (electric furnace): dust and ore into ingots.
+        (kind: "smelt", inputs: [("copper_dust", 1)], outputs: [("copper_ingot", 1)], seconds: 4.0),
+        (kind: "smelt", inputs: [("iron_dust", 1)], outputs: [("iron_ingot", 1)], seconds: 5.0),
+        (kind: "smelt", inputs: [("copper_ore", 1)], outputs: [("copper_ingot", 1)], seconds: 4.0),
+        (kind: "smelt", inputs: [("iron_ore", 1)], outputs: [("iron_ingot", 1)], seconds: 5.0),
+    ],
+)

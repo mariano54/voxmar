@@ -175,6 +175,13 @@ pub struct Creatures {
 }
 
 impl Creatures {
+    /// Takes a creature out of the world without a death (`/creatures remove`).
+    pub(crate) fn take_away(&mut self, id: u32) {
+        if self.live.remove(&id).is_some() {
+            self.gone.push(CreatureGone { id, died: false });
+        }
+    }
+
     /// The box a blow at a creature may land in: its own, widened by what the player's
     /// view of it may lag behind (`REACH_SLACK`, `REACH_LAG`).
     pub fn reach_box(&self, id: u32) -> Option<Aabb> {

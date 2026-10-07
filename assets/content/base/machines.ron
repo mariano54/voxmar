@@ -1,0 +1,83 @@
+// Machines (engine/src/machine.rs, factory.rs; docs/machines.md): what each machine block
+// does. A role is one of:
+// - `Conduit`: carries power of a kind to its neighbours (`tier`: the highest electricity
+//   it carries; a network fed above it carries nothing);
+// - `Generator`: gives `power` a tick at full output, from `Fuel` it burns (only as fast as
+//   the power is used), `FlowingWater` beside it, the `Wind` (more up high), or power of
+//   another kind it `Converts` (`ratio` of it for each unit it gives);
+// - `Store`: holds `capacity`, taking or giving up to `rate` a tick;
+// - `Transformer`: takes electricity at `tier` from above, gives it a tier lower around;
+// - `Processor`: works recipes of its `kinds` (processing.ron) `speed` times as fast as
+//   the recipe says, making `yield` more (each output times one more than it, the fraction
+//   a chance of one more), drawing `power` while it works, or burning fuel itself; with
+//   `water`, only while water lies beside it;
+// - `Chute`: carries items between the machines beside a run of chutes, up to `rate` a
+//   second (a run moves as fast as its slowest chute);
+// - `Bin`: holds `slots` stacks; one that `feeds` (a hopper) gives what players put in it
+//   to the machines on its chutes, one that does not (a chest) collects what they made.
+//   Along a run, each item goes in turn to a machine that works or burns it; what a
+//   processor made that none takes goes to a chest. Bins never feed bins.
+// Machines of a kind differ in speed and yield, never in what they make. Machines teach
+// nothing; building them (recipes_machines.ron) takes Engineering.
+(
+    machines: [
+        // Bronze: rotation.
+        (block: "water_wheel", role: Generator(carrier: Rotation, power: 8.0, source: FlowingWater)),
+        (block: "windmill", role: Generator(carrier: Rotation, power: 16.0, source: Wind)),
+        // A treadwheel, walked by a kept animal standing beside it (`walkers`).
+        (block: "treadwheel", role: Generator(carrier: Rotation, power: 8.0, source: Walked)),
+        (block: "shaft", role: Conduit(carrier: Rotation)),
+        (block: "trip_hammer", role: Processor(kinds: ["hammer"], power: Some((Rotation, 6.0)))),
+        // The Bellows Bloomery: the bellows carry rotation to the bloomery, which works only
+        // inside its standing shaft (multiblocks_machines.ron).
+        (block: "bellows", role: Conduit(carrier: Rotation)),
+        (block: "bloomery", role: Processor(kinds: ["bloom"], power: Some((Rotation, 6.0)))),
+        // Items: hoppers feed, chests collect, chutes and conveyors carry.
+        (block: "hopper", role: Bin(slots: 5, feeds: true)),
+        (block: "chest", role: Bin(slots: 27)),
+        (block: "chute", role: Chute(rate: 1.0)),
+        (block: "conveyor", role: Chute(rate: 4.0)),
+        // Iron and Steam: steam.
+        (block: "boiler", role: Generator(carrier: Steam, power: 24.0, source: Fuel)),
+        (block: "steam_pipe", role: Conduit(carrier: Steam)),
+        (block: "beam_engine", role: Generator(carrier: Rotation, power: 16.0, source: Converts(from: Steam, ratio: 1.25))),
+        (block: "steam_crusher", role: Processor(kinds: ["crush"], yield: 1.0, power: Some((Steam, 12.0)))),
+        // LV: electricity.
+        (block: "dynamo", role: Generator(carrier: Electric, tier: 1, power: 16.0, source: Converts(from: Rotation, ratio: 1.25))),
+        (block: "lv_cable", role: Conduit(carrier: Electric, tier: 1)),
+        (block: "battery_bank", role: Store(carrier: Electric, tier: 1, capacity: 100000.0, rate: 32.0)),
+        (block: "electric_furnace", role: Processor(kinds: ["smelt"], speed: 2.0, power: Some((Electric, 8.0)), tier: 1)),
+        (block: "macerator", role: Processor(kinds: ["crush"], speed: 2.0, yield: 1.0, power: Some((Electric, 16.0)), tier: 1)),
+        // Washing as it grinds gets a third dust from each ore, at half a crusher's speed.
+        (block: "ore_washer", role: Processor(kinds: ["crush"], speed: 0.5, yield: 2.0, power: Some((Electric, 24.0)), tier: 1, water: true)),
+        // MV: a turbine on steam, MV cable and banks, and transformers down to LV (MV in
+        // on top, LV out of every other face).
+        (block: "steam_turbine", role: Generator(carrier: Electric, tier: 2, power: 64.0, source: Converts(from: Steam, ratio: 1.25))),
+        (block: "mv_cable", role: Conduit(carrier: Electric, tier: 2)),
+        (block: "lv_transformer", role: Transformer(tier: 2, rate: 128.0)),
+        (block: "mv_battery_bank", role: Store(carrier: Electric, tier: 2, capacity: 400000.0, rate: 128.0)),
+    ],
+    // How the world drives machines: wind (blocks a second) under which windmills stall and
+    // at which they give all they can, the heights between which they catch from a third
+    // of it to all, how near another windmill's sails becalm one (blocks, any way), how near
+    // another water wheel stills one (blocks, any way; each fall or current turns one wheel
+    // at most), the wind reckoned while a windmill's land is not loaded, how near (across
+    // and up or down) a kept animal walks a treadwheel, seconds between looks at the world,
+    // and the tag of fluids (lava) that neither turn wheels nor wash ore. A later package's
+    // `sources` replaces these.
+    sources: Some((
+        wind_stall: 1.0, wind_full: 10.0, wind_low: 96.0, wind_high: 176.0, wind_low_share: 0.333, wind_spacing: 4, wind_mean: 5.0,
+        water_spacing: 4, walk_reach: 3.0, walk_height: 2.0, survey_seconds: 1.0, hot_tag: "hot",
+    )),
+    // Kept animals that walk a treadwheel: the big, steady grazers. A later package may
+    // add to them, or take one away with `not_walkers`.
+    walkers: ["aurochs", "wild_horse", "camel", "bison"],
+    // The last fuel that takes an item says how long it burns, so the broad tags come first
+    // and a later package can change any of them.
+    fuels: [
+        (item: "tag:fuel", seconds: 2.0),
+        (item: "tag:planks", seconds: 4.0),
+        (item: "tag:log", seconds: 15.0),
+        (item: "coal_ore|charcoal", seconds: 80.0),
+    ],
+)

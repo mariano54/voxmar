@@ -37,6 +37,7 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
         Box::new(Weather::default()),
         Box::new(crate::wear::Footsteps::default()),
         Box::new(crate::farm::Growth),
+        Box::new(crate::machines::Machines),
     ]
 }
 

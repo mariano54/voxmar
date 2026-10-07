@@ -11,6 +11,7 @@ mod fishing;
 mod death;
 mod hearth;
 mod journal;
+mod machines;
 mod quests;
 mod regrow;
 mod farm;
@@ -291,6 +292,8 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
+    /// Machines players built, and the power between them.
+    factory: voxmar_engine::factory::Factory,
     /// Cells whose block a player placed: ores, which then teach nothing; plants, which
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
@@ -402,6 +405,7 @@ impl Server {
             executor: Executor::default(),
             items,
             farm,
+            factory: voxmar_engine::factory::Factory::default(),
             placed,
             regrowing,
             planter_grown,
@@ -431,6 +435,11 @@ impl Server {
             Vec::new()
         });
         server.restore_creatures(saved_creatures);
+        let saved_machines = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_machines()).unwrap_or_else(|e| {
+            tracing::error!("could not load machines: {e}");
+            Vec::new()
+        });
+        server.restore_machines(saved_machines);
         server
     }
 
@@ -495,6 +504,7 @@ impl Server {
         self.world.insert(pos, Arc::new(loaded.column));
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
+        self.reconcile_machines(pos);
     }
 
     fn handle_messages(&mut self) {
@@ -550,6 +560,11 @@ impl Server {
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
+        // What machines hold before the land they stand in: a save cut short between the two
+        // loses what a machine held rather than keeping it twice.
+        if let Err(e) = save.write_machines(&self.saved_machines()) {
+            tracing::error!("could not save machines: {e}");
+        }
         let (world, registry) = (&self.world, &self.content.blocks);
         let columns = self.dirty.len();
         self.dirty.retain(|&pos| {
@@ -693,10 +708,11 @@ impl Server {
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
         let mut done = Vec::with_capacity(changes.len());
         for &(pos, block) in changes {
-            if self.world.set_block(pos, block).is_some() {
+            if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
                 self.forget_placed(pos);
                 done.push((pos, block));
+                self.machine_changed(pos, old, block);
             }
         }
         for &(pos, _) in &done {
@@ -726,9 +742,10 @@ impl Server {
 
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
         let column = ColumnPos::of_block(pos);
-        if self.world.set_block(pos, block).is_some() {
+        if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
             self.forget_placed(pos);
+            self.machine_changed(pos, old, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
