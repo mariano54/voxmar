@@ -122,7 +122,7 @@
     "settings.textures.voxmar": "Voxmar",
     "settings.textures.voxmar_hd": "Voxmar HD",
     "settings.minecraft_assets": "Minecraftの素材 (再起動後)",
-    "settings.minecraft_assets.hint": "持っているMinecraftから、テクスチャとブロックの音を借ります。次にゲームを起動したときに反映されます。",
+    "settings.minecraft_assets.hint": "持っているMinecraftとPrism Launcherから、テクスチャ、ブロックの音、音楽を借ります。次の起動から反映されます。",
 
     "settings.shader_pack": "シェーダーパック",
     "settings.shader_pack.hint": "光、空、水、色合いの見た目。",
