@@ -142,7 +142,7 @@
     "multiblock.base.blast_furnace": ("Blast Furnace", "高炉"),
     "multiblock.base.blast_furnace.hint": ("The blast furnace needs kiln bricks round it with bellows in the ring, and a hollow shaft of kiln bricks three more blocks high above it.", "高炉には、ふいごを含む窯レンガの囲いと、その上に3ブロック高い窯レンガの中空の煙突が必要です。"),
     "multiblock.base.turbine_hall": ("Turbine Hall", "タービンホール"),
-    "multiblock.base.turbine_hall.hint": ("The turbine hall needs a hall of HV casing five long, three wide and three high, hollow along its middle, with the turbine hall at the top of one end.", "タービンホールには、長さ5・幅3・高さ3の高圧外装の建屋が必要です。中央の列は空洞にし、片方の端の上段の中央にタービンホールを置きます。"),
+    "multiblock.base.turbine_hall.hint": ("The turbine hall needs a hall of HV casing five long, three wide and three high, hollow along its middle, with the turbine hall in the middle of the top of one end.", "タービンホールには、長さ5・幅3・高さ3の高圧外装の建屋が必要です。中央の列は空洞にし、片方の端の上段の中央にタービンホールを置きます。"),
     "multiblock.base.processing_array": ("Processing Array", "加工アレイ"),
     "multiblock.base.processing_array.hint": ("The processing array needs a cube of HV casing three on a side, hollow in the middle, with the processing array in the middle of one face.", "加工アレイには、一辺3の高圧外装の立方体が必要です。中央は空洞にし、一つの面の中央に加工アレイを置きます。"),
 }

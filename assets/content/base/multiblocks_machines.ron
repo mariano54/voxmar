@@ -50,7 +50,7 @@
         // the top of one end (steam in from above, HV out of its end).
         (
             name: "turbine_hall", title: "Turbine Hall",
-            hint: "The turbine hall needs a hall of HV casing five long, three wide and three high, hollow along its middle, with the turbine hall at the top of one end.",
+            hint: "The turbine hall needs a hall of HV casing five long, three wide and three high, hollow along its middle, with the turbine hall in the middle of the top of one end.",
             layers: [
                 ["ccccc", "ccccc", "ccccc"],
                 ["ccccc", "c   c", "ccccc"],
