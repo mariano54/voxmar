@@ -773,6 +773,25 @@ pub struct PlantDef {
     /// do not grow under snow.
     #[serde(default)]
     pub snowy: Option<String>,
+    /// Grows only in the biomes that name it (in their plants or wonders), never through a
+    /// tag, the forage sweep, a decoration's selector or the wonders every biome takes by
+    /// default: a rare herb that keeps to its one or two biomes.
+    #[serde(default)]
+    pub named_only: bool,
+    /// How it grows in the biomes that name it: in small patches, at a rate of its own
+    /// (see `Patches`), rather than by the biome's weight among its other plants.
+    #[serde(default)]
+    pub patches: Option<Patches>,
+}
+
+/// A rare herb's patches: about `rate` plants per million blocks of a biome that names it
+/// (times the weight the biome names it with), in patches of `size` plants, as many of
+/// them as the ground and climate where each would stand suit it.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Patches {
+    pub rate: f32,
+    pub size: (u32, u32),
 }
 
 /// What a biome grows, drawn from the shared pools of trees and plants.
