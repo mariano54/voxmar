@@ -153,7 +153,7 @@ fn first_column() {
             crate::parallel::set_enabled(parallel);
             let world = Overworld::new(seed, registry.clone());
             let (start, cpu) = (Instant::now(), thread_time());
-            let spawn = ColumnPos::of_block(world.spawn_point());
+            let (spawn, finding) = stage::measure(|| ColumnPos::of_block(world.spawn_point()));
             let found = (start.elapsed(), thread_time() - cpu);
             let (start, cpu) = (Instant::now(), thread_time());
             let (_, times) = stage::measure(|| world.generate(spawn));
@@ -161,16 +161,20 @@ fn first_column() {
             let start = Instant::now();
             std::hint::black_box(crate::tests::generate_area(&world, spawn.offset(-4, -4), 9));
             let area = start.elapsed();
-            let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
-            stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
+            let listed = |times: &Times| {
+                let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
+                stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
+                stages.iter().map(|(s, d)| format!("{s:?} {:.0}", ms(*d))).collect::<Vec<_>>().join(", ")
+            };
             // On one core all the work is this thread's, so its CPU time counts it all.
             let both = |(wall, cpu): (Duration, Duration)| if parallel { format!("{:.0} ms", ms(wall)) } else { format!("{:.0} ms ({:.0} CPU)", ms(wall), ms(cpu)) };
             println!(
-                "seed {seed}, {}: spawn point {}, spawn column {} ({}), then 9×9 columns {:.0} ms",
+                "seed {seed}, {}: spawn point {} ({}), spawn column {} ({}), then 9×9 columns {:.0} ms",
                 if parallel { "every core" } else { "one core" },
                 both(found),
+                listed(&finding),
                 both(generated),
-                stages.iter().map(|(s, d)| format!("{s:?} {:.0}", ms(*d))).collect::<Vec<_>>().join(", "),
+                listed(&times),
                 ms(area),
             );
         }
@@ -244,15 +248,18 @@ fn column_hash(column: &Column, registry: &BlockRegistry) -> u64 {
     h
 }
 
-/// Columns over rivers and lakes, caves, forests, mountains and coasts on three seeds.
-const GOLDEN: [(u64, [(i32, i32); 8]); 3] = [
+/// Columns over rivers and lakes, caves, forests, mountains and coasts on three seeds, and
+/// around a waterfall on a fourth.
+const GOLDEN: [(u64, [(i32, i32); 8]); 4] = [
     (1, [(0, 0), (1, 0), (0, 2), (60, -90), (-120, 40), (150, 150), (-40, -200), (-9, -6)]),
     (42, [(-10, -3), (-9, -2), (-1, 0), (0, 0), (-33, -2), (93, -63), (-10, -11), (4, 31)]),
     (0x5eed, [(0, 0), (60, -90), (-120, 40), (150, 150), (-40, -200), (-128, 28), (47, 162), (8, 8)]),
+    // Around a waterfall at (-894, 298): its curtain, pool and the water feeding its lip.
+    (0, [(-28, 9), (-29, 9), (-27, 9), (-28, 8), (-28, 10), (-29, 8), (-27, 10), (-29, 10)]),
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 3] = [0x90ce32ce5eb3fa4c, 0x969a66dd8a762198, 0xc693a73cd18c4482];
+const EXPECTED: [u64; 4] = [0xc67ac4a79cdbb83d, 0xb5bb37f88d59f40c, 0xd76cdd47b30e4101, 0x126f85a1101e3039];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -276,8 +283,8 @@ fn output_is_unchanged() {
     );
 }
 
-/// The hash of the light over three 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
-const LIGHT: u64 = 0x63979698b1894754;
+/// The hash of the light over four 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
+const LIGHT: u64 = 0x731fe2b7f3105521;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
 /// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on

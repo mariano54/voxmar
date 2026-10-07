@@ -61,10 +61,14 @@ const AMBIENCE_GAIN: f32 = 0.65;
 pub struct AmbiencePlugin;
 
 /// What the ambience's scan finds around the player, for the rest of the client: how many
-/// flowers are near, 0..1 (the `flowers` group of `ambience.ron`).
+/// flowers are near, 0..1 (the `flowers` group of `ambience.ron`), how far below the
+/// ground surface the player is, in blocks, and how much of the air around is open to the
+/// sky, 0..1 (for the music underground).
 #[derive(Resource, Default)]
 pub struct Surroundings {
     pub flowers: f32,
+    pub depth: f32,
+    pub sky: f32,
 }
 
 impl Plugin for AmbiencePlugin {
@@ -131,7 +135,7 @@ struct Ambient {
     surveying: bool,
     since_survey: f32,
     /// The generator of the world being played, made on first use.
-    generator: Option<(u64, Arc<OnceLock<Option<Overworld>>>)>,
+    generator: Option<(u64, Arc<OnceLock<Option<Arc<Overworld>>>>)>,
     /// The latest scan (whose sample blocks one-shots sound from), and its measures eased
     /// towards over a couple of seconds.
     enclosure: Enclosure,
@@ -292,7 +296,7 @@ fn survey(
     rayon::spawn(move || {
         let enclosure = enclosure::scan(eye, |p| snapshot.block(p), &kinds, random);
         let generator = generator.get_or_init(|| match WorldContent::load(&content) {
-            Ok(world) => Some(Overworld::with_content(seed, content.blocks.clone(), &world)),
+            Ok(world) => Some(Overworld::shared(seed, &content, &world)),
             Err(e) => {
                 warn!("ambience has no climate: {e}");
                 None
@@ -342,6 +346,7 @@ fn listen(
     let (env, smooth) = (&mut ambient.env, &ambient.smooth);
     env.set(Fixed::Air, smooth.air);
     env.set(Fixed::Sky, smooth.sky);
+    surroundings.sky = smooth.sky;
     env.set(Fixed::Canopy, smooth.canopy);
     let enclosed = (1.0 - smooth.sky) * ((smooth.air - 0.02) / 0.28).clamp(0.0, 1.0);
     env.set(Fixed::Reverb, enclosed);
@@ -364,6 +369,7 @@ fn listen(
         env.set(Fixed::Forest, place.forest);
         env.set(Fixed::Relief, eye - place.land);
         env.set(Fixed::Depth, place.ground - eye);
+        surroundings.depth = place.ground - eye;
         env.home_tags.clone_from(&place.home_tags);
         env.neighbour_tags.clone_from(&place.neighbour_tags);
         env.home = place.home;
