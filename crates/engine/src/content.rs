@@ -135,7 +135,7 @@ impl Content {
                     }
                     // `creatures.ron`, and `creatures_<topic>.ron` for the people a system
                     // places (villagers).
-                    topic if topic.starts_with("creatures") => {
+                    topic if topic == "creatures.ron" || topic.starts_with("creatures_") && topic.ends_with(".ron") => {
                         creatures.extend(CreatureRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }

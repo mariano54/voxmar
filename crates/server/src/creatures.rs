@@ -277,6 +277,7 @@ impl Server {
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
         let daylight = self.daylight();
+        let handoff = self.overworld.settlement_people().live.handoff;
         let mut actions: Vec<(u32, Decision)> = Vec::new();
         for &id in &ids {
             let creature = &self.creatures.live[&id];
@@ -310,7 +311,7 @@ impl Server {
                     food,
                     mate,
                     kept: creature.owner.is_some(),
-                    errand: self.villagers.errand(id),
+                    errand: self.villagers.errand(id, handoff),
                     dt: every as f32 * dt,
                     seed: mix(creature.seed, self.tick),
                 };
@@ -514,11 +515,14 @@ impl Server {
             }
             target.changed(traits::HEALTH);
         } else if let Some(skill) = defence_skill {
-            // Experience for the blow turned aside: four a point of the damage it would do.
-            let tenths = 40 * (low as u32 + high as u32) / 2;
-            target.skills.grant(skill, tenths.max(10));
-            target.changed(traits::SKILLS);
-            target.connection.send(ServerMessage::Xp { skill, tenths: tenths.max(10) });
+            // Experience for the blow turned aside: four a point of the damage it would do,
+            // by the species' share.
+            let tenths = ((40 * (low as u32 + high as u32) / 2).max(10) as f32 * def.xp.combat).round() as u32;
+            if tenths > 0 {
+                target.skills.grant(skill, tenths);
+                target.changed(traits::SKILLS);
+                target.connection.send(ServerMessage::Xp { skill, tenths });
+            }
         }
     }
 
@@ -562,11 +566,12 @@ impl Server {
         creature.hurt_by = Some(player);
         creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
         // RuneScape: four experience a point of damage in the style's skill, a third of
-        // that in Hitpoints.
-        let grants = [(attack_skill, 40 * damage as u32), (self.skill("core:hitpoints"), 13 * damage as u32)];
+        // that in Hitpoints; by the species' share.
+        let share = |tenths: u32| (tenths as f32 * species.def.xp.combat).round() as u32;
+        let grants = [(attack_skill, share(40 * damage as u32)), (self.skill("core:hitpoints"), share(13 * damage as u32))];
         if let Some(target) = self.players.get_mut(&player) {
             for (skill, tenths) in grants {
-                if let Some(skill) = skill {
+                if let Some(skill) = skill.filter(|_| tenths > 0) {
                     target.skills.grant(skill, tenths);
                     target.connection.send(ServerMessage::Xp { skill, tenths });
                 }
@@ -586,6 +591,8 @@ impl Server {
     pub(crate) fn creature_dies(&mut self, id: u32) {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
+        // One of a settlement's people: noted dead now, so no save misses it.
+        self.villager_died(id);
         let species = self.content.creatures.get(creature.species);
         let killer = creature.hurt_by.and_then(|p| self.players.get(&p));
         let tool: Vec<String> = killer.and_then(|p| p.held()).map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
@@ -602,7 +609,7 @@ impl Server {
         let cell = creature.body.position.floor().as_ivec3();
         // The killer's journal: one more of the species (people are not counted), and each
         // drop for the collection log.
-        let mut journal = if species.def.kind == Kind::Villager { Vec::new() } else { vec![(Self::page_of(species.def.kind), species.def.name.clone(), 1)] };
+        let mut journal: Vec<_> = Self::page_of(species.def.kind).map(|page| (page, species.def.name.clone(), 1)).into_iter().collect();
         journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;

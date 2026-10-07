@@ -1443,6 +1443,7 @@ impl WorldContent {
     pub fn load(content: &Content) -> Result<Self, ContentError> {
         let world = Self::from_files(content.files.iter(), &content.blocks)?;
         world.settlements.check_furnishings(&content.blocks)?;
+        world.settlements.people.check_against(&content.creatures, &world.settlements.works())?;
         Ok(world)
     }
 

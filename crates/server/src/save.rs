@@ -10,6 +10,8 @@
 //! - `items.ron`: the dropped items lying about, by item name.
 //! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
 //!   their next is due.
+//! - `villagers.ron`: who of each settlement's people died: how many newcomers have taken
+//!   their place, and the day the next comes.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
 //! never leaves a half-written file behind.
@@ -38,6 +40,7 @@ const META_FILE: &str = "world.ron";
 const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
+const VILLAGERS_FILE: &str = "villagers.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
 const COLUMN_MAGIC: &[u8; 4] = b"vxc4";
@@ -373,6 +376,17 @@ pub struct SavedCrop {
     pub due: u64,
 }
 
+/// One of a settlement's people who died, as saved: settlement `town`'s `person`th
+/// resident, `generation` newcomers on, the next due on day `away_until` (days since the
+/// world began).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedDead {
+    pub town: u64,
+    pub person: usize,
+    pub generation: u64,
+    pub away_until: f64,
+}
+
 impl WorldSave {
     /// The planted crops, none if the world has no crops file.
     pub fn read_crops(&self) -> io::Result<Vec<SavedCrop>> {
@@ -412,6 +426,21 @@ impl WorldSave {
     pub fn write_creatures(&self, creatures: &[crate::husbandry::SavedCreature]) -> io::Result<()> {
         let text = ron::ser::to_string(creatures).map_err(io::Error::other)?;
         write_atomic(&self.dir.join(CREATURES_FILE), text.as_bytes())
+    }
+
+    /// Who of the settlements' people died, none if the world has no villagers file.
+    pub fn read_villagers(&self) -> io::Result<Vec<SavedDead>> {
+        let path = self.dir.join(VILLAGERS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_villagers(&self, dead: &[SavedDead]) -> io::Result<()> {
+        let text = ron::ser::to_string(dead).map_err(io::Error::other)?;
+        write_atomic(&self.dir.join(VILLAGERS_FILE), text.as_bytes())
     }
 
     pub fn write_items(&self, items: &[SavedItem]) -> io::Result<()> {

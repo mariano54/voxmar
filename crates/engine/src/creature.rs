@@ -362,16 +362,27 @@ pub enum Behaviour {
     Curious { distance: f32 },
     /// Blinks a few blocks away when fleeing (supernatural).
     Blink,
-    /// Goes where its day's routine sends it (`Situation::errand`): villagers.
-    Routine,
+    /// Goes where its day's routine sends it (`Situation::errand`): villagers. There once
+    /// within `arrive` blocks of the spot; awake, it turns to a player within `look`.
+    Routine { arrive: f32, look: f32 },
 }
 
-/// Experience for killing one, in `skill`.
-#[derive(Clone, Debug, Default, Deserialize)]
+/// Experience for killing one, in `skill`, and how much its fights teach.
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CreatureXp {
     pub kill: f32,
     pub skill: Option<String>,
+    /// The share of the usual combat experience fighting it gives: for each point of
+    /// damage dealt it and each of its blows turned aside. 0 where a fight should teach
+    /// nothing (villagers who do not fight back).
+    pub combat: f32,
+}
+
+impl Default for CreatureXp {
+    fn default() -> Self {
+        Self { kill: 0.0, skill: None, combat: 1.0 }
+    }
 }
 
 /// A species as `creatures.ron` writes it.

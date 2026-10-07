@@ -326,6 +326,11 @@ impl Settlements {
         &self.def.people
     }
 
+    /// The names of the sizes settlements come in, as written.
+    pub fn sizes(&self) -> Vec<String> {
+        self.def.sizes.iter().map(|s| s.name.clone()).collect()
+    }
+
     /// The square of the grid holding (x, z).
     pub fn cell_of(&self, x: i32, z: i32) -> IVec2 {
         IVec2::new(x, z).div_euclid(IVec2::splat(self.def.grid.spacing))

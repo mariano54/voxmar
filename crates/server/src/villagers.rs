@@ -1,11 +1,12 @@
 //! The people of settlements (`people` in settlements.ron, planned by worldgen's
 //! `settlements::people`), alive near players.
 //!
-//! A settlement comes to life when a player comes within `ACTIVE` blocks of it: each of
-//! its residents appears where their day has them now (asleep at home at night, at work
-//! by day), as a creature of their species (`creatures_villagers.ron`, kind `Villager`)
-//! with the looks their seed gives, the same each visit. When every player is `RELEASE`
-//! blocks away they go again, and come back where their day has them by then.
+//! A settlement comes to life when a player comes within `active` blocks of it (every
+//! number here is `people.live` in settlements.ron): each of its residents appears where
+//! their day has them now (asleep at home at night, at work by day), as a creature of
+//! their species (`creatures_villagers.ron`, kind `Villager`) with the looks their seed
+//! gives, the same each visit. When every player is `release` blocks away they go again,
+//! and come back where their day has them by then.
 //!
 //! Each person's routine sends them from place to place through the day (`place_at`);
 //! the server finds their way there through the settlement's lanes, doors and yards
@@ -14,8 +15,12 @@
 //! while (the square, a field, the yard) they move to another spot of it now and then.
 //!
 //! Someone killed is gone until a newcomer takes their place `newcomer` days later, with
-//! looks of their own. A villager struck by a player calls the guards near: they fight
-//! the one who did it (`Defend`).
+//! looks of their own, a settlement taking `newcomers_per_day` at most. Who died is kept
+//! apart from the settlements near players and saved with the world (`villagers.ron`), so
+//! leaving, walking far or a restart brings no one back sooner. A villager struck by a
+//! player calls the guards near: they fight the one who did it (`Defend`), and one that
+//! comes no nearer them for `give_up` seconds (they stand where it cannot go) breaks off,
+//! heals and goes home a while.
 
 use std::collections::BTreeMap;
 
@@ -26,53 +31,73 @@ use voxmar_engine::creature::{CreatureId, mix, unit_from};
 use voxmar_engine::genes;
 use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3, Vec3Swizzles};
 use voxmar_protocol::{CreatureGone, TICKS_PER_DAY, TICKS_PER_SECOND};
-use voxmar_worldgen::people::{Place, is, place_at};
+use voxmar_worldgen::people::{LiveDef, Place, is, place_at};
 use voxmar_worldgen::{BuildingKind, SettlementInfo, SettlementLevers};
 
 use crate::Server;
+use crate::save::SavedDead;
 
-/// A settlement comes to life within this many blocks of a player, and goes again when
-/// every player is further than `RELEASE`.
-const ACTIVE: f32 = 112.0;
-const RELEASE: f32 = 160.0;
-/// Settlements no player has been within this many blocks of are forgotten (and with
-/// them who died there).
-const FORGET: f32 = 2000.0;
-/// Ticks between looks for settlements coming to life or going.
-const SCAN_EVERY: u64 = 2 * TICKS_PER_SECOND as u64;
-/// Ticks between each person's look at their day.
-const ERRAND_EVERY: u64 = 10;
-/// Ways found per tick at most, so a whole village waking at once spreads over ticks.
-const WAYS_PER_TICK: usize = 6;
-/// Cells a way may search before giving up.
-const SEARCH: usize = 8000;
-/// Blocks within which guards hear a villager struck.
-const HELP: f32 = 40.0;
-/// Seconds without getting nearer the next turn before finding the way again.
-const STUCK: f32 = 6.0;
+/// `seconds` in server ticks, at least one.
+fn ticks(seconds: f32) -> u64 {
+    ((seconds * TICKS_PER_SECOND as f32).round() as u64).max(1)
+}
 
-/// Every settlement near players, and who of their people is alive as which creature.
+/// Every settlement near players, who of their people is alive as which creature, and who
+/// of anyone's died.
 #[derive(Default)]
 pub struct Villagers {
     towns: BTreeMap<u64, Town>,
     by_creature: FxHashMap<u32, (u64, usize)>,
-    /// Ways found this tick.
-    ways: usize,
+    /// Cells searched for ways this tick, so a whole village waking at once spreads its
+    /// ways over ticks.
+    searched: u32,
+    /// Places no way reached, by settlement, and the tick they may be searched for again.
+    failed: FxHashMap<(u64, IVec3), u64>,
+    /// Who died, by settlement and resident: kept whether or not the settlement is near
+    /// anyone, and saved with the world.
+    dead: BTreeMap<(u64, usize), Dead>,
+}
+
+/// One of a settlement's people who died.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Dead {
+    /// Newcomers who have taken their place, each with looks of their own.
+    generation: u64,
+    /// The day (in days since the world began) the next newcomer comes.
+    away_until: f64,
 }
 
 impl Villagers {
+    /// From who died, as saved.
+    pub(crate) fn restore(saved: Vec<SavedDead>) -> Self {
+        let dead = saved.into_iter().map(|d| ((d.town, d.person), Dead { generation: d.generation, away_until: d.away_until })).collect();
+        Self { dead, ..Self::default() }
+    }
+
+    /// Who died, to save. One entry a person ever killed (their newcomers' looks hang on
+    /// how many came), so it grows with the people of the places players fight in, not
+    /// with every death.
+    pub(crate) fn saved(&self) -> Vec<SavedDead> {
+        self.dead.iter().map(|(&(town, person), d)| SavedDead { town, person, generation: d.generation, away_until: d.away_until }).collect()
+    }
+
+    fn generation(&self, town: u64, i: usize) -> u64 {
+        self.dead.get(&(town, i)).map_or(0, |d| d.generation)
+    }
+
     /// Whether creature `id` is someone's, kept here rather than by the land.
     pub(crate) fn manages(&self, id: u32) -> bool {
         self.by_creature.contains_key(&id)
     }
 
-    /// Where creature `id`'s routine sends it now, if it is someone's.
-    pub(crate) fn errand(&self, id: u32) -> Option<Errand> {
+    /// Where creature `id`'s routine sends it now, if it is someone's; a guard after
+    /// someone goes straight at them within `handoff` blocks.
+    pub(crate) fn errand(&self, id: u32, handoff: f32) -> Option<Errand> {
         let &(town, i) = self.by_creature.get(&id)?;
         let trip = self.towns.get(&town)?.people[i].trip.as_ref()?;
         let to = *trip.path.get(trip.step)?;
         let last = trip.step + 1 >= trip.path.len();
-        Some(Errand { to: to.as_vec3() + Vec3::new(0.5, 0.0, 0.5), last, pose: trip.pose, face: trip.face, chase: trip.pursuit.is_some() })
+        Some(Errand { to: to.as_vec3() + Vec3::new(0.5, 0.0, 0.5), last, pose: trip.pose, face: trip.face, chase: trip.pursuit.map(|_| handoff) })
     }
 }
 
@@ -90,11 +115,20 @@ struct Town {
 struct Person {
     species: Option<CreatureId>,
     creature: Option<u32>,
-    /// Newcomers so far in this place, each with their own looks.
-    generation: u64,
-    /// The day (in days since the world began) a newcomer arrives after a death.
-    away_until: f64,
     trip: Option<Trip>,
+    /// A guard's quarry: the player, the nearest it has come to them, and when.
+    quarry: Option<(u32, f32, u64)>,
+    /// A guard that broke off a chase stays home, heeding no call, until this tick.
+    calm_until: u64,
+}
+
+/// What came of looking for a way.
+enum Way {
+    Found(Vec<IVec3>),
+    /// None within the search, or none found there lately.
+    Unreached,
+    /// This tick's search is spent: look again next time.
+    Later,
 }
 
 /// Where someone is going and the way there.
@@ -120,7 +154,7 @@ struct Trip {
 }
 
 impl Town {
-    fn new(info: SettlementInfo) -> Self {
+    fn new(info: SettlementInfo, margin: i32) -> Self {
         let (mut min, mut max) = (IVec2::splat(i32::MAX), IVec2::splat(i32::MIN));
         for b in &info.buildings {
             min = min.min(b.min);
@@ -131,7 +165,7 @@ impl Town {
             max = max.max(*g);
         }
         let centre = IVec2::new(info.centre.x, info.centre.z);
-        let (min, max) = (min.min(centre) - 12, max.max(centre) + 12);
+        let (min, max) = (min.min(centre) - margin, max.max(centre) + margin);
         let people = info.people.iter().map(|_| Person::default()).collect();
         Self { levers: SettlementLevers(info.levers), info, min, max, people, alive: false }
     }
@@ -143,12 +177,12 @@ impl Town {
         p.distance(clamped)
     }
 
-    /// Whether it has anywhere for `place`.
-    fn has(&self, place: Place) -> bool {
+    /// Whether it has anywhere for `place`; `shrine` names the building Shrine is.
+    fn has(&self, place: Place, shrine: &str) -> bool {
         let b = &self.info.buildings;
         match place {
             Place::Inn => b.iter().any(|b| b.kind == BuildingKind::Inn),
-            Place::Shrine => b.iter().any(|b| is(b, "shrine")),
+            Place::Shrine => b.iter().any(|b| is(b, shrine)),
             Place::Well => b.iter().any(|b| b.kind == BuildingKind::Well),
             Place::Gate | Place::Patrol => !self.info.gates.is_empty(),
             Place::Neighbour => b.iter().filter(|b| b.kind == BuildingKind::House && b.door.is_some()).count() > 1,
@@ -164,29 +198,55 @@ fn days(day: f64) -> f64 {
 }
 
 impl Server {
+    /// How settlements' people are kept alive (`people.live`).
+    fn live(&self) -> LiveDef {
+        self.overworld.settlement_people().live
+    }
+
     /// Brings settlements near players to life and lets them go, notes who died, and
     /// moves everyone along their day.
     pub(crate) fn tick_villagers(&mut self) {
-        self.villagers.ways = 0;
-        if self.tick.is_multiple_of(SCAN_EVERY) {
-            self.scan_towns();
+        self.villagers.searched = 0;
+        let live = self.live();
+        let tick = self.tick;
+        if tick.is_multiple_of(ticks(live.scan_every)) {
+            self.villagers.failed.retain(|_, until| *until > tick);
+            self.scan_towns(&live);
         }
         let ids: Vec<(u32, u64, usize)> = self.villagers.by_creature.iter().map(|(&id, &(t, i))| (id, t, i)).collect();
         for (id, town, i) in ids {
-            if (self.tick + id as u64).is_multiple_of(ERRAND_EVERY) {
-                self.follow_day(id, town, i);
+            if (tick + id as u64).is_multiple_of(ticks(live.errand_every)) {
+                self.follow_day(id, town, i, &live);
             }
         }
-        self.call_guards();
+        if tick.is_multiple_of(ticks(live.call_every)) {
+            self.call_guards(&live);
+        }
     }
 
-    fn scan_towns(&mut self) {
+    /// Notes the death of creature `id`, if it was someone's, as it dies.
+    pub(crate) fn villager_died(&mut self, id: u32) {
+        if let Some(&(town, i)) = self.villagers.by_creature.get(&id) {
+            self.note_death(town, i, days(self.day));
+        }
+    }
+
+    /// Notes who of every settlement near players died, for the save.
+    pub(crate) fn note_all_deaths(&mut self) {
+        let today = days(self.day);
+        let ids: Vec<u64> = self.villagers.towns.keys().copied().collect();
+        for id in ids {
+            self.note_deaths(id, today);
+        }
+    }
+
+    fn scan_towns(&mut self, live: &LiveDef) {
         let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
         // Settlements coming into reach.
         for at in &players {
-            for info in self.overworld.settlements_near(IVec2::new(at.x as i32, at.z as i32), ACTIVE as i32 + 256) {
+            for info in self.overworld.settlements_near(IVec2::new(at.x as i32, at.z as i32), live.active as i32 + live.scan_pad) {
                 if !self.villagers.towns.contains_key(&info.id) {
-                    let town = Town::new(info);
+                    let town = Town::new(info, live.margin);
                     self.villagers.towns.insert(town.info.id, town);
                 }
             }
@@ -199,12 +259,13 @@ impl Server {
             self.note_deaths(id, today);
             let town = &self.villagers.towns[&id];
             let nearest = players.iter().map(|&p| town.distance(p)).fold(f32::MAX, f32::min);
-            if nearest > FORGET {
+            // Let go of altogether (who died there is kept apart).
+            if nearest > live.forget {
                 self.release_town(id);
                 self.villagers.towns.remove(&id);
                 continue;
             }
-            let alive = if town.alive { nearest < RELEASE } else { nearest < ACTIVE };
+            let alive = if town.alive { nearest < live.release } else { nearest < live.active };
             if !alive {
                 if town.alive {
                     self.release_town(id);
@@ -218,23 +279,32 @@ impl Server {
         }
     }
 
-    /// Notes who of settlement `id` died since the last look: each is gone until a
-    /// newcomer takes their place `newcomer` days on.
+    /// Notes who of settlement `id` died since the last look.
     fn note_deaths(&mut self, id: u64, today: f64) {
-        let newcomer = self.overworld.settlement_people().newcomer as f64;
-        let Some(town) = self.villagers.towns.get_mut(&id) else { return };
-        for (i, person) in town.people.iter_mut().enumerate() {
-            if let Some(c) = person.creature
-                && !self.creatures.live.contains_key(&c)
-            {
-                self.villagers.by_creature.remove(&c);
-                person.creature = None;
-                person.trip = None;
-                person.generation += 1;
-                person.away_until = today + newcomer;
-                tracing::debug!(town = %town.info.name.0, person = i, "a villager died");
-            }
+        let Some(town) = self.villagers.towns.get(&id) else { return };
+        let gone: Vec<usize> = town.people.iter().enumerate().filter(|(_, p)| p.creature.is_some_and(|c| !self.creatures.live.contains_key(&c))).map(|(i, _)| i).collect();
+        for i in gone {
+            self.note_death(id, i, today);
         }
+    }
+
+    /// Person `i` of settlement `town` died: gone until a newcomer takes their place
+    /// `newcomer` days on, and no sooner than a day's share (`newcomers_per_day`) after
+    /// the settlement's last newcomer due, so several dead come back one by one.
+    fn note_death(&mut self, town: u64, i: usize, today: f64) {
+        let people = self.overworld.settlement_people();
+        let (newcomer, apart) = (people.newcomer as f64, 1.0 / people.newcomers_per_day as f64);
+        let Some(t) = self.villagers.towns.get_mut(&town) else { return };
+        let person = &mut t.people[i];
+        let Some(c) = person.creature.take() else { return };
+        self.villagers.by_creature.remove(&c);
+        person.trip = None;
+        person.quarry = None;
+        let last = self.villagers.dead.range((town, 0)..=(town, usize::MAX)).map(|(_, d)| d.away_until).fold(f64::MIN, f64::max);
+        let dead = self.villagers.dead.entry((town, i)).or_insert(Dead { generation: 0, away_until: 0.0 });
+        dead.generation += 1;
+        dead.away_until = (today + newcomer).max(last + apart);
+        tracing::debug!(town = %t.info.name.0, person = i, back = dead.away_until, "a villager died");
     }
 
     /// Everyone of settlement `id` goes.
@@ -258,7 +328,7 @@ impl Server {
         let today = days(self.day);
         let t = &self.villagers.towns[&town];
         let person = &t.people[i];
-        if person.creature.is_some() || person.away_until > today {
+        if person.creature.is_some() || self.villagers.dead.get(&(town, i)).is_some_and(|d| d.away_until > today) {
             return;
         }
         let resident = &t.info.people[i];
@@ -272,7 +342,7 @@ impl Server {
                 s
             }
         };
-        let seed = mix(resident.seed, person.generation);
+        let seed = mix(resident.seed, self.villagers.generation(town, i));
         let home = t.info.buildings[resident.home].door.unwrap_or(t.info.centre).as_vec3();
         let Some(spot) = self.spot_for(town, i, seed) else { return };
         if !self.world.contains(ColumnPos::of_block(spot.0)) {
@@ -283,9 +353,10 @@ impl Server {
         let genome = self.wild_genome(species, home, seed);
         let def = &self.content.creatures.get(species).def;
         let traits = genes::express(&def.genes, &genome);
+        let scale = self.overworld.settlement_people().live.scale;
         let creature = self.creatures.live.get_mut(&id).expect("just put");
         creature.home = home;
-        creature.scale = traits.scale * (0.94 + 0.12 * unit_from(mix(seed, 0x5ca1e)));
+        creature.scale = traits.scale * (scale.0 + (scale.1 - scale.0) * unit_from(mix(seed, 0x5ca1e)));
         creature.adult_scale = creature.scale;
         creature.body.size = (def.body.size.0 * creature.scale, def.body.size.1 * creature.scale);
         creature.genome = genome;
@@ -301,7 +372,7 @@ impl Server {
     fn spot_for(&self, town: u64, i: usize, seed: u64) -> Option<(IVec3, Trip)> {
         let (place, slot, day) = self.place_now(town, i, seed);
         let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, self.tick), retry: 0, pursuit: None };
-        let target = self.target(town, i, seed, &mut trip)?;
+        let target = self.target(town, i, seed, &mut trip, &self.live())?;
         trip.path = vec![target];
         Some((target, trip))
     }
@@ -313,13 +384,18 @@ impl Server {
         let resident = &t.info.people[i];
         let now = days(self.day);
         let day = now.floor() as u64;
-        let (place, slot) = place_at(self.overworld.settlement_people(), resident.routine, seed, &t.levers, day, now.fract() as f32, |p| t.has(p));
+        let people = self.overworld.settlement_people();
+        // A guard who broke off a chase stays home a while.
+        if t.people[i].calm_until > self.tick {
+            return (Place::Home, usize::MAX, day);
+        }
+        let (place, slot) = place_at(people, resident.routine, seed, &t.levers, day, now.fract() as f32, |p| t.has(p, &people.shrine));
         (place, slot, day)
     }
 
     /// Moves person `i` along their day: a new place when the day says, another spot of a
     /// place they stay at, the next turn of the way, and a new way when stuck.
-    fn follow_day(&mut self, id: u32, town: u64, i: usize) {
+    fn follow_day(&mut self, id: u32, town: u64, i: usize, live: &LiveDef) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let at = creature.body.position;
         let seed = creature.seed;
@@ -327,9 +403,10 @@ impl Server {
         // An angry guard goes after the one it is angry with, by the lanes.
         let chasing = creature.mind.attacker().filter(|_| creature.mind.anger > 0.0 && self.villagers.towns[&town].info.people[i].guard);
         if let Some(player) = chasing {
-            self.pursue(town, i, at, player);
+            self.pursue(id, town, i, at, player, live);
             return;
         }
+        self.villagers.towns.get_mut(&town).expect("listed").people[i].quarry = None;
         let (place, slot, day) = self.place_now(town, i, seed);
         let fresh = {
             let trip = self.villagers.towns[&town].people[i].trip.as_ref();
@@ -340,22 +417,19 @@ impl Server {
             }
         };
         if fresh {
-            if self.villagers.ways >= WAYS_PER_TICK {
-                return;
-            }
-            self.villagers.ways += 1;
             let leg = self.villagers.towns[&town].people[i].trip.as_ref().filter(|t| t.place == place).map_or(0, |t| t.leg + 1);
             let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg, best: (f32::MAX, tick), retry: 0, pursuit: None };
-            let Some(target) = self.target(town, i, mix(seed, tick / 200), &mut trip) else { return };
+            let Some(target) = self.target(town, i, mix(seed, tick / 200), &mut trip, live) else { return };
             let start = at.floor().as_ivec3();
-            match self.way(start, target, town) {
-                Some(path) => trip.path = path,
-                None => {
+            match self.find_way(start, target, town, live) {
+                Way::Found(path) => trip.path = path,
+                Way::Unreached => {
                     // No way found: stay put, and look again in a while.
                     trip.path = vec![start];
                     trip.pose = Pose::Idle;
-                    trip.retry = tick + 10 * TICKS_PER_SECOND as u64;
+                    trip.retry = tick + ticks(live.no_way_retry);
                 }
+                Way::Later => return,
             }
             self.villagers.towns.get_mut(&town).expect("listed").people[i].trip = Some(trip);
             return;
@@ -370,52 +444,106 @@ impl Server {
             trip.best = (f32::MAX, tick);
         } else if d < 1.0 && last && trip.place == Place::Patrol && trip.next_spot.is_none() {
             // A patrol stops a moment at each stop, then walks on.
-            trip.next_spot = Some(tick + 3 * TICKS_PER_SECOND as u64);
+            trip.next_spot = Some(tick + ticks(live.patrol_pause));
         } else if d + 0.2 < trip.best.0 {
             trip.best = (d, tick);
-        } else if d > 1.0 && (tick - trip.best.1) as f32 > STUCK * TICKS_PER_SECOND as f32 {
+        } else if d > 1.0 && tick - trip.best.1 > ticks(live.stuck) {
             // Stuck: find the way again from here.
             trip.next_spot = Some(tick);
         }
     }
 
-    /// Person `i` (a guard) at `at` goes after `player`: a way to where they stand, found
-    /// again every two seconds; `Defend` strikes once they are in reach.
-    fn pursue(&mut self, town: u64, i: usize, at: Vec3, player: u32) {
-        let Some(target) = self.players.get(&player).map(|p| p.position.floor().as_ivec3()) else { return };
+    /// Person `i` (a guard, creature `id`) at `at` goes after `player`: a way to where they
+    /// stand, found again every `repath`; `Defend` strikes once they are in reach. One that
+    /// comes no nearer them for `give_up` gives up.
+    fn pursue(&mut self, id: u32, town: u64, i: usize, at: Vec3, player: u32, live: &LiveDef) {
+        let Some(quarry) = self.players.get(&player).map(|p| p.position) else { return };
         let tick = self.tick;
-        let trip = self.villagers.towns[&town].people[i].trip.as_ref();
-        let due = trip.is_none_or(|t| t.pursuit != Some(player) || tick >= t.retry);
-        if !due || self.villagers.ways >= WAYS_PER_TICK {
-            if let Some(t) = self.villagers.towns.get_mut(&town).expect("listed").people[i].trip.as_mut() {
-                // Along the way, turn by turn.
-                if let Some(&next) = t.path.get(t.step)
-                    && t.step + 1 < t.path.len()
-                    && (next.as_vec3() + Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).distance(at.with_y(0.0)) < 0.9
-                {
-                    t.step += 1;
-                }
-            }
+        // In reach of a blow counts as near enough, though it comes no nearer.
+        let reach = self.creatures.live.get(&id).and_then(|c| self.content.creatures.get(c.species).def.attack).map_or(1.5, |a| a.reach) + 1.0;
+        let d = at.distance(quarry);
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        let (best, since) = match person.quarry {
+            Some((p, best, since)) if p == player && d + 0.5 >= best && d > reach => (best, since),
+            _ => (d, tick),
+        };
+        person.quarry = Some((player, best, since));
+        if tick - since > ticks(live.give_up) {
+            self.give_up(id, town, i, live);
             return;
         }
-        self.villagers.ways += 1;
+        let target = quarry.floor().as_ivec3();
+        let trip = self.villagers.towns[&town].people[i].trip.as_ref();
+        let due = trip.is_none_or(|t| t.pursuit != Some(player) || tick >= t.retry);
         let start = at.floor().as_ivec3();
-        // No way there (they stand on a roof, past a wall): the guard holds where it is
-        // rather than walk into the wall, and looks again in two seconds.
-        let path = self.way(start, target, town).unwrap_or_else(|| vec![start]);
+        let way = if due { self.find_way(start, target, town, live) } else { Way::Later };
+        let path = match way {
+            Way::Found(path) => path,
+            // No way there (they stand on a roof, past a wall): the guard holds where it is
+            // rather than walk into the wall, and looks again after `repath`.
+            Way::Unreached => vec![start],
+            Way::Later => {
+                if let Some(t) = self.villagers.towns.get_mut(&town).expect("listed").people[i].trip.as_mut() {
+                    // Along the way, turn by turn.
+                    if let Some(&next) = t.path.get(t.step)
+                        && t.step + 1 < t.path.len()
+                        && (next.as_vec3() + Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).distance(at.with_y(0.0)) < 0.9
+                    {
+                        t.step += 1;
+                    }
+                }
+                return;
+            }
+        };
         let (place, slot, day) = (Place::Patrol, usize::MAX, 0);
-        let trip = Trip { place, slot, day, path, step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, tick), retry: tick + 2 * TICKS_PER_SECOND as u64, pursuit: Some(player) };
+        let trip = Trip { place, slot, day, path, step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, tick), retry: tick + ticks(live.repath), pursuit: Some(player) };
         self.villagers.towns.get_mut(&town).expect("listed").people[i].trip = Some(trip);
     }
 
+    /// Guard `id` (person `i`) breaks off its chase: it forgives, heals to full and goes
+    /// home for `calm`, heeding no call meanwhile.
+    fn give_up(&mut self, id: u32, town: u64, i: usize, live: &LiveDef) {
+        if let Some(c) = self.creatures.live.get_mut(&id) {
+            c.mind.forgive();
+            c.health = self.content.creatures.get(c.species).def.health;
+            c.changed = true;
+        }
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        person.quarry = None;
+        person.trip = None;
+        person.calm_until = self.tick + ticks(live.calm);
+        tracing::debug!(person = i, "a guard gave up the chase");
+    }
+
+    /// The way from `from` to `to` through settlement `town`, within this tick's search.
+    fn find_way(&mut self, from: IVec3, to: IVec3, town: u64, live: &LiveDef) -> Way {
+        let tick = self.tick;
+        if self.villagers.failed.get(&(town, to)).is_some_and(|&until| until > tick) {
+            return Way::Unreached;
+        }
+        if self.villagers.searched + live.search > live.search_per_tick {
+            return Way::Later;
+        }
+        let (path, searched) = self.way(from, to, town, live.search);
+        self.villagers.searched += searched;
+        match path {
+            Some(path) => Way::Found(path),
+            None => {
+                self.villagers.failed.insert((town, to), tick + ticks(live.failed_for));
+                Way::Unreached
+            }
+        }
+    }
+
     /// Picks the cell person `i` goes to for `trip`'s place, and how they are once there.
-    fn target(&self, town: u64, i: usize, seed: u64, trip: &mut Trip) -> Option<IVec3> {
+    fn target(&self, town: u64, i: usize, seed: u64, trip: &mut Trip, live: &LiveDef) -> Option<IVec3> {
         let t = &self.villagers.towns[&town];
         let resident = &t.info.people[i];
         let buildings = &t.info.buildings;
         let home = &buildings[resident.home];
         let centre = t.info.centre;
-        let linger = self.overworld.settlement_people().linger;
+        let people = self.overworld.settlement_people();
+        let (linger, r) = (people.linger, &live.spots);
         let stay = |trip: &mut Trip, salt: u64| {
             let seconds = linger.0 + (linger.1 - linger.0) * unit_from(mix(seed, salt));
             trip.next_spot = Some(self.tick + (seconds * TICKS_PER_SECOND as f32) as u64);
@@ -433,7 +561,7 @@ impl Server {
             Place::Yard => {
                 stay(trip, 2);
                 let door = home.door.unwrap_or(centre);
-                self.near_spot(door, 3, seed)
+                self.near_spot(door, r.yard, seed)
             }
             Place::Work => match resident.work {
                 Some(w) => {
@@ -449,13 +577,13 @@ impl Server {
                 }
                 None => {
                     stay(trip, 2);
-                    self.near_spot(home.door.unwrap_or(centre), 3, seed)
+                    self.near_spot(home.door.unwrap_or(centre), r.yard, seed)
                 }
             },
             Place::Square => {
                 stay(trip, 5);
                 trip.face = Some(centre.as_vec3() + Vec3::new(0.5, 1.5, 0.5));
-                self.near_spot(centre, 6, seed)
+                self.near_spot(centre, r.square, seed)
             }
             Place::Well => {
                 stay(trip, 6);
@@ -470,7 +598,7 @@ impl Server {
             }
             Place::Shrine => {
                 stay(trip, 8);
-                let s = buildings.iter().position(|b| is(b, "shrine"))?;
+                let s = buildings.iter().position(|b| is(b, &people.shrine))?;
                 if buildings[s].kind == BuildingKind::House { self.inside(s, t, seed) } else { self.about(s, t, seed) }
             }
             Place::Neighbour => {
@@ -479,7 +607,7 @@ impl Server {
                 let b = *houses.get((mix(seed, 10) % houses.len().max(1) as u64) as usize)?;
                 let door = buildings[b].door?;
                 trip.face = Some(door.as_vec3() - buildings[b].facing.step().extend(0).xzy().as_vec3() * 2.0 + Vec3::new(0.5, 1.5, 0.5));
-                self.near_spot(door, 1, seed)
+                self.near_spot(door, r.neighbour, seed)
             }
             Place::Gate => {
                 stay(trip, 11);
@@ -487,7 +615,7 @@ impl Server {
                 let g = gates[(mix(seed, 12) % gates.len() as u64) as usize];
                 let out = (g - IVec2::new(centre.x, centre.z)).as_vec2().normalize_or_zero();
                 trip.face = Some(Vec3::new(g.x as f32 + out.x * 8.0, centre.y as f32 + 1.5, g.y as f32 + out.y * 8.0));
-                self.near_spot(IVec3::new(g.x, centre.y, g.y), 2, seed)
+                self.near_spot(IVec3::new(g.x, centre.y, g.y), r.gate, seed)
             }
             Place::Patrol => {
                 // Gate to gate by way of the square, a leg at a time.
@@ -495,10 +623,10 @@ impl Server {
                 let stops = gates.len() * 2;
                 let leg = (trip.leg + (seed % stops as u64) as usize) % stops;
                 if leg % 2 == 1 {
-                    self.near_spot(centre, 4, seed)
+                    self.near_spot(centre, r.patrol_square, seed)
                 } else {
                     let g = gates[leg / 2];
-                    self.near_spot(IVec3::new(g.x, centre.y, g.y), 2, seed)
+                    self.near_spot(IVec3::new(g.x, centre.y, g.y), r.patrol_gate, seed)
                 }
             }
             Place::Wander => {
@@ -506,7 +634,7 @@ impl Server {
                 let lanes: Vec<&Vec<Vec2>> = t.info.lanes.iter().filter(|l| !l.is_empty()).collect();
                 let lane = lanes[(mix(seed, 14) % lanes.len() as u64) as usize];
                 let p = lane[(mix(seed, 15) % lane.len() as u64) as usize];
-                self.near_spot(IVec3::new(p.x as i32, centre.y, p.y as i32), 1, seed)
+                self.near_spot(IVec3::new(p.x as i32, centre.y, p.y as i32), r.wander, seed)
             }
         };
         spot
@@ -566,12 +694,12 @@ impl Server {
 
     /// The way from `from` to `to` through settlement `town`, as the cells it turns at
     /// (the last `to`): an A* over the cells a body can stand in, stepping up one block
-    /// or down two.
-    fn way(&self, from: IVec3, to: IVec3, town: u64) -> Option<Vec<IVec3>> {
+    /// or down two, searching `search` cells at most; and how many it searched.
+    fn way(&self, from: IVec3, to: IVec3, town: u64, search: u32) -> (Option<Vec<IVec3>>, u32) {
         let t = &self.villagers.towns[&town];
         let (flat, goal) = (IVec2::new(from.x, from.z), IVec2::new(to.x, to.z));
         // The settlement and a margin, stretched to take in both ends (a guard's quarry may
-        // stand outside it); `SEARCH` bounds the work whatever the box.
+        // stand outside it); `search` bounds the work whatever the box.
         let (min, max) = (t.min.min(flat).min(goal) - 8, t.max.max(flat).max(goal) + 8);
         let start = [from, from + IVec3::Y, from - IVec3::Y].into_iter().find(|&c| self.stands(c)).unwrap_or(from);
         let h = |c: IVec3| {
@@ -591,8 +719,8 @@ impl Server {
                 break;
             }
             searched += 1;
-            if searched > SEARCH {
-                return None;
+            if searched > search {
+                return (None, searched);
             }
             let g = came[&c].1;
             for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
@@ -614,7 +742,7 @@ impl Server {
                 }
             }
         }
-        let end = found?;
+        let Some(end) = found else { return (None, searched) };
         let mut cells = vec![end];
         let mut c = end;
         while c != start {
@@ -635,18 +763,17 @@ impl Server {
         if turns.is_empty() {
             turns.push(end);
         }
-        Some(turns)
+        (Some(turns), searched)
     }
 
     fn passable(&self, cell: IVec3) -> bool {
         self.block(cell).is_some_and(|b| !self.content.blocks.info(b).solid)
     }
 
-    /// Guards near a villager a player struck fight that player.
-    fn call_guards(&mut self) {
-        if !self.tick.is_multiple_of(5) {
-            return;
-        }
+    /// Guards near a villager a player struck fight that player, but for those home after
+    /// giving up a chase.
+    fn call_guards(&mut self, live: &LiveDef) {
+        let tick = self.tick;
         let mut calls: Vec<(u64, Vec3, u32)> = Vec::new();
         for (&id, &(town, i)) in &self.villagers.by_creature {
             let Some(c) = self.creatures.live.get(&id) else { continue };
@@ -662,12 +789,12 @@ impl Server {
                 .people
                 .iter()
                 .zip(&self.villagers.towns[&town].info.people)
-                .filter(|(_, r)| r.guard)
+                .filter(|(p, r)| r.guard && p.calm_until <= tick)
                 .filter_map(|(p, _)| p.creature)
                 .collect();
             for g in guards {
                 let Some(guard) = self.creatures.live.get_mut(&g) else { continue };
-                if guard.body.position.distance(at) > HELP || guard.mind.attacker() == Some(player) {
+                if guard.body.position.distance(at) > live.help || guard.mind.attacker() == Some(player) {
                     continue;
                 }
                 let species = self.content.creatures.get(guard.species);

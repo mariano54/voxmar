@@ -139,6 +139,33 @@ code. Its `rules` replace section by section: a mod giving only `rules: (lanes: 
 replaces the lanes (fields it leaves out take the code's defaults) and keeps every other
 section as earlier packages set it; each special size it names replaces that kind's.
 
+## People
+
+Who lives in a settlement is drawn with its plan, from the seed alone
+(`settlements/people.rs`, `people` in settlements.ron): each home holds as many as its
+house type says (`people`, fuller where it is crowded), each working building takes its
+workers from the homes nearest (`jobs`), a village keeps guards by its size (`guards`),
+and `folk` fill the rest by weight. Their days are `routines`: slots of the day, each
+drawing one place a day (asleep at home, at work, the square, the inn, a neighbour's
+door, the gates), so no two days and no two people go quite alike. Every species they
+are must be a villager (kind `Villager`, `creatures_villagers.ron`) and every job and
+work must name a building's work or kind, or the content fails to load.
+
+The server keeps them only near players (`crates/server/src/villagers.rs`, every number
+in `people.live`): a settlement comes to life within `active` blocks of a player, its
+people appearing where their day has them now with looks from their seed, and goes again
+past `release`. They walk their day by ways found over the cells a body can stand in,
+within a search budget a tick. They are never wild-spawned, never saved, never tamed or
+summoned, drop nothing, teach no combat (`xp.combat` 0, guards aside) and go in no
+journal.
+
+Someone killed stays dead: the world's save keeps who died (`villagers.ron`), so neither
+leaving, walking far nor a restart brings them back, and a newcomer with looks of their
+own takes their place `newcomer` days on (five, never under a quarter), one a day at most
+(`newcomers_per_day`). A villager struck calls the guards within `help`: they fight the
+one who did it, and only them; a guard that comes no nearer them for `give_up` seconds
+(they stand where it cannot go) breaks off, heals and goes home for `calm`.
+
 ## What else knows about them
 
 - Trails join settlements' gates (the ends of their main lanes) to each other and to

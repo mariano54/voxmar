@@ -522,6 +522,11 @@ impl Overworld {
             .collect()
     }
 
+    /// The names of the sizes settlements come in, as written.
+    pub fn settlement_sizes(&self) -> Vec<String> {
+        self.settlements.sizes()
+    }
+
     /// The routines and lists settlements' people live by.
     pub fn settlement_people(&self) -> &people::PeopleDef {
         self.settlements.people()

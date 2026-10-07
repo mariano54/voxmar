@@ -126,6 +126,37 @@ pub(super) struct PeopleFile {
     jitter: Option<f32>,
     linger: Option<(f32, f32)>,
     newcomer: Option<f32>,
+    newcomers_per_day: Option<f32>,
+    shrine: Option<String>,
+    #[serde(default)]
+    live: LiveFile,
+}
+
+/// `people.live` as written: each number it gives replaces the one before.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LiveFile {
+    active: Option<f32>,
+    release: Option<f32>,
+    forget: Option<f32>,
+    margin: Option<i32>,
+    scan_pad: Option<i32>,
+    scan_every: Option<f32>,
+    errand_every: Option<f32>,
+    search: Option<u32>,
+    search_per_tick: Option<u32>,
+    failed_for: Option<f32>,
+    stuck: Option<f32>,
+    no_way_retry: Option<f32>,
+    patrol_pause: Option<f32>,
+    repath: Option<f32>,
+    help: Option<f32>,
+    call_every: Option<f32>,
+    give_up: Option<f32>,
+    calm: Option<f32>,
+    handoff: Option<f32>,
+    scale: Option<(f32, f32)>,
+    spots: Option<SpotsDef>,
 }
 
 fn one() -> f32 {
@@ -206,11 +237,123 @@ pub struct PeopleDef {
     pub linger: (f32, f32),
     /// Days before a newcomer takes the place of someone who died.
     pub newcomer: f32,
+    /// Newcomers a settlement takes in a day at most: several dead come back one by one.
+    pub newcomers_per_day: f32,
+    /// The work or kind of building `Shrine` sends people to.
+    pub shrine: String,
+    pub live: LiveDef,
 }
 
 impl Default for PeopleDef {
     fn default() -> Self {
-        Self { jobs: Vec::new(), folk: Vec::new(), guards: Vec::new(), routines: Vec::new(), jitter: 0.03, linger: (12.0, 50.0), newcomer: 1.0 }
+        Self {
+            jobs: Vec::new(),
+            folk: Vec::new(),
+            guards: Vec::new(),
+            routines: Vec::new(),
+            jitter: 0.03,
+            linger: (12.0, 50.0),
+            newcomer: 5.0,
+            newcomers_per_day: 1.0,
+            shrine: "shrine".into(),
+            live: LiveDef::default(),
+        }
+    }
+}
+
+/// How the server keeps settlements' people alive near players (`people.live`;
+/// crates/server/src/villagers.rs). Distances in blocks, times in seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LiveDef {
+    /// A settlement comes to life within `active` of a player, and goes when every player
+    /// is past `release`; past `forget` the server lets go of it altogether (who died
+    /// there is kept in the world's save).
+    pub active: f32,
+    pub release: f32,
+    pub forget: f32,
+    /// Blocks round its buildings where ways are searched.
+    pub margin: i32,
+    /// Blocks past `active` looked through for settlements coming into reach.
+    pub scan_pad: i32,
+    /// Between looks for settlements coming to life or going.
+    pub scan_every: f32,
+    /// Between each person's looks at their day.
+    pub errand_every: f32,
+    /// Cells one way may search before it gives up, and all ways in a tick together.
+    pub search: u32,
+    pub search_per_tick: u32,
+    /// How long a place no way reached is not searched for again.
+    pub failed_for: f32,
+    /// Without getting nearer the next turn, finding the way again.
+    pub stuck: f32,
+    /// With no way to where their day sends them, looking again.
+    pub no_way_retry: f32,
+    /// A patrol's stop at each gate and the square.
+    pub patrol_pause: f32,
+    /// Between ways found to a guard's quarry.
+    pub repath: f32,
+    /// Guards within `help` of a villager struck come, looked for every `call_every`.
+    pub help: f32,
+    pub call_every: f32,
+    /// A guard that comes no nearer its quarry for `give_up` breaks off, heals and goes
+    /// home for `calm`.
+    pub give_up: f32,
+    pub calm: f32,
+    /// Within this of its quarry a guard goes straight at it rather than by the way.
+    pub handoff: f32,
+    /// Each person's size, as a share of their genes', from the first to the second.
+    pub scale: (f32, f32),
+    pub spots: SpotsDef,
+}
+
+impl Default for LiveDef {
+    fn default() -> Self {
+        Self {
+            active: 112.0,
+            release: 160.0,
+            forget: 2000.0,
+            margin: 12,
+            scan_pad: 256,
+            scan_every: 2.0,
+            errand_every: 0.5,
+            search: 8000,
+            search_per_tick: 20000,
+            failed_for: 10.0,
+            stuck: 6.0,
+            no_way_retry: 10.0,
+            patrol_pause: 3.0,
+            repath: 2.0,
+            help: 40.0,
+            call_every: 0.25,
+            give_up: 8.0,
+            calm: 60.0,
+            handoff: 4.0,
+            scale: (0.94, 1.06),
+            spots: SpotsDef::default(),
+        }
+    }
+}
+
+/// How far from a place's middle people stand there, in blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SpotsDef {
+    /// Outside their own door (and about their yard when they have no work).
+    pub yard: i32,
+    pub square: i32,
+    pub gate: i32,
+    /// A patrol's stops: the square and each gate.
+    pub patrol_square: i32,
+    pub patrol_gate: i32,
+    /// Along a lane.
+    pub wander: i32,
+    /// At another house's door.
+    pub neighbour: i32,
+}
+
+impl Default for SpotsDef {
+    fn default() -> Self {
+        Self { yard: 3, square: 6, gate: 2, patrol_square: 4, patrol_gate: 2, wander: 1, neighbour: 1 }
     }
 }
 
@@ -252,6 +395,21 @@ impl PeopleDef {
         if let Some(newcomer) = file.newcomer {
             self.newcomer = newcomer;
         }
+        if let Some(n) = file.newcomers_per_day {
+            self.newcomers_per_day = n;
+        }
+        if let Some(shrine) = file.shrine {
+            self.shrine = shrine;
+        }
+        let (live, l) = (&mut self.live, file.live);
+        macro_rules! take {
+            ($($field:ident),*) => {
+                $(if let Some(v) = l.$field {
+                    live.$field = v;
+                })*
+            };
+        }
+        take!(active, release, forget, margin, scan_pad, scan_every, errand_every, search, search_per_tick, failed_for, stuck, no_way_retry, patrol_pause, repath, help, call_every, give_up, calm, handoff, scale, spots);
         Ok(())
     }
 
@@ -282,8 +440,54 @@ impl PeopleDef {
                 return fail(format!("guards of `{}` need a size there is, routines and a count low to high", g.size));
             }
         }
-        if self.jobs.iter().any(|j| j.count.0 > j.count.1) || !(0.0..0.2).contains(&self.jitter) || self.linger.0 > self.linger.1 || self.newcomer < 0.0 {
-            return fail("counts low to high, a jitter under 0.2, linger low to high and newcomers after some days".into());
+        if self.jobs.iter().any(|j| j.count.0 > j.count.1) || !(0.0..0.2).contains(&self.jitter) || self.linger.0 < 0.0 || self.linger.0 > self.linger.1 {
+            return fail("counts low to high, a jitter under 0.2 and linger from nothing or more, low to high".into());
+        }
+        if self.jobs.iter().any(|j| !(0.0..=1.0).contains(&j.chance)) || self.folk.iter().any(|f| f.weight < 0.0) || self.routines.iter().any(|r| r.slots.iter().any(|s| s.go.iter().any(|g| g.weight < 0.0))) {
+            return fail("job chances within 0 to 1 and weights of nothing or more".into());
+        }
+        // A newcomer sooner than a quarter day after a death makes a village a well of
+        // experience to empty again and again.
+        if self.newcomer < 0.25 || self.newcomers_per_day <= 0.0 {
+            return fail("newcomers at least a quarter day after a death, and some each day".into());
+        }
+        let l = &self.live;
+        let s = &l.spots;
+        let times = [l.scan_every, l.errand_every, l.failed_for, l.stuck, l.no_way_retry, l.patrol_pause, l.repath, l.call_every, l.give_up, l.calm];
+        if !(0.0 < l.active && l.active < l.release && l.release < l.forget)
+            || l.margin < 0
+            || l.scan_pad < 0
+            || l.search == 0
+            || l.search_per_tick < l.search
+            || times.iter().any(|&t| t <= 0.0)
+            || l.help < 0.0
+            || l.handoff < 0.0
+            || !(0.0 < l.scale.0 && l.scale.0 <= l.scale.1)
+            || [s.yard, s.square, s.gate, s.patrol_square, s.patrol_gate, s.wander, s.neighbour].iter().any(|&r| r < 0)
+        {
+            return fail("live: active under release under forget, searches above nothing (a tick's at least one way's), times above nothing, a scale low to high and no distance below nothing".into());
+        }
+        Ok(())
+    }
+
+    /// Checks what the people are against the rest of the content: every species is a
+    /// villager (placed by settlements, never by the land), and every job and folk work
+    /// names a work or kind of building there is (`works`).
+    pub fn check_against(&self, creatures: &voxmar_engine::creature::CreatureRegistry, works: &[String]) -> Result<(), ContentError> {
+        let fail = |what: String| Err(ContentError(format!("settlements.ron: people: {what}")));
+        let species = self.jobs.iter().map(|j| &j.species).chain(self.folk.iter().map(|f| &f.species)).chain(self.guards.iter().map(|g| &g.species));
+        for name in species {
+            match creatures.find(name).map(|id| creatures.get(id).def.kind) {
+                Some(voxmar_engine::creature::Kind::Villager) => {}
+                Some(_) => return fail(format!("`{name}` is not a villager (kind Villager)")),
+                None => return fail(format!("there is no creature called `{name}`")),
+            }
+        }
+        let places = self.jobs.iter().map(|j| &j.at).chain(self.folk.iter().filter_map(|f| f.work.as_ref())).chain(std::iter::once(&self.shrine));
+        for name in places {
+            if !works.contains(name) {
+                return fail(format!("no building's work or kind is `{name}`"));
+            }
         }
         Ok(())
     }
@@ -334,7 +538,7 @@ pub fn residents(people: &PeopleDef, houses: &[HouseDef], size: &str, levers: &L
             if !matches!(b.kind, Kind::House | Kind::Trader | Kind::Inn) {
                 return 0;
             }
-            let range = houses.iter().find(|h| h.name == b.what).map_or((1, 3), |h| h.people);
+            let range = houses.iter().find(|h| h.name == b.what).map_or_else(super::def::household, |h| h.people);
             count(range, &crowded, levers, &mut rng)
         })
         .collect();

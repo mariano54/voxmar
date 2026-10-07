@@ -35,7 +35,7 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
         Behaviour::Hunt { radius } => Arc::new(Hunt { radius }),
         Behaviour::Defend => Arc::new(Defend),
         Behaviour::Curious { distance } => Arc::new(Curious { distance }),
-        Behaviour::Routine => Arc::new(Routine),
+        Behaviour::Routine { arrive, look } => Arc::new(Routine { arrive, look }),
     }
 }
 
@@ -532,7 +532,7 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     if !close {
         // Those with a way found after the target (guards going after someone) follow it
         // until the target is near; the day's errands are no way to anyone.
-        decision.goal = Some(ctx.at.errand.filter(|e| e.chase && d > 4.0).map_or(p.position, |e| e.to));
+        decision.goal = Some(ctx.at.errand.filter(|e| e.chase.is_some_and(|handoff| d > handoff)).map_or(p.position, |e| e.to));
         if stalker && d > 4.5 {
             decision.speed = walk(ctx) * 0.6;
             decision.pose = Pose::Crouched;
@@ -589,7 +589,10 @@ impl Module for Curious {
 /// Goes where its routine sends it, by the turns of the way the server found, and once
 /// there rests or stands as the errand says, looking at a player who comes close.
 #[derive(Debug)]
-struct Routine;
+struct Routine {
+    arrive: f32,
+    look: f32,
+}
 
 impl Module for Routine {
     fn name(&self) -> &'static str {
@@ -606,12 +609,12 @@ impl Module for Routine {
 
     fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
         let Some(errand) = ctx.at.errand else { return Decision::default() };
-        let there = errand.last && flat(errand.to, ctx.at.position) < ARRIVED * 0.6;
+        let there = errand.last && flat(errand.to, ctx.at.position) < self.arrive;
         if !there {
             return Decision { goal: Some(errand.to), speed: walk(ctx), ..Default::default() };
         }
         // Awake, they turn to a player close by.
-        let near = ctx.nearest().filter(|p| ctx.distance(p.position) < 4.0 && errand.pose != Pose::Resting);
+        let near = ctx.nearest().filter(|p| ctx.distance(p.position) < self.look && errand.pose != Pose::Resting);
         Decision { face: near.map(|p| p.position).or(errand.face), pose: errand.pose, ..Default::default() }
     }
 }

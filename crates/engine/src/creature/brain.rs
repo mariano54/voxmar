@@ -94,8 +94,9 @@ pub struct Errand {
     pub pose: Pose,
     /// What they face once there.
     pub face: Option<Vec3>,
-    /// Whether it is a way after someone (a guard's pursuit) rather than the day's.
-    pub chase: bool,
+    /// For a way after someone (a guard's pursuit) rather than the day's: within how many
+    /// blocks of them it goes straight at them instead.
+    pub chase: Option<f32>,
 }
 
 /// What a creature senses this decision.
@@ -283,6 +284,13 @@ impl Mind {
         if let Some(id) = by {
             self.remember(Memory::HurtBy(id), 45.0);
         }
+    }
+
+    /// Lets go of every grudge and fright: it was hurt by no one.
+    pub fn forgive(&mut self) {
+        self.anger = 0.0;
+        self.fear = 0.0;
+        self.memories.retain(|(m, _)| !matches!(m, Memory::HurtBy(_) | Memory::ScaredBy(_)));
     }
 
     /// Kin nearby raised the alarm.
@@ -528,9 +536,9 @@ pub(super) mod tests {
     #[test]
     fn errands_outrank_home_and_only_a_chase_leads_a_fight() {
         let guard = species(&format!(
-            "(creatures: [(name: \"guard\", health: 10, leash: 8.0, {BODY}, attack: (damage: (1, 2)), behaviours: [(do: Routine), (do: Defend)])])"
+            "(creatures: [(name: \"guard\", health: 10, leash: 8.0, {BODY}, attack: (damage: (1, 2)), behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Defend)])])"
         ));
-        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: false };
+        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None };
         let mut mind = Mind::new(&guard.def.temperament, 6);
         let far = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&[]) };
         let decision = think(&guard, &mut mind, &far);
@@ -543,9 +551,30 @@ pub(super) mod tests {
         let at = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&near) };
         let decision = think(&guard, &mut mind, &at);
         assert_eq!((doing(&guard, &mind), decision.goal), ("defend", Some(near[0].position)));
-        let turn = Errand { to: Vec3::new(28.0, 0.0, 3.0), last: false, chase: true, ..work };
+        let turn = Errand { to: Vec3::new(28.0, 0.0, 3.0), last: false, chase: Some(4.0), ..work };
         let decision = think(&guard, &mut mind, &Situation { errand: Some(turn), ..at });
         assert_eq!(decision.goal, Some(turn.to));
+        // Within the handoff of its quarry, straight at them whatever the way says.
+        let close = Errand { chase: Some(12.0), ..turn };
+        let decision = think(&guard, &mut mind, &Situation { errand: Some(close), ..at });
+        assert_eq!(decision.goal, Some(near[0].position));
+    }
+
+    #[test]
+    fn forgiven_it_neither_fights_nor_flees() {
+        let guard = species(&format!(
+            "(creatures: [(name: \"guard\", health: 10, {BODY}, attack: (damage: (1, 2)), behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Defend)])])"
+        ));
+        let mut mind = Mind::new(&guard.def.temperament, 6);
+        mind.hurt(&guard, Some(1), 1.0);
+        assert_eq!(mind.attacker(), Some(1));
+        mind.forgive();
+        assert_eq!((mind.attacker(), mind.anger, mind.fear), (None, 0.0, 0.0));
+        let work = Errand { to: Vec3::new(40.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None };
+        let near = [player(Vec3::new(20.0, 0.0, 0.0))];
+        let at = Situation { position: Vec3::new(30.0, 0.0, 0.0), errand: Some(work), ..situation(&near) };
+        let _ = think(&guard, &mut mind, &at);
+        assert_eq!(doing(&guard, &mind), "routine");
     }
 
     #[test]

@@ -866,8 +866,9 @@ struct HouseFile {
     people: (u32, u32),
 }
 
-fn household() -> (u32, u32) {
-    (1, 3)
+/// How many live in a house that does not say.
+pub(super) fn household() -> (u32, u32) {
+    (1, 2)
 }
 
 #[derive(Deserialize)]
@@ -1790,6 +1791,15 @@ impl SettlementsDef {
             }
         }
         self.people.check(&self.sizes.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
+    }
+}
+
+impl SettlementsDef {
+    /// Every work a building can have and every kind of building, by name: what people's
+    /// jobs and works may name.
+    pub fn works(&self) -> Vec<String> {
+        let kinds = super::house::Kind::ALL.iter().map(|k| k.name().to_owned());
+        self.houses.iter().filter_map(|h| h.work.clone()).chain(kinds).collect()
     }
 }
 

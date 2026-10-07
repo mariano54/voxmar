@@ -429,6 +429,11 @@ impl Server {
             Vec::new()
         });
         server.restore_creatures(saved_creatures);
+        let dead = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_villagers()).unwrap_or_else(|e| {
+            tracing::error!("could not load who of the villagers died: {e}");
+            Vec::new()
+        });
+        server.villagers = villagers::Villagers::restore(dead);
         server
     }
 
@@ -545,6 +550,10 @@ impl Server {
     /// Writes edited columns, joined players and the world's metadata. Failures are
     /// logged; columns that failed stay dirty and are tried again at the next save.
     fn save(&mut self) {
+        if self.save.is_none() {
+            return;
+        }
+        self.note_all_deaths();
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
@@ -567,6 +576,9 @@ impl Server {
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
             tracing::error!("could not save creatures: {e}");
+        }
+        if let Err(e) = save.write_villagers(&self.villagers.saved()) {
+            tracing::error!("could not save who of the villagers died: {e}");
         }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {

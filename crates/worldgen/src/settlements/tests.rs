@@ -1430,6 +1430,55 @@ fn ripe_or_rare_fruit_is_refused() {
     }));
 }
 
+/// People's numbers that would not play are refused at load: a newcomer sooner than a
+/// quarter day (a village to empty of experience again and again), chances past 1,
+/// weights below nothing, a settlement let go before it comes to life, a tick's search
+/// smaller than one way's.
+#[test]
+fn people_numbers_that_would_not_play_are_refused() {
+    let world = base_world(1);
+    let def = &world.settlements.def;
+    let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
+    assert!(def.people.check(&sizes).is_ok());
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 7] = [
+        ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
+        ("no newcomers a day", |p| p.newcomers_per_day = 0.0),
+        ("a job chance of 1.5", |p| p.jobs[0].chance = 1.5),
+        ("a folk weight below nothing", |p| p.folk[0].weight = -1.0),
+        ("release inside active", |p| p.live.release = p.live.active - 1.0),
+        ("a tick's search under a way's", |p| p.live.search_per_tick = p.live.search - 1),
+        ("linger from below nothing", |p| p.linger.0 = -1.0),
+    ];
+    for (what, spoil) in spoilt {
+        let mut people = def.people.clone();
+        spoil(&mut people);
+        assert!(people.check(&sizes).is_err(), "{what} was let through");
+    }
+}
+
+/// People name species that are villagers and works there are, or the content fails to
+/// load (rather than warn at every look once a player comes near).
+#[test]
+fn people_name_villagers_and_works_there_are() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world = crate::content::WorldContent::load(&content).unwrap();
+    let (people, works) = (&world.settlements.people, world.settlements.works());
+    assert!(people.check_against(&content.creatures, &works).is_ok());
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 5] = [
+        ("an animal for a folk", |p| p.folk[0].species = "base:rabbit".into()),
+        ("no such guard", |p| p.guards[0].species = "base:gaurd".into()),
+        ("a job at no such work", |p| p.jobs[0].at = "bakehouse".into()),
+        ("folk working at no such work", |p| p.folk.iter_mut().find(|f| f.work.is_some()).expect("a folk works").work = Some("mine".into())),
+        ("a shrine of no such kind", |p| p.shrine = "temple".into()),
+    ];
+    for (what, spoil) in spoilt {
+        let mut spoilt = people.clone();
+        spoil(&mut spoilt);
+        assert!(spoilt.check_against(&content.creatures, &works).is_err(), "{what} was let through");
+    }
+}
+
 /// Every settlement has people: each lives in a home and works at a building that takes
 /// workers, a village keeps guards and an innkeeper, every routine sends them somewhere
 /// each slot of the day, and no two people of a place keep quite the same day.

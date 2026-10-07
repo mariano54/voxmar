@@ -40,6 +40,9 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub const ALL: [Kind; 12] =
+        [Kind::House, Kind::Trader, Kind::Inn, Kind::Smithy, Kind::Stall, Kind::Well, Kind::Shrine, Kind::Field, Kind::Pen, Kind::Orchard, Kind::Woodyard, Kind::Centrepiece];
+
     pub fn name(self) -> &'static str {
         match self {
             Kind::House => "house",
