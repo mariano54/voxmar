@@ -876,4 +876,12 @@
     "biome.tag.wet": "wet",
     "biome.tag.wetland": "wetland",
     "biome.tag.wonder": "wonder",
+    "block.base.coin_purse": "Coin Purse",
+    "block.base.gold_coin": "Gold Coin",
+    "block.base.rice": "Rice",
+    "block.base.stone_altar": "Stone Altar",
+    "family.base.chickpea": "Chickpea",
+    "family.base.rice": "Rice",
+    "family.base.rye": "Rye",
+    "family.base.taro": "Taro",
 }
