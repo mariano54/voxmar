@@ -159,6 +159,7 @@ impl Client {
 
     fn apply(&mut self, message: ServerMessage) {
         match message {
+            ServerMessage::Rejected { reason } => panic!("turned away: {reason:?}"),
             ServerMessage::Welcome { player, position, admin, allow_flight, .. } => {
                 self.id = player;
                 self.position = position;
@@ -1812,6 +1813,20 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
 fn items_held(said: &str) -> u32 {
     let words: Vec<_> = said.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric())).collect();
     words.windows(2).find_map(|w| (w[1] == "items" || w[1] == "item").then(|| w[0].parse().ok()).flatten()).unwrap_or(0)
+}
+
+/// A player whose connection drops and who comes straight back is let in as themselves,
+/// even when the server reads their new hello in the loop that finds the old connection
+/// gone (connections are read oldest first).
+#[test]
+fn a_player_who_drops_and_comes_straight_back_is_let_in() {
+    let client = Client::join();
+    for _ in 0..16 {
+        let bob = client.another("bob");
+        drop(bob);
+        // No wait: the hello goes with the new connection, right behind the drop.
+        client.another("bob");
+    }
 }
 
 /// When the server saves, as the content says.

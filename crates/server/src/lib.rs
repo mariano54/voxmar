@@ -532,7 +532,10 @@ impl Server {
     }
 
     fn handle_messages(&mut self) {
-        let ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        // Oldest connection first, so a player's dropped connection is seen gone (and kept
+        // among the leavers) before a new one's hello under their name is answered.
+        let mut ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        ids.sort_unstable();
         for id in ids {
             while let Some(player) = self.players.get(&id) {
                 match player.connection.try_recv_at() {
