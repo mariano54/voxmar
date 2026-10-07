@@ -190,7 +190,7 @@
     "skill.core.crafting.guide.9": ("Aether-woven cloth (to come)", "エーテル織りの布（予定）"),
     "skill.core.defence": ("Defence", "防御"),
     "skill.core.defence.description": ("Turning blows aside, and wearing armour.", "攻撃をかわし、鎧を着こなす。"),
-    "skill.core.defence.guide.0": ("Hide armour; blows you turn aside train it", "革の鎧。受け流した攻撃で鍛えられる"),
+    "skill.core.defence.guide.0": ("Hide armour; blows you turn aside while you fight back train it", "革の鎧。反撃している間は、受け流した攻撃で鍛えられる"),
     "skill.core.defence.guide.1": ("Hard leather", "硬い革"),
     "skill.core.defence.guide.10": ("Aetherite armour", "エーテライトの鎧"),
     "skill.core.defence.guide.11": ("Cape perk: protection spells last longer (when spells come)", "ケープの特典：守りの呪文が長く続く（呪文が来たら）"),
