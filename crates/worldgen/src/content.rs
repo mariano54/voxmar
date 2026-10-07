@@ -2839,6 +2839,29 @@ mod tests {
         }
     }
 
+    /// Tarn data is refused at load unless it makes sense, naming what is wrong.
+    #[test]
+    fn bad_tarns_are_refused() {
+        let registry = registry();
+        let load = |tarns: &str| {
+            let mut files = base_files();
+            files.push(ContentFile { package: "mod".into(), name: "terrain.ron".into(), source: format!("#![enable(implicit_some)]\n(shapes: [], tarns: ({tarns}))") });
+            WorldContent::from_files(files.iter(), &registry).map(|c| c.tarns.unwrap().chance).map_err(|e| e.0)
+        };
+        let good = "climate: [(temperature: (\"frozen\", \"cool\"))], floor: 56.0, depth: 2.0, chance: 0.3, country: (scale: 1000.0, share: 0.5)";
+        assert_eq!(load(good), Ok(0.3), "a later package's tarns replace the base's");
+        for (from, to, expected) in [
+            ("chance: 0.3", "chance: 1.5", "chance 1.5"),
+            ("floor: 56.0", "floor: -3.0", "floor -3"),
+            ("depth: 2.0", "depth: 0.0", "depth 0"),
+            ("share: 0.5", "share: 2.0", "country share 2"),
+            ("\"cool\"", "\"balmy\"", "unknown Temperature band `balmy`"),
+        ] {
+            let message = load(&good.replace(from, to)).unwrap_err();
+            assert!(message.contains("terrain.ron: tarns") && message.contains(expected), "expected `{expected}` in: {message}");
+        }
+    }
+
     #[test]
     fn holes_in_the_biome_table_are_refused() {
         let only_cold = format!("#![enable(implicit_some)]\n(biomes: [(name: \"cold\", climate: [(temperature: (\"frozen\", \"cold\"))], {GROUND})])");

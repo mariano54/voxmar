@@ -249,7 +249,7 @@
         (name: "frost_turnip", block: "frost_turnip", spread: Drifts, habitat: Open, ground: [Soil, Snow], comfort: (temperature: (-24.0, 4.0), moisture: (0.30, 2.00)), properties: (nutrition: 3.0)),
         (name: "dreamberry_bush", block: "dreamberry_bush", spread: Alone, habitat: Shade, comfort: (temperature: (2.0, 22.0), moisture: (0.80, 2.50)), properties: (nutrition: 2.0)),
         (name: "whisper_oats", block: "whisper_oats", spread: Drifts, habitat: Understory, comfort: (temperature: (0.0, 24.0), moisture: (0.80, 8.00)), properties: (nutrition: 1.0)),
-        (name: "sky_lotus", block: "sky_lotus", named_only: true, tags: ["rare_herb"], patches: (rate: 20000.0, size: (3, 6), aim: 120.0), spread: Alone, habitat: LakeShore, ground: [Soil, Sand, Bare], comfort: (temperature: (-6.0, 12.0))),
+        (name: "sky_lotus", block: "sky_lotus", named_only: true, tags: ["rare_herb"], patches: (rate: 20000.0, size: (3, 6), aim: 120.0), spread: Alone, habitat: LakeShore, ground: [Soil, Sand, Bare], comfort: (temperature: (-6.0, 12.0)), snowy: "sky_lotus"),
         (name: "bloodroot", block: "bloodroot", spread: Drifts, habitat: Shade, comfort: (temperature: (0.0, 20.0), moisture: (0.80, 2.50)), properties: (nutrition: 1.0)),
         (name: "sunpetal", block: "sunpetal", spread: Drifts, habitat: Open, comfort: (temperature: (14.0, 36.0), moisture: (0.20, 1.40))),
         (name: "crystal_moss", block: "crystal_moss", spread: Drifts, habitat: Open, ground: [Soil, Snow], comfort: (temperature: (-30.0, 6.0))),

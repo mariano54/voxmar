@@ -1775,12 +1775,12 @@ mod tests {
     }
 
     /// One area of a biome as generated: `chunks` columns of chunks square around the
-    /// nearest place of `biome` in `world`, with its columns (dry land of that home biome)
+    /// nearest place of `biome` to `from` in `world`, with its columns (dry land of that home biome)
     /// and where each of `count` plants (by `looks`) stands on them, after trees, trails,
     /// boulders and water; none where the world has no such biome near.
-    fn biome_area(world: &Overworld, biome: &str, chunks: i32, looks: &std::collections::HashMap<BlockId, usize>, count: usize) -> Option<(u64, Vec<Vec<(i32, i32)>>)> {
+    fn biome_area(world: &Overworld, biome: &str, from: IVec2, chunks: i32, looks: &std::collections::HashMap<BlockId, usize>, count: usize) -> Option<(u64, Vec<Vec<(i32, i32)>>)> {
         let id = world.biomes.id(&format!("base:{biome}"))?;
-        let at = world.locate_biome(biome, IVec2::ZERO, 60000)?;
+        let at = world.locate_biome(biome, from, 60000)?;
         let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-chunks / 2, -chunks / 2);
         // One sampler a column of chunks: the same sites as `Overworld::site`, far quicker
         // than sampling each alone.
@@ -1831,7 +1831,15 @@ mod tests {
         patches
     }
 
-    /// Plants as they are actually placed (`biome_area`), around the nearest place of each
+    /// Where in a world plant counts look for a biome: around the nearest place of it to each
+    /// of these, far apart (`PLACES=n` takes the first n for the census; one by default).
+    const PLACES: [IVec2; 3] = [IVec2::ZERO, IVec2::new(24000, 8000), IVec2::new(-8000, 24000)];
+
+    fn places() -> usize {
+        std::env::var("PLACES").ok().and_then(|s| s.parse().ok()).unwrap_or(1)
+    }
+
+    /// Plants as they are actually placed (`biome_area`), around the nearest places of each
     /// biome given in each seed's world, per million columns of that biome, and the size of
     /// their patches. One world at a time, its land generated once for all the plants of a
     /// biome. Returns (plant, biome, rate, plants a patch, plants, columns).
@@ -1843,17 +1851,19 @@ mod tests {
         for &seed in seeds {
             let world = Overworld::new(seed, registry.clone());
             for (b, biome) in biomes.iter().enumerate() {
-                let Some((columns, placed)) = biome_area(&world, biome, chunks, &looks, plants.len()) else { continue };
-                tally[b].0 += columns;
-                for (k, placed) in placed.iter().enumerate() {
-                    let groups = patches(placed);
-                    let t = &mut tally[b].1[k];
-                    t.0 += placed.len();
-                    t.1 += groups.len();
-                    if let Some(g) = groups.iter().max_by_key(|g| g.len())
-                        && t.2.is_none_or(|(n, _, _)| g.len() > n)
-                    {
-                        t.2 = Some((g.len(), seed, g[0]));
+                for &from in PLACES.iter().take(places()) {
+                    let Some((columns, placed)) = biome_area(&world, biome, from, chunks, &looks, plants.len()) else { continue };
+                    tally[b].0 += columns;
+                    for (k, placed) in placed.iter().enumerate() {
+                        let groups = patches(placed);
+                        let t = &mut tally[b].1[k];
+                        t.0 += placed.len();
+                        t.1 += groups.len();
+                        if let Some(g) = groups.iter().max_by_key(|g| g.len())
+                            && t.2.is_none_or(|(n, _, _)| g.len() > n)
+                        {
+                            t.2 = Some((g.len(), seed, g[0]));
+                        }
                     }
                 }
             }
@@ -2010,7 +2020,7 @@ mod tests {
     }
 
     /// Where the rare herbs grow and how many: `cargo test --profile iter -p voxmar_worldgen
-    /// rare_herb_census -- --ignored --nocapture` (SEEDS=7,1,42, CHUNKS=12).
+    /// rare_herb_census -- --ignored --nocapture` (SEEDS=7,1,42, CHUNKS=12, PLACES=1).
     #[test]
     #[ignore]
     fn rare_herb_census() {
@@ -2047,9 +2057,10 @@ mod tests {
     /// Design's rates for the rare herbs (draft 89): in every biome naming it, each herb
     /// grows within 0.5 to 1.6 times its own `aim` (plants.ron), in patches of 3 to 6
     /// (2.5 to 6.5 measured), and the classes keep their order: Legendary herbs rarer than
-    /// VeryRare ones, VeryRare than Rare, on the same samples. Each biome is counted over
-    /// more seeds until every herb in it has 25 patches (a count's noise under about ±20%),
-    /// up to 24 seeds; a biome too small to get there is printed and left to the census.
+    /// VeryRare ones, VeryRare than Rare, on the same samples. Each biome is counted in more
+    /// places (three a seed) until every herb in it has 25 patches (a count's noise under
+    /// about ±20%) over at least twelve places, up to 16 seeds; a biome too small to get
+    /// there is printed and left to the census.
     /// Generated for real, so slow: the full gate runs it.
     #[test]
     fn rare_herbs_grow_at_their_rates() {
@@ -2060,20 +2071,27 @@ mod tests {
         let looks = plant_looks(&herb_names);
         let def = |herb: &str| content.plants.iter().find(|p| p.name.trim_start_matches("base:") == herb).unwrap();
         let herb_index = |herb: &str| herbs.iter().position(|h| h == herb).unwrap();
-        // Per biome: columns, and per herb its plants and patches.
-        let mut tally: Vec<(u64, Vec<(usize, usize)>)> = vec![(0, vec![(0, 0); herbs.len()]); biomes.len()];
-        let done = |tally: &[(u64, Vec<(usize, usize)>)], b: usize| pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| tally[b].1[herb_index(&p.0)].1 >= 25);
+        // Per biome: places counted, columns, and per herb its plants and patches. Each
+        // world gives three places of each biome, far apart, as herbs along water gather where
+        // the water does (tarns in tarn country), so a count needs many places as well as
+        // many patches.
+        let mut tally: Vec<(usize, u64, Vec<(usize, usize)>)> = vec![(0, 0, vec![(0, 0); herbs.len()]); biomes.len()];
+        let done = |tally: &[(usize, u64, Vec<(usize, usize)>)], b: usize| tally[b].0 >= 12 && pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| tally[b].2[herb_index(&p.0)].1 >= 25);
         let mut seeds = 0;
-        while seeds < 24 && (0..biomes.len()).any(|b| !done(&tally, b)) {
+        while seeds < 16 && (0..biomes.len()).any(|b| !done(&tally, b)) {
             seeds += 1;
             let world = Overworld::new(seeds, registry.clone());
             let open: Vec<usize> = (0..biomes.len()).filter(|&b| !done(&tally, b)).collect();
+            println!("seed {seeds}: counting {}", open.iter().map(|&b| biomes[b].as_str()).collect::<Vec<_>>().join(", "));
             for b in open {
-                let Some((columns, placed)) = biome_area(&world, &biomes[b], 16, &looks, herbs.len()) else { continue };
-                tally[b].0 += columns;
-                for (k, placed) in placed.iter().enumerate() {
-                    tally[b].1[k].0 += placed.len();
-                    tally[b].1[k].1 += patches(placed).len();
+                for from in PLACES {
+                    let Some((columns, placed)) = biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()) else { continue };
+                    tally[b].0 += 1;
+                    tally[b].1 += columns;
+                    for (k, placed) in placed.iter().enumerate() {
+                        tally[b].2[k].0 += placed.len();
+                        tally[b].2[k].1 += patches(placed).len();
+                    }
                 }
             }
         }
@@ -2081,12 +2099,12 @@ mod tests {
         let mut measured: Vec<(String, f64)> = Vec::new();
         for (herb, biome) in &pairs {
             let b = biomes.iter().position(|x| x == biome).unwrap();
-            let columns = tally[b].0;
-            let (n, groups) = tally[b].1[herb_index(herb)];
+            let columns = tally[b].1;
+            let (n, groups) = tally[b].2[herb_index(herb)];
             let rate = n as f64 * 1e6 / columns.max(1) as f64;
             let aim = def(herb).patches.as_ref().unwrap().aim as f64;
             let size = n as f64 / groups.max(1) as f64;
-            let line = format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}, {:.2}x), {:.0} patches a million, {size:.1} a patch, {groups} patches in {columns} columns", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64);
+            let line = format!("{herb} in {biome}: {rate:.0} per million (aim {aim:.0}, {:.2}x), {:.0} patches a million, {size:.1} a patch, {groups} patches in {columns} columns of {} places", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64, tally[b].0);
             if groups < 25 {
                 println!("{line}: too few to judge, left to the census");
                 continue;

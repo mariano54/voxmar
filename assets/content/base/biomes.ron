@@ -268,7 +268,7 @@
                 trees: [Name("big_oak", 1.5), Name("oak", 1.0), Name("ancient_oak", 15.0), Name("maple", 0.3), Name("dark_oak", 0.3), Name("chestnut", 1.0), Name("walnut", 0.6), Name("hazel", 0.2)],
                 exclude: ["blossom"],
                 cover: 0.65, flowers: 0.007,
-                plants: [Tag("forest_floor", 1.0), Tag("fern", 1.0), Name("short_grass", 0.6), Name("ginseng", 3.2), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
+                plants: [Tag("forest_floor", 1.0), Tag("fern", 1.0), Name("short_grass", 0.6), Name("ginseng", 3.37), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
                 // Its signature: great fallen trunks, hollow and mossy.
                 decorations: [Tag("forest", 1.0), Tag("dense", 1.0), Name("fallen_log", 2.5), Name("rotting_log", 2.0)],
             ),
@@ -374,7 +374,7 @@
                 trees: [Name("dark_oak", 3.0), Name("oak", 0.4), Name("birch", 0.3), Name("green_maple", 0.2), Name("big_oak", 0.4), Name("hazel", 0.2), Name("walnut", 0.3), Name("chestnut", 0.3)],
                 exclude: ["blossom"],
                 cover: 0.6, flowers: 0.007,
-                plants: [Tag("forest_floor", 1.0), Name("short_grass", 1.0), Name("brown_mushroom", 1.5), Name("red_mushroom", 1.0), Name("mandrake", 1.05), Tag("forage", 0.02)],
+                plants: [Tag("forest_floor", 1.0), Name("short_grass", 1.0), Name("brown_mushroom", 1.5), Name("red_mushroom", 1.0), Name("mandrake", 1.93), Tag("forage", 0.02)],
                 // Its signature: fungi at the foot of the trunks in the gloom.
                 decorations: [Tag("forest", 1.0), Tag("dense", 1.0), Name("foot_fungi", 3.0)],
             ),
@@ -422,7 +422,7 @@
                 forest: 0.3,
                 trees: [Name("oak", 1.0), Name("dark_oak", 0.3), Name("willow", 2.0), Name("alder", 1.0), Name("bald_cypress", 0.8)],
                 cover: 0.8, flowers: 0.014,
-                plants: [Name("wild_rice", 2.6), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("fern", 0.4), Tag("wetland", 1.0), Tag("riverbank", 3.0), Tag("fungus", 0.5), Tag("forage", 0.02)],
+                plants: [Name("wild_rice", 1.74), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("fern", 0.4), Tag("wetland", 1.0), Tag("riverbank", 3.0), Tag("fungus", 0.5), Tag("forage", 0.02)],
             ),
             surface: (
                 rules: [
@@ -711,7 +711,7 @@
                 forest: 0.25,
                 trees: [Tag("conifer", 1.0), Name("birch", 0.15), Name("shrub", 0.2), Name("larch", 0.8), Name("rowan", 0.3), Name("stone_pine", 0.4)],
                 cover: 0.6, flowers: 0.01,
-                plants: [Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("alpine", 1.0), Tag("meadow", 0.3), Name("allium", 1.0), Name("thunderbloom", 1.55), Name("sky_lotus", 1.6), Tag("forage", 0.02)],
+                plants: [Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("alpine", 1.0), Tag("meadow", 0.3), Name("allium", 1.0), Name("thunderbloom", 1.77), Name("sky_lotus", 3.9), Tag("forage", 0.02)],
             ),
             surface: (
                 include: ["rocky_slopes"],
@@ -734,7 +734,7 @@
                 forest: 0.06,
                 trees: [Name("pine", 1.0), Name("spruce", 0.5), Name("larch", 0.5), Name("rowan", 0.3), Name("stone_pine", 0.4)],
                 cover: 0.85, flowers: 0.06,
-                plants: [Name("short_grass", 2.0), Tag("alpine", 1.5), Name("juniper_bush", 1.0), Name("crocus", 1.0), Name("edelweiss", 1.73), Name("windroot", 3.05), Name("sky_lotus", 1.8), Tag("forage", 0.02)],
+                plants: [Name("short_grass", 2.0), Tag("alpine", 1.5), Name("juniper_bush", 1.0), Name("crocus", 1.0), Name("edelweiss", 1.6), Name("windroot", 2.74), Name("sky_lotus", 1.5), Tag("forage", 0.02)],
             ),
         ),
         (
@@ -746,7 +746,7 @@
                 forest: 0.03,
                 trees: [Name("pine", 1.0), Name("spruce", 0.5)],
                 cover: 0.3, flowers: 0.003,
-                plants: [Tag("alpine", 1.0), Name("short_grass", 1.0), Name("edelweiss", 1.56), Name("sky_lotus", 0.5), Tag("forage", 0.02)],
+                plants: [Tag("alpine", 1.0), Name("short_grass", 1.0), Name("edelweiss", 1.91), Name("sky_lotus", 0.29), Tag("forage", 0.02)],
             ),
             surface: (
                 include: ["rocky_slopes"],
@@ -767,7 +767,7 @@
                 forest: 0.08,
                 trees: [Name("pine", 1.0), Name("cypress", 0.5), Name("shrub", 1.0), Name("olive", 0.3), Name("almond", 0.3), Name("stone_pine", 1.0)],
                 cover: 0.45, flowers: 0.007,
-                plants: [Name("short_grass", 2.0), Tag("steppe", 0.6), Name("thyme", 1.0), Name("juniper_bush", 0.6), Name("windroot", 0.95), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
+                plants: [Name("short_grass", 2.0), Tag("steppe", 0.6), Name("thyme", 1.0), Name("juniper_bush", 0.6), Name("windroot", 0.9), Tag("wild_crop", 0.4), Tag("forage", 0.02)],
             ),
             surface: (
                 include: ["rocky_slopes"],
@@ -861,7 +861,7 @@
                 forest: 0.45,
                 trees: [Name("cypress", 2.5), Name("willow", 1.5), Name("oak", 0.4), Name("bald_cypress", 1.5)],
                 cover: 0.8, flowers: 0.01,
-                plants: [Name("wild_rice", 1.5), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Tag("riverbank", 3.0), Name("horsetail", 1.0), Tag("forage", 0.02)],
+                plants: [Name("wild_rice", 1.65), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Tag("riverbank", 3.0), Name("horsetail", 1.0), Tag("forage", 0.02)],
             ),
             surface: (
                 rules: [
@@ -885,7 +885,7 @@
                 forest: 0.5,
                 trees: [Name("mangrove", 4.0), Name("palm", 0.5), Name("jungle_bush", 0.5), Name("banana", 0.15), Name("mango", 0.15)],
                 cover: 0.7, flowers: 0.01,
-                plants: [Name("wild_taro", 0.68), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Name("papyrus", 3.0), Tag("forage", 0.02)],
+                plants: [Name("wild_taro", 1.08), Tag("grass", 1.0), Name("tall_grass", 0.35), Tag("wetland", 1.0), Name("papyrus", 3.0), Tag("forage", 0.02)],
             ),
             surface: (
                 rules: [
@@ -1118,7 +1118,7 @@
                 cover: 0.7, flowers: 0.15,
                 palette: (canopy: (150, 200, 220), flowers: (215, 225, 240)),
                 plants: [Tag("meadow", 1.0), Name("azure_bluet", 3.0), Name("oxeye_daisy", 2.0), Name("lily_of_the_valley", 2.0), Name("moonbloom", 20.0), Name("moonmelon", 0.15)],
-                wonders: [Name("starlily", 0.48), Name("heartbloom", 0.7)],
+                wonders: [Name("starlily", 0.48), Name("heartbloom", 0.64)],
             ),
             surface: (
                 include: ["soil_slopes"],
@@ -1147,8 +1147,8 @@
                 trees: [Name("silverwood", 14.0), Name("birch", 0.6), Name("spruce", 0.4)],
                 cover: 0.7, flowers: 0.017,
                 palette: (canopy: (150, 200, 220)),
-                plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0), Name("silvermint", 2.1)],
-                wonders: [Name("heartbloom", 0.53), Name("crystal_bloom", 1.0)],
+                plants: [Name("short_grass", 1.0), Tag("fern", 0.6), Name("frostpetal", 20.0), Name("whisperfern", 15.0), Name("snowdrop", 1.0), Name("moonbloom", 4.0), Name("silvermint", 1.56)],
+                wonders: [Name("heartbloom", 1.39), Name("crystal_bloom", 1.0)],
             ),
             surface: (
                 include: ["soil_slopes"],
@@ -1200,7 +1200,7 @@
                 trees: [Name("emberwood", 14.0), Name("dead_tree", 0.3)],
                 cover: 0.15, flowers: 0.007,
                 palette: (canopy: (230, 100, 30)),
-                plants: [Name("emberbloom", 8.0), Name("dead_bush", 0.6), Name("bunchgrass", 0.5), Name("ember_pepper", 2.0), Name("cinder_moss", 0.8)],
+                plants: [Name("emberbloom", 8.0), Name("dead_bush", 0.6), Name("bunchgrass", 0.5), Name("ember_pepper", 1.23), Name("cinder_moss", 0.8)],
                 wonders: [Name("sunspire", 1.0)],
             ),
             surface: (
@@ -1255,7 +1255,7 @@
                 forest: 0.04,
                 trees: [Name("oak", 1.0), Name("shrub", 0.5)],
                 cover: 0.8, flowers: 0.12,
-                plants: [Name("short_grass", 2.0), Name("wild_wheat", 1.0), Name("sunspire", 300.0), Name("starlily", 0.48), Name("marigold", 1.0), Name("goldenrod", 1.0), Name("sunpetal", 0.4)],
+                plants: [Name("short_grass", 2.0), Name("wild_wheat", 1.0), Name("sunspire", 300.0), Name("starlily", 0.37), Name("marigold", 1.0), Name("goldenrod", 1.0), Name("sunpetal", 0.4)],
                 wonders: [],
             ),
             surface: (
