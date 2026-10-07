@@ -291,6 +291,8 @@
     "machine.overloaded": "{machine}：この回路の電線が電圧に耐えられない。",
     "machine.incomplete": "{machine}：構造が完成していない。",
     "machine.network": "{machine}：供給{supply}、需要{demand}。",
+    "machine.chute": "{machine}：毎秒最大{rate}個を運ぶ。",
+    "machine.bin": "{machine}：{count}個入っている。",
     "machine.idle": "{machine}：停止中。",
     "bed.set": "家ができるまで、倒れたらここで目覚める。",
     "bed.set_home": "倒れたらここで目覚める。ただし炉が優先される。",

@@ -12,7 +12,11 @@
 //! - a **transformer** takes electricity from above and gives it a tier lower to its sides
 //!   and below;
 //! - a **processor** works recipes of its kinds (`crush`, `mill`, `smelt`...), driven by
-//!   power, by fuel it burns itself, or by nothing at all.
+//!   power, by fuel it burns itself, or by nothing at all;
+//! - a **chute** carries items between the machines beside a run of chutes (a conveyor is
+//!   a faster chute), at the rate of its slowest;
+//! - a **bin** holds items: a hopper feeds what players put in it to the machines on its
+//!   chutes, a crate collects what they made.
 //!
 //! Machines of the same kind differ in how fast they work (`speed`) and how much more they
 //! get from what goes in (`yield`), never in what they make: every crusher turns copper
@@ -116,6 +120,16 @@ pub enum Role {
         /// It works only with water beside it (a washer); the world says whether there is.
         #[serde(default)]
         water: bool,
+    },
+    /// Carries items between the machines beside a run of chutes, `rate` a second at most;
+    /// a run moves as fast as its slowest chute.
+    Chute { rate: f32 },
+    /// Holds items in `slots` stacks. One that `feeds` (a hopper) gives what players put in
+    /// it to the machines on its chutes; one that does not (a crate) collects what they make.
+    Bin {
+        slots: u8,
+        #[serde(default)]
+        feeds: bool,
     },
 }
 
@@ -282,7 +296,7 @@ impl Machine {
                 port(Carrier::Electric, tier, UP, PortRole::Takes(rate)),
             ],
             Role::Processor { power: Some((carrier, power)), tier, .. } => vec![port(carrier, tier, ALL_FACES, PortRole::Takes(power))],
-            Role::Processor { .. } => Vec::new(),
+            Role::Processor { .. } | Role::Chute { .. } | Role::Bin { .. } => Vec::new(),
         }
     }
 
@@ -293,6 +307,14 @@ impl Machine {
 
     pub fn is_processor(&self) -> bool {
         matches!(self.role, Role::Processor { .. })
+    }
+
+    /// The stacks it holds as a bin, if it is one.
+    pub fn bin_slots(&self) -> usize {
+        match self.role {
+            Role::Bin { slots, .. } => slots as usize,
+            _ => 0,
+        }
     }
 }
 
@@ -362,6 +384,11 @@ impl MachineRegistry {
                     && processes.is_empty()
                 {
                     return Err(RegistryError(format!("machine {}: no recipes of {kinds:?}", def.block)));
+                }
+                if let Role::Chute { rate } = def.role
+                    && rate <= 0.0
+                {
+                    return Err(RegistryError(format!("machine {}: a chute needs a rate above 0", def.block)));
                 }
                 if registry.by_block.insert(block, registry.machines.len()).is_some() {
                     return Err(RegistryError(format!("machine {} is defined twice", def.block)));

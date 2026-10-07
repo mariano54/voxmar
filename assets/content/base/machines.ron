@@ -10,7 +10,13 @@
 // - `Processor`: works recipes of its `kinds` (processing.ron) `speed` times as fast as
 //   the recipe says, making `yield` more (each output times one more than it, the fraction
 //   a chance of one more), drawing `power` while it works, or burning fuel itself; with
-//   `water`, only while water lies beside it.
+//   `water`, only while water lies beside it;
+// - `Chute`: carries items between the machines beside a run of chutes, up to `rate` a
+//   second (a run moves as fast as its slowest chute);
+// - `Bin`: holds `slots` stacks; one that `feeds` (a hopper) gives what players put in it
+//   to the machines on its chutes, one that does not (a crate) collects what they made.
+//   Along a run, each item goes in turn to a machine that works or burns it; what a
+//   processor made that none takes goes to a crate. Bins never feed bins.
 // Machines of a kind differ in speed and yield, never in what they make. Machines teach
 // nothing; building them (recipes_machines.ron) takes Engineering.
 (
@@ -26,6 +32,11 @@
         // inside its standing shaft (multiblocks_machines.ron).
         (block: "bellows", role: Conduit(carrier: Rotation)),
         (block: "bloomery", role: Processor(kinds: ["bloom"], power: Some((Rotation, 6.0)))),
+        // Items: hoppers feed, crates collect, chutes and conveyors carry.
+        (block: "hopper", role: Bin(slots: 5, feeds: true)),
+        (block: "crate", role: Bin(slots: 9)),
+        (block: "chute", role: Chute(rate: 1.0)),
+        (block: "conveyor", role: Chute(rate: 4.0)),
         // Iron and Steam: steam.
         (block: "boiler", role: Generator(carrier: Steam, power: 24.0, source: Fuel)),
         (block: "steam_pipe", role: Conduit(carrier: Steam)),

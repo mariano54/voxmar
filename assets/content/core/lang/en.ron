@@ -303,6 +303,8 @@
     "machine.overloaded": "{machine}: a cable on this network is too weak for its voltage.",
     "machine.incomplete": "{machine}: its structure is not complete.",
     "machine.network": "{machine}: {supply} power offered, {demand} asked.",
+    "machine.chute": "{machine}: moves up to {rate} items a second.",
+    "machine.bin": "{machine}: holds {count} items.",
     "machine.idle": "{machine}: idle.",
     "bed.set": "You will wake here after dying, until you have a home.",
     "bed.set_home": "You will wake here after dying, though your hearth comes first.",

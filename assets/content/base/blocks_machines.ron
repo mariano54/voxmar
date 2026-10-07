@@ -35,6 +35,25 @@
             name: "bellows", sound: Wood, textures: Sides(top: "bellows_top", bottom: "bellows_top", side: "bellows_side"),
             hardness: 1.5, color: (120, 85, 55), tags: ["machine", "wood", "building"],
         ),
+        // Items between machines: a hopper feeds what is put in it along chutes to the
+        // machines beside them, a crate collects what they made; a conveyor is a faster
+        // chute (machines.ron says how fast).
+        (
+            name: "hopper", sound: Wood, textures: Sides(top: "hopper_top", bottom: "hopper_bottom", side: "hopper_side"),
+            hardness: 2.0, color: (130, 100, 65), tags: ["machine", "wood", "building"],
+        ),
+        (
+            name: "crate", sound: Wood, textures: Sides(top: "crate_top", bottom: "crate_top", side: "crate_side"),
+            hardness: 2.0, color: (150, 115, 75), tags: ["machine", "wood", "building"],
+        ),
+        (
+            name: "chute", sound: Wood, textures: Column(end: "chute_end", side: "chute_side"),
+            hardness: 1.0, color: (140, 105, 70), tags: ["machine", "wood", "building"],
+        ),
+        (
+            name: "conveyor", sound: Stone, textures: Column(end: "conveyor_end", side: "conveyor_side"),
+            hardness: 2.0, color: (70, 65, 60), tags: ["machine", "building"],
+        ),
         // The Iron and Steam ages: boilers make steam, pipes carry it, engines turn it back
         // into rotation and steam machines work with it directly.
         (

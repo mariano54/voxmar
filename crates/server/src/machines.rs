@@ -68,6 +68,9 @@ pub struct SavedMachine {
     pub condition: f32,
     #[serde(default)]
     pub made: u32,
+    /// What it holds as a bin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin: Vec<(String, u8)>,
 }
 
 impl Server {
@@ -81,7 +84,7 @@ impl Server {
         if machines.get(old).is_some()
             && let Some((_, state)) = self.factory.remove(pos)
         {
-            let held = state.inputs.into_iter().chain(state.outputs).chain([state.fuel]).flatten();
+            let held = state.inputs.into_iter().chain(state.outputs).chain([state.fuel]).chain(state.bin).flatten();
             for (i, stack) in held.enumerate() {
                 let random = random3(self.tick, pos, 0x3ac4 ^ i as u32);
                 self.items.spawn(stack, dropped::popped(pos, random), dropped::PICKUP_DELAY);
@@ -232,6 +235,8 @@ impl Server {
         let washer = machine.is_some_and(|m| matches!(m.role, Role::Processor { water: true, .. }));
         let key = |key: &str| Words::key(key).with("machine", name.clone());
         match (view.status, machine.map(|m| &m.role)) {
+            (_, Some(Role::Chute { .. })) => key("machine.chute").with("rate", Words::text(view.moves)),
+            (_, Some(Role::Bin { .. })) => key("machine.bin").with("count", Words::text(view.held)),
             (_, Some(Role::Store { .. })) => key("machine.holds").with("energy", Words::text(view.energy)).with("capacity", Words::text(view.capacity)),
             (Status::Working, Some(Role::Processor { power: Some(_), .. })) => key("machine.working_powered")
                 .with("item", view.making.map_or(Words::text("?"), |item| Words::Block(self.content.blocks.def(item).name.clone())))
@@ -275,6 +280,7 @@ impl Server {
                 energy: state.energy,
                 condition: state.condition,
                 made: state.made,
+                bin: state.bin.iter().flatten().map(stack).collect(),
             })
             .collect();
         saved.sort_by_key(|m| m.position);
@@ -296,6 +302,7 @@ impl Server {
                 *slot = stack(saved);
             }
             state.fuel = machine.fuel.as_ref().and_then(stack);
+            state.bin = machine.bin.iter().map(stack).collect();
             self.factory.insert_state(IVec3::from_array(machine.position), block, state, &machines);
         }
     }

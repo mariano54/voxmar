@@ -22,6 +22,13 @@
 //! A machine that converts power (a dynamo, a beam engine) or steps it down (a
 //! transformer) sits on two networks; what it gives on one follows what it got on the
 //! other a step before.
+//!
+//! **Items** move along runs of chutes (and conveyors, faster chutes) between the machines
+//! beside a run. Blocks have no facing, so what goes where follows from what each machine
+//! is: a hopper gives what players put in it, a processor what it made; each item goes to
+//! a machine on the run that works or burns it, in turn, and what a processor made that no
+//! machine takes goes to a crate. Bins never feed bins, and a run moves as many items a
+//! second as its slowest chute.
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -86,13 +93,30 @@ pub struct MachineState {
     pub supplied: f32,
     /// The share of what it could give that was used last step, 0 to 1.
     pub load: f32,
+    /// What it holds as a bin (a hopper, a crate).
+    #[serde(default)]
+    pub bin: Vec<Option<ItemStack>>,
 }
 
 #[derive(Clone, Debug)]
 struct Node {
     block: BlockId,
     ports: Vec<Port>,
+    /// Items a second it carries, if it is a chute.
+    chute: Option<f32>,
     state: MachineState,
+}
+
+/// A run of chutes and the machines beside it.
+#[derive(Clone, Debug)]
+struct Run {
+    ends: Vec<IVec3>,
+    /// Items a second: its slowest chute's.
+    rate: f32,
+    /// Items it may move now, built up a step at a time.
+    credit: f32,
+    /// The end the next item tries first, so items go round them in turn.
+    next: usize,
 }
 
 /// One port of one machine on a network.
@@ -119,6 +143,9 @@ pub struct Factory {
     networks: Vec<Network>,
     /// Network of each port, by position then port.
     joined: FxHashMap<IVec3, Vec<usize>>,
+    runs: Vec<Run>,
+    /// Run of each chute.
+    run_of: FxHashMap<IVec3, usize>,
     dirty: bool,
 }
 
@@ -149,6 +176,9 @@ pub struct MachineView {
     pub energy: u32,
     pub capacity: u32,
     pub grid: Grid,
+    /// Items it holds (a bin), and items a second its run moves (a chute).
+    pub held: u32,
+    pub moves: f32,
 }
 
 impl Factory {
@@ -161,9 +191,14 @@ impl Factory {
     }
 
     /// Adds a machine with what it held (from a save).
-    pub fn insert_state(&mut self, pos: IVec3, block: BlockId, state: MachineState, machines: &MachineRegistry) -> bool {
+    pub fn insert_state(&mut self, pos: IVec3, block: BlockId, mut state: MachineState, machines: &MachineRegistry) -> bool {
         let Some(machine) = machines.get(block) else { return false };
-        self.nodes.insert(pos, Node { block, ports: machine.ports(), state });
+        state.bin.resize(machine.bin_slots(), None);
+        let chute = match machine.role {
+            Role::Chute { rate } => Some(rate),
+            _ => None,
+        };
+        self.nodes.insert(pos, Node { block, ports: machine.ports(), chute, state });
         self.dirty = true;
         true
     }
@@ -205,7 +240,7 @@ impl Factory {
     }
 
     /// Puts what it can of `stack` into the machine at `pos`: fuel where it burns, an input
-    /// where a recipe takes it. Returns what is left.
+    /// where a recipe takes it, anything into a bin. Returns what is left.
     pub fn put(&mut self, pos: IVec3, stack: ItemStack, machines: &MachineRegistry) -> Option<ItemStack> {
         let Some(node) = self.nodes.get_mut(&pos) else { return Some(stack) };
         let machine = machines.get(node.block)?;
@@ -215,6 +250,10 @@ impl Factory {
         }
         if left > 0 && machine.is_processor() && machines.takes(machine, stack.item) {
             left = fill(&mut node.state.inputs, stack.item, left);
+        }
+        if left > 0 && !node.state.bin.is_empty() {
+            let left = fill(&mut node.state.bin, stack.item, left);
+            return (left > 0).then_some(ItemStack { count: left, ..stack });
         }
         if left < stack.count {
             // Picks up the work (or lights the fuel) now, so whoever put it in sees it start;
@@ -232,18 +271,20 @@ impl Factory {
         (left > 0).then_some(ItemStack { count: left, ..stack })
     }
 
-    /// Puts a stack back into the machine's outputs (what a player could not carry);
-    /// returns what did not fit.
+    /// Puts a stack back where it was taken from (what a player could not carry): a bin,
+    /// or the machine's outputs. Returns what did not fit.
     pub fn put_output(&mut self, pos: IVec3, stack: ItemStack) -> Option<ItemStack> {
         let Some(node) = self.nodes.get_mut(&pos) else { return Some(stack) };
-        let left = fill(&mut node.state.outputs, stack.item, stack.count);
+        let left = fill(&mut node.state.bin, stack.item, stack.count);
+        let left = fill(&mut node.state.outputs, stack.item, left);
         (left > 0).then_some(ItemStack { count: left, ..stack })
     }
 
-    /// Takes everything out of the machine's outputs.
+    /// Takes everything out of the machine's outputs, or out of a bin.
     pub fn take_outputs(&mut self, pos: IVec3) -> Vec<ItemStack> {
         let Some(node) = self.nodes.get_mut(&pos) else { return Vec::new() };
-        node.state.outputs.iter_mut().filter_map(Option::take).collect()
+        let state = &mut node.state;
+        state.outputs.iter_mut().chain(state.bin.iter_mut()).filter_map(Option::take).collect()
     }
 
     /// The network a port of the machine at `pos` is on, as it looks.
@@ -284,6 +325,10 @@ impl Factory {
         };
         // The network it gives to, or takes from: its first port's.
         let grid = if node.ports.is_empty() { Grid::default() } else { self.grid(pos, 0) };
+        let held = state.bin.iter().flatten().map(|s| s.count as u32).sum();
+        // Its run's rate, or its own until the runs are next joined.
+        let run = self.run_of.get(&pos).filter(|_| !self.dirty).map(|&r| self.runs[r].rate);
+        let moves = run.or(node.chute).unwrap_or(0.0);
         Some(MachineView {
             block: node.block,
             status: state.status,
@@ -296,6 +341,8 @@ impl Factory {
             energy,
             capacity,
             grid,
+            held,
+            moves,
         })
     }
 
@@ -369,6 +416,75 @@ impl Factory {
             let got = |port: usize| given.get(&(pos, port)).copied();
             work(pos, node, machine, machines, seconds, got, &shorts);
         }
+        self.carry(seconds, machines);
+    }
+
+    /// Moves items along every run of chutes: what a hopper holds or a processor made, to
+    /// the machines on the run that work or burn it, in turn; what a processor made that
+    /// none takes, to a crate.
+    fn carry(&mut self, seconds: f32, machines: &MachineRegistry) {
+        for r in 0..self.runs.len() {
+            let run = &mut self.runs[r];
+            // No more than a second's worth built up, so an idle run does not burst.
+            run.credit = (run.credit + run.rate * seconds).min(run.rate.max(1.0));
+            let mut budget = run.credit.floor() as u32;
+            if budget == 0 {
+                continue;
+            }
+            let (ends, mut next) = (std::mem::take(&mut run.ends), run.next);
+            let role = |nodes: &FxHashMap<IVec3, Node>, pos: &IVec3| nodes.get(pos).and_then(|n| machines.get(n.block));
+            let mut moved = 0;
+            for &from in &ends {
+                let Some(giver) = role(&self.nodes, &from) else { continue };
+                let hopper = matches!(giver.role, Role::Bin { feeds: true, .. });
+                if !hopper && !giver.is_processor() {
+                    continue;
+                }
+                let slots = if hopper { self.nodes[&from].state.bin.len() } else { OUTPUTS };
+                for slot in 0..slots {
+                    let state = &self.nodes[&from].state;
+                    let Some(stack) = (if hopper { state.bin[slot] } else { state.outputs[slot] }) else { continue };
+                    if budget == 0 {
+                        break;
+                    }
+                    let count = stack.count.min(budget.min(u8::MAX as u32) as u8);
+                    let mut left = count;
+                    // First to machines that work or burn it, then (from a processor) to crates.
+                    for crates in [false, true] {
+                        if crates && hopper {
+                            break;
+                        }
+                        for k in 0..ends.len() {
+                            let to = ends[(next + k) % ends.len()];
+                            let takes = role(&self.nodes, &to).is_some_and(|m| match m.role {
+                                Role::Bin { feeds, .. } => crates && !feeds,
+                                _ => !crates && (m.is_processor() || m.burns()),
+                            });
+                            if left == 0 || to == from || !takes {
+                                continue;
+                            }
+                            let before = left;
+                            left = self.put(to, ItemStack { count: left, ..stack }, machines).map_or(0, |s| s.count);
+                            if left < before {
+                                next = (next + k + 1) % ends.len();
+                            }
+                        }
+                    }
+                    let gone = count - left;
+                    if gone > 0 {
+                        let state = &mut self.nodes.get_mut(&from).expect("ends are machines").state;
+                        let slot = if hopper { &mut state.bin[slot] } else { &mut state.outputs[slot] };
+                        *slot = (stack.count > gone).then_some(ItemStack { count: stack.count - gone, ..stack });
+                        budget -= gone as u32;
+                        moved += gone as u32;
+                    }
+                }
+            }
+            let run = &mut self.runs[r];
+            run.ends = ends;
+            run.next = next;
+            run.credit -= moved as f32;
+        }
     }
 
     /// Joins machines into networks.
@@ -412,6 +528,37 @@ impl Factory {
                 members.sort_by_key(|m| (m.pos.x, m.pos.y, m.pos.z, m.port));
                 self.networks.push(Network { carrier, members, short: false });
             }
+        }
+        // Runs of chutes, and the machines beside them.
+        self.runs.clear();
+        self.run_of.clear();
+        for &start in &self.order {
+            let Some(rate) = self.nodes[&start].chute else { continue };
+            if self.run_of.contains_key(&start) {
+                continue;
+            }
+            let id = self.runs.len();
+            let mut run = Run { ends: Vec::new(), rate, credit: 0.0, next: 0 };
+            let mut stack = vec![start];
+            self.run_of.insert(start, id);
+            while let Some(pos) = stack.pop() {
+                for face in Face::ALL {
+                    let next = pos + face.normal();
+                    let Some(node) = self.nodes.get(&next) else { continue };
+                    match node.chute {
+                        Some(rate) if !self.run_of.contains_key(&next) => {
+                            run.rate = run.rate.min(rate);
+                            self.run_of.insert(next, id);
+                            stack.push(next);
+                        }
+                        Some(_) => {}
+                        None if !run.ends.contains(&next) => run.ends.push(next),
+                        None => {}
+                    }
+                }
+            }
+            run.ends.sort_by_key(|p| (p.x, p.y, p.z));
+            self.runs.push(run);
         }
     }
 }
@@ -509,6 +656,7 @@ fn work(
     let refused = |port: usize| got(port).and_then(Result::err);
     match &machine.role {
         Role::Conduit { .. } => state.status = refused(0).unwrap_or(Status::Idle),
+        Role::Chute { .. } | Role::Bin { .. } => state.status = Status::Idle,
         Role::Store { .. } => match refused(0) {
             Some(status) => state.status = status,
             None => {
@@ -715,7 +863,7 @@ mod tests {
     fn test() -> Test {
         let names = [
             "ore", "dust", "log", "wheel", "shaft", "mill", "boiler", "pipe", "engine", "dynamo", "lv_cable", "mv_cable", "crusher",
-            "battery", "mv_battery", "transformer", "furnace", "ingot", "washer",
+            "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "crate",
         ];
         let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
         let machines = MachineRegistry::read(
@@ -736,6 +884,10 @@ mod tests {
                 (block: "transformer", role: Transformer(tier: 2, rate: 128.0)),
                 (block: "furnace", role: Processor(kinds: ["smelt"], burns: true)),
                 (block: "washer", role: Processor(kinds: ["crush"], speed: 0.5, yield: 2.0, power: Some((Rotation, 4.0)), water: true)),
+                (block: "chute", role: Chute(rate: 1.0)),
+                (block: "conveyor", role: Chute(rate: 4.0)),
+                (block: "hopper", role: Bin(slots: 3, feeds: true)),
+                (block: "crate", role: Bin(slots: 3)),
             ], fuels: [(item: "tag:log", seconds: 10.0)])"#,
         )
         .unwrap();
@@ -927,5 +1079,55 @@ mod tests {
         assert_eq!(factory.put(IVec3::ZERO, ingot, &t.machines), Some(ingot));
         let left = factory.put(IVec3::ZERO, ItemStack { item: t.id("ore"), count: 64 }, &t.machines);
         assert_eq!(left, None);
+    }
+
+    fn held(t: &Test, factory: &Factory, at: i32, item: &str) -> u32 {
+        let (_, state) = factory.get(IVec3::new(at, 0, 0)).unwrap();
+        state.bin.iter().chain(&state.inputs).flatten().filter(|s| s.item == t.id(item)).map(|s| s.count as u32).sum()
+    }
+
+    #[test]
+    fn a_hopper_feeds_a_furnace_by_chute_and_a_crate_collects_what_it_made() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["hopper", "conveyor", "furnace", "chute", "crate"]);
+        feed(&t, &mut factory, 0, "dust", 4);
+        feed(&t, &mut factory, 0, "log", 1);
+        assert_eq!(held(&t, &factory, 0, "dust"), 4, "a hopper takes anything");
+        run(&t, &mut factory, 8.0);
+        assert_eq!(held(&t, &factory, 0, "dust"), 0, "the furnace took the dust");
+        let (_, furnace) = factory.get(IVec3::new(2, 0, 0)).unwrap();
+        assert!(furnace.burning > 0.0 && furnace.fuel.is_none(), "and burns the log");
+        assert_eq!(held(&t, &factory, 4, "ingot"), 2, "the crate on the far run holds what it made");
+        assert_eq!(made(&t, &factory, 2, "ingot"), 0);
+        // A crate's stacks come out like a machine's outputs.
+        assert_eq!(factory.take_outputs(IVec3::new(4, 0, 0)), vec![ItemStack { item: t.id("ingot"), count: 2 }]);
+    }
+
+    #[test]
+    fn a_run_moves_as_fast_as_its_slowest_chute() {
+        let t = test();
+        let moved = |row: &[&str]| {
+            let mut factory = Factory::default();
+            build(&t, &mut factory, row);
+            feed(&t, &mut factory, 0, "dust", 64);
+            run(&t, &mut factory, 3.0);
+            held(&t, &factory, row.len() as i32 - 1, "dust")
+        };
+        // No fuel: the furnace only gathers the dust.
+        assert_eq!(moved(&["hopper", "chute", "furnace"]), 3);
+        assert_eq!(moved(&["hopper", "conveyor", "furnace"]), 12);
+        assert_eq!(moved(&["hopper", "conveyor", "chute", "furnace"]), 3);
+    }
+
+    #[test]
+    fn bins_never_feed_bins() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["hopper", "conveyor", "crate"]);
+        feed(&t, &mut factory, 0, "ore", 10);
+        run(&t, &mut factory, 4.0);
+        assert_eq!(held(&t, &factory, 0, "ore"), 10);
+        assert_eq!(held(&t, &factory, 2, "ore"), 0);
     }
 }

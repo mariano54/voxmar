@@ -16,6 +16,12 @@
         (pattern: [["stick", "{name}_planks", "stick"], ["{name}_planks", "bronze_ingot", "{name}_planks"], ["stick", "{name}_planks", "stick"]], output: "water_wheel", skill: "core:engineering", level: 20, xp: 40.0),
         (pattern: [["wool", "stick", "wool"], ["stick", "bronze_ingot", "stick"], ["wool", "stick", "wool"]], output: "windmill", skill: "core:engineering", level: 24, xp: 50.0),
         (pattern: [["bronze_ingot", "bronze_ingot", "bronze_ingot"], ["", "shaft", ""], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "trip_hammer", skill: "core:engineering", level: 26, xp: 60.0),
+        // Items between machines: a crate and a hopper of planks, wooden chutes, and iron
+        // conveyors on hide belts, four times as fast.
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "crate", skill: "core:engineering", level: 10, xp: 12.0),
+        (pattern: [["{name}_planks", "", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"], ["", "{name}_planks", ""]], output: "hopper", skill: "core:engineering", level: 12, xp: 15.0),
+        (pattern: [["{name}_planks", "", "{name}_planks"], ["", "{name}_planks", ""]], output: "chute", count: 4, skill: "core:engineering", level: 14, xp: 4.0),
+        (pattern: [["hide", "hide", "hide"], ["iron_plate", "shaft", "iron_plate"]], output: "conveyor", count: 4, skill: "core:engineering", level: 34, xp: 12.0),
         // The Bronze age's gate, the Bellows Bloomery: a bloomery of kiln bricks round a
         // fire, hide bellows on a shaft, and a bloom beaten into two ingots by hand (a trip
         // hammer gets three).
