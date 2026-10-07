@@ -120,10 +120,11 @@ pub enum Role {
         /// It works only with water beside it (a washer); the world says whether there is.
         #[serde(default)]
         water: bool,
-        /// How many stacks it holds of what goes in, and of what it made.
-        #[serde(default = "three")]
+        /// How many stacks it holds of what goes in, and of what it made; by default, the
+        /// factory's `slots`.
+        #[serde(default)]
         input_slots: u8,
-        #[serde(default = "three")]
+        #[serde(default)]
         output_slots: u8,
     },
     /// Carries items between the machines beside a run of chutes, `rate` a second at most;
@@ -140,10 +141,6 @@ pub enum Role {
 
 fn one() -> f32 {
     1.0
-}
-
-fn three() -> u8 {
-    3
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -179,6 +176,29 @@ pub struct MachineFile {
     /// How the world drives wind and walked machines; a later package's replaces it.
     #[serde(default)]
     pub sources: Option<SourceRules>,
+    /// How the factory itself runs; a later package's replaces it.
+    #[serde(default)]
+    pub rules: Option<FactoryRules>,
+}
+
+/// How the factory runs (`rules` in `machines.ron`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct FactoryRules {
+    /// Seconds of its rate a run of chutes may save up while it has nothing to carry, so
+    /// one that waited does not burst.
+    pub chute_burst: f32,
+    /// Stacks a processor holds of what goes in, and of what it made, when its entry does
+    /// not say.
+    pub slots: u8,
+    /// Items with this tag (machines) are laid against a bin, not put in it.
+    pub machine_tag: String,
+}
+
+impl Default for FactoryRules {
+    fn default() -> Self {
+        Self { chute_burst: 1.0, slots: 3, machine_tag: "machine".into() }
+    }
 }
 
 /// How the world drives the machines it powers (`sources` in `machines.ron`).
@@ -213,6 +233,13 @@ pub struct SourceRules {
     pub walk_share: (f32, f32),
     /// In-game days a kept animal walks a treadwheel after a player last fed it.
     pub walk_fed_days: f32,
+    /// How a windmill's share grows from stall to full wind: 1 in a straight line, more
+    /// slower at first.
+    pub wind_curve: f32,
+    /// Where a water wheel or washer takes water from, and where a windmill needs open air,
+    /// as offsets from it.
+    pub water_faces: Vec<[i32; 3]>,
+    pub wind_faces: Vec<[i32; 3]>,
 }
 
 impl Default for SourceRules {
@@ -232,6 +259,9 @@ impl Default for SourceRules {
             walk_height: 2.0,
             walk_share: (0.5, 1.2),
             walk_fed_days: 2.0,
+            wind_curve: 1.0,
+            water_faces: vec![[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0]],
+            wind_faces: vec![[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]],
         }
     }
 }
@@ -240,7 +270,7 @@ impl SourceRules {
     /// The share of its power a windmill gives in `wind` (blocks a second) at height `y`:
     /// nothing in calm air, all of it in a gale up high.
     pub fn wind_share(&self, wind: f32, y: f32) -> f32 {
-        let strength = ((wind - self.wind_stall) / (self.wind_full - self.wind_stall).max(0.01)).clamp(0.0, 1.0);
+        let strength = ((wind - self.wind_stall) / (self.wind_full - self.wind_stall).max(0.01)).clamp(0.0, 1.0).powf(self.wind_curve.max(0.01));
         let height = ((y - self.wind_low) / (self.wind_high - self.wind_low).max(1.0)).clamp(self.wind_low_share, 1.0);
         strength * height
     }
@@ -398,6 +428,8 @@ pub struct MachineRegistry {
     walkers: Vec<String>,
     /// How the world drives wind and walked machines.
     pub sources: SourceRules,
+    /// How the factory runs.
+    pub rules: FactoryRules,
 }
 
 impl MachineRegistry {
@@ -491,6 +523,20 @@ impl MachineRegistry {
             registry.walkers.retain(|w| !file.not_walkers.contains(w));
             if let Some(sources) = file.sources {
                 registry.sources = sources;
+            }
+            if let Some(rules) = file.rules {
+                registry.rules = rules;
+            }
+        }
+        // Processors that do not say how many stacks they hold take the factory's default.
+        let slots = registry.rules.slots.max(1);
+        for machine in &mut registry.machines {
+            if let Role::Processor { input_slots, output_slots, .. } = &mut machine.role {
+                for count in [input_slots, output_slots] {
+                    if *count == 0 {
+                        *count = slots;
+                    }
+                }
             }
         }
         Ok(registry)

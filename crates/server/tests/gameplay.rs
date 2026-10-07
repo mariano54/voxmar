@@ -1716,6 +1716,28 @@ fn a_multiblock_counts_as_built_for_whoever_placed_its_core_not_whoever_uses_it_
 }
 
 #[test]
+fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
+    let dir = world_dir("spill");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    client.ok(&format!("/setblock {at} chest"));
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
+    drop(client);
+    // Thirty stacks saved in a chest of twenty-seven slots, as when a package gives it fewer.
+    let stacks = vec![r#"("base:cobblestone",64)"#; 30].join(",");
+    let saved = format!(r#"[(position:({},{},{}),block:"base:chest",inputs:[],outputs:[],fuel:None,burning:0.0,energy:0.0,condition:0.0,made:0,bin:[{stacks}])]"#, chest.x, chest.y, chest.z);
+    std::fs::write(dir.join("machines.ron"), saved).unwrap();
+    let mut client = Client::join_with(config());
+    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
+    let cobblestone = client.content.blocks.expect("base:cobblestone");
+    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>() == 3 * 64);
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_broken_chest_drops_what_it_held_and_a_chute_in_hand_is_not_put_in() {
     let mut client = Client::join();
     let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
@@ -1746,15 +1768,15 @@ fn a_water_wheel_turns_on_falling_water_but_not_on_water_poured_out_on_flat_grou
     }
     // Poured beside it, water spreads but does not run: the wheel stays still.
     client.ok("/setblock ~3 ~ ~ water");
-    machine_says(&mut client, "~4 ~ ~", "needs flowing water", 10);
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 10);
     wait_server(&mut client, 2);
-    machine_says(&mut client, "~4 ~ ~", "needs flowing water", 5);
+    machine_says(&mut client, "~4 ~ ~", "a fall of water", 5);
     // Falling past it, from a spring above, it turns.
     for line in ["/fill ~2 ~ ~-2 ~3 ~2 ~2 air", "/setblock ~3 ~3 ~ water"] {
         client.ok(line);
     }
     let started = client.tick;
-    while client.ok("/machine ~4 ~ ~").contains("needs flowing water") {
+    while client.ok("/machine ~4 ~ ~").contains("a fall of water") {
         assert!(server_seconds(&client, started) < 15, "falling water never turned the wheel");
         std::thread::sleep(Duration::from_millis(300));
     }
@@ -1772,16 +1794,16 @@ fn water_wheels_within_four_blocks_of_another_share_its_water_and_both_turn_once
     machine_says(&mut client, &at(4, 0), "idle", 20);
     // A second wheel on the same fall shares it, and neither turns.
     client.ok("/setblock ~2 ~1 ~ water_wheel");
-    machine_says(&mut client, &at(4, 0), "needs flowing water", 20);
-    machine_says(&mut client, &at(2, 0), "needs flowing water", 20);
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(2, 0), "a fall of water", 20);
     client.ok("/setblock ~2 ~1 ~ air");
     machine_says(&mut client, &at(4, 0), "idle", 20);
     // On a fall of its own four blocks off (the data's `water_spacing`, diagonals too),
     // it stills the first all the same.
     client.ok("/setblock ~8 ~4 ~ water");
     client.ok("/setblock ~8 ~1 ~1 water_wheel");
-    machine_says(&mut client, &at(4, 0), "needs flowing water", 20);
-    machine_says(&mut client, &at(8, 1), "needs flowing water", 20);
+    machine_says(&mut client, &at(4, 0), "a fall of water", 20);
+    machine_says(&mut client, &at(8, 1), "a fall of water", 20);
     // Five blocks off, both turn.
     client.ok("/setblock ~8 ~1 ~1 air");
     client.ok("/setblock ~9 ~1 ~ water_wheel");

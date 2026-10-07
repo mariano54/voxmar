@@ -202,12 +202,15 @@ struct ColumnFile<C> {
     column: C,
 }
 
+/// A save being written: its generation and the files it has staged.
+type Staging = (u64, Vec<PathBuf>);
+
 /// A world directory. Cheap to clone, so worker threads can load columns.
 #[derive(Clone, Debug)]
 pub struct WorldSave {
     dir: Arc<Path>,
-    /// The save being written, if one is: its generation and the files it has staged.
-    staging: Arc<Mutex<Option<(u64, Vec<PathBuf>)>>>,
+    /// The save being written, if one is.
+    staging: Arc<Mutex<Option<Staging>>>,
 }
 
 impl WorldSave {

@@ -479,8 +479,8 @@ impl Factory {
     fn carry(&mut self, seconds: f32, machines: &MachineRegistry) {
         for r in 0..self.runs.len() {
             let run = &mut self.runs[r];
-            // No more than a second's worth built up, so an idle run does not burst.
-            run.credit = (run.credit + run.rate * seconds).min(run.rate.max(1.0));
+            // No more than `chute_burst` seconds' worth built up, so an idle run does not burst.
+            run.credit = (run.credit + run.rate * seconds).min((run.rate * machines.rules.chute_burst).max(1.0));
             let mut budget = run.credit.floor() as u32;
             if budget == 0 {
                 continue;

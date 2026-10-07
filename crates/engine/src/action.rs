@@ -459,7 +459,7 @@ impl ActionDef {
                         let fuel = machine.burns() && machines.burn_seconds(item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
                         // A bin takes anything but machines: a chute in hand is laid against it.
-                        let bin = machine.bin_slots() > 0 && !ctx.blocks().def(item).has_tag("machine");
+                        let bin = machine.bin_slots() > 0 && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);
                         fuel || input || bin || !ctx.info(item).placeable
                     }
                 }
