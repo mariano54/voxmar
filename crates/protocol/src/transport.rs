@@ -190,7 +190,8 @@ pub mod tcp {
         In: DeserializeOwned + Send + 'static,
     {
         stream.set_nodelay(true)?;
-        let loopback = stream.peer_addr()?.ip().is_loopback();
+        // An IPv4 peer reaching a dual-stack listener shows as `::ffff:127.0.0.1`.
+        let loopback = stream.peer_addr()?.ip().to_canonical().is_loopback();
         let (out_tx, out_rx) = bounded::<(Instant, Out)>(MAX_QUEUED_OUT);
         let (max_frame, (in_tx, in_rx), open) = match side {
             Side::Client => (MAX_SERVER_FRAME, unbounded::<(Instant, In)>(), None),

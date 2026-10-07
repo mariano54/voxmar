@@ -60,8 +60,15 @@ pub struct ServerConfig {
     /// Names of players with admin rights, besides the integrated server's own player.
     /// Names are not authenticated, so this only suits servers among friends.
     pub admins: Vec<String>,
-    /// Most players connected at once; more are turned away.
+    /// Most players playing at once; more are turned away when they say hello.
     pub max_players: usize,
+    /// A password that makes whoever joins with it an admin, from anywhere (`--admin-token`
+    /// on the dedicated server; a client sends `VOXMAR_ADMIN_TOKEN`). `None` for none.
+    pub admin_token: Option<String>,
+    /// How long a player connected from elsewhere may send nothing before they are let go
+    /// (clients send their position every tick): a connection that died without closing
+    /// would otherwise keep their name taken.
+    pub idle_timeout: Duration,
     /// Directory the world is saved in; a new world is created there if it holds none. A
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
     /// only.
@@ -102,6 +109,8 @@ impl Default for ServerConfig {
             local_admin: true,
             admins: Vec::new(),
             max_players: 64,
+            admin_token: None,
+            idle_timeout: Duration::from_secs(15),
             world: None,
             lag: Lag::default(),
         }
@@ -159,7 +168,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
-    rules::SurvivalRules::load(&content.files)?;
+    rules::SurvivalRules::load(&content.files, &content.blocks)?;
     Ok(content)
 }
 
@@ -265,6 +274,9 @@ fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, 
 pub(crate) struct Loaded {
     column: Column,
     saved: bool,
+    /// The column's file could not be read, nor moved aside, so edits to the column
+    /// generated in its place are not saved over it (`Server::kept`).
+    keep_file: bool,
 }
 
 /// A saved column if there is one, with its worn ground healed up to `today`, otherwise a
@@ -281,17 +293,26 @@ pub(crate) fn load_column(
         match save.read_column(pos, registry) {
             Ok(Some(mut column)) => {
                 wear.heal(&mut column, pos.origin(), today, registry);
-                return Loaded { column, saved: true };
+                return Loaded { column, saved: true, keep_file: false };
             }
             Ok(None) => {}
-            // Set aside, so the column generated in its place never overwrites it.
-            Err(e) => match save.set_aside_column(pos) {
+            // Not a column file: set aside, so the column generated in its place never
+            // overwrites it.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => match save.set_aside_column(pos) {
                 Ok(aside) => tracing::error!("could not load column {pos:?}: {e}; kept it as {} and generated the column again", aside.display()),
-                Err(moving) => tracing::error!("could not load column {pos:?}: {e}; nor move it aside ({moving}), so an edit will overwrite it"),
+                Err(moving) => {
+                    tracing::error!("could not load column {pos:?}: {e}; nor move it aside ({moving}), so edits to it will not be saved");
+                    return Loaded { column: generator.generate(pos), saved: false, keep_file: true };
+                }
             },
+            // Not read at all (no permission, a failing disk): left alone.
+            Err(e) => {
+                tracing::error!("could not read column {pos:?}: {e}; edits to it will not be saved");
+                return Loaded { column: generator.generate(pos), saved: false, keep_file: true };
+            }
         }
     }
-    Loaded { column: generator.generate(pos), saved: false }
+    Loaded { column: generator.generate(pos), saved: false, keep_file: false }
 }
 
 pub(crate) struct Server {
@@ -331,6 +352,8 @@ pub(crate) struct Server {
     /// Columns edited since they were last saved. They stay loaded until saved; without a
     /// save, that is forever.
     dirty: FxHashSet<ColumnPos>,
+    /// Columns whose files could not be read, which saving leaves alone (`Loaded`).
+    kept: FxHashSet<ColumnPos>,
     generating: FxHashSet<ColumnPos>,
     generated_tx: Sender<(ColumnPos, Loaded)>,
     generated_rx: Receiver<(ColumnPos, Loaded)>,
@@ -392,7 +415,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
-        let survival = Arc::new(rules::SurvivalRules::load(&content.files).expect("checked by load_content"));
+        let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks).expect("checked by load_content"));
         let mut server = Self {
             config,
             tick,
@@ -418,6 +441,7 @@ impl Server {
             world,
             fluids,
             dirty: FxHashSet::default(),
+            kept: if loaded.keep_file { FxHashSet::from_iter([spawn_column]) } else { FxHashSet::default() },
             generating: FxHashSet::default(),
             generated_tx,
             generated_rx,
@@ -472,7 +496,9 @@ impl Server {
 
     fn accept_connections(&mut self) {
         while let Ok(connection) = self.incoming.try_recv() {
-            if self.players.len() >= self.config.max_players {
+            // Those still to say hello count against their own small limit, so sockets
+            // left silent cannot fill the server (players are counted at hello).
+            if self.players.values().filter(|p| !p.joined).count() >= player::MAX_PENDING {
                 connection.send(ServerMessage::Rejected { reason: voxmar_engine::lang::Words::key("net.rejected.full") });
                 continue;
             }
@@ -494,6 +520,9 @@ impl Server {
 
     /// Adds a loaded column to the world, and lets fluid waiting for it flow on.
     pub(crate) fn insert_column(&mut self, pos: ColumnPos, loaded: Loaded) {
+        if loaded.keep_file {
+            self.kept.insert(pos);
+        }
         self.world.insert(pos, Arc::new(loaded.column));
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
@@ -511,17 +540,37 @@ impl Server {
                         player.messages_left -= 1;
                         self.handle_message(id, message, at);
                     }
-                    Ok(None) => break,
-                    Err(_) => {
-                        // Leaving dead buries first, or rejoining would revive them with
-                        // everything they carried.
-                        self.bury_if_dead(id);
-                        let player = self.players.remove(&id).expect("listed");
-                        tracing::info!("{} left", player.name);
-                        self.save_player(&player);
+                    Ok(None) => {
+                        if self.players[&id].idle(Instant::now(), self.config.idle_timeout) {
+                            tracing::info!("{} sent nothing for {:?}; letting them go", self.players[&id].name, self.config.idle_timeout);
+                            self.leave(id);
+                        }
+                        break;
                     }
+                    Err(_) => self.leave(id),
                 }
             }
+        }
+    }
+
+    /// Lets a player go, saving them. Leaving dead buries first, or rejoining would revive
+    /// them with everything they carried; the items are written before the player, so a
+    /// crash between the two can double what they left but never lose it.
+    fn leave(&mut self, id: PlayerId) {
+        self.bury_if_dead(id);
+        let player = self.players.remove(&id).expect("listed");
+        tracing::info!("{} left", player.name);
+        if player.joined {
+            self.save_items();
+            self.save_player(&player);
+        }
+    }
+
+    fn save_items(&self) {
+        let Some(save) = &self.save else { return };
+        let blocks = &self.content.blocks;
+        if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
+            tracing::error!("could not save dropped items: {e}");
         }
     }
 
@@ -565,22 +614,24 @@ impl Server {
         let Some(save) = &self.save else { return };
         let _span = tracing::info_span!("save_world").entered();
         let started = Instant::now();
-        let (world, registry) = (&self.world, &self.content.blocks);
+        let (world, registry, kept) = (&self.world, &self.content.blocks, &self.kept);
         let columns = self.dirty.len();
         self.dirty.retain(|&pos| {
             let Some(column) = world.column(pos) else { return false };
+            if kept.contains(&pos) {
+                tracing::warn!("not saving column {pos:?} over a file that could not be read");
+                return false;
+            }
             let result = save.write_column(pos, column, registry);
             if let Err(e) = &result {
                 tracing::error!("could not save column {pos:?}: {e}");
             }
             result.is_err()
         });
+        // Items before players, as when a player leaves (`leave`).
+        self.save_items();
         for player in self.players.values().filter(|p| p.joined) {
             self.save_player(player);
-        }
-        let blocks = &self.content.blocks;
-        if let Err(e) = save.write_items(&self.items.saved(|item| blocks.def(item).name.clone())) {
-            tracing::error!("could not save dropped items: {e}");
         }
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
             tracing::error!("could not save creatures: {e}");
@@ -688,6 +739,7 @@ impl Server {
             .collect();
         for pos in unload {
             self.world.remove(pos);
+            self.kept.remove(&pos);
             self.fluids.column_unloaded(pos);
         }
     }

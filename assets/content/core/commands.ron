@@ -82,9 +82,16 @@
         (
             name: "op",
             usage: "<player>",
-            help: "Makes an online player an admin until they leave. Names are not checked, so admins named when the server starts count only when playing on its own machine.",
+            help: "Makes an online player an admin, which lasts until /deop. Names are not checked, so admins named when the server starts count only when playing on its own machine (a tunnel that forwards players from elsewhere makes everyone look local); the server's admin token counts from anywhere.",
             permission: Admin,
             run: Op,
+        ),
+        (
+            name: "deop",
+            usage: "<player>",
+            help: "Takes an online player's admin rights away.",
+            permission: Admin,
+            run: Deop,
         ),
         (
             name: "clear",

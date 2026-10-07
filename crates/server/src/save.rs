@@ -149,6 +149,8 @@ pub struct SavedPlayer {
     /// Quests finished, and the tallies quests count.
     pub quests: Vec<String>,
     pub tallies: Vec<(String, u32)>,
+    /// Whether an admin made them one with `/op` (until `/deop`).
+    pub op: bool,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -178,6 +180,8 @@ struct PlayerFile {
     quests: Vec<String>,
     #[serde(default)]
     tallies: Vec<(String, u32)>,
+    #[serde(default)]
+    op: bool,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -245,7 +249,7 @@ impl WorldSave {
             return Err(invalid(&path, "not a column file"));
         };
         let mut encoded = Vec::new();
-        ZlibDecoder::new(compressed).read_to_end(&mut encoded)?;
+        ZlibDecoder::new(compressed).read_to_end(&mut encoded).map_err(|e| invalid(&path, e))?;
         let file: ColumnFile<Column> = postcard::from_bytes(&encoded).map_err(|e| invalid(&path, e))?;
         let mut column = file.column;
         if column.colors.len() != COLUMN_AREA || !column.chunks.iter().all(Chunk::is_valid) {
@@ -289,13 +293,34 @@ impl WorldSave {
         write_atomic(&path, &encoder.finish()?)
     }
 
+    /// Where the player called `name` is saved: by the name in lower case, since names
+    /// differing only in case are one player (and one file on macOS and Windows).
     fn player_path(&self, name: &str) -> PathBuf {
-        self.dir.join("players").join(format!("{}.ron", file_name(name)))
+        self.dir.join("players").join(format!("{}.ron", file_name(&name.to_lowercase())))
+    }
+
+    /// The file the player called `name` is read from: theirs, or one saved before names
+    /// were kept in lower case, under the name as some player typed it, in any case
+    /// (written back to theirs at the next save).
+    fn player_file(&self, name: &str) -> PathBuf {
+        let path = self.player_path(name);
+        if path.exists() {
+            return path;
+        }
+        let wanted = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let older = std::fs::read_dir(self.dir.join("players"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|older| older.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == wanted))
+            .min();
+        older.unwrap_or(path)
     }
 
     /// The saved state of the player called `name`. Items that no longer exist are dropped.
     pub fn read_player(&self, name: &str, registry: &BlockRegistry) -> io::Result<Option<SavedPlayer>> {
-        let path = self.player_path(name);
+        let path = self.player_file(name);
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -315,12 +340,12 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies, op: file.op }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
     pub fn set_aside_player(&self, name: &str) -> io::Result<PathBuf> {
-        set_aside(&self.player_path(name))
+        set_aside(&self.player_file(name))
     }
 
     /// Moves the column file at `pos` aside, as unreadable (`set_aside`).
@@ -353,6 +378,7 @@ impl WorldSave {
             journal: player.journal.clone(),
             quests: player.quests.clone(),
             tallies: player.tallies.clone(),
+            op: player.op,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -443,9 +469,9 @@ pub(crate) struct WorldState {
 }
 
 impl WorldSave {
-    /// The dropped items, crops and kept creatures. A file that cannot be read is moved
-    /// aside and logged, and the world opens without what it held; only a file that can
-    /// neither be read nor moved aside (and so would be overwritten at the next save) is
+    /// The dropped items, crops and kept creatures. A file that is not what it should be is
+    /// moved aside and logged, and the world opens without what it held; a file that could
+    /// not be read at all, or moved aside (and so would be overwritten at the next save), is
     /// an error.
     pub(crate) fn read_state(&self) -> io::Result<WorldState> {
         Ok(WorldState {
@@ -458,6 +484,8 @@ impl WorldSave {
     fn read_or_set_aside<T: Default>(&self, file: &str, read: fn(&Self) -> io::Result<T>) -> io::Result<T> {
         let error = match read(self) {
             Ok(value) => return Ok(value),
+            // Not read at all (no permission, a failing disk): the world does not open.
+            Err(error) if error.kind() != io::ErrorKind::InvalidData => return Err(error),
             Err(error) => error,
         };
         let path = self.dir.join(file);
@@ -642,6 +670,7 @@ mod tests {
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
             quests: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],
+            op: true,
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -652,6 +681,18 @@ mod tests {
         // Names that are not plain file names stay inside the players directory.
         let files = std::fs::read_dir(dir.join("players")).unwrap().count();
         assert!(files >= 4, "{files} player files");
+        // Names differing only in case are one player, with one file, on any filesystem.
+        assert_eq!(save.read_player("STEVE", &registry).unwrap(), Some(player.clone()));
+        assert!(dir.join("players/steve.ron").exists() && !dir.join("players/Steve.ron").exists() || cfg!(not(target_os = "linux")));
+        // A file saved under the name as typed, before names were kept in lower case, is
+        // still found, and the next save goes to the lower-case one.
+        let old = SavedPlayer { yaw: 0.5, ..player.clone() };
+        let text = std::fs::read_to_string(dir.join("players/a~2f~b.ron")).unwrap();
+        std::fs::write(dir.join("players/Ada.ron"), text.replace("yaw: 1.25", "yaw: 0.5")).unwrap();
+        assert_eq!(save.read_player("Ada", &registry).unwrap(), Some(old.clone()));
+        assert_eq!(save.read_player("ada", &registry).unwrap(), Some(old.clone()), "on a case-sensitive disk too");
+        save.write_player("Ada", &player, &registry).unwrap();
+        assert_eq!(save.read_player("ADA", &registry).unwrap(), Some(player.clone()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

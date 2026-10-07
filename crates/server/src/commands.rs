@@ -175,7 +175,8 @@ impl Server {
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
-            Run::Op => self.op_command(args),
+            Run::Op => self.op_command(args, true),
+            Run::Deop => self.op_command(args, false),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -831,15 +832,21 @@ impl Server {
         Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
     }
 
-    fn op_command(&mut self, args: &[String]) -> Reply {
-        let [name] = args else { return Err(Words::key("command.error.op_whom")) };
+    /// Makes a player an admin (`/op`), or no longer one (`/deop`); their save keeps it.
+    fn op_command(&mut self, args: &[String], admin: bool) -> Reply {
+        let [name] = args else { return Err(Words::key(if admin { "command.error.op_whom" } else { "command.error.deop_whom" })) };
         let who = self.find_player(name)?;
         let player = self.players.get_mut(&who).unwrap();
-        player.admin = true;
-        player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin: true });
+        player.admin = admin;
+        player.opped = admin;
+        if !admin {
+            player.fly_speed = 1.0;
+        }
+        player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin });
         let name = player.name.clone();
-        self.tell(Source::Player(who), ChatKind::Info, Words::key("command.op.you"));
-        Ok(Words::key("command.op").with("name", name))
+        let (theirs, yours) = if admin { ("command.op", "command.op.you") } else { ("command.deop", "command.deop.you") };
+        self.tell(Source::Player(who), ChatKind::Info, Words::key(yours));
+        Ok(Words::key(theirs).with("name", name))
     }
 
     fn kill_command(&mut self, source: Source) -> Reply {

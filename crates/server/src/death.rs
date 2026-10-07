@@ -38,6 +38,7 @@ impl Server {
     }
 
     fn bury(&mut self, id: PlayerId) {
+        let at = self.grave_site(id);
         let blocks = self.content.blocks.clone();
         let tools = self.content.tools.clone();
         let tick = self.tick;
@@ -61,7 +62,6 @@ impl Server {
         let (kept, left) = split(&player.inventory, if warded { KEPT_WARDED } else { KEPT }, warded, value);
         player.inventory = kept;
         player.changed(traits::INVENTORY);
-        let at = player.position;
         let owner = owner_of(&player.name);
         let minutes = if warded { 2.0 } else { 1.0 };
         let lifetime = (LIFETIME * minutes * TICKS_PER_SECOND as f32) as u32;

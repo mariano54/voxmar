@@ -1,5 +1,5 @@
 //! Dedicated server:
-//! `voxmar-server [--world DIR] [--bind ADDR] [--seed N] [--no-flight] [--view-distance N] [--admin NAME]...`.
+//! `voxmar-server [--world DIR] [--bind ADDR] [--seed N] [--no-flight] [--view-distance N] [--max-players N] [--admin-token TOKEN] [--admin NAME]...`.
 //!
 //! The world lives in `DIR` (default `./world`) and is created there if it does not exist
 //! yet, with `--seed` and, given `--no-flight`, in survival mode; an existing world keeps
@@ -8,8 +8,10 @@
 //! `weather storm`, `tp Ada 0 100 0`), or said to everyone with `say …`.
 //!
 //! Names are not authenticated, so an `--admin` name is an admin only when connecting from
-//! this machine; anyone else is made one for their session with `op NAME`, typed here or
-//! by an admin in game.
+//! this machine (a tunnel that forwards players from elsewhere makes them all look local, so
+//! leave `--admin` out behind one). From anywhere, a player whose client sends the
+//! `--admin-token` (set `VOXMAR_ADMIN_TOKEN` before starting the game) is an admin. Anyone
+//! else is made one with `op NAME`, typed here or by an admin in game, until `deop NAME`.
 
 use std::net::SocketAddr;
 
@@ -33,6 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--view-distance" => config.view_distance = value()?.parse()?,
             "--no-flight" => config.allow_flight = false,
             "--admin" => config.admins.push(value()?),
+            "--admin-token" => config.admin_token = Some(value()?).filter(|token| !token.is_empty()),
+            "--max-players" => config.max_players = value()?.parse()?,
             _ => return Err(format!("unknown argument {arg}").into()),
         }
     }

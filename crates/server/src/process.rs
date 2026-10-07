@@ -66,6 +66,9 @@ impl Process for Falling {
             let (in_water, in_lava) = (touching(water), touching(lava));
 
             let player = server.players.get_mut(&id).unwrap();
+            if on_ground && !in_lava {
+                player.last_ground = Some(player.position);
+            }
             let mut damage = 0.0;
             if in_lava && burns {
                 damage += rules.burn as f32;

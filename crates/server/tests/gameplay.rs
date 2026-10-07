@@ -45,6 +45,8 @@ struct Client {
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
+    /// Times we were told we died.
+    died: u32,
     blows: u32,
     /// The damage each of our blows did (0 for a miss).
     damage: Vec<u16>,
@@ -91,8 +93,13 @@ impl Client {
     }
 
     fn greet(connection: ClientConnection, name: &str, server: Option<ServerHandle>) -> Self {
+        Self::greet_with(connection, name, server, None)
+    }
+
+    /// Joins as `name`, giving the server `admin_token`.
+    fn greet_with(connection: ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>) -> Self {
         let content = content();
-        connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint() });
+        connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) });
         let mut client = Self {
             connection,
             id: 0,
@@ -116,6 +123,7 @@ impl Client {
             day: None,
             creatures: Default::default(),
             deaths: 0,
+            died: 0,
             blows: 0,
             damage: Vec::new(),
             journal: Default::default(),
@@ -200,6 +208,7 @@ impl Client {
                     self.deaths += gone.died as u32;
                 }
             }
+            ServerMessage::Died => self.died += 1,
             ServerMessage::Struck { damage, .. } => {
                 self.blows += 1;
                 self.damage.push(damage);
@@ -218,6 +227,19 @@ impl Client {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Waits until the server has run `ticks` whole ticks from now, by its own clock, and
+    /// applies everything they sent: a barrier after which whatever the server was going to
+    /// do about the messages sent before it is done, for checking that something did not
+    /// happen without waiting a fixed time.
+    fn after_ticks(&mut self, ticks: u64) {
+        let ran = |c: &Self| c._server.as_ref().expect("the first player holds the server").ticks();
+        let until = ran(self) + ticks + 1;
+        self.pump_until(|c| ran(c) >= until);
+        while let Ok(Some(message)) = self.connection.try_recv() {
+            self.apply(message);
         }
     }
 
@@ -259,6 +281,7 @@ const CATCH_UP: Duration = Duration::from_millis(11 * 1000 / TICKS_PER_SECOND as
 #[test]
 fn break_and_place_blocks() {
     let mut client = Client::join();
+    client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     // Stone, which takes long enough to mine that a server catching up cannot finish it
     // anywhere near at once.
@@ -292,12 +315,14 @@ fn break_and_place_blocks() {
     }));
     client.propose("core:place", ActionTarget::Block { block: below - IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.world.block(below) == Some(item.item));
-    client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(item.count - 1));
+    client.pump_until(|c| c.inventory.get(0).map_or(0, |s| s.count) == item.count - 1);
 }
 
 #[test]
 fn broken_blocks_pop_out_items_that_are_picked_up_and_thrown_stacks_fly() {
     let mut client = Client::join();
+    client.clear();
+    client.ok("/give oak_planks 64");
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     let ground = client.world.block(below).unwrap();
     let drop = client.content.blocks.info(ground).drops;
@@ -324,22 +349,23 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     let mut client = Client::join();
     let feet = client.position.floor().as_ivec3();
     let (ground, other) = (feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 2));
+    client.clear();
     for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5", "/give wooden_hoe 1"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(6).is_some());
+    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(2).is_some_and(|s| s.item == c.content.blocks.expect("base:wooden_hoe")));
     let blocks = &client.content.blocks;
     let (sprout, ripe, wheat) = (blocks.expect("base:wheat_crop_0"), blocks.expect("base:wheat_crop"), blocks.expect("base:wheat"));
     let farmland = blocks.expect("base:farmland");
-    assert_eq!(client.inventory.get(4).map(|s| s.item), blocks.id("base:wheat_seeds"));
+    assert_eq!(client.inventory.get(0).map(|s| s.item), blocks.id("base:wheat_seeds"));
     let hold = |client: &Client, slot: u8| {
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
 
     // Seeds go on farmland only: sowing on dirt is refused, and a hoe tills it.
-    hold(&client, 4);
+    hold(&client, 0);
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
-    hold(&client, 6);
+    hold(&client, 2);
     for block in [ground, other] {
         client.propose("base:till", ActionTarget::Block { block, face: Face::PosY });
     }
@@ -347,15 +373,15 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     assert_eq!(client.world.block(ground + IVec3::Y), Some(BlockId::AIR), "sown on untilled dirt");
 
     // Saffron takes farming 60: refused, nothing sown, no experience.
-    hold(&client, 5);
+    hold(&client, 1);
     client.propose("base:plant", ActionTarget::Block { block: other, face: Face::PosY });
     // Wheat takes level 1: sown, its planting experience waiting for the harvest.
-    hold(&client, 4);
+    hold(&client, 0);
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
     assert!(client.earned.is_empty(), "sowing paid at once: {:?}", client.earned);
     assert_eq!(client.world.block(other + IVec3::Y), Some(BlockId::AIR), "sown without the level");
-    client.pump_until(|c| c.inventory.get(4).map(|s| s.count) == Some(4));
+    client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(4));
 
     // Grown ripe, then broken: its harvest pops out and its experience is earned, the
     // sowing's (2) with the harvest's (9), in tenths.
@@ -436,7 +462,7 @@ fn falling_hurts() {
     client.ok(&format!("/tp {} {} {}", top.x, top.y, top.z));
     client.pump_until(|c| c.position == top);
     // A tick or two up there, so the fall is counted from the top.
-    std::thread::sleep(Duration::from_millis(150));
+    client.after_ticks(2);
     for y in (0..height).rev() {
         client.connection.send(ClientMessage::Input(PlayerInput {
             position: start + Vec3::Y * y as f32,
@@ -484,15 +510,15 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
     let dir = world_dir("restart");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
+    client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
     client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
-    let purse = client.content.blocks.id("base:coin_purse");
-    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.count == 1 && Some(s.item) != purse));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.count == 1));
     // Step a little within the same block, so the position is our own rather than spawn.
     let moved = client.position + Vec3::new(0.2, 0.0, -0.2);
     client.send_position(moved, false);
-    std::thread::sleep(Duration::from_millis(200));
+    client.after_ticks(2);
     let inventory = client.inventory.clone();
     // Dropping the server saves the world.
     drop(client);
@@ -809,10 +835,11 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
     let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
     let wheat = client.content.blocks.id("base:wheat").unwrap();
     client.ok("/summon junglefowl 2 ~ ~ ~");
+    client.clear();
     client.ok("/give wheat 64");
-    client.pump_until(|c| c.creatures.values().filter(|v| v.species == hen).count() == 2 && c.inventory.get(4).is_some_and(|s| s.item == wheat));
-    // Hold the wheat (the start kit fills the first four slots).
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 4, flying: false }));
+    client.pump_until(|c| c.creatures.values().filter(|v| v.species == hen).count() == 2 && c.inventory.get(0).is_some_and(|s| s.item == wheat));
+    // Hold the wheat.
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let hens: Vec<u32> = client.creatures.iter().filter(|(_, v)| v.species == hen).map(|(&id, _)| id).collect();
     // Feed each until it is ours: three to five feedings at level 1.
     for &id in &hens {
@@ -955,28 +982,29 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     let mut client = Client::join();
     let ore = client.position.floor().as_ivec3() + IVec3::new(0, -1, 1);
     client.ok("/setblock ~ ~-1 ~1 iron_ore");
+    client.clear();
     client.ok("/give stone_pickaxe 1");
-    client.pump_until(|c| c.world.block(ore) == c.content.blocks.id("base:iron_ore") && c.inventory.get(4).is_some());
+    client.pump_until(|c| c.world.block(ore) == c.content.blocks.id("base:iron_ore") && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:stone_pickaxe")));
     let iron = client.world.block(ore).unwrap();
+    // Long enough for the ore to break by hand, had it been allowed.
+    let by_hand = (client.content.blocks.info(iron).hardness * TICKS_PER_SECOND as f32) as u64 + 2;
     let mine = |client: &Client| client.propose("core:mine", ActionTarget::Block { block: ore, face: Face::PosY });
     let hold = |client: &Client, slot: u8| {
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     };
     // At Mining 1, even with the pickaxe: refused.
-    hold(&client, 4);
+    hold(&client, 0);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.after_ticks(by_hand);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
     // At Mining 15 with a bare hand: refused too.
     client.ok("/skill mining 15");
-    hold(&client, 5);
+    hold(&client, 1);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.after_ticks(by_hand);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
     // At Mining 15 with the stone pickaxe: broken, quicker than by hand, teaching Mining (35).
-    hold(&client, 4);
+    hold(&client, 0);
     let started = Instant::now();
     mine(&client);
     client.pump_until(|c| c.world.block(ore) == Some(BlockId::AIR) && c.earned.contains(&350));
@@ -1028,11 +1056,12 @@ fn cooked_food_takes_a_slot_each_and_ingredients_stack() {
 fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     let mut client = Client::join();
     let water = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+    client.clear();
     for line in ["/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/give fishing_rod 1", "/skill fishing 80"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(4).is_some());
-    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 4, flying: false }));
+    client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     let fish = |c: &Client| c.inventory.slots.iter().flatten().any(|s| c.content.blocks.def(s.item).has_tag("fish"));
     // Nine casts in ten land at level 80; a few casts make a miss streak vanishingly rare.
     for _ in 0..6 {
@@ -1252,8 +1281,7 @@ fn gravel_sometimes_breaks_to_flint_instead() {
         client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
         // The drop comes just after the block goes; setting the gravel again at once could
         // bury it unseen.
-        let seen = Instant::now() + Duration::from_millis(300);
-        client.pump_until(|c| Instant::now() > seen || c.items.values().any(|i| i.stack.item == flint));
+        client.after_ticks(2);
         flints = client.items.values().filter(|i| i.stack.item == flint).count() + client.inventory.slots.iter().flatten().filter(|s| s.item == flint).count();
         if flints > 0 {
             break;
@@ -1275,37 +1303,73 @@ fn give_a_load(client: &mut Client) {
     client.pump_until(|c| carried(c) == 47);
 }
 
+/// A server held up after every tick, so that messages sent together are handled together
+/// before the next tick: the races a quick client wins now and then, every time.
+fn stalled() -> voxmar_server::Lag {
+    voxmar_server::Lag { stall: Duration::from_millis(300), stall_every: 1, ..Default::default() }
+}
+
 #[test]
 fn a_respawn_sent_the_moment_a_player_dies_still_leaves_their_things_behind() {
-    let mut client = Client::join();
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, lag: stalled(), ..Default::default() });
     give_a_load(&mut client);
-    // Dying and asking to respawn in one breath, before a tick could bury: the server
-    // handles both before its next tick.
+    // Dying and asking to respawn in one breath, before a tick could bury.
     client.connection.send(ClientMessage::Command { line: "/kill".into() });
     client.propose("core:respawn", ActionTarget::None);
-    let lying = |c: &Client| c.items.values().map(|i| i.stack.count as u32).sum::<u32>();
-    let wait = Instant::now() + Duration::from_secs(5);
-    client.pump_until(|c| (c.health > 0 && carried(c) == 3 && lying(c) == 44) || Instant::now() > wait);
-    assert_eq!((carried(&client), lying(&client)), (3, 44), "the respawned player kept {:?}", client.inventory);
+    client.pump_until(|c| c.died > 0);
+    client.after_ticks(2);
+    let lying = client.items.values().map(|i| i.stack.count as u32).sum::<u32>();
+    assert_eq!((carried(&client), lying), (3, 44), "the respawned player kept {:?}", client.inventory);
+}
+
+/// Waits until `name` has left `host`'s server.
+fn gone(host: &mut Client, name: &str) {
+    let online = |c: &Client| c.chat.iter().find(|(kind, text)| *kind == ChatKind::Info && text.contains("online")).map(|(_, text)| text.clone());
+    for _ in 0..1000 {
+        host.chat.clear();
+        host.connection.send(ClientMessage::Command { line: "/list".into() });
+        host.pump_until(|c| online(c).is_some());
+        if !online(host).unwrap().contains(name) {
+            return;
+        }
+    }
+    panic!("{name} never left");
 }
 
 #[test]
 fn leaving_dead_leaves_their_things_behind_too() {
     let dir = world_dir("leave-dead");
-    let host = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let mut host = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), lag: stalled(), ..Default::default() });
     let mut guest = host.another("guest");
     give_a_load(&mut guest);
     // Dying and leaving at once, before a tick could bury.
     guest.connection.send(ClientMessage::Command { line: "/kill".into() });
     drop(guest);
-    // Dropping the server saves the world.
-    drop(host);
+    gone(&mut host, "guest");
     let content = content();
     let saved = voxmar_server::save::WorldSave::new(&dir).read_player("guest", &content.blocks).unwrap().expect("the guest was saved");
     let kept: u32 = saved.inventory.slots.iter().flatten().map(|s| s.count as u32).sum();
     assert_eq!(kept, 3, "the guest left dead with {:?}", saved.inventory);
+    // What they left was written before they were.
     let items = std::fs::read_to_string(dir.join("items.ron")).unwrap();
     assert!(items.contains("dirt"), "what the guest carried lies where they fell: {items}");
+    drop(host);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_player_who_left_dead_wakes_at_home() {
+    let dir = world_dir("dead-home");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    drop(Client::join_with(config()));
+    let file = dir.join("players/test.ron");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let dead = text.replace("current: 20", "current: 0").replace("home: None", "home: Some((3.5, 90.0, -7.5))");
+    assert!(dead.contains("current: 0") && dead.contains("home: Some"), "{text}");
+    std::fs::write(&file, dead).unwrap();
+    let client = Client::join_with(config());
+    assert_eq!(client.position, Vec3::new(3.5, 90.0, -7.5), "woke at the spawn point rather than at home");
+    drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1325,11 +1389,14 @@ fn an_unreadable_player_file_is_set_aside_not_overwritten() {
     let mut client = Client::join_with(config());
     client.pump_until(|c| c.chat.iter().any(|(kind, _)| *kind == ChatKind::Error));
     assert!(client.chat.iter().any(|(_, text)| text.contains("test.ron.corrupt-")), "{:?}", client.chat);
-    drop(client);
+    // Kept as it was before anything could be saved over it...
     let aside = set_aside(&dir.join("players"));
     assert_eq!(aside.len(), 1, "{aside:?}");
     assert_eq!(std::fs::read_to_string(dir.join("players").join(&aside[0])).unwrap(), "(position: [1.0, 2.0", "the bad file is kept as it was");
-    assert!(file.is_file(), "the player is saved afresh beside it");
+    // ...and the player saved afresh beside it.
+    drop(client);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("position"), "the player is saved afresh beside it");
+    assert_eq!(set_aside(&dir.join("players")).len(), 1);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1365,13 +1432,39 @@ fn unreadable_world_files_are_set_aside_and_the_world_still_opens() {
 fn on_a_test_floor() -> Client {
     let mut client = Client::join_with(ServerConfig { view_distance: 2, allow_flight: false, ..Default::default() });
     let at = client.position.floor().as_ivec3().with_y(300);
-    client.ok(&format!("/fill {} {} {} {} {} {} air", at.x - 2, at.y, at.z - 3, at.x + 42, at.y + 6, at.z + 3));
+    client.ok(&format!("/fill {} {} {} {} {} {} air", at.x - 2, at.y - 6, at.z - 3, at.x + 42, at.y + 6, at.z + 3));
     client.ok(&format!("/fill {} {} {} {} {} {} stone", at.x - 2, at.y - 1, at.z - 3, at.x + 42, at.y - 1, at.z + 3));
     let feet = at.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-    client.ok(&format!("/tp {} {} {}", feet.x, feet.y, feet.z));
-    client.pump_until(|c| c.position == feet && c.world.block(at - IVec3::Y).is_some_and(|b| b != BlockId::AIR));
-    client.teleported = None;
+    client.tp(feet);
+    client.pump_until(|c| c.world.block(at - IVec3::Y).is_some_and(|b| b != BlockId::AIR));
     client
+}
+
+impl Client {
+    /// Teleports the player, and forgets the correction that moved them.
+    fn tp(&mut self, to: Vec3) {
+        self.ok(&format!("/tp {} {} {}", to.x, to.y, to.z));
+        self.pump_until(|c| c.position == to);
+        self.teleported = None;
+    }
+
+    /// Fills a box of blocks, corners given from `at`.
+    fn fill(&mut self, at: IVec3, from: IVec3, to: IVec3, block: &str) {
+        let (a, b) = (at + from, at + to);
+        self.ok(&format!("/fill {} {} {} {} {} {} {block}", a.x, a.y, a.z, b.x, b.y, b.z));
+    }
+
+    /// Empties the inventory, and waits until it shows empty.
+    fn clear(&mut self) {
+        self.ok("/clear");
+        self.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+    }
+
+    /// Whether the server has corrected none of the inputs sent so far.
+    fn all_accepted(&mut self) -> bool {
+        self.after_ticks(2);
+        self.teleported.is_none()
+    }
 }
 
 #[test]
@@ -1385,13 +1478,13 @@ fn a_burst_of_inputs_gets_no_more_ground_than_the_clock_allows() {
     }
     client.pump_until(|c| c.teleported.is_some());
     let reached = client.teleported.unwrap().x - start.x;
-    let tuning = &client.content.movement;
-    let allowed = 1.5 * tuning.top_ground_speed().max(tuning.jump_velocity) + 0.5;
-    assert!(reached <= allowed && reached >= allowed - 2.0, "one burst carried the player {reached} blocks (a second's worth is {allowed})");
+    // Two seconds at a quarter over top speed, and half a block.
+    let allowed = 1.25 * client.content.movement.top_ground_speed() * 2.0 + 0.5;
+    assert!(reached <= allowed && reached >= allowed - 2.0, "one burst carried the player {reached} blocks (two seconds' worth is {allowed})");
 }
 
 #[test]
-fn on_foot_nobody_rises_higher_than_a_jump_or_passes_through_walls() {
+fn on_foot_nobody_rises_higher_than_a_jump() {
     let mut client = on_a_test_floor();
     let start = client.position;
     // Straight up, five blocks: no jump goes that high.
@@ -1399,47 +1492,138 @@ fn on_foot_nobody_rises_higher_than_a_jump_or_passes_through_walls() {
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported.take(), Some(start));
     // A jump's height is fine, but a second one from the air is not.
-    std::thread::sleep(Duration::from_millis(300));
     client.send_position(start + Vec3::Y * 1.2, false);
     client.send_position(start + Vec3::Y * 2.4, false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported.take(), Some(start + Vec3::Y * 1.2));
-    // Back down, then through a two-block wall to the open floor beyond it.
-    std::thread::sleep(Duration::from_millis(300));
+    // Nor is climbing onto a wall two blocks high from the ground.
     client.send_position(start, false);
-    let wall = start.floor().as_ivec3() + IVec3::X * 2;
-    client.ok(&format!("/fill {} {} {} {} {} {} stone", wall.x, wall.y, wall.z, wall.x, wall.y + 1, wall.z));
-    std::thread::sleep(Duration::from_millis(500));
+    client.send_position(start + Vec3::Y * 2.0, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start));
+}
+
+#[test]
+fn nobody_walks_through_walls() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    // Three and a half blocks in one step (a hitch's worth) over open floor, and back.
+    client.send_position(start + Vec3::X * 3.5, false);
+    client.send_position(start, false);
+    assert!(client.all_accepted(), "a long step over open floor was refused");
+    // The same step with a wall two blocks high in the way.
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 1, 0), "stone");
     client.send_position(start + Vec3::X * 3.5, false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported, Some(start), "walked through a wall");
 }
 
 #[test]
-fn a_name_already_playing_is_turned_away() {
-    let client = Client::join();
-    let (connection, server_side) = local_pair();
-    client._server.as_ref().unwrap().connections().send(server_side).unwrap();
-    connection.send(ClientMessage::Hello { name: "test".into(), protocol: PROTOCOL_VERSION, content: client.content.fingerprint() });
+fn long_steps_off_ledges_down_terraces_and_up_steps_are_not_snapped() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Past x+3 the floor steps down a block at a time: x+3 one below, x+4 two, then three.
+    client.fill(at, IVec3::new(3, -4, -3), IVec3::new(42, -1, 3), "air");
+    client.fill(at, IVec3::new(3, -2, -3), IVec3::new(3, -2, 3), "stone");
+    client.fill(at, IVec3::new(4, -3, -3), IVec3::new(4, -3, 3), "stone");
+    client.fill(at, IVec3::new(5, -4, -3), IVec3::new(42, -4, 3), "stone");
+    let at_ledge = start + Vec3::X * 2.0;
+    client.send_position(at_ledge, false);
+    // Off the ledge in one long step, as a client that hitched sends it: the straight line
+    // from the top to a block down cuts the ledge's corner, which the player went round.
+    client.send_position(at_ledge + Vec3::new(1.0, -1.0, 0.0), false);
+    // Down the other two terraces in one step.
+    client.send_position(at_ledge + Vec3::new(4.0, -3.0, 0.0), false);
+    // And back up one: up first, then across.
+    client.send_position(at_ledge + Vec3::new(2.0, -2.0, 0.0), false);
+    assert!(client.all_accepted(), "snapped back to {:?}", client.teleported);
+}
+
+#[test]
+fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Two pits two blocks deep in the floor, walled in stone: water at x+3..x+5, and dry
+    // at x+9..x+11.
+    for (x, inside) in [(3, "water"), (9, "air")] {
+        client.fill(at, IVec3::new(x - 1, -3, -2), IVec3::new(x + 3, -1, 2), "stone");
+        client.fill(at, IVec3::new(x, -2, -1), IVec3::new(x + 2, -1, 1), inside);
+    }
+    // From the bottom of the water onto the bank: a jump and the lift out of water.
+    client.tp(start + Vec3::new(5.0, -2.0, 0.0));
+    client.send_position(start + Vec3::new(6.0, 0.0, 0.0), false);
+    assert!(client.all_accepted(), "a swimmer was refused the bank: {:?}", client.teleported);
+    // From the bottom of the dry pit, two blocks is more than a jump.
+    let pit = start + Vec3::new(11.0, -2.0, 0.0);
+    client.tp(pit);
+    client.send_position(start + Vec3::new(12.0, 0.0, 0.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported, Some(pit));
+}
+
+#[test]
+fn nobody_hovers_over_a_ravine() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // The floor ends at x+3; past it there is nothing for a long way down.
+    client.fill(at, IVec3::new(3, -1, -3), IVec3::new(42, -1, 3), "air");
+    let over = start + Vec3::X * 3.0;
+    // Keeping on sending that height, a tick at a time, as a client that ignores gravity.
+    let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
+    let until = ticks(&client) + 6 * TICKS_PER_SECOND as u64;
+    while !client.teleported.is_some_and(|to| to.y < over.y) {
+        assert!(ticks(&client) < until, "hovered six seconds over a ravine");
+        client.send_position(over, false);
+        let next = ticks(&client) + 1;
+        client.pump_until(|c| ticks(c) >= next);
+    }
+}
+
+/// Reads what the server answers a connection's hello until it turns them away, and
+/// returns why (in English); panics if they are let in.
+fn turned_away(connection: &ClientConnection, content: &Content) -> String {
     let deadline = Instant::now() + SERVER_WAIT;
     loop {
-        assert!(Instant::now() < deadline, "the second login was never answered");
+        assert!(Instant::now() < deadline, "the login was never answered");
         match connection.try_recv() {
-            Ok(Some(ServerMessage::Rejected { reason })) => {
-                let reason = client.content.english.render(&reason, &client.content.blocks);
-                assert!(reason.contains("already playing"), "{reason}");
-                break;
-            }
-            Ok(Some(ServerMessage::Welcome { .. })) => panic!("a second player called test joined"),
+            Ok(Some(ServerMessage::Rejected { reason })) => return content.english.render(&reason, &content.blocks),
+            Ok(Some(ServerMessage::Welcome { .. })) => panic!("let in"),
             Ok(_) => std::thread::sleep(Duration::from_millis(1)),
             Err(_) => panic!("disconnected without a reason"),
         }
     }
 }
 
+fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
+    connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None });
+}
+
+#[test]
+fn a_name_already_playing_is_turned_away_in_any_case() {
+    let dir = world_dir("names");
+    let client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    for name in ["test", "TeSt"] {
+        let (connection, server_side) = local_pair();
+        client._server.as_ref().unwrap().connections().send(server_side).unwrap();
+        say_hello(&connection, name, &client.content);
+        let reason = turned_away(&connection, &client.content);
+        assert!(reason.contains("already playing"), "{name}: {reason}");
+    }
+    drop(client);
+    // One file for the name in any case (macOS and Windows would not tell them apart).
+    assert!(dir.join("players/test.ron").is_file());
+    let joined_as = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    drop(joined_as);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A server listening on a local port, with `host` joined (over TCP) as an admin.
 fn serve(config: ServerConfig) -> (Client, std::net::SocketAddr) {
-    let server = spawn(ServerConfig { view_distance: 2, admins: vec!["host".into()], ..config }, content()).unwrap();
+    let server = spawn(ServerConfig { view_distance: 2, admins: vec!["host".into()], idle_timeout: SERVER_WAIT, ..config }, content()).unwrap();
     let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
     (Client::hello(tcp::connect(addr).unwrap(), "host", server), addr)
 }
@@ -1480,36 +1664,122 @@ fn malformed_and_oversized_frames_and_silence_close_the_connection() {
 }
 
 #[test]
-fn chat_floods_slow_down_and_admins_make_admins() {
-    let (host, addr) = serve(ServerConfig::default());
+fn a_player_who_falls_silent_is_let_go_and_may_join_again() {
+    let host = Client::join_with(ServerConfig { view_distance: 2, idle_timeout: Duration::from_secs(1), ..Default::default() });
+    let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
+    // The host plays in process, and is never let go however long it says nothing.
+    for _ in 0..2 {
+        let connection = tcp::connect(addr).unwrap();
+        say_hello(&connection, "guest", &host.content);
+        let mut welcomed = false;
+        let deadline = Instant::now() + SERVER_WAIT;
+        loop {
+            assert!(Instant::now() < deadline, "a silent guest was kept");
+            match connection.try_recv() {
+                Ok(Some(ServerMessage::Welcome { .. })) => welcomed = true,
+                Ok(Some(ServerMessage::Rejected { reason })) => panic!("{reason:?}"),
+                Ok(_) => std::thread::sleep(Duration::from_millis(1)),
+                Err(_) => break,
+            }
+        }
+        assert!(welcomed, "the guest was let go before joining");
+    }
+    assert!(host._server.as_ref().unwrap().ticks() > 0);
+}
+
+#[test]
+fn chat_floods_slow_down_once_and_admins_make_admins_who_stay_until_deop() {
+    let dir = world_dir("op");
+    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
     assert!(host.admin, "a name on the admin list is an admin from this machine");
     let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
     assert!(!guest.admin);
     for i in 0..20 {
         guest.connection.send(ClientMessage::Chat { text: format!("spam {i}") });
     }
-    guest.pump_until(|c| c.chat.iter().any(|(kind, text)| *kind == ChatKind::Error && text.contains("too quickly")));
+    // An input no player could make, whose correction comes after everything the flood
+    // was answered with.
+    guest.send_position(guest.position + Vec3::X * 100.0, false);
+    guest.pump_until(|c| c.teleported.is_some());
     let said = guest.chat.iter().filter(|(kind, _)| *kind == ChatKind::Chat).count();
-    assert!(said <= 9, "{said} lines of a flood were said");
+    let told = guest.chat.iter().filter(|(kind, text)| *kind == ChatKind::Error && text.contains("too quickly")).count();
+    assert!((8..=10).contains(&said), "{said} lines of a flood of 20 were said");
+    assert_eq!(told, 1, "told to slow down {told} times for one flood");
     // (The host hears the flood, so its own reply is not the first line it gets.)
     host.connection.send(ClientMessage::Command { line: "/op guest".into() });
     guest.pump_until(|c| c.admin);
+    // Made an admin, they stay one when they come back...
+    drop(guest);
+    gone(&mut host, "guest");
+    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    assert!(guest.admin, "a player made an admin was not one when they came back");
+    // ...until an admin says otherwise.
+    host.chat.clear();
+    host.connection.send(ClientMessage::Command { line: "/deop guest".into() });
+    guest.pump_until(|c| !c.admin);
+    drop(guest);
+    gone(&mut host, "guest");
+    let guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    assert!(!guest.admin);
+    drop((guest, host));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_admin_token_makes_an_admin_from_anywhere() {
+    let (_host, addr) = serve(ServerConfig { admin_token: Some("open sesame".into()), ..Default::default() });
+    let wrong = Client::greet_with(tcp::connect(addr).unwrap(), "guest", None, Some("open sesame!"));
+    assert!(!wrong.admin);
+    let owner = Client::greet_with(tcp::connect(addr).unwrap(), "owner", None, Some("open sesame"));
+    assert!(owner.admin);
+}
+
+#[test]
+fn players_on_this_machine_are_known_over_ipv4_to_a_dual_stack_listener() {
+    let server = spawn(ServerConfig { view_distance: 2, admins: vec!["host".into()], ..Default::default() }, content()).unwrap();
+    let Ok(addr) = tcp::listen("[::]:0", server.connections()) else {
+        eprintln!("skipped: no IPv6 here");
+        return;
+    };
+    let Ok(connection) = tcp::connect(std::net::SocketAddr::from(([127, 0, 0, 1], addr.port()))) else {
+        eprintln!("skipped: this IPv6 listener takes no IPv4");
+        return;
+    };
+    // Seen as ::ffff:127.0.0.1.
+    let host = Client::hello(connection, "host", server);
+    assert!(host.admin, "a name on the admin list connecting from this machine over IPv4");
 }
 
 #[test]
 fn a_full_server_turns_newcomers_away() {
-    let (_host, addr) = serve(ServerConfig { max_players: 1, ..Default::default() });
+    let (host, addr) = serve(ServerConfig { max_players: 1, ..Default::default() });
     let connection = tcp::connect(addr).unwrap();
-    let deadline = Instant::now() + SERVER_WAIT;
-    loop {
-        assert!(Instant::now() < deadline, "the newcomer was never answered");
-        match connection.try_recv() {
-            Ok(Some(ServerMessage::Rejected { .. })) => break,
-            Ok(Some(_)) => panic!("a newcomer got in to a full server"),
-            Ok(None) => std::thread::sleep(Duration::from_millis(1)),
-            Err(_) => panic!("closed without a reason"),
-        }
-    }
+    say_hello(&connection, "guest", &host.content);
+    assert!(turned_away(&connection, &host.content).contains("full"));
+}
+
+#[test]
+fn silent_sockets_neither_count_as_players_nor_pile_up() {
+    let (host, addr) = serve(ServerConfig { max_players: 3, ..Default::default() });
+    let guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    // Fifteen connections that never say hello: a player still gets in...
+    let mut silent: Vec<_> = (0..15).map(|_| std::net::TcpStream::connect(addr).unwrap()).collect();
+    let third = Client::greet(tcp::connect(addr).unwrap(), "third", None);
+    // ...but with sixteen waiting, the next connection is turned away at once.
+    silent.push(std::net::TcpStream::connect(addr).unwrap());
+    let connection = tcp::connect(addr).unwrap();
+    assert!(turned_away(&connection, &host.content).contains("full"));
+    drop((guest, third, silent));
+}
+
+#[test]
+fn a_new_player_starts_with_food_light_wood_and_the_purse() {
+    let client = Client::join();
+    let id = |name: &str| client.content.blocks.expect(name);
+    let carried = |item| client.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16], "{:?}", client.inventory);
+    assert_eq!(client.inventory.slots[voxmar_engine::inventory::SLOTS - 1].map(|s| s.item), Some(id("base:coin_purse")));
+    assert_eq!(carried(id("base:cobblestone")) + carried(id("base:glass")) + carried(id("base:glowstone")), 0);
 }
 
 #[test]
@@ -1531,11 +1801,41 @@ fn lava_burns_by_the_survival_rules_and_the_void_kills() {
 }
 
 #[test]
+fn what_is_lost_in_the_void_or_lava_waits_where_the_player_last_stood() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // A pit of lava two deep at x+3..x+5, walled in stone.
+    client.fill(at, IVec3::new(2, -3, -2), IVec3::new(6, -1, 2), "stone");
+    client.fill(at, IVec3::new(3, -2, -1), IVec3::new(5, -1, 1), "lava");
+    let deaths = [
+        format!("/tp {} -20 {}", start.x, start.z),
+        // Into the lava in one step from where they stand.
+        String::new(),
+    ];
+    for (i, death) in deaths.iter().enumerate() {
+        give_a_load(&mut client);
+        // A tick on the floor, so the server knows they stood there.
+        client.after_ticks(2);
+        if death.is_empty() {
+            client.send_position(start + Vec3::new(4.0, -2.0, 0.0), false);
+        } else {
+            client.ok(death);
+        }
+        client.pump_until(|c| c.died > i as u32);
+        client.propose("core:respawn", ActionTarget::None);
+        client.pump_until(|c| c.health > 0 && carried(c) == 3);
+        // Back where they last stood, everything is there to pick up again.
+        client.tp(start);
+        client.pump_until(|c| carried(c) == 47);
+    }
+}
+
+#[test]
 fn fires_warm_and_water_chills() {
     let mut client = on_a_test_floor();
     // Survival judges warmth once a second: a few judgements on the floor give the air's.
-    let wait = Instant::now() + Duration::from_millis(2500);
-    client.pump_until(|_| Instant::now() > wait);
+    client.after_ticks(3 * TICKS_PER_SECOND as u64);
     let feet = client.position.floor().as_ivec3();
     let air = client.vitals.felt;
     // A glowstone a block away warms by most of the rules' 14 degrees.
@@ -1561,8 +1861,7 @@ fn a_ripe_crop_above_the_farming_level_refuses_harvest() {
     let earned = client.earned.len();
     client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
     client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
-    let wait = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > wait);
+    client.after_ticks(2);
     assert_eq!(client.world.block(at), Some(ripe), "a level 1 farmer harvested Farming 30 tomatoes");
     assert_eq!(client.earned.len(), earned, "no experience for a refused harvest");
     // At Farming 30 it comes.
@@ -1588,8 +1887,7 @@ fn breaking_a_sprout_teaches_nothing_and_sowing_pays_at_harvest() {
         client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
         client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
     }
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    client.after_ticks(2);
     assert_eq!(client.earned.len(), earned, "sowing and breaking sprouts paid experience");
 }
 
@@ -1610,8 +1908,7 @@ fn a_placed_wild_flower_gives_itself_back_and_no_forage() {
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
     // Its plain drop: the flower, and nothing foraged or taught.
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == moonbloom) || c.items.values().any(|i| i.stack.item == moonbloom));
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    client.after_ticks(2);
     assert_eq!(client.earned.len(), earned, "foraging a placed flower paid experience");
     let seeds = client.content.blocks.expect("base:moonbloom_seeds");
     assert!(!client.items.values().any(|i| i.stack.item == seeds), "a placed flower was foraged for seeds");
@@ -1634,8 +1931,7 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     client.propose("core:craft", ActionTarget::Slot(0));
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
-    let wait = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > wait);
+    client.after_ticks(2);
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
     assert_eq!(client.earned[earned..], [80], "one table's Engineering, once");
 }

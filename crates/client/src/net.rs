@@ -50,7 +50,9 @@ pub struct Net {
 
 impl Net {
     pub fn new(connection: ClientConnection, server: Option<ServerHandle>, name: String, content: u64) -> Self {
-        connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content });
+        // A server's admin password, for its owner joining from elsewhere.
+        let admin_token = std::env::var("VOXMAR_ADMIN_TOKEN").ok().filter(|token| !token.is_empty());
+        connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
         Self { connection, server, input_timer: 0.0 }
     }
 
