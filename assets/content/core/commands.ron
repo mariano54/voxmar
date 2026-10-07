@@ -108,6 +108,7 @@
             permission: Admin,
             run: Locate,
         ),
+        (name: "veins", help: "Lists the ore veins you have found, nearest first. Breaking ore or a sample of it on the ground over a vein remembers the vein.", run: Veins),
         (name: "seed", help: "Tells the world's seed.", run: Seed),
         (name: "list", help: "Lists who is online.", run: List),
         // Shortcuts, as any package could add them.

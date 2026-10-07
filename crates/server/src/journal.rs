@@ -2,8 +2,10 @@
 
 use voxmar_engine::block::BlockId;
 use voxmar_engine::creature::Kind;
+use voxmar_engine::glam::IVec3;
 use voxmar_engine::journal::Page;
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_engine::lang::Words;
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
@@ -46,6 +48,23 @@ impl Server {
         };
         let name = def.name.clone();
         self.discover(agent, page, &name, 1);
+    }
+
+    /// `agent` broke ore at `pos`, or a sample of it, where nobody placed it: the vein it
+    /// belongs to joins the veins they have found (`/veins`), as Visual Prospecting
+    /// remembers veins, and they hear of a new one.
+    pub(crate) fn prospect(&mut self, agent: PlayerId, pos: IVec3, block: BlockId) {
+        if !self.content.blocks.def(block).has_tag("ore") || self.placed.contains(&pos) {
+            return;
+        }
+        let Some(vein) = self.overworld.vein_at(pos) else { return };
+        let words = Words::key("prospect.found").with("vein", self.vein_words(&vein.name));
+        let Some(player) = self.players.get_mut(&agent) else { return };
+        if player.veins.iter().any(|(name, at)| *name == vein.name && *at == vein.centre) {
+            return;
+        }
+        player.veins.push((vein.name, vein.centre));
+        player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
     }
 
     /// Once a second: each player finds the biome they stand in and the creatures in sight.

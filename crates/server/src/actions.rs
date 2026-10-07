@@ -262,6 +262,7 @@ impl Server {
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
                     if let Some(broken) = self.block(block) {
                         self.discover_broken(agent, broken);
+                        self.prospect(agent, block, broken);
                     }
                     self.picked(agent, block);
                     self.reward_break(agent, block);

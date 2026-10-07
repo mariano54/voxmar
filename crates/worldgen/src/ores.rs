@@ -84,6 +84,10 @@ pub struct GridDef {
 #[serde(deny_unknown_fields)]
 pub struct VeinDef {
     pub name: String,
+    /// What players call it, in English (`vein.<package>.<name>` in other languages): a
+    /// copper and tin vein. Its name with spaces when left out.
+    #[serde(default)]
+    pub title: String,
     /// How often it is drawn, relative to other kinds.
     #[serde(default = "one")]
     pub weight: f32,
@@ -170,6 +174,7 @@ impl OresDef {
         }
         let q = |name: &str| qualify(package, name);
         self.veins.extend(file.veins.into_iter().map(|v| VeinDef {
+            title: if v.title.is_empty() { v.name.replace('_', " ") } else { v.title.clone() },
             name: q(&v.name),
             ores: v.ores.into_iter().map(|o| OreShare { block: q(&o.block), ..o }).collect(),
             sample: v.sample.as_deref().map(q),
@@ -240,6 +245,7 @@ impl OresDef {
 /// A kind of vein, ready to place.
 struct Kind {
     name: String,
+    title: String,
     /// Weight times rarity, by rock province.
     weights: Vec<f32>,
     /// Heights of its middle, in world coordinates.
@@ -368,6 +374,7 @@ impl Ores {
                     .collect();
                 Kind {
                     name: vein.name.clone(),
+                    title: vein.title.clone(),
                     weights,
                     height: (vein.height.0 + SEA_LEVEL, vein.height.1 + SEA_LEVEL),
                     shape: vein.shape,
@@ -531,7 +538,6 @@ impl Ores {
     }
 
     /// Whether a block lies within a vein's body (ore or not).
-    #[cfg(test)]
     fn contains(&self, vein: &Vein, p: IVec3) -> bool {
         match self.kinds[vein.kind].shape {
             VeinShape::Layered => vein.span(p.x, p.z).is_some_and(|(foot, top, _)| foot.ceil() as i32 <= p.y && p.y <= top.floor() as i32),
@@ -588,7 +594,32 @@ impl Kind {
     }
 }
 
+/// A vein a player came upon: its kind, by name and English title, and its middle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VeinAt {
+    pub name: String,
+    pub title: String,
+    pub centre: IVec3,
+}
+
 impl Overworld {
+    /// The vein a block belongs to: one whose body holds it, or whose sample lies there.
+    pub fn vein_at(&self, pos: IVec3) -> Option<VeinAt> {
+        let ores = &self.terrain.ores;
+        let veins = ores.veins_near(self, pos.xz(), pos.xz());
+        let vein = veins
+            .iter()
+            .find(|v| ores.contains(v, pos))
+            .or_else(|| veins.iter().find(|v| ores.samples_of(v).iter().any(|s| s.x == pos.x && s.z == pos.z)))?;
+        let kind = &ores.kinds[vein.kind];
+        Some(VeinAt { name: kind.name.clone(), title: kind.title.clone(), centre: vein.centre })
+    }
+
+    /// A kind of vein's English title, by name.
+    pub fn vein_title(&self, name: &str) -> Option<String> {
+        self.terrain.ores.kinds.iter().find(|k| k.name == name).map(|k| k.title.clone())
+    }
+
     /// The nearest sample of ore on the ground within `radius` blocks across of `from`, of a
     /// vein named `name` or holding an ore named `name` (`iron`, `iron_ore`, `base:iron_ore`),
     /// or of any vein: where it lies, and its block.
@@ -863,6 +894,22 @@ mod tests {
             let inside = (p.xz() - min).min_element() >= 7 && (max - p.xz()).min_element() >= 7;
             assert!(below > 0 || !inside, "no {wanted} below the {} at {p}", registry.def(b).name);
         }
+    }
+
+    /// Breaking ore or a sample of it tells which vein it is: the vein whose ore it is.
+    #[test]
+    fn ore_and_samples_know_their_vein() {
+        let registry = registry();
+        let world = Overworld::new(42, registry.clone());
+        let first = ColumnPos::of_block(world.spawn_point()).offset(-2, -2);
+        let (ores, samples) = census(&world, &registry, first, 4);
+        for &(p, b) in ores.iter().step_by(97).chain(&samples) {
+            let vein = world.vein_at(p).unwrap_or_else(|| panic!("no vein for the {} at {p}", registry.def(b).name));
+            let kind = world.terrain.ores.kinds.iter().find(|k| k.name == vein.name).unwrap();
+            let sample = kind.sample == Some(b);
+            assert!(sample || kind.ores.iter().any(|o| o.block == b || o.deep == Some(b)), "{} at {p} said to be in a {}", registry.def(b).name, vein.name);
+        }
+        assert!(world.vein_at(IVec3::new(first.origin().x, 300, first.origin().z)).is_none());
     }
 
     /// `/locate ore` finds a sample lying where it says, of the ore asked for.

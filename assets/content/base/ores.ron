@@ -3,7 +3,8 @@
 // them (the idea alone; see INSPIRATIONS.md). Each square of the grid, `spacing` blocks
 // across, holds up to `slots` veins at different heights, each there by `chance`.
 //
-// A vein is drawn by `weight` times its rarity's (Uncommon 0.3, Rare 0.08, VeryRare 0.015)
+// `title` is what players call it in English (Japanese and other languages in lang files,
+// `vein.<package>.<name>`). A vein is drawn by `weight` times its rarity's (Uncommon 0.3, Rare 0.08, VeryRare 0.015)
 // times its liking for the rock province, where `provinces` names it or one of its tags.
 // `height` is where its middle may lie, above sea level (negative below; deepslate starts
 // 48 below, bedrock lies 128 below). A Layered vein is a lens: `radius` its half-length
@@ -19,6 +20,7 @@
         // Coal in seams in the bedded rocks, shallow: the first vein most players find.
         (
             name: "coal_seam",
+            title: "coal seam",
             weight: 30,
             height: (-45, 15),
             radius: (16, 26),
@@ -32,6 +34,7 @@
         // Copper over tin, as in the granites where tin lodes lie: bronze from one vein.
         (
             name: "copper_tin",
+            title: "copper and tin vein",
             weight: 18,
             height: (-60, 5),
             radius: (14, 22),
@@ -46,6 +49,7 @@
         // Banded iron in old metamorphic and sedimentary beds, broad and plain.
         (
             name: "banded_iron",
+            title: "banded iron vein",
             weight: 24,
             height: (-70, 0),
             radius: (18, 28),
@@ -60,6 +64,7 @@
         // A porphyry deposit: copper above, iron below, a little gold through it.
         (
             name: "porphyry_copper",
+            title: "porphyry copper vein",
             weight: 12,
             height: (-80, -10),
             radius: (14, 20),
@@ -76,6 +81,7 @@
         // Silver over gold, as in the young volcanic rocks where such veins form.
         (
             name: "silver_gold",
+            title: "silver and gold vein",
             weight: 20,
             rarity: Uncommon,
             height: (-90, -35),
@@ -92,6 +98,7 @@
         // A gold reef in quartz, deep and narrow, with a little iron in it.
         (
             name: "gold_reef",
+            title: "gold reef",
             weight: 12,
             rarity: Uncommon,
             height: (-100, -50),
@@ -108,6 +115,7 @@
         // Cobalt over silver, as in the old shield rocks where both are mined together.
         (
             name: "cobalt_silver",
+            title: "cobalt and silver vein",
             weight: 15,
             rarity: Uncommon,
             height: (-110, -60),
@@ -125,6 +133,7 @@
         // country, with a little silver in the lead.
         (
             name: "lead_zinc",
+            title: "lead and zinc vein",
             weight: 16,
             height: (-40, 10),
             radius: (14, 22),
@@ -141,6 +150,7 @@
         // surface.
         (
             name: "bauxite_blanket",
+            title: "bauxite bed",
             weight: 14,
             rarity: Uncommon,
             height: (-15, 10),
@@ -155,6 +165,7 @@
         // Flakes of graphite in old metamorphic rock, deep.
         (
             name: "graphite_seam",
+            title: "graphite seam",
             weight: 10,
             rarity: Uncommon,
             height: (-100, -60),
@@ -168,6 +179,7 @@
         // Magnetite with a heart of lodestone, deep in igneous rock.
         (
             name: "magnetite",
+            title: "magnetite vein",
             weight: 18,
             rarity: Uncommon,
             height: (-110, -70),
@@ -184,6 +196,7 @@
         // Corundum in marble: ruby above, sapphire below.
         (
             name: "corundum",
+            title: "corundum vein",
             weight: 30,
             rarity: Rare,
             height: (-90, -40),
@@ -201,6 +214,7 @@
         // Emeralds in a granite pegmatite, small and rich.
         (
             name: "emerald_pegmatite",
+            title: "emerald pegmatite",
             weight: 30,
             rarity: Rare,
             height: (-80, -30),
@@ -216,6 +230,7 @@
         // hours from one spot. More samples lie over them.
         (
             name: "iron_motherlode",
+            title: "iron motherlode",
             weight: 16,
             rarity: Rare,
             height: (-112, -88),
@@ -232,6 +247,7 @@
         ),
         (
             name: "copper_motherlode",
+            title: "copper motherlode",
             weight: 12,
             rarity: Rare,
             height: (-112, -88),
@@ -248,6 +264,7 @@
         ),
         (
             name: "coal_motherlode",
+            title: "coal motherlode",
             weight: 10,
             rarity: Rare,
             height: (-100, -70),
@@ -262,6 +279,7 @@
         // A kimberlite pipe rising from the depths, sparse with diamonds.
         (
             name: "kimberlite_pipe",
+            title: "kimberlite pipe",
             weight: 30,
             rarity: Rare,
             height: (-100, -70),
@@ -277,6 +295,7 @@
         // A lode of aetherite near the bottom of the world, glowing in the dark.
         (
             name: "aetherite_lode",
+            title: "aetherite lode",
             weight: 40,
             rarity: VeryRare,
             height: (-118, -100),

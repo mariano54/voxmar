@@ -64,6 +64,8 @@ pub enum Run {
     Biome,
     /// Finds the nearest place of a kind, such as a biome.
     Locate,
+    /// Lists the ore veins the player has found.
+    Veins,
     /// Puts creatures of a species beside the player.
     Summon,
     /// Lists the creatures about the player, or (admins) tames, readies or hastens them.

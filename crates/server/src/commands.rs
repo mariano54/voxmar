@@ -28,6 +28,8 @@ const MAX_DAY_SPEED: f32 = 1000.0;
 /// How far `/locate` looks unless told, and at most, in blocks.
 const LOCATE_RADIUS: i32 = 4000;
 const MAX_LOCATE_RADIUS: i32 = 10_000;
+/// How many veins `/veins` lists, nearest first.
+const VEINS_LISTED: usize = 12;
 /// How far `/locate ore` looks unless told: samples lie over every vein, a hundred or so
 /// blocks apart.
 const ORE_RADIUS: i32 = 1000;
@@ -179,6 +181,7 @@ impl Server {
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
             Run::Locate => self.locate(id, args),
+            Run::Veins => self.veins(id),
             Run::Summon => self.summon(id, args),
             Run::Creatures => match args.first().map(String::as_str) {
                 None => Ok(self.creatures_about(id)),
@@ -679,6 +682,34 @@ impl Server {
             }
             None => Err(Words::key("command.error.gorge_not_near").with("radius", Words::text(radius))),
         }
+    }
+
+    /// `/veins`: the ore veins the player has found, nearest first.
+    fn veins(&self, id: Source) -> Reply {
+        let agent = Self::me(id)?;
+        let player = &self.players[&agent];
+        if player.veins.is_empty() {
+            return Ok(Words::key("command.veins.none"));
+        }
+        let from = player.position;
+        let mut found: Vec<&(String, IVec3)> = player.veins.iter().collect();
+        found.sort_by(|a, b| (a.1.as_vec3() - from).length_squared().total_cmp(&(b.1.as_vec3() - from).length_squared()));
+        let mut lines = vec![Words::key("command.veins.header").with("count", Words::text(found.len()))];
+        lines.extend(found.into_iter().take(VEINS_LISTED).map(|(name, at)| {
+            let offset = (IVec2::new(at.x, at.z) - IVec2::new(from.x.floor() as i32, from.z.floor() as i32)).as_vec2();
+            Words::key("command.veins.line")
+                .with("vein", self.vein_words(name))
+                .with("place", format!("{} {} {}", at.x, at.y, at.z))
+                .with("distance", Words::text(format!("{:.0}", offset.length())))
+                .with("way", compass(offset))
+        }));
+        Ok(Words::Lines(lines))
+    }
+
+    /// A kind of vein's name for players.
+    pub(crate) fn vein_words(&self, name: &str) -> Words {
+        let title = self.overworld.vein_title(name).unwrap_or_else(|| name.to_owned());
+        Words::Own(voxmar_engine::lang::def_key("vein", name), title)
     }
 
     fn locate_ore(&self, id: Source, name: Option<&str>, radius: i32) -> Reply {

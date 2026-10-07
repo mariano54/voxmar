@@ -209,7 +209,9 @@ server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
   package (`water` for `base:water`).
 - `/biome` names the biome you stand in; `/locate biome NAME [RADIUS]` finds the nearest one
   (within 4000 blocks unless you say); `/locate ore [NAME] [RADIUS]` the nearest sample of ore
-  lying on the ground over a vein (of an ore or vein named so, such as `iron`; within 1000).
+  lying on the ground over a vein (of an ore or vein named so, such as `iron`; within 1000);
+  `/veins` lists the ore veins you have found (breaking ore or a sample over a vein
+  remembers it), nearest first.
 - `/seed`, `/list` (who is online), `/help [COMMAND]`.
 
 Commands are data: each package's `commands.ron` names its commands, who may use them, their

@@ -144,6 +144,8 @@ pub struct SavedPlayer {
     /// Quests finished, and the tallies quests count.
     pub quests: Vec<String>,
     pub tallies: Vec<(String, u32)>,
+    /// Ore veins come upon, by kind and middle.
+    pub veins: Vec<(String, [i32; 3])>,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -171,6 +173,8 @@ struct PlayerFile {
     quests: Vec<String>,
     #[serde(default)]
     tallies: Vec<(String, u32)>,
+    #[serde(default)]
+    veins: Vec<(String, [i32; 3])>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -307,7 +311,7 @@ impl WorldSave {
             return Err(invalid(&path, "position is not finite"));
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
-        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, journal: file.journal, quests: file.quests, tallies: file.tallies }))
+        Ok(Some(SavedPlayer { position, yaw: file.yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, journal: file.journal, quests: file.quests, tallies: file.tallies, veins: file.veins }))
     }
 
     pub fn write_player(&self, name: &str, player: &SavedPlayer, registry: &BlockRegistry) -> io::Result<()> {
@@ -334,6 +338,7 @@ impl WorldSave {
             journal: player.journal.clone(),
             quests: player.quests.clone(),
             tallies: player.tallies.clone(),
+            veins: player.veins.clone(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -568,6 +573,7 @@ mod tests {
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
             quests: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],
+            veins: vec![("base:copper_tin".into(), [10, 90, -20])],
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();

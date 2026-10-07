@@ -7,7 +7,7 @@ use rustc_hash::FxHashSet;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
-use voxmar_engine::glam::Vec3;
+use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
 use voxmar_engine::physics::{Aabb, player as dims};
@@ -69,6 +69,8 @@ pub struct Player {
     /// states last sent (`quests`).
     pub quests_done: Vec<String>,
     pub tallies: rustc_hash::FxHashMap<String, u32>,
+    /// The ore veins the player has come upon, by kind and middle, oldest first (`prospect`).
+    pub veins: Vec<(String, IVec3)>,
     pub quests_sent: Vec<voxmar_engine::quest::QuestState>,
     pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
@@ -110,6 +112,7 @@ impl Player {
             journal: Default::default(),
             quests_done: Vec::new(),
             tallies: Default::default(),
+            veins: Vec::new(),
             quests_sent: Vec::new(),
             food_clock: 0.0,
             heal_clock: 0.0,
@@ -179,6 +182,7 @@ impl Player {
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
+            veins: self.veins.iter().map(|(name, at)| (name.clone(), at.to_array())).collect(),
         }
     }
 }
@@ -282,6 +286,7 @@ impl Server {
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.veins = saved.veins.into_iter().map(|(name, at)| (name, IVec3::from_array(at))).collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
             }
             // Players who left dead come back to life at the spawn point.
@@ -291,6 +296,7 @@ impl Server {
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.veins = saved.veins.into_iter().map(|(name, at)| (name, IVec3::from_array(at))).collect();
             }
             None => {
                 for (block, count) in start_kit {
