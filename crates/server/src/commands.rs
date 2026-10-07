@@ -520,7 +520,14 @@ impl Server {
         let mut count = 0;
         // Killed outright, as a blow would kill them: their death, their drops.
         if what == "kill" {
-            let near: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.body.position.distance(at) <= 8.0).map(|(&id, _)| id).collect();
+            // Never another player's kept animals: only wild ones and the admin's own.
+            let near: Vec<u32> = self
+                .creatures
+                .live
+                .iter()
+                .filter(|(_, c)| c.body.position.distance(at) <= 8.0 && c.owner.as_ref().is_none_or(|owner| *owner == name))
+                .map(|(&id, _)| id)
+                .collect();
             for &id in &near {
                 self.creature_dies(id);
             }

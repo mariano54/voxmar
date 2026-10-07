@@ -192,6 +192,11 @@ struct Shown {
     fall_side: f32,
     death_strayed: f32,
     death_around_eye: bool,
+    /// While it falls, what is drawn: the furthest any joint of its body went from the
+    /// middle of where it stood, in its heights, and the most any joint's scale strayed from
+    /// standing (a stretched mesh shows there first).
+    death_spread: f32,
+    death_scale: f32,
     /// Whether we have struck at it, so the target readout shows its health.
     struck: bool,
     /// Smoothed head pitch and turn, and body crouch.
@@ -241,6 +246,10 @@ pub struct Creatures {
 pub struct Fall {
     pub strayed: f32,
     pub around_eye: bool,
+    /// As drawn: the furthest a joint went from where it stood, in heights, and the most a
+    /// joint's scale strayed from standing.
+    pub spread: f32,
+    pub scale: f32,
 }
 
 /// A creature as the target readout shows it.
@@ -420,6 +429,13 @@ fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed
     })
 }
 
+/// What is drawn of bodies: whether each is shown, and where the last frame put its joints.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Drawn<'w, 's> {
+    visible: Query<'w, 's, &'static mut Visibility>,
+    globals: Query<'w, 's, &'static GlobalTransform>,
+}
+
 /// The light creatures are lit by and the air they are fogged by, as the terrain's.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Air<'w> {
@@ -427,15 +443,24 @@ struct Air<'w> {
     atmosphere: Res<'w, crate::render::atmosphere::SharedAtmosphere>,
 }
 
-/// How far a creature's body reaches from its centre, at its size: its head ahead, or half
-/// its width.
-fn species_reach(species: &creature::Creature, scale: f32) -> f32 {
-    species.reach.max(species.def.body.size.0 * 0.5) * scale
-}
+/// The near plane's reach: a box this much closer than the eye is already cut open.
+const NEAR_PLANE: f32 = 0.1;
 
-/// Keeps the furthest a dying body strayed.
-fn creatures_dying_check(furthest: &mut f32, strayed: f32) {
-    *furthest = furthest.max(strayed);
+/// Whether the eye is inside a living body: inside one of its part boxes (grown by the near
+/// plane), in the creature's own frame. A fallen body lies on its side, so a dying one counts
+/// within its height of where it stood.
+fn eye_inside(parts: &[Part], eye: Vec3, position: Vec3, yaw: f32, scale: f32, height: f32, dying: bool) -> bool {
+    let from = eye - position;
+    if dying {
+        return from.with_y(0.0).length() < height + NEAR_PLANE && (-0.2..height + 0.2).contains(&from.y);
+    }
+    let local = Quat::from_rotation_y(yaw).inverse() * from / scale.max(1e-3);
+    let grow = NEAR_PLANE / scale.max(1e-3);
+    parts.iter().any(|part| {
+        let inside = part.rest.inverse() * (local - part.centre);
+        let half = part.size * 0.5 + Vec3::splat(grow);
+        inside.abs().cmple(half).all()
+    })
 }
 
 /// A sound a creature makes now.
@@ -461,7 +486,7 @@ fn show(
     mut binds: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut transforms: Query<&mut Transform>,
     mut looks: Query<&mut MeshMaterial3d<StandardMaterial>>,
-    mut visible: Query<&mut Visibility>,
+    mut drawn: Drawn,
     mut sounds: ResMut<CreatureSounds>,
 ) {
     let now = time.elapsed_secs();
@@ -600,6 +625,8 @@ fn show(
                 fall_side: 0.0,
                 death_strayed: 0.0,
                 death_around_eye: false,
+                death_spread: 0.0,
+                death_scale: 0.0,
                 struck: false,
                 nod: 0.0,
                 look: 0.0,
@@ -694,13 +721,24 @@ fn show(
             let middle = root.translation + root.rotation * Vec3::Y * height * 0.5;
             let strayed = middle.distance(shown.position + Vec3::Y * height * 0.5) / height.max(0.1);
             root.translation.y -= (t * 2.0 - 1.0).max(0.0) * death.sink * height;
-            creatures_dying_check(&mut shown.death_strayed, strayed);
+            shown.death_strayed = shown.death_strayed.max(strayed);
             if t >= 1.0 {
                 finished.push(id);
             }
         }
         if let Ok(mut transform) = transforms.get_mut(shown.entity) {
             *transform = root;
+        }
+        // What the last frame drew of a falling body, joint by joint, for the gate.
+        if shown.dying.is_some() {
+            let middle = shown.position + Vec3::Y * height * 0.5;
+            for (joint, _) in &shown.joints {
+                if let Ok(global) = drawn.globals.get(*joint) {
+                    let (s, _, t) = global.to_scale_rotation_translation();
+                    shown.death_spread = shown.death_spread.max(t.distance(middle) / height.max(0.1));
+                    shown.death_scale = shown.death_scale.max((s / scale.max(1e-3) - Vec3::ONE).abs().max_element());
+                }
+            }
         }
         let far = shown.position.distance(eye) > DRAWN_WITHIN;
         // Hearts: trust filling while a wild one is being tamed, all full while a kept one
@@ -749,14 +787,13 @@ fn show(
                 material.extension.skin = shown.skin.clone();
             }
         }
-        // Never drawn around the eye: inside a body only its inside shows. Hidden while the
-        // eye is within its reach (a fallen one's reach is its height, on its side).
-        let reach = species_reach(registry.get(shown.view.species), scale).max(if shown.dying.is_some() { height } else { 0.0 });
-        let around_eye = to_eye.with_y(0.0).length() < reach + 0.25 && (-0.2..height + 0.2).contains(&(eye.y - shown.position.y));
+        // Never drawn around the eye: inside a body only its inside shows, so a body the eye
+        // is inside is hidden.
+        let around_eye = eye_inside(&registry.get(shown.view.species).parts, eye, shown.position, shown.yaw, scale, height, shown.dying.is_some());
         if around_eye && shown.dying.is_some() {
             shown.death_around_eye = true;
         }
-        if let Ok(mut shows) = visible.get_mut(shown.body) {
+        if let Ok(mut shows) = drawn.visible.get_mut(shown.body) {
             let want = if far || around_eye || shown.painting.is_some() { Visibility::Hidden } else { Visibility::Inherited };
             if *shows != want {
                 *shows = want;
@@ -814,7 +851,7 @@ fn show(
     }
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
-            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye });
+            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale });
             despawn(&mut commands, &shown);
             if shown.painting.is_none() {
                 images.remove(&shown.skin);
@@ -905,6 +942,40 @@ fn ray_box(origin: Vec3, direction: Vec3, aabb: &Aabb) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bear() -> Vec<Part> {
+        creature::Model::Quadruped {
+            body: (1.0, 0.92, 1.5),
+            head: (0.54, 0.46, 0.46),
+            legs: 0.55,
+            ears: None,
+            tail: None,
+            horns: None,
+            horn_shape: creature::HornShape::Curved,
+            snout: None,
+            neck: None,
+            haunches: false,
+            hump: None,
+            shell: None,
+            tail_droop: 0.0,
+            ear_lean: 0.0,
+        }
+        .parts(1.0)
+    }
+
+    #[test]
+    fn bodies_hide_only_with_the_eye_inside() {
+        let parts = bear();
+        // Beside the flank, 0.2 out: seen.
+        assert!(!eye_inside(&parts, Vec3::new(0.7, 1.0, 0.0), Vec3::ZERO, 0.0, 1.0, 1.4, false));
+        // Inside the torso: hidden.
+        assert!(eye_inside(&parts, Vec3::new(0.2, 1.0, 0.1), Vec3::ZERO, 0.0, 1.0, 1.4, false));
+        // Turned a quarter, the flank faces along z: still seen from 0.2 out.
+        assert!(!eye_inside(&parts, Vec3::new(0.0, 1.0, 0.7), Vec3::ZERO, std::f32::consts::FRAC_PI_2, 1.0, 1.4, false));
+        // A dying body hides within its height, where it may lie.
+        assert!(eye_inside(&parts, Vec3::new(1.2, 0.5, 0.0), Vec3::ZERO, 0.0, 1.0, 1.4, true));
+        assert!(!eye_inside(&parts, Vec3::new(2.0, 0.5, 0.0), Vec3::ZERO, 0.0, 1.0, 1.4, true));
+    }
 
     #[test]
     fn rays_find_boxes_in_front_only() {

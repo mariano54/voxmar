@@ -1348,3 +1348,25 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
     assert_eq!(client.earned[earned..], [80], "one table's Engineering, once");
 }
+
+#[test]
+fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
+    let mut client = Client::join();
+    let rabbit = client.content.creatures.find("rabbit").expect("rabbits in the content");
+    let falls = client.content.creatures.get(rabbit).def.death.drops_after();
+    client.ok("/summon rabbit 1 ~ ~ ~-2");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
+    let before = client.items.len();
+    let killed = Instant::now();
+    client.ok("/creatures kill");
+    // While it falls, nothing has dropped.
+    let early = Duration::from_secs_f32(falls * 0.6);
+    while killed.elapsed() < early {
+        assert_eq!(client.items.len(), before, "loot came out of a body still falling");
+        let until = Instant::now() + Duration::from_millis(20);
+        client.pump_until(|_| Instant::now() > until);
+    }
+    // Then its meat is on the ground.
+    client.pump_until(|c| c.items.len() > before);
+    assert!(killed.elapsed().as_secs_f32() >= falls * 0.9, "dropped after {:.2}s, before the {falls}s fall", killed.elapsed().as_secs_f32());
+}

@@ -2888,12 +2888,14 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let fall = world.resource::<crate::creatures::Creatures>().falls.last().copied();
                 if let Some(fall) = fall {
                     gate.fall_judged = true;
-                    let result = if fall.strayed > 1.5 {
-                        Err(format!("its body strayed {:.2} of its heights from where it died", fall.strayed))
-                    } else if fall.around_eye {
-                        Ok(format!("fell within {:.2} of its heights; the eye was inside it, and it was hidden", fall.strayed))
+                    // Judged by what was drawn: every joint of the body, every frame of its fall.
+                    let result = if fall.spread > 1.5 {
+                        Err(format!("a joint of its body was drawn {:.2} of its heights from where it died", fall.spread))
+                    } else if fall.scale > 0.05 {
+                        Err(format!("a joint of its body was drawn {:.0}% off its standing size", fall.scale * 100.0))
                     } else {
-                        Ok(format!("fell within {:.2} of its heights, away from the eye", fall.strayed))
+                        let eye = if fall.around_eye { "the eye was inside it, and it was hidden" } else { "away from the eye" };
+                        Ok(format!("drawn within {:.2} of its heights, joints at most {:.1}% off size; {eye}", fall.spread, fall.scale * 100.0))
                     };
                     gate.check("creature falls", result);
                 } else if in_phase > 4.0 {

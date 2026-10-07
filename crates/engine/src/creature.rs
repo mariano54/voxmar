@@ -451,11 +451,20 @@ pub struct Death {
     pub roll: f32,
     /// How far it sinks, in its own heights.
     pub sink: f32,
+    /// Seconds from the blow to its loot coming out; as its body goes unless given.
+    pub drops: Option<f32>,
 }
 
 impl Default for Death {
     fn default() -> Self {
-        Self { seconds: 0.9, roll: 90.0, sink: 1.0 }
+        Self { seconds: 0.9, roll: 90.0, sink: 1.0, drops: None }
+    }
+}
+
+impl Death {
+    /// Seconds from the blow to its loot coming out.
+    pub fn drops_after(&self) -> f32 {
+        self.drops.unwrap_or(self.seconds).max(0.0)
     }
 }
 
