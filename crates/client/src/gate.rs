@@ -3746,6 +3746,11 @@ fn worn_drawn(world: &mut World) -> Result<String, String> {
     if shirt.len() < 2 || shield.len() < 3 {
         return Err(format!("the tooltips read {shirt:?} and {shield:?}"));
     }
+    // What anyone can wear says nothing of the level it needs.
+    let needs_one = locale.format("item.armour_needs", &[("level", &1)]);
+    if shield.iter().any(|(line, _)| *line == needs_one) {
+        return Err(format!("the shield's tooltip says \"{needs_one}\": {shield:?}"));
+    }
     let words = |lines: &[(String, Color)]| lines.iter().map(|(line, _)| line.as_str()).collect::<Vec<_>>().join(" / ");
     Ok(format!("six worn wells, the shirt and shield shown in theirs; tooltips \"{}\" and \"{}\"", words(&shirt), words(&shield)))
 }

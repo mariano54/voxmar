@@ -850,8 +850,9 @@ pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Co
         let styles: Vec<String> = resists.iter().map(|style| locale.get(&format!("item.style.{}", style.key())).to_owned()).collect();
         lines.push((locale.format("item.armour_resists", &[("styles", &styles.join(locale.get("language.comma")))]), SOFT));
     }
+    // Below its level a shield neither guards nor gives armour (the weapon guards instead).
     if !ready {
-        lines.push((locale.get("item.armour_low").to_owned(), ERROR));
+        lines.push((locale.get(if guard.is_some() { "item.armour_low_shield" } else { "item.armour_low" }).to_owned(), ERROR));
     }
     lines
 }
@@ -1056,6 +1057,24 @@ mod tests {
         assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
         files.push(file("(worn_glyph_alpha: 2.0)"));
         assert!(InterfaceStyle::load(&files).is_err());
+    }
+
+    /// Below its level a shield says it neither guards nor gives armour (a body piece only
+    /// the armour), and what anyone can wear says nothing of the level it needs.
+    #[test]
+    fn armour_below_its_level_says_what_it_does_not_do() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let player = LocalPlayer::default();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            let lines = |name: &str| armour_lines(&locale, &content, &player, content.blocks.id(name).unwrap()).into_iter().map(|(line, _)| line).collect::<Vec<_>>();
+            let (copper, shirt, wooden) = (lines("base:copper_shield"), lines("base:chainmail_shirt"), lines("base:wooden_shield"));
+            assert_eq!(copper.last().map(String::as_str), Some(locale.get("item.armour_low_shield")), "{code}: {copper:?}");
+            assert_eq!(shirt.last().map(String::as_str), Some(locale.get("item.armour_low")), "{code}: {shirt:?}");
+            let needs_one = locale.format("item.armour_needs", &[("level", &1)]);
+            assert!(!wooden.contains(&needs_one) && !wooden.iter().any(|line| line == locale.get("item.armour_low_shield")), "{code}: {wooden:?}");
+        }
     }
 
     /// No item's tooltip, in any language, has a line that is only a package's id: every
