@@ -441,7 +441,9 @@ impl Server {
             admin,
         });
         player.budget_at = None;
-        player.last_ground = Some(player.position);
+        // Where they joined may be lava or the void; a grave waits only where they have
+        // stood since (or at spawn).
+        player.last_ground = None;
         tracing::info!("{} joined", player.name);
         let time = self.time_message();
         self.players[&id].connection.send(time);
