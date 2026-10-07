@@ -8,7 +8,7 @@
     "command.core.biome.help.summary": "Names the biome you stand in, and its climate.",
     "command.core.clear.help": "Empties your inventory, or takes every one of an item out of it.",
     "command.core.clear.help.summary": "Empties your inventory, or takes every one of an item out of it.",
-    "command.core.creatures.help": "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), or hold them still for a minute.",
+    "command.core.creatures.help": "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, or kill them.",
     "command.core.creatures.help.summary": "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing.",
     "command.core.day.help": "Sets the time to morning: /time set day.",
     "command.core.day.help.summary": "Sets the time to morning: /time set day.",
