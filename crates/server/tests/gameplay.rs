@@ -1377,8 +1377,10 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     for _ in 0..3 {
         client.settle();
     }
+    // A harvest (2 to 4 potatoes) a success: about 4 of 28 at 0.15, some 13 potatoes; 41 or
+    // more takes 11 successes or so, under one in 10,000. Every crop would give at least 56.
     let found = potatoes(&client) - before;
-    assert!(found < field.len() / 2, "a ripe field nobody sowed gave {found} potatoes from {} crops", field.len());
+    assert!(found <= 40, "a ripe field nobody sowed gave {found} potatoes from {} crops", field.len());
     assert_eq!(client.earned.len(), earned, "harvesting a field nobody sowed paid experience");
     // One the player sows gives its potato back, every time.
     let before = potatoes(&client);
