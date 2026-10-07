@@ -817,16 +817,21 @@ fn work(
             state.status = Status::Working;
             state.progress += seconds * speed * rate;
             // A fast machine may finish the same work more than once a step: what is left
-            // over goes on to the next, while it has the inputs and the room.
+            // over goes on to the next while it has the inputs, and waits, kept, while its
+            // outputs have no room for it.
             let id = state.process;
             while state.progress >= process.seconds {
                 let left = state.progress - process.seconds;
                 finish(pos, state, process, *extra);
-                if left <= 0.0 || !inputs_hold(&state.inputs, process) || !outputs_fit(&state.outputs, process, *extra) {
+                if left <= 0.0 || !inputs_hold(&state.inputs, process) {
                     break;
                 }
                 state.process = id;
                 state.progress = left;
+                if !outputs_fit(&state.outputs, process, *extra) {
+                    state.status = Status::Full;
+                    break;
+                }
             }
         }
     }
@@ -1484,6 +1489,43 @@ mod tests {
         assert_eq!(furnace.0, 4, "an electric furnace smelts four in 9 s");
         let (smelter_ingot, furnace_ingot) = (per(smelter, 1, 4.0), per(furnace, 1, 4.0));
         assert!((smelter_ingot / furnace_ingot - 1.0).abs() < 0.01, "an ingot costs the smelter {smelter_ingot}, a furnace {furnace_ingot}");
+    }
+
+    /// Work done past a finished recipe in a step is kept while the outputs have no room
+    /// for the next, and goes on once they are taken: a processing array (copper ore 6 s
+    /// at speed 16, 3.2 s of work a fifth of a second) with room for one ore's dust.
+    #[test]
+    fn leftover_work_waits_while_the_outputs_are_full() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let mut factory = Factory::default();
+        let (bank, cable, at) = (IVec3::ZERO, IVec3::X, IVec3::new(2, 0, 0));
+        assert!(factory.insert(bank, id("base:hv_battery_bank"), machines) && factory.insert(cable, id("base:hv_cable"), machines));
+        assert!(factory.insert(at, id("base:processing_array"), machines));
+        factory.state_mut(bank).unwrap().energy = 1_000_000.0;
+        factory.set_condition(at, 1.0);
+        let dust = id("base:copper_dust");
+        let outputs = &mut factory.state_mut(at).unwrap().outputs;
+        outputs.fill(Some(ItemStack { item: dust, count: max_stack(dust) }));
+        outputs[0] = Some(ItemStack { item: dust, count: max_stack(dust) - 2 });
+        assert_eq!(factory.put(at, ItemStack { item: id("base:copper_ore"), count: 8 }, machines), None);
+        // 3.2 s, then 6.4: one ore crushed and 0.4 s on the next, which has no room.
+        factory.step(4, 20.0, machines);
+        factory.step(4, 20.0, machines);
+        let (_, array) = factory.get(at).unwrap();
+        assert_eq!((array.status, array.process.is_some()), (Status::Full, true));
+        assert!((array.progress - 0.4).abs() < 1e-3, "kept {}", array.progress);
+        // Full, it waits with what it kept and takes no power.
+        let energy = factory.get(bank).unwrap().1.energy;
+        factory.step(4, 20.0, machines);
+        assert!((factory.get(at).unwrap().1.progress - 0.4).abs() < 1e-3);
+        assert_eq!(factory.get(bank).unwrap().1.energy, energy);
+        // Its dust taken, it goes on from there (its network's power coming back up).
+        factory.take_outputs(at);
+        factory.step(4, 20.0, machines);
+        let (_, array) = factory.get(at).unwrap();
+        assert!(array.status == Status::Working && array.progress > 0.4 + 1e-3, "went on to {}", array.progress);
     }
 
     /// Coal and charcoal are one input of the bloomery's recipe: together they fill no more
