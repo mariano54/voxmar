@@ -18,7 +18,7 @@
         // A slatted crate: boards with gaps between them, braced at the corners.
         (
             name: "crate", sound: Wood, textures: Sides(top: "crate_top", bottom: "crate_top", side: "crate_side"),
-            hardness: 1.5, color: (160, 120, 70), tags: ["crate", "wood", "storage", "building"],
+            drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["crate", "wood", "storage", "building"],
         ),
         // A sack of grain, its neck tied off.
         (
