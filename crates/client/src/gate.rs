@@ -1745,6 +1745,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.machines_stage = 0;
                     gate.machines_since = gate.server_now;
                     gate.machines_asked = f32::MIN;
+                    gate.machines_seen = false;
                     gate.advance(now);
                     return;
                 }
@@ -1804,11 +1805,18 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let content = world.resource::<Launch>().content.clone();
             let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
             let dry = gate.observer.as_ref().is_some_and(|o| o.replies.iter().map(english).any(|r| r.contains("needs water")));
-            // Each stage is done by what the player holds, or what the server says of the
+            // Each stage is done by what the player holds (first seen in hand, then gone after
+            // the machine was used, as in the step before), or what the server says of the
             // washer (asked by the observer: `/machine`).
+            let held = match gate.machines_stage {
+                0 => coal,
+                1 => ore,
+                _ => 0,
+            };
+            gate.machines_seen |= held > 0;
+            let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
             let done = match gate.machines_stage {
-                0 => coal == 0,
-                1 => ore == 0,
+                0 | 1 => put_in,
                 2 => dry,
                 _ => dust >= 3,
             };
@@ -1828,6 +1836,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.machines_stage += 1;
                 gate.machines_since = gate.server_now;
                 gate.machines_asked = f32::MIN;
+                gate.machines_seen = false;
                 return;
             }
             // Used (or asked about) only every few server seconds, as the kiln is.
@@ -1851,7 +1860,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     }
                 }
             }
-            if gate.server_now - gate.machines_since > 40.0 || in_phase > 120.0 {
+            // By the server's clock, as the step before.
+            if gate.server_now - gate.machines_since > 40.0 || in_phase > 300.0 {
                 let what = ["the boiler never took the coal", "the washer never took the ore", "the dry washer never said it needs water", "the wet washer never gave back three dust"][gate.machines_stage.min(3) as usize];
                 let waited = (gate.server_now - gate.machines_since, in_phase);
                 let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
