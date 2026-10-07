@@ -35,6 +35,11 @@ MATERIALS = {
     # and `tier_hv` palettes (default's machines.ron) so both packs code a tier alike.
     'tier': ['tier:0', 'tier:1', 'tier:2'],
     'high': ['high:0', 'high:1', 'high:2'],
+    # Item sprites: the `head` slot is the metal (default's `metal_*` palettes), so one
+    # drawing serves copper, iron and bronze; a dark outline and a glint as vanilla's.
+    'head': ['head:0', 'head:1', 'head:2'],
+    'ink': ['#1a140e'],
+    'glint': ['#fff6e0'],
 }
 TIERS = {'lv': 'tier_lv', 'mv': 'tier_mv', 'hv': 'tier_hv'}
 
@@ -117,6 +122,15 @@ class Face:
         for x, y in points:
             self.put(x, y, mat, 5 if mat == 'iron' else len(MATERIALS[mat]) - 1)
             self.put(x + 1, y + 1, mat, 0)
+
+    def ink(self):
+        """A one-texel dark outline round everything drawn, as vanilla's items have."""
+        edge = [(x, y) for y in range(N) for x in range(N) if self.px[y][x] is None and any(
+            (p := self.get(x + dx, y + dy)) is not None and p[0] != 'ink'
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))]
+        for x, y in edge:
+            self.put(x, y, 'ink', 0)
+        return self
 
     def recipe(self):
         """The face as a Grid recipe: one legend letter per (material, shade) used."""
@@ -936,12 +950,144 @@ def _():
     return f
 
 
+# Item sprites -----------------------------------------------------------------------------
+# Machines' products, drawn once in the `head` slot; default's iron dust and iron and bronze
+# plates take these with their own metal's palette (`base: "block/copper_dust"`).
+
+def item(name, metal):
+    def wrap(fn):
+        def draw():
+            f = Face()
+            f.palettes['head'] = metal
+            fn(f)
+            return f.ink()
+        FACES[name] = draw
+        return fn
+    return wrap
+
+
+def lit(dx, dy):
+    """The head shade for a point on a lump, by where it faces: top left lit, bottom right dark."""
+    t = dx + dy
+    return 2 if t < -0.55 else 1 if t < 0.45 else 0
+
+
+@item('copper_dust', 'metal_copper')
+def _(f):
+    # A heap of fine dust, its slope speckled with grains, a few spilled at its foot.
+    r = random.Random(41)
+    for y in range(12, 28):
+        for x in range(3, 29):
+            dx, dy = (x + 0.5 - 16) / 12.5, (y + 0.5 - 27) / 14.5
+            if dx * dx + dy * dy <= 1 and not (y == 27 and abs(dx) > 0.8):
+                s = lit(dx * 1.2, dy * 0.8 + 0.35)
+                if r.random() < 0.22:
+                    s = max(0, min(2, s + r.choice((-1, 1))))
+                f.put(x, y, 'head', s)
+    for x, y in ((2, 27), (29, 26), (27, 28), (5, 28)):
+        f.put(x, y, 'head', 1)
+    for x, y in ((12, 15), (10, 18), (14, 17)):
+        f.put(x, y, 'glint', 0)
+
+
+@item('copper_plate', 'metal_copper')
+def _(f):
+    # A square plate lying tilted towards us: its face, a two-texel edge below, a sheen.
+    for y in range(8, 25):
+        lean = (y - 8) // 2
+        for x in range(13 - lean, 30 - lean):
+            f.put(x, y, 'head', 1)
+    for y in (25, 26):
+        for x in range(4, 22):
+            f.put(x, y, 'head', 0)
+    for y in range(8, 27):
+        lean = (y - 8) // 2
+        f.put(30 - lean - (1 if y > 24 else 0), y, 'head', 0)
+    for x in range(13, 30):
+        f.put(x, 8, 'head', 2)
+    for y in range(8, 25):
+        f.put(13 - (y - 8) // 2, y, 'head', 2)
+    # Light catching the face in one broad band, as on rolled sheet.
+    for y in range(9, 24):
+        lean = (y - 8) // 2
+        for x in range(13 - lean, 30 - lean):
+            u = (x - (13 - lean)) + (y - 8) * 0.9
+            if 9 <= u <= 13:
+                f.put(x, y, 'head', 2)
+    f.put(15, 9, 'glint', 0)
+    f.put(16, 9, 'glint', 0)
+    f.put(14, 10, 'glint', 0)
+
+
+@item('copper_wire', 'metal_copper')
+def _(f):
+    # A coil of wire, three turns seen at a slant, one end left loose.
+    for turn in range(3):
+        cx, cy = 13 + turn * 2.5, 15 + turn * 1.5
+        for i in range(200):
+            a = i / 200 * 2 * math.pi
+            x, y = cx + 9 * math.cos(a), cy + 7 * math.sin(a)
+            front = math.sin(a) > 0
+            s = 2 if math.cos(a) + math.sin(a) < -0.6 else 1 if front or turn == 2 else 0
+            f.put(x, y, 'head', s)
+            f.put(x + 0.6, y + 0.6, 'head', 0 if s else 0)
+    for i in range(7):
+        f.put(27 + i * 0.5, 22 + i, 'head', 1)
+        f.put(28 + i * 0.5, 22 + i, 'head', 0)
+    f.put(9, 10, 'glint', 0)
+    f.put(10, 9, 'glint', 0)
+
+
+@item('coke', 'metal_coke')
+def _(f):
+    # Three porous lumps of coke, grey, dull, pitted all over.
+    r = random.Random(43)
+    for cx, cy, rx, ry in ((11, 20, 8, 7), (21, 21, 8, 6.5), (16, 13, 7, 6)):
+        for y in range(N):
+            for x in range(N):
+                dx, dy = (x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry
+                d = dx * dx + dy * dy
+                if d <= 1 - 0.12 * math.sin(7 * math.atan2(dy, dx) + cx):
+                    f.put(x, y, 'head', lit(dx, dy))
+    for _ in range(60):
+        x, y = r.randrange(4, 29), r.randrange(7, 29)
+        p = f.get(x, y)
+        if p and p[0] == 'head' and f.get(x + 1, y) and f.get(x, y + 1):
+            f.put(x, y, 'ink', 0)
+            if r.random() < 0.5:
+                f.put(x + 1, y, 'head', 0)
+            if f.get(x - 1, y - 1) and f.get(x - 1, y - 1)[0] == 'head':
+                f.put(x - 1, y - 1, 'head', 2)
+
+
+@item('iron_bloom', 'metal_bloom')
+def _(f):
+    # A spongy bloom of iron fresh from the bloomery: a rounded lump full of slag pits, its
+    # metal showing bright where the hammer has struck it.
+    r = random.Random(44)
+    for y in range(N):
+        for x in range(N):
+            dx, dy = (x + 0.5 - 16) / 12, (y + 0.5 - 18) / 10
+            a = math.atan2(dy, dx)
+            if dx * dx + dy * dy <= 1 - 0.1 * math.sin(5 * a) - 0.06 * math.sin(11 * a + 1):
+                f.put(x, y, 'head', lit(dx, dy))
+    for _ in range(34):
+        x, y = r.randrange(5, 28), r.randrange(9, 28)
+        p = f.get(x, y)
+        if p and p[0] == 'head' and p[1] > 0:
+            f.put(x, y, 'head', 0)
+            if r.random() < 0.4:
+                f.put(x + 1, y, 'ink', 0)
+    for x, y in ((10, 12), (11, 12), (12, 11), (18, 14), (19, 14), (9, 17)):
+        f.put(x, y, 'glint', 0)
+
+
 def main():
     root = os.path.join(os.path.dirname(__file__), '..', '..')
-    out = ['''// Machine faces at 32×32 (content/base/blocks_machines.ron), drawn by tools/art/machines.py
-// in vanilla's design language from a few materials: oak bound in bronze for the Bronze
-// age, a riveted iron casing for steam and electric machines, darker steel with hazard
-// bands for high voltage. Regenerate with `python3 tools/art/machines.py`; edit the
+    out = ['''// Machine faces and products at 32×32 (content/base/blocks_machines.ron), drawn by
+// tools/art/machines.py in vanilla's design language from a few materials: oak bound in
+// bronze for the Bronze age, a riveted iron casing for steam and electric machines, darker
+// steel with hazard bands for high voltage. Regenerate with `python3 tools/art/machines.py`; edit the
 // Python, not this file.
 (
     textures: {''']
@@ -950,7 +1096,7 @@ def main():
     out.append('    },\n)\n')
     path = os.path.join(root, 'assets/packs/voxmar_hd/recipes/machines.ron')
     open(path, 'w').write("\n".join(out))
-    print(len(FACES), 'faces ->', path)
+    print(len(FACES), 'textures ->', path)
 
 
 if __name__ == '__main__':
