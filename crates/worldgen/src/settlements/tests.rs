@@ -1429,14 +1429,19 @@ fn ripe_or_rare_fruit_is_refused() {
 /// stacks, foundation courses, well rims and stacked stone keep their blocks (and their
 /// drops), as the same village generated with no snow blanket at all has them (Review,
 /// 7 Oct: the blanket once covered every block tagged `stone`, cobbles and bricks too).
+/// The blanket still works there: natural stone open to the sky in and around the
+/// village turns to snow, and its sod roofs whiten as the ground does.
 #[test]
 fn snowy_villages_keep_their_built_stone() {
     let registry = base_registry();
     let content = crate::content::WorldContent::base(&registry).unwrap();
     let mut bare = content.clone();
     bare.climate.frost.blanket.clear();
-    let built = |b: BlockId| registry.def(b).has_tag("stone") && registry.def(b).has_tag("building");
-    let (mut villages, mut kept) = (0, 0);
+    let def = |b: BlockId| registry.def(b);
+    let built = |b: BlockId| def(b).has_tag("stone") && def(b).has_tag("building");
+    let natural_stone = |b: BlockId| def(b).has_tag("stone") && !def(b).has_tag("building");
+    let (snow, grass, snowy_grass) = (registry.expect("base:snow_block"), registry.expect("base:grass_block"), registry.expect("base:snowy_grass_block"));
+    let (mut villages, mut kept, mut snowed_stone, mut snowed_sod) = (0, 0, 0, 0);
     'seeds: for seed in 1u64..=60 {
         let world = Overworld::with_content(seed, registry.clone(), &content);
         let spawn = world.spawn_point();
@@ -1446,33 +1451,53 @@ fn snowy_villages_keep_their_built_stone() {
             let snowy = [(0, 0), (6, 0), (-6, 0), (0, 6), (0, -6)].iter().any(|&(dx, dz)| {
                 let (x, z) = ((s.centre.x + dx) & 31, (s.centre.z + dz) & 31);
                 let top = (0..WORLD_HEIGHT).rev().map(|y| column.block(IVec3::new(x, y, z))).find(|b| !b.is_air());
-                top.is_some_and(|b| registry.def(b).has_tag("snow"))
+                top.is_some_and(|b| def(b).has_tag("snow"))
             });
             if !snowy {
                 continue;
             }
             let plain = Overworld::with_content(seed, registry.clone(), &bare);
             let (mut snowed, mut unsnowed) = (rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::default());
+            let mut both = |x: i32, z: i32| {
+                let pos = ColumnPos::of_block(IVec3::new(x, 0, z));
+                let with = snowed.entry(pos).or_insert_with(|| world.generate(pos)).clone();
+                let without = unsnowed.entry(pos).or_insert_with(|| plain.generate(pos)).clone();
+                (with, without)
+            };
             for b in &s.buildings {
                 for z in b.min.y..=b.max.y {
                     for x in b.min.x..=b.max.x {
-                        let pos = ColumnPos::of_block(IVec3::new(x, 0, z));
-                        let with = snowed.entry(pos).or_insert_with(|| world.generate(pos));
-                        let without = unsnowed.entry(pos).or_insert_with(|| plain.generate(pos));
+                        let (with, without) = both(x, z);
                         for y in b.floor - 2..(b.floor + 24).min(WORLD_HEIGHT) {
                             let local = IVec3::new(x & 31, y, z & 31);
                             let (want, got) = (without.block(local), with.block(local));
                             if built(want) {
-                                assert_eq!(
-                                    registry.def(got).name,
-                                    registry.def(want).name,
-                                    "seed {seed}, {}: the {} at {x} {y} {z} turned to snow",
-                                    s.name.0,
-                                    b.what
-                                );
+                                assert_eq!(def(got).name, def(want).name, "seed {seed}, {}: the {} at {x} {y} {z} turned to snow", s.name.0, b.what);
                                 kept += 1;
                             }
                         }
+                    }
+                }
+            }
+            // The positive control: over the village and 16 blocks round it, natural stone
+            // open to the sky without the blanket is snow with it, and grass roofs and
+            // banks over the ground are snowy grass.
+            let min = s.buildings.iter().fold(IVec2::splat(i32::MAX), |m, b| m.min(b.min)) - 16;
+            let max = s.buildings.iter().fold(IVec2::splat(i32::MIN), |m, b| m.max(b.max)) + 16;
+            for z in min.y..=max.y {
+                for x in min.x..=max.x {
+                    let (with, without) = both(x, z);
+                    let mut open = true;
+                    for y in (1..WORLD_HEIGHT).rev() {
+                        let local = IVec3::new(x & 31, y, z & 31);
+                        let (want, got) = (without.block(local), with.block(local));
+                        if open && natural_stone(want) && got == snow {
+                            snowed_stone += 1;
+                        }
+                        if open && want == grass && got == snowy_grass {
+                            snowed_sod += 1;
+                        }
+                        open &= want.is_air() || def(want).render == RenderKind::Plant;
                     }
                 }
             }
@@ -1485,4 +1510,7 @@ fn snowy_villages_keep_their_built_stone() {
     }
     assert!(villages > 0, "no snowy settlement found");
     assert!(kept > 50, "only {kept} built stone blocks in {villages} snowy settlements");
+    assert!(snowed_stone > 0, "no natural stone open to the sky turned to snow in or around {villages} snowy settlements");
+    assert!(snowed_sod > 0, "no grass over the ground turned snowy in or around {villages} snowy settlements");
+    println!("kept {kept} built stone blocks; {snowed_stone} natural stone and {snowed_sod} grass blocks snowed");
 }

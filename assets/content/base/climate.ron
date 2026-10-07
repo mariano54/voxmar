@@ -33,13 +33,15 @@
         ice: "ice",
         thick_ice: "packed_ice",
         rare_ice: "blue_ice",
-        // Snow on rocks and moss above the ground, wherever snow lies: `covers` a block by
+        // Snow on rocks, moss and grass above the ground, wherever snow lies: `covers` a block by
         // `Name` or `Tag`, turning it `to` snow, except blocks with a tag in `not`. Built
         // stone (cobbles, bricks, polished; tagged `building`) keeps its look and drops,
         // so village chimneys, walls and wells stay what they are under the snow.
         blanket: [
             (covers: Tag("stone"), to: "snow_block", not: ["building"]),
             (covers: Name("moss_block"), to: "snow_block"),
+            // Grass over the ground (sod roofs, banks) whitens as the ground does.
+            (covers: Name("grass_block"), to: "snowy_grass_block"),
         ],
     ),
 )
