@@ -18,6 +18,12 @@
 //! wields it (Attack for melee, Ranged, Magic) and its max hit at that level, which rises by
 //! one for every eight levels above it, as a bare fist's does from 1. A weapon held below
 //! its level strikes as a fist.
+//!
+//! **Armour** is worn in five slots (head, body, legs, hands, feet), a set's pieces sharing
+//! its material's armour by slot. Worn armour adds to the defence roll against every
+//! blow, more or less by its weight (plate turns blades and arrows but not spells, robes the
+//! reverse) and half again against a style its set resists. A piece worn below its Defence
+//! level gives nothing, as a weapon held below its level strikes as a fist.
 
 use serde::{Deserialize, Serialize};
 
@@ -151,6 +157,123 @@ pub struct CombatFile {
     pub classes: Vec<ClassDef>,
     #[serde(default)]
     pub weapons: Vec<WeaponDef>,
+    #[serde(default)]
+    pub sets: Vec<SetDef>,
+}
+
+/// Where a piece of armour is worn: the inventory's worn slots, in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Slot {
+    Head,
+    Body,
+    Legs,
+    Hands,
+    Feet,
+}
+
+impl Slot {
+    pub const ALL: [Slot; 5] = [Slot::Head, Slot::Body, Slot::Legs, Slot::Hands, Slot::Feet];
+
+    /// Its worn slot, counted from the first (`inventory::WORN`).
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The armour a piece in this slot gives from a set of armour 1.0 (bronze): a whole
+    /// set gives 36, as RuneScape's bronze does about.
+    pub fn base(self) -> f32 {
+        match self {
+            Slot::Head => 6.0,
+            Slot::Body => 14.0,
+            Slot::Legs => 10.0,
+            Slot::Hands | Slot::Feet => 3.0,
+        }
+    }
+
+    /// Its lang key's last part.
+    pub fn key(self) -> &'static str {
+        match self {
+            Slot::Head => "head",
+            Slot::Body => "body",
+            Slot::Legs => "legs",
+            Slot::Hands => "hands",
+            Slot::Feet => "feet",
+        }
+    }
+}
+
+/// How heavy a set is, which sets what its armour is good against.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Weight {
+    /// Leather and hides: quiet and quick, weaker against melee.
+    Light,
+    /// Scale, chain and mail.
+    #[default]
+    Medium,
+    /// Plate: best against melee and arrows, worst against spells.
+    Heavy,
+    /// Cloth: for spells, weak against melee.
+    Robe,
+}
+
+impl Weight {
+    /// The share of its armour that counts against a blow of `style`.
+    pub fn against(self, style: Style) -> f32 {
+        match (self, style) {
+            (Weight::Medium, _) => 1.0,
+            (Weight::Light, Style::Ranged | Style::Magic) => 1.0,
+            (Weight::Light, _) => 0.8,
+            (Weight::Heavy, Style::Magic) => 0.6,
+            (Weight::Heavy, _) => 1.2,
+            (Weight::Robe, Style::Magic) => 1.5,
+            (Weight::Robe, Style::Ranged) => 0.7,
+            (Weight::Robe, _) => 0.5,
+        }
+    }
+
+    /// Its lang key's last part.
+    pub fn key(self) -> &'static str {
+        match self {
+            Weight::Light => "light",
+            Weight::Medium => "medium",
+            Weight::Heavy => "heavy",
+            Weight::Robe => "robe",
+        }
+    }
+}
+
+/// How much more armour counts against a style its set resists.
+pub const RESISTED: f32 = 1.5;
+
+/// A set of armour as content defines it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetDef {
+    pub name: String,
+    #[serde(default)]
+    pub weight: Weight,
+    /// The Defence level that wears it.
+    #[serde(default = "first_level")]
+    pub level: u8,
+    /// Its material's armour, which each piece shares by its slot (`Slot::base`): the wiki's
+    /// "Armour ×".
+    pub armour: f32,
+    /// Styles it is better against.
+    #[serde(default)]
+    pub resists: Vec<Style>,
+    /// Each piece, by slot and item name.
+    pub pieces: Vec<(Slot, String)>,
+}
+
+/// A piece of armour, worked out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Piece {
+    /// Its set, by index.
+    pub set: usize,
+    pub slot: Slot,
+    pub weight: Weight,
+    pub level: u8,
+    pub armour: u16,
 }
 
 /// What a blow is struck with.
@@ -191,6 +314,9 @@ pub struct CombatRegistry {
     weapons: Vec<Option<Weapon>>,
     /// The skill fists train and are judged by.
     attack: Option<SkillId>,
+    sets: Vec<SetDef>,
+    /// Each block id's piece of armour, if it is one.
+    pieces: Vec<Option<Piece>>,
 }
 
 impl CombatRegistry {
@@ -202,14 +328,32 @@ impl CombatRegistry {
                 weapon.item = format!("{namespace}:{}", weapon.item);
             }
         }
+        for (_, item) in file.sets.iter_mut().flat_map(|set| &mut set.pieces) {
+            if !item.contains(':') {
+                *item = format!("{namespace}:{item}");
+            }
+        }
         Ok(file)
     }
 
     pub fn new(files: Vec<CombatFile>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let (mut classes, mut defs) = (Vec::new(), Vec::new());
+        let (mut classes, mut defs, mut sets) = (Vec::new(), Vec::new(), Vec::new());
         for file in files {
             classes.extend(file.classes);
             defs.extend(file.weapons);
+            sets.extend(file.sets);
+        }
+        let mut pieces = vec![None; blocks.len()];
+        for (index, set) in sets.iter().enumerate() {
+            for (slot, name) in &set.pieces {
+                let error = |why: &str| RegistryError(format!("combat.ron: set `{}`: {name}: {why}", set.name));
+                let item = blocks.id(name).ok_or_else(|| error("no such item"))?;
+                if pieces[item.0 as usize].is_some() {
+                    return Err(error("listed twice"));
+                }
+                let armour = (slot.base() * set.armour).round().max(1.0) as u16;
+                pieces[item.0 as usize] = Some(Piece { set: index, slot: *slot, weight: set.weight, level: set.level, armour });
+            }
         }
         let mut weapons = vec![None; blocks.len()];
         for def in defs {
@@ -232,7 +376,7 @@ impl CombatRegistry {
                 accuracy: def.accuracy.unwrap_or(def.max_hit * 2),
             });
         }
-        Ok(Self { classes, weapons, attack: skills.id("core:attack") })
+        Ok(Self { classes, weapons, attack: skills.id("core:attack"), sets, pieces })
     }
 
     /// What `item` is as a weapon, if it is one.
@@ -249,6 +393,33 @@ impl CombatRegistry {
             Some(weapon) if weapon.skill.is_none_or(|skill| level(skill) >= weapon.level) => *weapon,
             _ => fists,
         }
+    }
+
+    /// What `item` is as armour, if it is some.
+    pub fn piece(&self, item: BlockId) -> Option<&Piece> {
+        self.pieces.get(item.0 as usize).and_then(Option::as_ref)
+    }
+
+    pub fn set(&self, index: usize) -> &SetDef {
+        &self.sets[index]
+    }
+
+    /// Each block id's worn slot, if it is armour (`inventory::set_worn_slots`).
+    pub fn worn_slots(&self) -> Vec<Option<u8>> {
+        self.pieces.iter().map(|p| p.map(|p| p.slot.index() as u8)).collect()
+    }
+
+    /// What `piece` adds to the defence roll against a blow of `style`.
+    pub fn armour_against(&self, piece: &Piece, style: Style) -> f32 {
+        let resisted = if self.sets[piece.set].resists.contains(&style) { RESISTED } else { 1.0 };
+        piece.armour as f32 * piece.weight.against(style) * resisted
+    }
+
+    /// The armour `worn` gives against a blow of `style`, for a wearer whose own Defence
+    /// level is `level`: pieces worn below their level give nothing.
+    pub fn worn_armour(&self, worn: impl IntoIterator<Item = BlockId>, style: Style, level: u8) -> u16 {
+        let total: f32 = worn.into_iter().filter_map(|item| self.piece(item)).filter(|p| level >= p.level).map(|p| self.armour_against(p, style)).sum();
+        total.round() as u16
     }
 
     pub fn class(&self, index: usize) -> &ClassDef {
@@ -348,5 +519,29 @@ mod tests {
         assert_eq!((spear.reach, spear.accuracy, spear.quickest()), (1.0, 10, 0.365));
         assert!(registry(r#"(weapons: [(item: "nothing", class: "sword", max_hit: 1)])"#).is_err());
         assert!(registry(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6)], weapons: [(item: "sword", class: "axe", max_hit: 1)])"#).is_err());
+    }
+
+    #[test]
+    fn armour_counts_by_slot_weight_resistance_and_level() {
+        let (combat, blocks) = registry(
+            r#"(sets: [
+                (name: "chain", weight: Medium, level: 20, armour: 1.2, resists: [Slash], pieces: [(Body, "sword"), (Head, "spear")]),
+                (name: "plate", weight: Heavy, level: 1, armour: 1.0, pieces: [(Legs, "stick")]),
+            ])"#,
+        )
+        .unwrap();
+        let [shirt, hood, legs] = ["t:sword", "t:spear", "t:stick"].map(|name| blocks.id(name).unwrap());
+        let piece = *combat.piece(shirt).unwrap();
+        assert_eq!((piece.slot, piece.armour, piece.level), (Slot::Body, 17, 20));
+        assert_eq!(combat.worn_slots()[hood.0 as usize], Some(Slot::Head.index() as u8));
+        // 17 + 7 against a stab, half again against the slash chain resists.
+        assert_eq!(combat.worn_armour([shirt, hood], Style::Stab, 20), 24);
+        assert_eq!(combat.worn_armour([shirt, hood], Style::Slash, 20), 36);
+        assert_eq!(combat.worn_armour([shirt, hood], Style::Slash, 19), 0, "below its level armour gives nothing");
+        // Plate turns blades better than spells.
+        assert_eq!((combat.worn_armour([legs], Style::Crush, 1), combat.worn_armour([legs], Style::Magic, 1)), (12, 6));
+        assert!(hit_chance(20, 0, 20, 36) < hit_chance(20, 0, 20, 0) * 0.8);
+        assert!(registry(r#"(sets: [(name: "x", armour: 1.0, pieces: [(Head, "nothing")])])"#).is_err());
+        assert!(registry(r#"(sets: [(name: "x", armour: 1.0, pieces: [(Head, "sword"), (Body, "sword")])])"#).is_err());
     }
 }

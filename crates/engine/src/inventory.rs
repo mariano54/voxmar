@@ -7,7 +7,8 @@
 //! pointer ([`CURSOR`]), [`Inventory::quick_move`] between the hotbar and the rest, and
 //! [`Inventory::stow_cursor`] when the screen closes. The crafting grid is nine more slots
 //! ([`CRAFT`]; two by two of them away from a crafting table, see `craft::SMALL`), and [`Inventory::craft`] turns what it holds into a recipe's
-//! output. The client works out which moves a gesture means; the server checks and
+//! output. Five more slots ([`WORN`]) hold the armour worn, each only the piece made for
+//! it (`combat::Slot`). The client works out which moves a gesture means; the server checks and
 //! applies each the same way.
 
 use serde::{Deserialize, Serialize};
@@ -56,8 +57,38 @@ pub fn max_stack(item: BlockId) -> u8 {
 pub const CURSOR: usize = SLOTS;
 /// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
 pub const CRAFT: usize = CURSOR + 1;
+/// The first worn slot; its five are head, body, legs, hands and feet (`combat::Slot`).
+pub const WORN: usize = CRAFT + GRID;
+pub const WORN_SLOTS: usize = 5;
 /// The last slot number there is.
-const LAST: usize = CRAFT + GRID - 1;
+pub const LAST: usize = WORN + WORN_SLOTS - 1;
+
+/// Each item's worn slot, by block id (`WORN` + it), as content's armour sets say.
+static WORN_AT: std::sync::RwLock<Vec<Option<u8>>> = std::sync::RwLock::new(Vec::new());
+
+/// Sets each item's worn slot, by block id.
+pub fn set_worn_slots(slots: Vec<Option<u8>>) {
+    *WORN_AT.write().unwrap_or_else(|e| e.into_inner()) = slots;
+}
+
+/// The worn slot `item` goes in, counted from [`WORN`], if it is armour.
+pub fn worn_slot(item: BlockId) -> Option<usize> {
+    WORN_AT.read().unwrap_or_else(|e| e.into_inner()).get(item.0 as usize).copied().flatten().map(usize::from)
+}
+
+/// Whether `stack` may be in `slot`: anything anywhere but a worn slot, which holds one of
+/// the armour made for it (`worn` says where each item is worn).
+fn fits(slot: usize, stack: Option<ItemStack>, worn: &impl Fn(BlockId) -> Option<usize>) -> bool {
+    match (slot, stack) {
+        (WORN..=LAST, Some(stack)) => stack.count == 1 && worn(stack.item) == Some(slot - WORN),
+        _ => true,
+    }
+}
+
+/// The most of `item` that `slot` holds.
+fn holds(slot: usize, item: BlockId) -> u8 {
+    if (WORN..=LAST).contains(&slot) { 1 } else { max_stack(item) }
+}
 
 /// Items are blocks for now; dedicated item definitions come with tools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +107,9 @@ pub struct Inventory {
     /// The crafting grid, slots [`CRAFT`] on.
     #[serde(default)]
     pub craft: [Option<ItemStack>; GRID],
+    /// The armour worn, slots [`WORN`] on.
+    #[serde(default)]
+    pub worn: [Option<ItemStack>; WORN_SLOTS],
     /// What the player's pouches carry: herbs and seeds, many of a kind in one slot's
     /// pouch (see [`pouch_for`]). It stays with the player; a pouch is needed to put more in.
     #[serde(default)]
@@ -84,7 +118,7 @@ pub struct Inventory {
 
 impl Default for Inventory {
     fn default() -> Self {
-        Self { slots: vec![None; SLOTS], cursor: None, craft: [None; GRID], pouched: Vec::new() }
+        Self { slots: vec![None; SLOTS], cursor: None, craft: [None; GRID], worn: [None; WORN_SLOTS], pouched: Vec::new() }
     }
 }
 
@@ -204,7 +238,8 @@ impl Inventory {
     pub fn get(&self, slot: usize) -> Option<ItemStack> {
         match slot {
             CURSOR => self.cursor,
-            CRAFT..=LAST => self.craft[slot - CRAFT],
+            CRAFT..WORN => self.craft[slot - CRAFT],
+            WORN..=LAST => self.worn[slot - WORN],
             _ => self.slots.get(slot).copied().flatten(),
         }
     }
@@ -213,7 +248,8 @@ impl Inventory {
         let stack = stack.filter(|s| s.count > 0);
         match slot {
             CURSOR => self.cursor = stack,
-            CRAFT..=LAST => self.craft[slot - CRAFT] = stack,
+            CRAFT..WORN => self.craft[slot - CRAFT] = stack,
+            WORN..=LAST => self.worn[slot - WORN] = stack,
             _ => self.slots[slot] = stack,
         }
     }
@@ -265,25 +301,33 @@ impl Inventory {
     /// empty slot or the same item, as many as fit, or swapping the two stacks when all of
     /// `from` goes onto a different item. Returns whether anything moved.
     pub fn move_items(&mut self, from: usize, to: usize, count: u8) -> bool {
+        self.move_worn(from, to, count, &worn_slot)
+    }
+
+    /// [`Inventory::move_items`], with `worn` saying where each item is worn.
+    fn move_worn(&mut self, from: usize, to: usize, count: u8, worn: &impl Fn(BlockId) -> Option<usize>) -> bool {
         if from == to || from > LAST || to > LAST || count == 0 {
             return false;
         }
         let Some(source) = self.get(from) else { return false };
         match self.get(to) {
             None => {
-                let moved = count.min(source.count);
+                let moved = count.min(source.count).min(holds(to, source.item));
+                if !fits(to, Some(ItemStack { count: moved, ..source }), worn) {
+                    return false;
+                }
                 self.set(to, Some(ItemStack { count: moved, ..source }));
                 self.set(from, Some(ItemStack { count: source.count - moved, ..source }));
             }
             Some(target) if target.item == source.item => {
-                let moved = count.min(source.count).min(max_stack(source.item).saturating_sub(target.count));
+                let moved = count.min(source.count).min(holds(to, source.item).saturating_sub(target.count));
                 if moved == 0 {
                     return false;
                 }
                 self.set(to, Some(ItemStack { count: target.count + moved, ..target }));
                 self.set(from, Some(ItemStack { count: source.count - moved, ..source }));
             }
-            Some(target) if count >= source.count => {
+            Some(target) if count >= source.count && fits(to, Some(source), worn) && fits(from, Some(target), worn) => {
                 self.set(to, Some(source));
                 self.set(from, Some(target));
             }
@@ -296,8 +340,19 @@ impl Inventory {
     /// topping up stacks of the same item first, then into the first empty slots. Returns
     /// whether anything moved.
     pub fn quick_move(&mut self, slot: usize) -> bool {
+        self.quick_move_worn(slot, &worn_slot)
+    }
+
+    /// [`Inventory::quick_move`], with `worn` saying where each item is worn.
+    fn quick_move_worn(&mut self, slot: usize, worn: &impl Fn(BlockId) -> Option<usize>) -> bool {
+        // Armour goes on, into its worn slot, if that is empty.
+        if let Some(stack) = self.get(slot).filter(|_| slot < SLOTS) {
+            if let Some(at) = worn(stack.item).filter(|&at| self.worn[at].is_none()) {
+                return self.move_worn(slot, WORN + at, 1, worn);
+            }
+        }
         if (CRAFT..=LAST).contains(&slot) {
-            // Out of the crafting grid, into the inventory.
+            // Out of the crafting grid or off, into the inventory.
             let Some(stack) = self.get(slot) else { return false };
             let left = self.add(stack.item, stack.count);
             self.set(slot, Some(ItemStack { count: left, ..stack }));
@@ -333,7 +388,7 @@ impl Inventory {
     /// inventory, as [`Inventory::add`] would. Whatever does not fit stays where it was.
     pub fn stow_cursor(&mut self) -> bool {
         let mut moved = false;
-        for slot in std::iter::once(CURSOR).chain(CRAFT..=LAST) {
+        for slot in std::iter::once(CURSOR).chain(CRAFT..WORN) {
             let Some(stack) = self.get(slot) else { continue };
             let left = self.add(stack.item, stack.count);
             self.set(slot, Some(ItemStack { count: left, ..stack }));
@@ -520,5 +575,37 @@ mod tests {
         assert_eq!(inv.pouched(seed), 0);
         let seeds: u32 = inv.slots.iter().flatten().filter(|s| s.item == seed).map(|s| s.count as u32).sum();
         assert_eq!(seeds, 210);
+    }
+
+    #[test]
+    fn armour_is_worn_only_in_its_own_slot_and_one_at_a_time() {
+        const HELM: BlockId = BlockId(3);
+        // Helms go on the head (the content's table is global, so the test passes its own).
+        let worn = |item: BlockId| (item == HELM).then_some(0);
+        let mut inv = Inventory::default();
+        inv.slots[0] = stack(DIRT, 10);
+        inv.slots[1] = stack(HELM, 1);
+        inv.slots[2] = stack(HELM, 1);
+        assert!(!inv.move_worn(0, WORN, 1, &worn), "dirt is not worn");
+        assert!(!inv.move_worn(1, WORN + 1, 1, &worn), "a helm goes on the head");
+        // Shift-click puts it on; another goes to storage, the head being taken.
+        assert!(inv.quick_move_worn(1, &worn));
+        assert_eq!((inv.get(WORN), inv.get(1)), (stack(HELM, 1), None));
+        assert!(inv.quick_move_worn(2, &worn));
+        assert_eq!((inv.get(2), inv.get(9)), (None, stack(HELM, 1)));
+        // Dirt on the pointer cannot swap with the helm worn; a helm can.
+        inv.cursor = stack(DIRT, 1);
+        assert!(!inv.move_worn(CURSOR, WORN, 1, &worn));
+        inv.cursor = None;
+        assert!(!inv.move_worn(9, WORN, 1, &worn), "one helm at a time");
+        assert!(!inv.move_worn(WORN, 0, 1, &worn), "nor onto dirt, which cannot go on the head");
+        assert!(inv.move_worn(WORN, 5, 1, &worn));
+        assert_eq!(inv.get(WORN), None);
+        // Taken off with a shift-click; cleared with the rest.
+        inv.worn[0] = stack(HELM, 1);
+        assert!(inv.quick_move_worn(WORN, &worn));
+        assert_eq!(inv.get(WORN), None);
+        inv.worn[0] = stack(HELM, 1);
+        assert_eq!(inv.clear(|i| i == HELM), 4);
     }
 }
