@@ -271,12 +271,12 @@ struct Kit {
     paving: Palette,
     hedge: Palette,
     weathered: Palette,
-    crops: Vec<[BlockId; 4]>,
+    crops: Vec<([BlockId; 4], f32)>,
     roofs: Vec<(Roof, f32)>,
     window: Option<BlockId>,
 }
 
-fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, rng: &mut Rng) -> Kit {
+fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, crop_level: u32, rng: &mut Rng) -> Kit {
     let woods: Vec<(usize, f32)> = style.woods.iter().enumerate().map(|(i, (_, w))| (i, *w)).collect();
     let wood = style.woods[pick(rng, &woods).unwrap_or(0)].0.clone();
     let trim = if rng.chance(0.55) { wood.clone() } else { style.woods[pick(rng, &woods).unwrap_or(0)].0.clone() };
@@ -295,13 +295,14 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, rng: &mut Rng) -> Kit {
         }
         kept
     };
+    // Only crops of the size's level or below: a field is no shortcut past Farming.
     let crops = style
         .crops
         .iter()
-        .filter(|(_, w)| *w > 0.0)
-        .filter_map(|(crop, _)| {
+        .filter(|(crop, w)| *w > 0.0 && ctx.def.crops.get(crop).is_none_or(|&(level, _)| level <= crop_level))
+        .filter_map(|(crop, w)| {
             let stage = |s: &str| ctx.resolved.get(&format!("{crop}{s}"));
-            Some([stage("_crop_0")?, stage("_crop_1")?, stage("_crop_2")?, stage("_crop")?])
+            Some(([stage("_crop_0")?, stage("_crop_1")?, stage("_crop_2")?, stage("_crop")?], *w))
         })
         .collect();
     Kit {
@@ -414,7 +415,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
     let layouts: Vec<(usize, f32)> = def.layouts.iter().enumerate().filter(|(_, l)| fresh || !l.water).map(|(i, l)| (i, l.lean.weigh(l.weight, &levers))).collect();
     let layout_index = pick(&mut rng, &layouts)?;
     let shape = def.layouts[layout_index].shape;
-    let kit = kit(ctx, style, &levers, &mut rng);
+    let kit = kit(ctx, style, &levers, size.crop_level, &mut rng);
     let names = def.names.iter().find(|n| tagged(&n.biome)).unwrap_or(&def.names[0]);
     let name = {
         let first = &names.first[rng.below(names.first.len() as u32) as usize];
@@ -944,8 +945,9 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
                 let p = centre + IVec2::new(x, z);
                 let d = p.as_vec2().distance(centre.as_vec2());
                 let ragged = unit(hash3(seed ^ 0x5a, p.x, 0, p.y)) * 1.6 * (1.0 - order + 0.3);
-                // Not under a centrepiece, a pond or a fountain least of all.
-                let under = lots.iter().any(|l| l.spec.kind == Kind::Centrepiece && l.rect.distance(p.as_vec2()) < 0.5);
+                // Not under anything built: paving lands after the buildings, so it would
+                // cap a well's water, a pond or a fountain.
+                let under = lots.iter().any(|l| l.rect.distance(p.as_vec2()) < 0.5);
                 if d <= r - ragged
                     && !under
                     && let Some(block) = kit.paving.at(seed, IVec3::new(p.x, 0, p.y))
@@ -1031,6 +1033,7 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
             for x in raster.min.x..=raster.max.x {
                 let p = IVec2::new(x, z);
                 if lane.distance(p.as_vec2()) <= lane.half
+                    && !rects.iter().any(|r| r.distance(p.as_vec2()) < 0.5)
                     && let Some(block) = kit.paving.at(seed, IVec3::new(x, 0, z))
                 {
                     canvas.grounded.entry(IVec3::new(x, 0, z)).or_insert(Put::Set(block));

@@ -432,6 +432,13 @@ impl Rivers {
         channels
     }
 
+    /// How many regions' trunk and stream channels are made, for tests of how much a
+    /// piece of generation needs.
+    #[cfg(test)]
+    pub(crate) fn made(&self) -> (usize, usize) {
+        (self.trunk_channels.len(), self.stream_channels.len())
+    }
+
     /// Whether a tier's channels of a region are made or being made.
     fn known(&self, level: Level, region: IVec2) -> bool {
         RECENT.with(|recent| recent.borrow().iter().any(|(id, l, r, _)| *id == self.id && *l == level && *r == region))

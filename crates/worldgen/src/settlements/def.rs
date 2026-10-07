@@ -411,6 +411,13 @@ struct SizeFile {
     /// The chance it has a centrepiece.
     #[serde(default)]
     centrepiece: f32,
+    /// The highest Farming level of the crops its fields grow.
+    #[serde(default = "first_level")]
+    crop_level: u32,
+}
+
+fn first_level() -> u32 {
+    1
 }
 
 #[derive(Deserialize)]
@@ -630,6 +637,7 @@ pub struct SizeDef {
     pub always: Vec<Special>,
     pub sometimes: Vec<(Special, f32)>,
     pub centrepiece: f32,
+    pub crop_level: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -762,6 +770,9 @@ pub struct SettlementsDef {
     pub styles: Vec<StyleDef>,
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
+    /// Every crop's Farming level and rarity, by its full name (from `crops.ron`), so
+    /// settlements grow only everyday crops a newcomer may harvest.
+    pub crops: BTreeMap<String, (u32, voxmar_engine::block::Rarity)>,
 }
 
 fn names(package: &str, at: &str, selects: &[Select]) -> Result<Vec<(String, f32)>, ContentError> {
@@ -847,6 +858,7 @@ impl SettlementsDef {
                 always: s.always,
                 sometimes: s.sometimes,
                 centrepiece: s.centrepiece,
+                crop_level: s.crop_level,
             });
         }
         for l in file.layouts {
@@ -1045,6 +1057,37 @@ impl SettlementsDef {
                         return fail(format!("style `{}`'s crop `{crop}` has no `{crop}{stage}` block", style.name));
                     }
                 }
+            }
+        }
+        // Fields and orchards hold only everyday crops: no rarer than uncommon, no higher
+        // than the largest size's crop level, one in every style a hamlet may grow, and
+        // fruit trees in blossom or unripe, never ripe.
+        if !self.crops.is_empty() {
+            let everyday = |crop: &str, most: u32| match self.crops.get(crop) {
+                None => Err(format!("`{crop}` is no crop in crops.ron")),
+                Some(&(level, rarity)) if rarity > voxmar_engine::block::Rarity::Uncommon || level > most => {
+                    Err(format!("`{crop}` (level {level}, {rarity:?}) is too rare or high for a settlement"))
+                }
+                Some(&(level, _)) => Ok(level),
+            };
+            let highest = self.sizes.iter().map(|s| s.crop_level).max().unwrap_or(1);
+            let lowest = self.sizes.iter().map(|s| s.crop_level).min().unwrap_or(1);
+            for style in &self.styles {
+                let mut least = u32::MAX;
+                for (crop, _) in &style.crops {
+                    least = least.min(everyday(crop, highest).map_err(|e| ContentError(format!("settlements.ron: {e}")))?);
+                }
+                if !style.crops.is_empty() && least > lowest {
+                    return fail(format!("style `{}` has no crop of level {lowest} or below for its hamlets", style.name));
+                }
+            }
+            for select in &self.furnishings.fruit {
+                let Select::Name(name, _) = select else { continue };
+                let unripe = name.rsplit_once('_').filter(|(_, n)| n.parse::<u8>().is_ok());
+                let Some((leaves, _)) = unripe else {
+                    return fail(format!("fruit `{name}` is ripe: name a growing stage (`_1`, `_2`)"));
+                };
+                everyday(leaves.trim_end_matches("_leaves"), highest).map_err(|e| ContentError(format!("settlements.ron: {e}")))?;
             }
         }
         Ok(())
