@@ -765,6 +765,8 @@
     "quest.base.a_bed_of_your_own.why": "Until you sleep somewhere, death sends you back to world spawn. Wool and hide, pelts, or feathers make a sleeping bag.",
     "quest.base.the_potter": "The Potter",
     "quest.base.the_potter.why": "Pots and vials hold potions and stews, and fired clay lines the kiln you are working toward.",
+    "quest.base.charcoal": "Charcoal",
+    "quest.base.charcoal.why": "Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down in a campfire, or dig out a coal seam.",
     "quest.base.red_metal": "Red Metal",
     "quest.base.red_metal.why": "Copper tools are faster and find more, and copper is three parts of bronze.",
     "quest.base.crucible_kiln": "Crucible Kiln",
