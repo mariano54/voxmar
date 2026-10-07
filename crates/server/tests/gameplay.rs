@@ -1371,16 +1371,19 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     client.ok("/summon rabbit 1 ~ ~ ~-2");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
     let before = client.items.len();
-    let killed = Instant::now();
     client.ok("/creatures kill");
+    // Judged by the server's clock, so a stalled server proves nothing for free.
+    let ticks = |c: &Client| c._server.as_ref().expect("the server").ticks();
+    let killed = ticks(&client);
+    let seconds = |c: &Client| (ticks(c) - killed) as f32 / TICKS_PER_SECOND as f32;
+    let one_tick = 1.0 / TICKS_PER_SECOND as f32;
     // While it falls, nothing has dropped.
-    let early = Duration::from_secs_f32(falls * 0.6);
-    while killed.elapsed() < early {
-        assert_eq!(client.items.len(), before, "loot came out of a body still falling");
-        let until = Instant::now() + Duration::from_millis(20);
+    while seconds(&client) < falls - one_tick {
+        assert_eq!(client.items.len(), before, "loot came out of a body still falling, {:.2}s into a {falls}s fall", seconds(&client));
+        let until = Instant::now() + Duration::from_millis(10);
         client.pump_until(|_| Instant::now() > until);
     }
-    // Then its meat is on the ground.
+    // Then its meat is on the ground, and not before the fall was done.
     client.pump_until(|c| c.items.len() > before);
-    assert!(killed.elapsed().as_secs_f32() >= falls * 0.9, "dropped after {:.2}s, before the {falls}s fall", killed.elapsed().as_secs_f32());
+    assert!(seconds(&client) >= falls - one_tick, "dropped {:.2}s after the kill, before the {falls}s fall", seconds(&client));
 }
