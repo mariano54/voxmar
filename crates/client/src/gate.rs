@@ -2572,7 +2572,7 @@ fn localized_text(world: &mut World, key: &str) -> Option<String> {
 /// Follows the weather shown from frame to frame once it is ready. On the first frame it
 /// must already be the server's (joining shows the real weather, not a change from the
 /// menus' sky into it); after that no fraction may change faster than easing lets it
-/// (`weather::fastest`), so fog, rain and the rest come and go gradually.
+/// (`weather::Easing::fastest`), so fog, rain and the rest come and go gradually.
 fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
     let weather = world.resource::<crate::weather::ClientWeather>();
     let shown = weather.current.fractions();
@@ -2594,7 +2594,7 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
         Some(last) => {
             let dt = world.resource::<Time>().delta_secs();
             for (i, (&(name, value), was)) in shown.iter().zip(last).enumerate() {
-                let ratio = (value - was).abs() / (crate::weather::fastest(i) * dt + 1e-4);
+                let ratio = (value - was).abs() / (weather.easing().fastest(i) * dt + 1e-4);
                 if ratio > gate.weather_jump.0 {
                     gate.weather_jump = (ratio, name, now);
                 }
