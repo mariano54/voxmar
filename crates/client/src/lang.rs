@@ -645,6 +645,35 @@ mod tests {
         assert!(wrong.is_empty(), "{} language keys out of step:\n{}", wrong.len(), wrong.join("\n"));
     }
 
+    /// Every English name of a block, item or multiblock reads in Title Case ("HV Battery
+    /// Bank"): each word begins with a capital, but for the small words (of, and, the, a,
+    /// with) after the first.
+    #[test]
+    fn every_english_name_is_in_title_case() {
+        use std::collections::BTreeMap;
+        const SMALL: [&str; 5] = ["of", "and", "the", "a", "with"];
+        let mut wrong = Vec::new();
+        for package in FIRST_PARTY {
+            let path = content().join(package).join(format!("lang/{ENGLISH}.ron"));
+            let source = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let english: BTreeMap<String, String> = ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            // A name's key is `kind.package.id`; longer keys (a multiblock's hint) are sentences,
+            // and `item.style.*` are words used in them.
+            let names = english.iter().filter(|(key, _)| {
+                let parts: Vec<&str> = key.split('.').collect();
+                parts.len() == 3 && ["block", "item", "multiblock"].contains(&parts[0]) && parts[1] == package
+            });
+            for (key, name) in names {
+                // A family's `{name}` is filled with a name that is itself checked.
+                let lower = |word: &str| !word.starts_with('{') && word.chars().find(|c| c.is_alphabetic()).is_some_and(char::is_lowercase);
+                if let Some((_, word)) = name.split(' ').enumerate().find(|&(i, word)| lower(word) && (i == 0 || !SMALL.contains(&word))) {
+                    wrong.push(format!("{package}/lang/{ENGLISH}.ron: `{key}` is {name:?}, but `{word}` wants a capital"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{} names not in Title Case:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
     /// Every translation of English that lives in a definition (guide lines, help, titles)
     /// was made from the English there now: each package's `lang/pins/<code>.ron` keeps,
     /// by key, the English a translation followed and the translation written for it. So a
