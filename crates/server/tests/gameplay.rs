@@ -1390,3 +1390,21 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     client.pump_until(|c| c.items.len() > before);
     assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
 }
+
+#[test]
+fn a_kept_animal_whose_species_is_gone_waits_in_the_save() {
+    // A mod turned off took its species away: the animal it gave stays in the save, and
+    // comes back once the species does, rather than being lost.
+    let dir = world_dir("unplaced");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let client = Client::join_with(config());
+    drop(client);
+    let path = dir.join("creatures.ron");
+    let ghost = r#"[(species: "lostmod:ghost_cat", position: (0.5, 70.0, 0.5), home: (0.5, 70.0, 0.5), yaw: 0.0, health: 5, owner: "test", seed: 7, scale: 1.0, grows_in: None, products_in: [])]"#;
+    std::fs::write(&path, ghost).unwrap();
+    let client = Client::join_with(config());
+    drop(client);
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("lostmod:ghost_cat"), "the kept animal was lost from the save: {saved}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

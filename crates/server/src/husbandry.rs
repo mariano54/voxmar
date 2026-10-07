@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use voxmar_engine::block::BlockId;
+use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::husbandry::{self, IN_LOVE_SECONDS, MATE_RANGE, YOUNG_SCALE};
 use voxmar_engine::creature::brain::Mind;
 use voxmar_engine::creature::{CreatureId, mix, unit_from};
@@ -294,6 +295,7 @@ impl Server {
     /// The kept creatures, as the save keeps them.
     pub(crate) fn saved_creatures(&self) -> Vec<SavedCreature> {
         let tick = self.tick;
+        let waiting = self.creatures.unplaced.iter().cloned();
         self.creatures
             .live
             .values()
@@ -313,14 +315,39 @@ impl Server {
                     genome: Some(c.genome.clone()),
                 })
             })
+            .chain(waiting)
             .collect()
+    }
+
+    /// Tries again to put back kept creatures that could not come back yet.
+    pub(crate) fn place_unplaced(&mut self) {
+        if self.creatures.unplaced.is_empty() {
+            return;
+        }
+        let waiting = std::mem::take(&mut self.creatures.unplaced);
+        // Only those whose species is back and whose place is loaded are tried; the rest
+        // wait as they are.
+        let (ready, still): (Vec<_>, Vec<_>) = waiting.into_iter().partition(|s| {
+            self.content.creatures.id(&s.species).is_some() && self.world.contains(ColumnPos::of_block(Vec3::from_array(s.position).floor().as_ivec3()))
+        });
+        self.creatures.unplaced = still;
+        self.restore_creatures(ready);
     }
 
     /// Puts kept creatures from a save back in the world.
     pub(crate) fn restore_creatures(&mut self, saved: Vec<SavedCreature>) {
         for s in saved {
-            let Some(species) = self.content.creatures.id(&s.species) else { continue };
-            let Some(id) = self.spawn_creature(species, Vec3::from_array(s.position), s.seed) else { continue };
+            // One that cannot come back now waits, in the save, for its species (a mod
+            // turned off) or for room (the world full): a player's animal is never lost.
+            let Some(species) = self.content.creatures.id(&s.species) else {
+                tracing::warn!("a kept {} of {} waits: its species is not in the content", s.species, s.owner);
+                self.creatures.unplaced.push(s);
+                continue;
+            };
+            let Some(id) = self.spawn_creature(species, Vec3::from_array(s.position), s.seed) else {
+                self.creatures.unplaced.push(s);
+                continue;
+            };
             let def = &self.content.creatures.get(species).def;
             let tick = self.tick;
             let creature = self.creatures.live.get_mut(&id).expect("just made");
