@@ -109,8 +109,27 @@
         (template: "crop", name: "chili_pepper", palettes: {"leaf": "crop_green", "wood": "seed_yellow"}),
         (template: "crop", name: "saffron", palettes: {"leaf": "saffron_leaf", "wood": "seed_corm"}),
         (template: "crop", name: "moonbloom", palettes: {"leaf": "moon_leaf", "wood": "seed_moon"}),
+        // Regional crops, sown from their harvest (no seeds); growing and ripe looks borrowed
+        // below until the pack draws their own.
+        (template: "crop", name: "rye", palettes: {"leaf": "crop_green", "wood": "wheat"}, without: ["block/{name}_seeds"]),
+        (template: "crop", name: "chickpea", palettes: {"leaf": "crop_green"}, without: ["block/{name}_seeds"]),
+        (template: "crop", name: "rice", palettes: {"leaf": "crop_green", "wood": "seed_cream"}, without: ["block/{name}_seeds"]),
+        (template: "crop", name: "taro", palettes: {"leaf": "cabbage_leaf"}, without: ["block/{name}_seeds"]),
     ],
     textures: {
+        // Placeholders for the regional crops (P50) until the pack draws them.
+        "block/rye_crop2": (base: "block/wheat_crop2"),
+        "block/rye_crop3": (base: "block/wheat_crop3"),
+        "block/rye": (base: "block/wheat"),
+        "block/chickpea_crop2": (base: "block/potato_crop2"),
+        "block/chickpea_crop3": (base: "block/potato_crop3"),
+        "block/chickpea": (base: "block/potato"),
+        "block/rice_crop2": (base: "block/wheat_crop2"),
+        "block/rice_crop3": (base: "block/wheat_crop3"),
+        "block/rice": (base: "block/wheat"),
+        "block/taro_crop2": (base: "block/potato_crop2"),
+        "block/taro_crop3": (base: "block/potato_crop3"),
+        "block/taro": (base: "block/potato"),
         "block/wheat_crop2": (base: "shape/plant", palettes: {"leaf": "crop_green"}, layers: [Grid(rows: [
             "................",
             "................",
