@@ -24,6 +24,9 @@ impl Plugin for LevelsPlugin {
 const NEAR: f32 = 16.0;
 /// How far over its head the level sits, in blocks.
 const ABOVE: f32 = 0.55;
+/// Room a label takes, for keeping labels apart: "Lv 50" and its shadow.
+const LABEL_WIDTH: f32 = 30.0 * crate::ui::skin::PX;
+const LABEL_HEIGHT: f32 = 10.0 * crate::ui::skin::PX;
 
 /// A creature's level over it, by the creature's id.
 #[derive(Component)]
@@ -50,22 +53,40 @@ fn label(
 ) {
     let Ok((camera, eye)) = camera.single() else { return };
     // Out of the way of a screen.
-    let screen = ui.inventory_open || ui.character_open || ui.menu_open || ui.recipes_open;
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
     let ours = player.skills_known.then(|| launch.content.skills.combat_level(&player.skills));
     let species = &launch.content.creatures;
-    let mut wanted: FxHashMap<u32, (Vec2, u8)> = FxHashMap::default();
+    let mut near: Vec<(u32, Vec2, u8, f32)> = Vec::new();
     if !screen {
         for (id, kind, feet) in creatures.living() {
             let def = &species.get(kind).def;
             let head = feet + Vec3::Y * (def.body.size.1 + ABOVE);
-            if head.distance(eye.translation()) > NEAR {
+            let distance = head.distance(eye.translation());
+            if distance > NEAR {
                 continue;
             }
             // In the window's points; the interface is laid out at its own scale.
             if let Ok(at) = camera.world_to_viewport(eye, head) {
-                wanted.insert(id, (at / scale.0, def.level));
+                near.push((id, at / scale.0, def.level, distance));
             }
         }
+    }
+    // Nearer creatures' labels where they are; a farther one that would cover another
+    // moves up above it.
+    near.sort_by(|a, b| a.3.total_cmp(&b.3));
+    let size = Vec2::new(LABEL_WIDTH, LABEL_HEIGHT);
+    let mut taken: Vec<Rect> = Vec::new();
+    let mut wanted: FxHashMap<u32, (Vec2, u8)> = FxHashMap::default();
+    for (id, mut at, level, _) in near {
+        for _ in 0..4 {
+            let rect = Rect::from_center_size(at - Vec2::Y * size.y / 2.0, size);
+            if !taken.iter().any(|other| !other.intersect(rect).is_empty()) {
+                break;
+            }
+            at.y -= size.y;
+        }
+        taken.push(Rect::from_center_size(at - Vec2::Y * size.y / 2.0, size));
+        wanted.insert(id, (at, level));
     }
     let mut placed: Vec<u32> = Vec::new();
     for (entity, label, mut node, mut text, mut color, mut visibility) in &mut labels {

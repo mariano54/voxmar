@@ -132,15 +132,16 @@ pub struct Settings {
     /// The pixel font the interface writes with.
     pub font: InterfaceFont,
     /// How large the interface is drawn, in percent: one of `UI_SCALES`.
+    pub ui_scale: i32,
     /// The tips shown already (`hud::tips`), each once.
     pub tips_seen: Vec<String>,
-    pub ui_scale: i32,
     /// The sounds buttons and the inventory make.
     pub ui_sounds: UiSounds,
     /// Key that opens and closes the inventory.
     pub inventory_key: Key,
     /// Key that opens and closes the character screen (skills and how you are).
     pub character_key: Key,
+    pub journal_key: Key,
     /// Keys that show, over an item, the recipes that make it and the ones it goes into.
     pub recipes_key: Key,
     pub uses_key: Key,
@@ -326,6 +327,7 @@ impl Default for Settings {
             ui_sounds: UiSounds::default(),
             inventory_key: Key(KeyCode::KeyE),
             character_key: Key(KeyCode::KeyC),
+            journal_key: Key(KeyCode::KeyJ),
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
             screenshot_key: Key(KeyCode::F2),
@@ -714,6 +716,7 @@ enum Binding {
     Chat,
     Inventory,
     Character,
+    Journal,
     Recipes,
     Uses,
     Screenshot,
@@ -727,6 +730,7 @@ impl Binding {
             Binding::Chat => "settings.key.chat",
             Binding::Inventory => "settings.key.inventory",
             Binding::Character => "settings.key.character",
+            Binding::Journal => "settings.key.journal",
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
             Binding::Screenshot => "settings.key.screenshot",
@@ -740,6 +744,7 @@ impl Binding {
             Binding::Chat => settings.chat_key,
             Binding::Inventory => settings.inventory_key,
             Binding::Character => settings.character_key,
+            Binding::Journal => settings.journal_key,
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
             Binding::Screenshot => settings.screenshot_key,
@@ -753,6 +758,7 @@ impl Binding {
             Binding::Chat => &mut settings.chat_key,
             Binding::Inventory => &mut settings.inventory_key,
             Binding::Character => &mut settings.character_key,
+            Binding::Journal => &mut settings.journal_key,
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
             Binding::Screenshot => &mut settings.screenshot_key,
@@ -880,6 +886,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
         &[
             Control::Key(Binding::Inventory),
             Control::Key(Binding::Character),
+            Control::Key(Binding::Journal),
             Control::Key(Binding::Recipes),
             Control::Key(Binding::Uses),
             Control::Key(Binding::Screenshot),
