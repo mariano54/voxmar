@@ -26,6 +26,22 @@
     // logarithm, and the weights of the slow wetness field, the wind's rain (wet coasts,
     // dry interiors, rain shadows) and the latitude's wet and dry belts.
     humidity: (median: 0.92, spread: 0.6, wetness: 1.0, wind: 0.3, belts: 0.2),
+    // Biome levels (P15, see `LevelsDef`). Up to a find's home level (by rarity: common,
+    // uncommon, rare, very rare, legendary) each level of its biome makes it `step` times
+    // commoner (the wiki's about 1.4×); above its home it keeps `earlier` of its home rate
+    // (about two thirds, Mariano 7 Oct). Level 1 is the data's own rates. Distance from the
+    // origin leans the biome picker towards higher levels: at `reach` blocks and middling
+    // wildness each level above 1 makes a biome `lean` times likelier (a level-4 biome about
+    // 1.6 times, the old remoteness curve's +60%); a wildness field `wildness` blocks across
+    // scales that from nothing to double, so far lands may stay gentle and near ones wild.
+    levels: (
+        step: 1.4,
+        earlier: 0.67,
+        homes: (common: 1, uncommon: 3, rare: 5, very_rare: 7, legendary: 9),
+        lean: 1.17,
+        reach: 15000.0,
+        wildness: 3000.0,
+    ),
     frost: (
         snow: "snow_block",
         powder: "powder_snow",

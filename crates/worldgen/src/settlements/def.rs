@@ -357,6 +357,9 @@ pub struct SiteDef {
     /// What a spot scores: luck, less how uneven and how steep it is, more for fresh
     /// water, less for every block over sea level.
     pub score: ScoreDef,
+    /// Gentle land first (biome levels, P15): up to biome level `.0` as likely as
+    /// anywhere, and `.1` of that above it.
+    pub levels: (u8, f32),
 }
 
 impl Default for SiteDef {
@@ -382,11 +385,17 @@ impl Default for SiteDef {
             look: 6,
             creek: 4,
             score: ScoreDef::default(),
+            levels: (5, 0.7),
         }
     }
 }
 
 impl SiteDef {
+    /// How likely a settlement is in a biome of `level`, 0 ..= 1.
+    pub fn level(&self, level: u8) -> f32 {
+        if level <= self.levels.0 { 1.0 } else { self.levels.1 }
+    }
+
     /// How likely a settlement is at `temperature`, 0 ..= 1.
     pub fn climate(&self, temperature: f32) -> f32 {
         let ((cold, hot), (low, high)) = (self.temperature, self.mild);
@@ -1493,8 +1502,8 @@ impl SettlementsDef {
         }
         let site = &self.site;
         let within = |(a, b): (f32, f32), (lo, hi): (f32, f32)| a <= b && a >= lo && b <= hi;
-        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.bank < 0 || site.water < 0 {
-            return fail(format!("the site needs mild temperatures within its temperatures, a taper in [0, 1], a step of 4 or more, a firm ground no wider than its reach, and tries: {site:?}"));
+        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.bank < 0 || site.water < 0 {
+            return fail(format!("the site needs mild temperatures within its temperatures, a taper and a chance above its levels in [0, 1], a step of 4 or more, a firm ground no wider than its reach, and tries: {site:?}"));
         }
         let rules = &self.rules;
         for (name, special) in &rules.specials {

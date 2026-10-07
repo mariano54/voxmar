@@ -932,6 +932,64 @@ fn every_style_crop_is_sown_somewhere() {
     assert!(wanted.is_empty(), "no field in {seen} settlements grows {wanted:?}");
 }
 
+/// How far out from the origin each regional crop is first sown in a field, in squares
+/// (rings of the grid), on seeds 1, 7 and 42, with biome levels (P15) and without them
+/// (every biome level 1 and no lower chance above level 3, as before levels): design asked
+/// that preferring gentle land leave no crop's nearest field more than a few squares
+/// further out (draft 95). Slow, by hand:
+/// `cargo test --profile iter -p voxmar_worldgen regional_crop_reach -- --ignored --nocapture`
+/// (`SEEDS=1,7`, and `LEVELS=gentle,chance` to try another `site.levels`).
+#[test]
+#[ignore]
+fn regional_crop_reach() {
+    use super::canvas::Put;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let mut leveled = crate::content::WorldContent::load(&content).unwrap();
+    if let Some((gentle, chance)) = std::env::var("LEVELS").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse().unwrap(), b.parse().unwrap()))) {
+        leveled.settlements.site.levels = (gentle, chance);
+    }
+    let mut plain = leveled.clone();
+    for biome in &mut plain.biomes {
+        biome.level = 1;
+    }
+    plain.settlements.site.levels.1 = 1.0;
+    let crops = ["base:rye", "base:chickpea", "base:rice", "base:taro"];
+    let registry = &content.blocks;
+    println!("seed | {} (squares out, without levels -> with)", crops.join(", "));
+    let seeds: Vec<u64> = std::env::var("SEEDS").map_or(vec![1, 7, 42], |v| v.split(',').map(|s| s.parse().unwrap()).collect());
+    for seed in seeds {
+        let mut rings = Vec::new();
+        for world_content in [&plain, &leveled] {
+            let world = Overworld::with_content(seed, content.blocks.clone(), world_content);
+            let mut first: [Option<i32>; 4] = [None; 4];
+            'search: for ring in 0..40 {
+                for step in 0..(ring * 8).max(1) {
+                    let (cx, cz) = crate::spiral(ring, step);
+                    let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+                    let Some(plan) = &slot.0 else { continue };
+                    for v in plan.voxels.values().flatten() {
+                        if let Put::Set(b) = v.put {
+                            let name = &registry.def(b).name;
+                            if let Some(crop) = name.strip_suffix("_crop_0").or_else(|| name.strip_suffix("_crop_1")).or_else(|| name.strip_suffix("_crop_2"))
+                                && let Some(i) = crops.iter().position(|c| *c == crop)
+                            {
+                                first[i].get_or_insert(ring);
+                            }
+                        }
+                    }
+                    if first.iter().all(Option::is_some) {
+                        break 'search;
+                    }
+                }
+            }
+            rings.push(first);
+        }
+        let cells: Vec<String> = (0..4).map(|i| format!("{:?} -> {:?}", rings[0][i], rings[1][i])).collect();
+        println!("{seed} | {}", cells.join(", "));
+    }
+}
+
 /// No lane runs through the well or a centrepiece, or within the ring of one block round
 /// them: lanes stop at the square's edge or go round.
 #[test]
