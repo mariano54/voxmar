@@ -104,7 +104,7 @@ pub enum Requirement {
     /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
     Bed,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
-    /// a crucible.
+    /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
     /// The target is a machine (`machines.ron`), and the actor holds nothing, something it
     /// takes, or something that is not a block to place (a placeable block it does not
@@ -456,7 +456,11 @@ impl ActionDef {
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;
-                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("multiblock_core"))
+                let Some(core) = ctx.block(block).filter(|&b| ctx.blocks().def(b).has_tag("multiblock_core")) else { return Ok(false) };
+                // A machine's core with a block in hand that it does not take (use_machine
+                // takes what it does) has that block built against it, as any machine does.
+                let machine = ctx.machines().is_some_and(|machines| machines.get(core).is_some());
+                !(machine && ctx.actor_held().is_some_and(|item| ctx.info(item).placeable))
             }
             Requirement::Machine => {
                 let (block, _) = block_target()?;
@@ -595,6 +599,58 @@ mod tests {
             requires: vec![Alive, InReach, HoldingBlock, Replaceable, Unobstructed, Supported],
             effects: vec![Effect::PlaceHeld],
         }
+    }
+
+    /// A click on a machine's core (a bloomery) with a block in hand it does not take lays
+    /// the block against it, as on any machine, rather than lighting it; an empty hand or
+    /// a tool lights it, and a hearth's core (no machine) lights whatever is in hand.
+    #[test]
+    fn a_block_in_hand_is_laid_against_a_machine_core_not_lit() {
+        struct Core<'a> {
+            content: &'a crate::content::Content,
+            core: BlockId,
+            held: Option<BlockId>,
+        }
+        impl ActionContext for Core<'_> {
+            fn block(&self, pos: IVec3) -> Option<BlockId> {
+                Some(if pos == IVec3::ZERO { self.core } else { BlockId::AIR })
+            }
+            fn info(&self, block: BlockId) -> &BlockInfo {
+                self.content.blocks.info(block)
+            }
+            fn blocks(&self) -> &BlockRegistry {
+                &self.content.blocks
+            }
+            fn crops(&self) -> &CropRegistry {
+                &self.content.crops
+            }
+            fn actor_level(&self, _: SkillId) -> u8 {
+                1
+            }
+            fn actor_eye(&self) -> Vec3 {
+                Vec3::new(0.5, 2.6, 2.5)
+            }
+            fn actor_alive(&self) -> bool {
+                true
+            }
+            fn actor_held(&self) -> Option<BlockId> {
+                self.held
+            }
+            fn occupied(&self, _: IVec3) -> bool {
+                false
+            }
+            fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
+                Some(&self.content.machines)
+            }
+        }
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let id = |name: &str| content.blocks.expect(name);
+        let light = content.actions.get(content.actions.id("base:light").unwrap()).unwrap();
+        let lights = |core: &str, held: Option<&str>| light.validate(&Core { content: &content, core: id(core), held: held.map(id) }, ActionTarget::Block { block: IVec3::ZERO, face: Face::PosZ });
+        assert_eq!(lights("base:bloomery", Some("base:kiln_bricks")), Err(Rejection::Unmet(Requirement::MultiblockCore)));
+        assert_eq!(lights("base:bloomery", None), Ok(()));
+        assert_eq!(lights("base:bloomery", Some("base:iron_pickaxe")), Ok(()));
+        assert_eq!(lights("base:crucible", Some("base:kiln_bricks")), Ok(()));
     }
 
     #[test]

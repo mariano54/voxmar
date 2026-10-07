@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy::text::{FontCx, FontSmoothing, LineHeight};
 use voxmar_engine::block::{BlockDef, BlockRegistry};
 use voxmar_engine::creature::CreatureDef;
-use voxmar_engine::lang::{ENGLISH, Lang, Language, def_key, languages, title_from_id};
+use voxmar_engine::lang::{ENGLISH, Lang, Language, LineRules, def_key, languages, title_from_id};
 use voxmar_engine::skill::SkillDef;
 use voxmar_engine::effect::EffectDef;
 
@@ -28,6 +28,7 @@ pub struct LangPlugin;
 impl Plugin for LangPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SmoothFonts>()
+            .init_resource::<Joined>()
             .add_systems(Startup, load_smooth_fonts)
             .add_systems(Update, switch.run_if(resource_changed::<Settings>))
             .add_systems(
@@ -38,6 +39,16 @@ impl Plugin for LangPlugin {
                         .chain()
                         .after(bevy::text::load_font_assets_into_font_collection)
                         .before(bevy::ui::UiSystems::Prepare),
+                    // Text is laid out joined where the language keeps characters together,
+                    // and is as written again right after. Joined only for measuring: this
+                    // depends on bevy_ui's `text_system` (PostLayout) breaking lines from
+                    // `ComputedTextBlock`, never reading `Text` (bevy_ui widget/text.rs,
+                    // 0.19.1). Re-check that when upgrading Bevy.
+                    join_for_layout
+                        .in_set(bevy::ui::UiSystems::Content)
+                        .after(bevy::ui::UiSystems::Prepare)
+                        .before(bevy::ui::widget::measure_text_system),
+                    unjoin_after_layout.in_set(bevy::ui::UiSystems::Content).after(bevy::ui::widget::measure_text_system),
                 ),
             );
     }
@@ -222,6 +233,62 @@ fn drawn_smooth(c: char) -> bool {
     c as u32 >= 0x2E80 && !(0xE000..0xF900).contains(&(c as u32))
 }
 
+/// The texts the language keeps characters of together, as they are laid out (see
+/// [`LineRules`]): each swapped into its `Text` just before text is measured and out again
+/// just after, so all that reads text between frames (what writes it, compares it, copies
+/// or searches it) sees it as written. One place for every wrapped text in the game.
+#[derive(Resource, Default)]
+struct Joined {
+    rules: LineRules,
+    /// By text, its other form: the joined one between frames, as written while measured.
+    texts: bevy::platform::collections::HashMap<Entity, String>,
+}
+
+fn join_for_layout(locale: Res<Locale>, mut joined: ResMut<Joined>, mut texts: Query<(Entity, Mut<Text>)>, mut gone: RemovedComponents<Text>) {
+    let joined = &mut *joined;
+    for entity in gone.read() {
+        joined.texts.remove(&entity);
+    }
+    let rules_changed = locale.is_changed() && {
+        let rules = LineRules::of(&locale);
+        let changed = rules != joined.rules;
+        joined.rules = rules;
+        changed
+    };
+    for (entity, mut text) in &mut texts {
+        if text.is_changed() || rules_changed {
+            match joined.rules.join(&text.0) {
+                Some(laid_out) => {
+                    let written = std::mem::replace(&mut text.bypass_change_detection().0, laid_out);
+                    joined.texts.insert(entity, written);
+                    // Measured again, joined, though the words are the same.
+                    if rules_changed {
+                        text.set_changed();
+                    }
+                }
+                None => {
+                    if joined.texts.remove(&entity).is_some() && rules_changed {
+                        text.set_changed();
+                    }
+                }
+            }
+        } else if let Some(other) = joined.texts.get_mut(&entity) {
+            std::mem::swap(&mut text.bypass_change_detection().0, other);
+        }
+    }
+}
+
+fn unjoin_after_layout(mut joined: ResMut<Joined>, mut texts: Query<&mut Text>) {
+    let joined = &mut *joined;
+    for (&entity, other) in joined.texts.iter_mut() {
+        if let Ok(mut text) = texts.get_mut(entity) {
+            // Nothing writes text while it is joined: a write here would be lost.
+            debug_assert_eq!(Some(&text.0), joined.rules.join(other).as_ref(), "text written while it was laid out joined");
+            std::mem::swap(&mut text.bypass_change_detection().0, other);
+        }
+    }
+}
+
 /// Puts a font rebuilt into a handle that already had one (the interface font, when the
 /// setting changes) into the font collection under a new name, and points text at it. Bevy
 /// only adds fonts with new handles, so text would otherwise ask for a name nothing has:
@@ -333,10 +400,10 @@ mod tests {
     const FIRST_PARTY: [&str; 2] = ["base", "core"];
 
     /// Every name a player can come across in first-party content, in `locale`, by what
-    /// it names: blocks and items (a fluid's flowing states show their source's), and
+    /// it names: blocks and items (a fluid's flowing states show their source's), biomes
+    /// and weather, commands' help, the names of alchemy properties and biome tags, and
     /// skills with their descriptions and guides.
     fn definition_names(content: &voxmar_engine::content::Content, locale: &Locale) -> Vec<(String, String)> {
-        let first_party = |name: &str| FIRST_PARTY.iter().any(|package| name.starts_with(&format!("{package}:")));
         let blocks = &content.blocks;
         let mut names = Vec::new();
         for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
@@ -357,6 +424,14 @@ mod tests {
             let words = voxmar_engine::lang::Words::Own(key.clone(), name);
             names.push((key, locale.render(&words, blocks)));
         }
+        for def in content.commands.iter().filter(|def| first_party(&def.name)) {
+            names.push((format!("/{} help", def.short_name()), locale.render(&def.help_words(), blocks)));
+            names.push((format!("/{} summary", def.short_name()), locale.render(&def.summary_words(), blocks)));
+        }
+        for key in built_keys(content) {
+            let own = key.rsplit('.').next().unwrap_or(&key).replace('_', " ");
+            names.push((key.clone(), locale.get_or(&key, &own).to_owned()));
+        }
         for id in content.skills.ids() {
             let def = content.skills.get(id);
             names.push((def.name.clone(), locale.skill(def)));
@@ -366,6 +441,103 @@ mod tests {
             }
         }
         names
+    }
+
+    /// The keys the code builds from first-party content rather than names: what each
+    /// `alchemy:<property>` tag is called (`alchemy.<property>`, in item tooltips), each
+    /// biome tag (`biome.tag.<tag>`, in `/biome`), what creatures are doing
+    /// (`creature.doing.<module>`), animals' genes and alleles (`gene.<species>.<gene>`, in
+    /// `/inspect`) and the weather's channels (`weather.channel.<name>`).
+    fn built_keys(content: &voxmar_engine::content::Content) -> BTreeSet<String> {
+        let blocks = &content.blocks;
+        let mut keys = BTreeSet::new();
+        for id in (0..blocks.len()).map(|i| BlockId(i as u16)) {
+            let def = blocks.def(id);
+            if first_party(&def.name) {
+                keys.extend(def.tags.iter().filter_map(|tag| tag.strip_prefix("alchemy:")).map(|property| format!("alchemy.{property}")));
+            }
+        }
+        let world = voxmar_worldgen::WorldContent::load(content).unwrap();
+        for biome in world.biomes.iter().filter(|biome| first_party(&biome.name)) {
+            keys.extend(biome.tags.iter().map(|tag| format!("biome.tag.{tag}")));
+        }
+        // What `/creatures` says each one is doing: its brain's module, or resting.
+        keys.insert("creature.doing.resting".into());
+        for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
+            keys.extend(species.modules.iter().map(|(module, _)| format!("creature.doing.{}", module.name())));
+        }
+        // What inspecting an animal names: its genes and their alleles.
+        for (_, species) in content.creatures.iter().filter(|(_, species)| first_party(&species.def.name)) {
+            let name = &species.def.name;
+            for gene in &species.def.genes {
+                keys.insert(def_key("gene", &format!("{name}.{}", gene.name)));
+                if let voxmar_engine::genes::GeneKind::Alleles(alleles) = &gene.kind {
+                    keys.extend(alleles.iter().map(|allele| def_key("gene", &format!("{name}.{}.{}", gene.name, allele.name))));
+                }
+            }
+        }
+        // The weather's channels in `/weather` and the F3 screen, and what falls.
+        let channels = voxmar_engine::weather::Weather::default().channels().map(|(name, _)| name);
+        keys.extend(channels.chain(["rain", "snow"]).map(|name| format!("weather.channel.{name}")));
+        keys
+    }
+
+    /// Whether a definition's name is first-party's.
+    fn first_party(name: &str) -> bool {
+        FIRST_PARTY.iter().any(|package| name.strip_prefix(package).is_some_and(|rest| rest.starts_with(':')))
+    }
+
+    /// The English first-party definitions carry themselves, by the key that names it:
+    /// titles, descriptions, guide lines and command help. The language files say the
+    /// same, so a translator works from a complete English file.
+    fn english_in_definitions(content: &voxmar_engine::content::Content) -> Vec<(String, String)> {
+        let mut own = Vec::new();
+        for id in content.effects.ids() {
+            let def = content.effects.get(id);
+            if first_party(&def.name) {
+                let key = def_key("effect", &def.name);
+                own.push((format!("{key}.description"), def.description.clone()));
+                own.push((key, def.title.clone()));
+            }
+        }
+        for (_, creature) in content.creatures.iter().filter(|(_, creature)| first_party(&creature.def.name)) {
+            let def = &creature.def;
+            own.push((def_key("creature", &def.name), def.title.clone()));
+            for breed in &def.breeds {
+                let title = if breed.title.is_empty() { title_from_id(&breed.name) } else { breed.title.clone() };
+                own.push((def_key("breed", &format!("{}.{}", def.name, breed.name)), title));
+            }
+        }
+        for id in content.skills.ids() {
+            let def = content.skills.get(id);
+            let key = def_key("skill", &def.name);
+            own.push((format!("{key}.description"), def.description.clone()));
+            for (i, step) in def.guide.iter().enumerate() {
+                own.push((format!("{key}.guide.{i}"), step.text.clone()));
+                if let Some(how) = &step.how {
+                    own.push((format!("{key}.guide.{i}.how"), how.clone()));
+                }
+            }
+            own.push((key, def.title.clone()));
+        }
+        for def in content.commands.iter().filter(|def| first_party(&def.name)) {
+            for words in [def.help_words(), def.summary_words()] {
+                if let voxmar_engine::lang::Words::Own(key, english) = words {
+                    own.push((key, english));
+                }
+            }
+        }
+        for quest in content.quests.iter().filter(|quest| first_party(&quest.name)) {
+            let key = def_key("quest", &quest.name);
+            own.push((format!("{key}.why"), quest.why.clone()));
+            own.push((key, quest.title.clone()));
+        }
+        for structure in content.multiblocks.iter().filter(|structure| first_party(&structure.name)) {
+            let key = def_key("multiblock", &structure.name);
+            own.push((format!("{key}.hint"), structure.hint.clone()));
+            own.push((key, structure.title.clone()));
+        }
+        own
     }
 
     /// Japanese has every word English has, with the same arguments, and every
@@ -398,15 +570,16 @@ mod tests {
         assert!(missing.is_empty(), "{} words have no Japanese:\n{}", missing.len(), missing.join("\n"));
     }
 
-    /// Every key the interface's code names is in English. Keys the code builds (a
-    /// setting's `.hint`, `key.<code>`, `alchemy.<property>`) are checked where they are
-    /// built.
+    /// Every key the interface's code names is in English, and so is every key it builds
+    /// from content (see [`built_keys`]). A setting's `.hint` is checked in `settings`, and
+    /// `key.<code>` in `keys`.
     #[test]
     fn every_key_in_the_code_exists() {
         let english = Lang::load(&content(), ENGLISH);
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let mut unknown: BTreeSet<String> = built_keys(&loaded).into_iter().filter(|key| english.find(key).is_none()).map(|key| format!("content: {key}")).collect();
         let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = vec![source];
-        let mut unknown = BTreeSet::new();
         let namespaces = [
             "menu", "worlds", "time", "create", "mode", "join", "loading", "net", "settings", "screen", "hud", "inventory",
             "rarity", "item", "skills", "character", "language", "effect",
@@ -435,16 +608,283 @@ mod tests {
         assert!(unknown.is_empty(), "keys missing from en.ron:\n{}", unknown.into_iter().collect::<Vec<_>>().join("\n"));
     }
 
-    /// Every character anything on screen writes: every language's strings and names, and
-    /// the characters the client's own string literals hold (symbols, markers), from the
-    /// lines that aren't comments.
+    /// Each first-party package's languages have the same keys (Japanese needs no `.one`
+    /// form of a count), so a translator works from a complete English file and no
+    /// translation keeps a string for a key that is gone; and where a definition writes its
+    /// own English (see [`english_in_definitions`]), English says the same, so the two
+    /// never drift apart.
+    #[test]
+    fn every_language_has_the_same_keys() {
+        use std::collections::BTreeMap;
+        let read = |package: &str, code: &str| -> BTreeMap<String, String> {
+            let path = content().join(package).join(format!("lang/{code}.ron"));
+            let source = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        };
+        let mut wrong = Vec::new();
+        for package in FIRST_PARTY {
+            let english = read(package, ENGLISH);
+            // The languages first-party ships; a mod's own language falls back to English.
+            let shipped = |code: &str| FIRST_PARTY.iter().any(|package| content().join(package).join(format!("lang/{code}.ron")).exists());
+            for language in languages(&content()).into_iter().filter(|language| language.code != ENGLISH && shipped(&language.code)) {
+                let other = read(package, &language.code);
+                let code = &language.code;
+                wrong.extend(english.keys().filter(|key| !key.ends_with(".one") && !other.contains_key(*key)).map(|key| format!("{package}/lang/{code}.ron lacks `{key}`")));
+                wrong.extend(other.keys().filter(|key| !english.contains_key(*key)).map(|key| format!("{package}/lang/en.ron lacks `{key}` (or {code}.ron keeps a key that is gone)")));
+            }
+        }
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let english = Lang::load(&content(), ENGLISH);
+        for (key, own) in english_in_definitions(&loaded) {
+            match english.find(&key) {
+                Some(text) if text == own => {}
+                Some(text) => wrong.push(format!("`{key}` is {own:?} in its definition but {text:?} in en.ron: change both (and the other languages)")),
+                None => wrong.push(format!("en.ron lacks `{key}`: {own:?}")),
+            }
+        }
+        assert!(wrong.is_empty(), "{} language keys out of step:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
+    /// Every English name of a block, item or multiblock reads in Title Case ("HV Battery
+    /// Bank"): each word begins with a capital, but for the small words (of, and, the, a,
+    /// with) after the first.
+    #[test]
+    fn every_english_name_is_in_title_case() {
+        use std::collections::BTreeMap;
+        const SMALL: [&str; 5] = ["of", "and", "the", "a", "with"];
+        let mut wrong = Vec::new();
+        for package in FIRST_PARTY {
+            let path = content().join(package).join(format!("lang/{ENGLISH}.ron"));
+            let source = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let english: BTreeMap<String, String> = ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            // A name's key is `kind.package.id`; longer keys (a multiblock's hint) are sentences,
+            // and `item.style.*` are words used in them.
+            let names = english.iter().filter(|(key, _)| {
+                let parts: Vec<&str> = key.split('.').collect();
+                parts.len() == 3 && ["block", "item", "multiblock"].contains(&parts[0]) && parts[1] == package
+            });
+            for (key, name) in names {
+                // A family's `{name}` is filled with a name that is itself checked.
+                let lower = |word: &str| !word.starts_with('{') && word.chars().find(|c| c.is_alphabetic()).is_some_and(char::is_lowercase);
+                if let Some((_, word)) = name.split(' ').enumerate().find(|&(i, word)| lower(word) && (i == 0 || !SMALL.contains(&word))) {
+                    wrong.push(format!("{package}/lang/{ENGLISH}.ron: `{key}` is {name:?}, but `{word}` wants a capital"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{} names not in Title Case:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
+    /// Every translation of English that lives in a definition (guide lines, help, titles)
+    /// was made from the English there now: each package's `lang/pins/<code>.ron` keeps,
+    /// by key, the English a translation followed and the translation written for it. So a
+    /// line inserted into a skill's guide (which shifts every later line's key), English
+    /// reworded, or a translation changed on its own fails here until someone checks the
+    /// two agree and updates the pin, instead of showing the wrong line.
+    #[test]
+    fn every_translation_follows_its_english() {
+        use std::collections::BTreeMap;
+        fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Option<BTreeMap<String, T>> {
+            let source = std::fs::read_to_string(path).ok()?;
+            Some(ron::from_str(&source).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+        }
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let own: BTreeMap<String, String> = english_in_definitions(&loaded).into_iter().collect();
+        let mut wrong = Vec::new();
+        for language in languages(&content()).into_iter().filter(|language| language.code != ENGLISH) {
+            let code = &language.code;
+            for package in FIRST_PARTY {
+                let Some(strings) = read::<String>(&content().join(package).join(format!("lang/{code}.ron"))) else { continue };
+                let pins = read::<(String, String)>(&content().join(package).join(format!("lang/pins/{code}.ron"))).unwrap_or_default();
+                let file = format!("{package}/lang/pins/{code}.ron");
+                for (key, english) in own.iter() {
+                    let Some(translation) = strings.get(key) else { continue };
+                    match pins.get(key) {
+                        Some((pinned, written)) if pinned == english && written == translation => {}
+                        Some((pinned, _)) if pinned != english => {
+                            wrong.push(format!("`{key}` in {package}/lang/{code}.ron follows {pinned:?}, but English now says {english:?}: change it, then its pin in {file}"))
+                        }
+                        Some((_, written)) => wrong.push(format!("`{key}` in {package}/lang/{code}.ron was {written:?} and is now {translation:?}: if it still follows {english:?}, update its pin in {file}")),
+                        None => wrong.push(format!("{file} lacks `{key}`: {key:?}: ({english:?}, {translation:?}),")),
+                    }
+                }
+                wrong.extend(pins.keys().filter(|key| !own.contains_key(*key) || !strings.contains_key(*key)).map(|key| format!("{file} pins `{key}`, which {code} no longer translates")));
+            }
+        }
+        assert!(wrong.is_empty(), "{} translations out of step with their English:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
+    /// The string literals in Rust or RON source, as written (escapes left in), past line
+    /// and block comments, character literals and raw strings.
+    fn string_literals(source: &str) -> Vec<String> {
+        let chars: Vec<char> = source.chars().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < chars.len() {
+            match chars[i] {
+                '/' if chars.get(i + 1) == Some(&'/') => {
+                    while i < chars.len() && chars[i] != '\n' {
+                        i += 1;
+                    }
+                }
+                // Block comments, nested as Rust nests them.
+                '/' if chars.get(i + 1) == Some(&'*') => {
+                    let mut depth = 0;
+                    while i < chars.len() {
+                        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                            depth += 1;
+                            i += 1;
+                        } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                            depth -= 1;
+                            i += 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                // A character literal ('"', '\''), not a lifetime ('a).
+                '\'' if chars.get(i + 1) == Some(&'\\') => {
+                    i += 2;
+                    while i < chars.len() && chars[i] != '\'' {
+                        i += 1;
+                    }
+                }
+                '\'' if chars.get(i + 2) == Some(&'\'') => i += 2,
+                'r' if matches!(chars.get(i + 1), Some('#' | '"')) && (i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_') => {
+                    let hashes = chars[i + 1..].iter().take_while(|&&c| c == '#').count();
+                    if chars.get(i + 1 + hashes) == Some(&'"') {
+                        let start = i + 2 + hashes;
+                        let mut end = start;
+                        while end < chars.len() && !(chars[end] == '"' && chars[end + 1..].iter().take(hashes).filter(|&&c| c == '#').count() == hashes) {
+                            end += 1;
+                        }
+                        out.push(chars[start..end.min(chars.len())].iter().collect());
+                        i = end + hashes;
+                    }
+                }
+                '"' => {
+                    let start = i + 1;
+                    i += 1;
+                    while i < chars.len() && chars[i] != '"' {
+                        i += if chars[i] == '\\' { 2 } else { 1 };
+                    }
+                    out.push(chars[start..i.min(chars.len())].iter().collect());
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out
+    }
+
+    #[test]
+    fn string_literals_skip_comments_and_characters() {
+        let source = "let a = \"menu.done\"; // \"menu.gone\"\n/* \"menu.gone\" /* \"menu.gone\" */ */ let c = '\"'; let d: &'static str = r#\"x \"y\" z\"#; \"esc \\\" q\"";
+        assert_eq!(string_literals(source), ["menu.done", "x \"y\" z", "esc \\\" q"]);
+    }
+
+    /// No language file keeps a key nothing uses: each first-party English key is a block's
+    /// or family's name as [`Lang::block`] looks it up, English a definition carries or a key
+    /// built from content (see [`english_in_definitions`], [`built_keys`]), or a key some
+    /// code or data names, whole or in a pattern (`"tip.{name}"`, `"{key}.hint"`). So
+    /// renaming or dropping something drops its words too, instead of leaving them behind.
+    #[test]
+    fn no_language_keeps_a_key_nothing_uses() {
+        use std::collections::BTreeMap;
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let english = Lang::load(&content(), ENGLISH);
+        let mut used: BTreeSet<String> = built_keys(&loaded);
+        used.extend(english_in_definitions(&loaded).into_iter().map(|(key, _)| key));
+        used.extend(definition_names(&loaded, &Locale::load(&content(), ENGLISH)).into_iter().map(|(key, _)| key));
+        // Blocks by the keys their names come from (see `Lang::block`).
+        let blocks = &loaded.blocks;
+        for def in (0..blocks.len()).map(|i| blocks.def(BlockId(i as u16))) {
+            let own = def_key("block", &def.name);
+            if english.find(&own).is_some() {
+                used.insert(own);
+            } else if let Some(family) = &def.family {
+                let (namespace, local) = def.name.split_once(':').unwrap_or(("", &def.name));
+                used.insert(format!("block.{namespace}.{}", local.replacen(family.rsplit(':').next().unwrap_or(family), "{name}", 1)));
+                used.insert(def_key("family", family));
+            }
+        }
+        // Every string in the code and the data, whole, or as a pattern where it fills in
+        // `{...}` (with at least a word of its own, so `"{}.{}"` matches nothing). The lang
+        // modules' own patterns (`"block.{namespace}.{pattern}"`) are what is modelled above.
+        let mut patterns: Vec<Vec<String>> = Vec::new();
+        let mut files = vec![assets().join("../crates"), content()];
+        while let Some(path) = files.pop() {
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name == "lang" || name == "target") {
+                    continue;
+                }
+                files.extend(std::fs::read_dir(&path).unwrap().map(|entry| entry.unwrap().path()));
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs" && e != "ron") {
+                continue;
+            }
+            for literal in string_literals(&std::fs::read_to_string(&path).unwrap()) {
+                let literal = literal.as_str();
+                if !literal.contains('{') {
+                    used.insert(literal.to_owned());
+                    continue;
+                }
+                let parts: Vec<String> = literal.split('{').enumerate().map(|(i, part)| if i == 0 { part } else { part.split_once('}').map_or("", |(_, rest)| rest) }.to_owned()).collect();
+                if !path.ends_with("lang.rs") && parts.iter().any(|part| part.trim_matches('.').len() > 1) && parts.iter().all(|part| part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.')) {
+                    patterns.push(parts);
+                }
+            }
+        }
+        // Whether `key` is `parts` with each gap filled by a word or more; one that only adds
+        // to another key (`"{key}.hint"`) is used where that key is.
+        let fits = |key: &str, parts: &[String]| {
+            if let [stem, suffix] = parts
+                && stem.is_empty()
+            {
+                return key.strip_suffix(suffix.as_str()).is_some_and(|stem| used.contains(stem));
+            }
+            let Some(mut rest) = key.strip_prefix(parts[0].as_str()) else { return false };
+            for (i, part) in parts.iter().enumerate().skip(1) {
+                let last = i == parts.len() - 1;
+                let found = if last { rest.strip_suffix(part.as_str()).map(|before| before.len()).filter(|_| part.len() <= rest.len()) } else { rest.get(1..).and_then(|after| after.find(part.as_str())).map(|at| at + 1) };
+                let Some(at) = found.filter(|&at| at > 0) else { return false };
+                rest = &rest[at + if last { rest.len() - at } else { part.len() }..];
+            }
+            parts.len() > 1 && rest.is_empty()
+        };
+        let mut unused = Vec::new();
+        for package in FIRST_PARTY {
+            let path = content().join(package).join("lang/en.ron");
+            let strings: BTreeMap<String, String> = ron::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            for key in strings.keys() {
+                // A count's forms are used with it.
+                let count = key.strip_suffix(".one").or_else(|| key.strip_suffix(".other"));
+                // What content names is only what it names (`"block.{kind}.{event}"` is a sound).
+                let modelled = ["block", "family", "biome", "creature", "breed", "gene", "effect", "skill", "quest", "multiblock", "alchemy"].contains(&key.split('.').next().unwrap_or(""));
+                if ![Some(key.as_str()), count].into_iter().flatten().any(|key| used.contains(key) || !modelled && patterns.iter().any(|parts| fits(key, parts))) {
+                    unused.push(format!("{package}/lang/en.ron: {key}"));
+                }
+            }
+        }
+        assert!(unused.is_empty(), "{} keys nothing uses (drop them from every language, or use them):\n{}", unused.len(), unused.join("\n"));
+    }
+
+    /// Every character anything on screen writes: every language's strings and names (as
+    /// they are laid out, joined, too), and the characters the client's own string literals
+    /// hold (symbols, markers), from the lines that aren't comments.
     fn every_text_written() -> Vec<String> {
         let loaded = voxmar_server::load_content(&assets()).unwrap();
         let mut texts: Vec<String> = Vec::new();
         for language in languages(&content()) {
             let locale = Locale::load(&content(), &language.code);
+            let start = texts.len();
             texts.extend(locale.keys().map(|key| locale.get(key).to_owned()));
             texts.extend(definition_names(&loaded, &locale).into_iter().map(|(_, name)| name));
+            let rules = LineRules::of(&locale);
+            let joined: Vec<String> = texts[start..].iter().filter_map(|text| rules.join(text)).collect();
+            texts.extend(joined);
         }
         let mut sources = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
         while let Some(path) = sources.pop() {
@@ -519,6 +959,101 @@ mod tests {
         }
     }
 
+    /// Text is joined only while it is laid out: before and after, and to anything that
+    /// writes or reads it, it is as written, and it is joined again when it changes or the
+    /// language does.
+    #[test]
+    fn text_is_joined_only_while_laid_out() {
+        #[derive(Resource, Default)]
+        struct Seen(Vec<String>);
+        let mut app = App::new();
+        app.insert_resource(Locale::load(&content(), "ja")).init_resource::<Joined>().init_resource::<Seen>();
+        app.add_systems(Update, (join_for_layout, |texts: Query<&Text>, mut seen: ResMut<Seen>| seen.0.extend(texts.iter().map(|text| text.0.clone())), unjoin_after_layout).chain());
+        let text = app.world_mut().spawn(Text::new("クリック。")).id();
+        let j = voxmar_engine::lang::WORD_JOINER;
+        let frame = |app: &mut App| {
+            app.update();
+            let seen = std::mem::take(&mut app.world_mut().resource_mut::<Seen>().0);
+            (seen, app.world().get::<Text>(text).unwrap().0.clone())
+        };
+        assert_eq!(frame(&mut app), (vec![format!("ク{j}リ{j}ッ{j}ク{j}。")], "クリック。".to_owned()));
+        assert_eq!(frame(&mut app), (vec![format!("ク{j}リ{j}ッ{j}ク{j}。")], "クリック。".to_owned()), "joined again on a frame it does not change");
+        app.world_mut().get_mut::<Text>(text).unwrap().0 = "ボタン".into();
+        assert_eq!(frame(&mut app).0, vec![format!("ボ{j}タ{j}ン")]);
+        // English has no rules: as written throughout.
+        *app.world_mut().resource_mut::<Locale>() = Locale::load(&content(), "en");
+        assert_eq!(frame(&mut app), (vec!["ボタン".to_owned()], "ボタン".to_owned()));
+    }
+
+    /// A text written while it is joined (between being joined and measured, and back)
+    /// would be lost: debug runs say so.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "text written while it was laid out joined")]
+    fn writing_joined_text_is_caught() {
+        let mut app = App::new();
+        app.insert_resource(Locale::load(&content(), "ja")).init_resource::<Joined>();
+        app.add_systems(Update, (join_for_layout, |mut texts: Query<&mut Text>| texts.iter_mut().for_each(|mut text| text.0 = "ボタン".into()), unjoin_after_layout).chain());
+        app.world_mut().spawn(Text::new("クリック"));
+        app.update();
+    }
+
+    /// Japanese text wraps as kinsoku wants at every width: no line starts with closing
+    /// punctuation or a small kana, none ends with an opening bracket, and no katakana word
+    /// splits, while a line still breaks between any two other kanji or kana. Laid out as
+    /// the game lays it out (joined, see [`Joined`]) in the CJK fonts, from Japanese's
+    /// own strings and names.
+    #[test]
+    fn japanese_wraps_where_kinsoku_allows() {
+        use parley::fontique::{Blob, FontInfoOverride};
+        use parley::{FontFamily, StyleProperty};
+        let fonts = assets().join("ui/fonts");
+        let mut cx = parley::FontContext::default();
+        let data = crate::ui::skin::smooth_fallbacks(&fonts).into_iter().next().expect("a CJK font");
+        cx.collection.register_fonts(Blob::from(data), Some(FontInfoOverride { family_name: Some("cjk"), ..Default::default() }));
+        let locale = Locale::load(&content(), "ja");
+        let rules = LineRules::of(&locale);
+        assert!(!rules.is_empty(), "Japanese gives no line rules");
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let mut texts: Vec<String> = locale.keys().filter(|key| !key.starts_with("language.")).map(|key| locale.get(key).to_owned()).collect();
+        texts.extend(definition_names(&loaded, &locale).into_iter().map(|(_, name)| name));
+        texts.retain(|text| text.chars().any(drawn_smooth) && rules.join(text).is_some());
+        texts.sort();
+        texts.dedup();
+        let mut layouts = parley::LayoutContext::<()>::new();
+        // Where `text` breaks into lines `width` wide: the index in it, as written, of each
+        // character starting a line after the first.
+        let mut breaks = |text: &str, width: f32| -> Vec<usize> {
+            let mut builder = layouts.ranged_builder(&mut cx, text, 1.0, true);
+            builder.push_default(StyleProperty::FontFamily(FontFamily::named("cjk")));
+            builder.push_default(StyleProperty::FontSize(16.0));
+            let mut layout = builder.build(text);
+            layout.break_all_lines(Some(width));
+            let written = |end: usize| text[..end].chars().filter(|&c| c != voxmar_engine::lang::WORD_JOINER).count();
+            layout.lines().skip(1).map(|line| written(line.text_range().start)).collect()
+        };
+        let widths = [48.0, 80.0, 120.0, 176.0, 260.0];
+        let mut wrong = BTreeSet::new();
+        let mut unjoined = 0;
+        for text in &texts {
+            let (joined, chars) = (rules.join(text).unwrap(), text.chars().collect::<Vec<_>>());
+            let held = rules.held(&chars);
+            let shown = |at: usize| format!("{}|{}", chars[..at].iter().collect::<String>(), chars[at..].iter().collect::<String>());
+            for width in widths {
+                wrong.extend(breaks(&joined, width).into_iter().filter(|&at| held.get(at) == Some(&true)).map(|at| format!("{} ({width} wide)", shown(at))));
+                unjoined += breaks(text, width).into_iter().filter(|&at| held.get(at) == Some(&true)).count();
+            }
+        }
+        // The check sees the breaks joining keeps out.
+        assert!(texts.len() > 200 && unjoined > 0, "the check sees no breaks to keep ({} texts)", texts.len());
+        assert!(wrong.is_empty(), "{} Japanese lines break where kinsoku forbids:\n{}", wrong.len(), wrong.into_iter().take(40).collect::<Vec<_>>().join("\n"));
+        // And a line still breaks between kanji and kana mid-sentence, not only at punctuation.
+        let sentence: Vec<char> = "経験値は行動ごとに入り、レベルが上がるほど手に入るものが増えていきます。".chars().collect();
+        let joined = rules.join(&sentence.iter().collect::<String>()).unwrap();
+        let at = breaks(&joined, 120.0);
+        assert!(at.iter().any(|&at| sentence[at - 1].is_alphabetic() && sentence[at].is_alphabetic()), "no break between kanji or kana: {at:?}");
+    }
+
     /// Every Japanese name with kanji (blocks and items, creatures, skills, conditions) has
     /// a reading, in kana alone, for the interface to show with it.
     #[test]
@@ -546,13 +1081,26 @@ mod tests {
             let def = loaded.skills.get(id);
             check(locale.skill(def), locale.skill_reading(def));
         }
-        for key in locale.keys().filter(|key| key.split_once('.').is_some_and(|(kind, rest)| kind == "effect" && !rest.contains('.'))) {
+        for key in locale.keys().filter(|key| key.split('.').count() == 3 && key.split('.').next() == Some("effect")) {
             check(locale.get(key).to_owned(), locale.reading(key));
         }
         assert!(unread.is_empty(), "Japanese names without a reading (add them to lang/readings/ja.ron): {}", unread.into_iter().collect::<Vec<_>>().join(", "));
         let oak = blocks.id("base:oak_log").map(|id| blocks.def(id)).unwrap();
         assert_eq!((locale.block(oak).as_str(), locale.block_reading(oak).as_deref()), ("オークの原木", Some("オークのげんぼく")));
         assert_eq!(Locale::load(&content(), "en").block_reading(oak), None);
+    }
+
+    /// A command's reply counting creatures says "1 creature" in English, and Japanese
+    /// counts with its one form.
+    #[test]
+    fn a_reply_counts_its_creatures() {
+        let blocks = voxmar_server::load_content(&assets()).unwrap().blocks;
+        let done = |code: &str, count: usize| {
+            Lang::load(&content(), code).render(&voxmar_engine::lang::Words::key("command.creatures.done").with("count", voxmar_engine::lang::Words::text(count)), &blocks)
+        };
+        assert_eq!(done(ENGLISH, 1), "Done, for 1 creature within 8 blocks.");
+        assert_eq!(done(ENGLISH, 3), "Done, for 3 creatures within 8 blocks.");
+        assert_eq!(done("ja", 1), "8ブロック以内の1体に行いました。");
     }
 
     #[test]

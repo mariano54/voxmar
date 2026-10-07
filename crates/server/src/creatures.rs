@@ -172,6 +172,8 @@ pub struct Creatures {
     struck: FxHashMap<PlayerId, std::time::Instant>,
     /// Where each player settled and since when (RuneScape's tolerance).
     settled: FxHashMap<PlayerId, (Vec3, u64)>,
+    /// Loot waiting for its body to finish falling: the tick it drops, and what.
+    falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
 }
 
 impl Creatures {
@@ -242,6 +244,7 @@ impl Server {
         }
         self.think_and_move();
         self.tick_husbandry();
+        self.drop_fallen_loot();
         self.replicate_creatures();
     }
 
@@ -588,7 +591,7 @@ impl Server {
     }
 
     /// A creature dies: its loot pops out, its killer earns experience.
-    fn creature_dies(&mut self, id: u32) {
+    pub(crate) fn creature_dies(&mut self, id: u32) {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
         let species = self.content.creatures.get(creature.species);
@@ -608,9 +611,11 @@ impl Server {
         // The killer's journal: one more of the species, and each drop for the collection log.
         let mut journal = vec![(Self::page_of(species.def.kind), species.def.name.clone(), 1)];
         journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
+        // Its loot comes out once its body has fallen, never from an animal still standing.
+        let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
         for (i, (item, count)) in found.into_iter().enumerate() {
             let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
-            self.items.spawn(ItemStack { item, count }, body, dropped::PICKUP_DELAY);
+            self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
         }
         if let (Some(player), Some(skill)) = (creature.hurt_by, species.xp_skill) {
             let tenths = (species.def.xp.kill * 10.0) as u32;
@@ -624,6 +629,16 @@ impl Server {
             for (page, name, times) in journal {
                 self.discover(player, page, &name, times);
             }
+        }
+    }
+
+    /// Drops the loot of creatures whose bodies have finished falling.
+    fn drop_fallen_loot(&mut self) {
+        let tick = self.tick;
+        let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.creatures.falling_loot).into_iter().partition(|(due, ..)| *due <= tick);
+        self.creatures.falling_loot = waiting;
+        for (_, stack, body) in ready {
+            self.items.spawn(stack, body, dropped::PICKUP_DELAY);
         }
     }
 
