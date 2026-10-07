@@ -42,6 +42,8 @@ MATERIALS = {
     # Item sprites: the `head` slot is the metal (default's `metal_*` palettes), so one
     # drawing serves copper, iron and bronze; a dark outline and a glint as vanilla's.
     'head': ['head:0', 'head:1', 'head:2'],
+    # A treasure chest's lock plate, in its age's metal (default's `lock_*` palettes).
+    'lock': ['lock:0', 'lock:1', 'lock:2'],
     'ink': ['#1a140e'],
     'glint': ['#fff6e0'],
 }
@@ -955,7 +957,10 @@ def _():
     straps(f)
     f.rect(12, 9, 19, 20, 'iron', 2)
     f.outline(12, 9, 19, 20, 'iron', 0)
-    f.rect(13, 10, 18, 15, 'bronze', 3)
+    f.palettes['lock'] = 'lock_steam'
+    f.rect(13, 10, 18, 19, 'lock', 1)
+    f.rect(13, 10, 18, 10, 'lock', 2, bevel=False)
+    f.rect(13, 10, 13, 19, 'lock', 2, bevel=False)
     f.rect(15, 12, 16, 17, 'rubber', 0, bevel=False)
     return f
 
