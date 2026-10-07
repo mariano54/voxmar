@@ -89,7 +89,7 @@
         (
             name: "deop",
             usage: "<player>",
-            help: "Takes an online player's admin rights away, until they leave; one named when the server started, or with its admin token, is an admin again when they come back.",
+            help: "Takes an online player's admin rights away until they leave. One named when the server started, or with its admin token, is an admin again when they come back.",
             permission: Admin,
             run: Deop,
         ),

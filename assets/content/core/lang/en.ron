@@ -11,6 +11,12 @@
     // How tall a line of wrapped text is, in font sizes.
     "language.line_height": "1.2",
     "language.tight_line": "1.0",
+    // Where wrapped lines may not break (none in English): characters no line starts with,
+    // characters no line ends with, and characters whose runs stay whole, up to so many.
+    "language.line_start_forbidden": "",
+    "language.line_end_forbidden": "",
+    "language.unbroken": "",
+    "language.unbroken_longest": "",
     // Between items in a line: "Farming 3 · Mining 5".
     "language.dot": " · ",
 
@@ -616,7 +622,8 @@
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",
     "command.creatures.admins_only": "Only admins may tame, ready, hasten, hold or kill creatures with a command.",
     "command.creatures.what": "Tame, ready, hasten, hold or kill?",
-    "command.creatures.done": "Done, for {count} creatures within 8 blocks.",
+    "command.creatures.done.one": "Done, for {count} creature within 8 blocks.",
+    "command.creatures.done.other": "Done, for {count} creatures within 8 blocks.",
     "command.skill.what": "Which skill, and what level?",
     "command.skill.unknown": "There is no skill called `{name}`.",
     "command.skill.level": "The level must be from 1 to the highest.",
@@ -709,8 +716,8 @@
     "command.core.creatures.help.summary": "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing.",
     "command.core.day.help": "Sets the time to morning: /time set day.",
     "command.core.day.help.summary": "Sets the time to morning: /time set day.",
-    "command.core.deop.help": "Takes an online player's admin rights away, until they leave; one named when the server started, or with its admin token, is an admin again when they come back.",
-    "command.core.deop.help.summary": "Takes an online player's admin rights away, until they leave; one named when the server started, or with its admin token, is an admin again when they come back.",
+    "command.core.deop.help": "Takes an online player's admin rights away until they leave. One named when the server started, or with its admin token, is an admin again when they come back.",
+    "command.core.deop.help.summary": "Takes an online player's admin rights away until they leave.",
     "command.core.drop.help": "Drops a stack of an item into the world (up to 64 at a time) at a block (~ is where you are), or at your feet.",
     "command.core.drop.help.summary": "Drops a stack of an item into the world (up to 64 at a time) at a block (~ is where you are), or at your feet.",
     "command.core.effect.help": "Gives you an effect for a while (60 seconds unless you say), as food would; clear takes them all away.",
