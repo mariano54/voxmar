@@ -3917,14 +3917,26 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource_mut::<crate::settings::Settings>().damage_numbers = true;
             gate.advance(now);
         }
-        // The guard on a toggle: one click up, the next down (looking at the sky, so the
-        // click is the guard's and nothing else's).
+        // The guard on a toggle: one click up, the next down, the sword in hand and nothing
+        // under the crosshair, so the click is the guard's and nothing else's (the view
+        // turns until nothing is: the workshop's kiln hangs overhead).
         4 => {
             world.resource_mut::<crate::settings::Settings>().toggle_guard = true;
-            select(world, WEAPON);
-            look(world, 0.0, 60.0);
-            mouse(world, MouseButton::Right, true);
-            gate.advance(now);
+            let in_hand = select(world, WEAPON);
+            let clear = {
+                let target = world.resource::<crate::interact::Target>();
+                target.hit.is_none() && target.creature.is_none()
+            };
+            if in_hand && clear && in_phase > 0.2 {
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                gate.check("toggle guard", Err(format!("the sword in hand: {in_hand}; nothing under the crosshair: {clear}")));
+                world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
+                gate.next(Step::Cook, now);
+            } else {
+                look(world, (in_phase * 90.0) % 360.0, 30.0);
+            }
         }
         5 => {
             mouse(world, MouseButton::Right, false);
@@ -3941,9 +3953,17 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             let (up_after_one, up_after_two) = (gate.count_before == 1, world.resource::<crate::fight::Fighting>().guard.is_some());
+            let why = {
+                let (ui, player, target) = (world.resource::<UiState>(), world.resource::<LocalPlayer>(), world.resource::<crate::interact::Target>());
+                format!("cursor locked {}, dead {}, the click used for something else {}", ui.cursor_locked, player.dead, target.used_right)
+            };
             gate.check(
                 "toggle guard",
-                if up_after_one && !up_after_two { Ok("with the guard on a toggle, a click raised it and stayed up let go, and the next lowered it".into()) } else { Err(format!("on a toggle, up after one click: {up_after_one}, after two: {up_after_two}")) },
+                if up_after_one && !up_after_two {
+                    Ok("with the guard on a toggle, a click raised it and stayed up let go, and the next lowered it".into())
+                } else {
+                    Err(format!("on a toggle, up after one click: {up_after_one}, after two: {up_after_two} ({why})"))
+                },
             );
             world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
             gate.next(Step::Cook, now);
