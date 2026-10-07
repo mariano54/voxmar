@@ -225,16 +225,36 @@ def tuft_grass(blades=11, h=24, plume=None, seed=0, curl=1.0):
             for x, y in tops[:5]: ellipse(c, x, y - 1, 1.8, 1.8, 'P', 3, jag=0.5, seed=int(x))
         elif plume == 'cattail':
             for x, y in tops[:3]:
-                # A plump brown head, rounded at both ends, lit on its left, on a spike.
-                for k in range(9):
-                    w = 1 if k in (0, 8) else 2
+                # A slim brown head, rounded at both ends, lit on its left, on a spike.
+                for k in range(7):
+                    w = 0 if k in (0, 6) else 1
                     for dx in range(-w, w + 1):
                         c.put(x + dx, y - k, 'F', (2 if dx < 0 else 1 if dx == 0 else 0) + (1 if (k + dx) % 3 == 0 else 0))
-                line(c, x, y - 9, x, y - 12, 'L', 3)
+                line(c, x, y - 7, x, y - 10, 'L', 3)
         elif plume == 'papyrus':
             for x, y in tops[:4]:
                 for k in range(9):
                     a = math.radians(-180 + k * 22.5); line(c, x, y, x + math.cos(a) * 4, y + math.sin(a) * 2.5, 'L', 3 + k % 2)
+        rim(c); return c
+    return f
+
+
+def rush_tuft(seed=0, stems=12, h=27):
+    """A tight, upright tuft of thin round stems, a few carrying small brown seed tufts
+    near their tips (rush)."""
+    def f():
+        c = Canvas(); r = random.Random(seed)
+        tops = []
+        for i in range(stems):
+            x0 = 16 + (i - (stems - 1) / 2) * 0.5 + r.uniform(-0.4, 0.4)
+            lean = (x0 - 16) * 4.2 + r.uniform(-1.5, 1.5); t = h * r.uniform(0.6, 1.0)
+            pts = curve(x0, 31, x0 + lean, 31 - t, lean * 0.12, 8)
+            for k, ((ax, ay), (bx, by)) in enumerate(zip(pts, pts[1:])):
+                line(c, ax, ay, bx, by, 'L', (1, 3, 2, 4)[i % 4] + (1 if k > 5 else 0))
+            tops.append(pts[-1])
+        for x, y in tops[1:9:2]:
+            for dx, dy, sh in ((0, 4, 2), (1, 5, 1), (1, 4, 3), (0, 5, 1)):
+                c.put(x + dx, y + dy, 'F', sh)
         rim(c); return c
     return f
 
@@ -537,7 +557,7 @@ add('pampas_grass', tuft_grass(12, 20, 'pampas', 4), leaf='#7a9a6a', petal='#e8e
 add('cotton_grass', tuft_grass(10, 18, 'cotton', 5), leaf='#7a9a5a', petal='#f4f4f0')
 add('cattail', tuft_grass(9, 26, 'cattail', 6, 0.3), leaf='#5a8a3a', fruit='#6a4020')
 add('papyrus', tuft_grass(6, 26, 'papyrus', 7, 0.3), leaf='#5aa23a')
-add('rush', tuft_grass(14, 27, None, 8, 0.2), leaf='#8a8a8a')
+add('rush', rush_tuft(8), leaf='#b0b0b0', fruit='#7a6a50')
 add('maidenhair_fern', fern(7, 16, 1, maiden=True), leaf='#9a9a9a')
 add('bracken', fern(7, 19, 2), leaf='#8a9a3a')
 add('horsetail', horsetail(), leaf='#5a9a3a', wood='#2a3a2a')
