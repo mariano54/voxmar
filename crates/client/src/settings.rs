@@ -128,6 +128,11 @@ pub struct Settings {
     /// a jar is found, so nothing changes for anyone who had it (see `Settings::load`).
     /// Takes effect the next time the game starts.
     pub minecraft_assets: bool,
+    /// With `minecraft_assets` on, music also comes from a Prism Launcher instance
+    /// (`music::prism`): the launcher's data folder, empty for the standard one, and the
+    /// instance's folder name, empty for the most recently launched GT New Horizons one.
+    pub prism_folder: String,
+    pub prism_instance: String,
     /// How many particles effects show (breaking blocks).
     pub particles: ParticleAmount,
     /// How coarsely far chunks are meshed.
@@ -333,6 +338,8 @@ impl Default for Settings {
             water_quality: WaterQuality::default(),
             textures: TextureOrder::default(),
             minecraft_assets: false,
+            prism_folder: String::new(),
+            prism_instance: String::new(),
             particles: ParticleAmount::default(),
             far_detail: FarDetail::default(),
             resolution: 50,
