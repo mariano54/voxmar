@@ -450,6 +450,12 @@ impl Default for BlockDef {
 }
 
 impl BlockDef {
+    /// For a block made in one of its facings other than north: the block it was made
+    /// from, by name (`base:wall_torch` for `base:wall_torch_east`).
+    pub fn facing_of(&self) -> Option<&str> {
+        self.faces.and_then(|facing| self.name.strip_suffix(facing.suffix())).filter(|base| *base != self.name)
+    }
+
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|t| t == tag)
     }

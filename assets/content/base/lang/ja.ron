@@ -681,6 +681,7 @@
     "block.base.aether_mote": "エーテルの粒",
     "block.base.campfire": "焚き火",
     "block.base.torch": "松明",
+    "block.base.wall_torch": "壁の松明",
     "block.base.cooked_rabbit": "焼いたウサギ肉",
     "block.base.cooked_chicken": "焼き鳥",
     "block.base.cooked_frog": "焼いたカエル肉",
