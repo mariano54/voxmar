@@ -1392,7 +1392,8 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
-    client.pump_until(|c| potatoes(c) == before);
+    // (At least: the ripe field's last drops may still be on their way.)
+    client.pump_until(|c| potatoes(c) >= before);
     // Sown, grown ripe and harvested: the harvest's experience with the sowing's.
     let earned = client.earned.len();
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));
