@@ -141,10 +141,12 @@ impl Default for ShaderPack {
 }
 
 impl ShaderPack {
-    /// The key lang names it by (`shader_pack.verdant`); a pack no language names goes by
-    /// its own name.
+    /// The key lang names it by: its name in lower case, with anything but a letter a to z
+    /// or a digit made `_` (`shader_pack.verdant`, `shader_pack.r_d_v1_2` for "R&D v1.2").
+    /// A pack no language names goes by its own name.
     pub fn key(&self) -> String {
-        format!("shader_pack.{}", self.name.to_lowercase().replace(' ', "_"))
+        let id: String = self.name.chars().map(|c| c.to_ascii_lowercase()).map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() { c } else { '_' }).collect();
+        format!("shader_pack.{id}")
     }
 }
 
@@ -166,8 +168,9 @@ impl ShaderPacks {
         files.sort();
         for path in files {
             match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| ron::from_str::<ShaderPack>(&s).map_err(|e| e.to_string())) {
-                Ok(pack) if packs.iter().all(|p| p.name != pack.name) => packs.push(pack),
-                Ok(pack) => warn!("{}: a shader pack called {} already exists", path.display(), pack.name),
+                // Two packs named alike would share a name in every language.
+                Ok(pack) if packs.iter().all(|p| p.key() != pack.key()) => packs.push(pack),
+                Ok(pack) => warn!("{}: a shader pack named like {} already exists ({})", path.display(), pack.name, pack.key()),
                 Err(e) => warn!("could not read shader pack {}: {e}", path.display()),
             }
         }
@@ -207,3 +210,32 @@ pub fn apply_pack(pack: Res<ActivePack>, air: Res<ClientAtmosphere>, mut camera:
 
 /// How far the local air's warmth (−1..1) shifts the grading's.
 const LOCAL_WARMTH: f32 = 0.08;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(name: &str) -> ShaderPack {
+        ShaderPack { name: name.into(), ..default() }
+    }
+
+    /// A pack's key keeps only lower-case letters and digits, so whatever its name holds the
+    /// key is one lang can write, and packs named alike (by case, or a space for an
+    /// underscore) are one pack: the first found.
+    #[test]
+    fn a_pack_is_keyed_by_its_name_in_plain_letters() {
+        assert_eq!(named("Verdant").key(), "shader_pack.verdant");
+        assert_eq!(named("Classic").key(), "shader_pack.classic");
+        assert_eq!(named("R&D v1.2").key(), "shader_pack.r_d_v1_2");
+        assert_eq!(named("Soft Light").key(), named("soft_light").key());
+        assert_eq!(named("新緑").key(), "shader_pack.__");
+        let dir = std::env::temp_dir().join(format!("voxmar-pack-keys-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("shaderpacks")).unwrap();
+        std::fs::write(dir.join("shaderpacks/a.ron"), r#"(name: "Soft Light", sun: 2.0)"#).unwrap();
+        std::fs::write(dir.join("shaderpacks/b.ron"), r#"(name: "soft_light", sun: 3.0)"#).unwrap();
+        let packs = ShaderPacks::load(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let names: Vec<&str> = packs.0.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Classic", "Soft Light"]);
+    }
+}
