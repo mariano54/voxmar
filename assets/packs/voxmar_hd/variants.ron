@@ -1,0 +1,7 @@
+// Voxmar HD's own other drawings, over the default pack's (variants.ron there, drawn from
+// its alternates.ron, which Voxmar HD's recipes redraw at 32×32): stone, the block seen
+// most, gets four alternates rather than two, each from its own seed, so a wide wall
+// shows five drawings, each turned and mirrored, block by block.
+{
+    "block/stone": ["block/stone_2", "block/stone_3", "block/stone_4", "block/stone_5"],
+}

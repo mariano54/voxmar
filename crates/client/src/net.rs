@@ -181,7 +181,7 @@ pub(crate) fn receive(
                 creatures.me = Some(me);
                 weather.set_seed(weather_seed);
                 air.start(seed);
-                generator.start(seed, world.registry.clone());
+                generator.start(seed, &launch.content);
                 player.position = position;
                 player.yaw = yaw;
                 player.flying = flying;

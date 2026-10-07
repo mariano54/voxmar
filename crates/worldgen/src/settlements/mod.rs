@@ -490,6 +490,7 @@ fn fixed(registry: &BlockRegistry, f: &FurnishingsDef) -> Option<Fixed> {
         fruit: palette(&f.fruit, &any),
         hay: palette(&f.hay, &any),
         hanging: palette(&f.hanging, &any),
+        nets: palette(if f.nets.is_empty() { &f.hanging } else { &f.nets }, &any),
         sacks: palette(&f.sacks, &any),
         cloth: palette(&f.cloth, &any),
     })
