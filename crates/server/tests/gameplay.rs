@@ -1409,6 +1409,8 @@ fn sowing_where_a_crop_cannot_grow_is_refused_with_why() {
     let (kind, text) = client.chat[0].clone();
     assert_eq!(kind, ChatKind::Info);
     assert!(text.contains("water close by") || text.contains("here for"), "refused sowing said {text:?}");
+    // Named as the player knows it: the rice they hold, not a growing stage.
+    assert!(text.starts_with("Rice ") && !text.contains("Crop"), "refused sowing named the crop as {text:?}");
     client.settle();
     assert_eq!(client.world.block(ground + IVec3::Y), Some(BlockId::AIR), "rice was sown where it cannot grow");
     assert_eq!(client.inventory.get(0).map(|s| s.count), Some(2), "a refused sowing took the seed");
