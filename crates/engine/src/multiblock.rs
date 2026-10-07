@@ -59,6 +59,21 @@ pub struct Multiblock {
 }
 
 impl Multiblock {
+    /// What it is built of: each set of blocks a cell takes, with how many cells take it,
+    /// the core's among them.
+    pub fn pieces(&self) -> Vec<(&[BlockId], u32)> {
+        let mut pieces: Vec<(&[BlockId], u32)> = Vec::new();
+        for (_, cell) in &self.cells {
+            if let Cell::OneOf(accepts) = cell {
+                match pieces.iter_mut().find(|(takes, _)| *takes == accepts.as_slice()) {
+                    Some((_, n)) => *n += 1,
+                    None => pieces.push((accepts, 1)),
+                }
+            }
+        }
+        pieces
+    }
+
     /// Whether the structure stands with its core at `core`, turned any way; `block` says
     /// what is where (none for a place not loaded, which never matches).
     pub fn stands(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> bool {
