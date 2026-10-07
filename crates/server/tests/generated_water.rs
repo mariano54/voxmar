@@ -142,7 +142,9 @@ fn water_still_settles_at_the_next_version() {
             places.push(IVec2::new(851, 1030));
         }
         for place in places {
-            fluid_cells += check_area(&registry, &generator, seed, place).0;
+            let fluids = check_area(&registry, &generator, seed, place).0;
+            assert!(!(seed == 5 && place == IVec2::new(851, 1030)) || fluids > 0, "no water at seed 5's old waterfall spot");
+            fluid_cells += fluids;
         }
     }
     assert!(fluid_cells > 1000, "too little water seen at the next version: {fluid_cells}");
