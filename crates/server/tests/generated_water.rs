@@ -124,17 +124,28 @@ fn generate(generator: &Overworld, first: ColumnPos) -> VoxelWorld {
     world
 }
 
-/// The next generation version reseeds every world; its water must not move either. Seed
-/// 5 at version 24 stopped a waterfall's curtain on a mangrove's roots, grown before it, so
-/// the falling water stood on wood and wanted to spill sideways.
+/// The next generation version reseeds every world; its water must not move either: around
+/// the water near spawn on a few seeds, and where seed 5 once stopped a waterfall's curtain
+/// on a mangrove's roots, grown before it (the falling water stood on wood and wanted to
+/// spill sideways).
 #[test]
 fn water_still_settles_at_the_next_version() {
     let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
-    let generator = Overworld::with_content_at(5, registry.clone(), &world_content, Overworld::VERSION + 1);
-    let (fluids, _, _) = check_area(&registry, &generator, 5, IVec2::new(851, 1030));
-    assert!(fluids > 0, "no water at the spot that used to fail");
+    let mut fluid_cells = 0;
+    for seed in [5, 7, 19] {
+        let generator = Overworld::with_content_at(seed, registry.clone(), &world_content, Overworld::VERSION + 1);
+        let spawn = generator.spawn_point();
+        let mut places: Vec<IVec2> = generator.water_sights(IVec2::new(spawn.x, spawn.z), 600).into_iter().map(|(_, at)| IVec2::new(at.x, at.z)).collect();
+        if seed == 5 {
+            places.push(IVec2::new(851, 1030));
+        }
+        for place in places {
+            fluid_cells += check_area(&registry, &generator, seed, place).0;
+        }
+    }
+    assert!(fluid_cells > 1000, "too little water seen at the next version: {fluid_cells}");
 }
 
 /// One spot, seed and generation version: `SEED`, `X`, `Z`, `VERSION` (default the
