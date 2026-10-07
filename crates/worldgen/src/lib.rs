@@ -307,7 +307,7 @@ impl Overworld {
             ecology,
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
-            settlements: settlements::Settlements::new(stream, &content.settlements, &registry),
+            settlements: settlements::Settlements::new(stream, &content.settlements, &registry, trees::tallest(content)),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),

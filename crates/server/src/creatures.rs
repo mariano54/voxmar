@@ -169,6 +169,10 @@ pub struct Creatures {
     struck: FxHashMap<PlayerId, std::time::Instant>,
     /// Where each player settled and since when (RuneScape's tolerance).
     settled: FxHashMap<PlayerId, (Vec3, u64)>,
+    /// Kept creatures from the save that could not be put back yet (their species is gone
+    /// from the content, or the world was full): kept in the save and tried again, never
+    /// lost.
+    pub unplaced: Vec<crate::husbandry::SavedCreature>,
     /// Loot waiting for its body to finish falling: the tick it drops, and what.
     pub(crate) falling_loot: Vec<(u64, ItemStack, dropped::Loose)>,
 }
@@ -235,6 +239,9 @@ impl Server {
         self.think_and_move();
         self.tick_husbandry();
         self.drop_fallen_loot();
+        if self.tick.is_multiple_of(10 * TICKS_PER_SECOND as u64) {
+            self.place_unplaced();
+        }
         self.replicate_creatures();
     }
 

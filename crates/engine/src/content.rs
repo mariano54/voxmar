@@ -211,7 +211,7 @@ impl Content {
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
         quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks })?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
-        crate::inventory::set_pouches(pouches(&blocks));
+        crate::inventory::set_pouches(pouches(&blocks)?);
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -273,12 +273,18 @@ fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, Reg
         .collect())
 }
 
-/// Each item's pouch: the first item tagged `pouch` and `holds:TAG` for a tag it has.
-fn pouches(blocks: &BlockRegistry) -> Vec<Option<crate::block::BlockId>> {
-    let holders: Vec<(crate::block::BlockId, String)> = blocks
-        .ids()
-        .filter(|&id| blocks.def(id).has_tag("pouch"))
-        .flat_map(|id| blocks.def(id).tags.iter().filter_map(move |t| Some((id, t.strip_prefix("holds:")?.to_owned()))))
-        .collect();
-    blocks.ids().map(|id| holders.iter().find(|(_, tag)| blocks.def(id).has_tag(tag)).map(|&(pouch, _)| pouch)).collect()
+/// Each item's pouch: the first item tagged `pouch` and `holds:TAG` for a tag it has, with
+/// how many of a kind it holds (its `holds_each:N`, else `inventory::POUCH_EACH`). A
+/// `holds_each` that is not a whole number above 0 is a mistake in the content.
+fn pouches(blocks: &BlockRegistry) -> Result<Vec<Option<(crate::block::BlockId, u16)>>, RegistryError> {
+    let mut holders: Vec<(crate::block::BlockId, String, u16)> = Vec::new();
+    for id in blocks.ids().filter(|&id| blocks.def(id).has_tag("pouch")) {
+        let def = blocks.def(id);
+        let each = match def.tags.iter().find_map(|t| t.strip_prefix("holds_each:")) {
+            None => crate::inventory::POUCH_EACH,
+            Some(n) => n.parse::<u16>().ok().filter(|&n| n > 0).ok_or_else(|| RegistryError(format!("pouch `{}`: `holds_each:{n}` is not a count above 0", def.name)))?,
+        };
+        holders.extend(def.tags.iter().filter_map(|t| Some((id, t.strip_prefix("holds:")?.to_owned(), each))));
+    }
+    Ok(blocks.ids().map(|id| holders.iter().find(|(_, tag, _)| blocks.def(id).has_tag(tag)).map(|&(pouch, _, each)| (pouch, each))).collect())
 }

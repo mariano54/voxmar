@@ -920,7 +920,7 @@ impl Server {
 
     /// Loads the columns under a box, so commands can build anywhere, not only where
     /// players have been.
-    fn load_area(&mut self, min: IVec3, max: IVec3) {
+    pub(crate) fn load_area(&mut self, min: IVec3, max: IVec3) {
         let (from, to) = (ColumnPos::of_block(min), ColumnPos::of_block(max));
         for z in from.0.y..=to.0.y {
             for x in from.0.x..=to.0.x {
