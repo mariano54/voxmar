@@ -2830,8 +2830,12 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let index = gate.phase as usize;
     let Some((language, view)) = FIT_LANGUAGES.get(index / views.len()).map(|language| (*language, views[index % views.len()])) else {
         let spills: Vec<String> = std::mem::take(&mut gate.spills).into_iter().map(|(_, line)| line).collect();
-        let result = if spills.is_empty() {
-            Ok(format!("every text fits on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+        // Line breaks are checked in the languages with rules (Japanese), or the pass fails.
+        let breaks = world.remove_resource::<crate::ui::fit::LineBreaksChecked>().unwrap_or_default();
+        let result = if breaks.looks > 0 && breaks.checked == 0 {
+            Err(format!("no line breaks checked on {} looks in a language with line rules", breaks.looks))
+        } else if spills.is_empty() {
+            Ok(format!("every text fits on {} views in {}; line breaks checked {}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };

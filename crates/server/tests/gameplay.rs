@@ -1456,7 +1456,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
     }
     assert!(!client.ok("/machine ~7 ~ ~").contains("needs a kept animal"), "the nearer wheel still turns");
     // The aurochs, kept, can be taken away again; then the wheel stops.
-    assert!(client.ok("/creatures remove aurochs").contains("for 1 creatures"));
+    assert!(client.ok("/creatures remove aurochs").contains("for 1 creature within"));
     let started = Instant::now();
     while !client.ok("/machine ~7 ~ ~").contains("needs a kept animal") {
         assert!(started.elapsed() < Duration::from_secs(10), "the wheel still turns without its aurochs");
