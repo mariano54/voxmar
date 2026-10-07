@@ -14,6 +14,9 @@ const FILE: &str = "survival.ron";
 pub(crate) struct SurvivalRules {
     pub max_health: u8,
     pub starter_kit: Vec<(String, u8)>,
+    /// What a new player starts with in the pack's last slots, last first.
+    #[serde(default)]
+    pub pack_end: Vec<(String, u8)>,
     pub safe_fall: f32,
     pub burn: u8,
     /// Seconds.
@@ -45,7 +48,8 @@ impl SurvivalRules {
             ((0..=16).contains(&rules.heat_reach), "heat_reach must be 0 to 16 blocks"),
             (rules.water_chill.is_finite(), "water_chill must be a number"),
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
-            (rules.starter_kit.iter().all(|&(_, count)| (1..=MAX_STACK).contains(&count)), "a starter kit count must be 1 to 64"),
+            (rules.starter_kit.iter().chain(&rules.pack_end).all(|&(_, count)| (1..=MAX_STACK).contains(&count)), "a starter kit count must be 1 to 64"),
+            (rules.pack_end.len() <= 9, "pack_end holds at most 9 items"),
         ];
         match checks.into_iter().find(|(ok, _)| !ok) {
             Some((_, problem)) => Err(at(&problem)),
@@ -55,13 +59,22 @@ impl SurvivalRules {
 
     /// The starter kit's items that exist.
     pub(crate) fn kit(&self, blocks: &BlockRegistry) -> Vec<(BlockId, u8)> {
-        self.starter_kit.iter().filter_map(|(name, count)| blocks.id(name).map(|id| (id, *count))).collect()
+        existing(&self.starter_kit, blocks)
+    }
+
+    /// The items for the pack's last slots that exist, last slot first.
+    pub(crate) fn pack_end(&self, blocks: &BlockRegistry) -> Vec<(BlockId, u8)> {
+        existing(&self.pack_end, blocks)
     }
 
     /// Ticks between lava's burns.
     pub(crate) fn burn_ticks(&self) -> u64 {
         ((self.burn_every * voxmar_protocol::TICKS_PER_SECOND as f32).round() as u64).max(1)
     }
+}
+
+fn existing(items: &[(String, u8)], blocks: &BlockRegistry) -> Vec<(BlockId, u8)> {
+    items.iter().filter_map(|(name, count)| blocks.id(name).map(|id| (id, *count))).collect()
 }
 
 #[cfg(test)]

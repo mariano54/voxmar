@@ -10,6 +10,9 @@
         ("base:glass", 32),
         ("base:glowstone", 16),
     ],
+    // What a new player starts with in the pack's last slots (last first), out of the
+    // hotbar's way: the coin purse.
+    pack_end: [("base:coin_purse", 1)],
     // Falls shorter than this many blocks do no damage; each block more costs one.
     safe_fall: 3.0,
     // Lava burns this much health every so many seconds.

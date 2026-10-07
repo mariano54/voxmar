@@ -284,6 +284,7 @@ impl Server {
         let fingerprint = self.content.fingerprint();
         let blocks = &self.content.blocks;
         let start_kit = self.survival.kit(blocks);
+        let pack_end = self.survival.pack_end(blocks);
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
         let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
@@ -363,6 +364,10 @@ impl Server {
             None => {
                 for (block, count) in start_kit {
                     player.inventory.add(block, count);
+                }
+                // The coin purse, in the pack's last slot, out of the hotbar's way.
+                for (slot, (block, count)) in (0..voxmar_engine::inventory::SLOTS).rev().zip(pack_end) {
+                    player.inventory.slots[slot] = Some(ItemStack { item: block, count });
                 }
             }
         }
