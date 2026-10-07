@@ -1883,16 +1883,23 @@ fn silent_sockets_neither_count_as_players_nor_pile_up() {
     // The operator lets two connections from one address wait to say hello.
     let limits = Limits { max_pending_per_address: 2, ..Default::default() };
     let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, limits, ..Default::default() }, content()).unwrap();
-    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
-    let guest = Client::hello(tcp::connect(addr).unwrap(), "guest", server);
-    let second = Client::greet(tcp::connect(addr).unwrap(), "second", None);
+    // Listening on IPv4, and on IPv6 too where the machine has it, so one machine has two
+    // addresses to come from.
+    let v4 = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    let v6 = tcp::listen("[::1]:0", server.connections()).ok();
+    let guest = Client::hello(tcp::connect(v4).unwrap(), "guest", server);
+    let second = Client::greet(tcp::connect(v4).unwrap(), "second", None);
     // Two connections from that address that never say hello: with them waiting, its next
     // connection is turned away at once...
-    let silent: Vec<_> = (0..2).map(|_| std::net::TcpStream::connect(addr).unwrap()).collect();
-    let connection = tcp::connect(addr).unwrap();
+    let silent: Vec<_> = (0..2).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
+    let connection = tcp::connect(v4).unwrap();
     assert!(turned_away(&connection, &guest.content).contains("full"));
-    // ...and they are not players, so a third still fits (in process, as from elsewhere).
-    let third = guest.another("third");
+    // ...while another address is not, and they are not players, so a third still fits
+    // (in process, as from elsewhere, without IPv6).
+    let third = match v6 {
+        Some(v6) => Client::greet(tcp::connect(v6).unwrap(), "third", None),
+        None => guest.another("third"),
+    };
     assert!(third.health > 0);
     drop((guest, second, third, silent));
 }
