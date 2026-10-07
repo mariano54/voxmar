@@ -293,8 +293,9 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
                 let (mut occludes, mut render) = if world_y < 0 { (true, RenderKind::Invisible) } else { (look.occludes, look.render) };
                 // Far away a crown is a solid mass: its leaves are drawn as opaque blocks,
                 // so the faces between them, a third of a distant forest's, go, and the
-                // rest skip the alpha test and hide what is behind them.
-                if detail > 1 && render == RenderKind::Leaves {
+                // rest skip the alpha test and hide what is behind them. A shape (a slab,
+                // a barrel) is too small there to make out, and is drawn as its block.
+                if detail > 1 && matches!(render, RenderKind::Leaves | RenderKind::Model) {
                     (occludes, render) = (true, RenderKind::Opaque);
                 }
                 let mut shades = occludes || render == RenderKind::Leaves;

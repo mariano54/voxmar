@@ -12,26 +12,37 @@
             (from: (0, 0, 0), to: (16, 8, 16), cull: true),
             (from: (0, 8, 8), to: (16, 16, 16), cull: true),
         ]),
-        // An octagonal barrel: a square body and the same turned 45°, a little shorter so
-        // their lids do not fight, with a hoop near the top and the bottom.
+        // A round barrel, as round as texels allow: two crossed boxes make its staves (a
+        // square with its corners cut), and two more each side stand proud as its iron
+        // hoops, where its texture draws them.
         "barrel": (boxes: [
-            (from: (2.5, 0, 2.5), to: (13.5, 16, 13.5)),
-            (from: (2.5, 0.05, 2.5), to: (13.5, 15.95, 13.5), turn: 45.0),
-            (from: (2, 2, 2), to: (14, 3, 14)),
-            (from: (2, 2.05, 2), to: (14, 2.95, 14), turn: 45.0),
-            (from: (2, 13, 2), to: (14, 14, 14)),
-            (from: (2, 13.05, 2), to: (14, 13.95, 14), turn: 45.0),
+            (from: (2, 0, 3), to: (14, 16, 13)),
+            (from: (3, 0, 2), to: (13, 16, 14)),
+            (from: (1.5, 4.5, 2.5), to: (14.5, 6, 13.5)),
+            (from: (2.5, 4.5, 1.5), to: (13.5, 6, 14.5)),
+            (from: (1.5, 12.5, 2.5), to: (14.5, 14, 13.5)),
+            (from: (2.5, 12.5, 1.5), to: (13.5, 14, 14.5)),
         ]),
-        // A full sack slumped on the ground: a bulging body, round its middle, narrowing
-        // to a neck tied off at the top.
+        // A slatted crate: its body a texel in from the cell's sides, and a post standing
+        // proud at each corner, where its texture draws the frame.
+        "crate": (boxes: [
+            (from: (1, 0, 1), to: (15, 16, 15)),
+            (from: (0, 0, 0), to: (2, 16, 2)),
+            (from: (14, 0, 0), to: (16, 16, 2)),
+            (from: (0, 0, 14), to: (2, 16, 16)),
+            (from: (14, 0, 14), to: (16, 16, 16)),
+        ]),
+        // A full sack slumped on the ground: a wide, round belly, narrower shoulders, and
+        // a neck gathered and tied off at the top, its cloth tufting out above the tie.
         "sack": (boxes: [
-            (from: (3, 0, 3), to: (13, 7, 13)),
-            (from: (3, 0.05, 3), to: (13, 6.95, 13), turn: 45.0),
-            (from: (4, 7, 4), to: (12, 10, 12)),
-            (from: (4, 7.05, 4), to: (12, 9.95, 12), turn: 45.0),
-            (from: (6, 10, 6), to: (10, 11.5, 10)),
-            (from: (7, 11.5, 7), to: (9, 13, 9)),
-            (from: (6, 13, 6), to: (10, 14.5, 10)),
+            (from: (2, 0, 3), to: (14, 7, 13)),
+            (from: (3, 0, 2), to: (13, 7, 14)),
+            (from: (3, 7, 4), to: (13, 10, 12)),
+            (from: (4, 7, 3), to: (12, 10, 13)),
+            (from: (5.5, 10, 5.5), to: (10.5, 11, 10.5)),
+            (from: (6.5, 11, 6.5), to: (9.5, 12.5, 9.5)),
+            (from: (6, 12.5, 6), to: (10, 13.5, 10)),
+            (from: (5.5, 13.5, 5.5), to: (10.5, 15, 10.5)),
         ]),
     },
 )

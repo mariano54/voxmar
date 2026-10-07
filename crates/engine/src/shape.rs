@@ -63,6 +63,19 @@ pub struct ShapeDef {
     pub boxes: Vec<ShapeBox>,
 }
 
+impl ShapeDef {
+    /// The shape turned over, top to bottom (a top slab from a slab): each box mirrored
+    /// about the cell's middle height, keeping its textures the right way up.
+    pub fn upside_down(&self) -> ShapeDef {
+        let boxes = self
+            .boxes
+            .iter()
+            .map(|b| ShapeBox { from: [b.from[0], 16.0 - b.to[1], b.from[2]], to: [b.to[0], 16.0 - b.from[1], b.to[2]], ..b.clone() })
+            .collect();
+        ShapeDef { boxes }
+    }
+}
+
 /// One box of a shape, in 16ths of a block from the cell's lower corner.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

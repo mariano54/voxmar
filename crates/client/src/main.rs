@@ -612,6 +612,12 @@ fn setup(
     let (registry, world_content) = (&registry.blocks, registry.world.clone());
     let mut source = Source::discover(settings.textures, settings.minecraft_assets);
     let (size, mut block_textures, animations) = source.block_textures(registry.textures());
+    // A pack we don't ship may give an opaque face clear texels, which are filled below; it
+    // hears of it if that is most of the face.
+    let opaque = textures::opaque_faces(registry);
+    for warning in textures::see_through_warnings(registry.textures(), &block_textures, &opaque, &source.servers(registry.textures())) {
+        warn!("{warning}");
+    }
     // Opaque blocks must not show see-through texels; cut-out and translucent ones keep them.
     let mut see_through = vec![false; block_textures.len()];
     for id in 0..registry.len() {
@@ -750,8 +756,26 @@ fn setup(
         }
         let (info, def) = (registry.info(block), registry.def(block));
         let own = def.icon.as_ref().and_then(|name| source.read(&format!("item/{name}")));
-        let icon = own.unwrap_or_else(|| match info.render {
-            RenderKind::Plant | RenderKind::Invisible => face_texture(info, Face::PosZ),
+        let icon = own.unwrap_or_else(|| match (info.render, registry.shape(block)) {
+            (RenderKind::Plant | RenderKind::Invisible, _) => face_texture(info, Face::PosZ),
+            // A shape as it stands (a barrel's staves, a stair's steps), each quad in its
+            // own texture.
+            (RenderKind::Model, Some(shape)) => {
+                let textures: Vec<_> = registry.shape_layers(block).iter().map(|&layer| as_image(block_textures[layer as usize].clone())).collect();
+                let quads: Vec<_> = shape
+                    .quads
+                    .iter()
+                    .zip(&textures)
+                    .map(|(quad, texture)| voxmar_texgen::icon::IconQuad {
+                        corners: quad.corners.map(|c| c.to_array()),
+                        uvs: quad.uvs,
+                        texture,
+                        light: voxmar_texgen::icon::icon_light(quad.normal.to_array()),
+                    })
+                    .collect();
+                let icon = voxmar_texgen::icon::isometric_quads(&quads, 32);
+                Rgba { width: icon.width, height: icon.height, pixels: icon.pixels }
+            }
             _ => {
                 // Leaves would show only their holes' rims: draw them as a solid bush.
                 let [top, left, right] = [Face::PosY, Face::PosZ, Face::PosX].map(|face| {
