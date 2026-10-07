@@ -1683,6 +1683,93 @@ mod tests {
         }
     }
 
+    /// Where the rare herbs grow: samples sites over a wide square (no chunks generated),
+    /// asks the ecology for the plant on soil, sand and snow, and counts each rare herb by
+    /// biome, per million samples: `cargo test --profile iter -p voxmar_worldgen
+    /// rare_herb_census -- --ignored --nocapture` (SEEDS=7,1, SPAN=24000, STEP=6; BIOMES=a,b
+    /// samples around the nearest place of each of those biomes instead).
+    #[test]
+    #[ignore]
+    fn rare_herb_census() {
+        use crate::content::Ground;
+        use crate::ecology::Plant;
+        let registry = registry();
+        let herbs = ["windroot", "edelweiss", "ginseng", "mandrake", "heartbloom", "starlily", "thunderbloom", "ember_pepper", "sky_lotus", "silvermint"];
+        let ids: Vec<Option<BlockId>> = herbs.iter().map(|h| registry.id(&format!("base:{h}"))).collect();
+        let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "7,1".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let span: i32 = std::env::var("SPAN").ok().and_then(|s| s.parse().ok()).unwrap_or(24000);
+        let step: i32 = std::env::var("STEP").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
+        let mut found = vec![std::collections::BTreeMap::<String, u32>::new(); herbs.len()];
+        let mut biome_samples = std::collections::BTreeMap::<String, u32>::new();
+        let mut samples = 0u64;
+        for &seed in &seeds {
+            let world = Overworld::new(seed, registry.clone());
+            let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+            // With BIOMES set, squares of `span` around the nearest place of each of those
+            // biomes (for the rare ones a wide square never meets); else one square at the
+            // origin.
+            let centres: Vec<IVec2> = match std::env::var("BIOMES") {
+                Ok(names) => names.split(',').filter_map(|n| world.locate_biome(n, IVec2::ZERO, 60000)).collect(),
+                Err(_) => vec![IVec2::ZERO],
+            };
+            let rows: Vec<(i32, i32)> = centres.iter().flat_map(|c| (-span / 2..span / 2).step_by(step as usize).map(move |z| (c.x, c.y + z))).collect();
+            let parts: Vec<_> = std::thread::scope(|scope| {
+                let handles: Vec<_> = rows
+                    .chunks(rows.len().div_ceil(threads))
+                    .map(|rows| {
+                        let (world, ids) = (&world, &ids);
+                        scope.spawn(move || {
+                            let mut found = vec![std::collections::BTreeMap::<String, u32>::new(); ids.len()];
+                            let mut seen = std::collections::BTreeMap::<String, u32>::new();
+                            let mut samples = 0u64;
+                            for &(cx, z) in rows {
+                                for x in (cx - span / 2..cx + span / 2).step_by(step as usize) {
+                                    let site = world.site(x, z);
+                                    if site.height < site.water {
+                                        continue;
+                                    }
+                                    samples += 1;
+                                    let biome = world.biomes.get(site.biome).name.trim_start_matches("base:").to_owned();
+                                    *seen.entry(biome.clone()).or_default() += 1;
+                                    for ground in [Ground::Soil, Ground::Sand, Ground::Snow] {
+                                        let block = match world.ecology.plant(&site, ground, x, z) {
+                                            Some(Plant::One(b) | Plant::Tall(b, _) | Plant::Stack(b, _)) => b,
+                                            None => continue,
+                                        };
+                                        if let Some(i) = ids.iter().position(|&id| id == Some(block)) {
+                                            *found[i].entry(biome.clone()).or_default() += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            (found, seen, samples)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            for (part, seen, n) in parts {
+                samples += n;
+                for (b, c) in seen {
+                    *biome_samples.entry(b).or_default() += c;
+                }
+                for (i, map) in part.into_iter().enumerate() {
+                    for (b, c) in map {
+                        *found[i].entry(b).or_default() += c;
+                    }
+                }
+            }
+        }
+        println!("{samples} land samples over seeds {seeds:?}, span {span}, step {step}");
+        for (i, herb) in herbs.iter().enumerate() {
+            let total: u32 = found[i].values().sum();
+            let mut by: Vec<_> = found[i].iter().map(|(b, n)| (b.clone(), *n)).collect();
+            by.sort_by_key(|e| std::cmp::Reverse(e.1));
+            let shown: Vec<String> = by.iter().map(|(b, n)| format!("{b} {n} ({:.0}/M of it)", *n as f64 * 1e6 / biome_samples[b] as f64)).collect();
+            println!("{herb}: {total} ({:.1}/M) in {} biomes: {}", total as f64 * 1e6 / samples as f64, by.len(), shown.join(", "));
+        }
+    }
+
     /// Most open grass in a meadow carries a plant, but few of them are flowers.
     #[test]
     fn meadows_are_carpeted_and_flowers_stay_sparse() {
