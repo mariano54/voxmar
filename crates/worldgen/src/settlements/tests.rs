@@ -1424,3 +1424,65 @@ fn ripe_or_rare_fruit_is_refused() {
         d.styles[0].woods.push(("apple".into(), 1.0));
     }));
 }
+
+/// Snow lies over a snowy village without turning its built stone to snow: chimney
+/// stacks, foundation courses, well rims and stacked stone keep their blocks (and their
+/// drops), as the same village generated with no snow blanket at all has them (Review,
+/// 7 Oct: the blanket once covered every block tagged `stone`, cobbles and bricks too).
+#[test]
+fn snowy_villages_keep_their_built_stone() {
+    let registry = base_registry();
+    let content = crate::content::WorldContent::base(&registry).unwrap();
+    let mut bare = content.clone();
+    bare.climate.frost.blanket.clear();
+    let built = |b: BlockId| registry.def(b).has_tag("stone") && registry.def(b).has_tag("building");
+    let (mut villages, mut kept) = (0, 0);
+    'seeds: for seed in 1u64..=60 {
+        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let spawn = world.spawn_point();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 4000) {
+            // Snowy where snow lies on the ground about its middle.
+            let column = world.generate(ColumnPos::of_block(s.centre));
+            let snowy = [(0, 0), (6, 0), (-6, 0), (0, 6), (0, -6)].iter().any(|&(dx, dz)| {
+                let (x, z) = ((s.centre.x + dx) & 31, (s.centre.z + dz) & 31);
+                let top = (0..WORLD_HEIGHT).rev().map(|y| column.block(IVec3::new(x, y, z))).find(|b| !b.is_air());
+                top.is_some_and(|b| registry.def(b).has_tag("snow"))
+            });
+            if !snowy {
+                continue;
+            }
+            let plain = Overworld::with_content(seed, registry.clone(), &bare);
+            let (mut snowed, mut unsnowed) = (rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::default());
+            for b in &s.buildings {
+                for z in b.min.y..=b.max.y {
+                    for x in b.min.x..=b.max.x {
+                        let pos = ColumnPos::of_block(IVec3::new(x, 0, z));
+                        let with = snowed.entry(pos).or_insert_with(|| world.generate(pos));
+                        let without = unsnowed.entry(pos).or_insert_with(|| plain.generate(pos));
+                        for y in b.floor - 2..(b.floor + 24).min(WORLD_HEIGHT) {
+                            let local = IVec3::new(x & 31, y, z & 31);
+                            let (want, got) = (without.block(local), with.block(local));
+                            if built(want) {
+                                assert_eq!(
+                                    registry.def(got).name,
+                                    registry.def(want).name,
+                                    "seed {seed}, {}: the {} at {x} {y} {z} turned to snow",
+                                    s.name.0,
+                                    b.what
+                                );
+                                kept += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            println!("seed {seed}: snowy {} {} at {}", s.size, s.name.0, s.centre);
+            villages += 1;
+            if villages >= 2 {
+                break 'seeds;
+            }
+        }
+    }
+    assert!(villages > 0, "no snowy settlement found");
+    assert!(kept > 50, "only {kept} built stone blocks in {villages} snowy settlements");
+}
