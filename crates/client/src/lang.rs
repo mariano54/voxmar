@@ -1061,6 +1061,19 @@ mod tests {
         assert_eq!(Locale::load(&content(), "en").block_reading(oak), None);
     }
 
+    /// A command's reply counting creatures says "1 creature" in English, and Japanese
+    /// counts with its one form.
+    #[test]
+    fn a_reply_counts_its_creatures() {
+        let blocks = voxmar_server::load_content(&assets()).unwrap().blocks;
+        let done = |code: &str, count: usize| {
+            Lang::load(&content(), code).render(&voxmar_engine::lang::Words::key("command.creatures.done").with("count", voxmar_engine::lang::Words::text(count)), &blocks)
+        };
+        assert_eq!(done(ENGLISH, 1), "Done, for 1 creature within 8 blocks.");
+        assert_eq!(done(ENGLISH, 3), "Done, for 3 creatures within 8 blocks.");
+        assert_eq!(done("ja", 1), "8ブロック以内の1体に行いました。");
+    }
+
     #[test]
     fn names_come_from_ids_until_a_language_names_them() {
         assert_eq!(title_from_id("base:oak_log"), "Oak Log");
