@@ -57,9 +57,10 @@ animals and monsters spawning for anyone:
   they are under it. The per-species caps by Farming level planned in P31 will sit inside
   it.
 - `most` is the most alive at once, wild and kept, and must hold `wild_most` and `keepers`
-  players' `kept_each`; a server for more players raises `keepers` and `most` together. Wild ones (spawned or summoned) and births also stop short of it by
-  the kept animals still waiting in the save, so those always have room to come back; past
-  `keepers` players at their cap, wild ones get fewer.
+  players' `kept_each`; a server for more players raises `keepers` and `most` together.
+  Wild ones (spawned or summoned) and births also stop short of it by the kept animals
+  still waiting in the save, so those always have room to come back; past `keepers`
+  players at their cap, wild ones get fewer.
 - `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
 
 What no package sets keeps the defaults above.
