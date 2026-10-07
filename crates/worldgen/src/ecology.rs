@@ -797,6 +797,32 @@ mod tests {
         WorldContent::from_files(files.iter(), registry).unwrap()
     }
 
+    /// Each rare herb grows in the one or two biomes that name it and nowhere else: not
+    /// through a tag, the forage sweep or the wonders every biome takes by default.
+    #[test]
+    fn rare_herbs_keep_to_the_biomes_that_name_them() {
+        let registry = registry();
+        let content = content(&[], &registry);
+        let ecology = Ecology::new(1, &WorldDials::sample(1), &content, &registry);
+        let rare: Vec<usize> = content.plants.iter().enumerate().filter(|(_, p)| content.plant_tags(p, &registry).any(|t| t == "rare_herb")).map(|(i, _)| i).collect();
+        assert!(rare.len() >= 10, "the ten rare herbs are tagged");
+        for &i in &rare {
+            let plant = &content.plants[i];
+            let names = |list: &[Select]| list.iter().any(|s| matches!(s, Select::Name(n, _) if *n == plant.name));
+            let mut grows_in = Vec::new();
+            for (b, biome) in content.biomes.iter().enumerate() {
+                let flora = &ecology.flora[b];
+                let listed = [&flora.carpet, &flora.drifts, &flora.alone, &flora.wonder_plants].iter().any(|l| l.iter().any(|(p, _)| p.0 as usize == i));
+                let named = names(&biome.flora.plants) || biome.flora.wonders.as_deref().is_some_and(names);
+                assert_eq!(listed, named, "{} in {}: listed {listed}, named {named}", plant.name, biome.name);
+                if listed {
+                    grows_in.push(biome.name.clone());
+                }
+            }
+            assert!((1..=2).contains(&grows_in.len()), "{} grows in {grows_in:?}", plant.name);
+        }
+    }
+
     #[test]
     fn a_new_plant_grows_wherever_its_tags_fit() {
         let registry = registry();
