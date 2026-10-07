@@ -107,6 +107,7 @@ pub struct Fixed {
     pub fruit: Palette,
     pub hay: Palette,
     pub hanging: Palette,
+    pub nets: Palette,
     pub sacks: Palette,
     pub cloth: Palette,
     pub dirt: BlockId,
