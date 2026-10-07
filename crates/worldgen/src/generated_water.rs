@@ -60,7 +60,8 @@ fn generated_water_does_not_move() {
 }
 
 /// Tarns, the small still lakes in high hollows, settle like any other lake: around the
-/// tarn nearest the alpine meadows closest to spawn on a few seeds, found afresh.
+/// first two small lakes as high as tarns lie in the regions around the alpine meadow
+/// nearest the origin, on a few seeds, found afresh.
 #[test]
 fn tarns_do_not_move() {
     let content = load_content();
@@ -69,14 +70,22 @@ fn tarns_do_not_move() {
     let mut tarns = 0;
     for seed in [1, 2, 3, 4] {
         let generator = Overworld::with_content(seed, registry.clone(), &world_content);
-        let spawn = generator.spawn_point();
-        let Some(meadow) = generator.locate_biome("alpine_meadow", IVec2::new(spawn.x, spawn.z), 20000) else { continue };
-        let Some(&(_, at)) = generator.water_sights(meadow, 400).iter().find(|(kind, _)| *kind == WaterSight::Tarn) else { continue };
-        let fluids = check_area(&registry, &generator, seed, IVec2::new(at.x, at.z)).0;
-        assert!(fluids > 0, "seed {seed}: no water around the tarn at {at}");
-        tarns += 1;
+        let floor = generator.rivers.tarn_floor().expect("the base content has tarns");
+        let Some(meadow) = generator.locate_biome("alpine_meadow", IVec2::ZERO, 60000) else { continue };
+        let region = meadow.div_euclid(IVec2::splat(crate::water::REGION));
+        let found: Vec<IVec2> = (0..9)
+            .flat_map(|r| generator.rivers.stream_lakes(generator.stages(), region + IVec2::new(r % 3 - 1, r / 3 - 1)))
+            .filter(|&(_, water, cells)| water as f32 >= floor && cells <= 8)
+            .map(|(pit, _, _)| pit)
+            .take(2)
+            .collect();
+        for pit in found {
+            let fluids = check_area(&registry, &generator, seed, pit).0;
+            assert!(fluids > 0, "seed {seed}: no water around the tarn at {pit}");
+            tarns += 1;
+        }
     }
-    assert!(tarns >= 2, "only {tarns} tarns found near alpine meadows");
+    assert!(tarns >= 4, "only {tarns} tarns found around alpine meadows");
 }
 
 /// Generates the area around `place` and checks that none of its water would move: none is
