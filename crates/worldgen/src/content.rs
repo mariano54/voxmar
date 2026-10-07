@@ -493,6 +493,7 @@ struct RawBiome {
     rarity: Option<Rarity>,
     surface: Option<SurfaceDef>,
     stones: Option<Stones>,
+    field_stones: Option<Vec<Select>>,
     strata: Option<Vec<String>>,
     colors: Option<Colors>,
     flora: Option<FloraDef>,
@@ -516,6 +517,10 @@ pub struct BiomeDef {
     pub rarity: Rarity,
     pub surface: SurfaceDef,
     pub stones: Stones,
+    /// The stones lying on gentle open ground (boulders, rocks), where a biome wants its own
+    /// rather than the bare rock's: a bright meadow's pale or mossy stone, not dark basalt.
+    /// Empty for the rock's own. Cliffs, slopes, scree and streams keep the rock's.
+    pub field_stones: Vec<Select>,
     /// Blocks of banded rock, one block each, bottom to top, repeating up the world.
     pub strata: Vec<String>,
     pub colors: Colors,
@@ -1418,6 +1423,14 @@ struct TreeFile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlantFile {
+    /// How densely small plants grow (flowers, ground plants, grasses and ferns), against
+    /// the base game's (1); a later package's replaces an earlier one's.
+    #[serde(default)]
+    density: Option<f32>,
+    /// Plants the density leaves at their biomes' own rate (by tag or name): the ones
+    /// gathered for food, crafting and alchemy, so thinning the look never thins them.
+    #[serde(default)]
+    density_keeps: Vec<Select>,
     plants: Vec<PlantDef>,
 }
 
@@ -1449,6 +1462,10 @@ pub struct WorldContent {
     /// How densely trees grow in forests, a factor on every biome's tree cover (`density`
     /// in `trees.ron`).
     pub tree_density: f32,
+    /// How densely small plants grow, from `plants.ron` (1 when no package sets it).
+    pub plant_density: f32,
+    /// Plants `plant_density` leaves alone, by tag or name.
+    pub plant_density_keeps: Vec<Select>,
     pub plants: Vec<PlantDef>,
     pub particles: Vec<ParticleDef>,
     pub shapes: Vec<ShapeDef>,
@@ -1552,6 +1569,8 @@ impl WorldContent {
         let mut trails = None;
         let mut land = None;
         let mut tree_density = None;
+        let mut plant_density = None;
+        let mut plant_density_keeps = Vec::new();
         let mut provinces = Vec::new();
         let (mut trees, mut plants, mut particles, mut shapes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
@@ -1616,10 +1635,23 @@ impl WorldContent {
                 "ambient.ron" => particles.extend(
                     parse::<AmbientFile>(&at, &file.source)?.particles.into_iter().map(|p| ParticleDef { name: qualify(&file.package, &p.name), ..p }),
                 ),
-                "plants.ron" => plants.extend(parse::<PlantFile>(&at, &file.source)?.plants.into_iter().map(|p| {
-                    let q = |n: &str| qualify(&file.package, n);
-                    PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
-                })),
+                "plants.ron" => {
+                    let def = parse::<PlantFile>(&at, &file.source)?;
+                    if let Some(density) = def.density {
+                        if !(density > 0.0 && density <= 4.0) {
+                            return Err(ContentError(format!("{at}: the plant density {density} is outside (0, 4]")));
+                        }
+                        plant_density = Some(density);
+                    }
+                    plant_density_keeps.extend(def.density_keeps.iter().map(|s| match s {
+                        Select::Name(n, w) => Select::Name(qualify(&file.package, n), *w),
+                        other => other.clone(),
+                    }));
+                    plants.extend(def.plants.into_iter().map(|p| {
+                        let q = |n: &str| qualify(&file.package, n);
+                        PlantDef { name: q(&p.name), block: q(&p.block), top: p.top.as_deref().map(q), snowy: p.snowy.as_deref().map(q), ..p }
+                    }));
+                }
                 "terrain.ron" => {
                     let file_shapes = parse::<ShapeFile>(&at, &file.source)?;
                     shapes.extend(file_shapes.shapes.into_iter().map(|s| ShapeDef {
@@ -1716,12 +1748,23 @@ impl WorldContent {
         }
         let snow_cover = weather.snow_cover().to_vec();
         let tree_density = tree_density.unwrap_or(1.0);
-        let content = Self { climate, provinces, biomes, trees, tree_density, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements, tarns };
+        let plant_density = plant_density.unwrap_or(1.0);
+        let content = Self { climate, provinces, biomes, trees, tree_density, plant_density, plant_density_keeps, plants, particles, shapes, decorations, rule_sets, snow_cover, trails, land, ores, settlements, tarns };
         content.ores.check(registry, &content.provinces)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;
         }
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
+        // Every plant the density keeps names one: a typo would thin what it meant to keep.
+        for keep in &content.plant_density_keeps {
+            let found = match keep {
+                Select::Name(name, _) => content.plants.iter().any(|p| p.name == *name),
+                Select::Tag(tag, _) => content.plants.iter().any(|p| content.plant_tags(p, registry).any(|t| t == tag)),
+            };
+            if !found {
+                return Err(ContentError(format!("plants.ron: density_keeps names {keep:?}, which no plant is or carries")));
+            }
+        }
         Ok(content)
     }
 
@@ -2009,6 +2052,14 @@ impl WorldContent {
         let lower = if lo == 0 { f32::NEG_INFINITY } else { def.edges[lo - 1] };
         let upper = def.edges.get(hi).copied().unwrap_or(f32::INFINITY);
         (lower, upper)
+    }
+
+    /// Whether the plant density leaves a plant at its biomes' own rate.
+    pub fn plant_kept(&self, plant: &PlantDef, registry: &BlockRegistry) -> bool {
+        self.plant_density_keeps.iter().any(|s| match s {
+            Select::Name(name, _) => *name == plant.name,
+            Select::Tag(tag, _) => self.plant_tags(plant, registry).any(|t| t == tag),
+        })
     }
 
     /// Tags of a plant: its own and its block's.
@@ -2651,6 +2702,7 @@ fn qualify_biome(package: &str, biome: RawBiome) -> RawBiome {
             Stones::Province => Stones::Province,
             Stones::Blocks(selects) => Stones::Blocks(selects.iter().map(|s| qualify_select(package, s)).collect()),
         }),
+        field_stones: biome.field_stones.map(|v| v.iter().map(|s| qualify_select(package, s)).collect()),
         variants: biome.variants.map(|v| v.into_iter().map(|(name, share)| (q(&name), share)).collect()),
         cave_decoration: biome.cave_decoration.map(|list| {
             list.into_iter()
@@ -2707,6 +2759,7 @@ fn inherit(raw: &[(String, RawBiome)]) -> Result<Vec<BiomeDef>, ContentError> {
                 rarity: field!(rarity).unwrap_or_default(),
                 surface,
                 stones: field!(stones).unwrap_or_default(),
+                field_stones: field!(field_stones).unwrap_or_default(),
                 strata: field!(strata).unwrap_or_default(),
                 colors: field!(colors).unwrap_or_default(),
                 flora: field!(flora).unwrap_or_default(),
@@ -2982,5 +3035,29 @@ mod tests {
             let message = load(&source).unwrap_err().0;
             assert!(message.contains(expected) && message.contains("cave_biomes.ron"), "expected `{expected}` in: {message}");
         }
+    }
+
+    /// A biome's field stones read as two stones, not one (Review on decor): where it
+    /// names two or more, the lightest and darkest differ in brightness by at least 30 of
+    /// 255. Stone and andesite, 10 apart, looked like one stone at 3840×2160.
+    #[test]
+    fn field_stones_differ_enough_to_show() {
+        let registry = registry();
+        let content = WorldContent::base(&registry).unwrap();
+        let luma = |name: &str| {
+            let [r, g, b] = registry.def(registry.expect(name)).color;
+            0.3 * r as f32 + 0.59 * g as f32 + 0.11 * b as f32
+        };
+        let mut checked = 0;
+        for biome in &content.biomes {
+            let lumas: Vec<f32> = biome.field_stones.iter().filter_map(|s| if let Select::Name(name, _) = s { Some(luma(name)) } else { None }).collect();
+            if lumas.len() < 2 {
+                continue;
+            }
+            checked += 1;
+            let spread = lumas.iter().copied().fold(f32::MIN, f32::max) - lumas.iter().copied().fold(f32::MAX, f32::min);
+            assert!(spread >= 30.0, "{}: its field stones {:?} differ by only {spread:.0} in brightness", biome.name, biome.field_stones);
+        }
+        assert!(checked >= 5, "{checked} biomes with field stones");
     }
 }
