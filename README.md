@@ -703,8 +703,19 @@ update, and never more than 2 ms in one tick.
 
 ## Sound
 
-Music is in `assets/music` (generated offline with `tools/generate_music.py`) and plays now and
-then with long quiet gaps; `M` toggles it. Starting a game fades the menu's music out, so a world
+Music is in `assets/music` and plays now and then with long quiet gaps; `M` toggles it. All of it
+is AI-generated, from two sources (recorded 7 October 2026 from the commits that added the tracks
+and the tags inside the files):
+
+| tracks | source | terms |
+| --- | --- | --- |
+| `dawn_meadow`, `highland_wind`, `lantern_village`, `old_forest`, `rain_on_stone`, `starlit_night` | Google Lyria 3 (`google/lyria-3-pro-preview`) through OpenRouter, by `tools/generate_music.py` (c100fc6) | Google does not claim ownership of generated output; use is subject to Google's generative AI terms and Prohibited Use Policy, and the files carry Google's SynthID watermark |
+| `moonlit_quest`, `moonlit_quest_2`, `quiet_sky`, `skyward_serenity` | made with Suno, added by Mariano in 5197578 (each file's tags hold its Suno id and creation time, 3 October 2026) | under Suno's terms, songs made on a paid plan (Pro or Premier) may be used commercially, while songs made on the free plan are for non-commercial use only and Suno keeps their rights; which plan made these is not recorded |
+
+Purely AI-generated audio generally has no copyright of its own, so neither source gives us
+exclusive rights to these tracks. The loading screen's picture, `assets/ui/loading.png`, is our
+own: 36 frames of the game itself, captured along the coast near spawn, then cropped, softened,
+tinted and tiled (801915d). Starting a game fades the menu's music out, so a world
 opens in quiet; returning to the menus brings it back.
 
 Block sounds follow each block's material (`sound: Wood` in its definition; the kinds are listed
