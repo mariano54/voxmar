@@ -63,7 +63,7 @@ fn generated_water_does_not_move() {
 /// tarn nearest the alpine meadows closest to spawn on a few seeds, found afresh.
 #[test]
 fn tarns_do_not_move() {
-    let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let content = load_content();
     let world_content = WorldContent::load(&content).unwrap();
     let registry = content.blocks.clone();
     let mut tarns = 0;
