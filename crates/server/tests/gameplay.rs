@@ -1289,3 +1289,28 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
     client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
     client.pump_until(|c| count(c, ingot) == 1 && count(c, dust) == 1);
 }
+
+#[test]
+fn gravel_sometimes_breaks_to_flint_instead() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    for line in ["/clear", "/give iron_shovel 1"] {
+        client.ok(line);
+    }
+    let (gravel, flint) = (client.content.blocks.expect("base:gravel"), client.content.blocks.expect("base:flint"));
+    client.pump_until(|c| c.inventory.get(0).is_some());
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    // One break in eight gives flint: in sixty, all but certainly some.
+    let mut flints = 0;
+    for _ in 0..60 {
+        client.ok("/setblock ~ ~-1 ~ gravel");
+        client.pump_until(|c| c.world.block(below) == Some(gravel));
+        client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
+        client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+        flints = client.items.values().filter(|i| i.stack.item == flint).count() + client.inventory.slots.iter().flatten().filter(|s| s.item == flint).count();
+        if flints > 0 {
+            break;
+        }
+    }
+    assert!(flints > 0, "sixty gravel broke without a flint");
+}
