@@ -153,7 +153,7 @@ fn first_column() {
             crate::parallel::set_enabled(parallel);
             let world = Overworld::new(seed, registry.clone());
             let (start, cpu) = (Instant::now(), thread_time());
-            let spawn = ColumnPos::of_block(world.spawn_point());
+            let (spawn, finding) = stage::measure(|| ColumnPos::of_block(world.spawn_point()));
             let found = (start.elapsed(), thread_time() - cpu);
             let (start, cpu) = (Instant::now(), thread_time());
             let (_, times) = stage::measure(|| world.generate(spawn));
@@ -161,16 +161,20 @@ fn first_column() {
             let start = Instant::now();
             std::hint::black_box(crate::tests::generate_area(&world, spawn.offset(-4, -4), 9));
             let area = start.elapsed();
-            let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
-            stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
+            let listed = |times: &Times| {
+                let mut stages: Vec<(Stage, Duration)> = Stage::ALL.iter().map(|&s| (s, times.get(s))).filter(|(_, d)| ms(*d) >= 1.0).collect();
+                stages.sort_by_key(|&(_, d)| std::cmp::Reverse(d));
+                stages.iter().map(|(s, d)| format!("{s:?} {:.0}", ms(*d))).collect::<Vec<_>>().join(", ")
+            };
             // On one core all the work is this thread's, so its CPU time counts it all.
             let both = |(wall, cpu): (Duration, Duration)| if parallel { format!("{:.0} ms", ms(wall)) } else { format!("{:.0} ms ({:.0} CPU)", ms(wall), ms(cpu)) };
             println!(
-                "seed {seed}, {}: spawn point {}, spawn column {} ({}), then 9×9 columns {:.0} ms",
+                "seed {seed}, {}: spawn point {} ({}), spawn column {} ({}), then 9×9 columns {:.0} ms",
                 if parallel { "every core" } else { "one core" },
                 both(found),
+                listed(&finding),
                 both(generated),
-                stages.iter().map(|(s, d)| format!("{s:?} {:.0}", ms(*d))).collect::<Vec<_>>().join(", "),
+                listed(&times),
                 ms(area),
             );
         }
