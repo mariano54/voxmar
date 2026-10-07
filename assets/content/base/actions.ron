@@ -30,5 +30,8 @@
         // Use a machine (machines.ron): what is in hand goes in, if it burns it or works it;
         // with nothing it takes, what the machine made comes out.
         (name: "use_machine", duration: Instant, requires: [Alive, InReach, Machine], effects: [UseMachine]),
+        // Pick the lock of a treasure chest (treasure.ron) with the lockpick in hand; with
+        // anything else, be told it is locked.
+        (name: "pick_lock", duration: Instant, requires: [Alive, InReach, Locked], effects: [PickLock]),
     ],
 )

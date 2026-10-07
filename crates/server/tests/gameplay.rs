@@ -1630,6 +1630,57 @@ fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> Stri
     }
 }
 
+/// Tries the lock of the chest at `at` with the item in slot 0, and returns what the
+/// server says.
+fn pick_lock(client: &mut Client, at: IVec3) -> String {
+    client.chat.clear();
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("base:pick_lock", ActionTarget::Block { block: at, face: Face::NegX });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("lock") || t.contains("pick")));
+    client.chat.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn a_treasure_chest_opens_to_a_pick_of_its_age_or_the_one_before_and_holds_its_tables_finds() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    let (bronze, iron) = (p + IVec3::new(2, 0, 0), p + IVec3::new(2, 0, 2));
+    for line in ["/clear".to_owned(), format!("/setblock {} bronze_treasure_chest", at(bronze)), format!("/setblock {} iron_treasure_chest", at(iron))] {
+        client.ok(&line);
+    }
+    let blocks = client.content.blocks.clone();
+    let picks = |c: &Client, name: &str| c.inventory.slots.iter().flatten().filter(|s| s.item == c.content.blocks.expect(name)).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(iron) == blocks.id("base:iron_treasure_chest") && c.inventory.slots.iter().all(Option::is_none));
+    // Nothing in hand: it is locked, and stays so.
+    assert!(pick_lock(&mut client, bronze).contains("It is locked"));
+    // A bone pick (Nomad) on an Iron chest, three ages short: too crude, and kept.
+    client.ok("/give bone_lockpick 2");
+    client.pump_until(|c| picks(c, "base:bone_lockpick") == 2);
+    assert!(pick_lock(&mut client, iron).contains("too crude"));
+    client.ok("/seed");
+    assert_eq!(picks(&client, "base:bone_lockpick"), 2, "a pick too crude to try is kept");
+    // On a Bronze chest, two ages short: a lucky try, the pick broken either way.
+    let said = pick_lock(&mut client, bronze);
+    assert!(said.contains("pick broke") || said.contains("lucky try"), "{said}");
+    client.pump_until(|c| picks(c, "base:bone_lockpick") == 1);
+    // A copper pick (Farm), the age before Bronze's: it opens, and is used up.
+    client.ok("/clear");
+    client.ok(&format!("/setblock {} bronze_treasure_chest", at(bronze)));
+    client.ok("/give copper_lockpick 1");
+    client.pump_until(|c| picks(c, "base:copper_lockpick") == 1 && c.world.block(bronze) == blocks.id("base:bronze_treasure_chest"));
+    assert!(pick_lock(&mut client, bronze).contains("The lock gives"));
+    client.pump_until(|c| c.world.block(bronze) == blocks.id("base:chest") && picks(c, "base:copper_lockpick") == 0);
+    // A plain chest now, holding the Bronze table's finds: 6 to 16 gold always.
+    let said = client.ok(&format!("/machine {}", at(bronze)));
+    assert!(items_held(&said) >= 6, "{said}");
+    use_machine(&mut client, bronze);
+    client.pump_until(|c| picks(c, "base:gold_coin") > 0);
+    assert!((6..=16).contains(&picks(&client, "base:gold_coin")), "{} gold", picks(&client, "base:gold_coin"));
+    // The Iron chest's lock is no machine and nothing breaks it.
+    assert!(client.content.blocks.def(blocks.expect("base:iron_treasure_chest")).hardness < 0.0);
+}
+
 #[test]
 fn a_processing_array_works_only_inside_its_cube_of_hv_casing() {
     let mut client = Client::join();

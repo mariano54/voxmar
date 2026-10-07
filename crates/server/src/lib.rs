@@ -19,6 +19,7 @@ mod fluids;
 mod items;
 mod player;
 mod process;
+mod treasure;
 pub mod save;
 pub mod save_rules;
 mod weather;

@@ -321,8 +321,8 @@ fn break_and_place(
             }
         }
         // A multiblock's core is lit (the server says whether the structure around it
-        // stands); a sleeping bag is slept in.
-        for name in ["base:light", "base:sleep"] {
+        // stands); a sleeping bag is slept in; a locked chest's lock is picked.
+        for name in ["base:light", "base:sleep", "base:pick_lock"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };

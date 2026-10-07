@@ -58,6 +58,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// Locked chests, the lockpicks that open them and what they hold.
+    pub treasure: Arc<crate::treasure::Treasure>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -102,6 +104,7 @@ impl Content {
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
+        let mut treasure = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
         let mut machines = Vec::new();
@@ -177,6 +180,10 @@ impl Content {
                         regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "treasure.ron" => {
+                        treasure.push(crate::treasure::Treasure::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "stacking.ron" => {
                         stacking.push(source.clone());
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -226,6 +233,15 @@ impl Content {
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
+        let treasure = crate::treasure::Treasure::new(treasure, &blocks)?;
+        // An opened chest becomes a bin with room for all its table can give.
+        for (block, chest) in treasure.chests() {
+            let room = machines.get(chest.opens_to).map_or(0, |m| m.bin_slots());
+            let most = treasure.tables[chest.table].most_stacks();
+            if room < most {
+                return Err(RegistryError(format!("treasure.ron: `{}` opens to a bin of {room} stacks, but its table gives up to {most}", blocks.def(block).name)));
+            }
+        }
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
@@ -244,6 +260,7 @@ impl Content {
             combat: Arc::new(combat),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            treasure: Arc::new(treasure),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
