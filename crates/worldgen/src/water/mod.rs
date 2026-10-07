@@ -21,7 +21,7 @@
 
 pub(crate) mod cache;
 mod channel;
-mod drainage;
+pub(crate) mod drainage;
 mod sights;
 
 use std::cell::RefCell;

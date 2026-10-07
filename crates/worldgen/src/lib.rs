@@ -1841,6 +1841,142 @@ mod tests {
         plant_counts(seeds, chunks, &herbs, &biomes).into_iter().filter(|r| pairs.contains(&(r.0.clone(), r.1.clone()))).collect()
     }
 
+    /// Scratch: lakes and lake banks per biome, from sites alone (TARNBIOMES=a,b SEEDS=1,2 SPAN=1024).
+    #[test]
+    #[ignore]
+    fn tarn_census() {
+        let registry = registry();
+        let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "1,2,3".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let span: i32 = std::env::var("SPAN").ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
+        let biomes = std::env::var("TARNBIOMES").unwrap_or_else(|_| "alpine_meadow,mountains,snowy_peaks,rocky_peaks".into());
+        for biome in biomes.split(',') {
+            let (mut columns, mut banks, mut lake, mut high_lake, mut lakes, mut high_lakes) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+            let mut heights: Vec<i32> = Vec::new();
+            for &seed in &seeds {
+                let world = Overworld::new(seed, registry.clone());
+                let Some(id) = world.biomes.id(&format!("base:{biome}")) else { continue };
+                let Some(at) = world.locate_biome(biome, IVec2::ZERO, 60000) else { continue };
+                let n = span as usize;
+                let mut wet = vec![0u8; n * n];
+                for j in 0..span {
+                    for i in 0..span {
+                        let (x, z) = (at.x - span / 2 + i, at.y - span / 2 + j);
+                        let site = world.site(x, z);
+                        if site.home != id {
+                            continue;
+                        }
+                        if site.height < site.water {
+                            if site.body == Body::Lake {
+                                lake += 1;
+                                wet[(j as usize) * n + i as usize] = if site.water >= 200 { 2 } else { 1 };
+                                if site.water >= 200 {
+                                    high_lake += 1;
+                                }
+                            }
+                            continue;
+                        }
+                        columns += 1;
+                        if (i + j) % 7 == 0 {
+                            heights.push(site.height);
+                        }
+                        if site.body == Body::Lake && (0..=2).contains(&(site.height - site.water)) {
+                            banks += 1;
+                        }
+                    }
+                }
+                // Lakes: connected lake water.
+                let mut seen = vec![false; n * n];
+                for k in 0..n * n {
+                    if wet[k] == 0 || seen[k] {
+                        continue;
+                    }
+                    lakes += 1;
+                    if wet[k] == 2 {
+                        high_lakes += 1;
+                    }
+                    let mut stack = vec![k];
+                    seen[k] = true;
+                    while let Some(c) = stack.pop() {
+                        let (ci, cj) = (c % n, c / n);
+                        for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                            let (a, b) = (ci as i32 + di, cj as i32 + dj);
+                            if a < 0 || b < 0 || a >= n as i32 || b >= n as i32 {
+                                continue;
+                            }
+                            let q = b as usize * n + a as usize;
+                            if wet[q] != 0 && !seen[q] {
+                                seen[q] = true;
+                                stack.push(q);
+                            }
+                        }
+                    }
+                }
+            }
+            heights.sort_unstable();
+            let pct = |p: f64| heights.get(((heights.len() as f64 - 1.0) * p) as usize).copied().unwrap_or(0);
+            let km2 = columns as f64 / 1e6;
+            println!("{biome:<16} {columns:>8} land columns; heights p10 {} p50 {} p90 {}; banks {banks} ({:.2}%), lake water {lake} ({high_lake} above 200), lakes {lakes} ({high_lakes} high) = {:.1} per km2", pct(0.1), pct(0.5), pct(0.9), banks as f64 * 100.0 / columns.max(1) as f64, lakes as f64 / km2.max(1e-9));
+        }
+    }
+
+    /// Scratch: stream pits per biome (PITBIOMES=a,b SEEDS SPAN), by depth and size.
+    #[test]
+    #[ignore]
+    fn pit_census() {
+        let registry = registry();
+        let seeds: Vec<u64> = std::env::var("SEEDS").unwrap_or_else(|_| "1,2,3".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let span: i32 = std::env::var("SPAN").ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
+        let biomes = std::env::var("PITBIOMES").unwrap_or_else(|_| "alpine_meadow,mountains,snowy_peaks,rocky_peaks".into());
+        for biome in biomes.split(',') {
+            let mut columns = 0u64;
+            // depth buckets: <1, 1-2, 2-3, 3-5, >=5 ; and kinds
+            let mut by_depth = [0u32; 5];
+            let mut wet = 0u32;
+            let mut kinds = [0u32; 5];
+            let mut sizes: Vec<usize> = Vec::new();
+            let mut high = 0u32;
+            for &seed in &seeds {
+                let world = Overworld::new(seed, registry.clone());
+                crate::water::drainage::PITS.lock().unwrap().clear();
+                let Some(id) = world.biomes.id(&format!("base:{biome}")) else { continue };
+                let Some(at) = world.locate_biome(biome, IVec2::ZERO, 60000) else { continue };
+                let (lo, hi) = (at - span / 2, at + span / 2);
+                for j in (lo.y..hi.y).step_by(4) {
+                    for i in (lo.x..hi.x).step_by(4) {
+                        let site = world.site(i, j);
+                        if site.home == id && site.height >= site.water {
+                            columns += 16;
+                        }
+                    }
+                }
+                let pits: Vec<_> = std::mem::take(&mut *crate::water::drainage::PITS.lock().unwrap());
+                let mut seen = std::collections::HashSet::new();
+                for (c, bottom, spill, cells, kind, w) in pits {
+                    if c.x < lo.x || c.y < lo.y || c.x >= hi.x || c.y >= hi.y || !seen.insert(c) {
+                        continue;
+                    }
+                    let site = world.site(c.x, c.y);
+                    if site.home != id {
+                        continue;
+                    }
+                    let depth = spill - bottom;
+                    let b = if depth < 1.0 { 0 } else if depth < 2.0 { 1 } else if depth < 3.0 { 2 } else if depth < 5.0 { 3 } else { 4 };
+                    by_depth[b] += 1;
+                    kinds[kind as usize] += 1;
+                    if w { wet += 1; }
+                    if bottom >= 200.0 { high += 1; }
+                    sizes.push(cells);
+                }
+            }
+            sizes.sort_unstable();
+            let km2 = columns as f64 / 1e6;
+            let per = |n: u32| n as f64 / km2.max(1e-9);
+            println!("{biome:<16} {km2:.2} km2: pits {:.0}/km2 (depth <1 {:.0}, 1-2 {:.0}, 2-3 {:.0}, 3-5 {:.0}, >=5 {:.0}); bottom>=200 {:.0}; kinds breach {} lake {} closed {} tunnel {} sink {}; wet {}; cells p50 {} p90 {}",
+                per(by_depth.iter().sum()), per(by_depth[0]), per(by_depth[1]), per(by_depth[2]), per(by_depth[3]), per(by_depth[4]), per(high), kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], wet,
+                sizes.get(sizes.len() / 2).copied().unwrap_or(0), sizes.get(sizes.len() * 9 / 10).copied().unwrap_or(0));
+        }
+    }
+
     /// Where the rare herbs grow and how many: `cargo test --profile iter -p voxmar_worldgen
     /// rare_herb_census -- --ignored --nocapture` (SEEDS=7,1,42, CHUNKS=12).
     #[test]

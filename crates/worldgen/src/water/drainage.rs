@@ -42,6 +42,9 @@ use voxmar_engine::glam::IVec2;
 
 use super::cache::{Cache, Weigh};
 use crate::SEA_LEVEL;
+
+/// Scratch: every stream pit flooded (centre, bottom, spill, cells, kind, wet).
+pub static PITS: std::sync::Mutex<Vec<(IVec2, f32, f32, usize, u8, bool)>> = std::sync::Mutex::new(Vec::new());
 use crate::rng::hash3;
 
 /// The eight neighbours, counter-clockwise from +x; odd indices are diagonals.
@@ -764,6 +767,14 @@ impl Drainage {
     /// Floods a pit until it overflows, and decides what it becomes. The cells it
     /// returns are those the flood passed, for finding tunnels; `lake` replaces them.
     fn flood(&self, reader: &mut Reader, pit: IVec2) -> Lake {
+        let lake = self.flood_inner(reader, pit);
+        if self.tier.cell == 8 {
+            PITS.lock().unwrap().push((self.tier.centre(pit), lake.bottom, lake.spill, lake.cells.len(), lake.kind as u8, lake.wet()));
+        }
+        lake
+    }
+
+    fn flood_inner(&self, reader: &mut Reader, pit: IVec2) -> Lake {
         let tier = &self.tier;
         let ground = reader.ground;
         let mut at = |c: IVec2| reader.at(c);
