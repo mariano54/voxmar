@@ -3,6 +3,7 @@
 //! (nothing from Minecraft is shipped or needed), and our own default pack, which draws
 //! everything the game uses. Whatever no pack provides gets a simple generated placeholder.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -154,6 +155,10 @@ impl Files {
     }
 }
 
+/// A pack's list of other drawings of its textures: a map from a texture's path to the
+/// paths of its alternates, `{"block/stone": ["block/stone_2", "block/stone_3"]}`.
+const VARIANTS_FILE: &str = "variants.ron";
+
 /// One texture pack: a folder, zip or jar with images at `textures/<path>.png` (our
 /// layout) or `assets/minecraft/textures/<path>.png` (Minecraft's, so its client jar and
 /// resource packs work unchanged), and texture recipes in `recipes/*.ron`, rendered here
@@ -170,6 +175,8 @@ struct Pack {
     recipes: Library,
     /// Texels across that block and item textures are drawn at, at least.
     resolution: u32,
+    /// Other drawings of its textures, from `variants.ron` (see [`Source::block_variants`]).
+    variants: HashMap<String, Vec<String>>,
     /// Textures this pack provided since the last log.
     served: usize,
 }
@@ -187,8 +194,17 @@ impl Pack {
             bevy::log::warn!("texture pack {name}: {e}; leaving that book out");
         }
         files.reverse();
+        // A pack's own variants win over those of the packs it builds on.
+        let mut variants = HashMap::new();
+        for layer in files.iter_mut().rev() {
+            let Some(bytes) = layer.read(VARIANTS_FILE) else { continue };
+            match std::str::from_utf8(&bytes).map_err(|e| e.to_string()).and_then(|s| ron::from_str::<HashMap<String, Vec<String>>>(s).map_err(|e| e.to_string())) {
+                Ok(more) => variants.extend(more),
+                Err(e) => bevy::log::warn!("texture pack {name}: {VARIANTS_FILE}: {e}; leaving it out"),
+            }
+        }
         let resolution = manifest.as_ref().map_or(0, |m| m.resolution);
-        Ok(Self { name: manifest.map_or(name, |m| m.name), files, recipes, resolution, served: 0 })
+        Ok(Self { name: manifest.map_or(name, |m| m.name), files, recipes, resolution, variants, served: 0 })
     }
 
     /// Whether the pack has `<path>.png`, as an image or a recipe.
@@ -338,6 +354,33 @@ impl Source {
             })
             .collect();
         (size, textures, animations)
+    }
+
+    /// For each texture reference, the other drawings its pack declares for it in
+    /// `variants.ron`, `size`×`size`: each block face shows the texture or one of these,
+    /// picked by its position, all equally often (a name listed twice comes up twice as
+    /// often). Only the pack that serves a texture can give it variants, so they match it.
+    /// None for an ore over its rock or an animation strip.
+    pub fn block_variants(&mut self, refs: &[TextureRef], size: u32) -> Vec<Vec<Rgba>> {
+        refs.iter()
+            .map(|r| {
+                let path = format!("block/{}", r.name);
+                if r.under.is_some() {
+                    return Vec::new();
+                }
+                let Some(pack) = self.packs.iter_mut().find(|pack| pack.contains(&path)) else { return Vec::new() };
+                let Some(names) = pack.variants.get(&path).cloned() else { return Vec::new() };
+                let mut alternates = Vec::new();
+                for name in names {
+                    match pack.read(&name) {
+                        Some(image) if image.frames().len() == 1 => alternates.push(image.square(size)),
+                        Some(_) => bevy::log::warn!("texture pack {}: variant {name} of {path} is an animation strip; leaving it out", pack.name),
+                        None => bevy::log::warn!("texture pack {}: variant {name} of {path} not found", pack.name),
+                    }
+                }
+                alternates
+            })
+            .collect()
     }
 
     /// For each texture reference `wanted`, its overlay, `block/<name>_overlay`, drawn over

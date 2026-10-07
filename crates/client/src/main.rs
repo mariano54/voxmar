@@ -666,6 +666,23 @@ fn setup(
         }
         layers[layer].animation = Some(render::Animation { first, frames, ticks: animation.ticks });
     }
+    // Other drawings of a texture its pack gives (`variants.ron`) go after those, each a
+    // layer of its own, which the terrain shader picks among by each block's position.
+    for (layer, alternates) in source.block_variants(registry.textures(), size).into_iter().enumerate() {
+        if alternates.is_empty() || layers[layer].animation.is_some() {
+            continue;
+        }
+        let first = block_textures.len() as u16;
+        let count = alternates.len().min(255) as u8;
+        for mut alternate in alternates.into_iter().take(255) {
+            if !see_through[layer] {
+                alternate.fill_transparent();
+            }
+            block_textures.push(alternate);
+            layers.push(LayerInfo { variants: None, ..layers[layer].clone() });
+        }
+        layers[layer].variants = Some(render::Variants { first, count });
+    }
     ui::skin::load(&mut source, &mut images);
     ui::skin::set_font(settings.font, &mut fonts);
     let colormaps = source.colormaps();

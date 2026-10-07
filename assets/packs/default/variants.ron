@@ -1,0 +1,13 @@
+// Other drawings of this pack's textures: each block face shows the texture or one of
+// these, picked by the block's position, all equally often (list one twice for twice as
+// often). Only textures this pack serves take them; recipes/alternates.ron draws them.
+{
+    "block/stone": ["block/stone_2", "block/stone_3"],
+    "block/cobblestone": ["block/cobblestone_2", "block/cobblestone_3"],
+    "block/andesite": ["block/andesite_2", "block/andesite_3"],
+    "block/granite": ["block/granite_2", "block/granite_3"],
+    "block/diorite": ["block/diorite_2", "block/diorite_3"],
+    "block/dirt": ["block/dirt_2", "block/dirt_3"],
+    "block/sand": ["block/sand_2", "block/sand_3"],
+    "block/gravel": ["block/gravel_2", "block/gravel_3"],
+}
