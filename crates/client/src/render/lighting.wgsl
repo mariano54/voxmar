@@ -164,17 +164,48 @@ fn weathered(albedo: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, sky: f32) -
     return vec4(color, wet);
 }
 
-// The sky mirrored by a wet surface, most at a glancing angle and in puddles.
+// The sky mirrored by a wet surface, most at a glancing angle and in puddles. A puddle's
+// surface ripples (and rings where rain falls on it), so what it mirrors moves from pixel
+// to pixel and breaks up; it mirrors the clouds as well as the sky. A flat mirror of the
+// sky's colour alone made every puddle one even tint, the same at every point
+// (Mariano's playtest, 2026-10-06).
 fn wet_sheen(color: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, wet: f32, sky: f32) -> vec3<f32> {
     if wet <= 0.0 {
         return color;
     }
     let to_eye = normalize(view.world_position - world);
-    let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(normal, to_eye), 0.0), 5.0);
-    let mirrored = reflect(-to_eye, normal);
-    let reflection = far_color(atmosphere, view.world_position, mirrored, sun_direction());
     let puddle = smoothstep(0.6, 1.0, wet);
+    var surface = normal;
+    if puddle > 0.0 && normal.y > 0.9 {
+        // How hard it rains (the storm term of the cloud layer: falling rain, more in storms).
+        let rain = saturate(atmosphere.cloud_shape.w * 2.0);
+        surface = normalize(mix(normal, water_normal(world * 2.5), puddle) + vec3(raindrop_rings(world.xz, rain), 0.0).xzy * puddle);
+    }
+    let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(surface, to_eye), 0.0), 5.0);
+    let mirrored = reflect(-to_eye, surface);
+    var reflection = far_color(atmosphere, view.world_position, mirrored, sun_direction());
+    if puddle > 0.0 {
+        let cloud = reflected_cloud(world, mirrored);
+        reflection = reflection * (1.0 - cloud.a) + cloud.rgb;
+    }
     return mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.9, puddle));
+}
+
+// The slope rings that falling rain spreads over a puddle at `xz`, `rain` 0..1: on a grid of
+// cells half a block across, each a drop's ring at its own moment, widening and fading.
+fn raindrop_rings(xz: vec2<f32>, rain: f32) -> vec2<f32> {
+    if rain <= 0.0 {
+        return vec2(0.0);
+    }
+    let cell = floor(xz * 2.0);
+    let within = fract(xz * 2.0) - 0.5;
+    let h = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+    let t = fract(globals.time * (0.6 + 0.8 * h) + h * 7.0);
+    let offset = vec2(fract(h * 13.0), fract(h * 29.0)) * 0.4 - 0.2;
+    let d = within - offset;
+    let r = length(d);
+    let ring = sin((r - t * 0.45) * 40.0) * smoothstep(0.08, 0.0, abs(r - t * 0.45)) * (1.0 - t);
+    return select(vec2(0.0), d / max(r, 1e-3) * ring * 0.25 * rain, h < rain);
 }
 
 // Light a glowing block gives off by itself (`glow` 0..1, from its light level): its bright
