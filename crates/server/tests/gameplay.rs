@@ -2216,16 +2216,22 @@ fn a_creatures_loot_comes_out_once_its_body_has_fallen() {
     client.ok("/summon rabbit 1 ~ ~ ~-2");
     client.pump_until(|c| c.creatures.values().any(|v| v.species == rabbit));
     let before = client.items.len();
-    let killed = Instant::now();
+    // Judged by the server's clock, with bounds that hold whenever this thread runs: no
+    // reply carries the tick it ran on, but the tick read before the command is no later
+    // than the kill's, and the tick read once the loot is seen is no earlier than its drop.
+    let ticks = |c: &Client| c._server.as_ref().expect("the server").ticks();
+    let asked = ticks(&client);
     client.ok("/creatures kill");
-    // While it falls, nothing has dropped.
-    let early = Duration::from_secs_f32(falls * 0.6);
-    while killed.elapsed() < early {
-        assert_eq!(client.items.len(), before, "loot came out of a body still falling");
-        let until = Instant::now() + Duration::from_millis(20);
+    // Less one: the counter is advanced after the tick's work, so loot sent in tick D is
+    // seen while ticks() reads D-1.
+    let fall = (falls * TICKS_PER_SECOND as f32).round() as u64 - 1;
+    // While the server has not run a fall's length since we asked, nothing has dropped.
+    while ticks(&client) < asked + fall {
+        assert_eq!(client.items.len(), before, "loot came out of a body still falling, {} ticks after asking", ticks(&client) - asked);
+        let until = Instant::now() + Duration::from_millis(10);
         client.pump_until(|_| Instant::now() > until);
     }
-    // Then its meat is on the ground.
+    // Then its meat is on the ground, and the server had run at least the fall by then.
     client.pump_until(|c| c.items.len() > before);
-    assert!(killed.elapsed().as_secs_f32() >= falls * 0.9, "dropped after {:.2}s, before the {falls}s fall", killed.elapsed().as_secs_f32());
+    assert!(ticks(&client) >= asked + fall, "loot seen {} ticks after asking, before the {fall}-tick fall", ticks(&client) - asked);
 }
