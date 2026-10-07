@@ -875,8 +875,13 @@ mod tests {
         let column = world.generate(ColumnPos::of_block(at));
         assert_eq!(column.block(IVec3::new(at.x.rem_euclid(32), at.y, at.z.rem_euclid(32))), block);
         assert!(registry.def(block).has_tag("ore_sample"));
-        if let Some((_, iron)) = world.locate_ore(Some("iron"), spawn.xz(), 1500) {
-            assert_eq!(registry.def(iron).name, "base:iron_ore_sample");
+        // A vein holding iron: its sample is of its main ore, iron or what lies with it.
+        if let Some((_, sample)) = world.locate_ore(Some("iron"), spawn.xz(), 1500) {
+            let name = &registry.def(sample).name;
+            assert!(["base:iron_ore_sample", "base:copper_ore_sample", "base:lodestone_sample"].contains(&name.as_str()), "/locate ore iron found a {name}");
+        }
+        if let Some((_, sample)) = world.locate_ore(Some("coal_seam"), spawn.xz(), 1500) {
+            assert_eq!(registry.def(sample).name, "base:coal_ore_sample");
         }
     }
 

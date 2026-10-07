@@ -342,10 +342,10 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
     let creature = |id| locale.creature(&content.creatures.get(id).def);
     match method {
         Method::Craft { shapeless, .. } => vec![(locale.get(if *shapeless { "recipes.shapeless" } else { "recipes.craft" }).to_owned(), MUTED)],
-        Method::Cook { station, level, burnt, .. } => {
+        Method::Cook { station, skill, level, burnt, .. } => {
             let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];
-            let skill = content.cooking.skill.map(|id| locale.skill(content.skills.get(id)));
+            let skill = skill.map(|id| locale.skill(content.skills.get(id)));
             if let Some(skill) = skill {
                 lines.push((locale.format("recipes.level", &[("skill", &skill), ("level", level)]), SOFT));
             }

@@ -1,7 +1,7 @@
 // Cooking (engine/src/cooking.rs, docs/food-and-cooking.md): what each station cooks.
 // `input` is an item (or `tag:` and a tag), `station` the tag of the station block, `level`
-// the Cooking level it takes, `xp` the experience for one that doesn't burn. Burning starts
-// at `level` (half the time) and stops at `stop_burning`; burnt food is `burnt_food`.
+// the level it takes in its `skill` (Cooking unless given), `xp` the experience for one that doesn't burn. Burning starts
+// at `level` (half the time) and stops at `stop_burning` (0: never burns); burnt food is `burnt_food`.
 (
     recipes: [
         (input: "raw_rabbit", output: "cooked_rabbit", level: 1, xp: 30.0, stop_burning: 15, burnt: "burnt_food"),
@@ -9,7 +9,6 @@
         (input: "potato", output: "baked_potato", level: 2, xp: 32.0, stop_burning: 16, burnt: "burnt_food"),
         (input: "carrot", output: "roast_carrot", level: 2, xp: 28.0, stop_burning: 14, burnt: "burnt_food"),
         (input: "egg", output: "fried_egg", level: 1, xp: 20.0, stop_burning: 12, burnt: "burnt_food"),
-        (input: "duck_egg", output: "fried_egg", level: 3, xp: 25.0, stop_burning: 14, burnt: "burnt_food"),
         (input: "raw_frog", output: "cooked_frog", level: 1, xp: 22.0, stop_burning: 12, burnt: "burnt_food"),
         (input: "raw_crab", output: "cooked_crab", level: 6, xp: 55.0, stop_burning: 24, burnt: "burnt_food"),
         (input: "raw_duck", output: "cooked_duck", level: 3, xp: 40.0, stop_burning: 18, burnt: "burnt_food"),
@@ -33,7 +32,14 @@
         (input: "raw_tuna", output: "cooked_tuna", level: 50, xp: 125.0, stop_burning: 70, burnt: "burnt_food"),
         (input: "raw_swordfish", output: "cooked_swordfish", level: 65, xp: 165.0, stop_burning: 80, burnt: "burnt_food"),
         (input: "raw_glimmer_koi", output: "cooked_glimmer_koi", level: 75, xp: 230.0, stop_burning: 80, burnt: "burnt_food"),
+        // Fired in a pit kiln (Crafting): clay into fired clay, which pots, vials and kiln
+        // bricks are made of; it cracks now and then until Crafting 12.
+        (input: "clay", output: "fired_clay", station: "pit_kiln", skill: "core:crafting", level: 1, xp: 6.0, stop_burning: 12),
+        // Smelted in the Crucible Kiln (Engineering), which must stand round its crucible:
+        // copper and tin, and bronze from their blend. Metal never burns.
+        (input: "copper_ore", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),
+        (input: "bronze_blend", output: "bronze_ingot", station: "crucible", skill: "core:engineering", level: 12, xp: 14.0, stop_burning: 0),
         // A log left in the fire burns down to charcoal, for torches; it never fails.
-        (input: "tag:log", output: "charcoal", level: 1, xp: 5.0, stop_burning: 1),
+        (input: "tag:log", output: "charcoal", level: 1, xp: 5.0, stop_burning: 0),
     ],
 )

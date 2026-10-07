@@ -46,6 +46,8 @@ struct Client {
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
     blows: u32,
+    /// The damage each of our blows did (0 for a miss).
+    damage: Vec<u16>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -115,6 +117,7 @@ impl Client {
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
+            damage: Vec::new(),
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
@@ -197,7 +200,10 @@ impl Client {
                     self.deaths += gone.died as u32;
                 }
             }
-            ServerMessage::Struck { .. } => self.blows += 1,
+            ServerMessage::Struck { damage, .. } => {
+                self.blows += 1;
+                self.damage.push(damage);
+            }
             ServerMessage::Journal { entries } => self.journal.merge(entries),
             ServerMessage::Quests { states } => self.quests = states,
             ServerMessage::Items { changed, gone } => {
@@ -532,8 +538,8 @@ fn commands_set_the_time_and_the_weather() {
     let (before, _) = client.day.unwrap();
     assert!(client.ok("/time set noon").contains("12:00"));
     let (day, speed) = client.day.unwrap();
-    // A day at normal speed takes the content's 25 minutes, so its ticks run at 0.8.
-    assert_eq!((day % TICKS_PER_DAY, speed), (8000, 0.8));
+    // A day at normal speed takes the content's 30 minutes, so its ticks run at 20 / 30.
+    assert_eq!((day % TICKS_PER_DAY, speed), (8000, 20.0 / 30.0));
     assert!(day >= before && day < before + TICKS_PER_DAY);
     client.ok("/night");
     assert_eq!(client.day.unwrap().0 % TICKS_PER_DAY, 17_000);
@@ -542,7 +548,7 @@ fn commands_set_the_time_and_the_weather() {
     assert!((client.day.unwrap().0 % TICKS_PER_DAY).abs_diff(19_000) < 40, "{:?}", client.day);
     assert!(client.ok("/time freeze").contains("frozen"));
     assert_eq!(client.day.unwrap().1, 0.0);
-    assert!(client.ok("/time speed 10").contains("2.5 minutes per day"));
+    assert!(client.ok("/time speed 10").contains("3.0 minutes per day"));
     assert_eq!(client.command("/time speed -1")[0].0, ChatKind::Error);
 
     // Forced weather arrives quickly, and stays.
@@ -747,6 +753,46 @@ fn strike_a_snail(mut client: Client) {
     client.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
     // Its slime pops out beside us, and we pick it up.
     client.pump_until(|c| (0..voxmar_engine::inventory::SLOTS).filter_map(|s| c.inventory.get(s)).any(|s| s.item == slime));
+}
+
+/// A weapon hits up to its max hit from the level that wields it; below that level it
+/// strikes as a bare fist (max hit 1, and 1 more for every eight levels).
+#[test]
+fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
+    let mut client = Client::join();
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    let sword = client.content.blocks.id("base:iron_sword").unwrap();
+    // Creative, so the bear's blows pass us by.
+    client.ok("/gamemode creative");
+    client.ok("/skill attack 19");
+    client.ok("/give iron_sword 1");
+    client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sword)).unwrap();
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear));
+    let id = client.creatures.iter().find(|(_, v)| v.species == bear).map(|(&id, _)| id).unwrap();
+    // Struck a full charge apart, beside it wherever it goes, until `landed` blows land.
+    let strike = |client: &mut Client, landed: usize| {
+        let start = client.damage.len();
+        while client.damage[start..].iter().filter(|&&d| d > 0).count() < landed && client.creatures.contains_key(&id) {
+            assert!(client.damage.len() - start < 80, "{} blows landed {landed}", client.damage.len() - start);
+            let at = client.creatures[&id].position;
+            client.ok(&format!("/tp {} {} {}", at.x + 1.2, at.y, at.z));
+            client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+            std::thread::sleep(Duration::from_millis(650));
+            let blows = client.blows;
+            client.propose("core:attack", ActionTarget::Creature(id));
+            let asked = Instant::now();
+            client.pump_until(|c| c.blows > blows || !c.creatures.contains_key(&id) || asked.elapsed() > Duration::from_millis(400));
+        }
+        client.damage[start..].iter().copied().filter(|&d| d > 0).collect::<Vec<u16>>()
+    };
+    // Attack 19, a level short of iron: a fist's max hit, 1 + 19 / 8 = 3.
+    let fists = strike(&mut client, 6);
+    assert!(fists.iter().all(|&d| d <= 3), "below the sword's level, blows did {fists:?}");
+    client.ok("/skill attack 20");
+    let swung = strike(&mut client, 8);
+    assert!(swung.iter().all(|&d| d <= 9) && swung.iter().any(|&d| d > 3), "with the sword, blows did {swung:?}");
 }
 
 #[test]
@@ -1090,8 +1136,8 @@ fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
     client.pump_until(|c| c.world.block(core) == Some(hearthstone));
     let light = |client: &mut Client| {
         client.chat.clear();
-        client.propose("base:light_hearth", ActionTarget::Block { block: core, face: Face::PosY });
-        client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("hearth")));
+        client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+        client.pump_until(|c| c.chat.iter().any(|(_, t)| t.to_lowercase().contains("hearth")));
         std::mem::take(&mut client.chat).into_iter().map(|(_, t)| t).collect::<String>()
     };
     assert!(light(&mut client).contains("needs"), "no chimney yet");
@@ -1124,4 +1170,79 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     client.propose("core:craft", ActionTarget::Slot(0));
     client.chat.clear();
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table")));
+}
+
+#[test]
+fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
+    let mut client = Client::join();
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~5 ~2 ~1 air", "/setblock ~4 ~ ~ crucible", "/give copper_ore 2", "/skill engineering 20"] {
+        client.ok(line);
+    }
+    let crucible = client.content.blocks.expect("base:crucible");
+    let (ore, ingot) = (client.content.blocks.expect("base:copper_ore"), client.content.blocks.expect("base:copper_ingot"));
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.inventory.get(0).is_some());
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let smelt = |client: &mut Client| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    };
+    // A crucible alone smelts nothing, and says what the kiln needs.
+    smelt(&mut client);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("kiln needs")));
+    assert_eq!(count(&client, ore), 2);
+    // Ringed with kiln bricks and a pillar on each corner, it smelts.
+    for line in ["/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks", "/setblock ~4 ~ ~ crucible", "/setblock ~3 ~1 ~-1 kiln_bricks", "/setblock ~5 ~1 ~-1 kiln_bricks", "/setblock ~3 ~1 ~1 kiln_bricks", "/setblock ~5 ~1 ~1 kiln_bricks"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
+    client.chat.clear();
+    client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")));
+    smelt(&mut client);
+    client.pump_until(|c| count(c, ingot) == 1 && count(c, ore) == 1);
+}
+
+#[test]
+fn a_sleeping_bag_is_where_the_homeless_wake() {
+    let mut client = Client::join_remote("sleeper", &["sleeper"]);
+    let bag = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    for line in ["/fill ~3 ~ ~ ~3 ~1 ~ air", "/setblock ~3 ~ ~ sleeping_bag"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("wake here")));
+    client.ok("/tp ~-20 ~ ~");
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(bag.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
+
+#[test]
+fn gravel_sometimes_breaks_to_flint_instead() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    for line in ["/clear", "/give iron_shovel 1"] {
+        client.ok(line);
+    }
+    let (gravel, flint) = (client.content.blocks.expect("base:gravel"), client.content.blocks.expect("base:flint"));
+    client.pump_until(|c| c.inventory.get(0).is_some());
+    client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    // One break in eight gives flint: in sixty, all but certainly some.
+    let mut flints = 0;
+    for _ in 0..60 {
+        client.ok("/setblock ~ ~-1 ~ gravel");
+        client.pump_until(|c| c.world.block(below) == Some(gravel));
+        client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
+        client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+        flints = client.items.values().filter(|i| i.stack.item == flint).count() + client.inventory.slots.iter().flatten().filter(|s| s.item == flint).count();
+        if flints > 0 {
+            break;
+        }
+    }
+    assert!(flints > 0, "sixty gravel broke without a flint");
 }

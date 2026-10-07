@@ -98,8 +98,11 @@ pub enum Requirement {
     Tillable,
     /// The target is a crafting table.
     CraftingTable,
-    /// The target is the core of a hearth (tagged `hearth`).
-    Hearth,
+    /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
+    Bed,
+    /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
+    /// a crucible.
+    MultiblockCore,
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
@@ -156,9 +159,11 @@ pub enum Effect {
     EmptyPouch,
     /// Bring up what bites in the target water, if anything (`fishing.ron`).
     Fish,
-    /// Light the target hearth: if the Homestead Hearth stands around it, it becomes the
-    /// actor's home, where they wake after dying.
-    ClaimHome,
+    /// Sleep at the target bed: the actor wakes there after dying, until they have a home.
+    Sleep,
+    /// Light the multiblock whose core is the target, if it stands around it: the
+    /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
+    Light,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -238,6 +243,10 @@ pub trait ActionContext {
     fn crops(&self) -> &CropRegistry;
     /// The actor's level in `skill`.
     fn actor_level(&self, skill: SkillId) -> u8;
+    /// The actor's own level in `skill`, without boosts (what wields a weapon).
+    fn actor_own_level(&self, skill: SkillId) -> u8 {
+        self.actor_level(skill)
+    }
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
@@ -282,6 +291,10 @@ pub trait ActionContext {
     }
     /// The box of a living creature, if there is one with that id.
     fn creature_box(&self, _id: u32) -> Option<crate::physics::Aabb> {
+        None
+    }
+    /// Weapons, where the context knows them.
+    fn combat(&self) -> Option<&crate::combat::CombatRegistry> {
         None
     }
 }
@@ -372,7 +385,7 @@ impl ActionDef {
                 let recipe = ctx.actor_held().zip(ctx.cooking()).and_then(|(item, cooking)| cooking.for_item(item, station));
                 match (requirement, recipe) {
                     (Requirement::Cookable, recipe) => recipe.is_some(),
-                    (_, Some(recipe)) => ctx.cooking().and_then(|c| c.skill).is_none_or(|skill| ctx.actor_level(skill) >= recipe.def.level),
+                    (_, Some(recipe)) => recipe.skill.is_none_or(|skill| ctx.actor_level(skill) >= recipe.def.level),
                     (_, None) => true,
                 }
             }
@@ -406,15 +419,21 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("crafting_table"))
             }
-            Requirement::Hearth => {
+            Requirement::Bed => {
                 let (block, _) = block_target()?;
-                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("hearth"))
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
+            }
+            Requirement::MultiblockCore => {
+                let (block, _) = block_target()?;
+                ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("multiblock_core"))
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };
+                // A spear reaches further, for one who can wield it.
+                let reach = ctx.combat().map_or(0.0, |combat| combat.wielded(ctx.actor_held(), |skill| ctx.actor_own_level(skill)).reach);
                 ctx.creature_box(id).is_some_and(|aabb| {
                     let nearest = ctx.actor_eye().clamp(aabb.min, aabb.max);
-                    ctx.actor_eye().distance(nearest) <= REACH_CREATURE
+                    ctx.actor_eye().distance(nearest) <= REACH_CREATURE + reach
                 })
             }
             Requirement::Replaceable => {

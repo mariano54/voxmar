@@ -8,8 +8,8 @@
 //                                    beneath; a: cover of small plants)
 
 #import bevy_pbr::mesh_view_bindings::{view, fog}
-#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, sun_unclouded, water_normal, reflected_cloud, horizon_along}
-#import voxmar::water::{absorption, scattering, transmittance, inscattered, fresnel, sky_gradient}
+#import voxmar::lighting::{FACE_SHADE, shade_normal, apply_fog, sun_direction, sun_color, sun_unclouded, reflected_cloud, horizon_along}
+#import voxmar::water::{Water, absorption, scattering, transmittance, inscattered, fresnel, sky_gradient, wind_wave_slope, mirrored_sky}
 
 struct DistantView {
     // xy: column of the coverage mask's first bit, z: the mask's width in columns, w: the
@@ -28,6 +28,10 @@ struct DistantView {
 @group(2) @binding(1) var<uniform> distant: DistantView;
 // One bit per column around the camera that has real chunks.
 @group(2) @binding(2) var<storage, read> coverage: array<u32>;
+// Real water's uniform and wave texture (water.rs), so the sheets carry the same waves.
+@group(2) @binding(14) var<uniform> water: Water;
+@group(2) @binding(15) var wave_texture: texture_2d<f32>;
+@group(2) @binding(16) var wave_sampler: sampler;
 
 const FIRST_CELL: f32 = 4.0;
 const RING: f32 = 6.0;
@@ -71,16 +75,10 @@ const FOREST_FLOOR: f32 = 0.55;
 // and how strongly; they fade where they would be a pixel or two, like the crowns.
 const PATCH_CELL: f32 = 4.0;
 const PATCHES: f32 = 0.3;
-// Real water's ripples carry on past the real chunks and smooth out over this distance, into
-// their average: a wider, dimmer sun glint, and a surface facing the eye a little more (the
-// variance of the ripples' slope).
-const RIPPLE_FADE: f32 = 256.0;
-// Blocks of water across a pixel (its longer side) over which the ripples fade out: their
-// shortest wavelength is a little over two blocks.
-const RIPPLE_ALIAS = vec2(0.4, 1.2);
-const GLINT_SHARPNESS = vec2(50.0, 220.0);
-const GLINT = vec2(0.9, 1.0);
-const RIPPLE_SLOPE_VARIANCE: f32 = 0.0013;
+// The sun's glint off the waves, as real water's (water_surface.wgsl): sharpness and
+// strength of its core and of its wider sheen.
+const GLINT = vec2(1600.0, 160.0);
+const GLINT_STRENGTH = vec2(40.0, 0.6);
 // Depth of water at which sky light at the floor has run out, in blocks (it falls two
 // levels per block).
 const SHEET_DEPTH: f32 = 7.5;
@@ -310,40 +308,34 @@ fn terrain(in: VertexOutput, to_eye: vec3<f32>, y: f32, filter_width: f32, surfa
     return mix(crown, ground, saturate(gaps));
 }
 
-// Water and ice: the surface over the floor beneath. Water is shaded like real water
-// (water.wgsl): the floor seen through it, dimmed and coloured by the water it is seen and lit
-// through, the water's own colour where it is deep, and a reflection of the sky. Where the
-// sheet falls steeply (`surface_slope`, rise per block: a river dropping off a cliff) it is
-// white water, as real falling water is, not a mirror: a level sheet's reflection there
-// took the horizon's colour, and waterfalls showed as sky-blue holes in the hills.
+// Water and ice: the surface over the floor beneath. Water is shaded as real water is
+// (water_surface.wgsl), with its waves (`wind_wave_slope`, the same texture, layers and
+// filtering), its reflection of the sky and the low cloud, and its sun glint, so the two
+// meet without a seam at the edge of the real chunks: the floor seen through it, dimmed
+// and coloured by the water it is seen and lit through, the water's own colour where it is
+// deep. Where the sheet falls steeply (`surface_slope`, rise per block: a river dropping
+// off a cliff) it is white water, as real falling water is, not a mirror: a level sheet's
+// reflection there took the horizon's colour, and waterfalls showed as sky-blue holes in
+// the hills.
 fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32, footprint: f32) -> vec3<f32> {
     let light = shade_normal(vec3(1.0), in.world_position, UP, 1.0, 1.0, 0.0, 1.0, false, true);
     let floor = saturate(in.side) * face_light(in, UP, 1.0, 1.0, false);
     if in.kind == ICE {
         return mix(floor, in.top * light, in.params.y);
     }
-    let past_real = max(abs(in.world_position.x - view.world_position.x), abs(in.world_position.z - view.world_position.z))
-        - f32(distant.coverage.w) * COLUMN;
-    // They also fade where a pixel spans a ripple or more: sampled that sparsely they
-    // alias into a fine checker, which showed as a hard-edged band of it beyond the real
-    // water (Mariano's title screen, 2026-10-06).
-    let ripples = (1.0 - smoothstep(0.0, RIPPLE_FADE, past_real)) * (1.0 - smoothstep(RIPPLE_ALIAS.x, RIPPLE_ALIAS.y, footprint));
-    let n = normalize(mix(UP, water_normal(in.world_position), ripples));
-    // Ripples facing the eye fill more of the view than those facing away, the more so the
-    // lower the angle, so on average real water faces the eye more than a flat sheet.
-    let facing = dot(n, to_eye) + (1.0 - ripples) * RIPPLE_SLOPE_VARIANCE / max(to_eye.y, 0.01);
-    let r = reflect(-to_eye, n);
-    let toward_sun = max(dot(r, sun_direction()), 0.0);
-    var glint = 0.0;
-    if toward_sun > 0.8 {
-        glint = pow(toward_sun, mix(GLINT_SHARPNESS.x, GLINT_SHARPNESS.y, ripples)) * mix(GLINT.x, GLINT.y, ripples)
-            * sun_unclouded(in.world_position);
+    // Open water: waves as high as the wind lets them grow.
+    let slope = wind_wave_slope(wave_texture, wave_sampler, water, in.world_position.xz, footprint, water.budget.x) * water.origin.w;
+    let n = normalize(vec3(-slope.x, 1.0, -slope.y));
+    let facing = dot(n, to_eye);
+    var r = reflect(-to_eye, n);
+    if r.y < 0.02 {
+        r = normalize(r + UP * (0.02 - r.y));
     }
     // The top colour is the biome's water colour, as real water's. Saturated, like every
     // colour here: seen edge-on, a sheet interpolates at pixel centres outside it.
     let tint = saturate(in.top);
-    let absorbed = absorption(tint, 1.0);
-    let scattered = scattering(tint, 1.0);
+    let absorbed = absorption(tint, water.optics.x);
+    let scattered = scattering(tint, water.optics.y);
     // Sky light at the floor fell by two levels per block of water above it. Saturated,
     // because a sheet seen edge-on interpolates its vertices' values at pixel centres
     // outside it, which an exponential would blow up.
@@ -351,12 +343,17 @@ fn sheet(in: VertexOutput, to_eye: vec3<f32>, surface_slope: f32, footprint: f32
     let depth = (1.0 - sky) * SHEET_DEPTH;
     let path = select(depth / max(to_eye.y, 0.05), 1e4, sky <= 0.0);
     let seen = floor * transmittance(absorbed, scattered, path + depth) + inscattered(absorbed, scattered, path, light);
-    // The sky and the low cloud as real water reflects them where its reflections leave
-    // the screen.
-    let cloud = reflected_cloud(in.world_position, r);
-    let reflected = sky_gradient(r, distant.zenith.rgb, horizon_along(distant.horizon.rgb, r)) * (1.0 - cloud.a) + cloud.rgb;
+    let up = mirrored_sky(to_eye, n, UP, footprint);
+    let cloud = reflected_cloud(in.world_position, up);
+    let reflected = sky_gradient(up, water.zenith.rgb, horizon_along(water.horizon.rgb, up)) * (1.0 - cloud.a) + cloud.rgb;
+    let toward_sun = max(dot(r, sun_direction()), 0.0);
+    var glint = 0.0;
+    if toward_sun > 0.95 {
+        glint = (pow(toward_sun, GLINT.x) * GLINT_STRENGTH.x + pow(toward_sun, GLINT.y) * GLINT_STRENGTH.y)
+            * sun_unclouded(in.world_position) * water.strengths.x;
+    }
+    let still = mix(seen, reflected, fresnel(facing) * water.strengths.x) + sun_color() * glint;
     let falls = smoothstep(0.7, 1.5, surface_slope);
-    let still = mix(seen, reflected, fresnel(facing)) + sun_color() * glint * 4.0;
     let white_water = mix(seen, light * FALLING_FOAM, 0.55);
     return mix(still, white_water, falls);
 }
@@ -374,6 +371,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let ground_x = length(dpdx(in.world_position.xz));
     let ground_y = length(dpdy(in.world_position.xz));
     let footprint = vec2(max(ground_x, ground_y), sqrt(ground_x * ground_y));
+    // Real water's measure of a pixel on the surface, for the sheets' waves.
+    let water_footprint = length(fwidth(in.world_position.xz));
     // Steepness of the drawn surface, crowns included.
     // Degenerate where a triangle is thinner than a pixel; such pixels count as flat.
     let across = cross(dpdx(in.world_position), dpdy(in.world_position));
@@ -395,7 +394,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             color *= 1.0 + PATCHES * patches * (value_noise(in.world_position.xz / PATCH_CELL + 17.0).x - 0.5);
         }
     } else {
-        color = sheet(in, to_eye, surface_slope, footprint.x);
+        color = sheet(in, to_eye, surface_slope, water_footprint);
     }
     // A NaN from a degenerate sliver would bloom into a blob; drop it.
     color = select(color, vec3(0.0), color != color);

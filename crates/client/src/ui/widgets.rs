@@ -540,13 +540,21 @@ pub fn spawn_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, piece
     meter.id()
 }
 
-/// A meter with its sign before it (a heart for health), together `width` wide.
+/// A meter with its sign before it (a heart for health), in a gold-trimmed frame like the
+/// hotbar's, together `width` wide.
 pub fn spawn_signed_meter(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, sign: Piece, piece: Piece, width: Val, marker: impl Bundle) {
-    let row = Node { width, align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), min_width: Val::Px(0.0), ..default() };
-    parent.spawn(row).with_children(|row| {
-        row.spawn((Node { width: Val::Px(9.0 * PX), height: Val::Px(9.0 * PX), flex_shrink: 0.0, ..default() }, sign.image()));
-        let meter = spawn_meter(row, font, piece, Val::Auto, marker);
-        row.commands().entity(meter).entry::<Node>().and_modify(|mut node| node.flex_grow = 1.0);
+    let frame = Node {
+        width,
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(space::INNER),
+        padding: UiRect::axes(Val::Px(space::INNER), Val::Px(2.0 * PX)),
+        min_width: Val::Px(0.0),
+        ..default()
+    };
+    parent.spawn((frame, Piece::Frame.image())).with_children(|frame| {
+        frame.spawn((Node { width: Val::Px(9.0 * PX), height: Val::Px(9.0 * PX), flex_shrink: 0.0, ..default() }, sign.image()));
+        let meter = spawn_meter(frame, font, piece, Val::Auto, marker);
+        frame.commands().entity(meter).entry::<Node>().and_modify(|mut node| node.flex_grow = 1.0);
     });
 }
 

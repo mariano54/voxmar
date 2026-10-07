@@ -197,6 +197,9 @@ enum Step {
     /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
     /// over picks up.
     Strike,
+    /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
+    /// blows than a fist could deal.
+    Weapon,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -219,6 +222,8 @@ enum Step {
     /// The Farming guide sorts its lines into kinds down the left; Planting shows only
     /// planting, and a line opens its page.
     Guides,
+    /// The journal key opens the journal, whose Plants page lists what there is to find.
+    Journal,
     /// In creative mode the inventory's catalogue finds an item by its English name and by
     /// its Japanese reading, and a click on it gives a stack; in survival it gives nothing.
     Catalogue,
@@ -228,6 +233,9 @@ enum Step {
     /// Every in-game screen and state, in English and Japanese: no text reaches past the
     /// element it sits in.
     Fit,
+    /// Every journal page, in English and Japanese: no text reaches past the element it
+    /// sits in. Each page has the time a step has, to be drawn and read.
+    FitJournal,
     /// Leaving the world for the title screen.
     Leave,
     /// The title screen and every menu before a game, in English and Japanese: no text
@@ -265,6 +273,12 @@ struct Gate {
     /// (in server seconds) that last went up.
     fell: Vec3,
     gathered: (u32, f32),
+    /// The crucible of the kiln the workshop builds and lights, and when (server seconds)
+    /// it was first lit.
+    kiln: IVec3,
+    kiln_since: f32,
+    /// When (server seconds) the kiln was last asked to light.
+    kiln_asked: f32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -353,6 +367,9 @@ impl Gate {
             count_before: 0,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
+            kiln: IVec3::ZERO,
+            kiln_since: 0.0,
+            kiln_asked: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -547,7 +564,7 @@ fn run(world: &mut World) {
         gate.killed_on_purpose = false;
     }
     // (The text-fit steps put the player through the death screen on purpose.)
-    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitMenus | Step::Leave | Step::Done) {
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
@@ -637,13 +654,15 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
-        Step::Strike => STRIKE_LIMIT,
+        Step::Strike | Step::Weapon => STRIKE_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Crafting, mining, tilling and fishing until something bites.
-        Step::Workshop => 160.0,
+        Step::Workshop => 220.0,
         _ => STEP_LIMIT,
     };
-    if now - gate.since > limit {
+    // The journal's tour is judged page by page.
+    let start = if gate.step == Step::FitJournal { gate.phase_since } else { gate.since };
+    if now - start > limit {
         return Err(format!("{:?} took longer than {limit}s", gate.step));
     }
     if let Some(observer) = &mut gate.observer
@@ -854,6 +873,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sky => sky(world, gate, now, in_phase),
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
+        Step::Weapon => weapon(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -862,9 +882,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
+        Step::Journal => journal(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
-        Step::Fit => fit(world, gate, now, in_phase),
+        Step::Fit | Step::FitJournal => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -1577,10 +1598,69 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 for line in ["clear", "give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
                     net.command(line);
                 }
-                end_workshop(world, gate, now);
+                // A Crucible Kiln built in the air over the player's head, clear of the
+                // test ground and the pool, to light.
+                let kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 4, 0);
+                let at = |dx: i32, dy: i32, dz: i32| format!("{} {} {}", kiln.x + dx, kiln.y + dy, kiln.z + dz);
+                let net = world.resource::<Net>();
+                for line in [
+                    format!("fill {} {} air", at(-1, 0, -1), at(1, 1, 1)),
+                    format!("fill {} {} kiln_bricks", at(-1, 0, -1), at(1, 0, 1)),
+                    format!("setblock {} crucible", at(0, 0, 0)),
+                    format!("setblock {} kiln_bricks", at(-1, 1, -1)),
+                    format!("setblock {} kiln_bricks", at(1, 1, -1)),
+                    format!("setblock {} kiln_bricks", at(-1, 1, 1)),
+                    format!("setblock {} kiln_bricks", at(1, 1, 1)),
+                ] {
+                    net.command(&line);
+                }
+                gate.kiln = kiln;
+                gate.advance(now);
             } else if gate.server_now - gate.gathered.1 > 15.0 {
                 let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
                 fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
+            }
+        }
+        // Right clicking the crucible lights the kiln: the quest that asks for it counts it.
+        15 => {
+            let kiln = gate.kiln;
+            let lit = |world: &World| {
+                world.resource::<LocalPlayer>().quests.iter().find(|q| q.name == "base:crucible_kiln").and_then(|q| q.tasks.first()?.first().copied()).is_some_and(|(have, _)| have > 0)
+            };
+            let crucible = world.resource::<ClientWorld>().registry.id("base:crucible");
+            if world.resource::<ClientWorld>().block(kiln) != crucible {
+                if in_phase > WORKSHOP_WAIT {
+                    fail(world, gate, "kiln", "the crucible never came".into());
+                }
+                return;
+            }
+            if gate.kiln_since == 0.0 {
+                gate.kiln_since = gate.server_now;
+            }
+            // Asked again only every few server seconds: each ask may stall the lagging
+            // server (`SERVER_LAG`), and asked every few frames it never got to a tick.
+            if gate.server_now - gate.kiln_asked >= 3.0 {
+                gate.kiln_asked = gate.server_now;
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+            }
+            // Quests are checked once a second of the server's time, which a loaded machine
+            // stretches: the wait is by its clock.
+            let done = lit(world);
+            let late = gate.server_now - gate.kiln_since > 20.0 || in_phase > 40.0;
+            if done || late {
+                // Taken down again either way, so the pool's bank is clear for the swim.
+                let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
+            }
+            if done {
+                gate.check("workshop: kiln", Ok("lighting the crucible lit the Crucible Kiln round it".into()));
+                end_workshop(world, gate, now);
+            } else if late {
+                let quests = &world.resource::<LocalPlayer>().quests;
+                let state = quests.iter().find(|q| q.name == "base:crucible_kiln").cloned();
+                let waited = (gate.server_now - gate.kiln_since, in_phase);
+                fail(world, gate, "kiln", format!("lighting the crucible in its kiln never counted ({:.1} server s, {:.1} game s): {} quests, the kiln's {state:?}", waited.0, waited.1, quests.len()));
             }
         }
         _ => {}
@@ -1626,6 +1706,12 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             gate.highest = gate.highest.max(position.y);
+            // Out of the water at the step's height, jump is let go so the player lands on
+            // the step and stays: held, a frame on the ground is easy to miss on a loaded
+            // machine, and the player hopped on and off the test ground.
+            if !in_water && position.y >= step_top - 0.01 {
+                key(world, KeyCode::Space, false);
+            }
             if on_ground && position.y >= step_top - 0.01 {
                 key(world, KeyCode::KeyW, false);
                 key(world, KeyCode::Space, false);
@@ -2084,33 +2170,43 @@ fn effects(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    use crate::hud::effects::ShowEffects;
-    use crate::hud::tips::{Popup, Tips};
-    let Some(warmed) = world.resource::<Launch>().content.effects.find("ember_warmed") else {
-        gate.check("tips", Err("no ember_warmed effect in the content".into()));
-        gate.next(Step::Guides, now);
-        return;
-    };
+    use crate::hud::tips::Tips;
+    let showing = |world: &World| world.resource::<Tips>().showing.map(|(name, _)| name);
     match gate.phase {
+        // As for a player who has seen every tip but the inventory's, the inventory shut.
         0 => {
-            // As for a player who has seen none.
-            world.resource_mut::<crate::settings::Settings>().tips_seen.clear();
-            world.insert_resource(ShowEffects(vec![("ember_warmed".into(), 60)]));
+            let others = crate::hud::tips::TIPS.iter().filter(|name| **name != "inventory").map(|name| name.to_string()).collect();
+            world.resource_mut::<crate::settings::Settings>().tips_seen = others;
+            *world.resource_mut::<Tips>() = Tips::default();
+            world.resource_mut::<UiState>().inventory_open = false;
+            gate.advance(now);
+        }
+        1 if in_phase > 0.2 => {
             world.resource_mut::<UiState>().inventory_open = true;
             gate.advance(now);
         }
-        _ => {
-            let popped = world.query::<&Popup>().iter(world).any(|popup| popup.0 == warmed);
-            let tip = world.resource::<Tips>().showing.map(|(name, _)| name);
-            if !(popped && tip.is_some()) && in_phase < 3.0 {
+        2 => {
+            let tip = showing(world);
+            if tip.is_none() && in_phase < 3.0 {
                 return;
             }
-            gate.check("tips: effect", if popped { Ok("Ember-warmed popped up as it came on".into()) } else { Err("an effect came on with no pop-up".into()) });
-            gate.check("tips: first look", match tip { Some(name) => Ok(format!("the {name} tip showed")), None => Err("opening the inventory brought no tip".into()) });
-            world.remove_resource::<ShowEffects>();
+            gate.check("tips: first look", match tip { Some(name) => Ok(format!("opening the inventory brought the {name} tip")), None => Err("opening the inventory brought no tip".into()) });
+            // Gone, and the inventory shut and opened again: it does not come back.
+            world.resource_mut::<Tips>().dismiss();
+            world.resource_mut::<UiState>().inventory_open = false;
+            gate.advance(now);
+        }
+        3 if in_phase > 0.2 => {
+            world.resource_mut::<UiState>().inventory_open = true;
+            gate.advance(now);
+        }
+        4 if in_phase > 1.0 => {
+            let again = showing(world).filter(|name| *name == "inventory");
+            gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err("the inventory tip came back".into()) });
             world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }
+        _ => {}
     }
 }
 
@@ -2119,7 +2215,7 @@ fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let skills = &world.resource::<Launch>().content.skills;
     let Some(farming) = skills.ids().find(|&id| skills.get(id).name.ends_with("farming")) else {
         gate.check("guides", Err("no Farming skill in the content".into()));
-        gate.next(Step::Catalogue, now);
+        gate.next(Step::Journal, now);
         return;
     };
     match gate.phase {
@@ -2154,6 +2250,31 @@ fn guides(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             *world.resource_mut::<GuideView>() = GuideView::default();
             world.resource_mut::<Guide>().0 = None;
             world.resource_mut::<UiState>().character_open = false;
+            gate.next(Step::Journal, now);
+        }
+    }
+}
+
+fn journal(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::journal::Page;
+    let key_code = world.resource::<crate::settings::Settings>().journal_key.0;
+    match gate.phase {
+        0 => {
+            let plants = Page::ALL.iter().position(|page| *page == Page::Plants).unwrap_or(0);
+            world.resource_mut::<crate::hud::journal::JournalView>().page = plants;
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        _ => {
+            key(world, key_code, false);
+            let open = world.resource::<UiState>().journal_open;
+            let cells = world.query_filtered::<(), With<Button>>().iter(world).count();
+            if !open && in_phase < 2.0 {
+                return;
+            }
+            let found = world.resource::<LocalPlayer>().journal.entries().count();
+            gate.check("journal", if open { Ok(format!("J opened the journal ({found} things found so far, {cells} buttons drawn)")) } else { Err("J did not open the journal".into()) });
+            world.resource_mut::<UiState>().journal_open = false;
             gate.next(Step::Catalogue, now);
         }
     }
@@ -2267,6 +2388,7 @@ fn screenshot(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// A screen or state the text-fit tour opens.
+
 #[derive(Clone, Copy, Debug)]
 enum View {
     /// The HUD alone, with experience, a refusal and a level-up showing.
@@ -2277,6 +2399,8 @@ enum View {
     Character,
     /// The character screen with one skill's guide open.
     Guide(usize),
+    /// The journal on one page.
+    Journal(usize),
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -2306,7 +2430,9 @@ const FIT_SETTLE: f32 = 0.4;
 /// `ui::fit`): one check for the lot, naming each.
 fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let skills = world.resource::<Launch>().content.skills.len();
-    let views: Vec<View> = if gate.step == Step::FitMenus {
+    let views: Vec<View> = if gate.step == Step::FitJournal {
+        (0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal).collect()
+    } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
         [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Character]
@@ -2324,10 +2450,11 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
-        gate.check(if menus { "text fits: menus" } else { "text fits" }, result);
+        let journal = gate.step == Step::FitJournal;
+        gate.check(if menus { "text fits: menus" } else if journal { "text fits: journal" } else { "text fits" }, result);
         show_view(world, None, now);
         set_language(world, "en");
-        gate.next(if menus { Step::Done } else { Step::Leave }, now);
+        gate.next(if menus { Step::Done } else if journal { Step::Leave } else { Step::FitJournal }, now);
         return;
     };
     if world.resource::<Locale>().code() != language {
@@ -2335,6 +2462,12 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
     show_view(world, Some(view), now);
     if in_phase < FIT_SETTLE {
+        return;
+    }
+    // A journal page is read once it is drawn, in this language, however long that takes.
+    if let View::Journal(page) = view
+        && world.resource::<crate::hud::journal::JournalDrawn>().0.as_ref() != Some(&(page, language.to_owned()))
+    {
         return;
     }
     for spill in crate::ui::fit::find(world) {
@@ -2367,17 +2500,21 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<crate::settings::Settings>().debug_overlay = debug;
     }
     let mut ui = world.resource_mut::<UiState>();
-    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+    (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open, ui.journal_open) = (false, false, false, false, false);
     match view {
         Some(View::Inventory) => ui.inventory_open = true,
         Some(View::Character | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
+        Some(View::Journal(_)) => ui.journal_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
     }
     if !matches!(view, Some(View::Recipes(_))) {
         ui.recipes_open = false;
+    }
+    if let Some(View::Journal(page)) = view {
+        world.resource_mut::<crate::hud::journal::JournalView>().page = page;
     }
     let lookup = match view {
         Some(View::Recipes(index)) => {
@@ -2642,9 +2779,9 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let shown = world.resource::<crate::creatures::Creatures>().alive();
                 gate.check("creatures shown", Ok(format!("{shown} creatures drawn on the test ground")));
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
-                // Those near enough to fight show their combat level over them.
-                let labels: Vec<String> = world.query::<(&crate::hud::levels::LevelLabel, &Text)>().iter(world).map(|(_, text)| text.0.clone()).collect();
-                gate.check("creature levels", if labels.is_empty() { Err("no creature shows its level over it".into()) } else { Ok(format!("{} creatures show their level over them ({})", labels.len(), labels[0])) });
+                // The one pointed at shows its level and health over it.
+                let shown = world.query_filtered::<&Visibility, With<crate::hud::levels::LevelLabel>>().iter(world).any(|v| *v != Visibility::Hidden);
+                gate.check("creature level", if shown { Ok("the creature pointed at shows its level and health over it".into()) } else { Err("the creature pointed at shows no level over it".into()) });
                 gate.next(Step::Strike, now);
             }
         }
@@ -2751,11 +2888,96 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     Err(format!("no {CREATURE_DROP} picked up after the kill"))
                 };
                 gate.check("creature drops", result);
-                gate.next(Step::Cook, now);
+                gate.next(Step::Weapon, now);
             }
         }
         _ => {}
     }
+}
+
+/// The weapon the gate strikes with, and the level that wields it.
+const WEAPON: &str = "base:iron_sword";
+const WEAPON_LEVEL: u8 = 20;
+/// What it strikes: big enough to take several blows, in creative so its own pass by.
+const BEAR: &str = "base:brown_bear";
+
+/// An iron sword at Attack 20 against a brown bear on the pad: struck until it dies, some
+/// blow must do more than a bare fist's most at that level (1 + 20 / 8 = 3).
+fn weapon(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
+        gate.check("weapon", Err(format!("no `{BEAR}` in the content")));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let bear = |world: &World| world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let fist = voxmar_engine::combat::Weapon::FISTS.max_hit(WEAPON_LEVEL);
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("skill attack {WEAPON_LEVEL}"));
+            net.command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
+            let pad = gate.feet + IVec3::new(0, 0, 14);
+            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
+            gate.advance(now);
+        }
+        1 => {
+            // The sword in hand, at the level that wields it, and the bear in sight.
+            let ready = skill_level(world, "core:attack").0 >= WEAPON_LEVEL && bear(world).is_some();
+            if ready && select(world, WEAPON) {
+                gate.advance(now);
+            } else if in_phase > 10.0 {
+                gate.check("weapon", Err(format!("the sword, Attack {WEAPON_LEVEL} or the bear never came (bear seen: {})", bear(world).is_some())));
+                end_weapon(world, gate, now);
+            }
+        }
+        _ => {
+            let (blows, hardest) = {
+                let creatures = world.resource::<crate::creatures::Creatures>();
+                (creatures.blows, creatures.hardest)
+            };
+            if blows > gate.blows_seen {
+                gate.blows_seen = blows;
+                gate.phase_since = now;
+                gate.phase_server = gate.server_now;
+            }
+            let stalled = gate.server_in_phase() > UNANSWERED;
+            match bear(world) {
+                Some(view) if !stalled => {
+                    // Close in and strike a full charge apart, as a player swings.
+                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.4;
+                    key(world, KeyCode::KeyW, far);
+                    aim_at(world, view.position + Vec3::Y * 0.6);
+                    let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
+                    mouse(world, MouseButton::Left, swing);
+                }
+                Some(_) => {
+                    gate.check("weapon strikes", Err(format!("the server answered no blow for {UNANSWERED}s")));
+                    end_weapon(world, gate, now);
+                }
+                None => {
+                    let result = if hardest > fist {
+                        Ok(format!("the bear died; the hardest blow did {hardest}, a fist's most is {fist}"))
+                    } else {
+                        Err(format!("no blow did more than a fist's {fist} (the hardest did {hardest})"))
+                    };
+                    gate.check("weapon strikes", result);
+                    end_weapon(world, gate, now);
+                }
+            }
+        }
+    }
+}
+
+/// Back to survival with the hands free, for the steps after.
+fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Left, false);
+    key(world, KeyCode::KeyW, false);
+    let net = world.resource::<Net>();
+    net.command("gamemode survival");
+    net.command("skill attack 1");
+    gate.next(Step::Cook, now);
 }
 
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
@@ -3475,10 +3697,11 @@ fn stars(shot: &Image) -> Result<String, String> {
 
 /// Open ground at midnight, in the lower half of a shot: dark, but not black. Before nights
 /// were lifted (2026-10-06) a moonless night's ground averaged 2 or 3 of 255 and Mariano
-/// could not see where he walked.
+/// could not see where he walked; nights averaging 8 (moonless) to 17 (full moon) he found
+/// far too bright; they now average about 5 to 9.
 fn night_ground(shot: &Image) -> Result<String, String> {
-    const DARKEST: f32 = 6.0;
-    const BRIGHTEST: f32 = 70.0;
+    const DARKEST: f32 = 3.5;
+    const BRIGHTEST: f32 = 40.0;
     let (w, h, data) = pixels(shot)?;
     let (mut sum, mut count) = (0.0f32, 0.0f32);
     // The lower half, above the hotbar.

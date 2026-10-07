@@ -8,6 +8,7 @@ pub mod death;
 pub mod effects;
 pub mod guide;
 pub mod inventory;
+pub mod journal;
 pub mod levels;
 pub mod screens;
 pub mod recipes;
@@ -40,7 +41,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, levels::LevelsPlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,
@@ -307,17 +308,20 @@ fn update_vitals(
 }
 
 /// A small label naming an effect, teal for a buff and red for a debuff.
-pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, locale: &Locale, images: &HudImages, active: &ActiveEffect, effect: &EffectDef) {
-    let chip = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::HAIR), padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
+pub fn spawn_effect_chip(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, _locale: &Locale, images: &HudImages, active: &ActiveEffect, effect: &EffectDef) {
+    // Just the icon (and the time left on a timed one), underlined teal for a buff and red
+    // for a debuff; its name and what it does are on hover.
+    let chip = Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(PX), padding: UiRect::all(Val::Px(space::HAIR)), ..default() };
     let color = if effect.kind == Kind::Buff { ACCENT } else { ERROR };
     let id = active.effect;
     parent.spawn((chip, Piece::Tooltip.image(), Button, effects::EffectHover(id), bevy::ui::RelativeCursorPosition::default(), crate::ui::widgets::HoverLight)).with_children(|chip| {
-        chip.spawn(effect_icon(images, id));
-        chip.spawn((shadowed(font, locale.effect(effect), BODY, color), crate::lang::TightLine));
-        if active.seconds_left.is_some() {
-            let gap = Node { margin: UiRect::left(Val::Px(space::INNER)), ..default() };
-            chip.spawn((shadowed(font, "", BODY, SOFT), gap, crate::lang::TightLine, EffectTimer(id)));
-        }
+        chip.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::HAIR), ..default() }).with_children(|line| {
+            line.spawn(effect_icon(images, id));
+            if active.seconds_left.is_some() {
+                line.spawn((shadowed(font, "", BODY, SOFT), crate::lang::TightLine, EffectTimer(id)));
+            }
+        });
+        chip.spawn((Node { width: Val::Percent(100.0), height: Val::Px(PX), ..default() }, BackgroundColor(color)));
     });
 }
 

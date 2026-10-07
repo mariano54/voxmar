@@ -22,7 +22,10 @@
         (name: "empty_pouch", duration: Instant, requires: [Alive], effects: [EmptyPouch]),
         // Working at a crafting table (right click): its three-by-three grid.
         (name: "use_table", duration: Instant, requires: [Alive, InReach, CraftingTable], effects: [UseTable]),
-        // Light a hearthstone: with the Homestead Hearth built around it, home (multiblocks.ron).
-        (name: "light_hearth", duration: Instant, requires: [Alive, InReach, Hearth], effects: [ClaimHome]),
+        // Light a multiblock by its core (multiblocks.ron): a hearthstone with the Homestead
+        // Hearth built around it is home; a crucible in its kiln smelts.
+        // Sleep in a sleeping bag: wake there after dying, until a hearth makes a home.
+        (name: "sleep", duration: Instant, requires: [Alive, InReach, Bed], effects: [Sleep]),
+        (name: "light", duration: Instant, requires: [Alive, InReach, MultiblockCore], effects: [Light]),
     ],
 )

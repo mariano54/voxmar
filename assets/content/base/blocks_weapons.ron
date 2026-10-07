@@ -1,0 +1,13 @@
+// Weapons (combat.ron says how each fights; recipes_weapons.ron how it is made). Axes are
+// tools too, in blocks_tools.ron.
+(
+    families: [
+        (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "bone"], all: (color: (225, 215, 190))),
+        (template: "drop", name: "stone_sword", tags: ["weapon", "stack:1", "sword"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "copper_sword", tags: ["weapon", "stack:1", "sword", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "fang_dagger", tags: ["weapon", "stack:1", "dagger"], all: (color: (235, 228, 205))),
+        (template: "drop", name: "bronze_sword", tags: ["weapon", "stack:1", "sword", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_spear", tags: ["weapon", "stack:1", "spear", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "iron_sword", tags: ["weapon", "stack:1", "sword", "metal:iron"], all: (color: (200, 205, 215))),
+    ],
+)
