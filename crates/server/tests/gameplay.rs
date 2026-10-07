@@ -1428,7 +1428,8 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     client.pump_until(|c| sleeper(c).is_some());
     let victim = sleeper(&client).unwrap();
     let (name, bed) = (species_name(&client, &victim), victim.position);
-    client.ok(&format!("/tp {} {} {}", bed.x + 1.0, bed.y, bed.z));
+    // Where they lie: a block to one side may be a wall.
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     client.pump_ticks(2 * TICKS_PER_SECOND as u64, |_| false);
     let near = |c: &Client| -> Vec<u32> { villagers(c).into_iter().filter(|v| v.position.distance(bed) < 16.0).map(|v| v.seed).collect() };
     let housemates = near(&client);
@@ -1479,8 +1480,11 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     let pick = |c: &Client| villagers(c).into_iter().find(|v| species_name(c, v) != "base:guard" && guards(c).iter().any(|g| g.position.distance(v.position) < 30.0));
     client.pump_until(|c| pick(c).is_some());
     let villager = pick(&client).unwrap();
-    client.ok(&format!("/tp {} {} {}", villager.position.x + 1.0, villager.position.y, villager.position.z));
-    client.ok(&format!("/tp bystander {} {} {}", villager.position.x - 3.0, villager.position.y, villager.position.z));
+    // Both where the villager stands, a cell anyone can stand in: a block to one side may
+    // be a wall, and guards cannot reach a player inside one (they give that chase up).
+    let at = villager.position;
+    client.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
+    client.ok(&format!("/tp bystander {} {} {}", at.x, at.y, at.z));
     bystander.pump_until(|c| c.teleported.is_some() && c.health > 0);
     let (full, calm) = (client.health, bystander.health);
     // Struck by a guard: hurt with a guard in reach of us.
