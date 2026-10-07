@@ -38,6 +38,7 @@ mod creature_sounds;
 mod creatures;
 mod drops;
 mod emitters;
+mod fight;
 mod gate;
 mod hud;
 mod interact;

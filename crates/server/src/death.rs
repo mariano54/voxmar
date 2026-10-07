@@ -2,9 +2,13 @@
 //! and everything else they carried stays where they fell, theirs alone to pick up, for
 //! 30 minutes; then it is gone. A grave-ward amulet keeps a fourth item and doubles the
 //! time. They wake at home (`Player::home`, set by a bed or hearth), or at world spawn.
+//! Worth is gold on the P51 curve (`voxmar_engine::value::worth`), counted a unit at a
+//! time; the numbers are content (`value.ron`'s `death`).
 
-use voxmar_engine::block::{BlockId, Rarity};
-use voxmar_engine::dropped::{self, LIFETIME};
+use std::collections::HashMap;
+
+use voxmar_engine::block::BlockId;
+use voxmar_engine::dropped;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{Inventory, ItemStack};
 use voxmar_engine::lang::Words;
@@ -13,10 +17,6 @@ use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 use crate::items::{owner_of, random3};
-
-/// Items a player keeps through death, and with a grave-ward amulet.
-pub const KEPT: usize = 3;
-pub const KEPT_WARDED: usize = 4;
 
 impl Server {
     /// Leaves what each player who has just died carried where they fell.
@@ -28,33 +28,27 @@ impl Server {
     }
 
     fn bury(&mut self, id: PlayerId) {
-        let blocks = self.content.blocks.clone();
-        let tools = self.content.tools.clone();
+        let content = self.content.clone();
+        let death = content.value.death;
         let tick = self.tick;
         let player = self.players.get_mut(&id).expect("listed");
         player.buried = true;
-        let warded = player.inventory.slots.iter().flatten().any(|s| blocks.def(s.item).has_tag("grave_ward"));
+        let ward = |item: BlockId| content.blocks.def(item).has_tag("grave_ward");
+        let warded = player.inventory.slots.iter().flatten().any(|s| ward(s.item));
+        let mut worth = HashMap::new();
         let value = |item: BlockId| {
-            let def = blocks.def(item);
-            if def.has_tag("grave_ward") {
+            if ward(item) {
                 return u32::MAX;
             }
-            let rarity = match def.rarity {
-                Rarity::Common => 1,
-                Rarity::Uncommon => 4,
-                Rarity::Rare => 16,
-                Rarity::VeryRare => 64,
-                Rarity::Legendary => 256,
-            };
-            rarity * (1 + tools.tool(Some(item)).tier as u32) * if voxmar_engine::inventory::max_stack(item) == 1 { 2 } else { 1 }
+            voxmar_engine::value::worth_in(&content, item, &mut worth)
         };
-        let (kept, left) = split(&player.inventory, if warded { KEPT_WARDED } else { KEPT }, warded, value);
+        let (kept, left) = split(&player.inventory, usize::from(if warded { death.warded } else { death.kept }), warded, value);
         player.inventory = kept;
         player.changed(traits::INVENTORY);
         let at = player.position;
         let owner = owner_of(&player.name);
-        let minutes = if warded { 2.0 } else { 1.0 };
-        let lifetime = (LIFETIME * minutes * TICKS_PER_SECOND as f32) as u32;
+        let seconds = if warded { death.warded_grave } else { death.grave };
+        let lifetime = (seconds * TICKS_PER_SECOND as f32) as u32;
         let cell = at.floor().as_ivec3();
         for (i, stack) in left.into_iter().enumerate() {
             // A pile at the feet, barely spread, so nothing rolls off a ledge or into water
@@ -69,15 +63,17 @@ impl Server {
             .with("x", Words::text(cell.x))
             .with("y", Words::text(cell.y))
             .with("z", Words::text(cell.z))
-            .with("minutes", Words::text((30.0 * minutes) as u32));
+            .with("minutes", Words::text((seconds / 60.0).round() as u32));
         self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
     }
 }
 
 /// Splits an inventory into what is kept (the `keep` most valuable single items, and a
 /// grave-ward amulet besides when `warded`) and the stacks that are left behind.
-fn split(inventory: &Inventory, keep: usize, warded: bool, value: impl Fn(BlockId) -> u32) -> (Inventory, Vec<ItemStack>) {
-    let mut carried: Vec<ItemStack> = (0..=voxmar_engine::inventory::CURSOR + voxmar_engine::craft::GRID).filter_map(|slot| inventory.get(slot)).collect();
+fn split(inventory: &Inventory, keep: usize, warded: bool, mut value: impl FnMut(BlockId) -> u32) -> (Inventory, Vec<ItemStack>) {
+    use voxmar_engine::inventory::{CURSOR, LAST, WORN};
+    // Everything carried: the inventory, the pointer, the crafting grid and what is worn.
+    let mut carried: Vec<ItemStack> = (0..=CURSOR + voxmar_engine::craft::GRID).chain(WORN..=LAST).filter_map(|slot| inventory.get(slot)).collect();
     carried.extend(inventory.pouched.iter().flat_map(|&(item, count)| {
         (0..count.div_ceil(64)).map(move |i| ItemStack { item, count: (count - i * 64).min(64) as u8 })
     }));
@@ -109,5 +105,33 @@ mod tests {
         let count = |inv: &Inventory, id: u16| inv.slots.iter().flatten().filter(|s| s.item == BlockId(id)).map(|s| s.count).sum::<u8>();
         assert_eq!((count(&kept, 2), count(&kept, 3), count(&kept, 1)), (2, 1, 0));
         assert_eq!(left, [ItemStack { item: BlockId(1), count: 10 }]);
+    }
+
+    #[test]
+    fn worth_in_gold_decides_and_a_worn_piece_or_a_pouch_counts_unit_by_unit() {
+        let content = crate::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("the game's content loads");
+        let id = |name: &str| content.blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("{name}"));
+        let mut known = HashMap::new();
+        let mut value = |item| voxmar_engine::value::worth_in(&content, item, &mut known);
+        let count = |inv: &Inventory, item| inv.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>() + inv.pouched.iter().filter(|p| p.0 == item).map(|p| p.1 as u32).sum::<u32>();
+        // Six kinds carried; the chainmail shirt worn is worth most, then the pickaxe and
+        // the sword, and five ingots or a loaf are each worth less than any of them.
+        let mut inventory = Inventory::default();
+        for (name, n) in [("iron_ingot", 5), ("bread", 3), ("iron_pickaxe", 1), ("iron_sword", 1), ("dirt", 40)] {
+            inventory.add(id(name), n);
+        }
+        inventory.worn[1] = Some(ItemStack { item: id("chainmail_shirt"), count: 1 });
+        let (kept, left) = split(&inventory, 3, false, &mut value);
+        for name in ["chainmail_shirt", "iron_pickaxe", "iron_sword"] {
+            assert_eq!(count(&kept, id(name)), 1, "{name} is kept: {kept:?}");
+        }
+        assert_eq!(left.iter().map(|s| s.count as u32).sum::<u32>(), 5 + 3 + 40);
+        // A pouch is counted a unit at a time: three of what is in it are kept, not all.
+        let mut pouch = Inventory::default();
+        pouch.pouched.push((id("iron_ingot"), 200));
+        pouch.add(id("dirt"), 1);
+        let (kept, left) = split(&pouch, 3, false, &mut value);
+        assert_eq!(count(&kept, id("iron_ingot")), 3);
+        assert_eq!(left.iter().filter(|s| s.item == id("iron_ingot")).map(|s| s.count as u32).sum::<u32>(), 197);
     }
 }

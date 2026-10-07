@@ -1,21 +1,35 @@
 // Weapons (engine/src/combat.rs, docs/combat.md). A class sets how a weapon fights: its
 // style (Stab, Slash or Crush in melee; Ranged; Magic), the seconds a full-strength blow
-// takes to charge (blows come no faster than half of it, and land lighter for it) and any
-// reach past an arm's length. A weapon names its item, its class, the level that wields it
+// takes to charge (blows come no faster than half of it, and land lighter for it) and its
+// reach, from the eye to a creature's nearest edge (unset, the feel's). A weapon names its item, its class, the level that wields it
 // (Attack for melee) and its max hit at that level, which rises a point for every eight
 // levels above it. Below its level a weapon strikes as a bare fist (max hit 1, a sword's
 // speed). `accuracy` adds to the attack roll; twice the max hit unless given.
 //
 // Cooldowns are the design wiki's weapon speeds divided by three, so a sword keeps the
 // fist's 0.6 s that play was tuned on: dagger 1.2, sword 1.8, spear 2.2, axe 2.4, mace 2.6.
+//
+// How a class feels (the wiki's "Combat feel", draft 49; starting values to tune by play):
+// `windup`, the seconds before a swing's blow lands; `buffer`, the seconds before the beat
+// a click is held for it; `beat`, the seconds after it a click is on it; `guard`, what share
+// of a melee blow holding it up stops, over what arc, and the seconds before a blow a raise
+// is a perfect block; `flourish`, what the blow after three on-beat ones does besides +20%
+// max hit. `fist` is how bare hands fight. `feel` holds the rest of the rhythm, guard and
+// creatures' timings; `dodges` how a dodge goes in armour of each weight.
 (
     classes: [
-        (name: "dagger", style: Stab, cooldown: 0.4),
-        (name: "sword", style: Slash, cooldown: 0.6),
-        (name: "spear", style: Stab, cooldown: 0.73, reach: 1.0),
+        (name: "fist", style: Crush, cooldown: 0.6, reach: 2.5, windup: 0.08, buffer: 0.15, beat: 0.10),
+        (name: "dagger", style: Stab, cooldown: 0.4, reach: 2.5, windup: 0.06, buffer: 0.12, beat: 0.08,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.15), flourish: Bleed(share: 0.25, seconds: 3.0)),
+        (name: "sword", style: Slash, cooldown: 0.6, windup: 0.10, buffer: 0.15, beat: 0.10,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.15), flourish: Cleave(share: 0.5)),
+        (name: "spear", style: Stab, cooldown: 0.73, reach: 3.8, windup: 0.12, buffer: 0.15, beat: 0.10, two_handed: true,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.12), flourish: Pin(slow: 0.4, seconds: 1.5)),
         // Heavy blows, and a tool too: an axe's max hit is a sword's at its speed, less a little.
-        (name: "axe", style: Slash, cooldown: 0.8),
-        (name: "mace", style: Crush, cooldown: 0.87),
+        (name: "axe", style: Slash, cooldown: 0.8, windup: 0.15, buffer: 0.18, beat: 0.12,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.12), flourish: Sunder(defence: 0.1, seconds: 6.0)),
+        (name: "mace", style: Crush, cooldown: 0.87, windup: 0.18, buffer: 0.18, beat: 0.12,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.12), flourish: Daze(stagger: 0.6)),
     ],
     weapons: [
         // Nomad: bone, wood and stone, Attack 1.
@@ -27,12 +41,107 @@
         (item: "copper_sword", class: "sword", level: 5, max_hit: 5),
         (item: "copper_axe", class: "axe", level: 5, max_hit: 6),
         // A wolf's or a boar's fang on a haft, Attack 10.
-        (item: "fang_dagger", class: "dagger", level: 10, max_hit: 5),
+        (item: "fang_dagger", class: "dagger", level: 10, max_hit: 4),
         // Bronze, Attack 15: a sword, and a spear that reaches further.
         (item: "bronze_sword", class: "sword", level: 15, max_hit: 7),
         (item: "bronze_spear", class: "spear", level: 15, max_hit: 8),
         // Iron, Attack 20.
         (item: "iron_sword", class: "sword", level: 20, max_hit: 9),
         (item: "iron_axe", class: "axe", level: 20, max_hit: 11),
+    ],
+    feel: (
+        // Earlier than the buffer, a click past half the cooldown fires at once: at 45% at
+        // the quickest, rising in a straight line to full at the cooldown, so spamming deals
+        // 90% of timed damage per second and nothing off the beat beats it.
+        quickest: 0.5,
+        spam_strength: 0.45,
+        // On the beat: +5% to the attack roll and a pip; three pips make a flourish (+20%
+        // max hit). Pips go 2 s after the last blow.
+        beat_accuracy: 0.05,
+        pips: 3,
+        pip_timeout: 2.0,
+        flourish_max_hit: 0.2,
+        counter_max_hit: 0.25,
+        falling_max_hit: 0.15,
+        falling_drop: 0.3,
+        cancel_to: 0.5,
+        crush_through: 0.5,
+        no_flicker: 0.4,
+        stagger: 0.8,
+        boss_stagger: 0.3,
+        counter: 1.0,
+        riposte: 0.8,
+        dodge_early: 0.1,
+        dodge_grace: 0.15,
+        // The wiki's "Reach" (draft 58): 2.8 blocks for a class that sets none (a fist or
+        // dagger 2.5, a spear 3.8), and 0.6 more for the lag of a view of the fight; at a
+        // moving creature, also as far as it goes in 0.15 s.
+        reach: 2.8,
+        reach_slack: 0.6,
+        reach_lag: 0.15,
+        cleave_cone: 0.5,
+        // The wiki's "No walking away" (drafts 58 and 65): an attack lunges as it lands (1.2
+        // blocks unless the creature says: quick animals 1.5, big ones 1.0), and a wind-up
+        // follows its target for its first 60%, running at it (slow creatures walk), then
+        // locks. A creature adds 0.8 of its level to its attack roll unless it says (draft 62).
+        creature_windup: 0.5,
+        creature_recovery: 0.6,
+        creature_lunge: 1.2,
+        creature_tracking: 0.6,
+        tracking_pace: Run,
+        creature_accuracy: 0.8,
+        creature_clearance: 0.2,
+        // Seconds after trading blows with a creature that a right click at it guards
+        // (with something that guards) rather than looks closely at it.
+        engaged: 6.0,
+        // The wiki's draft 63: Defence experience only while fighting back (a blow at the
+        // creature within 10 s) and from creatures of at least half the Defence level.
+        defence_xp_window: 10.0,
+        defence_xp_level: 0.5,
+    ),
+    dodges: [
+        (weight: "light", distance: 3.0, time: 0.25, safe: (0.04, 0.22), cooldown: 1.0),
+        (weight: "medium", distance: 2.6, time: 0.25, safe: (0.04, 0.20), cooldown: 1.2),
+        (weight: "heavy", distance: 2.2, time: 0.25, safe: (0.04, 0.18), cooldown: 1.5),
+    ],
+    // How armour counts (the wiki, drafts 59 and 62): each slot's share of a bronze set's
+    // 36; each weight, lightest first, with the share of its armour that counts against each
+    // style (1 unless listed) and the dodge it wears, the heaviest worn picking it; and what
+    // a style a set resists counts.
+    armour: (
+        slots: {Head: 6.0, Body: 14.0, Legs: 10.0, Hands: 3.0, Feet: 3.0},
+        weights: [
+            (weight: Robe, against: {Stab: 0.5, Slash: 0.5, Crush: 0.5, Ranged: 0.7, Magic: 1.5}, dodge: "light"),
+            (weight: Light, against: {Crush: 0.8}, dodge: "light"),
+            (weight: Medium, dodge: "medium"),
+            (weight: Heavy, against: {Stab: 1.2, Slash: 1.2, Crush: 1.2, Ranged: 1.2, Magic: 0.6}, dodge: "heavy"),
+        ],
+        resisted: 1.5,
+    ),
+    // Armour (the wiki's "Items" tab: sets, weights and Defence levels; "Armour x" from its
+    // material tiers). A piece's armour is its slot's share times the set's `armour`. Worn
+    // below its Defence level a piece gives nothing, but keeps its weight for the dodge.
+    // Hide wraps are raw hide at Crafting 1, so a new player has armour before tanning
+    // (0.5, draft 62: a whole set 19).
+    sets: [
+        (name: "hide_wraps", weight: Light, level: 1, armour: 0.5,
+            pieces: [(Head, "hide_hood"), (Body, "hide_tunic"), (Legs, "hide_trousers"), (Hands, "hide_gloves"), (Feet, "hide_boots")]),
+        (name: "copper", weight: Medium, level: 10, armour: 0.7,
+            pieces: [(Head, "copper_helmet"), (Body, "copper_chestplate"), (Legs, "copper_leggings"), (Hands, "copper_gauntlets"), (Feet, "copper_boots")]),
+        (name: "bronze_scale", weight: Medium, level: 15, armour: 1.0,
+            pieces: [(Head, "bronze_helmet"), (Body, "bronze_scale_shirt"), (Legs, "bronze_leggings"), (Hands, "bronze_gauntlets"), (Feet, "bronze_boots")]),
+        (name: "chainmail", weight: Medium, level: 20, armour: 1.2, resists: [Slash],
+            pieces: [(Head, "chainmail_coif"), (Body, "chainmail_shirt"), (Legs, "chainmail_leggings"), (Hands, "chainmail_gloves"), (Feet, "chainmail_boots")]),
+    ],
+    // Shields, in the off-hand (the wiki's "Combat feel" blocking table): the share of a
+    // melee blow or missile they stop, over what arc, the perfect window, and the Defence
+    // level that carries them. A two-handed weapon guards with itself instead. `armour`
+    // adds to the defence roll as a piece's does (not in the wiki: about a helmet's worth).
+    shields: [
+        (item: "hide_buckler", level: 1, armour: 1, guard: (stop: 0.45, arc: 120.0, perfect: 0.28, missiles: true)),
+        (item: "wooden_shield", level: 1, armour: 2, guard: (stop: 0.55, arc: 150.0, perfect: 0.20, missiles: true)),
+        (item: "copper_shield", level: 5, armour: 4, guard: (stop: 0.60, arc: 150.0, perfect: 0.20, missiles: true)),
+        (item: "bronze_shield", level: 15, armour: 6, guard: (stop: 0.65, arc: 150.0, perfect: 0.20, missiles: true)),
+        (item: "iron_shield", level: 20, armour: 7, guard: (stop: 0.70, arc: 150.0, perfect: 0.20, missiles: true)),
     ],
 )

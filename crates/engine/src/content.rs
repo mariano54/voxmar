@@ -60,6 +60,8 @@ pub struct Content {
     pub regrowth: Arc<crate::regrowth::Regrowth>,
     /// Locked chests, the lockpicks that open them and what they hold.
     pub treasure: Arc<crate::treasure::Treasure>,
+    /// What things are worth (`value`).
+    pub value: Arc<crate::value::Value>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -101,6 +103,7 @@ impl Content {
         let mut effects = Vec::new();
         let mut tools = Vec::new();
         let mut combat = Vec::new();
+        let mut value = Vec::new();
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
@@ -192,6 +195,10 @@ impl Content {
                         tools.push(ToolRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "value.ron" => {
+                        value.push(crate::value::Value::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "combat.ron" => {
                         combat.push(crate::combat::CombatRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -244,6 +251,7 @@ impl Content {
         }
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
+        crate::inventory::set_worn_slots(combat.worn_slots());
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -261,6 +269,7 @@ impl Content {
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             treasure: Arc::new(treasure),
+            value: Arc::new(crate::value::Value::merge(value)),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),

@@ -14,7 +14,7 @@ and "Items" tabs); the code is `engine/src/combat.rs`, the data each package's
 | 3 | Weakness | A creature's defence level counts half against the style it is weak to. |
 | 4 | Max hit | Each weapon's max hit is the wiki's at the level that wields it, and rises a point for every eight levels above it. A bare fist is a weapon of max hit 1 at level 0: 1 + Attack / 8, as before. A blow does 1 to the max hit, then the timing scales it. |
 | 5 | Wielding | A weapon needs its level in its style's skill (Attack for melee, Ranged, Magic), the player's own: boosts never help to wield. Held below its level it strikes as a fist; the tooltip says the level in red. |
-| 6 | Timing | Each class has a cooldown: a blow a full cooldown after the last lands at full strength, the quickest at half the cooldown at 45%, so spam-clicking deals about 90% of timed damage per second (Mariano, 6 Oct) with every weapon. |
+| 6 | Timing | Each class has a cooldown, and the end of it is the beat (see "Feel" below). A click on the beat lands at full strength; the quickest, at half the cooldown, at 45%, so spam-clicking deals about 90% of timed damage per second (Mariano, 6 Oct) with every weapon. |
 | 7 | Speeds | The wiki's class speeds divided by three, so a sword keeps the fist's 0.6 s that play was tuned on: dagger 0.4 s, sword 0.6, spear 0.73, axe 0.8, mace 0.87. |
 | 8 | Reach | A spear reaches a block further. |
 | 9 | Accuracy | Twice the max hit unless a weapon says otherwise. |
@@ -43,5 +43,56 @@ weak to stab; the frost stag crushes, weak to slash; the shambler crushes, weak 
 the ember salamander burns (magic), weak to crush; cave bats bite, weak to slash. The
 armoured tortoise, shore crab and crystal beetle are weak to crush.
 
-Still to come in phase 4, in order: ranged weapons, ammunition and projectiles; armour slots and sets with resistances; the
-weapons' specials (bleed, stun, brace); then modifications (P42).
+## Feel
+
+Oct 7, 2026 (Mariano: "a mix between osrs, action combat and minecraft, focused on food
+consumption, prayers, dodging and blocking, and attack rhythm"; numbers from the design
+wiki's #feel tab, drafts 49 and 58, and the review of 7 Oct). The server's `fight.rs` decides what lands; the client's
+`fight.rs` keeps the same rhythm for the meter and sends the guard. Every number below is
+in `combat.ron` (`feel:`, each class's times, `dodges:`) or the creature's `attack:`, so a
+pack can retune or replace all of it.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Rhythm | A swing winds up (`windup`), lands, and the cooldown runs from its start; the cooldown's end is the beat. A click in the `buffer` before the beat is held and fires on it; a click within `beat` after it is on the beat too. On the beat a blow rolls with +5% accuracy (`beat_accuracy`). Earlier clicks fire at once at part strength: 45% at half the cooldown (`quickest`, `spam_strength`), rising in a straight line to full at the cooldown, so spamming deals 90% of timed damage per second and no click off the beat beats waiting for it (for every class; tested). Earlier than half the cooldown they are ignored. One swing waits at most, struck with what was in hand when it started; switching what is in hand drops it. |
+| 2 | Pips | Each blow on the beat adds a pip; at three, the next one is a flourish (+20% max hit and the class's effect: dagger bleed, sword cleave, spear pin, axe sunder, mace daze), and the pips start over. An off-beat blow, an unguarded hit taken, a weapon switch or two seconds idle loses them. A counter or riposte is on the beat by itself: one pip, like any. The server tells the pips with every blow it answers, so the client's meter shows its count. |
+| 3 | Guard | Holding the use button with a weapon that guards raises it (a right click that opens a station or eats does not). It stops `stop` of a melee blow from its `arc` in front, half that against crush (`crush_through`); never magic, never a heavy blow, missiles only with a shield. Whether it took the blow is judged by when the blow landed, not when the server got to it. Moving at half speed, no sprint. Raising it during your own wind-up cancels the swing, and the meter restarts from half. |
+| 4 | Perfect block | Raised in the last `perfect` seconds before a blow lands: it takes nothing, staggers the creature 0.8 s after its recovery (bosses 0.3) and the next click within a second is a counter (certain to hit, +25% max hit, full strength, a pip). A guard raised again within 0.4 s of lowering it opens no perfect window (`no_flicker`), so flicking it is no use. Bonuses to a max hit, a sunder's share of defence and a flourish's share of damage round by chance, so small ones count on average. |
+| 5 | Dodge | Left Alt with a direction dashes that way, alone steps back: 3 blocks in a quarter second, safe from blows from 0.04 to 0.22 s in, once a second; heavier armour dodges shorter, safe shorter and recovers longer (`dodges:`). The dash moves at exactly its speed, so it covers its distance at any frame rate, and stops at walls and ledges. Only on foot on the ground (or 0.15 s off it, `dodge_grace`), not flying, eating or guarding; the server takes one up to 0.1 s early (`dodge_early`) for a client's clock ahead, and a dodge it refuses puts the player back where it has them. A blow dodged makes the next click within 0.8 s a riposte (on the beat by itself, a pip, full strength). |
+| 6 | Telegraphs | A creature winds up before its blow (`attack.windup`, default 0.5 s; quick ones 0.35, big ones 0.7) in its attack pose, and stands still to recover after (`attack.recovery`, default 0.6 s): the moment to strike it. For the first 60% of the wind-up (`creature_tracking`) it turns to follow its target and runs at it (`tracking_pace`; a creature's `attack.pace` may say walk, as the shambler's does), then its aim locks; as the blow lands it lunges up to `attack.lunge` blocks the way it faces (default 1.2; quick animals 1.5, big ones 1.0), stopping at the player's body or a wall. The blow lands if the player is in its reach from there: its `attack.reach`, half its body and 0.3 for the arm from its centre, and `reach_slack` for lag. So backing off at a walk does not escape it (tested for a bear, frost stag, cave crawler and ember salamander); a dodge does. A bear threatens 1.4 + 0.6 + 0.3 + 0.6 = 2.9 blocks from its centre to the player's, 3.9 with its lunge. `attack.heavy` blows cannot be blocked. |
+| 7 | Knockback | None (Mariano): a hit creature flinches for 0.15 s instead, drawn by the client. |
+| 8 | Bodies | The player cannot walk into a creature's body: the client pushes them 0.2 blocks clear (`creature_clearance`), so the camera never ends up inside a model. |
+| 9 | Falling blows | A blow on the beat struck at least 0.3 blocks into a fall (`falling_drop`), as Minecraft's critical hit, has +15% max hit (`falling_max_hit`). |
+| 10 | Reach | From the eye to a creature's nearest edge: 2.8 blocks (`feel.reach`, Minecraft's 3 less a little), a fist or dagger 2.5, a spear 3.8 (each class's `reach`). The server allows 0.6 more (`reach_slack`) for the lag of a view of the fight, and at a moving creature as far as it goes in 0.15 s (`reach_lag`), counted once. A swing that lands out of reach is a miss off the beat: no pip, no flourish spent. Only a spear outreaches a bear. A sword's flourish cleaves the nearest other wild creature within reach and 60 degrees of the look (`cleave_cone`); kept animals are never cleft. |
+| 11 | Defence experience | A blow turned aside (missed by the defence roll, or perfectly blocked) gives Defence experience, four a point of the damage it could do, only while the player fights back (their blow reached that creature in the last 10 s, `defence_xp_window`) and only from a creature of at least half their Defence level (`defence_xp_level`; the wiki's draft 63): standing in a cave of bats teaches nothing. |
+| 12 | Inspect or guard | A right click at a creature looks closely at it, unless it is fighting the player (winding up, or blows traded within 6 s, `engaged`) and what is held or worn guards: then it guards. Food or a tool it takes tends it first; a ripe crop is picked before armour in hand goes on. |
+
+## Armour and shields
+
+Oct 7, 2026 (the wiki's "Items" tab for sets, weights and Defence levels, its material tiers
+for "Armour ×", and "Combat feel" for shields and dodges by weight). Data in `combat.ron`
+(`sets:`, `shields:`), items in `blocks_armour.ron`, recipes in `recipes_armour.ron`.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Slots | Head, body, legs, hands, feet, and the off-hand for a shield: six worn slots after the crafting grid (`inventory::WORN`). Each takes only the piece made for it. Right click with a piece in hand puts it on, swapped for what was there; shift-click in the inventory too. |
+| 2 | Armour | A piece gives its slot's share of a bronze set's 36 (head 6, body 14, legs 10, hands 3, feet 3; `armour.slots`) times its set's material: hide 0.5 (tanned leather 0.65 to come), copper 0.7, bronze 1.0, iron 1.2. It adds to the defence roll as RuneScape's armour does. A creature's attack roll adds 0.8 of its level (`creature_accuracy`) unless it sets its own `accuracy` (the wiki's draft 62). |
+| 3 | Weight | Light (hide, leather) counts 0.8 against crush and full against the rest; medium full against all; heavy (plate) 1.2 against melee and arrows, 0.6 against spells; robes 1.5 against spells, 0.7 arrows, 0.5 melee, and dodge as light. A set's `resists` count half again (`armour.resisted`; chainmail against slash). All in `combat.ron`'s `armour:`. |
+| 4 | Levels | Worn below its Defence level a piece gives nothing, and a shield does not guard: your own level, boosts never count. |
+| 5 | Shields | In the off-hand a shield guards in place of the weapon: hide buckler 45% over 120° with a 0.28 s perfect window; wooden 55%, copper 60%, bronze 65%, iron 70%, each over 150° with 0.20 s. Shields stop arrows and thrown things too, never spells. A spear (two-handed) guards with itself, shield or not. A shield's own armour (1 to 7) adds to the defence roll. |
+| 6 | Dodge | The heaviest armour worn picks the dodge: light or none 3.0 blocks, safe 0.04 to 0.22 s, every 1.0 s; medium 2.6, to 0.20, 1.2 s; heavy 2.2, to 0.18, 1.5 s. |
+| 7 | Death | What is worn counts with the rest: the three things carried worth most are kept, counted a unit at a time (a stack or a pouch keeps one), a grave-ward amulet keeping a fourth besides itself. Worth is gold on the wiki's P51 curve (`engine/src/value.rs`, `value.ron`): 2 × 2.5^((level − 1) / 15), to the nearest 5 above 100, × the rarity's 1, 2, 5, 12 or 30, where the level is what wears or wields it or the least recipe level that makes it; a made thing is worth at least 1.25 × what goes into one. An iron sword is 15, an iron pickaxe 24, a chainmail shirt 50, an iron ingot 5. The numbers, and how many are kept and for how long, are `value.ron`'s. |
+
+| Set | Weight | Defence | Material × | Whole set | Made from |
+| --- | --- | --- | --- | --- | --- |
+| Hide wraps (hood, tunic, trousers, gloves, boots) | Light | 1 | 0.5 | 19 (3 + 7 + 5 + 2 + 2, each piece rounded) | 25 hide, Crafting 1 |
+| Copper (helmet, chestplate, leggings, gauntlets, boots) | Medium | 10 | 0.7 | 25 | 25 copper ingots, Engineering 5 |
+| Bronze scale (helmet, scale shirt, leggings, gauntlets, boots) | Medium | 15 | 1.0 | 36 | 25 bronze ingots, Engineering 12 |
+| Chainmail (coif, shirt, leggings, gloves, boots) | Medium, resists slash | 20 | 1.2 | 44 | 25 iron ingots, Engineering 15 |
+
+Against a brown bear (level 28, slash, accuracy 0.8 × 28 = 22) a Defence 15 player is hit
+about 76% of the time bare, 63% in bronze scale; a Defence 20 player in chainmail (66 against
+slash) about 43%. A set costs 25 of its material: hood 5, body 8, legs 7, gloves 2, boots 3.
+
+Still to come in phase 4, in order: food timing and Magic's prayers (wards against each style, boosts, vows); ranged
+weapons, ammunition and projectiles; then modifications (P42).

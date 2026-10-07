@@ -27,6 +27,8 @@
         (name: "drop", duration: Instant, requires: [Alive], effects: [Throw]),
         // Striking a creature with what is in hand (left click on it).
         (name: "attack", duration: Instant, requires: [Alive, CreatureInReach], effects: [Strike]),
+        // A dash aside with a moment no blow lands (Left Alt and a direction).
+        (name: "dodge", duration: Instant, requires: [Alive], effects: [Dodge]),
         // Eating what you hold, which heals you, if you are hurt.
         (name: "eat", duration: Seconds(1.2), requires: [Alive, HoldingFood, Hurt], effects: [EatHeld]),
         (name: "respawn", duration: Instant, requires: [Dead], effects: [Respawn]),

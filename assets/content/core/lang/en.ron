@@ -192,6 +192,8 @@
     "settings.key.chat.hint": "Opens the chat line. / always opens it for a command.",
     "settings.key.sprint": "Sprint key",
     "settings.key.sprint.hint": "Starts a sprint, which lasts while you keep moving forward.",
+    "settings.key.dodge": "Dodge key",
+    "settings.key.dodge.hint": "With a direction, dashes that way out of a blow; alone, steps back.",
     "settings.key.zoom": "Zoom key",
     "settings.key.zoom.hint": "Hold to zoom in.",
 
@@ -250,7 +252,7 @@
     "item.plants": "Plants {crop} · {skill} {level}",
     "item.weapon": "{class} · {style} · {skill} {level}",
     "item.weapon_hit": "Max hit {hit} · a blow every {seconds} s",
-    "item.weapon_reach": "Reaches a block further",
+    "item.weapon_reach": "Reaches {reach} blocks",
     "item.class.dagger": "Dagger",
     "item.class.sword": "Sword",
     "item.class.spear": "Spear",

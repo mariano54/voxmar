@@ -179,6 +179,8 @@
     "settings.key.chat.hint": "チャット欄を開きます。/ を押すと常にコマンド入力で開きます。",
     "settings.key.sprint": "ダッシュキー",
     "settings.key.sprint.hint": "ダッシュを始めます。前進している間続きます。",
+    "settings.key.dodge": "回避キー",
+    "settings.key.dodge.hint": "方向キーと一緒に押すと、その方向へすばやく避けます。単独では後ろへ下がります。",
     "settings.key.zoom": "ズームキー",
     "settings.key.zoom.hint": "押している間ズームします。",
 
@@ -237,7 +239,7 @@
     "item.plants": "{crop}を植える・{skill} {level}",
     "item.weapon": "{class}・{style}・{skill} {level}",
     "item.weapon_hit": "最大ダメージ {hit}・{seconds}秒ごとに一撃",
-    "item.weapon_reach": "一ブロック遠くまで届く",
+    "item.weapon_reach": "{reach}ブロック先まで届く",
     "item.class.dagger": "短剣",
     "item.class.sword": "剣",
     "item.class.spear": "槍",
