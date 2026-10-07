@@ -554,7 +554,10 @@ impl ParticleGpu {
             }
             Some(cache.queue_render_pipeline(descriptor))
         };
-        let add = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
+        // Light added over what is behind, which it also partly hides (by the alpha the
+        // shader gives, `HIDES`): a flame against the bright day sky stays orange instead of
+        // adding up with the sky's blue into peach.
+        let add = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::OneMinusSrcAlpha, operation: BlendOperation::Add };
         let keep = BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
         let ids = [
             make("add", "BLEND_ADD", BlendState { color: add, alpha: keep })?,

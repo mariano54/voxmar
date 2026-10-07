@@ -131,6 +131,12 @@ fn shade_normal(
     return albedo * light;
 }
 
+// How much darker soaked ground is than dry (it reads darker and a little glossier, never
+// paler).
+const WET_DARKENING: f32 = 0.3;
+// How much brighter than the soaked ground its gloss may make it, at most.
+const WET_GLOSS: f32 = 1.15;
+
 // A surface after the weather: darker where rain has wet it, darker still in puddles on
 // open level ground (which rise and dry with the wetness), whitened by frost, and dusted
 // with snow on top once enough lies around (the server turns grass snowy itself). Returns
@@ -150,7 +156,10 @@ fn weathered(albedo: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, sky: f32) -
         let level = 0.75 - 0.3 * wetness;
         wet = max(wet, smoothstep(level, level + 0.04, patches) * smoothstep(0.3, 0.6, wetness) * exposed);
     }
-    var color = albedo * (1.0 - 0.4 * min(wet, 1.0));
+    // Wet ground is darker and a little more saturated, as soaked soil, sand and stone are.
+    var color = albedo * (1.0 - WET_DARKENING * min(wet, 1.0));
+    let grey = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    color = max(mix(vec3(grey), color, 1.0 + 0.3 * min(wet, 1.0)), vec3(0.0));
     if frost > 0.0 {
         let rime = frost * exposed * saturate(normal.y * 0.8 + 0.2) * smoothstep(0.35, 0.6, value_noise(world.xz * 1.7 + world.y));
         color = mix(color, vec3(0.78, 0.84, 0.9), rime * 0.6);
@@ -188,7 +197,13 @@ fn wet_sheen(color: vec3<f32>, world: vec3<f32>, normal: vec3<f32>, wet: f32, sk
         let cloud = reflected_cloud(world, mirrored);
         reflection = reflection * (1.0 - cloud.a) + cloud.rgb;
     }
-    return mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.9, puddle));
+    let sheened = mix(color, reflection * smoothstep(0.5, 0.9, sky), fresnel * mix(0.35 * wet, 0.9, puddle));
+    // Never pale: a glancing sheen of bright sky over sand or gravel read as frost. What it
+    // mirrors still shows, as a gloss a little brighter than the soaked ground, which keeps
+    // its colour.
+    let soaked = dot(color, vec3(0.2126, 0.7152, 0.0722)) * WET_GLOSS;
+    let bright = dot(sheened, vec3(0.2126, 0.7152, 0.0722));
+    return sheened * min(1.0, soaked / max(bright, 1e-4));
 }
 
 // The slope rings that falling rain spreads over a puddle at `xz`, `rain` 0..1: on a grid of

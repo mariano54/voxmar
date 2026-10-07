@@ -65,9 +65,16 @@ const SOFT_DEPTH: f32 = 0.4;
 // What a cooling particle's colour is multiplied by at the end of its life: dimmer, and
 // redder, as blue and green go first.
 const COOLED: vec3<f32> = vec3(0.5, 0.2, 0.05);
-// A flame's white-hot core, and what its edge is multiplied by: hue-shifted towards red.
-const CORE: vec3<f32> = vec3(1.0, 0.86, 0.55);
+// A flame's hot core, a deep yellow (about 255, 200, 80 on screen), and what its edge is
+// multiplied by: hue-shifted towards red. A near-white core turned fire peach once the
+// display transform rolled its overlapping tongues towards white.
+const CORE: vec3<f32> = vec3(1.0, 0.58, 0.08);
 const EDGE: vec3<f32> = vec3(0.75, 0.32, 0.16);
+// How much of what lies behind a particle that adds light it hides, at full coverage.
+const HIDES: f32 = 0.6;
+// Levels of block light a lit particle loses for each block it travels from where it
+// was given off.
+const SMOKE_FALLOFF: f32 = 6.0;
 // Of the speed a particle hits the floor with, how much it hops back up.
 const BOUNCE: f32 = 0.35;
 // How quickly a particle that has touched the floor slows, per second.
@@ -79,8 +86,9 @@ const GLOW: f32 = 2.5;
 // Fire is less bright, so its oranges and reds hold rather than washing out to white: as
 // bright as the fire's own sprite.
 #ifdef BLEND_ADD
-// Added, a flame is a share of light that builds up where tongues overlap.
-const FIRE_GLOW: f32 = 2.2;
+// Added, a flame is a share of light that builds up where tongues overlap: low enough that
+// a crowd of them stays orange rather than burning out to white.
+const FIRE_GLOW: f32 = 1.3;
 #else
 const FIRE_GLOW: f32 = 1.25;
 #endif
@@ -200,11 +208,11 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     out.surface = p.surface;
     out.flags = p.sprite >> 28u;
     // A particle takes the block light where it was given off, and less the further it
-    // goes: smoke a few blocks over a fire at night is dark, not lit as the fire is. Two
-    // levels a block, faster than light spreads between blocks, as a puff is lit from below
-    // by a small fire, not bathed in its light.
+    // goes: smoke over a fire at night is lit only just above the flames and is nearly
+    // gone into the dark past a block and a half, as a puff is lit from below by a small
+    // fire, not bathed in its light. Sky light is as before, so by day it stays grey.
     let block_level = f32((p.surface >> 24u) & 15u);
-    out.block_light = max(block_level - 2.0 * distance(center, p.origin), 0.0) / 15.0;
+    out.block_light = max(block_level - SMOKE_FALLOFF * distance(center, p.origin), 0.0) / 15.0;
     let color = unpack4x8unorm(p.color);
     var linear = srgb_to_linear(color.rgb);
     if (out.flags & FLAG_COOLS) != 0u {
@@ -307,7 +315,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef BLEND_ADD
     // Light added to the scene, dimmed by the air between, which adds no light of its own
     // (it is already in what lies behind).
-    return vec4(color * alpha * air_between(in.world_position).transmittance, 0.0);
+    return vec4(color * alpha * air_between(in.world_position).transmittance, alpha * HIDES);
 #else ifdef BLEND_VEIL
     // Premultiplied.
     return vec4(apply_fog(color, in.world_position) * alpha, alpha);
