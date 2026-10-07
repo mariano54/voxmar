@@ -251,8 +251,9 @@ impl Pack {
 /// 1. the pack the player chose with `$VOXMAR_TEXTURES` (a folder, zip or jar), which
 ///    overrides everything below;
 /// 2. with the `textures` setting at Voxmar HD, that pack (`assets/packs/voxmar_hd`);
-/// 3. by default, the newest Minecraft client jar found in a standard launcher location,
-///    for the familiar look while our pack matures (the other settings put it last);
+/// 3. with the `textures` setting at Minecraft first, the newest Minecraft client jar
+///    found in a standard launcher location (the other orders put it last). Only with
+///    `minecraft_assets` on: without it the game never opens the player's install;
 /// 4. our default pack, `assets/packs/default`, which draws everything: what Minecraft
 ///    has not got (our stones, woods, plants, wonders) and, with the setting, the rest;
 /// 5. any other pack in `assets/packs` without a `pack.ron`, in name order (how mods ship
@@ -268,7 +269,9 @@ pub struct Source {
 pub const HD_PACK: &str = "voxmar_hd";
 
 impl Source {
-    pub fn discover(order: TextureOrder) -> Self {
+    /// The packs for texture order `order`, with the player's Minecraft jar among them
+    /// when `minecraft` (the `minecraft_assets` setting).
+    pub fn discover(order: TextureOrder, minecraft: bool) -> Self {
         let assets = voxmar_server::assets_dir();
         let root = assets.join("packs");
         let mut packs = Vec::new();
@@ -285,10 +288,8 @@ impl Source {
                 Err(e) => bevy::log::warn!("cannot open texture pack {HD_PACK}: {e}"),
             }
         }
-        let minecraft = match (&chosen, find_minecraft_jar()) {
-            (None, Some(jar)) => Pack::open(&jar).map_err(|e| bevy::log::warn!("cannot open {}: {e}", jar.display())).ok(),
-            _ => None,
-        };
+        let jar = if minecraft && chosen.is_none() { find_minecraft_jar() } else { None };
+        let minecraft = jar.and_then(|jar| Pack::open(&jar).map_err(|e| bevy::log::warn!("cannot open {}: {e}", jar.display())).ok());
         let mut minecraft = minecraft.into_iter();
         if order == TextureOrder::Minecraft {
             packs.extend(minecraft.by_ref());
@@ -413,7 +414,7 @@ impl Source {
     }
 }
 
-fn find_minecraft_jar() -> Option<PathBuf> {
+pub fn find_minecraft_jar() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)?;
     let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
     let mut version_dirs = vec![

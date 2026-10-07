@@ -123,6 +123,12 @@ impl Weather {
         std::array::from_fn(|i| (FRACTIONS[i], values[i]))
     }
 
+    /// The effects' channels by name, from drizzle on: what `/weather` and the F3 screen
+    /// list after the numbers.
+    pub fn channels(&self) -> impl Iterator<Item = (&'static str, f32)> + use<> {
+        self.fractions().into_iter().skip(FIRST_CHANNEL)
+    }
+
     /// Every fraction, in the order of `fractions`, for easing all of them alike.
     pub fn fractions_mut(&mut self) -> [&mut f32; 24] {
         [
@@ -209,15 +215,17 @@ impl Weather {
             self.wind.length(),
             self.visibility(),
         );
-        // The effects' channels, from gusts on.
-        for (name, value) in &self.fractions()[7..] {
-            if *value >= 0.05 {
+        for (name, value) in self.channels() {
+            if value >= 0.05 {
                 text.push_str(&format!(", {} {:.0}%", name.replace('_', " "), value * 100.0));
             }
         }
         text
     }
 }
+
+/// Where the effects' channels start in `FRACTIONS`: drizzle, the first after the numbers.
+const FIRST_CHANNEL: usize = 7;
 
 /// Names of `Weather::fractions`.
 const FRACTIONS: [&str; 24] = [
@@ -958,6 +966,13 @@ pub fn pcg(v: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The channels start at drizzle, after the numbers `/weather` shows on their own.
+    #[test]
+    fn channels_start_at_drizzle() {
+        assert_eq!(Weather::NONE.channels().next().map(|(name, _)| name), Some("drizzle"));
+        assert!(Weather::NONE.channels().all(|(name, _)| !["gusts", "precipitation", "snow"].contains(&name)));
+    }
 
     const TABLE: &str = r#"(
         effects: [
