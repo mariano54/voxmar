@@ -1637,7 +1637,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Quests are checked once a second of the server's time, which a loaded machine
             // stretches: the wait is by its clock.
             let done = lit(world);
-            let late = gate.server_now - gate.kiln_since > 20.0;
+            let late = gate.server_now - gate.kiln_since > 20.0 || in_phase > 40.0;
             if done || late {
                 // Taken down again either way, so the pool's bank is clear for the swim.
                 let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
@@ -1649,7 +1649,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if late {
                 let quests = &world.resource::<LocalPlayer>().quests;
                 let state = quests.iter().find(|q| q.name == "base:crucible_kiln").cloned();
-                fail(world, gate, "kiln", format!("lighting the crucible in its kiln never counted: {} quests, the kiln's {state:?}", quests.len()));
+                let waited = (gate.server_now - gate.kiln_since, in_phase);
+                fail(world, gate, "kiln", format!("lighting the crucible in its kiln never counted ({:.1} server s, {:.1} game s): {} quests, the kiln's {state:?}", waited.0, waited.1, quests.len()));
             }
         }
         _ => {}
