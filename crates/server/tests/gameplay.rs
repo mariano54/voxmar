@@ -1917,15 +1917,17 @@ fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
     connection.send(ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None });
 }
 
-/// A name already playing is turned away, in any case, when it comes from anywhere else.
-/// From where that player plays it is them coming back: a game that froze or lost its
-/// network without closing its socket still looks joined until it has been quiet too long.
-/// The earlier connection is told why and leaves, saved; the new one joins as anyone
-/// joining would, with what the save holds and no admin rights it was given (`/op`).
+/// A name already playing is turned away, in any case, from anywhere else, and from the
+/// same address while that player's game is still heard (an address can be a whole
+/// school's). A game that froze or lost its network without closing its socket still looks
+/// joined until it is idle too long; once it has been silent `rejoin_silence`, its player
+/// coming back from that address is them: the earlier connection leaves, saved, and the new
+/// one joins as anyone joining would, with what the save holds and no admin rights it was
+/// given (`/op`). The integrated server's own player always comes back.
 #[test]
-fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_the_same_place() {
+fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game_there() {
     let dir = world_dir("names");
-    let (host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
+    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
     let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
     host.connection.send(ClientMessage::Command { line: "/op guest".into() });
     guest.pump_until(|c| c.admin);
@@ -1938,20 +1940,38 @@ fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_the_same_plac
         let reason = turned_away(&connection, &host.content);
         assert!(reason.contains("already playing"), "{name}: {reason}");
     }
-    // The guest's game stops reading with its socket open, and they join again from the
-    // same address.
+    // From the same address while the guest plays: taken, and the guest plays on.
+    let connection = tcp::connect(addr).unwrap();
+    say_hello(&connection, "GuEsT", &host.content);
+    let reason = turned_away(&connection, &host.content);
+    assert!(reason.contains("already playing"), "a playing session was replaced: {reason}");
+    assert!(guest.ok("/seed").contains(char::is_numeric), "the playing guest was let go");
+    drop(guest);
+    gone(&mut host, "guest");
+    // The guest's game joins again and freezes with its socket open: it says hello and
+    // then nothing, not even the network thread's keepalive. An admin makes it an admin.
+    let mut frozen = std::net::TcpStream::connect(addr).unwrap();
+    let hello = ClientMessage::Hello { name: "guest".into(), protocol: PROTOCOL_VERSION, content: host.content.fingerprint(), admin_token: None };
+    let frame = postcard::to_stdvec(&hello).unwrap();
+    std::io::Write::write_all(&mut frozen, &[&(frame.len() as u32).to_le_bytes()[..], &frame].concat()).unwrap();
+    let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
+    while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
+        host.after_ticks(1);
+    }
+    // Silent past `rejoin_silence` by the server's clock, the guest comes back from there.
+    let silence = Limits::default().rejoin_silence;
+    let until = ticks(&host) + (silence * TICKS_PER_SECOND as f32) as u64 + 2;
+    host.pump_until(|c| ticks(c) >= until);
     let mining = host.content.skills.id("core:mining").unwrap();
     let again = Client::greet(tcp::connect(addr).unwrap(), "GuEsT", None);
     assert!(!again.admin, "admin rights given for a session lasted into the next");
-    assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the earlier connection had");
-    let reason = turned_away(&guest.connection, &guest.content);
-    assert!(reason.contains("joined again"), "{reason}");
-    // The same holds in process: the integrated server's own player coming back.
+    assert_eq!(again.content.skills.level(again.skills.xp(mining)), 7, "joined again without what the save holds");
+    // The same in process: the integrated server's own player coming back, never silent.
     let first = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
     let second = first.another("test");
     assert!(second.admin, "the integrated server's own player is its admin");
     assert!(turned_away(&first.connection, &first.content).contains("joined again"));
-    drop((again, guest, host, second, first));
+    drop((again, frozen, host, second, first));
     // One file for the name in any case (macOS and Windows would not tell them apart).
     assert!(dir.join("players/guest.ron").is_file());
     std::fs::remove_dir_all(&dir).unwrap();

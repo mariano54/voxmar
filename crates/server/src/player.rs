@@ -351,11 +351,17 @@ impl Server {
         }
         // One player per name: a second login would load the same save twice, so whatever
         // either carried would be doubled and their saves would overwrite each other. Unless
-        // it comes from where the first did: a client that crashed or lost its network
-        // without closing its socket still looks joined until it is idle too long, and its
-        // player coming back is them, so the old connection leaves (saved) and this one joins.
+        // it comes from where the first did, and the first has gone silent: a client that
+        // froze or lost its network without closing its socket still looks joined until it
+        // is idle too long, and its player coming back is them, so the old connection leaves
+        // (saved) and this one joins. A session still heard is never ended so (an address
+        // can be a whole school's); the integrated server's own player always comes back.
         let earlier = self.players.iter().find(|(_, p)| p.joined && same_name(&p.name, &name)).map(|(&earlier, _)| earlier);
-        let again = earlier.filter(|earlier| self.same_place(*earlier, id));
+        let silence = std::time::Duration::from_secs_f32(self.config.limits.rejoin_silence);
+        let again = earlier.filter(|&earlier| {
+            let local = self.players[&earlier].connection.is_local();
+            self.same_place(earlier, id) && (local || self.players[&earlier].idle(Instant::now(), silence))
+        });
         let reason = if protocol != PROTOCOL_VERSION {
             Some(Words::key("net.rejected.protocol").with("theirs", Words::text(protocol)).with("ours", Words::text(PROTOCOL_VERSION)))
         } else if content != fingerprint {
@@ -372,7 +378,7 @@ impl Server {
             return;
         }
         if let Some(earlier) = again {
-            tracing::info!("{name} joined again from the same address; the earlier connection leaves");
+            tracing::info!("{name} joined again from the same address; the earlier, silent connection leaves");
             self.players[&earlier].connection.send(ServerMessage::Rejected { reason: Words::key("net.rejected.joined_again") });
             self.leave(earlier);
         }
