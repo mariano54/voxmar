@@ -2700,6 +2700,35 @@ mod tests {
         assert!(content.provinces.len() >= 6);
     }
 
+    /// A wood is found only where its tree grows: no biome grows a tree of acacia wood
+    /// (acacia, olive, fig, …) unless acacia itself grows there, so acacia logs never turn
+    /// up in taiga or tundra (dead snags there are `dead_log`, which breaks to sticks).
+    #[test]
+    fn acacia_wood_grows_only_where_acacia_does() {
+        let content = WorldContent::base(&registry()).unwrap();
+        let picks = |select: &Select, tree: &TreeDef| match select {
+            Select::Name(name, _) => *name == tree.name,
+            Select::Tag(tag, _) => tree.tags.contains(tag),
+        };
+        let acacia = |tree: &TreeDef| [Some(&tree.log), tree.root_block.as_ref()].into_iter().flatten().any(|b| b == "base:acacia_log");
+        let mut failures = Vec::new();
+        for biome in &content.biomes {
+            let grows: Vec<&TreeDef> = content.trees.iter().filter(|t| biome.flora.trees.iter().any(|s| picks(s, t))).collect();
+            let has_acacia = grows.iter().any(|t| t.name == "base:acacia");
+            for tree in grows.iter().filter(|t| acacia(t)) {
+                if !has_acacia {
+                    failures.push(format!("{} grows {}, of acacia wood, without acacia", biome.name, tree.name));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        let dead = content.trees.iter().find(|t| t.name == "base:dead_tree").expect("dead_tree");
+        assert_eq!(dead.log, "base:dead_log");
+        let registry = registry();
+        let log = registry.def(registry.expect("base:dead_log"));
+        assert_eq!(log.drops.as_deref(), Some("core:air"), "a dead log is never an item (it breaks to a stick: tools.ron)");
+    }
+
     /// The snow blanket spares what its rules say, and refuses tags no block has and
     /// entries it cannot read.
     #[test]
