@@ -337,7 +337,9 @@ fn shade_water(
     if normal.y > 0.5 {
         // Tilted with the surface where flowing water slopes.
         waves = normalize(wave_normal(world.xz, footprint, height, flow) + normal - vec3(0.0, 1.0, 0.0));
-        let froth = smoothstep(RAPIDS.x, RAPIDS.y, length(flow));
+        // Rapids froth in a river's narrow run, not where a current crosses open sea:
+        // there it showed as pale speckled floes across the whole sea.
+        let froth = smoothstep(RAPIDS.x, RAPIDS.y, length(flow)) * (1.0 - smoothstep(0.55, 0.9, open_water));
         if froth > 0.0 {
             let t = globals.time;
             let along = world.xz - flow * t;

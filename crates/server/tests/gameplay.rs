@@ -1422,42 +1422,40 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
         client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
         client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
     }
-    for _ in 0..3 {
-        client.settle();
-    }
-    // About one in seven (`unsown` 0.15): enough to start a field, not 28 potatoes.
-    let found = potatoes(&client) - 1;
-    assert!(found < field.len() / 2, "a field nobody sowed gave {found} potatoes of {}", field.len());
+    // About one in seven (`unsown` 0.15): enough to start a field, not 28 potatoes. One
+    // potato a success, so 13 or more is a one-in-13,000 chance.
+    let found = client.quiet(potatoes) - 1;
+    assert!(found <= 12, "a field nobody sowed gave {found} potatoes of {}", field.len());
     // Ripe, as villages grow them: now and then a harvest, and never its experience.
     let earned = client.earned.len();
     let ripe = client.content.blocks.expect("base:potato_crop");
     client.ok("/fill ~-3 ~ ~1 ~3 ~ ~4 potato_crop");
     client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(ripe)));
-    let before = potatoes(&client);
+    let before = client.quiet(potatoes);
     for &cell in &field {
         client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
         client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
     }
-    for _ in 0..3 {
-        client.settle();
-    }
     // A harvest (2 to 4 potatoes) a success: about 4 of 28 at 0.15, some 13 potatoes; 41 or
     // more takes 11 successes or so, under one in 10,000. Every crop would give at least 56.
-    let found = potatoes(&client) - before;
+    let found = client.quiet(potatoes) - before;
     assert!(found <= 40, "a ripe field nobody sowed gave {found} potatoes from {} crops", field.len());
     assert_eq!(client.earned.len(), earned, "harvesting a field nobody sowed paid experience");
     // One the player sows gives its potato back, every time.
-    let before = potatoes(&client);
+    let before = client.quiet(potatoes);
     let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
     client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     let ground = feet + IVec3::new(0, -1, 1);
     let sprout = client.content.blocks.expect("base:potato_crop_0");
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
-    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
+    // Sown, and the potato seen gone: block changes go out at once but the inventory only
+    // as the tick ends, so a sprout seen (and broken) within one tick once left the sown
+    // potato showing in hand. When it was the only one (the field's drops not yet picked
+    // up, on a loaded machine), the second sowing then held nothing and was refused.
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && potatoes(c) == before - 1);
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
-    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
-    // (At least: the ripe field's last drops may still be on their way.)
-    client.pump_until(|c| potatoes(c) >= before);
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) == before);
+    assert_eq!(client.quiet(potatoes), before, "a sown sprout broken did not give its potato back");
     // Sown, grown ripe and harvested: the harvest's experience with the sowing's.
     let earned = client.earned.len();
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));

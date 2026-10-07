@@ -322,6 +322,7 @@
     "block.base.aether_mote": "エーテルのつぶ",
     "block.base.campfire": "たきび",
     "block.base.torch": "たいまつ",
+    "block.base.wall_torch": "かべのたいまつ",
     "block.base.cooked_rabbit": "やいたウサギにく",
     "block.base.cooked_chicken": "やきとり",
     "block.base.cooked_frog": "やいたカエルにく",

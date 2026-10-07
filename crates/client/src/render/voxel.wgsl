@@ -45,6 +45,9 @@
 // pack gives other drawings of.
 const ANIMATED: u32 = 32u;
 const VARIED: u32 = 16u;
+// How bright a glowing block's brightest channel gets: the display transform rolls off
+// gently up to here, and turns colours white past it.
+const GLOW_PEAK: f32 = 1.15;
 #endif
 @group(3) @binding(0) var<storage, read> vertex_chunks: array<u32>;
 
@@ -125,10 +128,18 @@ const MODEL_HASH: u32 = 1u;
 const MODEL_CAP: u32 = 2u;
 const MODEL_BUSH: u32 = 3u;
 const MODEL_ROCK: u32 = 4u;
+const MODEL_WALL: u32 = 5u;
+// A plant on a wall (`MODEL_WALL`, a torch): how high its foot sits on the wall, how far
+// out from the wall, and how far it leans out for every block it rises (22°, as a wall
+// torch leans).
+const WALL_FOOT: vec2<f32> = vec2(0.2, 0.08);
+const WALL_LEAN: f32 = 0.4;
 const PLANT_MODEL_SHIFT: u32 = 28u;
 const PLANT_MODEL_HIGH_SHIFT: u32 = 24u;
 const PLANT_PIECE_SHIFT: u32 = 30u;
 const PLANT_HEIGHT_SHIFT: u32 = 14u;
+// Set on a plant hanging from the block above (mesh.rs, `PLANT_HANGS_SHIFT`).
+const PLANT_HANGS: u32 = 1u << 27u;
 // A mushroom (`MODEL_CAP`, eight quads): a stem of two narrow quads crossing square with
 // the cell, and a cap with volume: a flat crown, four sloping sides down to a wider rim and
 // gills beneath it. Sizes are in blocks across and shares of the plant's height up.
@@ -324,11 +335,23 @@ fn plant_across(w0: u32) -> vec2<f32> {
 // wind and away from the player.
 fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
     let packed = plant_across(w0);
-    let stack = f32((w0 >> PLANT_STACK_SHIFT) & 3u);
+    let model = plant_model(w0);
+    // A plant on a wall keeps which way it faces where others keep their stack.
+    let stack = select(f32((w0 >> PLANT_STACK_SHIFT) & 3u), 0.0, model == MODEL_WALL);
     var up = f32((w0 >> 23u) & 1u) + stack;
     // The corner of the cell the whole plant stands in.
     let base = origin + local_position(w0) - vec3(packed.x, up, packed.y);
-    let model = plant_model(w0);
+    if model == MODEL_WALL {
+        // Straight with the blocks and still: its foot against the wall behind it, leaning
+        // out the way it faces (north, east, south, west: -z, +x, +z, -x).
+        let facing = (w0 >> PLANT_STACK_SHIFT) & 3u;
+        let outs = array(vec2(0.0, -1.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(-1.0, 0.0));
+        let out = outs[facing];
+        let rise = up * f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+        let foot = vec2(0.5) - out * (0.5 - WALL_FOOT.y);
+        let at = foot + (packed - 0.5) + out * rise * WALL_LEAN;
+        return vec3(base.x + at.x, base.y + WALL_FOOT.x + rise, base.z + at.y);
+    }
     var across = model_across(w0);
     let cell = vec3<i32>(floor(base + 0.5));
     let a = pcg3d(vec3<u32>(cell));
@@ -357,7 +380,13 @@ fn plant_position(w0: u32, w1: u32, origin: vec3<f32>) -> vec3<f32> {
     let offset = across - 0.5;
     let turned = vec2(offset.x * cos(angle) - offset.y * sin(angle), offset.x * sin(angle) + offset.y * cos(angle));
     let shift = (a.yz - 0.5) * 0.3;
-    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x)) * f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+    let own_height = f32((w1 >> PLANT_HEIGHT_SHIFT) & 31u) / 8.0;
+    if (w0 & PLANT_HANGS) != 0u {
+        // Hanging from the block above (a bell, herbs, roots, a stalactite): its top at the
+        // top of the cell, as long as its data says, and still, so it stays on its beam.
+        return vec3(base.x + 0.5 + turned.x + shift.x, base.y + 1.0 - (1.0 - up) * own_height, base.z + 0.5 + turned.y + shift.y);
+    }
+    let height = mix(0.6, 1.25, saturate(0.7 * tufts(base.xz * 0.12) + 0.3 * b.x)) * own_height;
     let sink = b.y * 0.25;
     // Bent along a curve from the base, and lower for it; the whole plant leans alike, so
     // a tall plant's two blocks stay joined.
@@ -818,6 +847,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
     let glow = entry.a;
     if glow > 0.0 {
         color += self_glow(base, albedo.rgb, glow);
+        // Its colour kept: the brightest channel held a little past where the display
+        // transform starts rolling it towards white (display.wgsl), which turned a torch's
+        // orange core pale peach.
+        let peak = max(color.r, max(color.g, color.b));
+        color *= min(1.0, GLOW_PEAK / max(peak, 1e-4));
     }
     var alpha = albedo.a;
 
