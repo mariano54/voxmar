@@ -1774,6 +1774,7 @@ impl SettlementsDef {
             ("fruit", &f.fruit),
             ("hay", &f.hay),
             ("hanging", &f.hanging),
+            ("nets", &f.nets),
             ("sacks", &f.sacks),
             ("cloth", &f.cloth),
         ] {
@@ -1788,19 +1789,22 @@ impl SettlementsDef {
         // What a village furnishes its yards and barns with gives nothing when broken
         // (design draft 80): each block in those slots drops nothing, or is a `furnishing`,
         // which gives itself back only where a player placed it. So a mod's barrel can't
-        // make every village a free store. (The altar's slot joins once its stand-in, a
-        // building block, gives way to the stone altar.)
+        // make every village a free store. An altar is checked once it is one (tagged
+        // `altar`): a building block standing in for it is no village's to give.
         let named = |select: &Select| -> Vec<String> {
             match select {
                 Select::Name(name, _) => vec![name.clone()],
                 Select::Tag(tag, _) => registry.tagged(tag).map(|b| registry.def(b).name.clone()).collect(),
             }
         };
-        let singles = [("campfire", &f.campfire), ("table", &f.table), ("planter", &f.planter), ("barrel", &f.barrel), ("bell", &f.bell)];
+        let altar = f.altar.clone().filter(|name| registry.id(name).is_some_and(|id| registry.def(id).has_tag("altar")));
+        let singles = [("campfire", &f.campfire), ("table", &f.table), ("planter", &f.planter), ("barrel", &f.barrel), ("bell", &f.bell), ("altar", &altar)];
         let singles = singles.into_iter().filter_map(|(what, name)| Some((what, name.clone()?)));
+        // A centrepiece's own bell hangs in its frame as the furnishings' does.
+        let bells = self.centrepieces.iter().flat_map(|c| c.parts.iter()).filter(|(part, name)| part == "bell" && !name.contains('{')).map(|(_, name)| ("centrepiece's bell", name.clone()));
         let lists = [("hay", &f.hay), ("hanging", &f.hanging), ("nets", &f.nets), ("sacks", &f.sacks)];
         let lists = lists.into_iter().flat_map(|(what, list)| list.iter().flat_map(named).map(move |name| (what, name)));
-        for (what, name) in singles.chain(lists) {
+        for (what, name) in singles.chain(bells).chain(lists) {
             let Some(id) = registry.id(&name) else { continue };
             let info = registry.info(id);
             if !(info.drops.is_air() || info.drop_count == 0 || registry.def(id).has_tag("furnishing")) {

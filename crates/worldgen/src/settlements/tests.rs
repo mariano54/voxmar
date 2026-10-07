@@ -1477,6 +1477,13 @@ fn furnishings_that_drop_themselves_are_refused_unless_tagged() {
     assert!(refused(&|d| d.furnishings.hay = vec![Select::Name("base:oak_planks".into(), 1.0)]));
     assert!(refused(&|d| d.furnishings.sacks = vec![Select::Tag("planks".into(), 1.0)]), "by tag too");
     assert!(refused(&|d| d.furnishings.campfire = Some("base:torch".into())), "a torch drops itself and is no furnishing");
+    // An altar is checked once it is one: the stone altar passes, and so does a building
+    // block standing in for it.
+    assert!(!refused(&|d| d.furnishings.altar = Some("base:stone_altar".into())));
+    assert!(!refused(&|d| d.furnishings.altar = Some("base:polished_calcite".into())));
+    assert!(refused(&|d| d.furnishings.nets = vec![Select::Name("base:oak_planks".into(), 1.0)]));
+    // A centrepiece's own bell too.
+    assert!(refused(&|d| d.centrepieces[0].parts = vec![("bell".into(), "base:oak_planks".into())]));
 }
 
 /// Snow lies over a snowy village without turning its built stone to snow: chimney
