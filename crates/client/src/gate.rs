@@ -1732,7 +1732,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (coal, ore, dust) = (holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "copper_dust").0);
+            let (coal, ore, dust) = (holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:copper_dust").0);
             // Each stage is done by what the player holds, as the server says it: what goes in
             // must first be seen in hand (it comes a few frames after it is given), then gone
             // after the machine was used.
@@ -1744,8 +1744,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.machines_seen |= held > 0;
             let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
             let (done, target, holds) = match gate.machines_stage {
-                0 => (put_in, boiler, Some("coal_ore")),
-                1 => (put_in, crusher, Some("copper_ore")),
+                0 => (put_in, boiler, Some("base:coal_ore")),
+                1 => (put_in, crusher, Some("base:copper_ore")),
                 _ => (dust >= 2, crusher, None),
             };
             if done {
@@ -1836,7 +1836,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (coal, ore, dust) = (holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "copper_dust").0);
+            let (coal, ore, dust) = (holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:copper_dust").0);
             let content = world.resource::<Launch>().content.clone();
             let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
             let dry = gate.observer.as_ref().is_some_and(|o| o.replies.iter().map(english).any(|r| r.contains("needs water")));
@@ -1903,8 +1903,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Used (or asked about) only every few server seconds, as the kiln is.
             if gate.server_now - gate.machines_asked >= 3.0 {
                 let ready = match gate.machines_stage {
-                    0 => select(world, "coal_ore"),
-                    1 => select(world, "copper_ore"),
+                    0 => select(world, "base:coal_ore"),
+                    1 => select(world, "base:copper_ore"),
                     _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
                 };
                 if ready {
@@ -1967,7 +1967,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (ore, coal, copper, bloom) = (holding(world, "iron_ore").0, holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "iron_bloom").0);
+            let (ore, coal, copper, bloom) = (holding(world, "base:iron_ore").0, holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:iron_bloom").0);
             // Each stage is done by what the player holds, first seen in hand and then gone
             // after the machine was used (as in the steps before), or what the server says.
             let held = match stage {
@@ -2062,9 +2062,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Used (or asked about) only every few server seconds, as the kiln is.
             if gate.server_now - gate.machines_asked >= 3.0 {
                 let ready = match stage {
-                    0 => select(world, "iron_ore"),
-                    1 | 3 => select(world, "coal_ore"),
-                    4 => select(world, "copper_ore"),
+                    0 => select(world, "base:iron_ore"),
+                    1 | 3 => select(world, "base:coal_ore"),
+                    4 => select(world, "base:copper_ore"),
                     _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
                 };
                 if ready {
@@ -2130,7 +2130,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            let (coal, ore, coke) = (holding(world, "coal_ore").0, holding(world, "iron_ore").0, holding(world, "coke").0);
+            let (coal, ore, coke) = (holding(world, "base:coal_ore").0, holding(world, "base:iron_ore").0, holding(world, "base:coke").0);
             // Put in: first seen in hand, then gone after the machine was used. Working: what
             // the server says when asked.
             let held = match stage {
@@ -2185,9 +2185,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Used (or asked about) only every few server seconds, as the kiln is.
             if gate.server_now - gate.machines_asked >= 3.0 {
                 let ready = match stage {
-                    0 => select(world, "coal_ore"),
-                    2 => select(world, "iron_ore"),
-                    3 => select(world, "coke"),
+                    0 => select(world, "base:coal_ore"),
+                    2 => select(world, "base:iron_ore"),
+                    3 => select(world, "base:coke"),
                     _ => true,
                 };
                 if ready {
