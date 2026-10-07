@@ -245,7 +245,16 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     rules::SurvivalRules::load(&content.files, &content.blocks)?;
+    for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
+        tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
+    }
     Ok(content)
+}
+
+/// Whether players swim in `fluid` or are burned by it: one that does neither (a mod's
+/// lava that lost its tag, say) is only waded through.
+fn swum_or_burns(blocks: &voxmar_engine::block::BlockRegistry, fluid: &voxmar_engine::fluid::Fluid) -> bool {
+    fluid.def.swim || blocks.def(fluid.source).has_tag("lava")
 }
 
 /// A running server thread. Dropping it stops the server.
@@ -954,6 +963,17 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_shipped_fluid_is_swum_in_or_burns() {
+        let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        assert!(blocks.fluids().iter().all(|fluid| swum_or_burns(blocks, fluid)));
+        // Water that is not swum in would be named at load.
+        let mut water = blocks.fluid_def(blocks.fluid(blocks.expect("base:water")).unwrap().fluid).clone();
+        water.def.swim = false;
+        assert!(!swum_or_burns(blocks, &water));
+    }
 
     #[test]
     fn addresses_count_together_by_ipv4_address_or_ipv6_prefix() {

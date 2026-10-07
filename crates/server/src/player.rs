@@ -748,7 +748,7 @@ impl Support {
     /// water the step onto a bank.
     fn rise(tuning: &voxmar_engine::movement::Tuning, fluid: bool) -> f32 {
         let jump = tuning.jump_velocity * tuning.jump_velocity / (2.0 * tuning.gravity);
-        jump + tuning.checks.rise_slack + if fluid { voxmar_engine::movement::STEP_OUT } else { 0.0 }
+        jump.max(tuning.step_up) + tuning.checks.rise_slack + if fluid { tuning.step_out } else { 0.0 }
     }
 
     /// The support of a player let down to `y` at `now`: the height they may keep is `y`,
