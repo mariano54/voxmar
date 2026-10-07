@@ -1925,7 +1925,7 @@ fn say_hello(connection: &ClientConnection, name: &str, content: &Content) {
 #[test]
 fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_the_same_place() {
     let dir = world_dir("names");
-    let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
+    let (host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
     let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
     host.connection.send(ClientMessage::Command { line: "/op guest".into() });
     guest.pump_until(|c| c.admin);
