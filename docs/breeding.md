@@ -78,15 +78,15 @@ seconds each kept animal in loaded land looks at its needs. A need met counts 1,
 met 0.8, unmet 0.5, and the target is their product. Below half health it is held to 0.5.
 Condition walks toward the target by at most 0.15 an in-game day up and 0.25 down, so one
 wet night or a missed meal shows only over days. An animal whose land, or home, is not
-loaded is paused with it: it neither hungers nor changes while nobody is near.
+loaded is paused with it: it neither hungers, changes nor lays while nobody is near.
 
 - Food: fed (grazing its food, or its food by hand) within a day, partly within two. A
   hungry kept animal takes its food from your hand as a meal; one that is fed takes only
   breeding food, and only when that could ready it.
 - Water: water within its leash (7 blocks) of its home. Until troughs come, a dug channel
   does; an animal with no water near can't breed.
-- Shelter: rain or snow on it under open sky is met if a roof lies within 3 blocks,
-  partly met otherwise; snow is unmet unless its kind's comfort reaches −10 °C (reindeer,
+- Shelter: rain or snow on it under open sky is met if within 3 blocks there is a spot it
+  could stand in with something solid a few blocks over it, partly met otherwise; snow is unmet unless its kind's comfort reaches −10 °C (reindeer,
   arctic fox, mountain goat, wolf). Ducks don't mind.
 - Space: the ground within 5 blocks (about 78) against what every kept animal on it wants
   together (`needs: (space: …)`: chickens 2, sheep 6, cattle 12; else about 8 blocks per
@@ -99,8 +99,8 @@ A tamed animal starts at 0.6 and a newborn at its parents' average. Products com
 come; litter odds and the share of work a treadwheel or gin gets scale the same way.
 Breeding takes condition above half: breeding food given to one kept worse says so, with
 what it wants, and stays in hand unless the animal is hungry. One unfed past two days stops
-working. Inspecting a kept animal shows its condition in a word (poor, fair, good,
-excellent), whether it is improving or getting worse, and what it wants; Farming 30 shows
+working. Inspecting a kept animal shows its condition in a word (poor, too poorly kept to breed;
+fair, good, excellent), whether it is improving or getting worse, and what it wants; Farming 30 shows
 the number. Troughs, feed quality, illness and inbreeding come next.
 
 **Feed** is cooked food (Cooking 12): mash, seed mix, hay. Each species prefers feed whose

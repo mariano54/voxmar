@@ -163,11 +163,6 @@ impl Server {
             let (hungry, readies) = (self.hungry(id), self.readies(player, id, item));
             let well = creature.condition > rules.breed;
             let room = self.birth_room(&keeper) > 0;
-            let why = match (readies, well, room) {
-                (true, false, _) => Some(self.too_poorly_kept(id)),
-                (true, true, false) => Some(self.no_room_for_young(&keeper)),
-                _ => None,
-            };
             let ready = readies && well && room;
             if hungry || ready {
                 if let Some(p) = self.players.get_mut(&player) {
@@ -180,11 +175,19 @@ impl Server {
                 let (day, tick) = (self.day, self.tick);
                 let creature = self.creatures.live.get_mut(&id).expect("checked");
                 creature.fed = day;
+                creature.needs.food = Met::Yes;
                 if ready {
                     creature.ready_until = tick + (IN_LOVE_SECONDS * TICKS_PER_SECOND as f32) as u64;
                     creature.changed = true;
                 }
             }
+            // Why the food did not ready it, if it would have: said after any meal, so a fed
+            // one is not told it wants food.
+            let why = match (readies, well, room) {
+                (true, false, _) => Some(self.too_poorly_kept(id)),
+                (true, true, false) => Some(self.no_room_for_young(&keeper)),
+                _ => None,
+            };
             if let Some(why) = why {
                 self.tell(Source::Player(player), ChatKind::Info, why);
             }
@@ -202,36 +205,34 @@ impl Server {
         let (day, tamed) = (self.day, self.content.creatures.condition().tamed);
         self.creatures.live.get_mut(&id).expect("checked").fed = day;
         let creature = &self.creatures.live[&id];
-        {
-            let Some(taming) = species.def.taming.clone() else { return };
-            let kind = species.def.name.clone();
-            let u = unit_from(mix(creature.seed, self.tick ^ 0x7a3e));
-            let creature = self.creatures.live.get_mut(&id).expect("checked");
-            if creature.trusting != name {
-                creature.trusting = name.clone();
-                creature.trust = 0.0;
+        let Some(taming) = species.def.taming.clone() else { return };
+        let kind = species.def.name.clone();
+        let u = unit_from(mix(creature.seed, self.tick ^ 0x7a3e));
+        let creature = self.creatures.live.get_mut(&id).expect("checked");
+        if creature.trusting != name {
+            creature.trusting = name.clone();
+            creature.trust = 0.0;
+        }
+        // A treat (`trust:2`) wins trust faster than plain food.
+        let gladly = tags.iter().find_map(|t| t.strip_prefix("trust:")?.parse::<f32>().ok()).unwrap_or(1.0);
+        creature.trust += husbandry::trust_gain(&taming, u) * gladly;
+        creature.mind.fear = 0.0;
+        creature.changed = true;
+        if creature.trust >= 1.0 {
+            creature.owner = name;
+            creature.owner_id = Some(player);
+            creature.condition = tamed;
+            creature.reckoned = day;
+            let was_kept = creature.was_kept;
+            self.settle(id);
+            // One let go and taken in again pays nothing more (design draft 99).
+            if was_kept {
+                return;
             }
-            // A treat (`trust:2`) wins trust faster than plain food.
-            let gladly = tags.iter().find_map(|t| t.strip_prefix("trust:")?.parse::<f32>().ok()).unwrap_or(1.0);
-            creature.trust += husbandry::trust_gain(&taming, u) * gladly;
-            creature.mind.fear = 0.0;
-            creature.changed = true;
-            if creature.trust >= 1.0 {
-                creature.owner = name;
-                creature.owner_id = Some(player);
-                creature.condition = tamed;
-                creature.reckoned = day;
-                let was_kept = creature.was_kept;
-                self.settle(id);
-                // One let go and taken in again pays nothing more (design draft 99).
-                if was_kept {
-                    return;
-                }
-                // For quests that ask for tamed animals.
-                let hunter = self.content.skills.id("core:hunter");
-                self.grant(player, hunter, taming.xp);
-                self.tally(player, "tamed", &kind, 1);
-            }
+            // For quests that ask for tamed animals.
+            let hunter = self.content.skills.id("core:hunter");
+            self.grant(player, hunter, taming.xp);
+            self.tally(player, "tamed", &kind, 1);
         }
     }
 
@@ -239,7 +240,7 @@ impl Server {
     fn too_poorly_kept(&self, id: u32) -> Words {
         let creature = &self.creatures.live[&id];
         let what = crate::commands::creature_name(&self.content.creatures.get(creature.species).def);
-        let state = Words::key(&format!("condition.{}", condition::word(creature.condition)));
+        let state = Words::key(&format!("condition.{}", condition::word(creature.condition, self.content.creatures.condition().breed)));
         match self.wants(id) {
             Some(wants) => Words::key("husbandry.too_poorly_kept_wants").with("creature", what).with("state", state).with("needs", wants),
             None => Words::key("husbandry.too_poorly_kept").with("creature", what).with("state", state),
@@ -347,6 +348,12 @@ impl Server {
                 creature.changed = true;
             }
             if creature.owner.is_none() || creature.grows_up.is_some() {
+                continue;
+            }
+            // In land that is not loaded its products wait, as its condition does: what is due
+            // moves on with the clock, and nothing piles up where nobody can see it.
+            if !self.world.contains(ColumnPos::of_block(creature.body.position.floor().as_ivec3())) {
+                creature.products_due.iter_mut().for_each(|due| *due += EVERY);
                 continue;
             }
             let species = self.content.creatures.get(creature.species);
@@ -1071,6 +1078,35 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_animal_in_land_not_loaded_lays_nothing_until_it_loads() {
+        let mut server = test_server();
+        let hen = kept(&mut server, "base:junglefowl", 1);
+        let eggs = |server: &Server| server.items.saved(|b| server.content.blocks.def(b).name.clone()).iter().filter(|i| i.item == "base:egg").count();
+        // Far off in land nobody has loaded, with an egg due a minute from now: an hour of
+        // passes lays nothing, and the egg is still a minute off.
+        let far = server.spawn + Vec3::new(4000.0, 0.0, 0.0);
+        server.tick = server.tick.next_multiple_of(EVERY);
+        let minute = 60 * TICKS_PER_SECOND as u64;
+        let creature = server.creatures.live.get_mut(&hen).unwrap();
+        (creature.body.position, creature.home) = (far, far);
+        creature.products_due[0] = server.tick + minute;
+        for _ in 0..(3600 * TICKS_PER_SECOND as u64 / EVERY) {
+            server.tick_husbandry();
+            server.tick += EVERY;
+        }
+        assert_eq!(eggs(&server), 0, "a hen in unloaded land laid");
+        assert_eq!(server.creatures.live[&hen].products_due[0], server.tick + minute);
+        // Back where the land is loaded, it lays when its minute is up.
+        let creature = server.creatures.live.get_mut(&hen).unwrap();
+        (creature.body.position, creature.home) = (server.spawn, server.spawn);
+        for _ in 0..(2 * minute / EVERY) {
+            server.tick_husbandry();
+            server.tick += EVERY;
+        }
+        assert_eq!(eggs(&server), 1);
+    }
+
+    #[test]
     fn an_animal_in_land_not_loaded_is_paused_as_its_land_is() {
         let mut server = test_server();
         let id = kept_rabbit(&mut server, 1);
@@ -1112,6 +1148,10 @@ mod tests {
         assert!(!server.roof_near(at, 0.5, 3.0));
         server.set_block(cell + IVec3::new(2, 3, 0), stone);
         assert!(server.roof_near(at, 0.5, 3.0));
+        // A wall or step two off, at head height with open sky above it, is no roof.
+        clear(&mut server);
+        server.set_block(cell + IVec3::new(2, 0, 0), stone);
+        assert!(!server.roof_near(at, 0.5, 3.0));
         // Further off than reach shelters nothing.
         clear(&mut server);
         server.set_block(cell + IVec3::new(4, 3, 0), stone);

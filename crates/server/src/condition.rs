@@ -124,14 +124,19 @@ impl Server {
         (report.weather.precipitation > wet).then_some(report.weather.snow >= 0.5)
     }
 
-    /// Whether a roof lies within `within` blocks of `at` at head height, searching outward
-    /// ring by ring and stopping at the first.
+    /// Whether shelter lies within `within` blocks of a body at `at`, `height` tall: a spot
+    /// it could stand in (feet and head clear) with something solid a few blocks over its
+    /// head. Searched outward ring by ring, stopping at the first.
     pub(crate) fn roof_near(&self, at: Vec3, height: f32, within: f32) -> bool {
+        let feet = at.floor().as_ivec3();
         let head = (at + Vec3::Y * height.max(0.5)).floor().as_ivec3();
-        (1..=within.floor() as i32).any(|r| (0..8 * r).any(|i| {
-            let (dx, dz) = crate::creatures::ring(r, i);
-            !self.open_sky(head + IVec3::new(dx, 0, dz))
-        }))
+        (1..=within.floor() as i32).any(|r| {
+            (0..8 * r).any(|i| {
+                let (dx, dz) = crate::creatures::ring(r, i);
+                let (feet, head) = (feet + IVec3::new(dx, 0, dz), head + IVec3::new(dx, 0, dz));
+                !self.is_solid(feet) && !self.is_solid(head) && (1..=6).any(|dy| self.is_solid(head + IVec3::Y * dy))
+            })
+        })
     }
 
     /// Whether water lies within `reach` blocks of `at` across and a few up and down.
