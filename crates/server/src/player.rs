@@ -38,6 +38,11 @@ const RISE_SLACK: f32 = 0.25;
 /// nobody hovers over a ravine.
 const HOVER_GRACE: f32 = 2.0;
 const HOVER_SINK: f32 = 1.0;
+/// Seconds after being let down before the height they may keep sinks again.
+const LET_DOWN_PAUSE: f32 = 0.25;
+/// How far above ground a player still counts as having just touched it, for the hover
+/// clock: a hop touches the ground for a moment only.
+const NEAR_GROUND: f32 = 0.5;
 /// Longest step a movement is checked for walls in, in blocks.
 const SWEEP_STEP: f32 = 0.25;
 /// Messages a player's handled per tick, at most; the rest wait for the next (and a
@@ -46,10 +51,11 @@ pub const MESSAGES_PER_TICK: u32 = 64;
 /// Lines of chat in a burst, and per second after it.
 const CHAT_BURST: f32 = 8.0;
 const CHAT_PER_SECOND: f32 = 2.0;
-/// Ticks a connection may take to say hello before it is closed, and how many may be
-/// waiting to at once.
-pub const HELLO_TICKS: u64 = 10 * TICKS_PER_SECOND as u64;
+/// Ticks a connection may take to say hello before it is closed, how many may be waiting
+/// to at once, and how many of those from one address.
+pub const HELLO_TICKS: u64 = 3 * TICKS_PER_SECOND as u64;
 pub const MAX_PENDING: usize = 16;
+pub const MAX_PENDING_PER_ADDRESS: usize = 4;
 
 pub struct Player {
     pub id: PlayerId,
@@ -57,8 +63,10 @@ pub struct Player {
     pub connection: ServerConnection,
     pub joined: bool,
     pub admin: bool,
-    /// Made an admin by another with `/op`, which their save keeps.
-    pub opped: bool,
+    /// An admin by right (the integrated server's own player, a name on the admin list from
+    /// this machine, or with the admin token), which `/deop` takes away only until they
+    /// join again.
+    pub admin_by_right: bool,
     /// Creative mode: the player may fly.
     pub allow_flight: bool,
     /// Radius, in columns, streamed around the player.
@@ -144,7 +152,7 @@ impl Player {
             connection,
             joined: false,
             admin: false,
-            opped: false,
+            admin_by_right: false,
             allow_flight: false,
             view_distance,
             fly_speed: 1.0,
@@ -255,7 +263,6 @@ impl Player {
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
-            op: self.opped,
         }
     }
 }
@@ -378,12 +385,12 @@ impl Server {
         // Only the integrated server's own player can connect in-process. Names are not
         // authenticated, so a name on the admin list counts only from this machine (a
         // tunnel that forwards from elsewhere makes everyone look local); from anywhere, the
-        // admin token does. An admin makes others admins with `/op`, which lasts.
-        player.opped = saved.as_ref().is_some_and(|saved| saved.op);
-        player.admin = (player.connection.is_local() && local_admin)
+        // admin token does. An admin makes others admins with `/op`, until they leave: a
+        // name is not checked, so nothing lasts on it.
+        player.admin_by_right = (player.connection.is_local() && local_admin)
             || (player.connection.is_loopback() && self.config.admins.iter().any(|admin| same_name(admin, &player.name)))
-            || token_admin
-            || player.opped;
+            || token_admin;
+        player.admin = player.admin_by_right;
         player.allow_flight = saved.as_ref().and_then(|saved| saved.mode).map_or(allow_flight, GameMode::allows_flight);
         // Returning players carry on where they left; new ones start at spawn with a kit.
         match saved {
@@ -496,17 +503,29 @@ impl Server {
         // Quicker on foot as their effects say, as the client moves them.
         let tuning = &self.content.movement.on_foot(player.modifiers.speed.max(1.0));
         let flying = input.flying && player.allow_flight;
-        let rates = Budgets {
-            across: SPEED_MARGIN * if flying { tuning.fly_sprint_speed * player.fly_speed } else { tuning.top_ground_speed() },
-            rise: SPEED_MARGIN * tuning.jump_velocity,
-            fall: SPEED_MARGIN * tuning.terminal_velocity,
+        // Flying, across is as fast diagonally as the client flies (both keys held), and up
+        // and down as fast as flight or a fall.
+        let fly = tuning.fly_sprint_speed * player.fly_speed;
+        let rates = if flying {
+            Budgets {
+                across: SPEED_MARGIN * fly * std::f32::consts::SQRT_2,
+                rise: SPEED_MARGIN * fly.max(tuning.jump_velocity),
+                fall: SPEED_MARGIN * fly.max(tuning.terminal_velocity),
+            }
+        } else {
+            Budgets {
+                across: SPEED_MARGIN * tuning.top_ground_speed(),
+                rise: SPEED_MARGIN * tuning.jump_velocity,
+                fall: SPEED_MARGIN * tuning.terminal_velocity,
+            }
         };
-        let since = player.budget_at.map_or(1.0 / TICKS_PER_SECOND as f32, |then| at.saturating_duration_since(then).as_secs_f32()).min(MOVE_BURST);
+        let gap = player.budget_at.map_or(1.0 / TICKS_PER_SECOND as f32, |then| at.saturating_duration_since(then).as_secs_f32());
+        let since = gap.min(MOVE_BURST);
         let from = player.position;
         // Moved by the server since their last input (a teleport, a respawn): afresh.
         let afresh = from != player.accepted || player.budget_at.is_none();
         let budgets = rates.refilled(&player.budgets, since, afresh);
-        let support = if afresh || (player.flying && player.allow_flight) {
+        let mut support = if afresh || (player.flying && player.allow_flight) {
             Support { y: from.y, fluid: self.standing(from) == Some(true), at: Some(at) }
         } else {
             match self.standing(from) {
@@ -514,21 +533,36 @@ impl Server {
                 None => player.support,
             }
         };
+        // The hover clock runs only while the player is seen off the ground: not across a
+        // gap in their inputs (a stalled connection, a hitch), and not while a hop has just
+        // touched down.
+        if gap > HOVER_GRACE || self.near_ground(from) {
+            support.at = Some(at);
+        }
         let delta = input.position - from;
-        // Flying, one budget covers air in any direction; on foot, across, up and down
-        // each have their own.
-        let cost = if flying {
-            Budgets { across: delta.length(), rise: 0.0, fall: 0.0 }
-        } else {
-            Budgets { across: delta.with_y(0.0).length(), rise: delta.y.max(0.0), fall: (-delta.y).max(0.0) }
-        };
-        let ceiling = support.ceiling(tuning, at);
+        let cost = Budgets { across: delta.with_y(0.0).length(), rise: delta.y.max(0.0), fall: (-delta.y).max(0.0) };
+        // Landing is always allowed: the height they may keep sinks only for a move that
+        // ends in the air.
+        let lands = self.standing(input.position).is_some();
+        let ceiling = support.ceiling(tuning, at, !lands);
         let too_high = !flying && input.position.y > ceiling;
         let plausible = budgets.covers(&cost) && !too_high && self.clear_between(from, input.position);
         // Someone kept up past the height they may stay at is let down to it, a little
-        // further each time, rather than left hanging where they were.
-        let lowered = Vec3::new(from.x, ceiling, from.z);
-        let let_down = !plausible && !flying && from.y > ceiling && !self.inside(lowered);
+        // further each time, rather than left hanging where they were: onto the ground
+        // below if the height is in it.
+        let sunk = support.ceiling(tuning, at, true);
+        let let_down = !plausible && !flying && from.y > sunk;
+        let lowered = if !let_down {
+            from
+        } else if self.inside(Vec3::new(from.x, sunk, from.z)) {
+            self.ground_below(from)
+        } else {
+            Vec3::new(from.x, sunk, from.z)
+        };
+        if let_down {
+            // From there, the height they may keep pauses, then sinks on.
+            support = support.let_down_to(lowered.y, tuning, at);
+        }
 
         let player = self.players.get_mut(&id).unwrap();
         player.yaw = input.yaw;
@@ -543,7 +577,7 @@ impl Server {
             player.accepted = input.position;
         } else {
             player.budgets = budgets;
-            if let_down {
+            if let_down && lowered != from {
                 player.position = lowered;
                 player.accepted = lowered;
             }
@@ -580,6 +614,23 @@ impl Server {
         } else {
             None
         }
+    }
+
+    /// Whether there is ground within `NEAR_GROUND` under a player at `feet`.
+    fn near_ground(&self, feet: Vec3) -> bool {
+        let half = dims::WIDTH / 2.0;
+        let below = Aabb { min: feet - Vec3::new(half, NEAR_GROUND, half), max: feet + Vec3::new(half, 0.0, half) };
+        below.intersects(|cell| self.is_solid(cell))
+    }
+
+    /// Where a player above `from` would stand on the first solid block under them (within
+    /// 64 blocks; otherwise where they are).
+    fn ground_below(&self, from: Vec3) -> Vec3 {
+        let cell = from.floor().as_ivec3();
+        (0..64)
+            .map(|down| cell - voxmar_engine::glam::IVec3::Y * down)
+            .find(|&below| self.is_solid(below) && !self.inside(below.as_vec3().with_x(from.x).with_z(from.z) + Vec3::Y))
+            .map_or(from, |below| Vec3::new(from.x, below.y as f32 + 1.0, from.z))
     }
 
     /// Whether a player at `feet` would be in a wall (with a slightly smaller box than
@@ -658,11 +709,24 @@ impl Support {
     /// The highest a player on foot may be `now`: a jump above where they last stood (and
     /// out of water, the step onto a bank besides), sinking once they have been off the
     /// ground longer than a jump or a fall from it takes.
-    fn ceiling(&self, tuning: &voxmar_engine::movement::Tuning, now: Instant) -> f32 {
-        let jump = tuning.jump_velocity * tuning.jump_velocity / (2.0 * tuning.gravity);
-        let step = if self.fluid { voxmar_engine::movement::STEP_OUT } else { 0.0 };
+    fn ceiling(&self, tuning: &voxmar_engine::movement::Tuning, now: Instant, sinking: bool) -> f32 {
         let aloft = self.at.map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f32());
-        self.y + jump + RISE_SLACK + step - (aloft - HOVER_GRACE).max(0.0) * HOVER_SINK
+        let sink = if sinking { (aloft - HOVER_GRACE).max(0.0) * HOVER_SINK } else { 0.0 };
+        self.y + Self::rise(tuning, self.fluid) - sink
+    }
+
+    /// How far above where they stood a player may rise: a jump and slack, and out of
+    /// water the step onto a bank.
+    fn rise(tuning: &voxmar_engine::movement::Tuning, fluid: bool) -> f32 {
+        let jump = tuning.jump_velocity * tuning.jump_velocity / (2.0 * tuning.gravity);
+        jump + RISE_SLACK + if fluid { voxmar_engine::movement::STEP_OUT } else { 0.0 }
+    }
+
+    /// The support of a player let down to `y` at `now`: the height they may keep is `y`,
+    /// for `LET_DOWN_PAUSE`, and sinks on from there.
+    fn let_down_to(&self, y: f32, tuning: &voxmar_engine::movement::Tuning, now: Instant) -> Support {
+        let pause = std::time::Duration::from_secs_f32(HOVER_GRACE - LET_DOWN_PAUSE);
+        Support { y: y - Self::rise(tuning, false), fluid: false, at: Some(now.checked_sub(pause).unwrap_or(now)) }
     }
 }
 

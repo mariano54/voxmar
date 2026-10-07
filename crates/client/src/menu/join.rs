@@ -205,7 +205,7 @@ fn finish_connecting(
     match result {
         Ok(connection) => {
             remember(&connecting.address);
-            session::play(&mut commands, &mut next, launch.multiplayer(connection));
+            session::play(&mut commands, &mut next, launch.multiplayer(connection, &connecting.address));
         }
         Err(e) => {
             let reason = match e.kind() {

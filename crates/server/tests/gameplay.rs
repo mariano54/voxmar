@@ -233,14 +233,25 @@ impl Client {
     /// Waits until the server has run `ticks` whole ticks from now, by its own clock, and
     /// applies everything they sent: a barrier after which whatever the server was going to
     /// do about the messages sent before it is done, for checking that something did not
-    /// happen without waiting a fixed time.
+    /// happen without waiting a fixed time. Sound only for in-process clients, whose
+    /// messages reach the server at once; over TCP a message may still be in flight.
     fn after_ticks(&mut self, ticks: u64) {
         let ran = |c: &Self| c._server.as_ref().expect("the first player holds the server").ticks();
         let until = ran(self) + ticks + 1;
         self.pump_until(|c| ran(c) >= until);
+        self.drain();
+    }
+
+    /// Applies every message waiting.
+    fn drain(&mut self) {
         while let Ok(Some(message)) = self.connection.try_recv() {
             self.apply(message);
         }
+    }
+
+    /// The server's ticks so far, by its own clock.
+    fn ticks(&self) -> u64 {
+        self._server.as_ref().expect("the first player holds the server").ticks()
     }
 
     fn propose(&self, action: &str, target: ActionTarget) {
@@ -294,8 +305,7 @@ fn break_and_place_blocks() {
     // Mining takes the block's hardness in seconds; cancelling before then changes nothing.
     client.propose("core:mine", target);
     client.connection.send(ClientMessage::Cancel);
-    std::thread::sleep(Duration::from_millis(1500));
-    client.pump_until(|_| true);
+    client.after_ticks((hardness.as_secs_f32() * TICKS_PER_SECOND as f32).ceil() as u64 + 2);
     assert_eq!(client.world.block(below), Some(ground));
 
     let started = std::time::Instant::now();
@@ -511,6 +521,10 @@ fn saved_worlds_keep_edits_and_players_across_restarts() {
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
     client.clear();
+    // Two stacks besides the one mined, so a save that kept only one slot would show.
+    client.ok("/give torch 5");
+    client.ok("/give stick 7");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().count() == 2);
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
     client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
@@ -915,15 +929,25 @@ fn a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks()
     // the server more than twice its time, long after the player saw it break.
     let lag = voxmar_server::Lag { per_tick: Duration::from_millis(60), ..Default::default() };
     let mut client = Client::join_with(ServerConfig { view_distance: 2, lag, ..Default::default() });
+    client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     client.ok("/setblock ~ ~-1 ~ stone");
     client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:stone"));
     let hardness = client.content.blocks.info(client.world.block(below).unwrap()).hardness;
-    let started = Instant::now();
+    let (started, from) = (Instant::now(), client.ticks());
     client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
-    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    let ran = std::cell::Cell::new(0);
+    client.pump_until(|c| {
+        ran.set(c.ticks() - from);
+        c.world.block(below) == Some(BlockId::AIR)
+    });
+    let ran = ran.get();
     let took = started.elapsed().as_secs_f32();
-    assert!(took >= hardness - 0.05 && took <= hardness + 0.4, "stone ({hardness} s) broke after {took:.2} s");
+    assert!(took >= hardness - 0.05, "stone ({hardness} s) broke after {took:.2} s");
+    // Each tick takes at least 60 ms, so the clock finishes it in fewer ticks than counting
+    // them would.
+    let by_ticks = (hardness * TICKS_PER_SECOND as f32) as u64;
+    assert!(ran < by_ticks, "stone broke after {ran} ticks, as many as {by_ticks} would take counted");
 }
 
 #[test]
@@ -1005,11 +1029,12 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
     // At Mining 15 with the stone pickaxe: broken, quicker than by hand, teaching Mining (35).
     hold(&client, 0);
-    let started = Instant::now();
+    let from = client.ticks();
     mine(&client);
     client.pump_until(|c| c.world.block(ore) == Some(BlockId::AIR) && c.earned.contains(&350));
     let hardness = client.content.blocks.info(iron).hardness;
-    assert!(started.elapsed().as_secs_f32() < hardness * 0.5, "a stone pickaxe should mine iron ore at four times a hand's speed");
+    let ran = client.ticks() - from;
+    assert!((ran as f32) < hardness * 0.5 * TICKS_PER_SECOND as f32, "a stone pickaxe should mine iron ore at four times a hand's speed, not in {ran} ticks");
 }
 
 #[test]
@@ -1030,8 +1055,7 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     };
     // Away from a table the three-by-three pattern makes nothing.
     lay(&client);
-    let waited = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > waited);
+    client.after_ticks(16);
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "a pickaxe was crafted without a table");
     // At the table it makes a stone pickaxe, teaching Engineering.
     client.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
@@ -1111,8 +1135,9 @@ fn the_dead_keep_three_items_and_only_they_may_pick_up_the_rest() {
     assert!(owner.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "the pickaxe is the most valuable: {:?}", owner.inventory);
     assert!(said.contains("for 30 minutes") || owner.chat.iter().any(|(_, text)| text.contains("for 30 minutes")), "{said} {:?}", owner.chat);
     // The thief stands where the owner fell (both joined at spawn) and picks up nothing.
-    let watch = Instant::now() + Duration::from_secs(3);
-    thief.pump_until(|c| c.items.values().map(|i| i.stack.count as u32).sum::<u32>() == 44 && Instant::now() > watch);
+    thief.pump_until(|c| c.items.values().map(|i| i.stack.count as u32).sum::<u32>() == 44);
+    owner.after_ticks(3 * TICKS_PER_SECOND as u64);
+    thief.drain();
     assert!(thief.collected.is_empty(), "someone else picked up a dead player's things");
     // The owner wakes at spawn, by their things, and gathers them all.
     owner.propose("core:respawn", ActionTarget::None);
@@ -1153,8 +1178,7 @@ fn picked_wild_flowers_grow_back_unless_their_ground_is_broken() {
     client.ok("/setblock ~-2 ~-1 ~ dirt");
     client.ok("/grow");
     client.pump_until(|c| c.world.block(near) == Some(poppy));
-    std::thread::sleep(Duration::from_millis(1500));
-    client.pump_until(|_| true);
+    client.after_ticks(30);
     assert_eq!(client.world.block(far), Some(BlockId::AIR), "a flower came back on ground that was replaced");
 }
 
@@ -1583,6 +1607,23 @@ fn nobody_hovers_over_a_ravine() {
     }
 }
 
+#[test]
+fn a_player_silent_in_mid_jump_lands_without_being_pulled_back() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    // Up in a jump, then nothing for four seconds (a hitch, a dropped connection), then
+    // the rest of the jump, down on the floor and walking on.
+    client.send_position(start + Vec3::new(0.2, 1.0, 0.0), false);
+    client.after_ticks(4 * TICKS_PER_SECOND as u64);
+    client.send_position(start + Vec3::new(0.3, 0.8, 0.0), false);
+    client.send_position(start + Vec3::new(0.4, 0.0, 0.0), false);
+    for step in 1..=10 {
+        client.send_position(start + Vec3::new(0.4 + step as f32 * 0.2, 0.0, 0.0), false);
+        client.after_ticks(1);
+    }
+    assert!(client.all_accepted(), "pulled back to {:?} after landing", client.teleported);
+}
+
 /// Reads what the server answers a connection's hello until it turns them away, and
 /// returns why (in English); panics if they are let in.
 fn turned_away(connection: &ClientConnection, content: &Content) -> String {
@@ -1702,7 +1743,7 @@ fn a_player_who_sends_nothing_but_keepalives_is_kept() {
 }
 
 #[test]
-fn chat_floods_slow_down_once_and_admins_make_admins_who_stay_until_deop() {
+fn chat_floods_slow_down_once_and_admins_make_admins_for_the_session() {
     let dir = world_dir("op");
     let (mut host, addr) = serve(ServerConfig { world: Some(dir.clone()), ..Default::default() });
     assert!(host.admin, "a name on the admin list is an admin from this machine");
@@ -1722,19 +1763,21 @@ fn chat_floods_slow_down_once_and_admins_make_admins_who_stay_until_deop() {
     // (The host hears the flood, so its own reply is not the first line it gets.)
     host.connection.send(ClientMessage::Command { line: "/op guest".into() });
     guest.pump_until(|c| c.admin);
-    // Made an admin, they stay one when they come back...
-    drop(guest);
-    gone(&mut host, "guest");
-    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
-    assert!(guest.admin, "a player made an admin was not one when they came back");
-    // ...until an admin says otherwise.
-    host.chat.clear();
+    // ...until an admin says otherwise...
     host.connection.send(ClientMessage::Command { line: "/deop guest".into() });
     guest.pump_until(|c| !c.admin);
+    host.connection.send(ClientMessage::Command { line: "/op guest".into() });
+    guest.pump_until(|c| c.admin);
+    // ...or they leave: it is never saved, so it lasts for the session only.
     drop(guest);
     gone(&mut host, "guest");
     let guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
-    assert!(!guest.admin);
+    assert!(!guest.admin, "a player made an admin was still one when they came back");
+    // An admin by right (the admin list, from this machine) is told it lasts until they
+    // join again.
+    host.chat.clear();
+    host.connection.send(ClientMessage::Command { line: "/deop host".into() });
+    host.pump_until(|c| !c.admin && c.chat.iter().any(|(_, text)| text.contains("until you join again")));
     drop((guest, host));
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1774,24 +1817,37 @@ fn a_full_server_turns_newcomers_away() {
 
 #[test]
 fn silent_sockets_neither_count_as_players_nor_pile_up() {
-    let (host, addr) = serve(ServerConfig { max_players: 3, ..Default::default() });
-    let guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
-    // Fifteen connections that never say hello: a player still gets in...
-    let mut silent: Vec<_> = (0..15).map(|_| std::net::TcpStream::connect(addr).unwrap()).collect();
-    let third = Client::greet(tcp::connect(addr).unwrap(), "third", None);
-    // ...but with sixteen waiting, the next connection is turned away at once.
-    silent.push(std::net::TcpStream::connect(addr).unwrap());
-    let connection = tcp::connect(addr).unwrap();
-    assert!(turned_away(&connection, &host.content).contains("full"));
-    drop((guest, third, silent));
+    // Listening on both IPv4 and IPv6, so one machine has two addresses to come from.
+    let server = spawn(ServerConfig { view_distance: 2, max_players: 3, idle_timeout: SERVER_WAIT, ..Default::default() }, content()).unwrap();
+    let Ok(addr) = tcp::listen("[::]:0", server.connections()) else {
+        eprintln!("skipped: no IPv6 here");
+        return;
+    };
+    let (v4, v6) = (std::net::SocketAddr::from(([127, 0, 0, 1], addr.port())), std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, addr.port())));
+    let Ok(connection) = tcp::connect(v4) else {
+        eprintln!("skipped: this IPv6 listener takes no IPv4");
+        return;
+    };
+    let guest = Client::hello(connection, "guest", server);
+    // Four connections from one address that never say hello: they are not players, so
+    // two more still fit...
+    let silent: Vec<_> = (0..4).map(|_| std::net::TcpStream::connect(v4).unwrap()).collect();
+    let second = Client::greet(tcp::connect(v4).unwrap(), "second", None);
+    // ...and with four waiting from that address, its next connection is turned away at
+    // once, while another address is not.
+    let connection = tcp::connect(v4).unwrap();
+    assert!(turned_away(&connection, &guest.content).contains("full"));
+    let third = Client::greet(tcp::connect(v6).unwrap(), "third", None);
+    drop((guest, second, third, silent));
 }
 
 #[test]
-fn a_new_player_starts_with_food_light_wood_and_the_purse() {
+fn a_new_player_starts_with_tools_food_light_wood_and_the_purse() {
     let client = Client::join();
     let id = |name: &str| client.content.blocks.expect(name);
     let carried = |item| client.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16], "{:?}", client.inventory);
+    assert_eq!([carried(id("base:wooden_pickaxe")), carried(id("base:wooden_axe"))], [1, 1], "{:?}", client.inventory);
     assert_eq!(client.inventory.slots[voxmar_engine::inventory::SLOTS - 1].map(|s| s.item), Some(id("base:coin_purse")));
     assert_eq!(carried(id("base:cobblestone")) + carried(id("base:glass")) + carried(id("base:glowstone")), 0);
 }

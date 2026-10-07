@@ -62,8 +62,9 @@ pub struct ServerConfig {
     pub admins: Vec<String>,
     /// Most players playing at once; more are turned away when they say hello.
     pub max_players: usize,
-    /// A password that makes whoever joins with it an admin, from anywhere (`--admin-token`
-    /// on the dedicated server; a client sends `VOXMAR_ADMIN_TOKEN`). `None` for none.
+    /// A password that makes whoever joins with it an admin, from anywhere (the dedicated
+    /// server reads it from `$VOXMAR_ADMIN_TOKEN` or `--admin-token-file`; a client sends the
+    /// one `VOXMAR_ADMIN_TOKENS` keeps for the server's address). `None` for none.
     pub admin_token: Option<String>,
     /// How long a player connected from elsewhere may send nothing before they are let go:
     /// a connection that died without closing would otherwise keep their name taken. A
@@ -497,9 +498,14 @@ impl Server {
 
     fn accept_connections(&mut self) {
         while let Ok(connection) = self.incoming.try_recv() {
-            // Those still to say hello count against their own small limit, so sockets
-            // left silent cannot fill the server (players are counted at hello).
-            if self.players.values().filter(|p| !p.joined).count() >= player::MAX_PENDING {
+            // Those still to say hello count against their own small limit, and fewer from
+            // any one address, so sockets left silent cannot fill the server or crowd out
+            // everyone else (players are counted at hello).
+            let pending = || self.players.values().filter(|p| !p.joined);
+            let peer = connection.peer();
+            if pending().count() >= player::MAX_PENDING
+                || peer.is_some() && pending().filter(|p| p.connection.peer() == peer).count() >= player::MAX_PENDING_PER_ADDRESS
+            {
                 connection.send(ServerMessage::Rejected { reason: voxmar_engine::lang::Words::key("net.rejected.full") });
                 continue;
             }

@@ -66,7 +66,8 @@ impl Process for Falling {
             let (in_water, in_lava) = (touching(water), touching(lava));
 
             let player = server.players.get_mut(&id).unwrap();
-            if on_ground && !in_lava {
+            // Where a grave would go: never in lava, nor on anything below the void.
+            if on_ground && !in_lava && player.position.y >= rules.void_below {
                 player.last_ground = Some(player.position);
             }
             let mut damage = 0.0;

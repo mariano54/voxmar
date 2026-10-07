@@ -149,8 +149,6 @@ pub struct SavedPlayer {
     /// Quests finished, and the tallies quests count.
     pub quests: Vec<String>,
     pub tallies: Vec<(String, u32)>,
-    /// Whether an admin made them one with `/op` (until `/deop`).
-    pub op: bool,
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -180,8 +178,6 @@ struct PlayerFile {
     quests: Vec<String>,
     #[serde(default)]
     tallies: Vec<(String, u32)>,
-    #[serde(default)]
-    op: bool,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -307,13 +303,16 @@ impl WorldSave {
         if path.exists() {
             return path;
         }
-        let wanted = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        // Compared by the names they hold, so a name escaped in the file (`Ü` as `~dc~`)
+        // matches in any case too.
+        let wanted = name.to_lowercase();
         let older = std::fs::read_dir(self.dir.join("players"))
             .into_iter()
             .flatten()
             .flatten()
             .map(|entry| entry.path())
-            .filter(|older| older.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == wanted))
+            .filter(|older| older.extension().is_some_and(|e| e == "ron"))
+            .filter(|older| older.file_stem().and_then(|n| player_name(&n.to_string_lossy())).is_some_and(|n| n.to_lowercase() == wanted))
             .min();
         older.unwrap_or(path)
     }
@@ -340,7 +339,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies, op: file.op }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: file.journal, quests: file.quests, tallies: file.tallies }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -378,7 +377,6 @@ impl WorldSave {
             journal: player.journal.clone(),
             quests: player.quests.clone(),
             tallies: player.tallies.clone(),
-            op: player.op,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -562,6 +560,23 @@ fn file_name(name: &str) -> String {
     out
 }
 
+/// The player name a `file_name` holds, or `None` if it is not one.
+fn player_name(file: &str) -> Option<String> {
+    let mut out = String::with_capacity(file.len());
+    let mut rest = file;
+    while let Some(c) = rest.chars().next() {
+        if c == '~' {
+            let (hex, after) = rest[1..].split_once('~')?;
+            out.push(char::from_u32(u32::from_str_radix(hex, 16).ok()?)?);
+            rest = after;
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    Some(out)
+}
+
 fn invalid(path: &Path, error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))
 }
@@ -670,7 +685,6 @@ mod tests {
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
             quests: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],
-            op: true,
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -693,6 +707,11 @@ mod tests {
         assert_eq!(save.read_player("ada", &registry).unwrap(), Some(old.clone()), "on a case-sensitive disk too");
         save.write_player("Ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ADA", &registry).unwrap(), Some(player.clone()));
+        // A name escaped in the old file is matched by what it holds: `Über` as `~dc~ber`.
+        std::fs::write(dir.join("players/~dc~ber.ron"), text.replace("yaw: 1.25", "yaw: 0.5")).unwrap();
+        assert_eq!(save.read_player("über", &registry).unwrap(), Some(old.clone()));
+        assert_eq!(player_name("a~2f~b").as_deref(), Some("a/b"));
+        assert_eq!(player_name("a~zz~b"), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -10,6 +10,7 @@
 //! writer thread does, whatever the game is doing), so a server can tell a client that is
 //! only minimized or busy from one whose connection died (`Connection::last_heard`).
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -27,9 +28,9 @@ pub struct Connection<Out, In> {
     tx: Sender<(Instant, Out)>,
     rx: Receiver<(Instant, In)>,
     local: bool,
-    /// Whether the peer is on this machine: in process, or over TCP from a loopback
-    /// address.
-    loopback: bool,
+    /// The peer's address over TCP (an IPv4 peer of a dual-stack listener as IPv4);
+    /// `None` in process.
+    peer: Option<IpAddr>,
     /// Set when the outgoing queue filled up because the peer stopped reading: the
     /// connection then counts as closed (see `send`).
     overflowed: AtomicBool,
@@ -97,7 +98,12 @@ impl<Out, In> Connection<Out, In> {
     /// Whether the peer is on this machine (in process, or over TCP from a loopback
     /// address), which a server may trust with what it would not give a stranger.
     pub fn is_loopback(&self) -> bool {
-        self.loopback
+        self.peer.is_none_or(|ip| ip.is_loopback())
+    }
+
+    /// The peer's address over TCP; `None` in process.
+    pub fn peer(&self) -> Option<IpAddr> {
+        self.peer
     }
 
     /// When the peer last sent anything over TCP, keepalives included; `None` in process.
@@ -105,8 +111,8 @@ impl<Out, In> Connection<Out, In> {
         self.heard.as_ref().map(|heard| epoch() + Duration::from_millis(heard.load(Ordering::Relaxed)))
     }
 
-    fn new(tx: Sender<(Instant, Out)>, rx: Receiver<(Instant, In)>, local: bool, loopback: bool, heard: Option<Arc<AtomicU64>>) -> Self {
-        Self { tx, rx, local, loopback, overflowed: AtomicBool::new(false), heard }
+    fn new(tx: Sender<(Instant, Out)>, rx: Receiver<(Instant, In)>, local: bool, peer: Option<IpAddr>, heard: Option<Arc<AtomicU64>>) -> Self {
+        Self { tx, rx, local, peer, overflowed: AtomicBool::new(false), heard }
     }
 }
 
@@ -114,7 +120,7 @@ impl<Out, In> Connection<Out, In> {
 pub fn local_pair() -> (ClientConnection, ServerConnection) {
     let (client_tx, server_rx) = unbounded();
     let (server_tx, client_rx) = unbounded();
-    (Connection::new(client_tx, client_rx, true, true, None), Connection::new(server_tx, server_rx, true, true, None))
+    (Connection::new(client_tx, client_rx, true, None, None), Connection::new(server_tx, server_rx, true, None, None))
 }
 
 pub mod tcp {
@@ -215,7 +221,7 @@ pub mod tcp {
     {
         stream.set_nodelay(true)?;
         // An IPv4 peer reaching a dual-stack listener shows as `::ffff:127.0.0.1`.
-        let loopback = stream.peer_addr()?.ip().to_canonical().is_loopback();
+        let peer = stream.peer_addr()?.ip().to_canonical();
         let (out_tx, out_rx) = bounded::<(Instant, Out)>(MAX_QUEUED_OUT);
         // Clients keep their connection alive; servers need not.
         let (max_frame, (in_tx, in_rx), open, keepalive) = match side {
@@ -302,6 +308,6 @@ pub mod tcp {
             let _ = reader.get_ref().shutdown(std::net::Shutdown::Both);
         })?;
 
-        Ok(Connection::new(out_tx, in_rx, false, loopback, Some(heard)))
+        Ok(Connection::new(out_tx, in_rx, false, Some(peer), Some(heard)))
     }
 }

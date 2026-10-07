@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_player_gets_bread_torches_planks_and_the_purse() {
+    fn a_new_player_gets_tools_bread_torches_planks_and_the_purse() {
         let blocks = blocks();
         let rules = SurvivalRules::load(&[file("core", SHIPPED)], &blocks).unwrap();
         let inventory = rules.new_inventory().unwrap();
@@ -169,7 +169,8 @@ mod tests {
         let carried = |item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
         assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16]);
         assert_eq!(inventory.slots[SLOTS - 1], Some(ItemStack { item: id("base:coin_purse"), count: 1 }), "the purse is in the last slot");
-        assert_eq!(inventory.slots.iter().flatten().count(), 7, "a slot for each loaf, the torches, the planks and the purse");
+        assert_eq!(inventory.slots[..2].iter().flatten().map(|s| s.item).collect::<Vec<_>>(), [id("base:wooden_pickaxe"), id("base:wooden_axe")], "the tools come first, in the hotbar");
+        assert_eq!(inventory.slots.iter().flatten().count(), 9, "a slot for each tool and loaf, the torches, the planks and the purse");
     }
 
     #[test]

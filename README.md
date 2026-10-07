@@ -180,7 +180,7 @@ recall earlier lines, Tab completes a command's name, Enter sends and Esc closes
 chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
 like actions: admins (the singleplayer host, players named with `--admin` on a dedicated
 server who play on its machine, players who join with the server's admin token, and anyone an
-admin makes one with `/op NAME`, until `/deop NAME`) may use them all, everyone else `/help`,
+admin makes one with `/op NAME` for the session) may use them all, everyone else `/help`,
 `/seed`, `/biome` and `/list`. Chat (and a non-admin's commands) is limited to a burst of eight
 lines and two a second after it, by the clock; lines past that are dropped, and the first of
 them says so.
@@ -240,10 +240,14 @@ the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_
 `--view-distance` and `--no-vsync` override them. On a dedicated server, name admins with
 `--admin NAME` (repeatable; names are not checked, so it counts only for players on the server's
 own machine; a tunnel or proxy that forwards players from elsewhere makes them all look local, so
-leave `--admin` out behind one). `--admin-token TOKEN` makes anyone who joins with that token an
-admin from anywhere: set `VOXMAR_ADMIN_TOKEN` to it before starting the game. `op NAME` typed at
-the server (or by an admin in game) makes anyone else an admin, which their save keeps until
-`deop NAME`. Cap render distance with `--view-distance N` (default 32) and players with
+leave `--admin` out behind one). An admin token makes anyone who joins with it an admin from
+anywhere: the server reads it from `$VOXMAR_ADMIN_TOKEN` or the first line of
+`--admin-token-file FILE` (never the command line, which others on the machine can see), and a
+player gives it by starting the game with `VOXMAR_ADMIN_TOKENS=host:port=TOKEN` (several
+separated by spaces), so each token goes to its own server only. It travels unencrypted, so
+use it on networks you trust. `op NAME` typed at the server (or by an admin in game) makes
+anyone else an admin until they leave, and `deop NAME` undoes it (an admin by name or token is
+one again when they come back). Cap render distance with `--view-distance N` (default 32) and players with
 `--max-players N` (default 64). Each name plays once at a time, whatever its case (Ada and ada
 are one player, with one save); at most 16 connections may be waiting to say hello, and a
 player from elsewhere whose connection sends nothing for 15 seconds is let go (the game's

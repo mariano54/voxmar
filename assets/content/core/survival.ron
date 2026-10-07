@@ -4,9 +4,11 @@
     // Health a player starts with, before their Hitpoints level sets it (twice the level).
     max_health: 20,
     // What a new player starts with: item and count (in as many slots as it takes; baked
-    // food takes one each), after `pack_end`: food for the first night, light and a
-    // little wood.
+    // food takes one each), after `pack_end`: the first tools, food for the first night,
+    // light and a little wood.
     starter_kit: [
+        ("base:wooden_pickaxe", 1),
+        ("base:wooden_axe", 1),
         ("base:bread", 4),
         ("base:torch", 8),
         ("base:oak_planks", 16),
