@@ -589,9 +589,9 @@ def _():
 
 @face('dynamo_side')
 def _():
-    f = iron_casing(seed=20)
-    coil(f, 6, 6, 25, 25)
-    f.rect(14, 6, 17, 25, 'iron', 4)
+    f = tier_band(iron_casing(seed=20), 'lv')
+    coil(f, 6, 8, 25, 24)
+    f.rect(14, 8, 17, 24, 'iron', 4)
     return f
 
 
@@ -605,16 +605,16 @@ def _():
 
 @face('electric_furnace_side')
 def _():
-    f = iron_casing(seed=22)
-    window(f, 8, 8, 23, 20, 'glow')
-    coil(f, 6, 24, 25, 26)
+    f = tier_band(iron_casing(seed=22), 'lv')
+    window(f, 8, 9, 23, 19, 'glow')
+    coil(f, 6, 22, 25, 24)
     return f
 
 
 @face('macerator_side')
 def _():
-    f = iron_casing(seed=23)
-    window(f, 6, 7, 25, 23, 'iron')
+    f = tier_band(iron_casing(seed=23), 'lv')
+    window(f, 6, 9, 25, 23, 'iron')
     for cx in (11, 20):
         f.disc(cx, 15, 5, 'iron', 4, ring=1)
         for k in range(8):
@@ -632,8 +632,8 @@ def _():
 
 @face('ore_washer_side')
 def _():
-    f = iron_casing(seed=25)
-    window(f, 6, 7, 25, 23, 'water')
+    f = tier_band(iron_casing(seed=25), 'lv')
+    window(f, 6, 9, 25, 23, 'water')
     for x in range(8, 24, 4):
         f.line(x, 22, x + 2, 12, 'water', 4)
     return f
@@ -648,7 +648,7 @@ def _():
 
 @face('steam_turbine_side')
 def _():
-    f = iron_casing(seed=27)
+    f = tier_band(iron_casing(seed=27), 'mv')
     f.disc(16, 16, 11, 'iron', 1, ring=4)
     for k in range(12):
         a = k * 2 * math.pi / 12
@@ -860,14 +860,21 @@ def _():
     return f
 
 
+def tier_band(f, tier):
+    """The voltage tier's two-row band across the top and bottom of an electric machine's
+    side, as the battery banks carry it, so every electric machine shows its tier."""
+    f.tiers(tier)
+    for x in range(2, 30):
+        for y in (5, 26):
+            f.put(x, y, 'tier', 2 if y == 5 else 1)
+            f.put(x, y + 1, 'tier', 0)
+    return f
+
+
 def bank_faces(name, tier, casing, cell_count, charge, terminal):
     @face(f'{name}_side')
     def _():
-        f = casing(seed=len(name)).tiers(tier)
-        for x in range(2, 30):
-            for y in (5, 26):
-                f.put(x, y, 'tier', 2 if y == 5 else 1)
-                f.put(x, y + 1, 'tier', 0)
+        f = tier_band(casing(seed=len(name)), tier)
         w = (24 - 2 * (cell_count - 1)) // cell_count
         x0 = 16 - (cell_count * (w + 2) - 2) // 2
         cells(f, x0, 11, cell_count, w, 14, terminal, charge)
