@@ -286,6 +286,8 @@ struct Gate {
     machines_asked: f32,
     /// Whether the player has been seen holding what this machine stage puts in.
     machines_seen: bool,
+    /// When the aurochs at the treadwheel was last told to hold still, by the server's clock.
+    machines_held: f32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
@@ -381,6 +383,7 @@ impl Gate {
             machines_since: 0.0,
             machines_asked: f32::MIN,
             machines_seen: false,
+            machines_held: f32::MIN,
             highest: f32::MIN,
             gorge: IVec3::ZERO,
             gorge_reached: false,
@@ -1829,7 +1832,33 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     _ => {
                         gate.check("workshop: MV machines", Ok(format!("a turbine on steam powered an ore washer through a transformer; dry it said it needs water, wet it gave {dust} dust for one ore")));
                         teardown(world);
-                        end_workshop(world, gate, now);
+                        // In their place, the Bellows Bloomery: kiln bricks round a bloomery,
+                        // bellows in their ring, a shaft out to a treadwheel, and a tamed
+                        // aurochs held still on a floor beside the wheel.
+                        let at = |d: IVec3| { let p = k + d; format!("{} {} {}", p.x, p.y, p.z) };
+                        let net = world.resource::<Net>();
+                        for line in [
+                            format!("fill {} {} cobblestone", at(IVec3::new(2, -1, 1)), at(IVec3::new(4, -1, 3))),
+                            format!("fill {} {} kiln_bricks", at(IVec3::new(-1, 0, -1)), at(IVec3::new(1, 2, 1))),
+                            format!("fill {} {} air", at(IVec3::Y), at(IVec3::new(0, 2, 0))),
+                            format!("setblock {} bloomery", at(IVec3::ZERO)),
+                            format!("setblock {} bellows", at(IVec3::X)),
+                            format!("setblock {} shaft", at(IVec3::new(2, 0, 0))),
+                            format!("setblock {} treadwheel", at(IVec3::new(3, 0, 0))),
+                            format!("summon aurochs 1 {}", at(IVec3::new(3, 0, 2))),
+                            "creatures tame".to_owned(),
+                            "creatures hold".to_owned(),
+                            "clear".to_owned(),
+                            "give iron_ore 2".to_owned(),
+                        ] {
+                            net.command(&line);
+                        }
+                        gate.machines_stage = 0;
+                        gate.machines_since = gate.server_now;
+                        gate.machines_asked = f32::MIN;
+                        gate.machines_held = gate.server_now;
+                        gate.machines_seen = false;
+                        gate.advance(now);
                         return;
                     }
                 }
@@ -1867,6 +1896,146 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
                 teardown(world);
                 fail(world, gate, "MV machines", format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, ore {ore}, dust {dust}; /machine said {said:?}", waited.0, waited.1));
+            }
+        }
+        // The Bellows Bloomery and item logistics. Two iron ore and a coal go into the
+        // bloomery; an aurochs walking the treadwheel blows its bellows, and an empty hand
+        // takes out the bloom. Then a line in its place: coal fires a boiler, ore put into a
+        // hopper rides a conveyor into the steam crusher, and its dust rises up a chute into
+        // a chest, which the observer asks after (`/machine`).
+        18 => {
+            let k = gate.kiln;
+            let (core, wheel) = (k, k + IVec3::new(3, 0, 0));
+            let (hopper, boiler, chest) = (k, k + IVec3::new(2, 0, -1), k + IVec3::new(2, 2, 0));
+            let teardown = move |world: &mut World| {
+                let (a, b) = (k + IVec3::new(-1, -1, -1), k + IVec3::new(4, 2, 3));
+                let net = world.resource::<Net>();
+                for line in ["creatures remove".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                    net.command(&line);
+                }
+                for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
+                    net.command(line);
+                }
+            };
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words: &voxmar_engine::lang::Words| content.english.render(words, &content.blocks);
+            let said: Vec<String> = gate.observer.as_ref().map(|o| o.replies.iter().map(english).collect()).unwrap_or_default();
+            let stage = gate.machines_stage;
+            // The machine each stage uses, and the block that must have come before it.
+            let (target, needs) = match stage {
+                0..=2 => (core, "base:treadwheel"),
+                _ => (if stage == 3 { boiler } else { hopper }, "base:chest"),
+            };
+            let there = if stage < 3 { wheel } else { chest };
+            let client = world.resource::<ClientWorld>();
+            if client.block(there) != client.registry.id(needs) {
+                if in_phase > WORKSHOP_WAIT && gate.server_now - gate.machines_since > 10.0 {
+                    teardown(world);
+                    fail(world, gate, "bloomery and logistics", format!("the {} never came", if stage < 3 { "bloomery and treadwheel" } else { "hopper line" }));
+                }
+                return;
+            }
+            let (ore, coal, copper, bloom) = (holding(world, "iron_ore").0, holding(world, "coal_ore").0, holding(world, "copper_ore").0, holding(world, "iron_bloom").0);
+            // Each stage is done by what the player holds, first seen in hand and then gone
+            // after the machine was used (as in the steps before), or what the server says.
+            let held = match stage {
+                0 => ore,
+                1 | 3 => coal,
+                4 => copper,
+                _ => 0,
+            };
+            gate.machines_seen |= held > 0;
+            let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
+            let done = match stage {
+                0 | 1 | 3 | 4 => put_in,
+                2 => bloom >= 1,
+                _ => said.iter().any(|r| r.contains("holds 4 items")),
+            };
+            if done {
+                let net = world.resource::<Net>();
+                match stage {
+                    0 => net.command("give coal_ore 1"),
+                    1 => net.command("clear"),
+                    2 => {
+                        // The bloomery's work is shown; its place goes to the hopper line.
+                        teardown(world);
+                        let at = |d: IVec3| { let p = k + d; format!("{} {} {}", p.x, p.y, p.z) };
+                        let net = world.resource::<Net>();
+                        for line in [
+                            format!("setblock {} hopper", at(IVec3::ZERO)),
+                            format!("setblock {} conveyor", at(IVec3::X)),
+                            format!("setblock {} steam_crusher", at(IVec3::new(2, 0, 0))),
+                            format!("setblock {} boiler", at(IVec3::new(2, 0, -1))),
+                            format!("setblock {} chute", at(IVec3::new(2, 1, 0))),
+                            format!("setblock {} chest", at(IVec3::new(2, 2, 0))),
+                            "clear".to_owned(),
+                            "give coal_ore 2".to_owned(),
+                        ] {
+                            net.command(&line);
+                        }
+                    }
+                    3 => net.command("give copper_ore 2"),
+                    4 => {}
+                    _ => {
+                        gate.check(
+                            "workshop: bloomery and logistics",
+                            Ok("an aurochs on the treadwheel blew the bellows and the Bellows Bloomery made an iron bloom; ore put in a hopper rode a conveyor into the crusher and 4 dust came up a chute into the chest".into()),
+                        );
+                        teardown(world);
+                        end_workshop(world, gate, now);
+                        return;
+                    }
+                }
+                gate.machines_stage += 1;
+                gate.machines_since = gate.server_now;
+                gate.machines_asked = f32::MIN;
+                gate.machines_seen = false;
+                return;
+            }
+            // The aurochs is held still again before its minute runs out.
+            if stage <= 2 && gate.server_now - gate.machines_held >= 20.0 {
+                gate.machines_held = gate.server_now;
+                world.resource::<Net>().command("creatures hold");
+            }
+            // Used (or asked about) only every few server seconds, as the kiln is.
+            if gate.server_now - gate.machines_asked >= 3.0 {
+                let ready = match stage {
+                    0 => select(world, "iron_ore"),
+                    1 | 3 => select(world, "coal_ore"),
+                    4 => select(world, "copper_ore"),
+                    _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                };
+                if ready {
+                    gate.machines_asked = gate.server_now;
+                    // While the bloom is worked, and while the dust travels, the observer asks
+                    // how the wheel or the chest is doing.
+                    if stage >= 2
+                        && let Some(observer) = gate.observer.as_mut()
+                    {
+                        let asked = if stage == 2 { wheel } else { chest };
+                        observer.replies.clear();
+                        observer.connection.send(ClientMessage::Command { line: format!("machine {} {} {}", asked.x, asked.y, asked.z) });
+                    }
+                    if stage != 5 {
+                        let actions = world.resource::<crate::Actions>().0.clone();
+                        world.resource::<Net>().propose(actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+                    }
+                }
+            }
+            // No progress for 40 seconds of the server's time; the game's clock only catches a
+            // server that stopped.
+            if gate.server_now - gate.machines_since > 40.0 || in_phase > 300.0 {
+                let what = [
+                    "the bloomery never took the iron ore",
+                    "the bloomery never took the coal",
+                    "the bloomery never gave an iron bloom",
+                    "the boiler never took the coal",
+                    "the hopper never took the copper ore",
+                    "the chest never held 4 dust",
+                ][stage.min(5) as usize];
+                let waited = (gate.server_now - gate.machines_since, in_phase);
+                teardown(world);
+                fail(world, gate, "bloomery and logistics", format!("{what} ({:.1} server s, {:.1} game s): holding iron ore {ore}, coal {coal}, copper ore {copper}, blooms {bloom}; /machine said {said:?}", waited.0, waited.1));
             }
         }
         _ => {}

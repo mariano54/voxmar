@@ -27,7 +27,7 @@
 //! beside a run. Blocks have no facing, so what goes where follows from what each machine
 //! is: a hopper gives what players put in it, a processor what it made; each item goes to
 //! a machine on the run that works or burns it, in turn, and what a processor made that no
-//! machine takes goes to a crate. Bins never feed bins, and a run moves as many items a
+//! machine takes goes to a chest. Bins never feed bins, and a run moves as many items a
 //! second as its slowest chute.
 
 use rustc_hash::FxHashMap;
@@ -421,7 +421,7 @@ impl Factory {
 
     /// Moves items along every run of chutes: what a hopper holds or a processor made, to
     /// the machines on the run that work or burn it, in turn; what a processor made that
-    /// none takes, to a crate.
+    /// none takes, to a chest.
     fn carry(&mut self, seconds: f32, machines: &MachineRegistry) {
         for r in 0..self.runs.len() {
             let run = &mut self.runs[r];
@@ -449,16 +449,16 @@ impl Factory {
                     }
                     let count = stack.count.min(budget.min(u8::MAX as u32) as u8);
                     let mut left = count;
-                    // First to machines that work or burn it, then (from a processor) to crates.
-                    for crates in [false, true] {
-                        if crates && hopper {
+                    // First to machines that work or burn it, then (from a processor) to chests.
+                    for chests in [false, true] {
+                        if chests && hopper {
                             break;
                         }
                         for k in 0..ends.len() {
                             let to = ends[(next + k) % ends.len()];
                             let takes = role(&self.nodes, &to).is_some_and(|m| match m.role {
-                                Role::Bin { feeds, .. } => crates && !feeds,
-                                _ => !crates && (m.is_processor() || m.burns()),
+                                Role::Bin { feeds, .. } => chests && !feeds,
+                                _ => !chests && (m.is_processor() || m.burns()),
                             });
                             if left == 0 || to == from || !takes {
                                 continue;
@@ -863,7 +863,7 @@ mod tests {
     fn test() -> Test {
         let names = [
             "ore", "dust", "log", "wheel", "shaft", "mill", "boiler", "pipe", "engine", "dynamo", "lv_cable", "mv_cable", "crusher",
-            "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "crate",
+            "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "chest",
         ];
         let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
         let machines = MachineRegistry::read(
@@ -887,7 +887,7 @@ mod tests {
                 (block: "chute", role: Chute(rate: 1.0)),
                 (block: "conveyor", role: Chute(rate: 4.0)),
                 (block: "hopper", role: Bin(slots: 3, feeds: true)),
-                (block: "crate", role: Bin(slots: 3)),
+                (block: "chest", role: Bin(slots: 3)),
             ], fuels: [(item: "tag:log", seconds: 10.0)])"#,
         )
         .unwrap();
@@ -1090,7 +1090,7 @@ mod tests {
     fn a_hopper_feeds_a_furnace_by_chute_and_a_crate_collects_what_it_made() {
         let t = test();
         let mut factory = Factory::default();
-        build(&t, &mut factory, &["hopper", "conveyor", "furnace", "chute", "crate"]);
+        build(&t, &mut factory, &["hopper", "conveyor", "furnace", "chute", "chest"]);
         feed(&t, &mut factory, 0, "dust", 4);
         feed(&t, &mut factory, 0, "log", 1);
         assert_eq!(held(&t, &factory, 0, "dust"), 4, "a hopper takes anything");
@@ -1098,9 +1098,9 @@ mod tests {
         assert_eq!(held(&t, &factory, 0, "dust"), 0, "the furnace took the dust");
         let (_, furnace) = factory.get(IVec3::new(2, 0, 0)).unwrap();
         assert!(furnace.burning > 0.0 && furnace.fuel.is_none(), "and burns the log");
-        assert_eq!(held(&t, &factory, 4, "ingot"), 2, "the crate on the far run holds what it made");
+        assert_eq!(held(&t, &factory, 4, "ingot"), 2, "the chest on the far run holds what it made");
         assert_eq!(made(&t, &factory, 2, "ingot"), 0);
-        // A crate's stacks come out like a machine's outputs.
+        // A chest's stacks come out like a machine's outputs.
         assert_eq!(factory.take_outputs(IVec3::new(4, 0, 0)), vec![ItemStack { item: t.id("ingot"), count: 2 }]);
     }
 
@@ -1124,7 +1124,7 @@ mod tests {
     fn bins_never_feed_bins() {
         let t = test();
         let mut factory = Factory::default();
-        build(&t, &mut factory, &["hopper", "conveyor", "crate"]);
+        build(&t, &mut factory, &["hopper", "conveyor", "chest"]);
         feed(&t, &mut factory, 0, "ore", 10);
         run(&t, &mut factory, 4.0);
         assert_eq!(held(&t, &factory, 0, "ore"), 10);

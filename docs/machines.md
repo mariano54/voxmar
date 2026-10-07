@@ -65,11 +65,11 @@ a second as its slowest piece (`Chute(rate)` in `machines.ron`).
 
 - A **hopper** gives what players put in it; a processor gives what it made.
 - Each item goes, in turn, to a machine on the run that works it or burns it.
-- What a processor made that no machine on the run takes goes to a **crate**.
-- Bins (hoppers, crates) never feed bins, so a hopper and a crate on one run do nothing.
+- What a processor made that no machine on the run takes goes to a **chest**.
+- Bins (hoppers, chests) never feed bins, so a hopper and a chest on one run do nothing.
 
-A furnace fed from a hopper on one run and emptied into a crate on another is the simplest
-line: ore and coal in the hopper, ingots in the crate.
+A furnace fed from a hopper on one run and emptied into a chest on another is the simplest
+line: ore and coal in the hopper, ingots in the chest.
 
 ## Using a machine
 
@@ -80,7 +80,7 @@ Right click (`base:use_machine`):
   into the inventory;
 - with a block it does not take, the block is placed against it.
 
-A hopper or crate takes whatever is in hand, and gives back everything with an empty hand.
+A hopper or chest takes whatever is in hand, and gives back everything with an empty hand.
 Either way the player is told, in chat, how the machine is doing: working and how far,
 no power, no fuel, no wind, no water, no animal walking it, its structure unfinished,
 full, too high a voltage, overloaded or idle; a bin says what it holds, a chute how fast

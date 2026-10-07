@@ -955,7 +955,7 @@
     "multiblock.base.bellows_bloomery": "ふいご付き塊鉄炉",
     "multiblock.base.bellows_bloomery.hint": "塊鉄炉には、ふいごを含む窯レンガの囲いと、その上に2ブロック高い窯レンガの中空の煙突が必要です。",
     "block.base.hopper": "ホッパー",
-    "block.base.crate": "木箱",
+    "block.base.chest": "チェスト",
     "block.base.chute": "シュート",
     "block.base.conveyor": "コンベア",
 }

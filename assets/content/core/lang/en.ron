@@ -633,7 +633,7 @@
     "command.creatures.title": "Within 64 blocks:",
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",
     "command.creatures.admins_only": "Only admins may tame, ready, hasten or hold creatures with a command.",
-    "command.creatures.what": "Tame, ready, hasten or hold?",
+    "command.creatures.what": "Tame, ready, hasten, hold or remove?",
     "command.creatures.done": "Done, for {count} creatures within 8 blocks.",
     "command.machine.none": "There is no machine at {place}.",
     "command.skill.what": "Which skill, and what level?",

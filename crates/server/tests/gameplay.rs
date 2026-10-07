@@ -1432,10 +1432,17 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
         client.pump_until(|c| !c.chat.is_empty());
     }
     assert_eq!(count(&client, bloom), 1);
+    // The aurochs, kept, can be taken away again; then the wheel stops.
+    assert!(client.ok("/creatures remove").contains("for 1 creatures"));
+    let started = Instant::now();
+    while !client.ok("/machine ~7 ~ ~").contains("needs a kept animal") {
+        assert!(started.elapsed() < Duration::from_secs(10), "the wheel still turns without its aurochs");
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 #[test]
-fn a_hopper_feeds_a_crusher_by_conveyor_and_a_crate_above_collects_its_dust() {
+fn a_hopper_feeds_a_crusher_by_conveyor_and_a_chest_above_collects_its_dust() {
     let mut client = Client::join();
     let start = client.position.floor().as_ivec3();
     let (boiler, hopper) = (start + IVec3::new(4, 0, -1), start + IVec3::new(2, 0, 0));
@@ -1447,7 +1454,7 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_crate_above_collects_its_dust() {
         "/setblock ~3 ~ ~ conveyor",
         "/setblock ~2 ~ ~ hopper",
         "/setblock ~4 ~1 ~ chute",
-        "/setblock ~4 ~2 ~ crate",
+        "/setblock ~4 ~2 ~ chest",
     ] {
         client.ok(line);
     }
@@ -1459,7 +1466,7 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_crate_above_collects_its_dust() {
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
     };
-    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(start + IVec3::new(4, 2, 0)) == c.content.blocks.id("base:crate"));
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(start + IVec3::new(4, 2, 0)) == c.content.blocks.id("base:chest"));
     let conveyor_says = client.ok("/machine ~3 ~ ~");
     assert!(conveyor_says.contains("moves up to 4 items a second"), "{conveyor_says}");
     client.ok("/give coal_ore 2");
@@ -1467,18 +1474,18 @@ fn a_hopper_feeds_a_crusher_by_conveyor_and_a_crate_above_collects_its_dust() {
     use_at(&mut client, boiler);
     client.pump_until(|c| count(c, coal) == 0);
     // Ore put into the hopper rides the conveyor into the crusher; the crusher's dust goes
-    // up the chute into the crate, not back into the hopper.
+    // up the chute into the chest, not back into the hopper.
     client.ok("/give copper_ore 2");
     client.pump_until(|c| count(c, ore) == 2);
     use_at(&mut client, hopper);
     client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("Put in 2")));
     let started = Instant::now();
     loop {
-        let crate_says = client.ok("/machine ~4 ~2 ~");
-        if crate_says.contains("holds 4 items") {
+        let chest_says = client.ok("/machine ~4 ~2 ~");
+        if chest_says.contains("holds 4 items") {
             break;
         }
-        assert!(started.elapsed() < Duration::from_secs(40), "the crate got no dust: {crate_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
+        assert!(started.elapsed() < Duration::from_secs(40), "the chest got no dust: {chest_says}; crusher: {}", client.ok("/machine ~4 ~ ~"));
         std::thread::sleep(Duration::from_millis(500));
     }
     assert!(client.ok("/machine ~2 ~ ~").contains("holds 0 items"));

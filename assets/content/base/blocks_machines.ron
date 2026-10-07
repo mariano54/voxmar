@@ -36,14 +36,14 @@
             hardness: 1.5, color: (120, 85, 55), tags: ["machine", "wood", "building"],
         ),
         // Items between machines: a hopper feeds what is put in it along chutes to the
-        // machines beside them, a crate collects what they made; a conveyor is a faster
+        // machines beside them, a chest collects what they made; a conveyor is a faster
         // chute (machines.ron says how fast).
         (
             name: "hopper", sound: Wood, textures: Sides(top: "hopper_top", bottom: "hopper_bottom", side: "hopper_side"),
             hardness: 2.0, color: (130, 100, 65), tags: ["machine", "wood", "building"],
         ),
         (
-            name: "crate", sound: Wood, textures: Sides(top: "crate_top", bottom: "crate_top", side: "crate_side"),
+            name: "chest", sound: Wood, textures: Sides(top: "chest_top", bottom: "chest_top", side: "chest_side"),
             hardness: 2.0, color: (150, 115, 75), tags: ["machine", "wood", "building"],
         ),
         (

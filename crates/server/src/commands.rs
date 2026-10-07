@@ -519,6 +519,14 @@ impl Server {
         let name = self.players[&player].name.clone();
         let tick = self.tick;
         let mut count = 0;
+        if what == "remove" {
+            // Only those the player keeps: a gate step tidies away the animals it summoned.
+            let kept: Vec<u32> = self.creatures.live.iter().filter(|(_, c)| c.owner_id == Some(player) && c.body.position.distance(at) <= 8.0).map(|(&id, _)| id).collect();
+            for &id in &kept {
+                self.creatures.take_away(id);
+            }
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(kept.len())));
+        }
         for creature in self.creatures.live.values_mut().filter(|c| c.body.position.distance(at) <= 8.0) {
             match what {
                 "tame" if creature.owner.is_none() => {

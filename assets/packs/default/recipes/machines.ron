@@ -821,7 +821,7 @@
             "ddddyyyyyyyydddd",
             "dddddddddddddddd",
         ])]),
-        "block/crate_side": (layers: [Grid(rows: [
+        "block/chest_side": (layers: [Grid(rows: [
             "dddddddddddddddd",
             "dmzzzzzzzzzzzzmd",
             "dzwdyxyyyyyyywzd",
@@ -839,7 +839,7 @@
             "dmzzzzzzzzzzzzmd",
             "dddddddddddddddd",
         ])]),
-        "block/crate_top": (layers: [Grid(rows: [
+        "block/chest_top": (layers: [Grid(rows: [
             "dddddddddddddddd",
             "dmzzzzzzzzzzzzmd",
             "dzydyxyyyyyyyyzd",

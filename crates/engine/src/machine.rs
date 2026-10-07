@@ -16,7 +16,7 @@
 //! - a **chute** carries items between the machines beside a run of chutes (a conveyor is
 //!   a faster chute), at the rate of its slowest;
 //! - a **bin** holds items: a hopper feeds what players put in it to the machines on its
-//!   chutes, a crate collects what they made.
+//!   chutes, a chest collects what they made.
 //!
 //! Machines of the same kind differ in how fast they work (`speed`) and how much more they
 //! get from what goes in (`yield`), never in what they make: every crusher turns copper
