@@ -372,6 +372,10 @@ fn settlement_wells_hold_water_and_crops_are_everyday() {
                                 },
                             };
                             let Some(&(need, rarity)) = def.crops.get(&format!("base:{crop}")) else { continue };
+                            // Sown crops are the fields'; wild ones (plants.ron) may stand ripe by a house.
+                            if bare.contains("_crop") && b.kind.name() != "field" {
+                                continue;
+                            }
                             planted += 1;
                             if ripe {
                                 failures.push(format!("seed {seed} {}: ripe {bare} in the {} at {x} {y} {z}", s.name.0, b.what));
@@ -596,3 +600,4 @@ fn house_catalogue() {
         }
     }
 }
+
