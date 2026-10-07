@@ -955,3 +955,23 @@ fn chimneys_stand_inside_and_just_clear_the_roof() {
     }
     assert!(drawn > 100, "only {drawn} chimneys drawn");
 }
+
+/// Numbers a mod could set that would hang planning are refused on load: lamps along lanes
+/// that come no further apart.
+#[test]
+fn numbers_that_would_hang_planning_are_refused() {
+    let registry = base_registry();
+    let mut def = super::SettlementsDef::default();
+    def.extend("base", "base", include_str!("../../../../assets/content/base/settlements.ron")).unwrap();
+    def.check(&registry).unwrap();
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut d = def.clone();
+        change(&mut d);
+        d.check(&registry).is_err()
+    };
+    assert!(refused(&|d| d.rules.dressing.every = (0.0, 0.0)), "lamps every (0, 0)");
+    assert!(refused(&|d| d.rules.dressing.every = (-4.0, 14.0)), "lamps every (-4, 14)");
+    assert!(refused(&|d| d.rules.dressing.every = (9.0, f32::NAN)), "lamps every (9, NaN)");
+    assert!(refused(&|d| d.sizes[0].lamps = 0.0), "a size's lamps 0");
+    assert!(refused(&|d| d.sizes[0].lamps = 0.01), "a size's lamps 0.01");
+}
