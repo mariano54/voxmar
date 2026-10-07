@@ -206,6 +206,7 @@ impl Server {
             ClientMessage::Command { line } => self.command(id, &line),
             ClientMessage::Chat { text } => self.chat(id, &text),
             ClientMessage::Take { item, count, held } => self.take_from_catalogue(id, item, count, held),
+            ClientMessage::Guard { up } => self.raise_guard(id, up),
         }
     }
 

@@ -131,6 +131,8 @@ pub enum Effect {
     StowCursor,
     /// Strike the target creature with what the actor holds.
     Strike,
+    /// A dodge: a moment no blow lands (`combat`); the client dashes.
+    Dodge,
     /// Cook one held item at the target station: its recipe's food, or burnt.
     Cook,
     /// Tend the target creature with what the actor holds: feed it (taming it, or readying

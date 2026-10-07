@@ -8,14 +8,28 @@
 //
 // Cooldowns are the design wiki's weapon speeds divided by three, so a sword keeps the
 // fist's 0.6 s that play was tuned on: dagger 1.2, sword 1.8, spear 2.2, axe 2.4, mace 2.6.
+//
+// How a class feels (the wiki's "Combat feel", draft 49; starting values to tune by play):
+// `windup`, the seconds before a swing's blow lands; `buffer`, the seconds before the beat
+// a click is held for it; `beat`, the seconds after it a click is on it; `guard`, what share
+// of a melee blow holding it up stops, over what arc, and the seconds before a blow a raise
+// is a perfect block; `flourish`, what the blow after three on-beat ones does besides +20%
+// max hit. `fist` is how bare hands fight. `feel` holds the rest of the rhythm, guard and
+// creatures' timings; `dodges` how a dodge goes in armour of each weight.
 (
     classes: [
-        (name: "dagger", style: Stab, cooldown: 0.4),
-        (name: "sword", style: Slash, cooldown: 0.6),
-        (name: "spear", style: Stab, cooldown: 0.73, reach: 1.0),
+        (name: "fist", style: Crush, cooldown: 0.6, windup: 0.08, buffer: 0.15, beat: 0.10),
+        (name: "dagger", style: Stab, cooldown: 0.4, windup: 0.06, buffer: 0.12, beat: 0.08,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.15), flourish: Bleed(share: 0.25, seconds: 3.0)),
+        (name: "sword", style: Slash, cooldown: 0.6, windup: 0.10, buffer: 0.15, beat: 0.10,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.15), flourish: Cleave(share: 0.5)),
+        (name: "spear", style: Stab, cooldown: 0.73, reach: 1.0, windup: 0.12, buffer: 0.15, beat: 0.10, two_handed: true,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.12), flourish: Pin(slow: 0.4, seconds: 1.5)),
         // Heavy blows, and a tool too: an axe's max hit is a sword's at its speed, less a little.
-        (name: "axe", style: Slash, cooldown: 0.8),
-        (name: "mace", style: Crush, cooldown: 0.87),
+        (name: "axe", style: Slash, cooldown: 0.8, windup: 0.15, buffer: 0.18, beat: 0.12,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.12), flourish: Sunder(defence: 0.1, seconds: 6.0)),
+        (name: "mace", style: Crush, cooldown: 0.87, windup: 0.18, buffer: 0.18, beat: 0.12,
+            guard: (stop: 0.35, arc: 90.0, perfect: 0.12), flourish: Daze(stagger: 0.6)),
     ],
     weapons: [
         // Nomad: bone, wood and stone, Attack 1.
@@ -34,5 +48,33 @@
         // Iron, Attack 20.
         (item: "iron_sword", class: "sword", level: 20, max_hit: 9),
         (item: "iron_axe", class: "axe", level: 20, max_hit: 11),
+    ],
+    feel: (
+        // Earlier than the buffer, a click past half the cooldown fires at once: at 45% at
+        // the quickest, rising to full at the buffer.
+        quickest: 0.5,
+        spam_strength: 0.45,
+        // On the beat: +5% to the attack roll and a pip; three pips make a flourish (+20%
+        // max hit). Pips go 2 s after the last blow.
+        beat_accuracy: 0.05,
+        pips: 3,
+        pip_timeout: 2.0,
+        flourish_max_hit: 0.2,
+        counter_max_hit: 0.25,
+        falling_max_hit: 0.15,
+        cancel_to: 0.5,
+        crush_through: 0.5,
+        no_flicker: 0.4,
+        stagger: 0.8,
+        boss_stagger: 0.3,
+        counter: 1.0,
+        riposte: 0.8,
+        creature_windup: 0.5,
+        creature_recovery: 0.6,
+    ),
+    dodges: [
+        (weight: "light", distance: 3.0, time: 0.25, safe: (0.04, 0.22), cooldown: 1.0),
+        (weight: "medium", distance: 2.6, time: 0.25, safe: (0.04, 0.20), cooldown: 1.2),
+        (weight: "heavy", distance: 2.2, time: 0.25, safe: (0.04, 0.18), cooldown: 1.5),
     ],
 )

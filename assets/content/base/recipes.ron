@@ -22,11 +22,11 @@
         // kiln bricks from what it fires; a crucible at their heart. Bronze is three
         // copper to one tin, smelted in the Crucible Kiln.
         (pattern: [["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "campfire", "tag:cobbled"]], output: "pit_kiln", skill: "core:engineering", level: 3, xp: 15.0),
-        (pattern: [["clay", "", "clay"], ["clay", "clay", "clay"]], output: "unfired_pot", count: 2, level: 2, xp: 4.0),
-        (pattern: [["clay"], ["clay"]], output: "unfired_vial", count: 3, level: 4, xp: 3.0),
-        (ingredients: ["fired_brick", "fired_brick", "fired_brick", "fired_brick"], output: "kiln_bricks", level: 5, xp: 6.0),
+        (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "clay_pot", count: 2, level: 2, xp: 12.0),
+        (pattern: [["fired_clay"], ["fired_clay"]], output: "vial", count: 3, level: 4, xp: 8.0),
+        (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay"], output: "kiln_bricks", level: 5, xp: 6.0),
         (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", skill: "core:engineering", level: 10, xp: 40.0),
-        (ingredients: ["copper_ingot", "copper_ingot", "copper_ingot", "tin_ingot"], output: "bronze_blend", count: 4, skill: "core:engineering", level: 12, xp: 8.0),
+        (ingredients: ["copper_ingot", "copper_ingot", "copper_ingot", "tin_ore"], output: "bronze_blend", count: 4, skill: "core:engineering", level: 12, xp: 8.0),
         // A sleeping bag three ways: wool and hide, pelts, or feathers and hide.
         (pattern: [["wool", "wool", "wool"], ["hide", "hide", ""]], output: "sleeping_bag", level: 5, xp: 30.0),
         (pattern: [["tag:fur", "tag:fur"], ["tag:fur", "tag:fur"]], output: "sleeping_bag", level: 5, xp: 30.0),
@@ -66,9 +66,7 @@
         (pattern: [["", "", "iron_ingot"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fine_rod", level: 20, xp: 40.0),
         // Pouches from a hide and twine (Crafting 3): seeds stood up, herbs laid flat.
         (pattern: [["twine"], ["hide"]], output: "seed_pouch", level: 3, xp: 12.0),
-        (pattern: [["twine"], ["rabbit_hide"]], output: "seed_pouch", level: 3, xp: 12.0),
         (pattern: [["hide", "twine"]], output: "herb_pouch", level: 3, xp: 12.0),
-        (pattern: [["rabbit_hide", "twine"]], output: "herb_pouch", level: 3, xp: 12.0),
         // For taming and breeding: a treat any tameable animal takes, twice as gladly as its
         // own food; seed mix that readies any kept animal to breed.
         (ingredients: ["wheat", "wheat", "apple", "egg"], output: "taming_treat", count: 2, skill: "core:cooking", level: 27, xp: 30.0),
