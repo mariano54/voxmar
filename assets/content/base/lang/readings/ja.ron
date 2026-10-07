@@ -126,6 +126,7 @@
     "block.base.sapphire_ore_sample": "サファイアこうせきのかけら",
     "block.base.emerald_ore_sample": "エメラルドこうせきのかけら",
     "block.base.{name}_log": "{name}のげんぼく",
+    "block.base.dead_log": "かれたげんぼく",
     "block.base.stripped_{name}_log": "じゅひをはいだ{name}のげんぼく",
     "block.base.{name}_wood": "{name}のき",
     "block.base.{name}_planks": "{name}のいたざい",
