@@ -1342,6 +1342,17 @@ fn select(world: &mut World, name: &str) -> bool {
     true
 }
 
+/// Selects an empty hotbar slot, to use a machine with an empty hand (which takes out what
+/// it made); false while none is free. Not the whole pack emptied: fuel a machine taken down
+/// let fall (`Server::machine_changed`) may be picked up on the way, and must not hold the
+/// step up.
+fn empty_hand(world: &mut World) -> bool {
+    let player = world.resource::<LocalPlayer>();
+    let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none()) else { return false };
+    world.resource_mut::<LocalPlayer>().selected = slot;
+    true
+}
+
 /// The level of a skill, as the client was last told.
 fn skill_level(world: &World, name: &str) -> (u8, u32) {
     let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -1815,7 +1826,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // Waits for what it holds to arrive before using the machine with it.
             let ready = match holds {
                 Some(name) => select(world, name),
-                None => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                None => empty_hand(world),
             };
             // Used only every few server seconds (see the kiln above); the crusher takes a
             // few of them to work the ore.
@@ -1927,7 +1938,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let ready = match gate.machines_stage {
                     0 => select(world, "base:coal_ore"),
                     1 => select(world, "base:copper_ore"),
-                    _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                    _ => empty_hand(world),
                 };
                 if ready {
                     gate.machines_asked = gate.server_now;
@@ -2087,7 +2098,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     0 => select(world, "base:iron_ore"),
                     1 | 3 => select(world, "base:coal_ore"),
                     4 => select(world, "base:copper_ore"),
-                    _ => world.resource::<LocalPlayer>().inventory.slots.iter().all(Option::is_none),
+                    _ => empty_hand(world),
                 };
                 if ready {
                     gate.machines_asked = gate.server_now;
