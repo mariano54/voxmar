@@ -2377,12 +2377,27 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let nodes = world.query_filtered::<(), With<Button>>().iter(world).count();
             gate.check("quests: book", Ok(format!("L opened the quest book on {picked} ({nodes} buttons drawn)")));
+            gate.advance(now);
+        }
+        // The book as it stands (what the earlier steps did shows done), in English, then
+        // Japanese.
+        2 => {
+            if in_phase > 0.5 && gate.shot(world, "quests-en").is_some() {
+                set_language(world, "ja");
+                gate.advance(now);
+            }
+        }
+        3 => {
+            if in_phase < 0.5 || gate.shot(world, "quests-ja").is_none() {
+                return;
+            }
+            set_language(world, "en");
             // W held with the book open.
             gate.quest_feet = world.resource::<LocalPlayer>().position;
             key(world, KeyCode::KeyW, true);
             gate.advance(now);
         }
-        2 => {
+        4 => {
             if in_phase < 1.0 {
                 return;
             }
@@ -2392,7 +2407,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             key(world, KeyCode::Escape, true);
             gate.advance(now);
         }
-        3 => {
+        5 => {
             key(world, KeyCode::Escape, false);
             let ui = world.resource::<UiState>();
             let (open, locked, menu) = (ui.quests_open, ui.cursor_locked, ui.menu_open);
@@ -2412,7 +2427,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command("give stick 1");
             gate.advance(now);
         }
-        4 => {
+        6 => {
             let ready = holding(world, "base:charcoal").0 >= 1 && holding(world, "base:stick").0 >= 1;
             let words = tracker_words(world, gate.count_before);
             let lines = tracker_lines(world);
@@ -2430,7 +2445,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.quests_rev = world.resource::<LocalPlayer>().quests_rev;
             gate.advance(now);
         }
-        5 => {
+        7 => {
             let made = gate.count_before + 4;
             let rev = world.resource::<LocalPlayer>().quests_rev;
             let lines = tracker_lines(world).unwrap_or_default();
@@ -2453,7 +2468,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             toggle_pin(&mut settings, &content, DONE_QUEST);
             gate.advance(now);
         }
-        6 => {
+        8 => {
             let done = world.resource::<Locale>().get("quest.tracker.done").to_owned();
             let lines = tracker_lines(world);
             if !lines.as_ref().is_some_and(|lines| lines.contains(&done)) {
