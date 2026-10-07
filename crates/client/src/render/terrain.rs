@@ -35,7 +35,7 @@ use bevy::render::render_resource::{
     BufferUsages, CachedRenderPipelineId, CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState,
     IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
     ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, TextureSampleType, VertexState, encase,
-    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer},
+    binding_types::{sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer, uniform_buffer_sized},
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -1104,11 +1104,12 @@ fn prepare_bind_group(
     pipeline_cache: Res<PipelineCache>,
     atmosphere: Res<AtmosphereBuffer>,
     cloud_map: Option<Res<CloudMap>>,
+    water: Option<Res<super::water::WaterGpu>>,
 ) {
     if gpu.bind_group.is_some() && gpu.distant_bind_group.is_some() && !gpu.bind_group_dirty {
         return;
     }
-    let Some(cloud_map) = cloud_map else { return };
+    let (Some(cloud_map), Some(water)) = (cloud_map, water) else { return };
     let (Some(origins), Some(view), Some(coverage)) = (&gpu.origins_buffer, &gpu.distant_view, &gpu.coverage) else { return };
     let distant = device.create_bind_group(
         "distant_bind_group",
@@ -1119,6 +1120,9 @@ fn prepare_bind_group(
                 (1, view.as_entire_binding()),
                 (2, coverage.as_entire_binding()),
                 (6, atmosphere.0.as_entire_binding()),
+                (14, water.uniform.as_entire_binding()),
+                (15, &water.waves),
+                (16, &water.wave_sampler),
             ))[..],
             &cloud_map.entries(),
         ]
@@ -1552,6 +1556,10 @@ fn init_pipelines(mut commands: Commands, asset_server: Res<AssetServer>) {
                 (2, storage_buffer_read_only_sized(false, None)),
                 // The air and light, at the binding lighting.wgsl expects.
                 (6, uniform_buffer::<Atmosphere>(false)),
+                // Real water's uniform, wave texture and sampler (water.rs), for the sheets.
+                (14, uniform_buffer_sized(false, None)),
+                (15, texture_2d(TextureSampleType::Float { filterable: true })),
+                (16, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
