@@ -856,8 +856,57 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
 }
 
 #[cfg(test)]
+impl Server {
+    /// A server without its thread, for a test to drive a step at a time, and where to
+    /// send it connections.
+    fn without_thread(mut config: ServerConfig) -> (Self, Sender<ServerConnection>) {
+        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("the game's content loads");
+        let (save, meta) = open_world(&mut config).expect("an unsaved world opens");
+        let (connections, incoming) = unbounded();
+        let (_console, lines) = unbounded();
+        (Self::new(config, meta, save, content, incoming, lines), connections)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A player whose connection dropped and whose new hello comes in the same loop is let
+    /// back in: connections are read oldest first, so the old one is seen gone (and kept
+    /// among the leavers) before the new hello under its name is answered. Each round
+    /// queues the drop and the new hello, then runs one loop's reading.
+    #[test]
+    fn a_dropped_player_rejoining_in_the_same_loop_is_let_in() {
+        use voxmar_protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage, local_pair};
+        let (mut server, connections) = Server::without_thread(ServerConfig { view_distance: 2, ..Default::default() });
+        let fingerprint = server.content.fingerprint();
+        let join = |server: &mut Server| {
+            let (client, server_side) = local_pair();
+            connections.send(server_side).unwrap();
+            client.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: fingerprint });
+            server.accept_connections();
+            server.handle_messages();
+            client
+        };
+        let answer = |client: &voxmar_protocol::ClientConnection| loop {
+            match client.try_recv() {
+                Ok(Some(ServerMessage::Welcome { .. })) => break Ok(()),
+                Ok(Some(ServerMessage::Rejected { reason })) => break Err(reason),
+                Ok(Some(_)) => {}
+                other => panic!("no answer to the hello: {other:?}"),
+            }
+        };
+        let mut bob = join(&mut server);
+        answer(&bob).expect("the first bob is let in");
+        for round in 0..8 {
+            drop(bob);
+            bob = join(&mut server);
+            if let Err(reason) = answer(&bob) {
+                panic!("round {round}: bob, back in the loop that found him gone, was turned away: {reason:?}");
+            }
+        }
+    }
 
     #[test]
     fn rings_cover_square_once() {
