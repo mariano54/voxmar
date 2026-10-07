@@ -10,12 +10,12 @@
         ),
         // A barrel of staves held by two iron hoops.
         (
-            name: "barrel", sound: Wood, textures: Column(end: "barrel_top", side: "barrel_side"),
+            name: "barrel", render: Model, shape: "barrel", sound: Wood, textures: Column(end: "barrel_top", side: "barrel_side"),
             hardness: 2.0, color: (130, 90, 55), tags: ["barrel", "wood", "storage", "building"],
         ),
         // A sack of grain, its neck tied off.
         (
-            name: "sack", sound: Grass, textures: Sides(top: "sack_top", bottom: "sack_top", side: "sack_side"),
+            name: "sack", render: Model, shape: "sack", sound: Grass, textures: Sides(top: "sack_top", bottom: "sack_top", side: "sack_side"),
             hardness: 0.4, color: (200, 180, 140), tags: ["sack", "cloth", "farm", "building"],
         ),
         // A bronze bell hanging from the beam above it.

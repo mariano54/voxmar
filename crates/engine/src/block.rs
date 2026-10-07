@@ -60,6 +60,10 @@ pub enum RenderKind {
     /// nothing and lets light through. A plant gives way to a block placed into it and
     /// goes when the block beneath it does.
     Plant,
+    /// Drawn as its shape's boxes (`shape`, see [`crate::shape`]): a barrel, a crate, a slab,
+    /// stairs, a door. Alpha-tested. It hides its neighbours' faces and blocks light only
+    /// where its boxes cover a whole side of the cell.
+    Model,
 }
 
 /// The material a block sounds like when stepped on, placed or broken.
@@ -109,7 +113,7 @@ pub enum Tint {
     Water,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Textures {
     None,
     All(String),
@@ -126,6 +130,11 @@ impl Textures {
             Textures::Column { end, side } => vec![end, side],
             Textures::Sides { top, bottom, side } => vec![top, bottom, side],
         }
+    }
+
+    /// The texture of `face`, if it has one.
+    pub fn face_name(&self, face: Face) -> Option<&str> {
+        self.face(face)
     }
 
     fn face(&self, face: Face) -> Option<&str> {
@@ -215,6 +224,8 @@ pub struct BlockDef {
     pub facing: bool,
     /// For a block made in one of its facings (see `facing`): which way it faces.
     pub faces: Option<Facing>,
+    /// Its shape, by name (`base:barrel`), for a block drawn as one (`render: Model`).
+    pub shape: Option<String>,
     /// The block placed instead when this one is placed against a block's side, by name,
     /// facing out from it: a torch on a wall is a wall torch (`facing` and `support: Wall`).
     pub wall: Option<String>,
@@ -460,6 +471,7 @@ impl Default for BlockDef {
             facing: false,
             faces: None,
             wall: None,
+            shape: None,
         }
     }
 }
@@ -503,6 +515,7 @@ impl BlockDef {
         self.family.iter_mut().for_each(qualify);
         self.variant_of.iter_mut().for_each(qualify);
         self.wall.iter_mut().for_each(qualify);
+        self.shape.iter_mut().for_each(qualify);
         if let Some(fluid) = &mut self.fluid {
             for meeting in &mut fluid.meets {
                 for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
@@ -704,6 +717,9 @@ pub struct BlockInfo {
     /// The block placed instead against a block's side, facing north (see
     /// [`BlockDef::wall`] and [`BlockRegistry::facing`]).
     pub wall: Option<BlockId>,
+    /// Its shape, made ready for its facing (see [`BlockRegistry::shape`]), for a block
+    /// drawn as one.
+    pub shape: Option<u16>,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -723,6 +739,13 @@ pub struct BlockRegistry {
     info: Vec<BlockInfo>,
     by_name: FxHashMap<String, BlockId>,
     textures: Vec<TextureRef>,
+    /// The shapes blocks drawn as boxes take, each in one facing, once however many blocks
+    /// take it (by [`BlockInfo::shape`]).
+    shapes: Vec<crate::shape::Shape>,
+    /// Where each shape's quads start in all shapes' quads, in order.
+    shape_starts: Vec<u32>,
+    /// The texture layer of each quad of a block's shape, by block.
+    shape_layers: Vec<Vec<u16>>,
     /// Every block's looks: itself and its variants (shared by the variants).
     looks: Vec<Vec<Look>>,
     fluids: Vec<Fluid>,
@@ -807,6 +830,11 @@ impl BlockRegistry {
     /// Builds the registry from fully qualified definitions, making each variant its own
     /// block right after the block it varies. `core:air` is always id 0.
     pub fn new(content: Vec<BlockDef>) -> Result<Self, RegistryError> {
+        Self::with_shapes(content, &crate::shape::Shapes::default())
+    }
+
+    /// [`Self::new`], with the shapes blocks drawn as boxes take (`render: Model`).
+    pub fn with_shapes(content: Vec<BlockDef>, shape_defs: &crate::shape::Shapes) -> Result<Self, RegistryError> {
         let air = BlockDef {
             name: Self::AIR.into(),
             render: RenderKind::Invisible,
@@ -888,7 +916,47 @@ impl BlockRegistry {
         let mut textures: Vec<TextureRef> = Vec::new();
         let mut texture_index = FxHashMap::<(String, Option<String>), u16>::default();
         let mut info = Vec::with_capacity(defs.len());
-        for (def, &fluid) in defs.iter().zip(&states) {
+        let mut shapes: Vec<crate::shape::Shape> = Vec::new();
+        let mut shape_starts = Vec::new();
+        let mut shape_layers = vec![Vec::new(); defs.len()];
+        let mut shape_quads = 0;
+        for (index, (def, &fluid)) in defs.iter().zip(&states).enumerate() {
+            let shape = match (def.render, &def.shape) {
+                (RenderKind::Model, Some(name)) => {
+                    let shape_def = shape_defs.defs.get(name).ok_or_else(|| RegistryError(format!("block `{}` takes unknown shape `{name}`", def.name)))?;
+                    let limits = shape_defs.limits.ok_or_else(|| RegistryError("no package sets the shape limits (`limits` in shapes.ron)".into()))?;
+                    let (shape, names) = crate::shape::compile(name, &def.name, shape_def, &def.textures, def.faces.unwrap_or_default(), limits)?;
+                    shape_layers[index] = names
+                        .into_iter()
+                        .map(|name| {
+                            *texture_index.entry((name.clone(), None)).or_insert_with(|| {
+                                textures.push(TextureRef { name, under: None, color: def.color, render: def.render });
+                                (textures.len() - 1) as u16
+                            })
+                        })
+                        .collect();
+                    // Blocks of one shape (the stairs of every wood) share its quads.
+                    let found = match shapes.iter().position(|s| *s == shape) {
+                        Some(found) => found,
+                        None => {
+                            shape_starts.push(shape_quads as u32);
+                            shape_quads += shape.quads.len();
+                            if shape_quads > limits.quads {
+                                return Err(RegistryError(format!(
+                                    "block `{}`, shape `{name}`: shapes have more than the {} quads they may have in all",
+                                    def.name, limits.quads
+                                )));
+                            }
+                            shapes.push(shape);
+                            shapes.len() - 1
+                        }
+                    };
+                    Some(found as u16)
+                }
+                (RenderKind::Model, None) => return Err(RegistryError(format!("block `{}` is drawn as a shape (`render: Model`) but names none", def.name))),
+                (_, Some(_)) => return Err(RegistryError(format!("block `{}` names a shape but is not drawn as one (`render: Model`)", def.name))),
+                _ => None,
+            };
             let host = match &def.host {
                 Some(name) => match by_name.get(name) {
                     Some(&id) => Some(&defs[id.0 as usize]),
@@ -916,7 +984,7 @@ impl BlockRegistry {
                     .ok_or_else(|| RegistryError(format!("`{}` drops unknown block `{name}`", def.name)))?,
                 None => by_name[&def.name],
             };
-            let occludes = def.render == RenderKind::Opaque;
+            let occludes = def.render == RenderKind::Opaque || shape.is_some_and(|s| shapes[s as usize].is_full_cube());
             info.push(BlockInfo {
                 render: def.render,
                 solid: def.solid,
@@ -944,10 +1012,15 @@ impl BlockRegistry {
                         if defs[wall.0 as usize].faces.is_none() {
                             return Err(RegistryError(format!("`{}` goes on walls as `{name}`, which has no facings", def.name)));
                         }
+                        // Placed against a side, it must rest on that side, and go with it.
+                        if defs[wall.0 as usize].support != Some(Support::Wall) {
+                            return Err(RegistryError(format!("`{}` goes on walls as `{name}`, which does not rest on a wall (`support: Wall`)", def.name)));
+                        }
                         Some(wall)
                     }
                     None => None,
                 },
+                shape,
             });
         }
         if textures.len() > 4096 {
@@ -970,7 +1043,7 @@ impl BlockRegistry {
             }
         }
 
-        Ok(Self { defs, info, by_name, textures, looks, fluids })
+        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, looks, fluids })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -1053,6 +1126,27 @@ impl BlockRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.defs.is_empty()
+    }
+
+    /// The shape a block drawn as boxes takes, made ready for its facing.
+    pub fn shape(&self, id: BlockId) -> Option<&crate::shape::Shape> {
+        self.info(id).shape.map(|s| &self.shapes[s as usize])
+    }
+
+    /// Where a block's shape's quads start in all shapes' quads, in order, as the renderer's
+    /// table holds them.
+    pub fn shape_first_quad(&self, id: BlockId) -> Option<usize> {
+        self.info(id).shape.map(|s| self.shape_starts[s as usize] as usize)
+    }
+
+    /// The texture layer of each quad of a block's shape.
+    pub fn shape_layers(&self, id: BlockId) -> &[u16] {
+        &self.shape_layers[id.0 as usize]
+    }
+
+    /// Every shape blocks take, by [`BlockInfo::shape`]: what the renderer's table holds.
+    pub fn shapes(&self) -> &[crate::shape::Shape] {
+        &self.shapes
     }
 
     pub fn textures(&self) -> &[TextureRef] {

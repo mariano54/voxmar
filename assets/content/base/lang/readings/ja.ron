@@ -129,6 +129,7 @@
     "block.base.stripped_{name}_log": "じゅひをはいだ{name}のげんぼく",
     "block.base.{name}_wood": "{name}のき",
     "block.base.{name}_planks": "{name}のいたざい",
+    "block.base.{name}_stairs": "{name}のかいだん",
     "block.base.{name}_leaves": "{name}のは",
     "block.base.{name}_sapling": "{name}のなえぎ",
     "block.base.cobbled_{name}": "{name}のまるいし",

@@ -98,6 +98,9 @@ const PLANT_MODEL_SHIFT: u32 = 28;
 const PLANT_HANGS_SHIFT: u32 = 27;
 const PLANT_MODEL_HIGH_SHIFT: u32 = 24;
 const PLANT_PIECE_SHIFT: u32 = 30;
+/// The plant model a shape's quads go as (after `PlantModel`'s own): voxel.wgsl places
+/// each from the renderer's shape table.
+const PLANT_SHAPE: u32 = 6;
 const PLANT_HEIGHT_SHIFT: u32 = 14;
 /// Ambient occlusion level (0..=3) of the faces between two leaves.
 const INNER_LEAF_AO: u64 = 1;
@@ -266,6 +269,7 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     let Scratch { cells, occ, walled, opaque, cutout, translucent, joins, leaves, looks, .. } = scratch;
     let origin = IVec3::new(-1, cy * CHUNK_SIZE - 1, -1);
     let mut plants = Vec::new();
+    let mut models = Vec::new();
     let mut grids: Vec<LodGrid> =
         LEVELS.into_iter().filter(|&level| level > 1).map(|level| LodGrid::new(looks, region, origin, level)).collect();
     let (mut occluding, mut grass) = (0, false);
@@ -327,7 +331,8 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
                     }
                     RenderKind::Translucent => translucent.set(x, y, z),
                     RenderKind::Plant if [x, y, z].iter().all(|c| (1..=S).contains(c)) => plants.push(pidx(x, y, z)),
-                    RenderKind::Plant | RenderKind::Invisible => {}
+                    RenderKind::Model if [x, y, z].iter().all(|c| (1..=S).contains(c)) => models.push(pidx(x, y, z)),
+                    RenderKind::Plant | RenderKind::Model | RenderKind::Invisible => {}
                 }
                 if matches!(render, RenderKind::Cutout | RenderKind::Translucent) {
                     // Cells with a lower coordinate are already filled in.
@@ -366,6 +371,10 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     for i in plants {
         let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
         emit_plant(&mut mesh.cutout, registry, column, &cells[i], local, cy * CHUNK_SIZE);
+    }
+    for i in models {
+        let local = IVec3::new((i % P) as i32, (i / (P * P)) as i32, (i / P % P) as i32) - 1;
+        emit_model(&mut mesh.cutout, registry, &cells, i, local);
     }
     if detail > 1 {
         return mesh;
@@ -1098,6 +1107,46 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
         }
         // Both windings, so back-face culling keeps one of them from either side.
         out.indices.extend([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2].map(|i| base + i));
+    }
+}
+
+/// The quads of a block drawn as its shape (`RenderKind::Model`), each a quad of the
+/// renderer's shape table (`BlockRegistry::shapes`, in order). A quad inside the cell is lit
+/// by the cell's own light; one on its boundary by the brighter of the cell's and the
+/// neighbour's (the one beyond, for a shape that fills its cell and so holds no light), and
+/// it hides, if it may, behind a neighbour that hides faces. They go as plant faces of the
+/// shape model (`PLANT_SHAPE`), with the table's quad in word 1 bits 12..23 where a plant
+/// has its tint and height.
+fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], padded: usize, pos: IVec3) {
+    let cell = &cells[padded];
+    let Some(first) = registry.shape_first_quad(cell.block) else { return };
+    let Some(shape) = registry.shape(cell.block) else { return };
+    let layers = registry.shape_layers(cell.block);
+    let at = IVec3::new((padded % P) as i32, (padded / (P * P)) as i32, (padded / P % P) as i32);
+    for (q, quad) in shape.quads.iter().enumerate() {
+        let mut light = cell.light;
+        if let Some(face) = quad.boundary {
+            let n = at + face.normal();
+            let beyond = &cells[pidx(n.x as usize, n.y as usize, n.z as usize)];
+            if quad.cull && beyond.occludes {
+                continue;
+            }
+            light = (light & 0xF0).max(beyond.light & 0xF0) | (light & 0x0F).max(beyond.light & 0x0F);
+        }
+        let index = (first + q) as u32;
+        let w1 = layers[q] as u32 | (index & 0xFFF) << 12 | (light as u32) << 24;
+        let base = out.vertices.len() as u32;
+        for corner in 0..4u32 {
+            let w0 = pos.x as u32
+                | (pos.y as u32) << 6
+                | (pos.z as u32) << 12
+                | PLANT_DIAGONAL << 18
+                | corner << 21
+                | (PLANT_SHAPE & 3) << PLANT_MODEL_SHIFT
+                | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT;
+            out.vertices.push([w0, w1]);
+        }
+        out.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
     }
 }
 

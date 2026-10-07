@@ -1,0 +1,37 @@
+// Blocks drawn as boxes (`render: Model`, `shape: "<name>"`), in 16ths of a block from
+// the cell's lower corner, facing north (-z); see crate::shape. A box without textures takes
+// its block's. A turned box (`turn`, degrees about the vertical) only draws: it hides
+// nothing, and collides as its unturned bound. `cull` lets a box's faces on the cell's
+// boundary hide behind a solid neighbour.
+(
+    shapes: {
+        // The lower half of a block.
+        "slab": (boxes: [(from: (0, 0, 0), to: (16, 8, 16), cull: true)]),
+        // A slab with the back half of a block on it; the step faces north.
+        "stairs": (boxes: [
+            (from: (0, 0, 0), to: (16, 8, 16), cull: true),
+            (from: (0, 8, 8), to: (16, 16, 16), cull: true),
+        ]),
+        // An octagonal barrel: a square body and the same turned 45°, a little shorter so
+        // their lids do not fight, with a hoop near the top and the bottom.
+        "barrel": (boxes: [
+            (from: (2.5, 0, 2.5), to: (13.5, 16, 13.5)),
+            (from: (2.5, 0.05, 2.5), to: (13.5, 15.95, 13.5), turn: 45.0),
+            (from: (2, 2, 2), to: (14, 3, 14)),
+            (from: (2, 2.05, 2), to: (14, 2.95, 14), turn: 45.0),
+            (from: (2, 13, 2), to: (14, 14, 14)),
+            (from: (2, 13.05, 2), to: (14, 13.95, 14), turn: 45.0),
+        ]),
+        // A full sack slumped on the ground: a bulging body, round its middle, narrowing
+        // to a neck tied off at the top.
+        "sack": (boxes: [
+            (from: (3, 0, 3), to: (13, 7, 13)),
+            (from: (3, 0.05, 3), to: (13, 6.95, 13), turn: 45.0),
+            (from: (4, 7, 4), to: (12, 10, 12)),
+            (from: (4, 7.05, 4), to: (12, 9.95, 12), turn: 45.0),
+            (from: (6, 10, 6), to: (10, 11.5, 10)),
+            (from: (7, 11.5, 7), to: (9, 13, 9)),
+            (from: (6, 13, 6), to: (10, 14.5, 10)),
+        ]),
+    },
+)
