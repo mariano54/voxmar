@@ -286,3 +286,68 @@ fn pouches(blocks: &BlockRegistry) -> Result<Vec<Option<(crate::block::BlockId, 
     }
     Ok(blocks.ids().map(|id| holders.iter().find(|(_, tag, _)| blocks.def(id).has_tag(tag)).map(|&(pouch, _, each)| (pouch, each))).collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skill::SkillId;
+
+    /// Every skill something trains has a way in at level 1: one whose only source asks
+    /// for level 5 never leaves level 1 (Construction, with only the altar, did: design
+    /// draft 94). Skills nothing trains yet (Ranged, Magic, Alchemy) are waiting for their
+    /// systems, and the combat skills are trained by any fight.
+    #[test]
+    fn every_trained_skill_is_trained_from_level_one() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let skill = |name: &str| content.skills.id(name);
+        let mut lowest: std::collections::BTreeMap<SkillId, (u8, String)> = Default::default();
+        let mut source = |skill: Option<SkillId>, level: u8, xp: f32, what: String| {
+            if let Some(skill) = skill.filter(|_| xp > 0.0) {
+                let entry = lowest.entry(skill).or_insert((u8::MAX, String::new()));
+                if level.max(1) < entry.0 {
+                    *entry = (level.max(1), what);
+                }
+            }
+        };
+        let name = |id| content.blocks.def(id).name.clone();
+        for recipe in content.recipes.iter() {
+            source(recipe.skill, recipe.level, recipe.xp, format!("crafting {}", name(recipe.output)));
+        }
+        for (_, recipe) in content.cooking.iter() {
+            source(recipe.skill, recipe.def.level, recipe.def.xp, format!("cooking {}", name(recipe.output)));
+        }
+        for id in content.blocks.ids() {
+            if let Some(rule) = content.tools.rule(id) {
+                source(rule.skill, rule.level, rule.xp, format!("breaking {}", name(id)));
+            }
+        }
+        for (_, crop) in content.crops.iter() {
+            let xp = crop.def.xp;
+            source(Some(crop.skill), crop.def.level, xp.plant + xp.harvest + xp.forage, format!("growing {}", crop.def.name));
+        }
+        for catch in content.fishing.iter() {
+            source(content.fishing.skill, catch.def.level, catch.def.xp, format!("catching {}", catch.def.item));
+        }
+        for (_, creature) in content.creatures.iter() {
+            let def = &creature.def;
+            source(creature.xp_skill, 1, def.xp.kill, format!("killing {}", def.name));
+            if let Some(taming) = &def.taming {
+                source(skill("core:hunter"), taming.level, taming.xp, format!("taming {}", def.name));
+            }
+            if let Some(breeding) = &def.breeding {
+                source(skill("core:farming"), breeding.level, breeding.xp, format!("breeding {}", def.name));
+            }
+            for product in &def.products {
+                source(skill("core:farming"), 1, product.xp, format!("{}'s {}", def.name, product.item));
+            }
+        }
+        let planter = &content.regrowth.rules;
+        source(skill("core:farming"), planter.planter_level.common as u8, planter.planter_xp.common, "a herb planter's common plants".into());
+        let late: Vec<String> = lowest
+            .iter()
+            .filter(|(_, (level, _))| *level > 1)
+            .map(|(&id, (level, what))| format!("{} (first {what}, at {level})", content.skills.get(id).name))
+            .collect();
+        assert!(late.is_empty(), "these skills are trained only from above level 1: {late:?}");
+    }
+}
