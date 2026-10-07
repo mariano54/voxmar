@@ -119,9 +119,10 @@ impl InterfaceStyle {
     pub const FILE: &str = "interface.ron";
 
     pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let mut alpha = None;
         for file in files.iter().filter(|f| f.name == Self::FILE) {
-            let given: InterfaceFile = ron::from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
+            let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
             alpha = given.worn_glyph_alpha.or(alpha);
         }
         let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
