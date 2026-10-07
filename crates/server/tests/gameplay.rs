@@ -1408,6 +1408,68 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
 }
 
 #[test]
+fn a_wild_ripe_crop_forages_at_its_level_and_a_field_stage_rolls() {
+    let mut client = Client::join();
+    let feet = client.position.floor().as_ivec3();
+    let at = feet + IVec3::new(0, 0, 2);
+    // A ripe tomato nobody sowed, as plants.ron grows them wild: Farming 30.
+    for line in ["/clear", "/skill farming 29", "/fill ~-3 ~-1 ~1 ~3 ~-1 ~4 farmland", "/fill ~-3 ~ ~1 ~3 ~1 ~4 air", "/setblock ~ ~ ~2 tomato_crop"] {
+        client.ok(line);
+    }
+    let (ripe, regrowing, seeds) = {
+        let blocks = &client.content.blocks;
+        (blocks.expect("base:tomato_crop"), blocks.expect("base:tomato_crop_2"), blocks.expect("base:tomato_seeds"))
+    };
+    let tomato = client.content.crops.iter().find(|(_, c)| c.def.name == "base:tomato").unwrap().1.def.clone();
+    let forage_xp = (tomato.xp.forage * 10.0).round() as u32;
+    client.pump_until(|c| c.world.block(at) == Some(ripe));
+    let earned = client.earned.len();
+    // Below its level it is refused, picked or broken: nothing foraged, nothing taught.
+    client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
+    client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+    client.settle();
+    assert_eq!(client.world.block(at), Some(ripe), "a wild tomato was taken below its level");
+    assert_eq!(client.earned.len(), earned, "a refused wild tomato taught something");
+    // At its level, picked: its forage and exactly the forage's experience, no harvest's
+    // or sowing's.
+    client.ok("/skill farming 30");
+    client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(regrowing));
+    client.settle();
+    assert_eq!(client.earned[earned..], [forage_xp], "a wild tomato paid other than its forage experience");
+    // It grows back, still nobody's, and forages again.
+    client.ok("/grow ripe");
+    client.pump_until(|c| c.world.block(at) == Some(ripe));
+    client.propose("base:pick", ActionTarget::Block { block: at, face: Face::PosY });
+    client.pump_until(|c| c.world.block(at) == Some(regrowing));
+    client.settle();
+    assert_eq!(client.earned[earned..], [forage_xp, forage_xp], "a regrown wild tomato paid other than its forage experience");
+    // The last stage a village field grows (never ripe), broken: its seed now and then,
+    // and no experience.
+    client.ok("/fill ~-3 ~ ~1 ~3 ~ ~4 air");
+    let field_stage = &tomato.stages[tomato.stages.len() - 2];
+    client.ok(&format!("/fill ~-3 ~ ~1 ~3 ~ ~4 {}", field_stage.trim_start_matches("base:")));
+    let field: Vec<IVec3> = (1..=4).flat_map(|dz| (-3..=3).map(move |dx| feet + IVec3::new(dx, 0, dz))).collect();
+    client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(regrowing)));
+    let earned = client.earned.len();
+    let seeds_had = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == seeds).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == seeds).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    let before = seeds_had(&client);
+    for &cell in &field {
+        client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    }
+    for _ in 0..3 {
+        client.settle();
+    }
+    let found = seeds_had(&client).saturating_sub(before);
+    assert!(found < field.len() / 2, "a field stage nobody sowed gave {found} seeds from {} crops", field.len());
+    assert_eq!(client.earned.len(), earned, "breaking a field stage nobody sowed paid experience");
+}
+
+#[test]
 fn a_flower_placed_and_broken_on_a_planter_teaches_nothing() {
     let mut client = Client::join();
     let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
