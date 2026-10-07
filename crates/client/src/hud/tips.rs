@@ -1,12 +1,12 @@
-//! Discovering what the game does as it happens. An effect that comes on shows its name and
-//! what it does at the top of the screen for a few seconds. The first time the player meets
-//! a mechanic (opens the inventory, holds seeds, faces an animal), a one-line tip says what
-//! can be done with it; each tip shows once, remembered in the settings.
+//! A one-line tip the first time the player meets a mechanic: opens the inventory, holds
+//! seeds, faces an animal. Each tip comes once, on the moment the player first meets its
+//! mechanic, and stays while that lasts (the inventory open, the seeds held), until the
+//! player has had time to read it; then never again, remembered in the settings. Tips come
+//! one at a time and not close together: one that would crowd another waits for the next
+//! time its moment comes.
 
 use bevy::prelude::*;
-use voxmar_engine::effect::{EffectId, Kind};
 
-use super::HudImages;
 use crate::interact::Target;
 use crate::lang::Locale;
 use crate::menu::Screen;
@@ -14,7 +14,7 @@ use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
-use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, SOFT, TEXT, UiFont, shadowed, space, text};
+use crate::ui::widgets::{GOLD, TEXT, UiFont, shadowed, space, text, BODY};
 
 pub struct TipsPlugin;
 
@@ -22,42 +22,47 @@ impl Plugin for TipsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tips>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (announce_effects, notice, show_tip, age_popups, clear_debug).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (notice, show_tip).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut tips: ResMut<Tips>| *tips = Tips::default());
     }
 }
 
-/// Seconds an effect's pop-up stays, and a tip.
-const POPUP_SECONDS: f32 = 4.0;
-const TIP_SECONDS: f32 = 7.0;
-/// Pop-ups showing at once; more wait their turn.
-const POPUPS: usize = 3;
-/// How wide a pop-up's and a tip's words may run.
+/// A tip stays at least this long, however soon its moment passes, and at most this long
+/// while it lasts.
+const LEAST: f32 = 6.0;
+const MOST: f32 = 25.0;
+/// Seconds after one tip goes before another may come.
+const APART: f32 = 90.0;
+/// How wide a tip's words may run.
 const WIDTH: f32 = 150.0 * PX;
 
 /// Every tip, by name: its words are `tip.<name>`.
 pub const TIPS: [&str; 10] = ["inventory", "recipes", "character", "effect", "seed", "food", "creature", "level", "table", "catalogue"];
 
-/// A tip a screenshot shows and holds (`--tip`).
-#[derive(Resource)]
-pub struct HeldTip(pub String);
-
-/// The tips waiting to show, the one showing and since when, and the effects seen.
+/// The tip showing, since when and whether its moment still lasts; when the last went; and
+/// each mechanic's moment as last seen, to tell when one begins.
 #[derive(Resource, Default)]
 pub struct Tips {
-    queue: Vec<&'static str>,
     pub showing: Option<(&'static str, f32)>,
-    /// The effects on the player as last seen, once the server has said what they are.
-    effects: Option<Vec<EffectId>>,
+    lasting: bool,
+    gone_at: Option<f32>,
+    met: Vec<(&'static str, bool)>,
     /// Skill levels as last seen, to see one go up.
     levels: Option<Vec<u8>>,
 }
 
-#[derive(Component)]
-struct Popups;
-/// An effect's pop-up, and when it came.
-#[derive(Component)]
-pub struct Popup(pub EffectId, f32);
+impl Tips {
+    /// Puts the showing tip away at once, as if its time were up long ago (for the gate).
+    pub fn dismiss(&mut self) {
+        self.showing = None;
+        self.gone_at = None;
+    }
+}
+
+/// A tip a screenshot shows and holds (`--tip`).
+#[derive(Resource)]
+pub struct HeldTip(pub String);
+
 #[derive(Component)]
 struct TipPlate;
 #[derive(Component)]
@@ -66,17 +71,6 @@ struct TipCorner;
 struct TipWords;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
-    // Effects across the top, under the sky's middle.
-    let column = Node {
-        position_type: PositionType::Absolute,
-        top: Val::Percent(12.0),
-        width: Val::Percent(100.0),
-        flex_direction: FlexDirection::Column,
-        align_items: AlignItems::Center,
-        row_gap: Val::Px(space::INNER),
-        ..default()
-    };
-    commands.spawn((column, Popups, GlobalZIndex(1)));
     // Tips in the bottom right corner, clear of the screens in the middle, the hotbar and
     // the chat at the left; at the left while creative mode's catalogue fills the right
     // (the chat is put away while a screen is open).
@@ -96,93 +90,17 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
-/// A pop-up for each effect that comes on (not those the player joined with).
-#[allow(clippy::too_many_arguments)]
-fn announce_effects(
-    mut commands: Commands,
-    time: Res<Time>,
-    player: Res<LocalPlayer>,
-    launch: Res<Launch>,
-    locale: Res<Locale>,
-    font: Res<UiFont>,
-    images: Res<HudImages>,
-    mut tips: ResMut<Tips>,
-    column: Query<Entity, With<Popups>>,
-    shown: Query<&Popup>,
-    shows: Option<Res<super::effects::ShowEffects>>,
-) {
-    // Before the server has said, the player has no effects to compare with.
-    if player.vitals_at <= 0.0 {
-        return;
-    }
-    let now: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).collect();
-    // Effects a screenshot shows (`--effect`) come on after the ones the player joined with.
-    let shown_on = |id: &EffectId| shows.as_ref().is_some_and(|shows| shows.0.iter().any(|(name, _)| launch.content.effects.find(name) == Some(*id)));
-    let joined: Vec<EffectId> = now.iter().copied().filter(|id| !shown_on(id)).collect();
-    let Some(before) = tips.effects.replace(now.clone()).or_else(|| (!joined.is_empty() || shows.is_some()).then_some(joined)) else { return };
-    let Ok(column) = column.single() else { return };
-    let mut showing = shown.iter().count();
-    for &id in now.iter().filter(|id| !before.contains(id)) {
-        if showing >= POPUPS {
-            break;
-        }
-        showing += 1;
-        let effect = launch.content.effects.get(id);
-        let color = if effect.kind == Kind::Buff { ACCENT } else { ERROR };
-        let plate = Node {
-            width: Val::Px(WIDTH),
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(space::HAIR),
-            padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
-            ..default()
-        };
-        commands.entity(column).with_children(|column| {
-            column.spawn((plate, Piece::Tooltip.image(), Popup(id, time.elapsed_secs()))).with_children(|plate| {
-                plate.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() }).with_children(|head| {
-                    head.spawn(super::effect_icon(&images, id));
-                    head.spawn(shadowed(&font.0, locale.effect(effect), BODY, color));
-                });
-                plate.spawn(text(&font.0, locale.effect_description(effect), BODY, SOFT));
-            });
-        });
-    }
-}
-
-/// The pop-ups go under the debug overlay while it shows, rather than over its lines.
-fn clear_debug(debug: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<super::DebugPlate>>, mut column: Query<&mut Node, With<Popups>>) {
-    let Ok(mut node) = column.single_mut() else { return };
-    let below = debug
-        .iter()
-        .filter(|(_, _, visible)| visible.get())
-        .map(|(plate, place, _)| (place.translation.y + plate.size().y / 2.0) * plate.inverse_scale_factor() + space::GAP)
-        .next();
-    let top = below.map_or(Val::Percent(12.0), Val::Px);
-    if node.top != top {
-        node.top = top;
-    }
-}
-
-fn age_popups(mut commands: Commands, time: Res<Time>, popups: Query<(Entity, &Popup)>, shows: Option<Res<super::effects::ShowEffects>>) {
-    // Held while a screenshot or the gate shows effects (`--effect`).
-    if shows.is_some() {
-        return;
-    }
-    for (entity, popup) in &popups {
-        if time.elapsed_secs() - popup.1 > POPUP_SECONDS {
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
-/// Queues the tip for each mechanic the player meets for the first time.
+/// Each mechanic's moment now, and the tip for one that has just begun, if the player has
+/// not seen it and no other is showing or has just gone.
 #[allow(clippy::too_many_arguments)]
 fn notice(
+    time: Res<Time>,
     ui: Res<UiState>,
     player: Res<LocalPlayer>,
     launch: Res<Launch>,
     target: Res<Target>,
     hovered: Res<super::recipes::HoveredItem>,
-    settings: Res<Settings>,
+    mut settings: ResMut<Settings>,
     mut tips: ResMut<Tips>,
 ) {
     let content = &launch.content;
@@ -192,7 +110,7 @@ fn notice(
     if player.skills_known {
         tips.levels = Some(levels);
     }
-    let met = [
+    let met: [(&'static str, bool); 10] = [
         ("inventory", ui.inventory_open),
         ("recipes", ui.inventory_open && hovered.0.is_some()),
         ("character", ui.character_open),
@@ -204,20 +122,34 @@ fn notice(
         ("table", player.station.is_some()),
         ("catalogue", ui.inventory_open && player.allow_flight),
     ];
-    for (name, now) in met {
+    let now = time.elapsed_secs();
+    // The showing tip's moment: does it still last?
+    if let Some((name, _)) = tips.showing {
+        tips.lasting = met.iter().any(|(m, on)| *m == name && *on);
+    }
+    let before = std::mem::replace(&mut tips.met, met.to_vec());
+    let free = tips.showing.is_none() && tips.gone_at.is_none_or(|gone| now - gone > APART);
+    if !free {
+        return;
+    }
+    for (name, on) in met {
         debug_assert!(TIPS.contains(&name), "the tip {name} has no words listed");
-        let seen = settings.tips_seen.iter().any(|s| s == name);
-        if now && !seen && !tips.queue.contains(&name) && tips.showing.is_none_or(|(showing, _)| showing != name) {
-            tips.queue.push(name);
+        let began = on && !before.iter().any(|(m, was)| *m == name && *was);
+        if began && !settings.tips_seen.iter().any(|s| s == name) {
+            tips.showing = Some((name, now));
+            tips.lasting = true;
+            settings.tips_seen.push(name.to_owned());
+            settings.save();
+            break;
         }
     }
 }
 
-/// Shows the waiting tips one at a time, each remembered as seen once shown.
+/// Shows the tip while its moment lasts, from `LEAST` to `MOST` seconds.
+#[allow(clippy::too_many_arguments)]
 fn show_tip(
     time: Res<Time>,
     locale: Res<Locale>,
-    mut settings: ResMut<Settings>,
     mut tips: ResMut<Tips>,
     mut plate: Query<&mut Visibility, With<TipPlate>>,
     mut words: Query<&mut Text, With<TipWords>>,
@@ -228,17 +160,12 @@ fn show_tip(
     let now = time.elapsed_secs();
     if let Some(name) = held.and_then(|held| TIPS.iter().find(|name| **name == held.0)) {
         tips.showing = Some((name, now));
-        tips.queue.clear();
     }
-    if tips.showing.is_some_and(|(_, since)| now - since > TIP_SECONDS) {
-        tips.showing = None;
-    }
-    if tips.showing.is_none() && !tips.queue.is_empty() {
-        let name = tips.queue.remove(0);
-        tips.showing = Some((name, now));
-        if !settings.tips_seen.iter().any(|s| s == name) {
-            settings.tips_seen.push(name.to_owned());
-            settings.save();
+    if let Some((_, since)) = tips.showing {
+        let shown = now - since;
+        if shown > MOST || (shown > LEAST && !tips.lasting) {
+            tips.showing = None;
+            tips.gone_at = Some(now);
         }
     }
     // Out of the creative catalogue's way.

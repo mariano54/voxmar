@@ -2,13 +2,15 @@
 // Layers go from the bottom up; in each, rows run north to south and characters west to
 // east, and the pattern counts turned any of four ways. `key` says what a character takes
 // (an item, `tag:TAG`, or `a|b`), `.` anything and a space only air. `core` is the block
-// a player uses to bring it to life.
+// a player right clicks to light it (tagged `multiblock_core`); `hint` is what they are
+// told when it does not stand yet, and `home` makes it their home, where they wake.
 (
     multiblocks: [
         // The Homestead Hearth, the Nomad age's gate: a hearthstone in a ring of stone, a
         // chimney two blocks tall at one corner. Lit, it is your home: you wake there.
         (
-            name: "homestead_hearth",
+            name: "homestead_hearth", title: "Homestead Hearth", home: true,
+            hint: "The hearth needs a ring of stone around the hearthstone and a chimney two blocks tall at one corner.",
             layers: [
                 ["sss", "sHs", "sss"],
                 ["C..", "...", "..."],
@@ -16,6 +18,19 @@
             ],
             key: {'s': "tag:stone", 'H': "hearthstone", 'C': "chimney"},
             core: 'H',
+        ),
+        // The Crucible Kiln, the Farm age's gate: a crucible ringed with kiln bricks, with a
+        // brick pillar on each corner to hold the heat. Lit, it smelts copper and tin and
+        // makes bronze (cooking.ron's `crucible` station), and the Bronze age opens.
+        (
+            name: "crucible_kiln", title: "Crucible Kiln",
+            hint: "The kiln needs kiln bricks all round the crucible and a pillar of kiln bricks on each corner.",
+            layers: [
+                ["kkk", "kCk", "kkk"],
+                ["k.k", "...", "k.k"],
+            ],
+            key: {'k': "kiln_bricks", 'C': "crucible"},
+            core: 'C',
         ),
     ],
 )

@@ -6,7 +6,8 @@
 //
 // Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
 // Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
-// Discover(page, n), Level(skill, n), Have(item, n), Home. Items and creatures may be
+// Discover(page, n), Level(skill, n), Have(item, n), Home, Built(multiblock, n). Cook
+// counts what any station turns out: fired pots and smelted ingots too. Items and creatures may be
 // `any` or `tag:TAG`. Rewards: Xp(skill, xp), Item(item, count).
 //
 // The Nomad chapter as far as the game has it today (quest book v2's N01 to N18); quests
@@ -26,6 +27,13 @@
             rewards: [Xp("engineering", 51.0), Xp("mining", 31.0)],
         ),
         (
+            name: "a_bed_of_your_own", age: "nomad", branch: "main", title: "A Bed of Your Own",
+            why: "Until you sleep somewhere, death sends you back to world spawn. Wool and hide, pelts, or feathers make a sleeping bag.",
+            tasks: [[Craft("sleeping_bag", 1)]],
+            after: ["first_night"],
+            rewards: [Xp("crafting", 82.0)],
+        ),
+        (
             name: "where_to_settle", age: "nomad", branch: "main", title: "Where to Settle",
             why: "Biomes help different work: the woods heal, the water fishes, the mountains mine. Where you build decides what your home gives.",
             tasks: [[Visit(3)]],
@@ -36,7 +44,7 @@
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
             why: "Your home: you wake here after dying, and the Farm age opens. A hearthstone in a ring of stone, with a chimney at a corner.",
             tasks: [[Home]],
-            after: ["first_night", "where_to_settle"],
+            after: ["a_bed_of_your_own", "where_to_settle"],
             rewards: [Item("seed_pouch", 1), Item("bread", 4)],
         ),
         (
@@ -84,6 +92,35 @@
             tasks: [[Mine("copper_ore", 5)]],
             after: ["stone_in_hand"],
             rewards: [Xp("mining", 60.0)],
+        ),
+        // The Farm age: fired clay, copper and tin, and the Crucible Kiln that opens bronze.
+        (
+            name: "the_potter", age: "farm", branch: "main", title: "The Potter",
+            why: "Pots and vials hold potions and stews, and fired clay lines the kiln you are working toward.",
+            tasks: [[Cook("clay_pot", 6)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("crafting", 305.0), Item("vial", 4)],
+        ),
+        (
+            name: "red_metal", age: "farm", branch: "main", title: "Red Metal",
+            why: "Copper tools are faster and find more, and copper is three parts of bronze.",
+            tasks: [[Mine("copper_ore", 9), Craft("copper_pickaxe", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("mining", 375.0), Xp("engineering", 360.0)],
+        ),
+        (
+            name: "crucible_kiln", age: "farm", branch: "main", title: "Crucible Kiln",
+            why: "Bronze needs heat a campfire can't reach. Lighting the kiln starts the Bronze age.",
+            tasks: [[Built("crucible_kiln", 1)]],
+            after: ["the_potter", "red_metal"],
+            rewards: [Xp("engineering", 905.0)],
+        ),
+        (
+            name: "first_bronze", age: "farm", branch: "main", title: "First Bronze",
+            why: "Three copper to one tin, smelted in the kiln: the metal of the next age.",
+            tasks: [[Cook("bronze_ingot", 4)]],
+            after: ["crucible_kiln"],
+            rewards: [Xp("engineering", 400.0)],
         ),
     ],
 )

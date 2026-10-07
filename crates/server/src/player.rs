@@ -62,6 +62,8 @@ pub struct Player {
     /// Where the player wakes after dying (a bed or hearth sets it), and whether what
     /// they carried has been left where they fell since they last died (`death`).
     pub home: Option<Vec3>,
+    /// The bed (a sleeping bag) last slept in, where they wake without a home.
+    pub bed: Option<Vec3>,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -106,6 +108,7 @@ impl Player {
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
             home: None,
+            bed: None,
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
@@ -176,6 +179,7 @@ impl Player {
             skills: skills.ids().map(|id| (skills.get(id).name.clone(), self.skills.xp(id))).filter(|(_, xp)| *xp > 0).collect(),
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
             home: self.home.map(|h| h.to_array()),
+            bed: self.bed.map(|b| b.to_array()),
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
@@ -279,6 +283,7 @@ impl Server {
                 player.inventory = saved.inventory;
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.home = saved.home.map(Vec3::from_array);
+                player.bed = saved.bed.map(Vec3::from_array);
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
                 player.tallies = saved.tallies.into_iter().collect();

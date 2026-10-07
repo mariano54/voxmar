@@ -14,6 +14,15 @@ use crate::glam::IVec3;
 #[serde(deny_unknown_fields)]
 pub struct MultiblockDef {
     pub name: String,
+    /// What it is called, and what it needs, in English (language keys
+    /// `multiblock.<package>.<name>` and `.hint`).
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub hint: String,
+    /// Lit, it becomes the player's home, where they wake after dying.
+    #[serde(default)]
+    pub home: bool,
     /// Bottom layer first; in each, rows run north to south and characters west to east.
     pub layers: Vec<Vec<String>>,
     pub key: FxHashMap<char, String>,
@@ -40,6 +49,11 @@ enum Cell {
 #[derive(Clone, Debug)]
 pub struct Multiblock {
     pub name: String,
+    pub title: String,
+    pub hint: String,
+    pub home: bool,
+    /// What the core takes.
+    pub core: Vec<BlockId>,
     /// Each cell's offset from the core (unturned) and what it takes.
     cells: Vec<(IVec3, Cell)>,
 }
@@ -124,8 +138,12 @@ impl MultiblockRegistry {
                 }
             }
             let core = core.ok_or_else(|| bad(format!("no core `{}` in the layers", def.core)))?;
+            let core_takes = match key.get(&def.core) {
+                Some(Cell::OneOf(accepts)) => accepts.clone(),
+                _ => Vec::new(),
+            };
             let cells = cells.into_iter().filter(|(_, cell)| *cell != Cell::Any).map(|(at, cell)| (at - core, cell)).collect();
-            multiblocks.push(Multiblock { name: def.name, cells });
+            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, core: core_takes, cells });
         }
         Ok(Self { multiblocks })
     }
@@ -136,6 +154,11 @@ impl MultiblockRegistry {
 
     pub fn iter(&self) -> impl Iterator<Item = &Multiblock> {
         self.multiblocks.iter()
+    }
+
+    /// The multiblocks a block can be the core of.
+    pub fn with_core(&self, block: BlockId) -> impl Iterator<Item = &Multiblock> {
+        self.multiblocks.iter().filter(move |m| m.core.binary_search(&block).is_ok())
     }
 }
 

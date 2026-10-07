@@ -56,10 +56,11 @@ pub fn entries(locale: &Locale, launch: &Launch, skill: SkillId) -> Vec<Entry> {
         let words = locale.format("character.sow", &[("crop", &locale.block_named(&content.blocks, &crop.def.name))]);
         entries.push(Entry { level: crop.def.level, words, icon: item(&crop.def.name), category: "planting".into(), source: Source::Crop(id) });
     }
-    // Everything cooked, at the level it starts at, once each.
-    if content.cooking.skill == Some(skill) {
+    // Everything cooked (or fired, or smelted) in this skill, at the level it starts at,
+    // once each.
+    {
         let mut cooked: Vec<BlockId> = Vec::new();
-        for (_, recipe) in content.cooking.iter() {
+        for (_, recipe) in content.cooking.iter().filter(|(_, r)| r.skill == Some(skill)) {
             if !cooked.contains(&recipe.output) {
                 cooked.push(recipe.output);
                 let words = locale.format("character.cook", &[("item", &locale.block(content.blocks.def(recipe.output)))]);
