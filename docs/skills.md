@@ -145,10 +145,12 @@ level; foraging wild plants does not, though their seeds drop only near your lev
 | Level | Crops and trees | Animals |
 | --- | --- | --- |
 | 1 | Wheat | Keep and breed junglefowl and rabbits; collect eggs |
-| 3 | | Mallards |
+| 3 | Rye, in the cold | Mallards |
 | 5 | Carrot; compost (crop scraps and manure) | Mouflon (sheep); shearing |
+| 7 | Chickpea, in dry warmth | |
 | 8 | | Wild boar (pigs); truffle rooting |
-| 10 | | Ibex (goats); milking |
+| 10 | Rice, in wet heat with water near (wild rice) | Ibex (goats); milking |
+| 11 | Taro, in wet heat (wild taro) | |
 | 12 | Potato | Bees: wild hives moved into skeps; honey and wax |
 | 15 | | Aurochs (cattle); inspecting shows visible genes |
 | 18 | | Alpacas |

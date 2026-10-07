@@ -329,6 +329,9 @@ pub struct SiteDef {
     pub caves: i32,
     /// No trees within the first many blocks of a house, fewer out to the second.
     pub glade: (i32, i32),
+    /// The land's trees are cut back over each building and this many blocks round it, as
+    /// their crowns reach past the glade's treeless ring.
+    pub eaves: i32,
     /// The share of trees left just past the treeless ring, and how many more where it is
     /// green.
     pub glade_trees: (f32, f32),
@@ -366,7 +369,8 @@ impl Default for SiteDef {
             relief: 14,
             caves: 150,
             glade: (5, 16),
-            glade_trees: (0.08, 0.3),
+            glade_trees: (0.08, 0.1),
+            eaves: 1,
             water: 48,
             fertility: 0.3,
             poor: BTreeMap::new(),
@@ -663,6 +667,8 @@ pub struct RulesDef {
     /// spawn: the square of the grid they spawn in always holds one, standing within
     /// that reach (none promised at 0).
     pub spawn_settlement_within: i32,
+    /// No two settlements within this many blocks of each other share a name.
+    pub names_apart: i32,
     pub levers: LeversDef,
     pub lanes: LanesDef,
     pub lots: LotsDef,
@@ -677,6 +683,7 @@ impl Default for RulesDef {
     fn default() -> Self {
         Self {
             spawn_settlement_within: 1024,
+            names_apart: 4096,
             levers: LeversDef::default(),
             lanes: LanesDef::default(),
             lots: LotsDef::default(),
@@ -1006,6 +1013,7 @@ struct StyleFile {
 #[serde(deny_unknown_fields, default)]
 struct RulesFile {
     spawn_settlement_within: Option<i32>,
+    names_apart: Option<i32>,
     levers: Option<LeversDef>,
     lanes: Option<LanesDef>,
     lots: Option<LotsDef>,
@@ -1266,6 +1274,9 @@ impl SettlementsDef {
             if let Some(within) = rules.spawn_settlement_within {
                 mine.spawn_settlement_within = within;
             }
+            if let Some(apart) = rules.names_apart {
+                mine.names_apart = apart;
+            }
             if let Some(levers) = rules.levers {
                 mine.levers = levers;
             }
@@ -1514,6 +1525,9 @@ impl SettlementsDef {
         if !(0..=4096).contains(&rules.spawn_settlement_within) {
             return fail(format!("rules: a settlement is promised within 0 to 4096 blocks of spawn: {}", rules.spawn_settlement_within));
         }
+        if !(0..=16384).contains(&rules.names_apart) {
+            return fail(format!("rules: names are kept apart by 0 to 16384 blocks: {}", rules.names_apart));
+        }
         if site.look == 0 || site.creek < 1 {
             return fail(format!("the site's closer look for creeks needs `look` and `creek` of 1 or more: {}, {}", site.look, site.creek));
         }
@@ -1559,8 +1573,8 @@ impl SettlementsDef {
         if !(every.0 > 0.0 && every.1 >= 0.0 && every.1.is_finite()) || self.sizes.iter().any(|s| every.0 * s.lamps < 1.0) {
             return fail(format!("rules: dressing needs `every` above nothing then nothing or more, and every size's lamps that far apart times its `lamps` a block or more: {every:?}"));
         }
-        if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 {
-            return fail(format!("the site needs ranges low to high and a glade of at most 48 blocks, its treeless ring the smaller: {site:?}"));
+        if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 || !(0..=8).contains(&site.eaves) {
+            return fail(format!("the site needs ranges low to high, a glade of at most 48 blocks, its treeless ring the smaller, and eaves of 0 to 8: {site:?}"));
         }
         for c in &self.centrepieces {
             if let CentreKind::Blocks(name, blocks) = &c.kind {

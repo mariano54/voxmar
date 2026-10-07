@@ -36,6 +36,10 @@ impl Server {
 
     /// `agent` broke `block`: an ore, gem or rock goes on the Ores page, a plant on Plants.
     pub(crate) fn discover_broken(&mut self, agent: PlayerId, block: BlockId) {
+        // A crop's stages are found when it is harvested (see `harvest`).
+        if self.content.crops.stage_of(block).is_some() {
+            return;
+        }
         let (def, info) = (self.content.blocks.def(block), self.content.blocks.info(block));
         let page = if def.has_tag("ore") || def.has_tag("gem") || (def.has_tag("stone") && def.has_tag("natural")) {
             Page::Ores
