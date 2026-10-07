@@ -305,6 +305,7 @@
     "quest.goal.home": "家の炉に火を入れる",
     "quest.goal.built": "{item}に火を入れる",
     "quest.age.nomad": "放浪",
+    "quest.age.farm": "農耕",
     "screen.journal": "図鑑",
     "settings.key.journal": "図鑑キー",
     "settings.key.journal.hint": "見つけたものの図鑑を開く。",
