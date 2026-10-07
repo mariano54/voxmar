@@ -100,6 +100,8 @@ struct VertexOutput {
     @location(4) @interpolate(flat) flags: u32,
     // Linear colour, and opacity times how far it has faded.
     @location(5) @interpolate(flat) color: vec4<f32>,
+    // The block light it is lit by, 0..1 (see `vertex`).
+    @location(6) @interpolate(flat) block_light: f32,
 };
 
 fn age_of(p: Particle) -> f32 {
@@ -197,6 +199,12 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     out.uv = piece + vec2(corner.x * 0.5 + 0.5, 0.5 - corner.y * 0.5) * span;
     out.surface = p.surface;
     out.flags = p.sprite >> 28u;
+    // A particle takes the block light where it was given off, and less the further it
+    // goes: smoke a few blocks over a fire at night is dark, not lit as the fire is. Two
+    // levels a block, faster than light spreads between blocks, as a puff is lit from below
+    // by a small fire, not bathed in its light.
+    let block_level = f32((p.surface >> 24u) & 15u);
+    out.block_light = max(block_level - 2.0 * distance(center, p.origin), 0.0) / 15.0;
     let color = unpack4x8unorm(p.color);
     var linear = srgb_to_linear(color.rgb);
     if (out.flags & FLAG_COOLS) != 0u {
@@ -291,7 +299,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = albedo * select(GLOW, FIRE_GLOW, (in.flags & FLAG_COOLS) != 0u);
     if (in.flags & FLAG_GLOW) == 0u {
         let sky = f32(in.surface >> 28u) / 15.0;
-        let block = f32((in.surface >> 24u) & 15u) / 15.0;
+        let block = in.block_light;
         // Lit like a plant: no face is turned away from the sun.
         // Hard-edged shadows: a particle is too small to show a penumbra.
         color = shade_normal(albedo, in.world_position, vec3(0.0, 1.0, 0.0), 0.85, sky, block, 1.0, true, false);
