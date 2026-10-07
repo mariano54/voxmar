@@ -5,10 +5,18 @@ the hunger and warmth the Game UI thread added (`engine::vitals`). Part of the c
 food and breeding design (see [creatures.md](creatures.md)).
 
 > **2026-10-06: there is no hunger any more** (Mariano). Food heals: an item heals its
-> `heal:N` or `food:N` (the larger), a tenth less each time the same food is eaten in a row,
-> down to half, recovering as other foods are eaten or a minute passes
-> (`engine::vitals::Recent`). Health comes back slowly by itself (a point every ten
-> seconds). Read "hunger" below as healing where it still appears.
+> `heal:N`, a tenth less each time the same food is eaten in a row, down to half,
+> recovering as other foods are eaten or a minute passes (`engine::vitals::Recent`).
+> Health comes back slowly by itself (a point every ten seconds). Read "hunger" below as
+> healing where it still appears.
+>
+> **2026-10-08: how much food heals** (design drafts 55 and 63): cooked food 0.4 × the
+> lowest level that cooks it, at least 2 (`vitals::cooked_heal`; about a fifth of the
+> health of a player who can make it), so cooking always makes food better; raw produce
+> and meat 1, fruit and berries 2; golden apple and emberfruit follow the cooked rule by
+> the Farming level that picks them (70 and 41: 28 and 16). Hearty gives a tenth more
+> maximum health that comes empty, to fill by eating. `crates/engine/tests/food_heals.rs`
+> holds every food to the rule.
 
 ## Decisions
 
