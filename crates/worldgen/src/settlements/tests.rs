@@ -1456,6 +1456,29 @@ fn ripe_or_rare_fruit_is_refused() {
     }));
 }
 
+/// Loading refuses a furnishing slot whose block would drop itself from every village
+/// (design draft 80): one that drops nothing passes, and so does one tagged `furnishing`,
+/// which gives itself back only where a player placed it.
+#[test]
+fn furnishings_that_drop_themselves_are_refused_unless_tagged() {
+    use crate::content::Select;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let base = crate::content::WorldContent::load(&content).unwrap().settlements;
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut def = base.clone();
+        change(&mut def);
+        def.check_furnishings(&content.blocks).is_err()
+    };
+    assert!(!refused(&|_| {}), "the game's own settlements load");
+    // Planks drop themselves and are no furnishing; the crafting table is one.
+    assert!(refused(&|d| d.furnishings.barrel = Some("base:oak_planks".into())));
+    assert!(!refused(&|d| d.furnishings.barrel = Some("base:crafting_table".into())));
+    assert!(refused(&|d| d.furnishings.hay = vec![Select::Name("base:oak_planks".into(), 1.0)]));
+    assert!(refused(&|d| d.furnishings.sacks = vec![Select::Tag("planks".into(), 1.0)]), "by tag too");
+    assert!(refused(&|d| d.furnishings.campfire = Some("base:torch".into())), "a torch drops itself and is no furnishing");
+}
+
 /// Snow lies over a snowy village without turning its built stone to snow: chimney
 /// stacks, foundation courses, well rims and stacked stone keep their blocks (and their
 /// drops), as the same village generated with no snow blanket at all has them (Review,

@@ -4,9 +4,10 @@
 (
     blocks: [
         // A campfire: logs and embers that cook one thing at a time and keep the cold off.
+        // A `furnishing`: a village's gives nothing, one a player placed gives itself back.
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
-            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire"],
+            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "furnishing"],
             // Flames licking a block and more above the logs, a deep yellow core among them,
             // smoke thick over the fire and thinning as it rises a few blocks, embers
             // floating up as high, and now and then a crackle of sparks (`particles`:
