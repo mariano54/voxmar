@@ -1701,8 +1701,15 @@ fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformer
     use_machine(&mut client, macerator);
     client.pump_until(|c| count(c, ore) == 0);
     machine_says(&mut client, &at(macerator), "no power", 2);
-    assert!(server_seconds(&client, broken) <= 2, "the macerator ran on for {} s", server_seconds(&client, broken));
+    let after = client.tick - broken;
+    assert!(after <= 2 * TICKS_PER_SECOND as u64, "the macerator ran on for {after} ticks");
     machine_says(&mut client, &at(core), "not complete", 1);
+    // Nor does it make any more: the ore is still there, with no dust.
+    wait_server(&mut client, 3);
+    let said = machine_says(&mut client, &at(macerator), "no power", 1);
+    use_machine(&mut client, macerator);
+    client.ok("/seed");
+    assert_eq!(count(&client, dust), 0, "the macerator made dust with its hall broken: {said}");
 }
 
 #[test]
