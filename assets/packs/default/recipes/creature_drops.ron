@@ -62,6 +62,7 @@
         "spool_wood": ["#5a3c1c", "#7a5a30", "#9a7a48"],
         "venom_green": ["#2e5a14", "#5a9a28", "#9ad04a"],
         "moon_dust": ["#8aa0d8", "#c4d4ff", "#ffffff"],
+        "fired_clay": ["#7a3c1e", "#b0603a", "#d08a5c"],
         "glimmer_dust": ["#9c98d6", "#d4d2ff", "#ffffff"],
         "lumen_glow": ["#2aa088", "#5ce6c6", "#c4fff0"],
         "aether_violet": ["#8a6ad0", "#c4a8ff", "#f4ecff"],
@@ -173,6 +174,14 @@
             "................", "................", "................", "................",
         ])]),
         "block/bear_fat": (base: "block/lard", palettes: {"fruit": "bear_fat"}),
+        // Fired clay, what the pit kiln makes of raw clay: a small rough lump of warm
+        // terracotta, pitted and lit from the top left, the size of a ball of clay.
+        "block/fired_clay": (base: "shape/plant", palettes: {"fruit": "fired_clay"}, layers: [Grid(rows: [
+            "................", "................", "................", "................",
+            "................", "......jjj.......", ".....jhhjjh.....", "....jhhfhhhh....",
+            "....hhhhhhfh....", "....hfhhhhhf....", "....fhhhfhff....", ".....ffffff.....",
+            "................", "................", "................", "................",
+        ])]),
         // A coil of silk on a twig.
         "block/silk": (base: "shape/plant", palettes: {"fruit": "silk_white", "wood": "spool_wood"}, layers: [Grid(rows: [
             "................", "................", "........k.......", ".......kl.......",
