@@ -3862,7 +3862,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             tell_blows(world, id);
             gate.advance(now);
         }
-        1 | 2 => {
+        1 | 3 => {
             if let Some((_, feet)) = creature {
                 aim_at(world, feet + Vec3::Y * 0.3);
             }
@@ -3889,7 +3889,6 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (_, false) => Err("a hit on the player did not flash the health bar".into()),
             };
             gate.check(&format!("combat marks: {language}"), result);
-            gate.count_before = world.resource::<SplatsShown>().flashes;
             if gate.phase == 1 {
                 // The setting too, as a splat's words are fixed when it is drawn: a change
                 // to any setting meanwhile would load the setting's language again.
@@ -3902,13 +3901,30 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 world.resource_mut::<crate::settings::Settings>().damage_numbers = false;
                 let shown = world.resource::<SplatsShown>();
                 gate.count_before = (shown.struck.len() + shown.hurt.len()) as u32;
-            }
-            if let Some((id, _)) = creature {
-                tell_blows(world, id);
+                if let Some((id, _)) = creature {
+                    tell_blows(world, id);
+                }
             }
             gate.advance(now);
         }
-        3 => {
+        // The English splats gone, the same run told again, to be drawn in Japanese.
+        2 => {
+            if let Some((_, feet)) = creature {
+                aim_at(world, feet + Vec3::Y * 0.3);
+            }
+            let up = world.query::<&crate::hud::combat::HitSplat>().iter(world).count();
+            if up == 0 && let Some((id, _)) = creature {
+                gate.count_before = world.resource::<SplatsShown>().flashes;
+                tell_blows(world, id);
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                gate.check("combat marks", Err(format!("ja: {up} English splats still up, or no creature to mark ({})", creature.is_some())));
+                world.resource_mut::<crate::settings::Settings>().language = "en".into();
+                set_language(world, "en");
+                gate.next(Step::Cook, now);
+            }
+        }
+        4 => {
             let told = {
                 let fighting = world.resource::<crate::fight::Fighting>();
                 (fighting.struck_count, fighting.hurt_count)
@@ -3929,7 +3945,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // that guards with it and nothing under the crosshair, so the click is the guard's
         // and nothing else's (the view turns until nothing is: the workshop's kiln hangs
         // overhead).
-        4 => {
+        5 => {
             world.resource_mut::<crate::settings::Settings>().toggle_guard = true;
             let in_hand = select(world, WEAPON);
             let guards = {
@@ -3953,7 +3969,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 look(world, (in_phase * 90.0) % 360.0, 30.0);
             }
         }
-        5 => {
+        6 => {
             mouse(world, MouseButton::Right, false);
             if in_phase < 0.3 {
                 return;
