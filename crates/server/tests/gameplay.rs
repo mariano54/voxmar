@@ -42,6 +42,8 @@ struct Client {
     chat: Vec<(ChatKind, String)>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
+    /// The server's tick as last told (once a second).
+    server_tick: u64,
     /// Creatures in sight, how many were seen to die, and our blows the server answered.
     creatures: std::collections::HashMap<u32, voxmar_protocol::CreatureView>,
     deaths: u32,
@@ -114,6 +116,7 @@ impl Client {
             quick: false,
             chat: Vec::new(),
             day: None,
+            server_tick: 0,
             creatures: Default::default(),
             deaths: 0,
             blows: 0,
@@ -186,7 +189,10 @@ impl Client {
                 self.quick = quick;
             }
             ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
-            ServerMessage::Time { day, day_speed, .. } => self.day = Some((day, day_speed)),
+            ServerMessage::Time { tick, day, day_speed } => {
+                self.day = Some((day, day_speed));
+                self.server_tick = tick;
+            }
             ServerMessage::Abilities { allow_flight, admin } => {
                 self.allow_flight = allow_flight;
                 self.admin = admin;
@@ -242,6 +248,30 @@ impl Client {
     /// actions included), by a command's answer coming back after them.
     fn settle(&mut self) {
         self.ok("/time");
+    }
+
+    /// Waits until at least `ticks` server ticks have passed from now, by the server's own
+    /// clock (it tells it once a second).
+    fn after_ticks(&mut self, ticks: u64) {
+        let told = self.server_tick;
+        self.pump_until(|c| c.server_tick > told);
+        let from = self.server_tick;
+        self.pump_until(|c| c.server_tick >= from + ticks);
+    }
+
+    /// Waits until `count` holds still across 20 server ticks after everything sent was
+    /// handled (drops still landing, pick-ups on the way), and returns it.
+    fn quiet(&mut self, count: impl Fn(&Self) -> usize) -> usize {
+        for _ in 0..30 {
+            self.settle();
+            let before = count(self);
+            self.after_ticks(20);
+            self.settle();
+            if count(self) == before {
+                return before;
+            }
+        }
+        panic!("a count never held still for 20 ticks");
     }
 
     /// Runs a command that should succeed, returning its answer.
@@ -937,8 +967,7 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     let stone = client.world.block(far).unwrap();
     let target = ActionTarget::Block { block: far, face: Face::PosY };
     client.propose("core:mine", target);
-    let refused = Instant::now() + Duration::from_millis(300);
-    client.pump_until(|_| Instant::now() > refused);
+    client.settle();
     client.world.set_block(far, BlockId::AIR);
     client.connection.send(ClientMessage::Finished { target });
     client.pump_until(|c| c.world.block(far) == Some(stone));
@@ -968,15 +997,13 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     // At Mining 1, even with the pickaxe: refused.
     hold(&client, 4);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.settle();
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
     // At Mining 15 with a bare hand: refused too.
     client.ok("/skill mining 15");
     hold(&client, 5);
     mine(&client);
-    let waited = Instant::now() + Duration::from_millis(1500);
-    client.pump_until(|_| Instant::now() > waited);
+    client.settle();
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
     // At Mining 15 with the stone pickaxe: broken, quicker than by hand, teaching Mining (35).
     hold(&client, 4);
@@ -1005,8 +1032,9 @@ fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     };
     // Away from a table the three-by-three pattern makes nothing.
     lay(&client);
-    let waited = Instant::now() + Duration::from_millis(800);
-    client.pump_until(|_| Instant::now() > waited);
+    // Handled, and the inventory told (it goes out as the tick ends).
+    client.settle();
+    client.after_ticks(2);
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == pickaxe), "a pickaxe was crafted without a table");
     // At the table it makes a stone pickaxe, teaching Engineering.
     client.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
@@ -1358,42 +1386,36 @@ fn a_field_nobody_sowed_gives_little_and_a_sown_crop_its_seed() {
         client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
         client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
     }
-    for _ in 0..3 {
-        client.settle();
-    }
-    // About one in seven (`unsown` 0.15): enough to start a field, not 28 potatoes.
-    let found = potatoes(&client) - 1;
-    assert!(found < field.len() / 2, "a field nobody sowed gave {found} potatoes of {}", field.len());
+    // About one in seven (`unsown` 0.15): enough to start a field, not 28 potatoes. One
+    // potato a success, so 13 or more is a one-in-13,000 chance.
+    let found = client.quiet(potatoes) - 1;
+    assert!(found <= 12, "a field nobody sowed gave {found} potatoes of {}", field.len());
     // Ripe, as villages grow them: now and then a harvest, and never its experience.
     let earned = client.earned.len();
     let ripe = client.content.blocks.expect("base:potato_crop");
     client.ok("/fill ~-3 ~ ~1 ~3 ~ ~4 potato_crop");
     client.pump_until(|c| field.iter().all(|&p| c.world.block(p) == Some(ripe)));
-    let before = potatoes(&client);
+    let before = client.quiet(potatoes);
     for &cell in &field {
         client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
         client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
     }
-    for _ in 0..3 {
-        client.settle();
-    }
     // A harvest (2 to 4 potatoes) a success: about 4 of 28 at 0.15, some 13 potatoes; 41 or
     // more takes 11 successes or so, under one in 10,000. Every crop would give at least 56.
-    let found = potatoes(&client) - before;
+    let found = client.quiet(potatoes) - before;
     assert!(found <= 40, "a ripe field nobody sowed gave {found} potatoes from {} crops", field.len());
     assert_eq!(client.earned.len(), earned, "harvesting a field nobody sowed paid experience");
     // One the player sows gives its potato back, every time.
-    let before = potatoes(&client);
+    let before = client.quiet(potatoes);
     let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == potato)).unwrap() as u8;
     client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot, flying: false }));
     let ground = feet + IVec3::new(0, -1, 1);
     let sprout = client.content.blocks.expect("base:potato_crop_0");
     client.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
-    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout));
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(sprout) && potatoes(c) == before - 1);
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
-    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR));
-    // (At least: the ripe field's last drops may still be on their way.)
-    client.pump_until(|c| potatoes(c) >= before);
+    client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(BlockId::AIR) && potatoes(c) == before);
+    assert_eq!(client.quiet(potatoes), before, "a sown sprout broken did not give its potato back");
     // Sown, grown ripe and harvested: the harvest's experience with the sowing's.
     let earned = client.earned.len();
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == potato));
@@ -1461,16 +1483,13 @@ fn a_wild_ripe_crop_forages_at_its_level_and_a_field_stage_rolls() {
             + c.inventory.pouched(seeds) as usize
             + c.items.values().filter(|i| i.stack.item == seeds).map(|i| i.stack.count as usize).sum::<usize>()
     };
-    let before = seeds_had(&client);
+    let before = client.quiet(seeds_had);
     for &cell in &field {
         client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::PosY });
         client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
     }
-    for _ in 0..3 {
-        client.settle();
-    }
     // One seed a success: about 4 of 28 at 0.15; 13 or more is a one-in-13,000 chance.
-    let found = seeds_had(&client).saturating_sub(before);
+    let found = client.quiet(seeds_had).saturating_sub(before);
     assert!(found <= 12, "a field stage nobody sowed gave {found} seeds from {} crops", field.len());
     assert_eq!(client.earned.len(), earned, "breaking a field stage nobody sowed paid experience");
 }
