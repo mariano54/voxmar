@@ -683,7 +683,7 @@ compose Ó O acute
         let read = |name: &str| std::fs::read_to_string(format!("{dir}/{name}")).ok();
         for file in ["voxmar.txt", "ledger.txt", "block.txt"] {
             let font = PixelFont::parse_with(&read(file).unwrap(), read).unwrap();
-            for c in (' '..='~').chain("áéíóúñÁÉÍÓÚÑ¿¡°×…◆▸◂↔".chars()) {
+            for c in (' '..='~').chain("áéíóúñÁÉÍÓÚÑ¿¡°×…◆▸◂↔✓•".chars()) {
                 assert!(font.glyphs.contains_key(&c), "{file} has no `{c}`");
             }
             // Nothing reaches above the ascent or below the descent the font promises, and a
