@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::colour::{self, Rgba};
 use crate::field::{hash, seed_of};
-use crate::recipe::{Book, Layer, Palette, Recipe};
+use crate::recipe::{Book, Family, Layer, Palette, Recipe};
 use crate::render::{self, Resolved};
 use crate::scale;
 use crate::{Error, Image, Manifest};
@@ -17,6 +17,12 @@ const MAX_DEPTH: usize = 32;
 pub struct Library {
     palettes: BTreeMap<String, Palette>,
     recipes: BTreeMap<String, Recipe>,
+    /// The layer each recipe in `recipes` comes from: 0 for the pack everything builds on,
+    /// one more for each pack over it.
+    levels: BTreeMap<String, usize>,
+    /// The recipes later layers replaced, by name, each with its layer, earliest first: what
+    /// a lower layer's book saw when it was written (see [`Library::size_seen_at`]).
+    replaced: BTreeMap<String, Vec<(usize, Recipe)>>,
 }
 
 impl Library {
@@ -108,67 +114,100 @@ impl Library {
                     if !textures_here.insert(name.clone()) {
                         return Err(Error(format!("{origin}: texture `{name}` is defined twice")));
                     }
-                    library.recipes.insert(name, recipe);
+                    library.put(name, level, recipe);
                 }
                 for (name, template) in templates_with_legend {
                     if !templates_here.insert(name.clone()) {
                         return Err(Error(format!("{origin}: template `{name}` is defined twice")));
                     }
                     // A later layer redraws a template's members one by one: those it
-                    // names replace the earlier ones, the rest stay.
-                    templates.entry(name).or_insert_with(BTreeMap::new).extend(template);
+                    // names replace the earlier ones, the rest stay. Each member keeps the
+                    // drawings it replaced, with their layers, for what earlier layers saw.
+                    let members = templates.entry(name).or_insert_with(BTreeMap::new);
+                    for (pattern, recipe) in template {
+                        members.entry(pattern).or_insert_with(Vec::new).push((level, recipe));
+                    }
                 }
                 families.extend(book.families.into_iter().map(|family| (level, origin.to_owned(), family)));
             }
         }
 
         // Each family is made with the template as finally replaced; a later layer's
-        // family replaces an earlier layer's texture of the same name.
-        let mut made: BTreeMap<String, (usize, Recipe)> = BTreeMap::new();
+        // family replaces an earlier layer's texture of the same name. A texture made from
+        // a member a later layer redrew is that later layer's, and the one made from the
+        // member it replaced is kept as what the layers below saw.
+        let mut made: BTreeMap<String, (usize, Vec<(usize, Recipe)>)> = BTreeMap::new();
         for (level, origin, family) in families {
             let template = templates
                 .get(&family.template)
                 .ok_or_else(|| Error(format!("{origin}: family `{}` uses unknown template `{}`", family.name, family.template)))?;
-            for (pattern, recipe) in template {
+            for (pattern, drawings) in template {
                 if family.without.contains(pattern) {
                     continue;
                 }
                 let name = pattern.replace("{name}", &family.name);
-                if library.recipes.contains_key(&name) {
-                    continue;
-                }
-                let mut recipe = recipe.clone();
-                // Textures made from another of the family's own keep its seed, so a
-                // leaf sprite matches its leaves.
-                let own_base = recipe.base.as_ref().is_some_and(|b| b.contains("{name}"));
-                recipe.base = recipe.base.map(|b| b.replace("{name}", &family.name));
-                for layer in &mut recipe.layers {
-                    if let Layer::Stamp(stamp) = layer {
-                        stamp.texture = stamp.texture.replace("{name}", &family.name);
+                // An explicit texture of the name beats the family's, but what the family made
+                // below it is still what the lower layers saw (kept at the end).
+                let explicit = library.recipes.contains_key(&name);
+                let mut versions: Vec<(usize, Recipe)> = Vec::new();
+                for (drawn, recipe) in drawings {
+                    let made_at = level.max(*drawn);
+                    if versions.last().is_some_and(|(at, _)| *at == made_at) {
+                        versions.pop();
                     }
+                    versions.push((made_at, family_member(recipe, &family)));
                 }
-                for palette in recipe.palettes.values_mut() {
-                    if let Palette::Named(n) = palette {
-                        *n = n.replace("{name}", &family.name);
-                    }
-                }
-                recipe.palettes.extend(family.palettes.clone());
-                if !own_base {
-                    recipe.seed = family.seed.or(recipe.seed).or(Some(seed_of(&family.name)));
-                }
-                match made.get(&name) {
-                    Some((earlier, _)) if *earlier == level => {
+                match made.get_mut(&name) {
+                    Some((earlier, _)) if *earlier == level && !explicit => {
                         return Err(Error(format!("{origin}: two families make texture `{name}`")));
                     }
-                    Some((earlier, _)) if *earlier > level => continue,
-                    _ => {
-                        made.insert(name, (level, recipe));
+                    // A later layer's family replaces this one, but not below its own layer.
+                    Some((earlier, theirs)) if *earlier > level => {
+                        let below = versions.into_iter().filter(|(at, _)| at < earlier);
+                        let mut all: Vec<_> = below.collect();
+                        all.append(theirs);
+                        *theirs = all;
+                    }
+                    // This family replaces an earlier layer's, which still stands below it.
+                    Some((_, ours)) => {
+                        let mut all: Vec<_> = ours.drain(..).filter(|(at, _)| *at < level).collect();
+                        all.extend(versions);
+                        made.insert(name, (level, all));
+                    }
+                    None => {
+                        made.insert(name, (level, versions));
                     }
                 }
             }
         }
-        library.recipes.extend(made.into_iter().map(|(name, (_, recipe))| (name, recipe)));
+        for (name, (_, versions)) in made {
+            match library.levels.get(&name) {
+                // Explicit textures beat family ones from any layer; the family's versions from
+                // below the first explicit one are what those lower layers saw.
+                Some(&level) => {
+                    let first = library.replaced.get(&name).and_then(|r| r.first()).map_or(level, |(at, _)| *at);
+                    let below: Vec<_> = versions.into_iter().filter(|(at, _)| *at < first).collect();
+                    if !below.is_empty() {
+                        library.replaced.entry(name).or_default().splice(0..0, below);
+                    }
+                }
+                None => {
+                    for (level, recipe) in versions {
+                        library.put(name.clone(), level, recipe);
+                    }
+                }
+            }
+        }
         Ok(library)
+    }
+
+    /// Adds a recipe from `level`, keeping the one it replaces as what lower layers saw.
+    fn put(&mut self, name: String, level: usize, recipe: Recipe) {
+        if let Some(old) = self.recipes.insert(name.clone(), recipe) {
+            let old_level = self.levels[&name];
+            self.replaced.entry(name.clone()).or_default().push((old_level, old));
+        }
+        self.levels.insert(name, level);
     }
 
     /// Reads every `recipes/*.ron` book in a pack folder (none is fine), over the books
@@ -241,30 +280,75 @@ impl Library {
             resolved.layers.iter_mut().for_each(|(layer_seed, _)| *layer_seed = None);
         }
         let own = recipe.seed.unwrap_or_else(|| seed_of(name));
+        // A recipe without a size of its own is written at its base's size as its own layer
+        // saw it, but a later layer may redraw the base finer: default's crafting table over
+        // the planks Voxmar HD draws at 32×32. Its own layers are drawn that much finer.
+        let k = k * self.redrawn_finer(name, recipe, resolved.size, k);
         for (slot, palette) in &recipe.palettes {
             let shades = self.shades(palette, 0).map_err(|Error(e)| Error(format!("{name}: palette `{slot}`: {e}")))?;
             resolved.palettes.insert(slot.clone(), shades);
         }
         for layer in &recipe.layers {
             if let Layer::Stamp(stamp) = layer
-                && !resolved.stamps.contains_key(&stamp.texture)
+                && !resolved.stamps.contains_key(&stamp_key(&stamp.texture, k))
             {
                 let image = self.resolve(&stamp.texture, depth + 1, k).and_then(|r| render::render(&r)).map_err(|Error(e)| Error(format!("{name}: {e}")))?;
-                resolved.stamps.insert(stamp.texture.clone(), image);
+                resolved.stamps.insert(stamp_key(&stamp.texture, k), image);
             }
         }
         if let (None, None, Some(Layer::Stamp(stamp))) = (recipe.size, &recipe.base, recipe.layers.first())
             && stamp.relative
         {
-            let image = &resolved.stamps[&stamp.texture];
+            let image = &resolved.stamps[&stamp_key(&stamp.texture, k)];
             resolved.size = (image.width, image.height);
         }
         let first = resolved.layers.len();
         resolved.layers.extend(recipe.layers.iter().enumerate().map(|(i, layer)| {
-            let layer = if k == 1 { layer.clone() } else { scale::layer(layer, k) };
+            let mut layer = if k == 1 { layer.clone() } else { scale::layer(layer, k) };
+            if let Layer::Stamp(stamp) = &mut layer {
+                stamp.texture = stamp_key(&stamp.texture, k);
+            }
             (Some(hash(own, (first + i) as i32, 0x1a7e)), layer)
         }));
         Ok(resolved)
+    }
+
+    /// How many times finer than its own layer saw it the base of `recipe` (`name`) is
+    /// drawn: `size` is the base as finally resolved, `k` times finer than written. 1 when
+    /// the recipe has a size of its own or no base, or the sizes do not divide evenly.
+    fn redrawn_finer(&self, name: &str, recipe: &Recipe, size: (u32, u32), k: u32) -> u32 {
+        let (None, Some(base)) = (recipe.size, &recipe.base) else { return 1 };
+        let Some((w, h)) = self.size_seen_at(base, self.levels[name], 0) else { return 1 };
+        let (w, h) = (w * k, h * k);
+        if size.0 % w != 0 || size.1 % h != 0 {
+            return 1;
+        }
+        let m = size.0 / w;
+        if m >= 2 && size.1 / h == m { m } else { 1 }
+    }
+
+    /// The size `name` has as the books of `level` and below draw it, before any later
+    /// layer redraws it or its bases; `None` if it did not exist there.
+    fn size_seen_at(&self, name: &str, level: usize, depth: usize) -> Option<(u32, u32)> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        let recipe = match self.levels.get(name) {
+            Some(&at) if at <= level => self.recipes.get(name)?,
+            _ => self.replaced.get(name)?.iter().rev().find(|(at, _)| *at <= level).map(|(_, r)| r)?,
+        };
+        if let Some(size) = recipe.size {
+            return Some(size);
+        }
+        if let Some(base) = &recipe.base {
+            return self.size_seen_at(base, level, depth + 1);
+        }
+        if let Some(Layer::Stamp(stamp)) = recipe.layers.first()
+            && stamp.relative
+        {
+            return self.size_seen_at(&stamp.texture, level, depth + 1);
+        }
+        Some((16, 16))
     }
 
     fn shades(&self, palette: &Palette, depth: usize) -> Result<Vec<Rgba>, Error> {
@@ -279,6 +363,37 @@ impl Library {
             }
         }
     }
+}
+
+/// A template member made for a family: `{name}` filled in, the family's palettes over its
+/// own, and the family's seed unless it is made from another of the family's textures.
+fn family_member(recipe: &Recipe, family: &Family) -> Recipe {
+    let mut recipe = recipe.clone();
+    // Textures made from another of the family's own keep its seed, so a leaf sprite
+    // matches its leaves.
+    let own_base = recipe.base.as_ref().is_some_and(|b| b.contains("{name}"));
+    recipe.base = recipe.base.map(|b| b.replace("{name}", &family.name));
+    for layer in &mut recipe.layers {
+        if let Layer::Stamp(stamp) = layer {
+            stamp.texture = stamp.texture.replace("{name}", &family.name);
+        }
+    }
+    for palette in recipe.palettes.values_mut() {
+        if let Palette::Named(n) = palette {
+            *n = n.replace("{name}", &family.name);
+        }
+    }
+    recipe.palettes.extend(family.palettes.clone());
+    if !own_base {
+        recipe.seed = family.seed.or(recipe.seed).or(Some(seed_of(&family.name)));
+    }
+    recipe
+}
+
+/// Stamped textures are rendered once for each fineness they are drawn at: a base and a
+/// recipe drawn finer than it may stamp the same texture at two sizes.
+fn stamp_key(texture: &str, k: u32) -> String {
+    format!("{texture}@{k}")
 }
 
 /// Layers and terms are written `Paint(palette: "stone")` rather than
@@ -427,6 +542,127 @@ mod tests {
         assert!(library.contains("block/pine_planks_pair"));
         // Within one layer, names stay unique.
         assert!(Library::from_layers([vec![("a", "(textures: {\"x\": ()})"), ("b", "(textures: {\"x\": ()})")]]).is_err());
+    }
+
+    #[test]
+    fn a_child_written_at_16_fills_a_base_redrawn_at_32() {
+        let child = r##"(textures: {"block/chest": (palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)]),
+            "block/locked_chest": (base: "block/chest", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+                "x...............", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "...............x",
+            ])])})"##;
+        let hd = r##"(textures: {"block/chest": (size: (32, 32), palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)])})"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", child)], vec![("hd", hd)]]).unwrap();
+        let locked = library.render("block/locked_chest").unwrap().unwrap();
+        assert_eq!((locked.width, locked.height), (32, 32));
+        // The lock plate's corners land in the face's corners, not its top-left quarter.
+        for (x, y) in [(0, 0), (1, 1), (30, 30), (31, 31)] {
+            assert_eq!(locked.get(x, y), [0xff, 0, 0, 0xff], "({x}, {y})");
+        }
+        assert_ne!(locked.get(15, 15), [0xff, 0, 0, 0xff]);
+        // Drawn at the base's own size, it is drawn as written, and a pack drawing it at
+        // 32 draws it 32 across, not 64.
+        let plain = Library::from_books([("base", BOOK), ("child", child)]).unwrap();
+        let native = plain.render("block/locked_chest").unwrap().unwrap();
+        assert_eq!((native.width, native.get(15, 15)), (16, [0xff, 0, 0, 0xff]));
+        let finer = plain.render_at_least("block/locked_chest", 32).unwrap().unwrap();
+        assert_eq!((finer.width, finer.height), (32, 32));
+        assert_eq!((finer.get(0, 0), finer.get(31, 31)), ([0xff, 0, 0, 0xff], [0xff, 0, 0, 0xff]));
+        assert_ne!(finer.get(15, 15), [0xff, 0, 0, 0xff]);
+    }
+
+    #[test]
+    fn a_recipe_drawn_with_its_base_stays_as_written() {
+        // A pack drawing both the chest at 32×32 and a 16×16 badge on it meant the badge
+        // to cover a quarter of the face.
+        let hd = r##"(textures: {"block/chest": (size: (32, 32), palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)]),
+            "block/badge": (base: "block/chest", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+                "x...............", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "...............x",
+            ])])})"##;
+        let badge = Library::from_layers([vec![("base", BOOK)], vec![("hd", hd)]]).unwrap().render("block/badge").unwrap().unwrap();
+        assert_eq!((badge.width, badge.get(0, 0), badge.get(15, 15)), (32, [0xff, 0, 0, 0xff], [0xff, 0, 0, 0xff]));
+        assert_ne!(badge.get(31, 31), [0xff, 0, 0, 0xff]);
+    }
+
+    #[test]
+    fn any_layer_written_at_16_keeps_its_place_on_a_base_redrawn_finer() {
+        // An 8×8 badge in the corner of a 16×16 plate covers a quarter of it, and a one-texel
+        // border its edge, however finely a later pack redraws the plate.
+        let child = r##"(textures: {"block/plate": (palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)]),
+            "block/badge": (base: "block/plate", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+                "x.......", "........", "........", "........", "........", "........", "........", ".......x",
+            ])]),
+            "block/framed": (base: "block/plate", palettes: {"edge": ["#00ff00"]}, layers: [Paint(palette: "edge", mask: [Border(width: 1, amount: 1.0)], above: 0.5)])})"##;
+        let hd = r##"(textures: {"block/plate": (size: (32, 32), palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)])})"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", child)], vec![("hd", hd)]]).unwrap();
+        let badge = library.render("block/badge").unwrap().unwrap();
+        assert_eq!((badge.width, badge.get(15, 15)), (32, [0xff, 0, 0, 0xff]));
+        assert_ne!(badge.get(16, 16), [0xff, 0, 0, 0xff]);
+        let framed = library.render("block/framed").unwrap().unwrap();
+        assert_eq!((framed.get(1, 1), framed.get(30, 30)), ([0, 0xff, 0, 0xff], [0, 0xff, 0, 0xff]));
+        assert_ne!(framed.get(2, 2), [0, 0xff, 0, 0xff]);
+    }
+
+    #[test]
+    fn a_family_member_redrawn_finer_counts_as_the_later_layer() {
+        // The base pack's table is built on pine planks, which the family makes from the
+        // `wood` template; a later pack redraws the template's planks at 32×32.
+        let child = r##"(textures: {"block/pine_table": (base: "block/pine_planks", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+                "x...............", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "................",
+                "................", "................", "................", "...............x",
+            ])])})"##;
+        let hd = r##"(templates: {"wood": {"block/{name}_planks": (size: (32, 32), layers: [Paint(palette: "wood", base: 0.5)])}})"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", child)], vec![("hd", hd)]]).unwrap();
+        let table = library.render("block/pine_table").unwrap().unwrap();
+        assert_eq!((table.width, table.get(31, 31)), (32, [0xff, 0, 0, 0xff]));
+        assert_ne!(table.get(15, 15), [0xff, 0, 0, 0xff]);
+    }
+
+    /// A base-pack table on pine planks, which the base pack's `wood` family makes.
+    const PINE_TABLE: &str = r##"(textures: {"block/pine_table": (base: "block/pine_planks", layers: [Grid(legend: {'x': "#ff0000"}, rows: [
+            "x...............", "................", "................", "................",
+            "................", "................", "................", "................",
+            "................", "................", "................", "................",
+            "................", "................", "................", "...............x",
+        ])])})"##;
+
+    #[test]
+    fn a_family_texture_a_later_pack_draws_itself_still_scales_what_is_built_on_it() {
+        let hd = r##"(textures: {"block/pine_planks": (size: (32, 32), palettes: {"wood": "grey"}, layers: [Paint(palette: "wood", base: 0.5)])})"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", PINE_TABLE)], vec![("hd", hd)]]).unwrap();
+        let table = library.render("block/pine_table").unwrap().unwrap();
+        assert_eq!((table.width, table.get(31, 31)), (32, [0xff, 0, 0, 0xff]));
+    }
+
+    #[test]
+    fn a_family_a_later_pack_declares_again_still_scales_what_is_built_on_it() {
+        let hd = r##"(templates: {"wood": {"block/{name}_planks": (size: (32, 32), layers: [Paint(palette: "wood", base: 0.5)])}},
+            families: [(template: "wood", name: "pine", palettes: {"wood": "red"})])"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("child", PINE_TABLE)], vec![("hd", hd)]]).unwrap();
+        let table = library.render("block/pine_table").unwrap().unwrap();
+        assert_eq!((table.width, table.get(31, 31)), (32, [0xff, 0, 0, 0xff]));
+    }
+
+    #[test]
+    fn a_texture_stamped_at_two_finenesses_is_drawn_at_each() {
+        // The later pack's `framed` stamps the dot as written; the base pack's `doubled`,
+        // built on `framed` and drawn twice as fine, stamps it twice as large.
+        let base = r##"(textures: {"block/dot": (palettes: {"red": ["#ff0000"]}, layers: [Paint(palette: "red")]),
+            "block/plain": (palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0)]),
+            "block/framed": (base: "block/plain"),
+            "block/doubled": (base: "block/framed", layers: [Stamp(texture: "block/dot")])})"##;
+        let hd = r##"(textures: {"block/framed": (size: (32, 32), palettes: {"main": "grey"}, layers: [Paint(palette: "main", base: 0.0), Stamp(texture: "block/dot", at: [(16, 0)])])})"##;
+        let library = Library::from_layers([vec![("base", BOOK), ("more", base)], vec![("hd", hd)]]).unwrap();
+        let doubled = library.render("block/doubled").unwrap().unwrap();
+        // `framed`'s dot covers the top right quarter; `doubled`'s, twice as large, the face.
+        assert_eq!((doubled.width, doubled.get(0, 0), doubled.get(31, 31)), (32, [0xff, 0, 0, 0xff], [0xff, 0, 0, 0xff]));
     }
 
     #[test]
