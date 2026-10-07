@@ -28,7 +28,10 @@ Everything a mod might want to change is in that data, not in code.
 - **What it holds is never made twice (P60).** A save is one generation: machines,
   players, dropped items and land are staged and count together once `world.ron` takes the
   generation, so a save cut short leaves the last whole one and nothing a player put in a
-  machine is both in hand and in the machine (see `crates/server/src/save.rs`). A machines
+  machine is both in hand and in the machine (see `crates/server/src/save.rs`). A save with
+  any part that fails to write never counts. A player leaving brings a save, no sooner than
+  `after_leaving` seconds after the last (`core/saves.ron`), and is kept as they left until
+  one that holds them counts; rejoining before then takes that, not their file. A machines
   file that cannot be read is copied to `machines.unreadable.<seconds>.ron` and the server
   goes on without it; machine blocks standing in saved land join the factory again, empty.
   A machine whose block is gone when its land loads drops what it held, as breaking it

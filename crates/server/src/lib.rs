@@ -20,6 +20,7 @@ mod items;
 mod player;
 mod process;
 pub mod save;
+pub mod save_rules;
 mod weather;
 mod wear;
 
@@ -45,7 +46,7 @@ use voxmar_worldgen::{Generator, Overworld, WorldContent};
 use crate::actions::Executor;
 use crate::player::Player;
 use crate::process::Process;
-use crate::save::{GameMode, WorldMeta, WorldSave};
+use crate::save::{GameMode, SavedPlayer, WorldMeta, WorldSave};
 use crate::weather::WeatherState;
 
 pub struct ServerConfig {
@@ -121,8 +122,6 @@ impl GameMode {
     }
 }
 
-/// How often edited columns, players and the time of day are saved.
-const SAVE_INTERVAL: u64 = 30 * TICKS_PER_SECOND as u64;
 /// Time a new world starts at: early morning.
 const FIRST_TICK: u64 = 2000;
 
@@ -152,6 +151,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     let content = Content::load(&assets.join("content"))?;
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
+    save_rules::SaveRules::load(&content.files)?;
     Ok(content)
 }
 
@@ -290,6 +290,14 @@ pub(crate) struct Server {
     /// files a failed save left can never pass for a later one's.
     generation: u64,
     save: Option<WorldSave>,
+    save_rules: save_rules::SaveRules,
+    /// A player left since the last save: one is due once `after_leaving` has passed.
+    save_wanted: bool,
+    /// The tick the last save was begun at.
+    last_save: u64,
+    /// Players who left, as they were, until a save holding them counts: until then their
+    /// files are older than what they left in machines, and a rejoin takes this instead.
+    leavers: FxHashMap<String, SavedPlayer>,
     content: Content,
     generator: Arc<dyn Generator>,
     /// The same generator, for what commands ask about the land.
@@ -371,6 +379,7 @@ impl Server {
         let spawn_column = ColumnPos::of_block(spawn_block);
         let tick = meta.time.max(FIRST_TICK);
         let wear_rules = Arc::new(wear::WearRules::load(&content.files, &content.blocks, meta.seed).expect("checked by load_content"));
+        let save_rules = save_rules::SaveRules::load(&content.files).expect("checked by load_content");
         let today = wear::day(meta.day.unwrap_or(tick) as f64);
         let loaded = load_column(save.as_ref(), &*generator, &content.blocks, &wear_rules, today, spawn_column);
         world.insert(spawn_column, Arc::new(loaded.column));
@@ -402,6 +411,10 @@ impl Server {
             generation: meta.generation,
             meta,
             save,
+            save_rules,
+            save_wanted: false,
+            last_save: tick,
+            leavers: FxHashMap::default(),
             content,
             generator,
             overworld,
@@ -523,7 +536,9 @@ impl Server {
                         // opening and closing sockets must not make the server save.
                         if player.joined {
                             tracing::info!("{} left", player.name);
-                            self.save();
+                            let saved = player.saved(&self.content.skills, &self.content.effects);
+                            self.leavers.insert(player.name.clone(), saved);
+                            self.save_wanted = true;
                         }
                         self.players.remove(&id);
                     }
@@ -553,11 +568,13 @@ impl Server {
         }
         self.unload_columns();
         self.broadcast_players();
+        // Before the time is told, so whoever hears it hears after the save.
+        let since = self.tick.saturating_sub(self.last_save);
+        if self.tick.is_multiple_of(self.save_rules.every) || (self.save_wanted && since >= self.save_rules.after_leaving) {
+            self.save();
+        }
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(self.time_message());
-        }
-        if self.tick.is_multiple_of(SAVE_INTERVAL) {
-            self.save();
         }
         self.tick_seconds = started.elapsed().as_secs_f64();
     }
@@ -572,6 +589,8 @@ impl Server {
         // the last whole one, and what a player holds never also stays in a machine.
         let generation = self.generation.max(self.meta.generation) + 1;
         self.generation = generation;
+        self.last_save = self.tick;
+        self.save_wanted = false;
         save.begin(generation);
         let mut ok = true;
         let mut failed = |what: &str, e: std::io::Error| {
@@ -603,6 +622,11 @@ impl Server {
                 failed(&format!("player {}", player.name), e);
             }
         }
+        for (name, player) in &self.leavers {
+            if let Err(e) = save.write_player(name, player, registry) {
+                failed(&format!("player {name}"), e);
+            }
+        }
         if let Err(e) = save.write_items(&self.items.saved(|item| registry.def(item).name.clone())) {
             failed("dropped items", e);
         }
@@ -620,6 +644,7 @@ impl Server {
             tracing::error!("save {generation} of {} abandoned", save.dir().display());
             return;
         }
+        let players = self.players.values().filter(|p| p.joined).count() + self.leavers.len();
         let mut meta = self.meta.clone();
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
@@ -631,14 +656,21 @@ impl Server {
         match save.commit(&meta) {
             Ok(moved) => {
                 self.meta = meta;
-                // Columns saved are clean; any not moved into place are written again next time.
+                // Columns saved are clean, and leavers are in their files; any not moved
+                // into place are written again next time.
                 if moved {
                     self.dirty.retain(|pos| !written.contains(pos));
+                    self.leavers.clear();
                 }
             }
             Err(e) => tracing::error!("could not save {}: {e}", save.dir().display()),
         }
-        tracing::debug!("saved {} columns and {} players in {:?}", written.len(), self.players.len(), started.elapsed());
+        let took = started.elapsed();
+        if took.as_secs_f32() * 1000.0 > self.save_rules.slow_ms {
+            tracing::warn!("save {generation} took {took:?}: {} columns and {players} players", written.len());
+        } else {
+            tracing::debug!("saved {} columns and {players} players in {took:?}", written.len());
+        }
     }
 
     /// The clocks, as players are told them.

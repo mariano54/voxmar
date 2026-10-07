@@ -13,6 +13,7 @@ use voxmar_protocol::{
     ChatKind, ClientConnection, ClientMessage, ItemView, PROTOCOL_VERSION, PlayerId, PlayerInput, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND,
     Weather, local_pair, tcp,
 };
+use voxmar_server::save_rules::SaveRules;
 use voxmar_server::{ServerConfig, ServerHandle, load_content, spawn};
 
 struct Client {
@@ -1713,8 +1714,17 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// How often the server saves on its own (`SAVE_INTERVAL`), in ticks.
-const SAVE_EVERY: u64 = 30 * TICKS_PER_SECOND as u64;
+/// How many items a machine's `/machine` answer says it holds: "… holds 64 items." (none
+/// said, none held).
+fn items_held(said: &str) -> u32 {
+    let words: Vec<_> = said.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric())).collect();
+    words.windows(2).find_map(|w| (w[1] == "items" || w[1] == "item").then(|| w[0].parse().ok()).flatten()).unwrap_or(0)
+}
+
+/// When the server saves, as the content says.
+fn save_rules() -> SaveRules {
+    SaveRules::load(&content().files).expect("saves.ron")
+}
 
 /// The generation of the save in `dir`, from its `world.ron`.
 fn saved_generation(dir: &std::path::Path) -> u64 {
@@ -1731,11 +1741,23 @@ fn after_this_loop(client: &mut Client) {
     client.pump_until(|c| c.tick > told);
 }
 
+/// Waits out the time in which a player leaving brings a save: whatever saves were due by
+/// then are done (the time is told after a save).
+fn after_leave_saves(client: &mut Client) {
+    after_this_loop(client);
+    wait_server(client, save_rules().after_leaving.div_ceil(TICKS_PER_SECOND as u64) + 1);
+}
+
+/// Saves the server made on its own between ticks `from` and `to`, at most.
+fn autosaves(from: u64, to: u64) -> u64 {
+    let every = save_rules().every;
+    (to / every).saturating_sub(from.saturating_sub(TICKS_PER_SECOND as u64) / every)
+}
+
 #[test]
-fn only_a_joined_player_leaving_saves_the_world() {
+fn only_joined_players_leaving_save_the_world_and_many_leaving_at_once_save_it_once() {
     let dir = world_dir("leavers");
     let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
-    let autosaves = |from: u64, to: u64| (to / SAVE_EVERY).saturating_sub(from.saturating_sub(TICKS_PER_SECOND as u64) / SAVE_EVERY);
     after_this_loop(&mut client);
     let (before, from) = (saved_generation(&dir), client.tick);
     // Three connections that close without a hello: none of them is a player leaving.
@@ -1744,17 +1766,20 @@ fn only_a_joined_player_leaving_saves_the_world() {
         drop(connection);
         client._server.as_ref().unwrap().connections().send(server_side).unwrap();
     }
-    after_this_loop(&mut client);
+    after_leave_saves(&mut client);
     let saves = saved_generation(&dir) - before;
     assert!(saves <= autosaves(from, client.tick), "{saves} saves for connections that never joined");
-    // A player who joined does save the world as they leave.
-    let other = client.another("other");
+    // Three who joined leave together: one save holds them all.
+    let others: Vec<_> = ["a", "b", "c"].iter().map(|name| client.another(name)).collect();
     after_this_loop(&mut client);
     let (before, from) = (saved_generation(&dir), client.tick);
-    drop(other);
-    after_this_loop(&mut client);
+    drop(others);
+    after_leave_saves(&mut client);
     let saves = saved_generation(&dir) - before;
-    assert!(saves >= 1 && saves <= 1 + autosaves(from, client.tick), "{saves} saves for a player leaving");
+    assert!(saves >= 1 && saves <= 1 + autosaves(from, client.tick), "{saves} saves for three players leaving at once");
+    for name in ["a", "b", "c"] {
+        assert!(dir.join("players").join(format!("{name}.ron")).is_file(), "{name} was saved as they left");
+    }
     drop(client);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1785,7 +1810,7 @@ fn a_save_cut_short_after_the_machines_neither_loses_nor_doubles_what_went_in() 
     let mut client = Client::join_with(config(false));
     client.pump_until(|c| held(c) > 0);
     let said = client.ok(&format!("/machine {at}"));
-    let in_chest = said.split(' ').zip(said.split(' ').skip(1)).find_map(|(n, word)| (word == "items").then(|| n.parse::<u32>().ok()).flatten()).unwrap_or(0);
+    let in_chest = items_held(&said);
     assert_eq!(held(&client) + in_chest, 64, "the player holds {}, the chest: {said}", held(&client));
     drop(client);
     assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new(), "the cut save was forgotten");
@@ -1817,7 +1842,7 @@ fn a_save_whose_machines_cannot_be_written_does_not_count_and_leaves_nothing_sta
     let other = client.another("other");
     after_this_loop(&mut client);
     drop(other);
-    after_this_loop(&mut client);
+    after_leave_saves(&mut client);
     assert_eq!(saved_generation(&dir), before, "a save missing its machines counted");
     let staged: Vec<_> = staged_files(&dir).into_iter().filter(|p| !blocked.contains(p)).collect();
     assert!(staged.is_empty(), "the failed save left {staged:?}");
@@ -1828,10 +1853,62 @@ fn a_save_whose_machines_cannot_be_written_does_not_count_and_leaves_nothing_sta
     let other = client.another("other");
     after_this_loop(&mut client);
     drop(other);
-    after_this_loop(&mut client);
+    after_leave_saves(&mut client);
     assert!(saved_generation(&dir) > before, "the save after counted");
     drop(client);
     assert_eq!(staged_files(&dir), Vec::<std::path::PathBuf>::new());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_player_who_leaves_while_their_file_cannot_be_written_is_kept_until_a_save_holds_them() {
+    let dir = world_dir("kept");
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let ore = client.content.blocks.expect("base:iron_ore");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    // Another player takes 64 ore and leaves: their file holds it.
+    let mut other = client.another("other");
+    let chest = other.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let at = format!("{} {} {}", chest.x, chest.y, chest.z);
+    for line in ["/clear", &format!("/setblock {at} chest"), "/give iron_ore 64"] {
+        other.ok(line);
+    }
+    other.pump_until(|c| held(c) == 64 && c.world.block(chest) == c.content.blocks.id("base:chest"));
+    let before = saved_generation(&dir);
+    drop(other);
+    after_leave_saves(&mut client);
+    assert!(saved_generation(&dir) > before, "their leaving was saved");
+    // Back, they put it all in the chest.
+    let mut other = client.another("other");
+    other.pump_until(|c| held(c) == 64);
+    use_machine(&mut other, chest);
+    other.pump_until(|c| held(c) == 0);
+    machine_says(&mut other, &at, "holds 64 items", 10);
+    // They leave while their file can't be written: that save does not count.
+    let before = saved_generation(&dir);
+    let blocked: Vec<_> = (before + 1..before + 40).map(|g| dir.join("players").join(format!("other.ron.{g}.new"))).collect();
+    for path in &blocked {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    drop(other);
+    after_leave_saves(&mut client);
+    assert_eq!(saved_generation(&dir), before, "a save without their file counted");
+    // With room again, the next save holds the chest and them as they left, together.
+    for path in &blocked {
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    let third = client.another("third");
+    after_this_loop(&mut client);
+    drop(third);
+    after_leave_saves(&mut client);
+    assert!(saved_generation(&dir) > before, "the save after counted");
+    let mut other = client.another("other");
+    other.ok("/seed");
+    let said = other.ok(&format!("/machine {at}"));
+    let in_chest = items_held(&said);
+    assert_eq!(held(&other) + in_chest, 64, "they hold {}, the chest: {said}", held(&other));
+    drop(other);
+    drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

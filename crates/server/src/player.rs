@@ -243,10 +243,13 @@ impl Server {
         let (seed, allow_flight, tick) = (self.meta.seed, self.config.allow_flight, self.tick);
         let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
-        let saved = self.save.as_ref().and_then(|save| {
-            save.read_player(&name, blocks).unwrap_or_else(|e| {
-                tracing::error!("could not load player {name}: {e}");
-                None
+        // One who left since the last save that counted is as they left, not as their file.
+        let saved = self.leavers.get(&name).cloned().or_else(|| {
+            self.save.as_ref().and_then(|save| {
+                save.read_player(&name, blocks).unwrap_or_else(|e| {
+                    tracing::error!("could not load player {name}: {e}");
+                    None
+                })
             })
         });
         let local_admin = self.config.local_admin;
@@ -269,6 +272,8 @@ impl Server {
             return;
         }
 
+        // Back in play: what they hold is saved with them from now on.
+        self.leavers.remove(&name);
         player.name = name;
         player.joined = true;
         // Only the integrated server's own player can connect in-process.

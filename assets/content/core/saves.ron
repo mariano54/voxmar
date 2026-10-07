@@ -1,0 +1,12 @@
+// When the server saves the world (server/src/save_rules.rs). A save is the whole world as
+// one generation (server/src/save.rs): players, what machines and the ground hold, edited land.
+// A later package's numbers replace an earlier one's.
+(
+    // Seconds between saves while anyone plays.
+    every: 30.0,
+    // A player leaving asks for a save, so what they carry is saved with what they left in
+    // machines; but no sooner than this many seconds after the last, however many leave.
+    after_leaving: 5.0,
+    // A save taking longer than this many milliseconds is logged as slow.
+    slow_ms: 50.0,
+)
