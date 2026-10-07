@@ -243,6 +243,7 @@ impl Server {
                 .into_iter()
                 .filter_map(|(name, count)| blocks.id(name).map(|id| (id, count)))
                 .collect();
+        let purse = blocks.id("base:coin_purse");
         let (seed, allow_flight, tick) = (self.meta.seed, self.config.allow_flight, self.tick);
         let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
         let name = if name.trim().is_empty() { "player".to_owned() } else { name };
@@ -304,6 +305,10 @@ impl Server {
             None => {
                 for (block, count) in start_kit {
                     player.inventory.add(block, count);
+                }
+                // A coin purse, in the pack's last slot, out of the hotbar's way.
+                if let Some(purse) = purse {
+                    player.inventory.slots[voxmar_engine::inventory::SLOTS - 1] = Some(ItemStack { item: purse, count: 1 });
                 }
             }
         }

@@ -91,6 +91,9 @@ pub enum Requirement {
     ToolGood,
     /// The actor's level in the skill the target block asks for is at least what it asks.
     BlockLevel,
+    /// A ripe crop (or fruit) at the target asks for its Farming level to harvest, as an ore
+    /// asks for its Mining level; anything else passes.
+    CropLevel,
     /// The target is soil a hoe can till, with nothing standing on it.
     Tillable,
     /// The target is a crafting table.
@@ -394,6 +397,14 @@ impl ActionDef {
                     (Some(b), Some(tools)) => tools.good_enough(ctx.actor_held(), b),
                     _ => true,
                 }
+            }
+            Requirement::CropLevel => {
+                let (block, _) = block_target()?;
+                let crops = ctx.crops();
+                ctx.block(block).and_then(|b| crops.stage_of(b)).is_none_or(|(crop, stage)| {
+                    let crop = crops.get(crop);
+                    stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
+                })
             }
             Requirement::BlockLevel => {
                 let (block, _) = block_target()?;
