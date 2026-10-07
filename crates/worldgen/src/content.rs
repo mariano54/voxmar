@@ -1446,6 +1446,21 @@ impl WorldContent {
         Ok(world)
     }
 
+    /// A fingerprint of the files that decide what land is made, from every package (mods
+    /// too), in package order: a world records it, so it can tell when land made from now on
+    /// may not line up with land made before. Ambient particles change no land and are left
+    /// out.
+    pub fn fingerprint<'a>(files: impl Iterator<Item = &'a ContentFile>) -> u64 {
+        let shapes_land = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for file in files.filter(|file| shapes_land(&file.name)) {
+            for b in file.package.bytes().chain([0]).chain(file.name.bytes()).chain([0]).chain(file.source.bytes()).chain([0]) {
+                hash = (hash ^ b as u64).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        hash
+    }
+
     /// The base package's definitions alone.
     pub fn base(registry: &BlockRegistry) -> Result<Self, ContentError> {
         let files: Vec<ContentFile> =

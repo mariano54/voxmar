@@ -452,6 +452,9 @@ impl Server {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });
         }
+        if admin && self.generation_changed {
+            self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("world.generation_changed") });
+        }
     }
 
     /// Gives every player their share of messages for the tick, and closes connections

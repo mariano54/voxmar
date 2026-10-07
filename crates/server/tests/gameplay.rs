@@ -580,6 +580,34 @@ fn loot_still_falling_when_the_server_stops_is_there_after_a_restart() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A world opened with other worldgen data than its land was last made from tells the
+/// admin who joins that new land may not line up, once for each change, and still opens.
+#[test]
+fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
+    let dir = world_dir("worldgen-content");
+    let tuned = {
+        let mut content = content();
+        let mut files = (*content.files).clone();
+        files.iter_mut().find(|f| f.package == "base" && f.name == "ores.ron").unwrap().source.push_str("\n// a vein tuned\n");
+        content.files = std::sync::Arc::new(files);
+        content
+    };
+    let warned = |content: Content| {
+        let server = spawn(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() }, content.clone()).unwrap();
+        let (connection, server_side) = local_pair();
+        server.connections().send(server_side).unwrap();
+        let client = Client::greet_content(connection, "test", Some(server), None, content);
+        let warning = client.content.english.render(&voxmar_engine::lang::Words::key("world.generation_changed"), &client.content.blocks);
+        client.chat.iter().any(|(_, line)| *line == warning)
+    };
+    assert!(!warned(content()), "a new world");
+    assert!(!warned(content()), "the same data");
+    assert!(warned(tuned.clone()), "ores.ron changed");
+    assert!(!warned(tuned), "the change was told");
+    assert!(warned(content()), "changed back");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn game_mode_decides_flight_and_the_host_is_admin() {
     use voxmar_server::save::{GameMode, WorldMeta, WorldSave};

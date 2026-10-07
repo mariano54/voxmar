@@ -278,7 +278,20 @@ impl Drop for ServerHandle {
 /// Starts a server thread. With `config.world` set, opens the world saved there (or
 /// creates it); the server saves it periodically and when the handle is dropped.
 pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHandle> {
-    let (save, meta) = open_world(&mut config)?;
+    let (save, mut meta) = open_world(&mut config)?;
+    // Land made from different worldgen data than before may not line up with it: warned
+    // about, never refused (content-only changes keep the generator's version).
+    let worldgen_content = WorldContent::fingerprint(content.files.iter());
+    let generation_changed = meta.worldgen_content.is_some_and(|before| before != worldgen_content);
+    if meta.worldgen_content != Some(worldgen_content) {
+        meta.worldgen_content = Some(worldgen_content);
+        if let Some(save) = &save {
+            if generation_changed {
+                tracing::warn!("{}: {}", save.dir().display(), content.english.render(&voxmar_engine::lang::Words::key("world.generation_changed"), &content.blocks));
+            }
+            save.write_meta(&meta)?;
+        }
+    }
     let state = save.as_ref().map_or(Ok(save::WorldState::default()), WorldSave::read_state)?;
     let (connections, incoming) = unbounded();
     let (console, lines) = unbounded();
@@ -289,7 +302,11 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
         let (stop, tick_times, ticks) = (stop.clone(), tick_times.clone(), ticks.clone());
         std::thread::Builder::new()
             .name("server".into())
-            .spawn(move || Server::new(config, meta, save, state, content, incoming, lines).run(&stop, &tick_times, &ticks))?
+            .spawn(move || {
+                let mut server = Server::new(config, meta, save, state, content, incoming, lines);
+                server.generation_changed = generation_changed;
+                server.run(&stop, &tick_times, &ticks)
+            })?
     };
     Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks })
 }
@@ -409,6 +426,9 @@ pub(crate) struct Server {
     dirty: FxHashSet<ColumnPos>,
     /// Columns whose files could not be read, which saving leaves alone (`Loaded`).
     kept: FxHashSet<ColumnPos>,
+    /// The world's worldgen data changed since land was last made in it, so admins who
+    /// join are warned that new land may not line up (`WorldMeta::worldgen_content`).
+    generation_changed: bool,
     /// When each address's new players had the starting kit, in ticks (`Server::grant_kit`).
     /// Kept only while the server runs.
     kits: FxHashMap<std::net::IpAddr, Vec<u64>>,
@@ -500,6 +520,7 @@ impl Server {
             fluids,
             dirty: FxHashSet::default(),
             kept: if loaded.keep_file { FxHashSet::from_iter([spawn_column]) } else { FxHashSet::default() },
+            generation_changed: false,
             kits: FxHashMap::default(),
             generating: FxHashSet::default(),
             generated_tx,

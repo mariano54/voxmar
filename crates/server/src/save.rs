@@ -86,6 +86,11 @@ pub struct WorldMeta {
     /// Picked wild plants waiting to grow back.
     #[serde(default)]
     pub regrowing: Vec<SavedRegrowing>,
+    /// The fingerprint of the content land was last made from (`WorldContent::fingerprint`):
+    /// a world opened with different worldgen data warns that new land may not line up.
+    /// `None` until a world is first opened with it.
+    #[serde(default)]
+    pub worldgen_content: Option<u64>,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -117,6 +122,7 @@ impl WorldMeta {
             day_speed: 1.0,
             placed: Vec::new(),
             regrowing: Vec::new(),
+            worldgen_content: None,
         }
     }
 }
