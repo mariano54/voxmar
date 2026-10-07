@@ -153,6 +153,16 @@
             name: "hv_battery_bank", sound: Stone, textures: Sides(top: "hv_battery_bank_top", bottom: "iron_casing", side: "hv_battery_bank_side"),
             hardness: 4.5, color: (110, 100, 70), tags: ["machine", "building"],
         ),
+        // HV processors: a processing array (a multiblock of HV casing round its core) and
+        // an induction smelter.
+        (
+            name: "processing_array", sound: Stone, textures: Sides(top: "hv_casing", bottom: "hv_casing", side: "processing_array_side"),
+            hardness: 4.5, color: (95, 110, 120), tags: ["machine", "multiblock_core", "building"],
+        ),
+        (
+            name: "induction_smelter", sound: Stone, textures: Sides(top: "induction_smelter_top", bottom: "hv_casing", side: "induction_smelter_side"),
+            hardness: 4.5, color: (120, 90, 80), tags: ["machine", "building"],
+        ),
     ],
     families: [
         // Coke: coal baked in a coke oven, which a blast furnace needs; it burns as long as

@@ -1631,6 +1631,47 @@ fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> Stri
 }
 
 #[test]
+fn a_processing_array_works_only_inside_its_cube_of_hv_casing() {
+    let mut client = Client::join();
+    let p = client.position.floor().as_ivec3();
+    let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
+    // The cube's corner; the array in the middle of its near face.
+    let cube = p + IVec3::new(3, 0, 2);
+    let core = cube + IVec3::new(0, 1, 1);
+    for line in [
+        "/clear".to_owned(),
+        format!("/fill {} {} air", at(cube - IVec3::ONE), at(cube + IVec3::splat(3))),
+        format!("/setblock {} processing_array", at(core)),
+    ] {
+        client.ok(&line);
+    }
+    let ore = client.content.blocks.expect("base:copper_ore");
+    let count = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == ore).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:processing_array") && c.inventory.slots.iter().all(Option::is_none));
+    client.ok("/give copper_ore 8");
+    client.pump_until(|c| count(c) == 8);
+    use_machine(&mut client, core);
+    client.pump_until(|c| count(c) == 0);
+    // Alone, it says its structure is unfinished.
+    machine_says(&mut client, &at(core), "not complete", 10);
+    // The cube round it, hollow in the middle: it stands, and wants only power.
+    for line in [
+        format!("/fill {} {} hv_casing", at(cube + IVec3::X), at(cube + IVec3::new(2, 2, 2))),
+        format!("/fill {} {} hv_casing", at(cube), at(cube + IVec3::new(0, 0, 2))),
+        format!("/fill {} {} hv_casing", at(cube + IVec3::new(0, 2, 0)), at(cube + IVec3::new(0, 2, 2))),
+        format!("/setblock {} hv_casing", at(core - IVec3::Z)),
+        format!("/setblock {} hv_casing", at(core + IVec3::Z)),
+        format!("/setblock {} air", at(cube + IVec3::ONE)),
+    ] {
+        client.ok(&line);
+    }
+    machine_says(&mut client, &at(core), "no power", 10);
+    // Filled in, it is no cube of HV casing.
+    client.ok(&format!("/setblock {} hv_casing", at(cube + IVec3::ONE)));
+    machine_says(&mut client, &at(core), "not complete", 10);
+}
+
+#[test]
 fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv() {
     let mut client = Client::join();
     let p = client.position.floor().as_ivec3();

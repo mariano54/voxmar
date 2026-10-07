@@ -816,8 +816,17 @@ fn work(
             }
             state.status = Status::Working;
             state.progress += seconds * speed * rate;
-            if state.progress >= process.seconds {
+            // A fast machine may finish the same work more than once a step: what is left
+            // over goes on to the next, while it has the inputs and the room.
+            let id = state.process;
+            while state.progress >= process.seconds {
+                let left = state.progress - process.seconds;
                 finish(pos, state, process, *extra);
+                if left <= 0.0 || !inputs_hold(&state.inputs, process) || !outputs_fit(&state.outputs, process, *extra) {
+                    break;
+                }
+                state.process = id;
+                state.progress = left;
             }
         }
     }
@@ -1421,6 +1430,60 @@ mod tests {
         assert!((560..=640).contains(&planks), "a hundred logs made {planks} planks, not about 600");
         let birch = machines.processes().filter(|(_, p)| p.kind == "saw").any(|(_, p)| p.outputs[0].0 == id("base:birch_planks"));
         assert!(birch, "every wood has its sawing recipe");
+    }
+
+    /// The HV processors from the game's content: a processing array crushes as sixteen
+    /// macerators and an induction smelter smelts as eight electric furnaces, each for the
+    /// same power a dust or an ingot as those, and the array only while its hall stands.
+    #[test]
+    fn hv_processors_are_many_machines_in_one_at_their_power_and_yield() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let (blocks, machines) = (&content.blocks, &content.machines);
+        let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let stack = |name: &str, count| ItemStack { item: id(name), count };
+        const FULL: f32 = 1_000_000.0;
+        // A bank and cable of the machine's tier feeding it; what it made after `seconds`,
+        // and the energy it took.
+        let run_on_bank = |machine: &str, condition: f32, input: &str, count: u8, seconds: f32| {
+            let (bank_block, cable_block) = match machines.get(id(machine)).map(|m| &m.role) {
+                Some(Role::Processor { tier: 3, .. }) => ("base:hv_battery_bank", "base:hv_cable"),
+                _ => ("base:battery_bank", "base:lv_cable"),
+            };
+            let mut factory = Factory::default();
+            let (bank, cable, at) = (IVec3::ZERO, IVec3::X, IVec3::new(2, 0, 0));
+            assert!(factory.insert(bank, id(bank_block), machines) && factory.insert(cable, id(cable_block), machines));
+            assert!(factory.insert(at, id(machine), machines));
+            factory.state_mut(bank).unwrap().energy = FULL;
+            factory.set_condition(at, condition);
+            assert_eq!(factory.put(at, stack(input, count), machines), None, "{machine} takes {count} {input}");
+            for _ in 0..(seconds * 5.0).round() as u32 {
+                factory.step(4, 20.0, machines);
+            }
+            let made: u32 = factory.take_outputs(at).iter().map(|s| s.count as u32).sum();
+            (made, FULL - factory.get(bank).unwrap().1.energy, factory.get(at).unwrap().1.progress)
+        };
+        // The energy a recipe took: what was spent over the recipes done, counting the one
+        // under way by how far it got.
+        let per = |(made, energy, progress): (u32, f32, f32), each: u32, seconds: f32| energy / (made as f32 / each as f32 + progress / seconds);
+        // Copper ore takes 6 s at speed 1: a macerator crushes one in 3 s, the array 32 in.
+        let array = run_on_bank("base:processing_array", 1.0, "base:copper_ore", 64, 13.0);
+        assert_eq!(array.0, 128, "64 ore in 12 s, two dust each");
+        let macerator = run_on_bank("base:macerator", 1.0, "base:copper_ore", 64, 13.0);
+        assert_eq!(macerator.0, 8, "a macerator crushes four ore in 13 s");
+        // Each ore costs the array what it costs a macerator (timed while it still has ore,
+        // since the step it runs out in is drawn in full).
+        let (array_ore, macerator_ore) = (per(run_on_bank("base:processing_array", 1.0, "base:copper_ore", 64, 6.0), 2, 6.0), per(macerator, 2, 6.0));
+        assert!((array_ore / macerator_ore - 1.0).abs() < 0.01, "an ore costs the array {array_ore}, a macerator {macerator_ore}");
+        // Its hall not standing, the array does nothing.
+        assert_eq!(run_on_bank("base:processing_array", 0.0, "base:copper_ore", 64, 13.0), (0, 0.0, 0.0));
+        // Copper dust takes 4 s at speed 1: an electric furnace smelts one in 2 s, the
+        // smelter 32 in 8 s.
+        let smelter = run_on_bank("base:induction_smelter", 1.0, "base:copper_dust", 32, 9.0);
+        assert_eq!(smelter.0, 32);
+        let furnace = run_on_bank("base:electric_furnace", 1.0, "base:copper_dust", 32, 9.0);
+        assert_eq!(furnace.0, 4, "an electric furnace smelts four in 9 s");
+        let (smelter_ingot, furnace_ingot) = (per(smelter, 1, 4.0), per(furnace, 1, 4.0));
+        assert!((smelter_ingot / furnace_ingot - 1.0).abs() < 0.01, "an ingot costs the smelter {smelter_ingot}, a furnace {furnace_ingot}");
     }
 
     /// Coal and charcoal are one input of the bloomery's recipe: together they fill no more

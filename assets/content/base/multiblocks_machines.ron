@@ -59,5 +59,18 @@
             key: {'c': "hv_casing", 'T': "turbine_hall"},
             core: 'T',
         ),
+        // The Processing Array: a cube of HV casing three on a side, hollow in the middle,
+        // with the array in the middle of one face.
+        (
+            name: "processing_array", title: "Processing Array",
+            hint: "The processing array needs a cube of HV casing three on a side, hollow in the middle, with the processing array in the middle of one face.",
+            layers: [
+                ["ccc", "ccc", "ccc"],
+                ["ccc", "P c", "ccc"],
+                ["ccc", "ccc", "ccc"],
+            ],
+            key: {'c': "hv_casing", 'P': "processing_array"},
+            core: 'P',
+        ),
     ],
 )

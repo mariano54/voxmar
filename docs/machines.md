@@ -45,7 +45,7 @@ Everything a mod might want to change is in that data, not in code.
 | Iron and Steam | Steam: boiler, pipes; beam engine (steam to rotation) | Steam crusher (2 dust an ore); the Coke Oven (a multiblock of kiln bricks three on a side round a hollow middle: coal into coke by its own heat, 30 s); the Blast Furnace (the bloomery's ring four high, on rotation: two iron ore and a coke into four ingots, two an ore, ore only); sawmill (on rotation: a log into six planks of its wood on average, half again an axe's) |
 | LV | Dynamo (rotation to LV), LV cable, battery bank | Electric furnace, macerator (2 dust, twice as fast), ore washer (3 dust, half as fast, needs water beside it) |
 | MV | Steam turbine (steam to MV), MV cable, MV battery bank, LV transformer (MV in on top, LV out of the other faces) | LV machines through a transformer |
-| HV | The Turbine Hall (a multiblock of HV casing five long, three wide and three high, hollow in the middle, its core in the front face: steam to HV, 128 a step from 128 steam: six boilers run it at full, five at 94%), HV cable, HV battery bank, MV transformer (HV in on top, MV out of the other faces) | MV and LV machines through transformers |
+| HV | The Turbine Hall (a multiblock of HV casing five long, three wide and three high, hollow in the middle, its core in the front face: steam to HV, 128 a step from 128 steam: six boilers run it at full, five at 94%), HV cable, HV battery bank, MV transformer (HV in on top, MV out of the other faces) | Processing Array (a multiblock: a cube of HV casing three on a side, hollow in the middle, the array in the middle of one face; sixteen macerators in one, at sixteen times their speed and draw), induction smelter (eight electric furnaces in one); MV and LV machines through transformers |
 
 ## How power moves
 
@@ -72,6 +72,11 @@ Each factory step (every 4 server ticks) every network shares out its power:
    the surplus, up to their rate.
 4. Every consumer gets the same share of what it asked. A weak network slows its machines
    rather than stopping one of them.
+
+A machine fast enough to finish its work more than once a step does, while it has the
+inputs and the room, so a recipe costs the same power at any speed. HV processors trade
+space for speed, never power or yield: a dust costs a processing array what it costs a
+macerator. The array crushes about five copper ore a second, more than one conveyor carries.
 
 Fuel burns only as fast as its power is used. A boiler nobody draws on keeps its coal.
 Converters give on the next step what they were given on this one, so a chain of them
