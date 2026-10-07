@@ -195,6 +195,10 @@ impl ActionContext for ClientContext<'_> {
     fn tools(&self) -> Option<&voxmar_engine::tool::ToolRegistry> {
         Some(&self.content.tools)
     }
+
+    fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
+        Some(&self.content.machines)
+    }
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
@@ -294,6 +298,17 @@ fn break_and_place(
                 net.propose_from(&player, use_table, action_target);
                 player.station = Some(hit.block);
                 ui.inventory_open = true;
+                return;
+            }
+        }
+        // A machine takes what it burns or works from the hand, or gives what it made; the
+        // server says how it is doing. Anything else in hand is placed against it.
+        if let (Some(hit), Some(use_machine)) = (hit, actions.0.id("base:use_machine")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(use_machine).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, use_machine, action_target);
+                target.place_cooldown = 0.4;
                 return;
             }
         }

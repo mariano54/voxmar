@@ -103,6 +103,10 @@ pub enum Requirement {
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible.
     MultiblockCore,
+    /// The target is a machine (`machines.ron`), and the actor holds nothing, something it
+    /// takes, or something that is not a block to place (a placeable block it does not
+    /// take is placed against it instead).
+    Machine,
     /// The actor holds a fishing rod and the target is water with open air above, near
     /// enough to cast to.
     Fishable,
@@ -164,6 +168,9 @@ pub enum Effect {
     /// Light the multiblock whose core is the target, if it stands around it: the
     /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
     Light,
+    /// Use the target machine: what the actor holds goes in if it takes it, otherwise
+    /// what it made comes out; the actor is told how it is doing.
+    UseMachine,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -279,6 +286,10 @@ pub trait ActionContext {
     fn occupied(&self, cell: IVec3) -> bool;
     /// The cooking recipes, where the context knows them.
     fn cooking(&self) -> Option<&crate::cooking::CookingRegistry> {
+        None
+    }
+    /// The machines, where the context knows them.
+    fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
         None
     }
     /// Whether the creature with that id takes `item` from the actor's hand.
@@ -418,6 +429,19 @@ impl ActionDef {
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("multiblock_core"))
+            }
+            Requirement::Machine => {
+                let (block, _) = block_target()?;
+                let Some(machines) = ctx.machines() else { return Ok(false) };
+                let Some(machine) = ctx.block(block).and_then(|b| machines.get(b)) else { return Ok(false) };
+                match ctx.actor_held() {
+                    None => true,
+                    Some(item) => {
+                        let fuel = machine.burns() && machines.burn_seconds(item).is_some();
+                        let input = machine.is_processor() && machines.takes(machine, item);
+                        fuel || input || !ctx.info(item).placeable
+                    }
+                }
             }
             Requirement::CreatureInReach => {
                 let ActionTarget::Creature(id) = target else { return Err(Rejection::WrongTarget) };

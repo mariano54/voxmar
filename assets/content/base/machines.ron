@@ -1,0 +1,42 @@
+// Machines (engine/src/machine.rs, factory.rs; docs/machines.md): what each machine block
+// does. A role is one of:
+// - `Conduit`: carries power of a kind to its neighbours (`tier`: the highest electricity
+//   it carries; a network fed above it carries nothing);
+// - `Generator`: gives `power` a tick at full output, from `Fuel` it burns (only as fast as
+//   the power is used), `FlowingWater` beside it, the `Wind` (more up high), or power of
+//   another kind it `Converts` (`ratio` of it for each unit it gives);
+// - `Store`: holds `capacity`, taking or giving up to `rate` a tick;
+// - `Transformer`: takes electricity at `tier` from above, gives it a tier lower around;
+// - `Processor`: works recipes of its `kinds` (processing.ron) `speed` times as fast as
+//   the recipe says, making `yield` more (each output times one more than it, the fraction
+//   a chance of one more), drawing `power` while it works, or burning fuel itself.
+// Machines of a kind differ in speed and yield, never in what they make. Machines teach
+// nothing; building them (recipes_machines.ron) takes Engineering.
+(
+    machines: [
+        // Bronze: rotation.
+        (block: "water_wheel", role: Generator(carrier: Rotation, power: 8.0, source: FlowingWater)),
+        (block: "windmill", role: Generator(carrier: Rotation, power: 16.0, source: Wind)),
+        (block: "shaft", role: Conduit(carrier: Rotation)),
+        (block: "trip_hammer", role: Processor(kinds: ["hammer"], power: Some((Rotation, 6.0)))),
+        // Iron and Steam: steam.
+        (block: "boiler", role: Generator(carrier: Steam, power: 24.0, source: Fuel)),
+        (block: "steam_pipe", role: Conduit(carrier: Steam)),
+        (block: "beam_engine", role: Generator(carrier: Rotation, power: 16.0, source: Converts(from: Steam, ratio: 1.25))),
+        (block: "steam_crusher", role: Processor(kinds: ["crush"], yield: 1.0, power: Some((Steam, 12.0)))),
+        // LV: electricity.
+        (block: "dynamo", role: Generator(carrier: Electric, tier: 1, power: 16.0, source: Converts(from: Rotation, ratio: 1.25))),
+        (block: "lv_cable", role: Conduit(carrier: Electric, tier: 1)),
+        (block: "battery_bank", role: Store(carrier: Electric, tier: 1, capacity: 100000.0, rate: 32.0)),
+        (block: "electric_furnace", role: Processor(kinds: ["smelt"], speed: 2.0, power: Some((Electric, 8.0)), tier: 1)),
+        (block: "macerator", role: Processor(kinds: ["crush"], speed: 2.0, yield: 1.0, power: Some((Electric, 16.0)), tier: 1)),
+    ],
+    // What burns, and for how many seconds at a generator's full output; the first that
+    // takes an item counts.
+    fuels: [
+        (item: "coal_ore|charcoal", seconds: 80.0),
+        (item: "tag:log", seconds: 15.0),
+        (item: "tag:planks", seconds: 4.0),
+        (item: "tag:fuel", seconds: 2.0),
+    ],
+)

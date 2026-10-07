@@ -9,6 +9,7 @@ mod fishing;
 mod death;
 mod hearth;
 mod journal;
+mod machines;
 mod quests;
 mod regrow;
 mod farm;
@@ -289,6 +290,8 @@ pub(crate) struct Server {
     items: items::Items,
     /// Crops players planted.
     farm: farm::Farm,
+    /// Machines players built, and the power between them.
+    factory: voxmar_engine::factory::Factory,
     /// Blocks players placed that would teach a skill if broken (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
     /// Picked wild plants waiting to grow back (see `regrow`).
@@ -395,6 +398,7 @@ impl Server {
             executor: Executor::default(),
             items,
             farm,
+            factory: voxmar_engine::factory::Factory::default(),
             placed,
             regrowing,
             arrival: Instant::now(),
@@ -423,6 +427,11 @@ impl Server {
             Vec::new()
         });
         server.restore_creatures(saved_creatures);
+        let saved_machines = server.save.as_ref().map_or(Ok(Vec::new()), |save| save.read_machines()).unwrap_or_else(|e| {
+            tracing::error!("could not load machines: {e}");
+            Vec::new()
+        });
+        server.restore_machines(saved_machines);
         server
     }
 
@@ -562,6 +571,9 @@ impl Server {
         if let Err(e) = save.write_creatures(&self.saved_creatures()) {
             tracing::error!("could not save creatures: {e}");
         }
+        if let Err(e) = save.write_machines(&self.saved_machines()) {
+            tracing::error!("could not save machines: {e}");
+        }
         let crops = &self.content.crops;
         if let Err(e) = save.write_crops(&self.farm.saved(|id| crops.get(id).def.name.clone())) {
             tracing::error!("could not save crops: {e}");
@@ -682,9 +694,10 @@ impl Server {
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
         let mut done = Vec::with_capacity(changes.len());
         for &(pos, block) in changes {
-            if self.world.set_block(pos, block).is_some() {
+            if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
                 done.push((pos, block));
+                self.machine_changed(pos, old, block);
             }
         }
         for &(pos, _) in &done {
@@ -707,8 +720,9 @@ impl Server {
     /// change with the column), and wakes any fluid it lets flow.
     pub(crate) fn set_block(&mut self, pos: IVec3, block: BlockId) {
         let column = ColumnPos::of_block(pos);
-        if self.world.set_block(pos, block).is_some() {
+        if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
+            self.machine_changed(pos, old, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }

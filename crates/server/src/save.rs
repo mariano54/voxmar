@@ -10,6 +10,7 @@
 //! - `items.ron`: the dropped items lying about, by item name.
 //! - `crops.ron`: the crops players planted, by crop name, with their stage and the tick
 //!   their next is due.
+//! - `machines.ron`: the machines players built, by block name, with what they hold.
 //!
 //! Every file is written to a temporary file and then renamed over the old one, so a crash
 //! never leaves a half-written file behind.
@@ -38,6 +39,7 @@ const META_FILE: &str = "world.ron";
 const CREATURES_FILE: &str = "creatures.ron";
 const ITEMS_FILE: &str = "items.ron";
 const CROPS_FILE: &str = "crops.ron";
+const MACHINES_FILE: &str = "machines.ron";
 /// Column files start with this, followed by the zlib stream. Bump the digit when the
 /// layout changes.
 const COLUMN_MAGIC: &[u8; 4] = b"vxc4";
@@ -387,6 +389,21 @@ impl WorldSave {
     pub fn write_crops(&self, crops: &[SavedCrop]) -> io::Result<()> {
         let text = ron::ser::to_string(crops).map_err(io::Error::other)?;
         write_atomic(&self.dir.join(CROPS_FILE), text.as_bytes())
+    }
+
+    /// The machines, none if the world has no machines file.
+    pub fn read_machines(&self) -> io::Result<Vec<crate::machines::SavedMachine>> {
+        let path = self.dir.join(MACHINES_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(source) => ron::from_str(&source).map_err(|e| invalid(&path, e)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn write_machines(&self, machines: &[crate::machines::SavedMachine]) -> io::Result<()> {
+        let text = ron::ser::to_string(machines).map_err(io::Error::other)?;
+        write_atomic(&self.dir.join(MACHINES_FILE), text.as_bytes())
     }
 
     /// The dropped items lying about, none if the world has no items file.

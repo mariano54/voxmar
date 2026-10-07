@@ -48,6 +48,8 @@ pub struct Content {
     pub fishing: Arc<FishingRegistry>,
     /// Structures recognised from patterns of blocks (the Homestead Hearth).
     pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
+    /// Machines, what they burn and what they make (`machines.ron`, `processing.ron`).
+    pub machines: Arc<crate::machine::MachineRegistry>,
     /// The quest book.
     pub quests: Arc<crate::quest::QuestRegistry>,
     /// What it takes to study and master the journal's entries.
@@ -99,6 +101,8 @@ impl Content {
         let mut regrowth = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
+        let mut machines = Vec::new();
+        let mut processes = Vec::new();
         let mut quests = Vec::new();
         let mut files = Vec::new();
         for package in &packages {
@@ -134,10 +138,11 @@ impl Content {
                         creatures.extend(CreatureRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "recipes.ron" => {
+                    // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (machines).
+                    file if file.starts_with("recipes") => {
                         recipes.extend(RecipeRegistry::read(package, &source)?);
                         // Kept with the other files too, so the fingerprint covers it.
-                        files.push(ContentFile { package: package.clone(), name, source });
+                        files.push(ContentFile { package: package.clone(), name: file.to_owned(), source });
                     }
                     "fishing.ron" => {
                         fishing.push(FishingRegistry::read(package, &source)?);
@@ -149,6 +154,14 @@ impl Content {
                     }
                     "multiblocks.ron" => {
                         multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "machines.ron" => {
+                        machines.push(crate::machine::MachineRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "processing.ron" => {
+                        processes.push(crate::machine::MachineRegistry::read_processes(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "journal.ron" => {
@@ -196,6 +209,7 @@ impl Content {
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
+        let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
@@ -214,6 +228,7 @@ impl Content {
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             multiblocks: Arc::new(multiblocks),
+            machines: Arc::new(machines),
             quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),

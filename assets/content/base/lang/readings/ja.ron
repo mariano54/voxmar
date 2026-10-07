@@ -443,4 +443,22 @@
     "block.base.bright_feather": "あざやかなはね",
     "block.base.spore_cap": "ほうしのかさ",
     "block.base.beetle_crystal": "こうちゅうのすいしょう",
+
+    // Machines and their parts.
+    "block.base.water_wheel": "すいしゃ",
+    "block.base.windmill": "ふうしゃ",
+    "block.base.shaft": "かいてんじく",
+    "block.base.steam_pipe": "じょうきかん",
+    "block.base.steam_crusher": "じょうきふんさいき",
+    "block.base.dynamo": "はつでんき",
+    "block.base.lv_cable": "ていあつケーブル",
+    "block.base.battery_bank": "ちくでんち",
+    "block.base.electric_furnace": "でんきろ",
+    "block.base.macerator": "ふんさいき",
+    "block.base.copper_dust": "どうのこな",
+    "block.base.iron_dust": "てつのこな",
+    "block.base.copper_plate": "どうばん",
+    "block.base.iron_plate": "てっぱん",
+    "block.base.bronze_plate": "せいどうばん",
+    "block.base.copper_wire": "どうせん",
 }

@@ -1,0 +1,75 @@
+// Machines (machines.ron says what each does, processing.ron what they make,
+// recipes_machines.ron how they are built) and the parts and dusts they work with.
+// Every machine is tagged `machine`; right click one to put in what is in your hand, or
+// with an empty hand to take what it made (`base:use_machine`).
+(
+    blocks: [
+        // The Bronze age: rotation. Wheels and windmills turn shafts; shafts turn machines.
+        (
+            name: "water_wheel", sound: Wood, textures: Sides(top: "water_wheel_top", bottom: "water_wheel_top", side: "water_wheel_side"),
+            hardness: 2.5, color: (120, 90, 60), tags: ["machine", "wood", "building"],
+        ),
+        (
+            name: "windmill", sound: Wood, textures: Sides(top: "windmill_top", bottom: "windmill_top", side: "windmill_side"),
+            hardness: 2.5, color: (200, 190, 170), tags: ["machine", "wood", "building"],
+        ),
+        (
+            name: "shaft", sound: Wood, textures: Column(end: "shaft_end", side: "shaft_side"),
+            hardness: 1.5, color: (150, 115, 70), tags: ["machine", "wood", "building"],
+        ),
+        (
+            name: "trip_hammer", sound: Stone, textures: Sides(top: "trip_hammer_top", bottom: "cobblestone", side: "trip_hammer_side"),
+            hardness: 3.0, color: (130, 110, 90), tags: ["machine", "building"],
+        ),
+        // The Iron and Steam ages: boilers make steam, pipes carry it, engines turn it back
+        // into rotation and steam machines work with it directly.
+        (
+            name: "boiler", sound: Stone, textures: Sides(top: "boiler_top", bottom: "iron_casing", side: "boiler_side"),
+            hardness: 3.5, color: (90, 80, 75), light: 6, tags: ["machine", "heat", "building"],
+        ),
+        (
+            name: "steam_pipe", sound: Stone, textures: Column(end: "steam_pipe_end", side: "steam_pipe_side"),
+            hardness: 2.0, color: (180, 110, 70), tags: ["machine", "building"],
+        ),
+        (
+            name: "beam_engine", sound: Stone, textures: Sides(top: "beam_engine_top", bottom: "iron_casing", side: "beam_engine_side"),
+            hardness: 3.5, color: (100, 100, 105), tags: ["machine", "building"],
+        ),
+        (
+            name: "steam_crusher", sound: Stone, textures: Sides(top: "steam_crusher_top", bottom: "iron_casing", side: "steam_crusher_side"),
+            hardness: 3.5, color: (110, 105, 100), tags: ["machine", "building"],
+        ),
+        // The LV age: dynamos turn rotation into electricity, cables carry it, battery
+        // banks keep it.
+        (
+            name: "dynamo", sound: Stone, textures: Sides(top: "dynamo_top", bottom: "iron_casing", side: "dynamo_side"),
+            hardness: 3.5, color: (120, 90, 70), tags: ["machine", "building"],
+        ),
+        (
+            name: "lv_cable", sound: Wood, textures: Column(end: "lv_cable_end", side: "lv_cable_side"),
+            hardness: 1.0, color: (60, 60, 60), tags: ["machine", "building"],
+        ),
+        (
+            name: "battery_bank", sound: Stone, textures: Sides(top: "battery_bank_top", bottom: "iron_casing", side: "battery_bank_side"),
+            hardness: 3.5, color: (90, 95, 110), tags: ["machine", "building"],
+        ),
+        (
+            name: "electric_furnace", sound: Stone, textures: Sides(top: "iron_casing", bottom: "iron_casing", side: "electric_furnace_side"),
+            hardness: 3.5, color: (110, 100, 100), light: 4, tags: ["machine", "building"],
+        ),
+        (
+            name: "macerator", sound: Stone, textures: Sides(top: "macerator_top", bottom: "iron_casing", side: "macerator_side"),
+            hardness: 3.5, color: (100, 105, 110), tags: ["machine", "building"],
+        ),
+    ],
+    families: [
+        // Crushed ore: twice the metal from an ore, smelted like the ore.
+        (template: "drop", name: "copper_dust", tags: ["dust", "metal:copper"], all: (color: (200, 120, 80))),
+        (template: "drop", name: "iron_dust", tags: ["dust", "metal:iron"], all: (color: (150, 140, 135))),
+        // Plates hammered from ingots, and wire drawn from copper: what machines are built of.
+        (template: "drop", name: "copper_plate", tags: ["plate", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "iron_plate", tags: ["plate", "metal:iron"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "bronze_plate", tags: ["plate", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "copper_wire", tags: ["wire", "metal:copper"], all: (color: (200, 120, 70))),
+    ],
+)

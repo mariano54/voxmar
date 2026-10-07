@@ -1,0 +1,5 @@
+// English names the base package's ids do not spell out on their own (the rest come from
+// the id: "water_wheel" is "Water wheel"); the words themselves are in core's lang.
+{
+    "block.base.lv_cable": "LV cable",
+}

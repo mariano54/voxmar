@@ -1135,8 +1135,9 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     }
     let crucible = client.content.blocks.expect("base:crucible");
     let (ore, ingot) = (client.content.blocks.expect("base:copper_ore"), client.content.blocks.expect("base:copper_ingot"));
-    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.inventory.get(0).is_some());
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    // Wait for the ore itself: the starting kit fills slot 0 before /clear and /give arrive.
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && count(c, ore) == 2);
     let smelt = |client: &mut Client| {
         client.chat.clear();
         client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
@@ -1174,4 +1175,44 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
     client.pump_until(|c| c.health == 0);
     client.propose("core:respawn", ActionTarget::None);
     client.pump_until(|c| c.health > 0 && c.teleported.is_some_and(|p| p.distance(bag.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 0.1));
+}
+
+#[test]
+fn a_boiler_drives_a_steam_crusher_that_doubles_ore() {
+    let mut client = Client::join();
+    let boiler = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+    let crusher = boiler + IVec3::X;
+    for line in ["/clear", "/fill ~3 ~ ~-1 ~4 ~1 ~1 air", "/setblock ~3 ~ ~ boiler", "/setblock ~4 ~ ~ steam_crusher"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (coal, ore, dust) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ore"), blocks.expect("base:copper_dust"));
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let use_at = |client: &mut Client, at: IVec3| {
+        client.chat.clear();
+        client.connection.send(ClientMessage::Input(PlayerInput { position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:use_machine", ActionTarget::Block { block: at, face: Face::NegX });
+    };
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none) && c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
+    // A crusher with nothing to work says so; coal in hand goes into the boiler.
+    use_at(&mut client, crusher);
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Steam Crusher: idle")));
+    client.ok("/give coal_ore 2");
+    client.pump_until(|c| count(c, coal) == 2);
+    use_at(&mut client, boiler);
+    client.pump_until(|c| count(c, coal) == 0 && c.chat.iter().any(|(_, t)| t.contains("Put in 2")));
+    // Ore in hand goes into the crusher, which works it on the boiler's steam.
+    client.ok("/give copper_ore 1");
+    client.pump_until(|c| count(c, ore) == 1);
+    use_at(&mut client, crusher);
+    client.pump_until(|c| count(c, ore) == 0 && c.chat.iter().any(|(_, t)| t.contains("making")));
+    // With an empty hand, what it made comes out: two dust from one ore.
+    let started = Instant::now();
+    while count(&client, dust) == 0 {
+        assert!(started.elapsed() < Duration::from_secs(30), "the crusher made nothing: {:?}", client.chat);
+        std::thread::sleep(Duration::from_millis(500));
+        use_at(&mut client, crusher);
+        client.pump_until(|c| !c.chat.is_empty());
+    }
+    assert_eq!(count(&client, dust), 2);
 }
