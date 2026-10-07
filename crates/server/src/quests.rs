@@ -30,8 +30,8 @@ impl Server {
             let (finished, states) = {
                 let player = &self.players[&id];
                 let (skills, blocks) = (&self.content.skills, &self.content.blocks);
-                // A skill as quests name it, `mining`, is core's unless it says whose.
-                let level = |name: &str| if name.contains(':') { skills.level_of(&player.skills, name) } else { skills.level_of(&player.skills, &format!("core:{name}")) };
+                // Names are full ones, resolved as content loaded (`QuestRegistry::resolve`).
+                let level = |name: &str| skills.level_of(&player.skills, name);
                 let carried = |want: &str| {
                     let matches = |item: voxmar_engine::block::BlockId| {
                         let def = blocks.def(item);
@@ -72,8 +72,7 @@ impl Server {
         for reward in &quest.rewards {
             match reward {
                 Reward::Xp(skill, xp) => {
-                    let skill = if skill.contains(':') { skill.clone() } else { format!("core:{skill}") };
-                    if let Some(id) = self.content.skills.id(&skill) {
+                    if let Some(id) = self.content.skills.id(skill) {
                         self.grant_xp(agent, id, *xp);
                     }
                 }

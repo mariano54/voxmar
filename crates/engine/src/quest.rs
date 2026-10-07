@@ -13,7 +13,8 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::RegistryError;
+use crate::block::{BlockRegistry, RegistryError};
+use crate::skill::SkillRegistry;
 use crate::journal::{Journal, Page};
 
 /// Something a player must have done.
@@ -229,6 +230,48 @@ impl QuestRegistry {
         Ok(Self { quests, tracker })
     }
 
+    /// Checks every skill, item and tag the quests' goals and rewards name against the
+    /// loaded skills and blocks, and writes each as the full name it found, so the server
+    /// looks names up exactly. A name nothing has (a typo in a mod's quests.ron) is refused
+    /// with the quest it is in, rather than leaving a quest that never finishes or a reward
+    /// that never comes.
+    pub fn resolve(&mut self, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<(), RegistryError> {
+        for quest in &mut self.quests {
+            let namespace = quest.name.split(':').next().unwrap_or("").to_owned();
+            let refuse = |what: &str, name: &str| RegistryError(format!("quest {} names the {what} `{name}`, which no package has", quest.name));
+            let skill = |name: &mut String| -> Result<(), RegistryError> {
+                *name = skills.named(&namespace, name).map(|id| skills.get(id).name.clone()).ok_or_else(|| refuse("skill", name))?;
+                Ok(())
+            };
+            // An item, `tag:TAG` (some block has it), or `any` where the goal counts anything.
+            let item = |name: &mut String, any: bool| -> Result<(), RegistryError> {
+                if any && name == "any" {
+                    return Ok(());
+                }
+                if let Some(tag) = name.strip_prefix("tag:") {
+                    return if blocks.ids().any(|id| blocks.def(id).has_tag(tag)) { Ok(()) } else { Err(refuse("tag", tag)) };
+                }
+                *name = item_name(blocks, &namespace, name).ok_or_else(|| refuse("item", name))?;
+                Ok(())
+            };
+            for goal in quest.tasks.iter_mut().flatten() {
+                match goal {
+                    Goal::Level(name, _) => skill(name)?,
+                    Goal::Have(name, _) => item(name, false)?,
+                    Goal::Craft(name, _) | Goal::Cook(name, _) => item(name, true)?,
+                    _ => {}
+                }
+            }
+            for reward in &mut quest.rewards {
+                match reward {
+                    Reward::Xp(name, _) => skill(name)?,
+                    Reward::Item(name, _) => item(name, false)?,
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// How the interface follows pinned quests.
     pub fn tracker(&self) -> Tracker {
         self.tracker
@@ -276,6 +319,23 @@ impl QuestRegistry {
                 tasks: q.tasks.iter().map(|t| t.iter().map(|g| progress.goal(g)).collect()).collect(),
             })
             .collect()
+    }
+}
+
+/// The item a quest in package `namespace` means by `name`: a full name as written, else
+/// the package's own block of that name, else the one block of that name in any package.
+fn item_name(blocks: &BlockRegistry, namespace: &str, name: &str) -> Option<String> {
+    if name.contains(':') {
+        return blocks.id(name).map(|_| name.to_owned());
+    }
+    let own = format!("{namespace}:{name}");
+    if blocks.id(&own).is_some() {
+        return Some(own);
+    }
+    let mut named = blocks.ids().map(|id| &blocks.def(id).name).filter(|full| full.rsplit(':').next() == Some(name));
+    match (named.next(), named.next()) {
+        (Some(only), None) => Some(only.clone()),
+        _ => None,
     }
 }
 
@@ -334,6 +394,54 @@ mod tests {
         assert!(QuestRegistry::new(vec![none]).is_err());
         let clear = QuestRegistry::read("core", "(tracker: (backing_alpha: 1.5))").unwrap();
         assert!(QuestRegistry::new(vec![clear]).is_err());
+    }
+
+    fn named(blocks: &[(&str, &[&str])]) -> (BlockRegistry, SkillRegistry) {
+        let defs = blocks.iter().map(|(name, tags)| crate::block::BlockDef { name: name.to_string(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() }).collect();
+        let mut skills = SkillRegistry::default();
+        let core = r#"(curve: RuneScape(max: 99), skills: [(name: "mining", title: "", description: ""), (name: "cooking", title: "", description: ""), (name: "fishing", title: "", description: "")])"#;
+        skills.extend("core", core).unwrap();
+        skills.extend("sky", r#"(skills: [(name: "gliding", title: "", description: ""), (name: "fishing", title: "", description: "")])"#).unwrap();
+        (crate::block::BlockRegistry::new(defs).unwrap(), skills)
+    }
+
+    fn resolved(namespace: &str, quest: &str) -> Result<QuestRegistry, RegistryError> {
+        let (blocks, skills) = named(&[("base:torch", &[]), ("base:oak_log", &["log"]), ("base:stone_pickaxe", &[]), ("base:stone_axe", &[]), ("sky:torch", &[]), ("sky:cloud", &[])]);
+        let source = format!("(quests: [{quest}])");
+        let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
+        quests.resolve(&blocks, &skills)?;
+        Ok(quests)
+    }
+
+    #[test]
+    fn a_skill_item_or_tag_no_package_has_is_refused_naming_the_quest() {
+        let quest = |tasks: &str, rewards: &str| format!(r#"(name: "dig", age: "nomad", branch: "main", title: "", why: "", tasks: [[{tasks}]], rewards: [{rewards}])"#);
+        let refused = |tasks: &str, rewards: &str| resolved("base", &quest(tasks, rewards)).err().map(|e| e.0);
+        assert_eq!(refused(r#"Level("minning", 10)"#, ""), Some("quest base:dig names the skill `minning`, which no package has".to_owned()));
+        assert_eq!(refused("Home", r#"Xp("cookin", 5.0)"#), Some("quest base:dig names the skill `cookin`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Have("tourch", 1)"#, ""), Some("quest base:dig names the item `tourch`, which no package has".to_owned()));
+        assert_eq!(refused("Home", r#"Item("base:tourch", 1)"#), Some("quest base:dig names the item `base:tourch`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Have("tag:logs", 1)"#, ""), Some("quest base:dig names the tag `logs`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Craft("stone_shovel", 1)"#, ""), Some("quest base:dig names the item `stone_shovel`, which no package has".to_owned()));
+        // `any` counts anything only where a goal counts things made; nobody carries "any".
+        assert!(refused(r#"Cook("any", 1)"#, "").is_none());
+        assert!(refused(r#"Have("any", 1)"#, "").is_some());
+        // Goals the loaded blocks and skills cannot check (catches, kills, visits) pass as written.
+        assert!(refused(r#"Catch("Kinds", 3), Visit(2)"#, "").is_none());
+    }
+
+    #[test]
+    fn short_names_become_the_full_names_the_server_looks_up() {
+        let base = resolved("base", r#"(name: "dig", age: "nomad", branch: "main", title: "", why: "", tasks: [[Level("mining", 5), Have("tag:log", 2), Craft("stone_pickaxe", 1)]], rewards: [Xp("cooking", 9.0), Item("stone_axe", 1), Item("torch", 2)])"#).unwrap();
+        let dig = base.get("base:dig").unwrap();
+        assert_eq!(dig.tasks, vec![vec![Goal::Level("core:mining".into(), 5), Goal::Have("tag:log".into(), 2), Goal::Craft("base:stone_pickaxe".into(), 1)]]);
+        assert_eq!(dig.rewards, vec![Reward::Xp("core:cooking".into(), 9.0), Reward::Item("base:stone_axe".into(), 1), Reward::Item("base:torch".into(), 2)]);
+        // A package's own skill and block of a name come before core's and others'; a block
+        // only one package has is that one; a name two others share is refused, not guessed.
+        let sky = resolved("sky", r#"(name: "fly", age: "nomad", branch: "main", title: "", why: "", tasks: [[Level("fishing", 2), Level("gliding", 2), Have("torch", 1), Have("stone_axe", 1)]])"#).unwrap();
+        assert_eq!(sky.get("sky:fly").unwrap().tasks[0], vec![Goal::Level("sky:fishing".into(), 2), Goal::Level("sky:gliding".into(), 2), Goal::Have("sky:torch".into(), 1), Goal::Have("base:stone_axe".into(), 1)]);
+        let elsewhere = r#"(name: "far", age: "nomad", branch: "main", title: "", why: "", tasks: [[Have("torch", 1)]])"#;
+        assert!(resolved("deep", elsewhere).is_err());
     }
 
     #[test]

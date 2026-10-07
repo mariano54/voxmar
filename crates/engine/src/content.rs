@@ -208,6 +208,8 @@ impl Content {
         let fishing = FishingRegistry::new(fishing, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
+        let mut quests = crate::quest::QuestRegistry::new(quests)?;
+        quests.resolve(&blocks, &skills)?;
         crate::inventory::set_stack_limits(stack_limits(&blocks, &stacking)?);
         crate::inventory::set_pouches(pouches(&blocks));
         Ok(Self {
@@ -227,7 +229,7 @@ impl Content {
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             multiblocks: Arc::new(multiblocks),
-            quests: Arc::new(crate::quest::QuestRegistry::new(quests)?),
+            quests: Arc::new(quests),
             journal: Arc::new(crate::journal::JournalRules::merge(journal)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),

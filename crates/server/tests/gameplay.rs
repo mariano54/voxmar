@@ -1366,8 +1366,9 @@ fn join_content(content: Content) -> Client {
     Client::greet_content(connection, "test", Some(server), None, content)
 }
 
+/// Short names, as shipped quests write them: `stick` and `torch` are base's, found at load.
 const TEST_QUESTS: &str = r#"(quests: [
-    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("base:stick", 3)]], rewards: [Item("base:torch", 2)]),
+    (name: "sticks", age: "nomad", branch: "main", title: "Three Sticks", why: "", tasks: [[Have("stick", 3)]], rewards: [Item("torch", 2)]),
     (name: "miner", age: "nomad", branch: "main", title: "Miner", why: "", tasks: [[Level("mining", 10)]], rewards: [Xp("crafting", 50.0)]),
     (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
 ])"#;
