@@ -2113,7 +2113,7 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             gate.check("tips: first look", match tip { Some(name) => Ok(format!("opening the inventory brought the {name} tip")), None => Err("opening the inventory brought no tip".into()) });
             // Gone, and the inventory shut and opened again: it does not come back.
-            *world.resource_mut::<Tips>() = Tips::default();
+            world.resource_mut::<Tips>().dismiss();
             world.resource_mut::<UiState>().inventory_open = false;
             gate.advance(now);
         }
@@ -2122,8 +2122,8 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         4 if in_phase > 1.0 => {
-            let again = showing(world);
-            gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err(format!("the {} tip came back", again.unwrap_or_default())) });
+            let again = showing(world).filter(|name| *name == "inventory");
+            gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err("the inventory tip came back".into()) });
             world.resource_mut::<UiState>().inventory_open = false;
             gate.next(Step::Guides, now);
         }

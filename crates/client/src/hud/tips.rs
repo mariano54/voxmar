@@ -51,6 +51,14 @@ pub struct Tips {
     levels: Option<Vec<u8>>,
 }
 
+impl Tips {
+    /// Puts the showing tip away at once, as if its time were up long ago (for the gate).
+    pub fn dismiss(&mut self) {
+        self.showing = None;
+        self.gone_at = None;
+    }
+}
+
 /// A tip a screenshot shows and holds (`--tip`).
 #[derive(Resource)]
 pub struct HeldTip(pub String);

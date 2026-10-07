@@ -1,12 +1,11 @@
-//! The creature under the crosshair shows its combat level over its head, coloured against
-//! ours as the target readout colours it (green for weaker, gold for even, red for
-//! stronger), with a bar of its health beneath. Only that one: a creature behind the ground
-//! is never pointed at, so no level shows through it.
+//! The creature under the crosshair, out to `SIGHT` blocks, shows its combat level over its
+//! head, coloured against ours as the target readout colours it (green for weaker, gold for
+//! even, red for stronger), with a bar of its health beneath. Only that one, and only in
+//! plain sight: a solid block in the way hides it.
 
 use bevy::prelude::*;
 
 use crate::creatures::Creatures;
-use crate::interact::Target;
 use crate::lang::{Locale, TightLine};
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
@@ -22,6 +21,8 @@ impl Plugin for LevelsPlugin {
     }
 }
 
+/// How far off a creature pointed at shows its level, in blocks.
+const SIGHT: f32 = 16.0;
 /// How far over its head the level sits, in blocks.
 const ABOVE: f32 = 0.45;
 /// The health bar's width and height.
@@ -59,7 +60,7 @@ fn label(
     launch: Res<Launch>,
     locale: Res<Locale>,
     creatures: Res<Creatures>,
-    target: Res<Target>,
+    world: Res<crate::world::ClientWorld>,
     scale: Res<UiScale>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut plate: Query<(&mut Node, &mut Visibility), With<LevelLabel>>,
@@ -68,7 +69,10 @@ fn label(
 ) {
     let Ok((mut node, mut visibility)) = plate.single_mut() else { return };
     let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
-    let pointed = target.creature.filter(|_| !screen).and_then(|id| {
+    // The nearest creature along the crosshair, before any solid block (grass is seen through).
+    let (eye_at, look) = (player.eye(), player.look_direction().normalize_or_zero());
+    let block = voxmar_engine::physics::raycast(eye_at, look, SIGHT, |p| world.block(p).is_some_and(|b| world.registry.info(b).solid)).map_or(f32::MAX, |hit| hit.distance);
+    let pointed = creatures.pointed(&launch, eye_at, look, SIGHT, block).filter(|_| !screen).and_then(|id| {
         let (_, kind, feet) = creatures.living().find(|(living, ..)| *living == id)?;
         Some((kind, feet, creatures.sighting(id)?.health))
     });
