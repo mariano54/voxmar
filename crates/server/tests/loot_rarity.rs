@@ -14,6 +14,9 @@
 //! quest, breaking another block) may be commoner, never rarer. A find (a drop's own rarity,
 //! which decides its level bonus) is never rarer than its source's class, and may be
 //! commoner: staples stay Common finds, keeping their extra-count bonus.
+//!
+//! A cooked food takes its raw input's label (draft 101): cooked duck is as uncommon as raw
+//! duck. So does whatever cooking makes of a creature's drop or product.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -84,5 +87,30 @@ fn creature_drops_are_labelled_by_their_easiest_source() {
             wrong.push(format!("{}: labelled {:?}, but its easiest source, {source}, makes it {:?}{}", def.name, def.rarity, CLASSES[*class], if other { "" } else { " (only creatures drop it)" }));
         }
     }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn cooked_food_takes_its_raw_inputs_label() {
+    let content = voxmar_server::load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let tagged = |item: BlockId, tag: &str| blocks.def(item).tags.iter().any(|t| t == tag);
+    // What creatures give: their drops and kept animals' products.
+    let from_creatures: BTreeSet<BlockId> = content.creatures.iter().flat_map(|(_, c)| c.loot.iter().map(|l| l.item).chain(c.products.iter().copied())).collect();
+    let mut wrong = Vec::new();
+    let mut checked = 0;
+    // Every recipe that cooks a creature's drop or product, or one raw item into a cooked
+    // one; a recipe for a whole tag has no one input to follow.
+    for (input, recipe) in content.cooking.iter().filter(|(_, r)| !r.def.input.starts_with("tag:")) {
+        if !from_creatures.contains(&input) && !(tagged(input, "raw") && tagged(recipe.output, "cooked")) {
+            continue;
+        }
+        checked += 1;
+        let (raw, cooked) = (blocks.def(input), blocks.def(recipe.output));
+        if raw.rarity != cooked.rarity {
+            wrong.push(format!("{} is {:?} but {} is {:?}", cooked.name, cooked.rarity, raw.name, raw.rarity));
+        }
+    }
+    assert!(checked >= 20, "only {checked} raw foods are cooked");
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
