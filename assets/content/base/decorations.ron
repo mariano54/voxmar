@@ -55,7 +55,7 @@
         (
             // Lumps of the rock beneath, in fields of them, mossy in damp woods.
             name: "boulder", tags: ["forest", "grassland", "mountain", "highland", "tundra", "rocky"],
-            shape: Boulder(radius: (1.2, 2.0), stones: Stones, moss: 0.7),
+            shape: Boulder(radius: (1.6, 2.2), stones: Stones, moss: 0.7),
             spacing: 40.0,
             follows: [(Noise((name: "boulder_fields", scale: 140.0, octaves: 2)), -0.15, 0.45)],
         ),
@@ -116,25 +116,25 @@
             follows: [(Aether, 0.4, 0.9), (Moisture, 0.8, 1.1), (Slope, 2.0, 1.0)],
         ),
 
-        // --- Bushes -------------------------------------------------------------------
+        // --- Bushes (spacings ×√2, half as many, with the plant density cut) ------------
         (
             // Scrub at the edges of stands and in the forest's gaps.
             name: "undergrowth", tags: ["forest"],
             shape: Bush(radius: (0.9, 1.7)),
-            spacing: 16.0,
+            spacing: 22.6,
             follows: [(Stand, 0.55, 0.15)],
         ),
         (
             // The mantle of shrubs that rings a clearing, reaching further in than trees.
             name: "clearing_edge", tags: ["forest"],
             shape: Bush(radius: (1.0, 1.9)),
-            spacing: 12.0,
+            spacing: 17.0,
             follows: [(Clearing, 0.05, 0.3), (Clearing, 0.85, 0.55)],
         ),
         (
             name: "meadow_bush", tags: ["grassland", "savanna"],
             shape: Bush(radius: (0.9, 1.6)),
-            spacing: 56.0,
+            spacing: 79.0,
         ),
 
         // --- Tree ornaments -----------------------------------------------------------
