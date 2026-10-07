@@ -33,7 +33,12 @@ struct VertexOutput {
     // Where the blade looks up its shadow: just above the ground it grows from, so the
     // ground's own depth never shadows it.
     @location(4) shadow_at: vec3<f32>,
+    // Across the blade and up it from its root, in blocks, and its height: for its texels.
+    @location(5) blade: vec3<f32>,
 };
+
+// Texels a block, as the 32×32 packs draw: a blade is shaded texel by texel, not smoothly.
+const TEXELS: f32 = 32.0;
 
 fn hash(seed: vec3<u32>) -> vec4<f32> {
     var v = vec4(seed, seed.x ^ seed.z) * 1664525u + 1013904223u;
@@ -109,7 +114,8 @@ fn vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: 
     // Darker at the root where blades crowd, lighter at the tip, and each its own shade. A
     // gust sweeping over shows as a lighter wave, as bent blades catch the sky.
     let sheen = 1.0 + 0.16 * (wind.gust - 0.5) * smoothstep(0.0, 0.3, strength);
-    out.albedo = grass_colour(chunk.w, local) * mix(0.42, 0.95, up) * mix(0.8, 1.12, b.w) * sheen;
+    out.albedo = grass_colour(chunk.w, local) * mix(0.8, 1.12, b.w) * sheen;
+    out.blade = vec3(side * width, up * height, height);
     out.light = vec2(f32((seed >> 19u) & 15u) / 15.0, f32((seed >> 15u) & 15u) / 15.0);
     out.normal = normalize(vec3(-across.y * 0.4, 1.0, across.x * 0.4));
     out.shadow_at = vec3(world.x, max(world.y, root.y + 0.12), world.z);
@@ -118,6 +124,12 @@ fn vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: 
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = shade_normal(in.albedo, in.shadow_at, normalize(in.normal), 0.92, in.light.x, in.light.y, 1.0, true, true);
+    // Darker at the root than the tip in steps of a texel, and each texel a little lighter
+    // or darker than the next, as a blade drawn in a block texture's pixels is.
+    let texel = floor(in.blade.xy * TEXELS);
+    let up = saturate((texel.y + 0.5) / (max(in.blade.z, 0.01) * TEXELS));
+    let grain = fract(sin(dot(texel + vec2(in.blade.z * 97.0, 0.0), vec2(12.9898, 78.233))) * 43758.5453);
+    let albedo = in.albedo * mix(0.42, 0.95, up) * mix(0.78, 1.14, grain);
+    let color = shade_normal(albedo, in.shadow_at, normalize(in.normal), 0.92, in.light.x, in.light.y, 1.0, true, true);
     return vec4(apply_fog(color, in.world_position), 1.0);
 }
