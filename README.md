@@ -178,8 +178,10 @@ language complete, every key the code names defined, and every character drawn.
 T opens the console to chat with everyone on the server; / opens it with a command. Up and down
 recall earlier lines, Tab completes a command's name, Enter sends and Esc closes. Replies and
 chat show above the hotbar and fade after ten seconds. The server checks and runs commands,
-like actions: admins (the singleplayer host, and players named with `--admin` on a dedicated
-server) may use them all, everyone else `/help`, `/seed`, `/biome` and `/list`.
+like actions: admins (the singleplayer host, players named with `--admin` on a dedicated
+server who play on its machine, and anyone an admin makes one with `/op NAME`) may use them all,
+everyone else `/help`, `/seed`, `/biome` and `/list`. Chat (and a non-admin's commands) is
+limited to a burst of eight lines and two a second after it.
 
 - `/time` tells the time; `/time set sunrise|day|morning|noon|afternoon|sunset|dusk|night|midnight|dawn|TICKS`
   moves forward to that time of day (a day is 24000 ticks, 0 is sunrise), `/time add 100|30s|2h|1d`
@@ -234,7 +236,10 @@ to title (Disconnect on a server) and Quit game. Settings are saved to `voxmar/s
 the OS config directory (`~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
 `~/.config` on Linux, `%APPDATA%` on Windows; `$VOXMAR_CONFIG` replaces `…/voxmar`);
 `--view-distance` and `--no-vsync` override them. On a dedicated server, name admins with
-`--admin NAME` (repeatable), and cap render distance with `--view-distance N` (default 32).
+`--admin NAME` (repeatable; names are not checked, so it counts only for players on the server's
+own machine, and `op NAME` typed at the server makes anyone else an admin until they leave), and
+cap render distance with `--view-distance N` (default 32). Each name plays once at a time, and
+a server takes at most 64 players.
 
 ### Saved worlds
 
@@ -249,7 +254,9 @@ Singleplayer worlds live in `voxmar/worlds/<name>/` next to the settings:
 
 The server saves edited columns, players and the time every 30 seconds, when a player leaves
 and when it stops (leaving to the title screen or quitting). Every file is written to a
-temporary file and renamed, so a crash never leaves half a file. Saved columns are unloaded
+temporary file and renamed, so a crash never leaves half a file, and a file that cannot be read
+is never written over: it is moved aside to `<file>.corrupt-<unix time>` and the error logged
+(a player whose file it was starts afresh and is told so). Saved columns are unloaded
 like any other. The dedicated server keeps its world in `--world DIR` (default `./world`),
 created with `--seed N` and, given `--no-flight`, in survival mode if it does not exist yet;
 type `stop` to save and quit. Anything else typed there runs as a command, as an admin

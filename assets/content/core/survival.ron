@@ -1,0 +1,29 @@
+// The numbers survival runs on, which the server reads (one package sets them). Health is
+// in half hearts; temperatures in °C.
+(
+    // Health a player starts with, before their Hitpoints level sets it (twice the level).
+    max_health: 20,
+    // What a new player starts with: item and count. Items no package defines are left out.
+    starter_kit: [
+        ("base:oak_planks", 64),
+        ("base:cobblestone", 64),
+        ("base:glass", 32),
+        ("base:glowstone", 16),
+    ],
+    // Falls shorter than this many blocks do no damage; each block more costs one.
+    safe_fall: 3.0,
+    // Lava burns this much health every so many seconds.
+    burn: 4,
+    burn_every: 0.5,
+    // Below this height the void takes all of a player's health.
+    void_below: -16.0,
+    // Blocks giving at least this much light (of 15) warm those near them: up to `heat` at
+    // their heart, fading to nothing past `heat_reach` blocks.
+    heat_emission: 12,
+    heat: 14.0,
+    heat_reach: 4,
+    // How much colder standing in water feels.
+    water_chill: 8.0,
+    // How far up a roof is looked for, to tell whether a player is out in the weather.
+    roof_scan: 48,
+)

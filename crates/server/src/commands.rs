@@ -175,6 +175,7 @@ impl Server {
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
+            Run::Op => self.op_command(args),
             Run::Drop => self.drop_command(id, args),
             Run::Grow => self.grow_command(id, args),
             Run::Biome => Ok(self.biome(id)),
@@ -307,11 +308,9 @@ impl Server {
             let at = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
             return Err(Words::key("command.error.too_far").with("place", at));
         }
-        let tick = self.tick;
         let player = self.players.get_mut(&who).unwrap();
         player.position = position;
         player.fall_start = None;
-        player.last_input_tick = tick;
         player.connection.send(ServerMessage::Teleport { position });
         let name = player.name.clone();
         let place = format!("{:.1} {:.1} {:.1}", position.x, position.y, position.z);
@@ -830,6 +829,17 @@ impl Server {
         let id = effects.find(name).ok_or_else(|| Words::key("command.error.no_such_effect").with("effect", name.as_str()))?;
         player.give_effects(&[(id, seconds)]);
         Ok(Words::key("command.effect").with("effect", Words::Own(voxmar_engine::lang::def_key("effect", &effects.get(id).name), effects.get(id).title.clone())).with("seconds", Words::text(seconds)))
+    }
+
+    fn op_command(&mut self, args: &[String]) -> Reply {
+        let [name] = args else { return Err(Words::key("command.error.op_whom")) };
+        let who = self.find_player(name)?;
+        let player = self.players.get_mut(&who).unwrap();
+        player.admin = true;
+        player.connection.send(ServerMessage::Abilities { allow_flight: player.allow_flight, admin: true });
+        let name = player.name.clone();
+        self.tell(Source::Player(who), ChatKind::Info, Words::key("command.op.you"));
+        Ok(Words::key("command.op").with("name", name))
     }
 
     fn kill_command(&mut self, source: Source) -> Reply {

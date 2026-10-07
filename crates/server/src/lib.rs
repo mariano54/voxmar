@@ -18,6 +18,7 @@ mod fluids;
 mod items;
 mod player;
 mod process;
+mod rules;
 pub mod save;
 mod weather;
 mod wear;
@@ -35,7 +36,7 @@ use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind};
 use voxmar_engine::content::Content;
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::field::Field;
-use voxmar_engine::fluid::{Budget, Fluids};
+use voxmar_engine::fluid::Fluids;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
@@ -59,6 +60,8 @@ pub struct ServerConfig {
     /// Names of players with admin rights, besides the integrated server's own player.
     /// Names are not authenticated, so this only suits servers among friends.
     pub admins: Vec<String>,
+    /// Most players connected at once; more are turned away.
+    pub max_players: usize,
     /// Directory the world is saved in; a new world is created there if it holds none. A
     /// saved world's game mode replaces `allow_flight`. `None` keeps the world in memory
     /// only.
@@ -98,6 +101,7 @@ impl Default for ServerConfig {
             allow_flight: true,
             local_admin: true,
             admins: Vec::new(),
+            max_players: 64,
             world: None,
             lag: Lag::default(),
         }
@@ -141,12 +145,21 @@ pub fn assets_dir() -> PathBuf {
     PathBuf::from("assets")
 }
 
+/// Actions the client and server name in code: content that leaves one out fails at
+/// startup rather than in play.
+const NAMED_ACTIONS: &[&str] =
+    &["core:mine", "core:place", "core:transfer", "core:quick_move", "core:craft", "core:stow", "core:drop", "core:attack", "core:eat", "core:respawn"];
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let content = Content::load(&assets.join("content"))?;
+    if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
+        return Err(format!("no package defines the action {missing}, which the game needs").into());
+    }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
+    rules::SurvivalRules::load(&content.files)?;
     Ok(content)
 }
 
@@ -302,6 +315,8 @@ pub(crate) struct Server {
     arrival: Instant,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
+    /// A new player's health and kit, and what falls, lava, fires and water do.
+    survival: Arc<rules::SurvivalRules>,
     processes: Vec<Box<dyn Process>>,
     /// `core:temperature`, mean air temperature in °C, baseline from the climate generator.
     temperature: Field,
@@ -311,11 +326,8 @@ pub(crate) struct Server {
     /// admins have forced.
     weather: WeatherState,
     world: VoxelWorld,
-    /// Water and lava waiting to flow, and how much of it a tick may move.
+    /// Water and lava waiting to flow.
     fluids: Fluids,
-    fluid_budget: Budget,
-    /// Seconds the last tick took.
-    tick_seconds: f64,
     /// Columns edited since they were last saved. They stay loaded until saved; without a
     /// save, that is forever.
     dirty: FxHashSet<ColumnPos>,
@@ -380,6 +392,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let survival = Arc::new(rules::SurvivalRules::load(&content.files).expect("checked by load_content"));
         let mut server = Self {
             config,
             tick,
@@ -397,14 +410,13 @@ impl Server {
             regrowing,
             arrival: Instant::now(),
             creatures: creatures::Creatures::default(),
+            survival,
             processes,
             temperature,
             wear_rules,
             weather,
             world,
             fluids,
-            fluid_budget: Budget::default(),
-            tick_seconds: 0.0,
             dirty: FxHashSet::default(),
             generating: FxHashSet::default(),
             generated_tx,
@@ -460,9 +472,13 @@ impl Server {
 
     fn accept_connections(&mut self) {
         while let Ok(connection) = self.incoming.try_recv() {
+            if self.players.len() >= self.config.max_players {
+                connection.send(ServerMessage::Rejected { reason: voxmar_engine::lang::Words::key("net.rejected.full") });
+                continue;
+            }
             let id = self.next_player;
             self.next_player += 1;
-            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance));
+            self.players.insert(id, Player::new(id, connection, self.spawn, self.config.view_distance, self.tick, self.survival.max_health));
         }
     }
 
@@ -486,9 +502,15 @@ impl Server {
     fn handle_messages(&mut self) {
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
-            while let Some(player) = self.players.get(&id) {
+            // A player's messages beyond their share of this tick wait for the next.
+            while let Some(player) = self.players.get_mut(&id)
+                && player.messages_left > 0
+            {
                 match player.connection.try_recv_at() {
-                    Ok(Some((at, message))) => self.handle_message(id, message, at),
+                    Ok(Some((at, message))) => {
+                        player.messages_left -= 1;
+                        self.handle_message(id, message, at);
+                    }
                     Ok(None) => break,
                     Err(_) => {
                         // Leaving dead buries first, or rejoining would revive them with
@@ -505,8 +527,8 @@ impl Server {
 
     fn tick(&mut self) {
         let _span = tracing::info_span!("server_tick").entered();
-        let started = Instant::now();
         self.tick += 1;
+        self.limit_players();
         // At normal speed a day takes the content's `day_minutes`.
         self.day += (self.day_speed * self.content.commands.day_pace()) as f64;
         self.run_processes();
@@ -530,7 +552,6 @@ impl Server {
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
         }
-        self.tick_seconds = started.elapsed().as_secs_f64();
     }
 
     /// Writes edited columns, joined players and the world's metadata. Failures are

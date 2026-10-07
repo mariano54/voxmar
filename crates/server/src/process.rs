@@ -11,14 +11,7 @@ use voxmar_engine::vitals;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::player::MAX_HEALTH;
 use crate::weather::Weather;
-
-/// Falls shorter than this many blocks do no damage.
-const SAFE_FALL: f32 = 3.0;
-/// Lava burns this much health every `BURN_TICKS`.
-const BURN: f32 = 4.0;
-const BURN_TICKS: u64 = TICKS_PER_SECOND as u64 / 2;
 
 pub(crate) trait Process: Send {
     fn tier(&self) -> Tier;
@@ -53,7 +46,8 @@ impl Process for Falling {
         let blocks = &server.content.blocks;
         let fluid = |name: &str| blocks.id(name).and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
         let (water, lava) = (fluid("base:water"), fluid("base:lava"));
-        let burns = server.tick.is_multiple_of(BURN_TICKS);
+        let rules = server.survival.clone();
+        let burns = server.tick.is_multiple_of(rules.burn_ticks());
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
             let player = &server.players[&id];
@@ -74,20 +68,20 @@ impl Process for Falling {
             let player = server.players.get_mut(&id).unwrap();
             let mut damage = 0.0;
             if in_lava && burns {
-                damage += BURN;
+                damage += rules.burn as f32;
             }
             if player.flying || in_water || in_lava || !column_loaded {
                 player.fall_start = None;
             } else if on_ground {
                 if let Some(start) = player.fall_start.take() {
-                    damage += (start - player.position.y - SAFE_FALL).max(0.0).ceil();
+                    damage += (start - player.position.y - rules.safe_fall).max(0.0).ceil();
                 }
             } else {
                 let y = player.position.y;
                 player.fall_start = Some(player.fall_start.map_or(y, |s| s.max(y)));
             }
-            if player.position.y < -16.0 {
-                damage += MAX_HEALTH as f32;
+            if player.position.y < rules.void_below {
+                damage += player.health.max as f32;
             }
             if damage > 0.0 {
                 let died = player.health.damage(damage as u8);
@@ -107,14 +101,6 @@ impl Process for Falling {
 /// Once a second; creative players are never hurt.
 #[derive(Default)]
 struct Survival;
-
-/// How far a fire or torch warms, in blocks, and how much at its heart (°C).
-const HEAT_REACH: i32 = 4;
-const HEAT: f32 = 14.0;
-/// How much colder water feels (°C).
-const WATER_CHILL: f32 = 8.0;
-/// How far up a roof is looked for, to tell whether a player is out in the weather.
-const ROOF_SCAN: i32 = 48;
 
 impl Process for Survival {
     fn tier(&self) -> Tier {
@@ -139,7 +125,7 @@ impl Process for Survival {
             let at = voxmar_engine::glam::Vec2::new(player.position.x, player.position.z);
             let (tick, day) = (server.tick, server.day);
             let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
-            let cold_air = air - if wet { WATER_CHILL } else { 0.0 };
+            let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
             let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
             let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
 
@@ -169,7 +155,7 @@ impl Process for Survival {
             let rates = vitals::rates(&modifiers);
             // Twice the Hitpoints level, and what effects add: what a raised most brings is
             // health to fill it, what a lowered one takes goes.
-            let max = (max_level.map_or(MAX_HEALTH as i32, |level| 2 * level as i32) + modifiers.max_health as i32).clamp(1, u8::MAX as i32) as u8;
+            let max = (max_level.map_or(server.survival.max_health as i32, |level| 2 * level as i32) + modifiers.max_health as i32).clamp(1, u8::MAX as i32) as u8;
             if max != player.health.max {
                 let gained = max.saturating_sub(player.health.max);
                 player.health.max = max;
@@ -212,28 +198,31 @@ impl Process for Survival {
 }
 
 impl Server {
-    /// Whether nothing solid hangs over `at` (within `ROOF_SCAN` blocks): out in the rain.
+    /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in
+    /// the rain.
     fn open_sky(&self, at: voxmar_engine::glam::IVec3) -> bool {
-        (0..ROOF_SCAN).map(|dy| at + voxmar_engine::glam::IVec3::Y * dy).all(|p| !self.is_solid(p))
+        (0..self.survival.roof_scan).map(|dy| at + voxmar_engine::glam::IVec3::Y * dy).all(|p| !self.is_solid(p))
     }
 
     /// How much fires, torches and other glowing blocks near `at` warm it (°C): the
     /// brightest within reach, fading with distance.
     fn heat_near(&self, at: voxmar_engine::glam::IVec3) -> f32 {
         let blocks = &self.content.blocks;
+        let rules = &self.survival;
+        let reach = rules.heat_reach;
         let mut heat = 0.0f32;
         for dy in -1..=2 {
-            for dz in -HEAT_REACH..=HEAT_REACH {
-                for dx in -HEAT_REACH..=HEAT_REACH {
+            for dz in -reach..=reach {
+                for dx in -reach..=reach {
                     let pos = at + voxmar_engine::glam::IVec3::new(dx, dy, dz);
                     let Some(block) = self.block(pos) else { continue };
                     let emission = blocks.info(block).emission;
-                    if emission < 12 {
+                    if emission < rules.heat_emission {
                         continue;
                     }
                     let distance = ((dx * dx + dy * dy + dz * dz) as f32).sqrt();
-                    let falloff = (1.0 - distance / (HEAT_REACH as f32 + 1.0)).max(0.0);
-                    heat = heat.max(HEAT * falloff * emission as f32 / 15.0);
+                    let falloff = (1.0 - distance / (reach as f32 + 1.0)).max(0.0);
+                    heat = heat.max(rules.heat * falloff * emission as f32 / 15.0);
                 }
             }
         }

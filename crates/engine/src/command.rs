@@ -56,6 +56,8 @@ pub enum Run {
     Effect,
     /// Kills the player.
     Kill,
+    /// Makes an online player an admin until they leave.
+    Op,
     /// Drops a stack of items into the world.
     Drop,
     /// Grows the crops around the player.

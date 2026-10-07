@@ -6,6 +6,10 @@
 //! its own seed and mode. It is saved every 30 seconds and when `stop` is typed. Anything
 //! else typed is run as a command, as an admin standing at spawn (`time set noon`,
 //! `weather storm`, `tp Ada 0 100 0`), or said to everyone with `say …`.
+//!
+//! Names are not authenticated, so an `--admin` name is an admin only when connecting from
+//! this machine; anyone else is made one for their session with `op NAME`, typed here or
+//! by an admin in game.
 
 use std::net::SocketAddr;
 

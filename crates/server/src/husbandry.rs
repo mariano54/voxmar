@@ -319,8 +319,14 @@ impl Server {
     /// Puts kept creatures from a save back in the world.
     pub(crate) fn restore_creatures(&mut self, saved: Vec<SavedCreature>) {
         for s in saved {
-            let Some(species) = self.content.creatures.id(&s.species) else { continue };
-            let Some(id) = self.spawn_creature(species, Vec3::from_array(s.position), s.seed) else { continue };
+            let Some(species) = self.content.creatures.id(&s.species) else {
+                tracing::warn!("a kept {} no package defines any more is left out", s.species);
+                continue;
+            };
+            let Some(id) = self.spawn_creature(species, Vec3::from_array(s.position), s.seed) else {
+                tracing::error!("too many creatures to bring back a kept {} at {:?}; it is lost at the next save", s.species, s.position);
+                continue;
+            };
             let def = &self.content.creatures.get(species).def;
             let tick = self.tick;
             let creature = self.creatures.live.get_mut(&id).expect("just made");

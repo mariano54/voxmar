@@ -424,13 +424,18 @@ fn falling_hurts() {
     let mut client = Client::join();
     let start = client.position;
     let feet = start.floor().as_ivec3();
-    // Climb as high as the open air (or grass) above spawn allows (at most 11 blocks), one
-    // plausible step per input, then drop back down.
+    // Rise as high as the open air (or grass) above spawn allows (at most 11 blocks), by a
+    // teleport (on foot nobody may rise more than a jump), then drop back down one plausible
+    // step per input.
     let open = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| !c.content.blocks.info(b).solid);
     let height = (1..=12).take_while(|&dy| open(&client, feet + IVec3::Y * dy)).count() as i32 - 1;
     assert!(height >= 6, "need open sky above spawn, have {height} blocks");
-    let path = (1..=height).chain((0..height).rev());
-    for y in path {
+    let top = start + Vec3::Y * height as f32;
+    client.ok(&format!("/tp {} {} {}", top.x, top.y, top.z));
+    client.pump_until(|c| c.position == top);
+    // A tick or two up there, so the fall is counted from the top.
+    std::thread::sleep(Duration::from_millis(150));
+    for y in (0..height).rev() {
         client.connection.send(ClientMessage::Input(PlayerInput {
             position: start + Vec3::Y * y as f32,
             yaw: 0.0,
@@ -1343,4 +1348,192 @@ fn unreadable_world_files_are_set_aside_and_the_world_still_opens() {
         assert_ne!(std::fs::read_to_string(dir.join(file)).unwrap(), "[(oops", "{file} is written afresh");
     }
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A survival player standing on a stone floor high in the open air, 40 blocks long along
+/// +x, with nothing around it: ground to test movement on.
+fn on_a_test_floor() -> Client {
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, allow_flight: false, ..Default::default() });
+    let at = client.position.floor().as_ivec3().with_y(300);
+    client.ok(&format!("/fill {} {} {} {} {} {} air", at.x - 2, at.y, at.z - 3, at.x + 42, at.y + 6, at.z + 3));
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", at.x - 2, at.y - 1, at.z - 3, at.x + 42, at.y - 1, at.z + 3));
+    let feet = at.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    client.ok(&format!("/tp {} {} {}", feet.x, feet.y, feet.z));
+    client.pump_until(|c| c.position == feet && c.world.block(at - IVec3::Y).is_some_and(|b| b != BlockId::AIR));
+    client.teleported = None;
+    client
+}
+
+#[test]
+fn a_burst_of_inputs_gets_no_more_ground_than_the_clock_allows() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    // Thirty one-block steps at once: each was allowed on its own (a twentieth of a
+    // second at speed), so a client could cover any distance in one go.
+    for i in 1..=30 {
+        client.send_position(start + Vec3::X * i as f32, false);
+    }
+    client.pump_until(|c| c.teleported.is_some());
+    let reached = client.teleported.unwrap().x - start.x;
+    let tuning = &client.content.movement;
+    let allowed = 1.5 * tuning.top_ground_speed().max(tuning.jump_velocity) + 0.5;
+    assert!(reached <= allowed && reached >= allowed - 2.0, "one burst carried the player {reached} blocks (a second's worth is {allowed})");
+}
+
+#[test]
+fn on_foot_nobody_rises_higher_than_a_jump_or_passes_through_walls() {
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    // Straight up, five blocks: no jump goes that high.
+    client.send_position(start + Vec3::Y * 5.0, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start));
+    // A jump's height is fine, but a second one from the air is not.
+    std::thread::sleep(Duration::from_millis(300));
+    client.send_position(start + Vec3::Y * 1.2, false);
+    client.send_position(start + Vec3::Y * 2.4, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::Y * 1.2));
+    // Back down, then through a two-block wall to the open floor beyond it.
+    std::thread::sleep(Duration::from_millis(300));
+    client.send_position(start, false);
+    let wall = start.floor().as_ivec3() + IVec3::X * 2;
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", wall.x, wall.y, wall.z, wall.x, wall.y + 1, wall.z));
+    std::thread::sleep(Duration::from_millis(500));
+    client.send_position(start + Vec3::X * 3.5, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported, Some(start), "walked through a wall");
+}
+
+#[test]
+fn a_name_already_playing_is_turned_away() {
+    let client = Client::join();
+    let (connection, server_side) = local_pair();
+    client._server.as_ref().unwrap().connections().send(server_side).unwrap();
+    connection.send(ClientMessage::Hello { name: "test".into(), protocol: PROTOCOL_VERSION, content: client.content.fingerprint() });
+    let deadline = Instant::now() + SERVER_WAIT;
+    loop {
+        assert!(Instant::now() < deadline, "the second login was never answered");
+        match connection.try_recv() {
+            Ok(Some(ServerMessage::Rejected { reason })) => {
+                let reason = client.content.english.render(&reason, &client.content.blocks);
+                assert!(reason.contains("already playing"), "{reason}");
+                break;
+            }
+            Ok(Some(ServerMessage::Welcome { .. })) => panic!("a second player called test joined"),
+            Ok(_) => std::thread::sleep(Duration::from_millis(1)),
+            Err(_) => panic!("disconnected without a reason"),
+        }
+    }
+}
+
+/// A server listening on a local port, with `host` joined (over TCP) as an admin.
+fn serve(config: ServerConfig) -> (Client, std::net::SocketAddr) {
+    let server = spawn(ServerConfig { view_distance: 2, admins: vec!["host".into()], ..config }, content()).unwrap();
+    let addr = tcp::listen("127.0.0.1:0", server.connections()).unwrap();
+    (Client::hello(tcp::connect(addr).unwrap(), "host", server), addr)
+}
+
+/// Reads a connection until the server closes it, or panics after `limit`.
+fn closed_within(mut stream: std::net::TcpStream, limit: Duration) {
+    use std::io::Read;
+    stream.set_read_timeout(Some(limit)).unwrap();
+    let mut buffer = [0u8; 4096];
+    let started = Instant::now();
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => return,
+            Err(e) => panic!("the server kept the connection open for {:?}: {e}", started.elapsed()),
+        }
+        assert!(started.elapsed() < limit, "the server kept the connection open");
+    }
+}
+
+#[test]
+fn malformed_and_oversized_frames_and_silence_close_the_connection() {
+    use std::io::Write;
+    let (_host, addr) = serve(ServerConfig::default());
+    // A frame larger than any message a client sends: closed before it is read.
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    stream.write_all(&(1u32 << 20).to_le_bytes()).unwrap();
+    closed_within(stream, Duration::from_secs(10));
+    // Bytes that are no message.
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    stream.write_all(&4u32.to_le_bytes()).unwrap();
+    stream.write_all(&[0xff, 0xff, 0xff, 0xff]).unwrap();
+    closed_within(stream, Duration::from_secs(10));
+    // Connecting and never saying hello: closed after ten seconds of the server's clock.
+    let stream = std::net::TcpStream::connect(addr).unwrap();
+    closed_within(stream, Duration::from_secs(60));
+}
+
+#[test]
+fn chat_floods_slow_down_and_admins_make_admins() {
+    let (host, addr) = serve(ServerConfig::default());
+    assert!(host.admin, "a name on the admin list is an admin from this machine");
+    let mut guest = Client::greet(tcp::connect(addr).unwrap(), "guest", None);
+    assert!(!guest.admin);
+    for i in 0..20 {
+        guest.connection.send(ClientMessage::Chat { text: format!("spam {i}") });
+    }
+    guest.pump_until(|c| c.chat.iter().any(|(kind, text)| *kind == ChatKind::Error && text.contains("too quickly")));
+    let said = guest.chat.iter().filter(|(kind, _)| *kind == ChatKind::Chat).count();
+    assert!(said <= 9, "{said} lines of a flood were said");
+    // (The host hears the flood, so its own reply is not the first line it gets.)
+    host.connection.send(ClientMessage::Command { line: "/op guest".into() });
+    guest.pump_until(|c| c.admin);
+}
+
+#[test]
+fn a_full_server_turns_newcomers_away() {
+    let (_host, addr) = serve(ServerConfig { max_players: 1, ..Default::default() });
+    let connection = tcp::connect(addr).unwrap();
+    let deadline = Instant::now() + SERVER_WAIT;
+    loop {
+        assert!(Instant::now() < deadline, "the newcomer was never answered");
+        match connection.try_recv() {
+            Ok(Some(ServerMessage::Rejected { .. })) => break,
+            Ok(Some(_)) => panic!("a newcomer got in to a full server"),
+            Ok(None) => std::thread::sleep(Duration::from_millis(1)),
+            Err(_) => panic!("closed without a reason"),
+        }
+    }
+}
+
+#[test]
+fn lava_burns_by_the_survival_rules_and_the_void_kills() {
+    let mut client = on_a_test_floor();
+    let rules = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core/survival.ron")).unwrap();
+    assert!(rules.contains("burn: 4,"), "the test reads lava's burn as 4");
+    let feet = client.position.floor().as_ivec3();
+    client.ok(&format!("/setblock {} {} {} lava", feet.x, feet.y, feet.z));
+    client.pump_until(|c| c.health < 20);
+    assert_eq!(client.health, 16, "the first burn takes 4");
+    client.pump_until(|c| c.health < 16);
+    assert_eq!(client.health, 12, "and so does the next");
+    // Out of the lava and down below the world.
+    client.ok(&format!("/setblock {} {} {} air", feet.x, feet.y, feet.z));
+    let pos = client.position;
+    client.ok(&format!("/tp {} -20 {}", pos.x, pos.z));
+    client.pump_until(|c| c.health == 0);
+}
+
+#[test]
+fn fires_warm_and_water_chills() {
+    let mut client = on_a_test_floor();
+    // Survival judges warmth once a second: a few judgements on the floor give the air's.
+    let wait = Instant::now() + Duration::from_millis(2500);
+    client.pump_until(|_| Instant::now() > wait);
+    let feet = client.position.floor().as_ivec3();
+    let air = client.vitals.felt;
+    // A glowstone a block away warms by most of the rules' 14 degrees.
+    client.ok(&format!("/setblock {} {} {} glowstone", feet.x + 1, feet.y, feet.z));
+    client.pump_until(|c| c.vitals.felt >= air + 5.0);
+    client.ok(&format!("/setblock {} {} {} air", feet.x + 1, feet.y, feet.z));
+    client.pump_until(|c| c.vitals.felt < air + 5.0);
+    // Water at the feet chills by the rules' 8 degrees, and more if soaked.
+    client.ok(&format!("/setblock {} {} {} water", feet.x, feet.y, feet.z));
+    client.pump_until(|c| c.vitals.felt <= air - 7.0);
 }
