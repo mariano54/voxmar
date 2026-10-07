@@ -16,15 +16,17 @@ impl Key {
         KEYS.iter().any(|&(k, _)| k == key)
     }
 
-    /// What the menu calls it.
-    pub fn label(self) -> &'static str {
-        KEYS.iter().find(|&&(k, _)| k == self.0).map_or("?", |&(_, label)| label)
+    /// What the menu calls it in the player's language. A key with a word for a name
+    /// (Space, Left Shift) is named by the language, `key.<code>`, and on this system by
+    /// `key.<code>.<system>` where that differs (Option on macOS for Alt, Win on Windows
+    /// for Super); the others are their own symbol (C, F3, `[`).
+    pub fn name(self, lang: &voxmar_engine::lang::Lang) -> String {
+        name_of(lang, &self.code(), self.symbol())
     }
 
-    /// What the menu calls it in the player's language: a language may rename a key
-    /// (`key.Space`), and the others keep the names below.
-    pub fn name(self, lang: &voxmar_engine::lang::Lang) -> String {
-        lang.get_or(&format!("key.{}", self.code()), self.label()).to_owned()
+    /// The symbol on the key, or "" for a key named in words.
+    fn symbol(self) -> &'static str {
+        KEYS.iter().find(|&&(k, _)| k == self.0).map_or("?", |&(_, symbol)| symbol)
     }
 
     /// The standard code name, as kept in the settings file.
@@ -50,11 +52,32 @@ impl<'de> Deserialize<'de> for Key {
     }
 }
 
-/// Modifier keys carry the names macOS gives them there.
-const ALT: [&str; 2] = if cfg!(target_os = "macos") { ["Left Option", "Right Option"] } else { ["Left Alt", "Right Alt"] };
-const SUPER: [&str; 2] = if cfg!(target_os = "macos") { ["Left Cmd", "Right Cmd"] } else { ["Left Super", "Right Super"] };
+/// The name of the key with standard code name `code`: `key.<code>.<system>`, then
+/// `key.<code>`, then its symbol (and its code, for a word key no language names).
+fn name_of(lang: &voxmar_engine::lang::Lang, code: &str, symbol: &str) -> String {
+    let key = format!("key.{code}");
+    if let Some(name) = lang.find(&format!("{key}.{SYSTEM}")).or_else(|| lang.find(&key)) {
+        return name.to_owned();
+    }
+    if symbol.is_empty() { code.to_owned() } else { symbol.to_owned() }
+}
 
-/// Every bindable key and its name in the menu.
+/// The system, as the per-system names of keys know it (`key.AltLeft.macos`).
+const SYSTEM: &str = if cfg!(target_os = "macos") {
+    "macos"
+} else if cfg!(target_os = "windows") {
+    "windows"
+} else {
+    "linux"
+};
+
+/// What Esc is called: it is not bindable, but the interface shows it.
+pub fn escape_name(lang: &voxmar_engine::lang::Lang) -> String {
+    name_of(lang, "Escape", "")
+}
+
+/// Every bindable key and the symbol on it; "" for a key named in words, by the
+/// language (`key.<code>` in `lang/<code>.ron`).
 const KEYS: &[(KeyCode, &str)] = &[
     (KeyCode::KeyA, "A"),
     (KeyCode::KeyB, "B"),
@@ -104,19 +127,19 @@ const KEYS: &[(KeyCode, &str)] = &[
     (KeyCode::F10, "F10"),
     (KeyCode::F11, "F11"),
     (KeyCode::F12, "F12"),
-    (KeyCode::Space, "Space"),
-    (KeyCode::Tab, "Tab"),
-    (KeyCode::CapsLock, "Caps Lock"),
-    (KeyCode::Enter, "Enter"),
-    (KeyCode::Backspace, "Backspace"),
-    (KeyCode::ShiftLeft, "Left Shift"),
-    (KeyCode::ShiftRight, "Right Shift"),
-    (KeyCode::ControlLeft, "Left Ctrl"),
-    (KeyCode::ControlRight, "Right Ctrl"),
-    (KeyCode::AltLeft, ALT[0]),
-    (KeyCode::AltRight, ALT[1]),
-    (KeyCode::SuperLeft, SUPER[0]),
-    (KeyCode::SuperRight, SUPER[1]),
+    (KeyCode::Space, ""),
+    (KeyCode::Tab, ""),
+    (KeyCode::CapsLock, ""),
+    (KeyCode::Enter, ""),
+    (KeyCode::Backspace, ""),
+    (KeyCode::ShiftLeft, ""),
+    (KeyCode::ShiftRight, ""),
+    (KeyCode::ControlLeft, ""),
+    (KeyCode::ControlRight, ""),
+    (KeyCode::AltLeft, ""),
+    (KeyCode::AltRight, ""),
+    (KeyCode::SuperLeft, ""),
+    (KeyCode::SuperRight, ""),
     (KeyCode::Backquote, "`"),
     (KeyCode::Minus, "-"),
     (KeyCode::Equal, "="),
@@ -128,26 +151,26 @@ const KEYS: &[(KeyCode, &str)] = &[
     (KeyCode::Comma, ","),
     (KeyCode::Period, "."),
     (KeyCode::Slash, "/"),
-    (KeyCode::ArrowUp, "Up"),
-    (KeyCode::ArrowDown, "Down"),
-    (KeyCode::ArrowLeft, "Left"),
-    (KeyCode::ArrowRight, "Right"),
-    (KeyCode::Insert, "Insert"),
-    (KeyCode::Delete, "Delete"),
-    (KeyCode::Home, "Home"),
-    (KeyCode::End, "End"),
-    (KeyCode::PageUp, "Page Up"),
-    (KeyCode::PageDown, "Page Down"),
-    (KeyCode::Numpad0, "Numpad 0"),
-    (KeyCode::Numpad1, "Numpad 1"),
-    (KeyCode::Numpad2, "Numpad 2"),
-    (KeyCode::Numpad3, "Numpad 3"),
-    (KeyCode::Numpad4, "Numpad 4"),
-    (KeyCode::Numpad5, "Numpad 5"),
-    (KeyCode::Numpad6, "Numpad 6"),
-    (KeyCode::Numpad7, "Numpad 7"),
-    (KeyCode::Numpad8, "Numpad 8"),
-    (KeyCode::Numpad9, "Numpad 9"),
+    (KeyCode::ArrowUp, ""),
+    (KeyCode::ArrowDown, ""),
+    (KeyCode::ArrowLeft, ""),
+    (KeyCode::ArrowRight, ""),
+    (KeyCode::Insert, ""),
+    (KeyCode::Delete, ""),
+    (KeyCode::Home, ""),
+    (KeyCode::End, ""),
+    (KeyCode::PageUp, ""),
+    (KeyCode::PageDown, ""),
+    (KeyCode::Numpad0, ""),
+    (KeyCode::Numpad1, ""),
+    (KeyCode::Numpad2, ""),
+    (KeyCode::Numpad3, ""),
+    (KeyCode::Numpad4, ""),
+    (KeyCode::Numpad5, ""),
+    (KeyCode::Numpad6, ""),
+    (KeyCode::Numpad7, ""),
+    (KeyCode::Numpad8, ""),
+    (KeyCode::Numpad9, ""),
 ];
 
 #[cfg(test)]
@@ -162,6 +185,39 @@ mod tests {
         }
         assert_eq!(ron::to_string(&Key(KeyCode::KeyC)).unwrap(), "\"KeyC\"");
         assert!(ron::from_str::<Key>("\"Escape\"").is_err(), "Esc is not bindable");
-        assert_eq!(Key(KeyCode::KeyC).label(), "C");
+        assert_eq!(Key(KeyCode::KeyC).symbol(), "C");
+    }
+
+    /// Every key named in words has a name in English and Japanese, with the modifiers
+    /// named as each system names them (Option and Cmd on macOS, Win on Windows).
+    #[test]
+    fn word_keys_are_named_in_every_language() {
+        use voxmar_engine::lang::Lang;
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let mut unnamed = Vec::new();
+        for code in ["en", "ja"] {
+            let lang = Lang::load(&content, code);
+            // Its own name, not English's in its place.
+            let named = |key: &str| lang.find(key).is_some() && lang.untranslated().all(|k| k != key);
+            let words = KEYS.iter().filter(|(_, symbol)| symbol.is_empty()).map(|&(key, _)| Key(key).code()).chain(["Escape".to_owned()]);
+            for code_name in words {
+                if !named(&format!("key.{code_name}")) {
+                    unnamed.push(format!("{code}: key.{code_name}"));
+                }
+            }
+            let by_system = [("AltLeft", "macos"), ("AltRight", "macos"), ("SuperLeft", "macos"), ("SuperRight", "macos"), ("SuperLeft", "windows"), ("SuperRight", "windows")];
+            for (modifier, system) in by_system {
+                if !named(&format!("key.{modifier}.{system}")) {
+                    unnamed.push(format!("{code}: key.{modifier}.{system}"));
+                }
+            }
+        }
+        assert!(unnamed.is_empty(), "keys without a name: {}", unnamed.join(", "));
+        let en = Lang::load(&content, "en");
+        assert_eq!(name_of(&en, "AltLeft", ""), if cfg!(target_os = "macos") { "Left Option" } else { "Left Alt" });
+        assert_eq!(Key(KeyCode::KeyC).name(&en), "C");
+        assert_eq!(Key(KeyCode::ShiftLeft).name(&en), "Left Shift");
+        let ja = Lang::load(&content, "ja");
+        assert_eq!(name_of(&ja, "SuperLeft", ""), if cfg!(target_os = "macos") { "左Cmd" } else if cfg!(target_os = "windows") { "左Win" } else { "左Super" });
     }
 }

@@ -6,18 +6,32 @@ in that file; the code only rolls from the lists and draws what it rolled.
 
 ## Where they stand
 
-The world is cut into squares (`grid.spacing`, 1024 blocks). Each square has a
-settlement with chance `grid.chance` (0.33), kept `grid.margin` blocks inside its edges so
+The world is cut into squares (`grid.spacing`, 1024 blocks). Each square rolls a
+settlement with chance `grid.chance` (0.45), kept `grid.margin` blocks inside its edges so
 it never reaches a neighbour's square. Within the square the planner scores spots every
-32 blocks for flat, firm, dry ground near fresh water, and takes the best that:
+`site.step` blocks (16) for flat, firm, dry ground with fresh water near, and takes the
+best of the first `site.tries` (6) that:
 
+- has firm, dry ground (no river bank, crag or terrain shape) within `site.firm` (24)
+  blocks of its middle, and no sea within `site.reach` (48);
+- has a river or lake (not the sea) within `site.water` (48) blocks; a closer look finds
+  the creeks the coarse samples miss;
 - is not in a biome with an `avoid` tag (`no_settlement`, oceans, rivers, peaks, ice,
   fantastical and giant biomes);
-- has a temperature between −8 and 34;
+- has a temperature between −10 and 36 °C: as likely as anywhere between 0 and 26, a
+  quarter as likely at the edges (`site.taper`);
 - has no sinkhole or ravine within 150 blocks.
 
-About half the squares that roll a settlement find no such spot, so about one square in
-six has one.
+Once planned, its buildings keep `site.bank` (3) blocks from water, and the ground under
+them must average `site.fertility` (0.3; 0.15 in cold and desert biomes, `site.poor`).
+These are design's numbers (wiki, settlements, draft 60). With them about one square in
+seven holds a settlement, four hamlets to every village.
+
+A new player finds one within `rules.spawn_settlement_within` (1024) blocks of where they
+spawn: where no square near is settled within that reach anyway, the nearest square in
+reach that can hold one always does, its climate ruling no spot out and its next best
+spot tried where one cannot be laid out. Where no spot in reach will do (a strip of coast
+under mountains), none is promised. A player never spawns inside a settlement.
 
 ## The levers
 
@@ -54,7 +68,10 @@ The levers are correlated, so a place reads as a whole:
     wide doors), granary (bins, on low stilts), smokehouse (a smoking fire, racks),
     chapel (an altar between two lights, pews; its altar will restore prayer) and
     boathouse (a boat, wide doors; beside water only). Bakeries, mills, tanneries and
-    chapels stand in villages.
+    chapels stand in villages. A building with fittings has one storey;
+  - a house of two or more storeys has stairs up its walls to each floor, clear of the
+    door and the hearth; windows are old glass, which breaks to nothing, so a village is
+    no glass mine.
 - `roofs`: how each shape leans (gable, hip, half-hip, saltbox, gambrel, conical, flat,
   shed), multiplying the weights each style gives it: half-hips and cones where it is
   old, saltboxes where it grew rather than was planned, gambrels in green, roomy places,
@@ -84,32 +101,56 @@ The levers are correlated, so a place reads as a whole:
   jungle stilts, turf house, villa, and timber frame anywhere else). A style names its
   woods, its roof shapes by weight, and a weighted list per part (foundation, floor,
   walls, frame, roof, trim, paving, hedge, weathered, crops); `{wood}` and `{trim}` stand
-  for the two woods the settlement picks. Crops are everyday ones: a size's fields grow
-  only crops up to its `crop_level` (hamlets 5: wheat and carrot; villages 12: potato
-  too), by weight, and always growing, never ripe; loading fails on a crop rarer than
-  uncommon, above every size's level, or a style with nothing a hamlet may grow. A settlement keeps one to three entries of
-  each list, fewer where it is orderly. Where two styles fit a biome, either may be
+  for the two woods the settlement picks. Crops are everyday ones, by region (design
+  draft 64): rye by log cabins and turf houses, chickpea in sandstone, mudbrick and
+  villa country, rice on stilts in wetlands and jungles, taro in jungles, wheat, carrot
+  and potato elsewhere. A size's fields grow only crops up to its `crop_level` (hamlets 5:
+  wheat, carrot, rye; villages 12: the rest), by weight, always growing (any stage but the
+  last of its `stages` in crops.ron), never ripe; loading fails on a crop rarer than
+  uncommon, above every size's level, or a style with nothing a hamlet may grow. Orchards
+  grow only fruit up to the same level. A settlement keeps one to three entries of each
+  list, fewer where it is orderly. Where two styles fit a biome, either may be
   built.
 - `names`: name parts by biome tag, each with its Japanese reading, small words for
   hamlets ("End", "Cross"), and prefixes that lean on the levers ("Old", "Great"), with
   how often each is used (`small_chance`, `prefix_chance`).
-- `site`: the temperatures, heights and relief a settlement stands on, how far it keeps
-  from sinkholes and ravines, and the glade it opens in the woods.
+- `kana`: how the Japanese parts join where the English runs a consonant into a vowel:
+  Sab + ir is Sabir, so サブ + イル is サビル, not サブイル (Glenach グレナック, Oasis オアシス).
+- `rules`: every other number planning reads, documented in the file: the settlement
+  promised near spawn, how levers are drawn, how lanes are walked (width, bends, steps,
+  greens, rings, terraces, side lanes grown, the square round a centrepiece and the well
+  beside it, a green's rim), how lots are laid along them (gaps, setbacks, the steepest
+  ground, field or pen, the outskirts), the sizes of fields, pens, orchards, smithies and
+  the rest, the inn's and trader's sizes, windows, plinths and moss, and how props are
+  spaced. Loading refuses numbers planning cannot use or that would never finish.
+- `site`: where a settlement stands (see above), and the glade it opens in the woods.
 - `furnishings`: the blocks every settlement uses whatever its style (torch, campfire,
   table, farmland, water, dirt, planter, anvil, barrel, bell, altar) and the lists of
   flowers, bushes, stall canopies, compost, boulders, orchard fruit (in blossom or
   unripe, never the ripe leaves), hay, things hung to
   dry, sacks and cloth. Hay, sacks and drying herbs stand in with terracotta and hanging
-  roots until the pack has blocks of their own.
+  roots, the barrel with a stripped log and the altar with polished calcite, until the
+  pack and gameplay have blocks of their own (`base:stone_altar`). Every name must be a
+  block when the game loads its content.
 
 A package adds to every list, and its `grid`, `site` and each furnishing it names replace
 earlier ones, so a mod can add a style, a name culture, a house type or a prop without
-code.
+code. Its `rules` replace section by section: a mod giving only `rules: (lanes: (...))`
+replaces the lanes (fields it leaves out take the code's defaults) and keeps every other
+section as earlier packages set it; each special size it names replaces that kind's.
 
 ## What else knows about them
 
 - Trails join settlements' gates (the ends of their main lanes) to each other and to
-  landmarks within reach.
+  landmarks within reach, and route round their buildings, never through them. Every
+  settlement with somewhere to go is joined at a gate; two gates towards one place share
+  the shorter trail. A place no trail may run through (a settlement's other gate, a second
+  viewpoint beside the first) stands in no trail's way.
+- The snow blanket stops at roofs, however tall, so no snow lies inside a building.
+- Every storey can be walked to: each stair's top three steps open to the floor above,
+  so each step is jumped with room overhead.
+- Servers on one world in one process share its generator (`Overworld::shared`), so the
+  settlements, trails and rivers round spawn are planned once.
 - Trees and decorations keep out of buildings, lanes and a glade round the houses.
 - `Overworld::settlements_near` lists them with their buildings (each with what it is
   in the lists and the work done in it), doors and gates, for gameplay (villagers,
