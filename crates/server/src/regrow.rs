@@ -56,7 +56,11 @@ impl Server {
                 }
                 return;
             }
-            if let Some(skill) = farming {
+            // Paid only for what the planter grew back: placing and breaking a plant on
+            // it pays nothing.
+            if self.planter_grown.remove(&pos)
+                && let Some(skill) = farming
+            {
                 self.grant_xp(agent, skill, regrowth.rules.planter_xp.of(rarity));
             }
         }
@@ -86,6 +90,12 @@ impl Server {
             self.regrowing.remove(&pos);
             if here.is_air() && ground == regrowing.ground {
                 self.set_block(pos, regrowing.plant);
+                // Grown back in a planter, it is still the gardener's: it forages and
+                // counts for nothing, and picking it pays the planter's experience.
+                if Some(ground) == self.content.regrowth.planter {
+                    self.placed.insert(pos);
+                    self.planter_grown.insert(pos);
+                }
             }
         }
     }
