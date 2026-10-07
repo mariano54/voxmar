@@ -783,17 +783,20 @@ mod tests {
         let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content");
         let world = WorldContent::load(&content).expect("world content");
         let f = &world.settlements.furnishings;
-        let mut names: Vec<String> = f.barrel.iter().chain(&f.bell).cloned().collect();
-        for list in [&f.hay, &f.sacks, &f.hanging, &f.nets] {
-            names.extend(list.iter().filter_map(|s| match s {
-                Select::Name(name, _) => Some(name.clone()),
-                Select::Tag(..) => None,
-            }));
-        }
-        assert!(names.len() >= 6, "{names:?}");
         let blocks = &content.blocks;
-        for name in names {
-            let id = blocks.expect(&name);
+        let mut props: Vec<voxmar_engine::block::BlockId> = f.barrel.iter().chain(&f.bell).map(|name| blocks.expect(name)).collect();
+        // A list may pick by tag: every block with the tag is a prop.
+        for list in [&f.hay, &f.sacks, &f.hanging, &f.nets] {
+            for select in list {
+                match select {
+                    Select::Name(name, _) => props.push(blocks.expect(name)),
+                    Select::Tag(tag, _) => props.extend(blocks.tagged(tag)),
+                }
+            }
+        }
+        assert!(props.len() >= 6, "only {} props", props.len());
+        for id in props {
+            let name = blocks.def(id).name.clone();
             let (def, info) = (blocks.def(id), blocks.info(id));
             assert_eq!(info.drops, voxmar_engine::block::BlockId::AIR, "{name} drops something");
             assert!(!content.regrowth.regrows(def, info.solid), "{name} regrows when picked");
