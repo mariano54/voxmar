@@ -37,6 +37,47 @@ From the design philosophy, applied here:
 
 Every file is optional in a package; any package can add to any of them.
 
+A package's `creatures.ron` may also set how many creatures the world holds, any of these
+numbers alone. A later package's numbers (packages load in name order) replace an earlier
+one's, and the load log names both packages and the numbers replaced, so a mod tunes one
+without forking base (the project-wide rule for single-valued data, Design draft 91):
+
+```ron
+limits: (most: 1024, wild_most: 512, kept_each: 64, keepers: 8, animals_near: 6, monsters_near: 6),
+```
+
+Wild creatures and kept animals have budgets of their own, so a big ranch never stops wild
+animals and monsters spawning for anyone:
+
+- `wild_most` is the most wild creatures alive at once; kept animals never count against it.
+- `kept_each` is the most animals one player keeps, herds and pets together, alive or
+  waiting in the save. Taming one more, or a birth past it, is refused with a message, and
+  breeding food is not taken while no young could come. A keeper already over the cap (a
+  package lowered it, or an old save) keeps every animal; taming and births wait until
+  they are under it. The per-species caps by Farming level planned in P31 will sit inside
+  it.
+- `most` is the most alive at once, wild and kept, and must hold `wild_most` and `keepers`
+  players' `kept_each`; a server for more players raises `keepers` and `most` together.
+  Wild ones (spawned or summoned) and births also stop short of it by the kept animals
+  still waiting in the save, so those always have room to come back; past `keepers`
+  players at their cap, wild ones get fewer.
+- `animals_near` and `monsters_near` cap each kind within 64 blocks of a player.
+
+What no package sets keeps the defaults above.
+
+The same file sets, the same way, when creatures' blows train Defence (design wiki draft
+63):
+
+```ron
+defence: (fought_within: 10.0, least_level: 0.5),
+```
+
+A blow that misses trains the player's Defence only if they landed a damaging blow on that
+very creature within `fought_within` seconds, and only from a creature of at least
+`least_level` times their Defence level. Standing among weak monsters, or tapping a penned
+hen between a strong one's blows, trains nothing; with two players at one creature, only
+the last to hurt it trains on its blows.
+
 ## A creature
 
 ```ron
@@ -207,7 +248,12 @@ Content fails to load, with the file and a reason, when:
 - a creature drops nothing any action uses, or an item is produced by nothing ("dead ends
   fail", design philosophy);
 - a level, chance or count is out of range, or a loot table references itself;
-- a supernatural species has no aether minimum.
+- a supernatural species has no aether minimum;
+- the limits leave no room for wild creatures (`wild_most` 0), one player's `animals_near`
+  and `monsters_near` together are more than `wild_most`, or `most` is less than
+  `wild_most` and `keepers` players' `kept_each`;
+- `defence` makes a fight last no time (`fought_within` 0 or less) or asks a negative
+  `least_level`.
 
 Test-time checks (in `cargo test`): every species can be spawned and survives a simulated
 day in the sandbox; the supernatural share of species is 15–30% and of encounters, over a

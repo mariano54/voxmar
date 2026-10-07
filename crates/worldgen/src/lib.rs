@@ -23,6 +23,8 @@ mod density;
 mod dials;
 mod ecology;
 mod features;
+#[cfg(test)]
+mod generated_water;
 mod geology;
 mod growth;
 mod hue;
@@ -281,8 +283,7 @@ impl Overworld {
 
     /// As [`with_content`](Self::with_content), as generation `version` would seed it: tests
     /// use it to check a world before `VERSION` is bumped to reseed every world.
-    #[doc(hidden)]
-    pub fn with_content_at(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent, version: u32) -> Self {
+    fn with_content_at(seed: u64, registry: Arc<BlockRegistry>, content: &WorldContent, version: u32) -> Self {
         let stream = rng::stream_seed(seed, Self::ID, version);
         let mut dials = WorldDials::sample(stream);
         dials.pole_distance *= content.climate.zones / WorldDials::POLE_DISTANCE;
@@ -1628,11 +1629,11 @@ mod tests {
     #[ignore]
     fn flower_counts() {
         let registry = registry();
-        let names = std::env::var("BIOMES").unwrap_or_else(|_| "plains,meadow,flower_meadow,forest,birch_forest,cherry_grove,savanna".into());
+        let names = std::env::var("BIOMES").unwrap_or_else(|_| "plains,meadow,flower_meadow,forest,taiga,jungle,savanna,swamp".into());
         let seeds = [1u64, 7, 42];
         let worlds: Vec<Overworld> = seeds.iter().map(|&s| Overworld::new(s, registry.clone())).collect();
         for name in names.split(',') {
-            let (mut flowers, mut areas) = (0, 0);
+            let (mut flowers, mut plants, mut areas) = (0, 0, 0);
             let mut kinds = std::collections::BTreeMap::<String, i32>::new();
             for world in &worlds {
                 let Some(at) = world.locate_biome(name, IVec2::ZERO, 8000) else { continue };
@@ -1644,6 +1645,9 @@ mod tests {
                                 let b = column.block(IVec3::new(x, y, z));
                                 if b.is_air() {
                                     continue;
+                                }
+                                if registry.info(b).render == voxmar_engine::block::RenderKind::Plant {
+                                    plants += 1;
                                 }
                                 if registry.def(b).has_tag("flower") && registry.info(b).render == voxmar_engine::block::RenderKind::Plant {
                                     flowers += 1;
@@ -1661,7 +1665,8 @@ mod tests {
             let mut top: Vec<_> = kinds.into_iter().collect();
             top.sort_by_key(|k| -k.1);
             top.truncate(4);
-            println!("{name}: {:.0} flowers per 9 columns ({areas} seeds); most: {top:?}", flowers as f32 / areas.max(1) as f32);
+            let per = |n: i32| n as f32 / areas.max(1) as f32;
+            println!("{name}: {:.0} plants, {:.0} flowers per 9 columns ({areas} seeds); most flowers: {top:?}", per(plants), per(flowers));
         }
     }
 
@@ -1828,12 +1833,14 @@ mod tests {
         }
     }
 
-    /// Most open grass in a meadow carries a plant, but few of them are flowers.
+    /// Plains are well carpeted (about three blocks of open grass in ten carry a plant, since
+    /// plants grow at half the biomes' own density), and few of the plants are flowers.
+    /// Measured on the open grass of `base:plains` near two seeds' origins.
     #[test]
-    fn meadows_are_carpeted_and_flowers_stay_sparse() {
+    fn plains_are_carpeted_and_flowers_stay_sparse() {
         let registry = registry();
         let (grass, air) = (registry.expect("base:grass_block"), BlockId::AIR);
-        let (mut open, mut planted, mut flowers) = (0, 0, 0);
+        let (mut open, mut planted, mut flowers, mut implied) = (0, 0, 0, 0);
         for seed in [1, 42] {
             let world = Overworld::new(seed, registry.clone());
             let at = world.locate_biome("plains", IVec2::ZERO, 6000).unwrap();
@@ -1857,13 +1864,84 @@ mod tests {
                             planted += 1;
                             flowers += registry.def(above).has_tag("flower") as i32;
                         }
+                        // The flower the biome's data grows here, before anything else
+                        // claims the spot.
+                        if let Some(ecology::Plant::One(b) | ecology::Plant::Tall(b, _) | ecology::Plant::Stack(b, _)) = world.ecology.plant(&site, crate::content::Ground::Soil, wx, wz) {
+                            implied += registry.def(b).has_tag("flower") as i32;
+                        }
                     }
                 }
             }
         }
-        let (planted, flowers) = (planted as f32 / open as f32, flowers as f32 / open as f32);
-        println!("{open} open grass blocks, {planted:.2} planted, {flowers:.3} flowers");
-        assert!(open > 1000 && planted > 0.5 && flowers < 0.08, "{open} open, {planted} planted, {flowers} flowers");
+        let (planted, implied) = (planted as f32 / open as f32, implied as f32 / open as f32);
+        let flowers = flowers as f32 / open as f32;
+        println!("{open} open grass blocks, {planted:.2} planted, {flowers:.4} flowers ({implied:.4} by the biome's data)");
+        // Two-sided: well carpeted but not crowded; flowers scarce, yet at least half as
+        // many as the biome's data grows (nothing else crowds them out).
+        assert!(open > 1000 && (0.24..=0.36).contains(&planted), "{open} open, {planted} planted");
+        assert!(implied > 0.0 && flowers >= 0.5 * implied && flowers <= 0.05, "{flowers} flowers, {implied} by the data");
+    }
+
+    /// Small plants in 3×3 chunks of `biome` near the origin of `world`: how many in all,
+    /// and how many of them the plant density keeps (gatherables).
+    fn plants_in(world: &Overworld, content: &WorldContent, biome: &str, registry: &BlockRegistry) -> (u32, u32) {
+        let kept: rustc_hash::FxHashSet<BlockId> =
+            content.plants.iter().filter(|p| content.plant_kept(p, registry)).filter_map(|p| registry.id(&p.block)).collect();
+        let at = world.locate_biome(biome, IVec2::ZERO, 6000).unwrap();
+        let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
+        let (mut all, mut gathered) = (0, 0);
+        for column in generate_area(world, first, 3) {
+            for z in 0..32 {
+                for x in 0..32 {
+                    for y in (1..WORLD_HEIGHT_FOR_TESTS).rev() {
+                        let b = column.block(IVec3::new(x, y, z));
+                        if b.is_air() {
+                            continue;
+                        }
+                        if registry.info(b).render != voxmar_engine::block::RenderKind::Plant {
+                            break;
+                        }
+                        all += 1;
+                        gathered += kept.contains(&b) as u32;
+                    }
+                }
+            }
+        }
+        (all, gathered)
+    }
+
+    /// The plant density thins the look of the land, not its harvest: at density 0.5 the
+    /// same ground grows 40-60% of the plants it grows at 1.0, while the plants gathered
+    /// for food and crafting (wild crops, rare herbs, forage, berries, fungi, sugar cane)
+    /// keep their count within sampling noise.
+    #[test]
+    fn plant_density_thins_the_look_not_the_harvest() {
+        let registry = registry();
+        let full_density = "(density: 1.0, plants: [])";
+        let half = WorldContent::base(&registry).unwrap();
+        assert_eq!(half.plant_density, 0.5, "the test measures the base package's 0.5");
+        let files: Vec<voxmar_engine::content::ContentFile> = crate::content::BASE_FILES
+            .iter()
+            .map(|(name, source)| voxmar_engine::content::ContentFile { package: "base".into(), name: (*name).into(), source: (*source).into() })
+            .chain([voxmar_engine::content::ContentFile { package: "mod".into(), name: "plants.ron".into(), source: full_density.into() }])
+            .collect();
+        let full = WorldContent::from_files(files.iter(), &registry).unwrap();
+        assert_eq!(full.plant_density, 1.0);
+        let (mut all, mut gathered) = ([0u32; 2], [0u32; 2]);
+        for seed in [1, 7] {
+            for (k, content) in [&full, &half].into_iter().enumerate() {
+                let world = Overworld::with_content(seed, registry.clone(), content);
+                for biome in ["forest", "plains", "taiga"] {
+                    let (a, g) = plants_in(&world, content, biome, &registry);
+                    all[k] += a;
+                    gathered[k] += g;
+                }
+            }
+        }
+        let (ratio, kept) = (all[1] as f32 / all[0] as f32, gathered[1] as f32 / gathered[0] as f32);
+        println!("plants {} → {} ({ratio:.2}); gathered {} → {} ({kept:.2})", all[0], all[1], gathered[0], gathered[1]);
+        assert!((0.4..=0.6).contains(&ratio), "plants at half density: {ratio}");
+        assert!(gathered[0] >= 100 && (0.85..=1.15).contains(&kept), "gathered plants {gathered:?}: {kept}");
     }
 
     /// `cargo test --release -p voxmar_worldgen decor_sights -- --ignored --nocapture`
@@ -2532,10 +2610,58 @@ mod tests {
         println!("{:#?}\ncentre {centre}, spawn {spawn}", world.cave_style());
     }
 
-    /// `cargo test --release -p voxmar_worldgen cave_sights -- --ignored --nocapture`
-    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
-    /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
-    /// in-game captures of caves near spawn: inside the largest open space under each sight.
+    /// The stone pieces standing on the ground around `AT=x,z` (seed `SEED`): each piece's
+    /// lowest block, its size, height above the ground and blocks, to find what made one.
+    #[test]
+    #[ignore]
+    fn stone_pieces() {
+        let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
+        let at: Vec<i32> = std::env::var("AT").unwrap_or_else(|_| "0,0".into()).split(',').filter_map(|s| s.parse().ok()).collect();
+        let registry = registry();
+        let world = Overworld::new(seed, registry.clone());
+        let first = ColumnPos::of_block(IVec3::new(at[0], 0, at[1])).offset(-1, -1);
+        let columns = generate_area(&world, first, 3);
+        let origin = first.origin();
+        let span = 3 * voxmar_engine::coords::CHUNK_SIZE;
+        let block = |p: IVec3| {
+            if !(0..span).contains(&(p.x - origin.x)) || !(0..span).contains(&(p.z - origin.z)) || !(1..WORLD_HEIGHT_FOR_TESTS).contains(&p.y) {
+                return BlockId::AIR;
+            }
+            columns[(((p.z - origin.z) >> 5) * 3 + ((p.x - origin.x) >> 5)) as usize].block(p.with_x(p.x & 31).with_z(p.z & 31))
+        };
+        let stone = |b: BlockId| registry.def(b).has_tag("stone") || registry.def(b).name.ends_with("moss_block");
+        let mut seen = rustc_hash::FxHashSet::default();
+        for z in origin.z..origin.z + span {
+            for x in origin.x..origin.x + span {
+                let h = world.height(x, z);
+                for y in h + 1..h + 5 {
+                    let p = IVec3::new(x, y, z);
+                    if !stone(block(p)) || !seen.insert(p) {
+                        continue;
+                    }
+                    let mut stack = vec![p];
+                    let mut cells = Vec::new();
+                    while let Some(q) = stack.pop() {
+                        cells.push(q);
+                        for d in [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z] {
+                            let n = q + d;
+                            if n.y > world.height(n.x, n.z) && stone(block(n)) && seen.insert(n) {
+                                stack.push(n);
+                            }
+                        }
+                    }
+                    let high = cells.iter().map(|c| c.y - world.height(c.x, c.z)).max().unwrap();
+                    let mut kinds = std::collections::BTreeMap::<String, i32>::new();
+                    for c in &cells {
+                        *kinds.entry(registry.def(block(*c)).name.trim_start_matches("base:").to_owned()).or_default() += 1;
+                    }
+                    let d = (p.x - at[0]).abs().max((p.z - at[1]).abs());
+                    println!("{p} (d {d}): {} blocks, {high} high, {kinds:?}", cells.len());
+                }
+            }
+        }
+    }
+
     /// Close-ups of kinds of tree in place, for captures: `TREES=olive:mediterranean,
     /// larch:taiga SEED=n` finds, in each biome near spawn, the places the tree is likeliest,
     /// then in the first of them that has one the trunk whose crown holds most of its own
@@ -2663,6 +2789,10 @@ mod tests {
         }
     }
 
+    /// `cargo test --release -p voxmar_worldgen cave_sights -- --ignored --nocapture`
+    /// (optionally `SEED=n`, or several as `SEEDS=1,2,3`, and a place `X`, `Z` other than
+    /// spawn, or `NEAR=biome` for the nearest of that biome) prints `--pose` arguments for
+    /// in-game captures of caves near spawn: inside the largest open space under each sight.
     #[test]
     #[ignore]
     fn cave_sights() {

@@ -165,7 +165,12 @@ its blocks and skills, or adds a whole language. Definitions are named by key fr
 (`block.base.oak_log`, `skill.core.farming`), and a template's members by pattern, so
 `block.base.{name}_log` with `family.base.oak` names オークの原木 and a new wood needs one
 line per language; anything a language leaves out shows in English, then as a name made from
-the id. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
+the id. A shader pack is named by `shader_pack.<key>`, its key being its name in lower case
+with anything but a letter or a digit made `_` (Verdant is `shader_pack.verdant`, 新緑
+`shader_pack.新緑`, "R&D v1.2" `shader_pack.r_d_v1_2`); a pack no language names shows its own
+name. The packs the game ships (`assets/shaderpacks/shipped.ron`) load first; a pack with a
+name already loaded is refused, and one whose key is already taken ("soft_light" after "Soft
+Light") loads but keeps its own name. Text names its arguments (`"{crop}を植える"`) so each language orders them its own
 way. Kanji and kana come from Fusion Pixel 12px, a Japanese pixel font (listed in
 `assets/ui/fonts/fallback.ron`) whose glyphs are read at startup and merged under the chosen
 interface font, its pixels drawn at three quarters of ours; BIZ UDGothic, a smooth font,
