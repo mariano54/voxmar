@@ -101,7 +101,8 @@ fn worn_glyph(slot: usize) -> Option<Piece> {
 }
 
 /// What packages restyle of the interface (`interface.ron`, in `core`); a later package
-/// changes what it gives.
+/// changes what it gives. Read with the rest of the content at launch, which a bad value
+/// fails.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct InterfaceStyle {
     /// How strongly an empty worn well shows what it takes, 0 to 1.
@@ -132,16 +133,10 @@ impl InterfaceStyle {
 }
 
 /// Each worn well's mark shows, faintly, while nothing is worn there.
-fn show_worn_glyphs(shown: Res<ShownInventory>, launch: Res<Launch>, mut style: Local<Option<f32>>, mut glyphs: Query<(&WornGlyph, &mut Visibility, &mut ImageNode)>) {
-    let alpha = *style.get_or_insert_with(|| {
-        InterfaceStyle::load(&launch.content.files).map(|s| s.worn_glyph_alpha).unwrap_or_else(|e| {
-            error!("interface style: {e}");
-            0.0
-        })
-    });
+fn show_worn_glyphs(shown: Res<ShownInventory>, style: Res<InterfaceStyle>, mut glyphs: Query<(&WornGlyph, &mut Visibility, &mut ImageNode)>) {
+    let faint = Color::WHITE.with_alpha(style.worn_glyph_alpha);
     for (glyph, mut visibility, mut image) in &mut glyphs {
         visibility.set_if_neq(if shown.0.get(glyph.0).is_some() { Visibility::Hidden } else { Visibility::Inherited });
-        let faint = Color::WHITE.with_alpha(alpha);
         if image.color != faint {
             image.color = faint;
         }

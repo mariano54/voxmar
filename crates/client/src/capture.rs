@@ -168,6 +168,7 @@ impl Plugin for CapturePlugin {
             press: self.press,
             hold: self.hold.clone(),
             wear: self.wear.clone(),
+            dressed: self.wear.is_empty(),
             repeat: self.repeat,
             face_creature: self.face_creature,
             strike: self.strike.clone(),
@@ -227,6 +228,8 @@ struct Capture {
     press: Option<MouseButton>,
     hold: Option<String>,
     wear: Vec<String>,
+    /// Every piece of `wear` is on (the shot waits for it).
+    dressed: bool,
     repeat: bool,
     face_creature: bool,
     strike: Option<String>,
@@ -359,17 +362,40 @@ fn hold(state: Res<Capture>, world: Res<crate::world::ClientWorld>, mut player: 
 }
 
 /// Puts on each piece of `--wear` once the inventory has it, moving it into its worn slot
-/// as a click would; the server checks it fits.
-fn wear(state: Res<Capture>, world: Res<crate::world::ClientWorld>, player: Res<LocalPlayer>, net: Res<crate::net::Net>, actions: Res<crate::Actions>, mut asked: Local<Vec<String>>) {
+/// as a click would. The shot waits until every piece is on; a piece the server has not
+/// put on `WEAR_TICKS` after it was asked fails the capture, naming it.
+fn wear(
+    mut state: ResMut<Capture>,
+    world: Res<crate::world::ClientWorld>,
+    player: Res<LocalPlayer>,
+    net: Res<crate::net::Net>,
+    actions: Res<crate::Actions>,
+    mut asked: Local<Vec<(String, usize, u64)>>,
+    mut exit: MessageWriter<AppExit>,
+) {
     use voxmar_engine::inventory::{WORN, worn_slot};
-    for name in state.wear.iter().filter(|name| !asked.contains(name)) {
-        let Some(item) = world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}"))) else { continue };
+    let ticks = net.server().map_or(0, |server| server.ticks());
+    let id = |name: &str| world.registry.id(name).or_else(|| world.registry.id(&format!("base:{name}")));
+    for name in state.wear.iter().filter(|name| !asked.iter().any(|(n, ..)| n == *name)) {
+        let Some(item) = id(name) else { continue };
         let (Some(from), Some(at)) = ((0..WORN).find(|&s| player.inventory.get(s).is_some_and(|stack| stack.item == item)), worn_slot(item)) else { continue };
         let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: (WORN + at) as u8, count: 1 };
         net.propose(actions.0.expect("core:transfer"), target);
-        asked.push(name.clone());
+        asked.push((name.clone(), WORN + at, ticks));
+    }
+    let worn = |(name, slot, _): &(String, usize, u64)| player.inventory.get(*slot).is_some_and(|stack| Some(stack.item) == id(name));
+    if let Some((name, ..)) = asked.iter().find(|piece| !worn(piece) && ticks.saturating_sub(piece.2) > WEAR_TICKS) {
+        error!("capture: {name} was not put on {WEAR_TICKS} server ticks after asking");
+        exit.write(AppExit::error());
+    }
+    let dressed = asked.len() == state.wear.len() && asked.iter().all(worn);
+    if state.dressed != dressed {
+        state.dressed = dressed;
     }
 }
+
+/// Server ticks a piece `--wear` asks for has to come on.
+const WEAR_TICKS: u64 = 40;
 
 /// Clip frames `--press` holds its button for: a second, long enough to dig soil.
 const PRESS_FRAMES: u32 = CLIP_RATE;
@@ -681,6 +707,7 @@ fn capture(
     }
     let busy = joining
         || (*screen.get() == Screen::InGame && !ready.0)
+        || (*screen.get() == Screen::InGame && !state.dressed)
         || stats.jobs_in_flight > 0
         || stats.pending_columns > 0
         || world.voxels.len() < 9
